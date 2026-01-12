@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::error::{Result, ToolError};
-use super::tool::{object_schema, string_property, number_property, Tool, ToolOutput};
+use super::tool::{object_schema, string_property, number_property, Tool, ToolOutput, ToolDefinition, ToolExample};
 
 use edge_ai_devices::{MqttDeviceManager, TimeSeriesStorage};
 use edge_ai_rules::RuleEngine;
@@ -31,19 +31,57 @@ impl Tool for QueryDataTool {
     }
 
     fn description(&self) -> &str {
-        "Query time series data from device metrics. Use this to get historical or current data from devices."
+        r#"查询设备的历史时间序列数据。
+
+## 使用场景
+- 查询传感器的历史数据（如温度、湿度、压力等）
+- 获取设备的实时数据点
+- 分析设备数据趋势
+- 生成数据报告
+
+## 注意事项
+- device_id 必须是系统中已注册的设备ID
+- metric 名称通常是：temperature（温度）、humidity（湿度）、pressure（压力）等
+- 如果不指定时间范围，默认返回最近24小时的数据
+- 返回数据按时间戳升序排列"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "device_id": string_property("The ID of the device to query"),
-                "metric": string_property("The metric name to query (e.g., 'temperature', 'humidity')"),
-                "start_time": number_property("Start timestamp (Unix epoch). Optional, defaults to 24 hours ago."),
-                "end_time": number_property("End timestamp (Unix epoch). Optional, defaults to now."),
+                "device_id": string_property("设备ID，例如：sensor_1, temp_sensor_02"),
+                "metric": string_property("指标名称，例如：temperature（温度）、humidity（湿度）、pressure（压力）"),
+                "start_time": number_property("起始时间戳（Unix时间戳，秒）。可选，默认为当前时间往前推24小时"),
+                "end_time": number_property("结束时间戳（Unix时间戳，秒）。可选，默认为当前时间"),
             }),
             vec!["device_id".to_string(), "metric".to_string()],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "device_id": "sensor_1",
+                    "metric": "temperature",
+                    "start_time": 1735718400,
+                    "end_time": 1735804800
+                }),
+                result: serde_json::json!({
+                    "device_id": "sensor_1",
+                    "metric": "temperature",
+                    "count": 24,
+                    "data": [
+                        {"timestamp": 1735718400, "value": 22.5},
+                        {"timestamp": 1735722000, "value": 23.1}
+                    ]
+                }),
+                description: "查询传感器最近24小时的温度数据".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -115,18 +153,61 @@ impl Tool for ControlDeviceTool {
     }
 
     fn description(&self) -> &str {
-        "Control a device by sending commands. Use this to change device settings, trigger actions, or modify device behavior."
+        r#"向设备发送控制命令。
+
+## 使用场景
+- 开关设备控制（打开/关闭）
+- 设置设备参数值
+- 触发设备动作
+- 修改设备工作模式
+
+## 常用命令
+- turn_on: 打开设备
+- turn_off: 关闭设备
+- set_value: 设置数值参数（需通过parameters传递value）
+- toggle: 切换设备状态
+
+## 注意事项
+- 执行控制命令前应先确认设备在线状态
+- 部分命令需要额外的参数（如set_value需要value参数）
+- 控制命令执行是异步的，实际生效可能有延迟"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "device_id": string_property("The ID of the device to control"),
-                "command": string_property("The command to execute (e.g., 'set_value', 'turn_on', 'turn_off')"),
-                "parameters": object_schema(serde_json::json!({}), vec![])
+                "device_id": string_property("要控制的设备ID，例如：actuator_1, switch_living_room"),
+                "command": string_property("控制命令，例如：turn_on（打开）、turn_off（关闭）、set_value（设置值）"),
+                "parameters": object_schema(serde_json::json!({
+                    "description": "命令参数，可选。对于set_value命令，需要传递value参数",
+                    "properties": {
+                        "value": {"type": ["number", "string", "boolean"], "description": "命令参数值"}
+                    }
+                }), vec![])
             }),
             vec!["device_id".to_string(), "command".to_string()],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "device_id": "actuator_1",
+                    "command": "turn_on"
+                }),
+                result: serde_json::json!({
+                    "status": "success",
+                    "device_id": "actuator_1",
+                    "command": "turn_on",
+                    "message": "Command sent successfully"
+                }),
+                description: "打开执行器设备".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -192,16 +273,55 @@ impl Tool for ListDevicesTool {
     }
 
     fn description(&self) -> &str {
-        "List all available devices with their information including status and capabilities."
+        r#"列出系统中所有已注册的设备。
+
+## 使用场景
+- 查看所有可用设备列表
+- 按设备类型筛选设备
+- 获取设备基本信息（ID、名称、类型）
+- 检查设备在线状态
+
+## 返回信息
+- 设备ID：唯一标识符
+- 设备名称：人类可读的名称
+- 设备类型：sensor（传感器）、actuator（执行器）等
+- 设备状态：online（在线）、offline（离线）
+
+## 设备类型
+- sensor: 传感器设备（温度、湿度、压力等）
+- actuator: 执行器设备（开关、阀门、电机等）
+- controller: 控制器设备
+- gateway: 网关设备"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "filter_type": string_property("Optional filter by device type (e.g., 'sensor', 'actuator')"),
+                "filter_type": string_property("可选，按设备类型过滤。例如：sensor（传感器）、actuator（执行器）"),
             }),
             vec![],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "filter_type": "sensor"
+                }),
+                result: serde_json::json!({
+                    "count": 2,
+                    "devices": [
+                        {"id": "sensor_1", "name": "温度传感器1", "type": "sensor", "status": "online"},
+                        {"id": "sensor_2", "name": "湿度传感器1", "type": "sensor", "status": "online"}
+                    ]
+                }),
+                description: "列出所有传感器设备".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -252,17 +372,58 @@ impl Tool for CreateRuleTool {
     }
 
     fn description(&self) -> &str {
-        "Create a new automation rule using a simple DSL. Use this to define when certain actions should be triggered based on device data."
+        r#"创建一个新的自动化规则。
+
+## 使用场景
+- 当设备数据满足条件时自动触发动作
+- 设置温度、湿度等阈值告警
+- 定时执行特定任务
+- 多条件组合的复杂自动化逻辑
+
+## DSL 语法格式
+RULE \"规则名称\" WHEN <条件> [FOR <持续时间>] DO <动作> END
+
+## 条件示例
+- sensor.temperature > 50: 温度大于50
+- device.humidity < 30: 湿度小于30
+- sensor.value == 1: 值等于1
+
+## 动作类型
+- NOTIFY \"消息\": 发送通知
+- CONTROL device_id command: 控制设备
+- EXECUTE workflow_id: 执行工作流
+
+## 完整示例
+RULE \"高温告警\" WHEN sensor.temperature > 35 FOR 5 minutes DO NOTIFY \"温度过高\" END"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "name": string_property("The name of the rule"),
-                "dsl": string_property("The rule definition in DSL format. Example: 'RULE \"High Temp\" WHEN sensor.temperature > 50 FOR 5 minutes DO NOTIFY \"High temperature detected\" END'")
+                "name": string_property("规则名称，简洁描述规则的功能"),
+                "dsl": string_property("规则DSL定义，格式：RULE \"名称\" WHEN 条件 DO 动作 END")
             }),
             vec!["name".to_string(), "dsl".to_string()],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "name": "高温告警",
+                    "dsl": "RULE \"高温告警\" WHEN sensor.temperature > 35 FOR 5 minutes DO NOTIFY \"温度过高，请注意\" END"
+                }),
+                result: serde_json::json!({
+                    "rule_id": "rule_123",
+                    "status": "created"
+                }),
+                description: "创建一个温度超过35度时触发告警的规则".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -308,7 +469,19 @@ impl Tool for ListRulesTool {
     }
 
     fn description(&self) -> &str {
-        "List all automation rules with their status and information."
+        r#"列出系统中所有自动化规则。
+
+## 使用场景
+- 查看所有已创建的规则
+- 检查规则的启用状态
+- 查看规则的触发次数统计
+- 管理和监控自动化规则
+
+## 返回信息
+- 规则ID：唯一标识符
+- 规则名称：人类可读的名称
+- 启用状态：是否正在运行
+- 触发次数：规则被执行的次数统计"#
     }
 
     fn parameters(&self) -> Value {
@@ -316,6 +489,25 @@ impl Tool for ListRulesTool {
             serde_json::json!({}),
             vec![],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({}),
+                result: serde_json::json!({
+                    "count": 2,
+                    "rules": [
+                        {"id": "rule_1", "name": "高温告警", "enabled": true, "trigger_count": 5},
+                        {"id": "rule_2", "name": "低湿提醒", "enabled": true, "trigger_count": 2}
+                    ]
+                }),
+                description: "列出所有自动化规则".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, _args: Value) -> Result<ToolOutput> {
@@ -358,19 +550,56 @@ impl Tool for TriggerWorkflowTool {
     }
 
     fn description(&self) -> &str {
-        "Trigger a workflow execution by its ID. Use this to manually start a workflow automation."
+        r#"手动触发一个工作流执行。
+
+## 使用场景
+- 手动启动预定义的工作流
+- 执行复杂的多步骤自动化任务
+- 批量操作多个设备
+- 定时任务的即时执行
+
+## 工作流类型
+- 数据采集工作流：批量采集多个设备数据
+- 报告生成工作流：生成数据统计报告
+- 批量控制工作流：同时控制多个设备
+- 数据清理工作流：清理历史数据
+
+## 注意事项
+- 需要先在系统中创建工作流
+- 可选参数会传递给工作流步骤使用
+- 执行是异步的，返回execution_id用于追踪状态"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "workflow_id": string_property("The ID of the workflow to trigger"),
+                "workflow_id": string_property("要触发的工作流ID，例如：daily_backup、data_collection"),
                 "parameters": object_schema(serde_json::json!({
-                    "description": "Optional parameters to pass to the workflow"
+                    "description": "可选参数，会传递给工作流使用"
                 }), vec![])
             }),
             vec!["workflow_id".to_string()],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "workflow_id": "daily_backup",
+                    "parameters": {"mode": "full"}
+                }),
+                result: serde_json::json!({
+                    "workflow_id": "daily_backup",
+                    "execution_id": "exec_abc123",
+                    "status": "triggered"
+                }),
+                description: "触发日常备份工作流".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -413,17 +642,56 @@ impl Tool for QueryRuleHistoryTool {
     }
 
     fn description(&self) -> &str {
-        "Query the execution history of automation rules. Use this to see when rules were triggered, their success rate, and execution patterns."
+        r#"查询自动化规则的执行历史记录。
+
+## 使用场景
+- 查看规则的触发历史
+- 分析规则执行成功率
+- 排查规则执行失败原因
+- 统计规则执行频率
+
+## 返回信息
+- 规则ID和名称
+- 执行时间戳
+- 执行是否成功
+- 执行的动作数量
+- 错误信息（如果失败）
+- 执行耗时（毫秒）
+
+## 筛选选项
+- rule_id: 指定规则ID筛选
+- limit: 限制返回条数，默认10条"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "rule_id": string_property("Optional filter by specific rule ID"),
-                "limit": number_property("Maximum number of history entries to return. Optional, defaults to 10.")
+                "rule_id": string_property("可选，按规则ID筛选历史记录"),
+                "limit": number_property("可选，返回的最大条数，默认10条")
             }),
             vec![],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "rule_id": "rule_1",
+                    "limit": 5
+                }),
+                result: serde_json::json!({
+                    "count": 5,
+                    "history": [
+                        {"id": "h1", "rule_id": "rule_1", "rule_name": "高温告警", "success": true, "actions_executed": 1, "timestamp": 1735804800}
+                    ]
+                }),
+                description: "查询指定规则的执行历史".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -483,18 +751,58 @@ impl Tool for QueryWorkflowStatusTool {
     }
 
     fn description(&self) -> &str {
-        "Query the status of workflow executions. Use this to see running workflows, their current state, and recent executions."
+        r#"查询工作流的执行状态。
+
+## 使用场景
+- 查看正在运行的工作流
+- 检查工作流执行结果
+- 追踪工作流执行进度
+- 查看工作流执行历史
+
+## 返回信息
+- 执行ID：唯一标识符
+- 工作流ID：被执行的工作流
+- 执行状态：running（运行中）、completed（完成）、failed（失败）、cancelled（取消）
+- 开始时间：执行开始时间戳
+- 当前步骤：执行到的步骤名称
+- 错误信息：失败时的错误描述
+
+## 筛选选项
+- execution_id: 按执行ID筛选
+- workflow_id: 按工作流ID筛选
+- limit: 限制返回条数，默认10条"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "execution_id": string_property("Optional filter by specific execution ID"),
-                "workflow_id": string_property("Optional filter by specific workflow ID"),
-                "limit": number_property("Maximum number of status entries to return. Optional, defaults to 10.")
+                "execution_id": string_property("可选，按执行ID筛选"),
+                "workflow_id": string_property("可选，按工作流ID筛选"),
+                "limit": number_property("可选，返回的最大条数，默认10条")
             }),
             vec![],
         )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "workflow_id": "daily_backup",
+                    "limit": 5
+                }),
+                result: serde_json::json!({
+                    "count": 2,
+                    "executions": [
+                        {"execution_id": "exec_1", "workflow_id": "daily_backup", "status": "completed", "started_at": 1735804800}
+                    ]
+                }),
+                description: "查询指定工作流的执行状态".to_string(),
+            }),
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {

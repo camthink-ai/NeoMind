@@ -120,11 +120,42 @@ pub fn process_stream_events(
                     for tool_call in &tool_calls {
                         yield AgentEvent::tool_call_start(&tool_call.name, tool_call.arguments.clone());
 
-                        let tool_result = tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::try_current()
-                                .unwrap()
-                                .block_on(tools.execute(&tool_call.name, tool_call.arguments.clone()))
-                        });
+                        // Execute with retry logic for transient errors
+                        let max_retries = 2u32;
+                        let mut tool_result: std::result::Result<edge_ai_tools::ToolOutput, edge_ai_tools::ToolError> = Err(
+                            edge_ai_tools::ToolError::Execution("Not executed".to_string())
+                        );
+                        let mut last_error = String::new();
+
+                        for attempt in 0..=max_retries {
+                            tool_result = tokio::task::block_in_place(|| {
+                                tokio::runtime::Handle::try_current()
+                                    .unwrap()
+                                    .block_on(tools.execute(&tool_call.name, tool_call.arguments.clone()))
+                            });
+
+                            match &tool_result {
+                                Ok(output) if output.success => break,
+                                Err(e) => {
+                                    last_error = e.to_string();
+                                    let is_transient = last_error.contains("timeout")
+                                        || last_error.contains("network")
+                                        || last_error.contains("connection")
+                                        || last_error.contains("unavailable");
+
+                                    if is_transient && attempt < max_retries {
+                                        let delay_ms = 100u64 * (2_u64.pow(attempt));
+                                        tokio::task::block_in_place(|| {
+                                            tokio::runtime::Handle::try_current()
+                                                .unwrap()
+                                                .block_on(tokio::time::sleep(std::time::Duration::from_millis(delay_ms)))
+                                        });
+                                        continue;
+                                    }
+                                }
+                                _ => break,
+                            }
+                        }
 
                         match tool_result {
                             Ok(output) => {
@@ -141,7 +172,7 @@ pub fn process_stream_events(
                                 );
                             }
                             Err(e) => {
-                                let error_msg = e.to_string();
+                                let error_msg = format!("工具执行失败: {}", e);
                                 yield AgentEvent::tool_call_end(&tool_call.name, &error_msg, false);
 
                                 short_term_memory.write().await.push(
@@ -154,7 +185,7 @@ pub fn process_stream_events(
                     // Build conversation context for follow-up
                     let history = short_term_memory.read().await;
                     let conversation: Vec<String> = history.iter()
-                        .take(20)
+                        .take(50) // Increased context window for better conversation retention
                         .map(|msg| {
                             match msg.role.as_str() {
                                 "user" => format!("User: {}", msg.content),

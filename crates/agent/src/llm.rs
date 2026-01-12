@@ -513,9 +513,9 @@ impl Default for ChatConfig {
     fn default() -> Self {
         Self {
             model: "qwen3-vl:2b".to_string(),
-            temperature: 0.7,
-            top_p: 0.9,
-            max_tokens: 512,
+            temperature: 0.4,
+            top_p: 0.95,
+            max_tokens: 1024,
             concurrent_limit: DEFAULT_CONCURRENT_LIMIT,
         }
     }

@@ -23,6 +23,7 @@ pub mod types;
 pub mod fallback;
 pub mod tool_parser;
 pub mod streaming;
+pub mod formatter;
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -78,8 +79,8 @@ impl Agent {
         let llm_config = ChatConfig {
             model: config.model.clone(),
             temperature: config.temperature,
-            top_p: 0.9,
-            max_tokens: config.max_context_tokens,
+            top_p: 0.95,
+            max_tokens: 1024,  // Allow longer responses
             concurrent_limit: 3, // Default to 3 concurrent LLM requests
         };
 
@@ -348,7 +349,7 @@ impl Agent {
         // Build conversation history for the follow-up call
         let history = self.short_term_memory.read().await;
         let conversation: Vec<String> = history.iter()
-            .take(20) // Limit context window
+            .take(50) // Limit context window (increased for better context retention)
             .map(|msg| {
                 match msg.role.as_str() {
                     "user" => format!("User: {}", msg.content),
@@ -383,12 +384,49 @@ impl Agent {
         })
     }
 
-    /// Execute a tool.
+    /// Execute a tool with retry logic.
+    ///
+    /// Retries up to 2 times for transient errors (network issues, timeouts).
+    /// Returns a user-friendly error message if all retries fail.
     async fn execute_tool(&self, name: &str, arguments: &Value) -> Result<String> {
-        let output = self.tools.execute(name, arguments.clone()).await
-            .map_err(|e| super::error::AgentError::Tool(e.to_string()))?;
+        const MAX_RETRIES: u32 = 2;
+        let mut last_error = String::new();
 
-        Ok(serde_json::to_string_pretty(&output.data).unwrap_or_else(|_| "Success".to_string()))
+        for attempt in 0..=MAX_RETRIES {
+            match self.tools.execute(name, arguments.clone()).await {
+                Ok(output) => {
+                    // Check if tool execution itself failed
+                    if !output.success {
+                        let error_msg = output.error.unwrap_or_else(|| "Unknown error".to_string());
+                        // Don't retry on logical errors (like invalid input)
+                        return Ok(format!("错误: {}", error_msg));
+                    }
+                    return Ok(serde_json::to_string_pretty(&output.data)
+                        .unwrap_or_else(|_| "Success".to_string()));
+                }
+                Err(e) => {
+                    last_error = e.to_string();
+                    // Check if error is transient (worth retrying)
+                    let is_transient = last_error.contains("timeout")
+                        || last_error.contains("network")
+                        || last_error.contains("connection")
+                        || last_error.contains("unavailable");
+
+                    if is_transient && attempt < MAX_RETRIES {
+                        // Exponential backoff: 100ms, 200ms
+                        let delay_ms = 100 * (2_u64.pow(attempt));
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // All retries failed
+        Err(super::error::AgentError::Tool(format!(
+            "工具 {} 执行失败: {}",
+            name, last_error
+        )))
     }
 
     /// Process a tool call result.
