@@ -1,0 +1,66 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/llm",
+    "crates/api",
+    "crates/sandbox",
+    "crates/cli",
+    "crates/devices",
+    "crates/storage",
+    "crates/rules",
+    "crates/scenarios",
+    "crates/alerts",
+    "crates/memory",
+    "crates/tools",
+    "crates/agent",
+    "crates/workflow",
+    "crates/commands",
+    "crates/integrations",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Edge AI Agent Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/edge-ai-agent/neo-talk"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# ML/LLM - Tokenizer (Candle temporarily disabled due to dependency issues)
+# candle-core = { version = "0.7", optional = true }
+# candle-transformers = { version = "0.7", optional = true }
+# candle-nn = { version = "0.7", optional = true }
+tokenizers = "0.20"
+
+# UI (Web)
+axum = "0.7"
+tokio-tungstenite = "0.24"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors", "compression-gzip", "limit"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utils
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+semver = { version = "1", features = ["serde"] }

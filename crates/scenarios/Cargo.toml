@@ -1,0 +1,22 @@
+[package]
+name = "edge-ai-scenarios"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+edge-ai-devices = { path = "../devices" }
+edge-ai-rules = { path = "../rules" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

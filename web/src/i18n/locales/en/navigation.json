@@ -1,0 +1,10 @@
+{
+  "dashboard": "Chat",
+  "devices": "Devices",
+  "alerts": "Alerts",
+  "automation": "Automation",
+  "commands": "Commands",
+  "decisions": "AI Decisions",
+  "plugins": "Plugins",
+  "settings": "Settings"
+}

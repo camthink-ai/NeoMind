@@ -1,0 +1,112 @@
+import type { MqttStatus } from "@/types"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Server, RefreshCw } from "lucide-react"
+
+interface BuiltinBrokerViewProps {
+  mqttStatus: MqttStatus | null
+  isRefreshingStatus: boolean
+  onRefreshStatus: () => void
+  onBack: () => void
+}
+
+export function BuiltinBrokerView({
+  mqttStatus,
+  isRefreshingStatus,
+  onRefreshStatus,
+  onBack,
+}: BuiltinBrokerViewProps) {
+  return (
+    <div className="py-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="sm" onClick={onBack} className="gap-1">
+          返回
+        </Button>
+        <div>
+          <h2 className="text-2xl font-bold flex items-center gap-2">
+            <Server className="h-6 w-6" />
+            内置 MQTT Broker
+          </h2>
+          <p className="text-sm text-muted-foreground">系统内置的 MQTT Broker 状态信息</p>
+        </div>
+      </div>
+
+      {/* Status Card */}
+      <div className="border rounded-lg p-6">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-semibold">连接状态</h3>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onRefreshStatus}
+            disabled={isRefreshingStatus}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshingStatus ? "animate-spin" : ""}`} />
+            刷新
+          </Button>
+        </div>
+
+        {mqttStatus ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">状态</p>
+                <div className="flex items-center gap-2">
+                  <div className={`h-2 w-2 rounded-full ${mqttStatus.connected ? "bg-green-500" : "bg-red-500"}`} />
+                  <span className="text-sm font-medium">{mqttStatus.connected ? "运行中" : "未连接"}</span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">访问地址</p>
+                <p className="text-sm font-medium font-mono">{mqttStatus.server_ip}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">监听端口</p>
+                <p className="text-sm font-medium">{mqttStatus.listen_port}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">客户端数量</p>
+                <p className="text-sm font-medium">{mqttStatus.clients_count}</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">设备数量</p>
+                <p className="text-sm font-medium">{mqttStatus.devices_count}</p>
+              </div>
+            </div>
+
+            {/* External brokers connected */}
+            {mqttStatus.external_brokers && mqttStatus.external_brokers.length > 0 && (
+              <div className="border-t pt-4 mt-4">
+                <h4 className="text-sm font-medium mb-3">已订阅的外部 Broker</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {mqttStatus.external_brokers.map((broker) => (
+                    <div key={broker.id} className="border rounded p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className={`h-2 w-2 rounded-full ${broker.connected ? "bg-green-500" : "bg-red-500"}`} />
+                          <span className="font-medium text-sm">{broker.name}</span>
+                        </div>
+                        {!broker.enabled && (
+                          <Badge variant="secondary" className="text-xs">已禁用</Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground font-mono">
+                        {broker.tls ? "mqtts" : "mqtt"}://{broker.broker}:{broker.port}
+                      </p>
+                      {!broker.connected && broker.last_error && (
+                        <p className="text-xs text-destructive">{broker.last_error}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-sm text-muted-foreground">正在加载状态...</div>
+        )}
+      </div>
+    </div>
+  )
+}

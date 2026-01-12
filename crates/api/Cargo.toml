@@ -1,0 +1,63 @@
+[package]
+name = "edge-ai-api"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["embedded-broker"]
+embedded-broker = []
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+edge-ai-agent = { path = "../agent" }
+edge-ai-llm = { path = "../llm" }
+edge-ai-devices = { path = "../devices", features = ["embedded-broker"] }
+edge-ai-rules = { path = "../rules" }
+edge-ai-alerts = { path = "../alerts" }
+edge-ai-storage = { path = "../storage" }
+edge-ai-workflow = { path = "../workflow" }
+edge-ai-memory = { path = "../memory" }
+edge-ai-scenarios = { path = "../scenarios" }
+edge-ai-tools = { path = "../tools" }
+edge-ai-commands = { path = "../commands" }
+
+tokio = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+reqwest = { version = "0.12", features = ["json"] }
+
+# Web framework
+axum = { workspace = true, features = ["ws"] }
+tokio-tungstenite = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# Utils
+uuid = { workspace = true }
+chrono = { workspace = true }
+async-trait = "0.1"
+get_if_addrs = "0.5"
+hostname = "0.4"
+base64 = "0.22"
+async-stream = "0.3"
+utoipa = "5"
+utoipa-swagger-ui = { version = "8", features = ["axum"] }
+headers = "0.4"
+atty = "0.2"
+
+# Encryption
+aes-gcm = "0.10"
+sha2 = "0.10"
+rand = "0.8"
+pbkdf2 = "0.12"
+hmac = "0.12"
+bcrypt = "0.15"
+
+# Persistence
+redb = "2.1"
+bincode = "1.3"

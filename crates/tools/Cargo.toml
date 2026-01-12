@@ -1,0 +1,33 @@
+[package]
+name = "edge-ai-tools"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+edge-ai-storage = { path = "../storage" }
+edge-ai-devices = { path = "../devices" }
+edge-ai-rules = { path = "../rules" }
+edge-ai-alerts = { path = "../alerts" }
+edge-ai-workflow = { path = "../workflow" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = ["builtin"]
+# Built-in tools (mock implementations for testing)
+builtin = []
+# Real tools (actual implementations)
+real = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }

@@ -1,0 +1,58 @@
+[package]
+name = "edge-ai-devices"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+edge-ai-storage = { path = "../storage" }
+
+tokio = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+
+# HTTP Client (for Home Assistant REST API)
+reqwest = { version = "0.12", optional = true, features = ["json"] }
+
+# WebSocket (for Home Assistant real-time updates)
+tokio-tungstenite = { version = "0.23", optional = true }
+futures-util = { version = "0.3", optional = true }
+
+# Storage
+bincode = "1.3"
+redb = "2.1"
+
+# MQTT
+rumqttc = { version = "0.24", optional = true }
+rumqttd = { version = "0.19", optional = true }
+
+# Modbus
+tokio-modbus = { version = "0.11", optional = true, default-features = false, features = ["tcp"] }
+
+# Discovery
+mdns-sd = { version = "0.11", optional = true }
+socket2 = "0.5"
+
+# Utils
+futures = { workspace = true }
+async-trait = "0.1"
+async-stream = "0.3"
+base64 = "0.22"
+semver = { workspace = true }
+
+[features]
+default = ["mqtt", "modbus"]
+mqtt = ["rumqttc"]
+embedded-broker = ["rumqttd"]
+modbus = ["tokio-modbus"]
+discovery = ["mdns-sd"]
+hass = ["reqwest", "tokio-tungstenite", "futures-util"]
+all = ["mqtt", "embedded-broker", "modbus", "discovery", "hass"]
+
+[dev-dependencies]
+base64 = "0.22"

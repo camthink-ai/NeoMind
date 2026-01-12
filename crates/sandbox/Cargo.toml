@@ -1,0 +1,21 @@
+[package]
+name = "edge-ai-sandbox"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# WASM runtime
+wasmtime = { version = "26", features = ["async", "component-model"] }
+wasmtime-wasi = { version = "26" }
+
+[features]
+default = []

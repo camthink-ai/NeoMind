@@ -1,0 +1,21 @@
+{
+  "required": "{{field}} is required",
+  "invalid": "{{field}} is invalid",
+  "tooShort": "{{field}} must be at least {{min}} characters",
+  "tooLong": "{{field}} must be at most {{max}} characters",
+  "invalidEmail": "Invalid email address",
+  "invalidUrl": "Invalid URL",
+  "invalidNumber": "Must be a valid number",
+  "invalidJson": "Invalid JSON format",
+  "minValue": "{{field}} must be at least {{min}}",
+  "maxValue": "{{field}} must be at most {{max}}",
+  "minLength": "Must be at least {{min}} characters",
+  "maxLength": "Must be at most {{max}} characters",
+  "patternMismatch": "Format is incorrect",
+  "rangeError": "Value must be between {{min}} and {{max}}",
+  "unique": "This value already exists",
+  "confirmPassword": "Passwords do not match",
+  "fieldRequired": "This field is required",
+  "selectOption": "Please select an option",
+  "enterValue": "Please enter a value"
+}

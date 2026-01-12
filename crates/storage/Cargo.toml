@@ -1,0 +1,39 @@
+[package]
+name = "edge-ai-storage"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+
+tokio = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# New database: redb
+redb = "2.1"
+
+# Vector search: HNSW
+hnsw = { version = "0.1", optional = true }
+
+# Utils
+bincode = "1.3"
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+async-trait = "0.1"
+
+[features]
+default = ["redb"]
+
+# Storage backends
+redb = []
+memory = []
+
+# Vector search
+hnsw = ["dep:hnsw"]
+
+# All features
+all = ["redb", "memory", "hnsw"]

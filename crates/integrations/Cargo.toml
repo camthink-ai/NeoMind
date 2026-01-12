@@ -1,0 +1,61 @@
+[package]
+name = "edge-ai-integrations"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+
+# Async runtime
+tokio = { workspace = true }
+tokio-stream = "0.1"
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Utils
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+# Concurrency
+parking_lot = "0.12"
+
+# Feature-gated dependencies
+
+# MQTT connector
+rumqttc = { version = "0.24", optional = true }
+
+# WebSocket connector
+tokio-tungstenite = { version = "0.24", optional = true }
+
+# HTTP connector
+reqwest = { version = "0.12", optional = true }
+
+# Modbus connector
+tokio-modbus = { version = "0.11", optional = true, features = ["tcp"] }
+
+[features]
+default = []
+
+# Connectors
+mqtt = ["rumqttc"]
+websocket = ["tokio-tungstenite"]
+http = ["reqwest"]
+modbus = ["tokio-modbus"]
+
+# Protocols
+hass = ["http", "websocket"]
+hass-mqtt = ["mqtt"]
+tasmota = ["mqtt"]
+zigbee = ["mqtt"]
+
+# All features
+all = ["mqtt", "websocket", "http", "modbus", "hass", "hass-mqtt", "tasmota", "zigbee"]

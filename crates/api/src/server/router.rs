@@ -1,0 +1,329 @@
+//! Application router configuration.
+
+use axum::{routing::{delete, get, post, put}, Router};
+
+use super::types::ServerState;
+use super::middleware::rate_limit_middleware;
+use super::types::MAX_REQUEST_BODY_SIZE;
+use crate::auth::api_key_middleware;
+use crate::auth::hybrid_auth_middleware;
+use crate::auth_users::jwt_auth_middleware;
+
+/// Create the application router.
+pub fn create_router() -> Router {
+    create_router_with_state(ServerState::new())
+}
+
+/// Create the application router with a specific state.
+pub fn create_router_with_state(state: ServerState) -> Router {
+    use crate::handlers::{
+        basic, sessions, devices, rules, alerts, settings, workflows, memory, scenarios, tools, mqtt, hass, events,
+        commands, decisions, stats, auth as auth_handlers, auth_users, bulk, config, search, plugins,
+        llm_backends,
+    };
+
+    // Public routes (no authentication required)
+    let public_routes = Router::new()
+        // Health check endpoints
+        .route("/api/health", get(basic::health_handler))
+        .route("/api/health/status", get(basic::health_status_handler))
+        .route("/api/health/live", get(basic::liveness_handler))
+        .route("/api/health/ready", get(basic::readiness_handler))
+        // Auth status (public - shows if auth is enabled)
+        .route("/api/auth/status", get(auth_handlers::auth_status_handler))
+        // User authentication (public - login and register)
+        .route("/api/auth/login", post(auth_users::login_handler))
+        .route("/api/auth/register", post(auth_users::register_handler))
+        // API documentation (public)
+        .merge(crate::openapi::swagger_ui());
+
+    // JWT protected routes (require JWT token authentication)
+    let jwt_routes = Router::new()
+        // User info and session management
+        .route("/api/auth/me", get(auth_users::get_current_user_handler))
+        .route("/api/auth/logout", post(auth_users::logout_handler))
+        .route("/api/auth/change-password", post(auth_users::change_password_handler))
+        // Apply JWT authentication middleware
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            jwt_auth_middleware,
+        ));
+
+    // WebSocket routes - authentication handled in handler via query parameter
+    // These routes bypass middleware because WebSocket doesn't support custom headers reliably
+    let websocket_routes = Router::new()
+        // Event streaming WebSocket/SSE (JWT via ?token= parameter)
+        .route("/api/events/ws", get(events::event_websocket_handler))
+        .route("/api/events/stream", get(events::event_stream_handler))
+        // Chat WebSocket (JWT via ?token= parameter)
+        .route("/api/chat", get(sessions::ws_chat_handler))
+        // Apply only rate limiting (no auth middleware - handled in handlers)
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ));
+
+    // Protected routes (require API key or JWT via Authorization header)
+    let protected_routes = Router::new()
+        // Events API (REST endpoints)
+        .route("/api/events/history", get(events::event_history_handler))
+        .route("/api/events", get(events::events_query_handler))
+        .route("/api/events/stats", get(events::event_stats_handler))
+        .route("/api/events/subscribe", post(events::subscribe_events_handler))
+        .route("/api/events/subscribe/:id", delete(events::unsubscribe_events_handler))
+        // Session management
+        .route("/api/sessions", post(sessions::create_session_handler))
+        .route("/api/sessions", get(sessions::list_sessions_handler))
+        .route("/api/sessions/:id", get(sessions::get_session_handler))
+        .route("/api/sessions/:id/history", get(sessions::get_session_history_handler))
+        .route("/api/sessions/:id", delete(sessions::delete_session_handler))
+        .route("/api/sessions/:id/chat", post(sessions::chat_handler))
+        // Devices API
+        .route("/api/devices", get(devices::list_devices_handler))
+        .route("/api/devices", post(devices::add_device_handler))
+        .route("/api/devices/:id", get(devices::get_device_handler))
+        .route("/api/devices/:id", delete(devices::delete_device_handler))
+        .route("/api/devices/:id/command/:command", post(devices::send_command_handler))
+        .route("/api/devices/:id/metrics/:metric", get(devices::read_metric_handler))
+        .route("/api/devices/:id/metrics/:metric/data", get(devices::query_metric_handler))
+        .route("/api/devices/:id/metrics/:metric/aggregate", get(devices::aggregate_metric_handler))
+        .route("/api/devices/:id/telemetry", get(devices::get_device_telemetry_handler))
+        .route("/api/devices/:id/telemetry/summary", get(devices::get_device_telemetry_summary_handler))
+        .route("/api/devices/:id/commands", get(devices::get_device_command_history_handler))
+        // Device Types API
+        .route("/api/device-types", get(devices::list_device_types_handler))
+        .route("/api/device-types/:id", get(devices::get_device_type_handler))
+        .route("/api/device-types", post(devices::register_device_type_handler))
+        .route("/api/device-types", put(devices::validate_device_type_handler))
+        .route("/api/device-types/:id", delete(devices::delete_device_type_handler))
+        // Device Discovery API
+        .route("/api/devices/discover", post(devices::discover_devices_handler))
+        .route("/api/devices/discover/info", get(devices::discovery_info_handler))
+        // MDL Generation API
+        .route("/api/devices/generate-mdl", post(devices::generate_mdl_handler))
+        // HASS Discovery API
+        .route("/api/devices/hass/discover", post(devices::discover_hass_devices_handler))
+        .route("/api/devices/hass/stop", post(devices::stop_hass_discovery_handler))
+        .route("/api/devices/hass/process", post(devices::process_hass_discovery_handler))
+        .route("/api/devices/hass/register", post(devices::register_aggregated_hass_device_handler))
+        .route("/api/devices/hass/status", get(devices::hass_discovery_status_handler))
+        .route("/api/devices/hass/discovered", get(devices::get_hass_discovered_devices_handler))
+        .route("/api/devices/hass/discovered", delete(devices::clear_hass_discovered_devices_handler))
+        .route("/api/devices/hass/unregister/:device_id", delete(devices::unregister_hass_device_handler))
+        // Rules API
+        .route("/api/rules", get(rules::list_rules_handler))
+        .route("/api/rules", post(rules::create_rule_handler))
+        .route("/api/rules/:id", get(rules::get_rule_handler))
+        .route("/api/rules/:id", put(rules::update_rule_handler))
+        .route("/api/rules/:id", delete(rules::delete_rule_handler))
+        .route("/api/rules/:id/enable", post(rules::set_rule_status_handler))
+        .route("/api/rules/:id/test", post(rules::test_rule_handler))
+        .route("/api/rules/:id/history", get(rules::get_rule_history_handler))
+        // Alerts API
+        .route("/api/alerts", get(alerts::list_alerts_handler))
+        .route("/api/alerts", post(alerts::create_alert_handler))
+        .route("/api/alerts/:id", get(alerts::get_alert_handler))
+        .route("/api/alerts/:id/acknowledge", post(alerts::acknowledge_alert_handler))
+        // Settings API
+        .route("/api/settings/llm", get(settings::get_llm_settings_handler))
+        .route("/api/settings/llm", post(settings::set_llm_handler))
+        .route("/api/settings/llm/test", post(settings::test_llm_handler))
+        .route("/api/settings/llm/models", get(settings::list_ollama_models_handler))
+        // LLM Generation API
+        .route("/api/llm/generate", post(settings::llm_generate_handler))
+        // LLM Backends API (NEW)
+        .route("/api/llm-backends", get(llm_backends::list_backends_handler))
+        .route("/api/llm-backends", post(llm_backends::create_backend_handler))
+        .route("/api/llm-backends/:id", get(llm_backends::get_backend_handler))
+        .route("/api/llm-backends/:id", put(llm_backends::update_backend_handler))
+        .route("/api/llm-backends/:id", delete(llm_backends::delete_backend_handler))
+        .route("/api/llm-backends/:id/activate", post(llm_backends::activate_backend_handler))
+        .route("/api/llm-backends/:id/test", post(llm_backends::test_backend_handler))
+        .route("/api/llm-backends/types", get(llm_backends::list_backend_types_handler))
+        .route("/api/llm-backends/types/:type/schema", get(llm_backends::get_backend_schema_handler))
+        .route("/api/llm-backends/stats", get(llm_backends::get_backend_stats_handler))
+        // Workflows API
+        .route("/api/workflows", get(workflows::list_workflows_handler))
+        .route("/api/workflows", post(workflows::create_workflow_handler))
+        .route("/api/workflows/:id", get(workflows::get_workflow_handler))
+        .route("/api/workflows/:id", put(workflows::update_workflow_handler))
+        .route("/api/workflows/:id", delete(workflows::delete_workflow_handler))
+        .route("/api/workflows/:id/enable", post(workflows::set_workflow_status_handler))
+        .route("/api/workflows/:id/execute", post(workflows::execute_workflow_handler))
+        .route("/api/workflows/:id/executions", get(workflows::get_workflow_executions_handler))
+        .route("/api/workflows/:id/executions/:exec_id", get(workflows::get_execution_handler))
+        // Memory API
+        .route("/api/memory/stats", get(memory::get_memory_stats_handler))
+        .route("/api/memory/query", get(memory::query_memory_handler))
+        .route("/api/memory/consolidate/:session_id", post(memory::consolidate_memory_handler))
+        .route("/api/memory/short-term", get(memory::get_short_term_handler))
+        .route("/api/memory/short-term", post(memory::add_short_term_handler))
+        .route("/api/memory/short-term", delete(memory::clear_short_term_handler))
+        .route("/api/memory/mid-term/:session_id", get(memory::get_session_history_handler))
+        .route("/api/memory/mid-term", post(memory::add_mid_term_handler))
+        .route("/api/memory/mid-term/search", get(memory::search_mid_term_handler))
+        .route("/api/memory/mid-term", delete(memory::clear_mid_term_handler))
+        .route("/api/memory/long-term/search", get(memory::search_knowledge_handler))
+        .route("/api/memory/long-term/category/:category", get(memory::get_knowledge_by_category_handler))
+        .route("/api/memory/long-term/device/:device_id", get(memory::get_device_knowledge_handler))
+        .route("/api/memory/long-term/popular", get(memory::get_popular_knowledge_handler))
+        .route("/api/memory/long-term", post(memory::add_knowledge_handler))
+        .route("/api/memory/long-term", delete(memory::clear_long_term_handler))
+        // Scenarios API
+        .route("/api/scenarios", get(scenarios::list_scenarios_handler))
+        .route("/api/scenarios", post(scenarios::create_scenario_handler))
+        .route("/api/scenarios/active", get(scenarios::list_active_scenarios_handler))
+        .route("/api/scenarios/stats", get(scenarios::get_scenario_stats_handler))
+        .route("/api/scenarios/:id", get(scenarios::get_scenario_handler))
+        .route("/api/scenarios/:id", put(scenarios::update_scenario_handler))
+        .route("/api/scenarios/:id", delete(scenarios::delete_scenario_handler))
+        .route("/api/scenarios/:id/activate", post(scenarios::activate_scenario_handler))
+        .route("/api/scenarios/:id/deactivate", post(scenarios::deactivate_scenario_handler))
+        .route("/api/scenarios/:id/execute", post(scenarios::execute_scenario_handler))
+        .route("/api/scenarios/:id/prompt", get(scenarios::get_scenario_prompt_handler))
+        .route("/api/scenarios/:id/devices", post(scenarios::add_device_handler))
+        .route("/api/scenarios/:id/devices/:device_id", delete(scenarios::remove_device_handler))
+        .route("/api/scenarios/:id/rules", post(scenarios::add_rule_handler))
+        .route("/api/scenarios/:id/rules/:rule_id", delete(scenarios::remove_rule_handler))
+        .route("/api/scenario-templates", get(scenarios::list_templates_handler))
+        .route("/api/scenario/from-template/:template_id", post(scenarios::create_from_template_handler))
+        // Tools API
+        .route("/api/tools", get(tools::list_tools_handler))
+        .route("/api/tools/:name/schema", get(tools::get_tool_schema_handler))
+        .route("/api/tools/metrics", get(tools::get_tool_metrics_handler))
+        .route("/api/tools/:name/execute", post(tools::execute_tool_handler))
+        .route("/api/tools/format-for-llm", get(tools::format_for_llm_handler))
+        // MQTT Settings API
+        .route("/api/settings/mqtt", get(mqtt::get_mqtt_settings_handler))
+        .route("/api/settings/mqtt", post(mqtt::set_mqtt_settings_handler))
+        // MQTT Management API
+        .route("/api/mqtt/status", get(mqtt::get_mqtt_status_handler))
+        .route("/api/mqtt/subscriptions", get(mqtt::list_subscriptions_handler))
+        .route("/api/mqtt/subscribe", post(mqtt::subscribe_handler))
+        .route("/api/mqtt/unsubscribe", post(mqtt::unsubscribe_handler))
+        .route("/api/mqtt/subscribe/:device_id", post(mqtt::subscribe_device_handler))
+        .route("/api/mqtt/unsubscribe/:device_id", post(mqtt::unsubscribe_device_handler))
+        // External Brokers API
+        .route("/api/brokers", get(mqtt::list_brokers_handler))
+        .route("/api/brokers", post(mqtt::create_broker_handler))
+        .route("/api/brokers/:id", get(mqtt::get_broker_handler))
+        .route("/api/brokers/:id", put(mqtt::update_broker_handler))
+        .route("/api/brokers/:id", delete(mqtt::delete_broker_handler))
+        .route("/api/brokers/:id/test", post(mqtt::test_broker_handler))
+        // HASS Integration API
+        .route("/api/integration/hass", get(hass::get_hass_status_handler))
+        .route("/api/integration/hass/connect", post(hass::connect_hass_handler))
+        .route("/api/integration/hass/disconnect", delete(hass::disconnect_hass_handler))
+        .route("/api/integration/hass/entities", get(hass::get_hass_entities_handler))
+        .route("/api/integration/hass/import", post(hass::import_hass_entities_handler))
+        .route("/api/integration/hass/devices", get(hass::get_hass_devices_handler))
+        .route("/api/integration/hass/sync/:entity_id", post(hass::sync_hass_entity_handler))
+        .route("/api/integration/hass/devices/:entity_id", delete(hass::remove_hass_device_handler))
+        // Commands API
+        .route("/api/commands", get(commands::list_commands_handler))
+        .route("/api/commands/:id", get(commands::get_command_handler))
+        .route("/api/commands/:id/retry", post(commands::retry_command_handler))
+        .route("/api/commands/:id/cancel", post(commands::cancel_command_handler))
+        .route("/api/commands/stats", get(commands::get_command_stats_handler))
+        .route("/api/commands/cleanup", post(commands::cleanup_commands_handler))
+        // Decisions API
+        .route("/api/decisions", get(decisions::list_decisions_handler))
+        .route("/api/decisions/:id", get(decisions::get_decision_handler))
+        .route("/api/decisions/:id/execute", post(decisions::execute_decision_handler))
+        .route("/api/decisions/:id/approve", post(decisions::approve_decision_handler))
+        .route("/api/decisions/:id/reject", post(decisions::reject_decision_handler))
+        .route("/api/decisions/:id", delete(decisions::delete_decision_handler))
+        .route("/api/decisions/stats", get(decisions::get_decision_stats_handler))
+        .route("/api/decisions/cleanup", post(decisions::cleanup_decisions_handler))
+        // Stats API
+        .route("/api/stats/system", get(stats::get_system_stats_handler))
+        .route("/api/stats/devices", get(stats::get_device_stats_handler))
+        .route("/api/stats/rules", get(stats::get_rule_stats_handler))
+        // Bulk Operations API
+        .route("/api/bulk/alerts", post(bulk::bulk_create_alerts_handler))
+        .route("/api/bulk/alerts/resolve", post(bulk::bulk_resolve_alerts_handler))
+        .route("/api/bulk/alerts/acknowledge", post(bulk::bulk_acknowledge_alerts_handler))
+        .route("/api/bulk/alerts/delete", post(bulk::bulk_delete_alerts_handler))
+        .route("/api/bulk/sessions/delete", post(bulk::bulk_delete_sessions_handler))
+        .route("/api/bulk/devices/delete", post(bulk::bulk_delete_devices_handler))
+        .route("/api/bulk/devices/command", post(bulk::bulk_device_command_handler))
+        .route("/api/bulk/device-types/delete", post(bulk::bulk_delete_device_types_handler))
+        // Config Import/Export API
+        .route("/api/config/export", get(config::export_config_handler))
+        .route("/api/config/import", post(config::import_config_handler))
+        .route("/api/config/validate", post(config::validate_config_handler))
+        // Global Search API
+        .route("/api/search", get(search::global_search_handler))
+        .route("/api/search/suggestions", get(search::search_suggestions_handler))
+        // Auth management API (also protected)
+        .route("/api/auth/keys", get(auth_handlers::list_keys_handler))
+        .route("/api/auth/keys", post(auth_handlers::create_key_handler))
+        .route("/api/auth/keys/:id", delete(auth_handlers::delete_key_handler))
+        // Plugins API
+        .route("/api/plugins", get(plugins::list_plugins_handler))
+        .route("/api/plugins", post(plugins::register_plugin_handler))
+        .route("/api/plugins/:id", get(plugins::get_plugin_handler))
+        .route("/api/plugins/:id", delete(plugins::unregister_plugin_handler))
+        .route("/api/plugins/:id/enable", post(plugins::enable_plugin_handler))
+        .route("/api/plugins/:id/disable", post(plugins::disable_plugin_handler))
+        .route("/api/plugins/:id/start", post(plugins::start_plugin_handler))
+        .route("/api/plugins/:id/stop", post(plugins::stop_plugin_handler))
+        .route("/api/plugins/:id/health", get(plugins::plugin_health_handler))
+        .route("/api/plugins/:id/config", get(plugins::get_plugin_config_handler))
+        .route("/api/plugins/:id/config", put(plugins::update_plugin_config_handler))
+        .route("/api/plugins/:id/command", post(plugins::execute_plugin_command_handler))
+        .route("/api/plugins/:id/stats", get(plugins::get_plugin_stats_handler))
+        .route("/api/plugins/discover", post(plugins::discover_plugins_handler))
+        .route("/api/plugins/type/:type", get(plugins::list_plugins_by_type_handler))
+        .route("/api/plugins/types", get(plugins::get_plugin_types_handler))
+        // Device Adapter Plugin Endpoints
+        .route("/api/plugins/device-adapters", get(plugins::list_device_adapter_plugins_handler))
+        .route("/api/plugins/device-adapters", post(plugins::register_device_adapter_handler))
+        .route("/api/plugins/device-adapters/stats", get(plugins::get_device_adapter_stats_handler))
+        .route("/api/plugins/:id/devices", get(plugins::get_adapter_devices_handler))
+        // Apply rate limiting middleware to all protected routes
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
+        // Apply hybrid authentication middleware (supports both JWT tokens and API keys)
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            hybrid_auth_middleware,
+        ));
+
+    // Admin routes (require JWT + Admin role)
+    let admin_routes = Router::new()
+        // User management (admin only)
+        .route("/api/users", get(auth_users::list_users_handler))
+        .route("/api/users", post(auth_users::create_user_handler))
+        .route("/api/users/:username", delete(auth_users::delete_user_handler))
+        // Apply JWT authentication middleware
+        .route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            jwt_auth_middleware,
+        ));
+
+    // Combine all routes
+    // IMPORTANT: More specific routes must come before catch-all routes.
+    // Also, routes with their own middleware must be merged BEFORE routes
+    // with wildcard middleware to avoid route masking.
+    public_routes
+        .merge(websocket_routes)  // WebSocket routes with custom auth
+        .merge(jwt_routes)
+        .merge(admin_routes)
+        .merge(protected_routes)
+        // Apply middleware layers
+        .layer(tower_http::compression::CompressionLayer::new())
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(MAX_REQUEST_BODY_SIZE))
+        // CORS layer
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any)
+        )
+        // Serve static files
+        .fallback_service(tower_http::services::ServeDir::new("static"))
+        .with_state(state)
+}

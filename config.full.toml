@@ -1,0 +1,402 @@
+# ============================================================
+# NeoTalk 完整配置文件
+# ============================================================
+#
+# 这是 NeoTalk 的完整配置示例，包含所有可配置项。
+#
+# 配置优先级: Web UI 设置 > config.toml > 环境变量 > 默认值
+#
+# 使用方法:
+#   1. 复制此文件为 config.toml
+#   2. 根据需要修改配置项
+#   3. 删除不需要的配置项（使用默认值）
+#
+# 快速开始请参考 config.minimal.toml
+
+# ============================================================
+# 服务器配置
+# ============================================================
+[server]
+# 绑定地址 (默认: 0.0.0.0)
+host = "0.0.0.0"
+
+# 服务端口 (默认: 3000)
+port = 3000
+
+# 工作线程数 (默认: CPU 核心数)
+# workers = 4
+
+# 请求体最大大小 (默认: 10MB)
+# max_request_body_size = 10485760
+
+# ============================================================
+# LLM 配置
+# ============================================================
+[llm]
+# 后端类型: ollama, openai, anthropic, google, xai
+backend = "ollama"
+
+# 模型名称
+# Ollama: qwen3-vl:2b, qwen2.5:7b, llama3.2:3b, mistral:7b
+# OpenAI: gpt-4o-mini, gpt-4o, gpt-4-turbo, o1-mini
+# Anthropic: claude-3-haiku-20240307, claude-3-sonnet-20240229
+# Google: gemini-pro, gemini-pro-vision
+# xAI: grok-beta
+model = "qwen3-vl:2b"
+
+# API 端点 (可选，使用默认值)
+# Ollama: http://localhost:11434
+# OpenAI: https://api.openai.com/v1
+# Anthropic: https://api.anthropic.com/v1
+# Google: https://generativelanguage.googleapis.com/v1beta
+# xAI: https://api.x.ai/v1
+endpoint = "http://localhost:11434"
+
+# API 密钥 (云端 LLM 必需)
+# api_key = "sk-your-api-key-here"
+
+# 生成参数 (可选)
+# temperature = 0.7        # 0.0-2.0, 越高越随机
+# max_tokens = 4096        # 最大生成 token 数
+# top_p = 0.9              # 0.0-1.0, 核采样
+# frequency_penalty = 0.0  # -2.0-2.0, 降低重复频率
+# presence_penalty = 0.0   # -2.0-2.0, 鼓励新话题
+
+# ============================================================
+# LLM 后端配置示例
+# ============================================================
+
+# --- OpenAI 配置示例 ---
+# [llm]
+# backend = "openai"
+# model = "gpt-4o-mini"
+# endpoint = "https://api.openai.com/v1"
+# api_key = "sk-your-openai-api-key"
+
+# --- Anthropic 配置示例 ---
+# [llm]
+# backend = "anthropic"
+# model = "claude-3-haiku-20240307"
+# endpoint = "https://api.anthropic.com/v1"
+# api_key = "sk-ant-your-api-key"
+
+# --- Google 配置示例 ---
+# [llm]
+# backend = "google"
+# model = "gemini-pro"
+# endpoint = "https://generativelanguage.googleapis.com/v1beta"
+# api_key = "your-google-api-key"
+
+# --- xAI 配置示例 ---
+# [llm]
+# backend = "xai"
+# model = "grok-beta"
+# endpoint = "https://api.x.ai/v1"
+# api_key = "your-xai-api-key"
+
+# ============================================================
+# MQTT 设备管理配置
+# ============================================================
+[mqtt]
+# Broker 模式
+# - embedded: 使用内置 MQTT broker (推荐)
+# - external: 连接到外部 MQTT broker
+mode = "embedded"
+
+# --- 内置 Broker 配置 (mode = "embedded") ---
+
+# 监听地址 (默认: 0.0.0.0)
+listen = "0.0.0.0"
+
+# 监听端口 (默认: 1883)
+port = 1883
+
+# 最大连接数 (默认: 1000)
+# max_connections = 1000
+
+# 最大消息大小 (字节，默认: 256MB)
+# max_payload_size = 268435456
+
+# 连接超时 (毫秒，默认: 60000)
+# connection_timeout_ms = 60000
+
+# --- 设备发现配置 ---
+
+# 发现主题前缀
+discovery_prefix = "neotalk/discovery"
+
+# 自动发现设备 (默认: true)
+auto_discovery = true
+
+# --- 外部 Broker 配置 (mode = "external") ---
+
+# Broker 地址
+# broker = "192.168.1.100"
+
+# Broker 端口
+# port = 1883
+
+# 客户端 ID (可选)
+# client_id = "neotalk-server"
+
+# 认证信息 (可选)
+# username = "mqtt_user"
+# password = "mqtt_password"
+
+# TLS 配置
+# tls = false
+# cert_path = "/path/to/client.crt"
+# key_path = "/path/to/client.key"
+
+# Keep-alive 间隔 (秒，默认: 60)
+# keep_alive = 60
+
+# 订阅的主题列表
+# subscriptions = ["sensors/#", "devices/#"]
+
+# ============================================================
+# 存储配置
+# ============================================================
+[storage]
+# 数据目录 (默认: ./data)
+data_dir = "./data"
+
+# 备份目录 (默认: ./data/backups)
+# backup_dir = "./data/backups"
+
+# 数据保留天数 (默认: 30)
+# retention_days = 30
+
+# --- 时序数据配置 ---
+[storage.timeseries]
+# 数据保留时间 (小时，默认: 720 = 30天)
+retention_hours = 720
+
+# 数据采样间隔 (秒，默认: 60)
+# sampling_interval = 60
+
+# --- 事件数据配置 ---
+[storage.events]
+# 数据保留时间 (小时，默认: 168 = 7天)
+retention_hours = 168
+
+# ============================================================
+# Agent 配置
+# ============================================================
+[agent]
+# 启用 Agent (默认: true)
+enabled = true
+
+# 会话超时 (秒，默认: 1800 = 30分钟)
+session_timeout_seconds = 1800
+
+# 最大历史消息数 (默认: 100)
+# max_history_messages = 100
+
+# ============================================================
+# 自主决策配置
+# ============================================================
+[agent.autonomous]
+# 启用自主决策 (默认: false)
+enabled = false
+
+# 定期审查间隔 (秒，默认: 3600 = 1小时)
+review_interval_seconds = 3600
+
+# 自动执行阈值 (0.0-1.0，默认: 0.85)
+# 高于此置信度的决策将自动执行
+auto_execute_threshold = 0.85
+
+# 最大决策历史记录数 (默认: 1000)
+# max_decision_history = 1000
+
+# 决策保留天数 (默认: 7)
+# decision_retention_days = 7
+
+# ============================================================
+# 规则引擎配置
+# ============================================================
+[rules]
+# 启用规则引擎 (默认: true)
+enabled = true
+
+# 规则评估间隔 (毫秒，默认: 1000)
+evaluation_interval_ms = 1000
+
+# 最大并发规则数 (默认: 100)
+# max_concurrent_rules = 100
+
+# 规则执行超时 (秒，默认: 30)
+# rule_timeout_seconds = 30
+
+# ============================================================
+# 工作流配置
+# ============================================================
+[workflows]
+# 启用工作流引擎 (默认: true)
+enabled = true
+
+# 最大并发执行数 (默认: 10)
+max_concurrent_executions = 10
+
+# 单个工作流超时 (秒，默认: 300)
+# workflow_timeout_seconds = 300
+
+# 执行历史保留天数 (默认: 7)
+# execution_retention_days = 7
+
+# ============================================================
+# 告警配置
+# ============================================================
+[alerts]
+# 启用告警系统 (默认: true)
+enabled = true
+
+# 默认告警级别: info, warning, critical, emergency
+# default_severity = "warning"
+
+# 告警保留天数 (默认: 30)
+# retention_days = 30
+
+# 自动确认规则 (可选)
+# [alerts.auto_ack]
+# enabled = false
+# patterns = ["^info:", "^resolved:"]
+
+# ============================================================
+# 日志配置
+# ============================================================
+[logging]
+# 日志级别: trace, debug, info, warn, error (默认: info)
+level = "info"
+
+# 日志格式: json, pretty (默认: json)
+# format = "json"
+
+# 日志文件 (可选，默认仅控制台输出)
+# file = "./data/neotalk.log"
+
+# --- 日志轮转配置 ---
+[logging.rotation]
+# 单个日志文件最大大小 (MB，默认: 100)
+# max_size_mb = 100
+
+# 保留的历史日志文件数 (默认: 10)
+# max_files = 10
+
+# 压缩历史日志 (默认: true)
+# compress = true
+
+# ============================================================
+# Web API 配置
+# ============================================================
+[api]
+# CORS 允许的来源 (默认: *)
+# cors_origins = ["*"]
+
+# API 速率限制 (默认: 启用)
+# [api.rate_limit]
+# max_requests = 100
+# per_seconds = 60
+
+# API 缓存配置
+# [api.cache]
+# enabled = true
+# ttl_seconds = 30
+
+# ============================================================
+# 认证配置
+# ============================================================
+[auth]
+# 启用 API Key 认证 (默认: true)
+enabled = true
+
+# 默认 API Key (仅用于开发环境!)
+# 生产环境请通过 Web UI 生成
+# default_api_key = "neotalk-dev-key-change-me"
+
+# Session 密钥 (用于 WebSocket 会话)
+# 自动生成无需配置
+# session_secret = "auto-generated-secret"
+
+# ============================================================
+# Home Assistant 发现配置
+# ============================================================
+[hass_discovery]
+# 启用 HASS 发现 (默认: false)
+enabled = false
+
+# HASS MQTT Broker 地址
+# broker = "homeassistant.local"
+# port = 1883
+
+# 发现主题前缀
+# discovery_prefix = "homeassistant"
+
+# 自动注册发现的设备
+# auto_register = true
+
+# ============================================================
+# 插件配置
+# ============================================================
+[plugins]
+# 插件目录 (默认: ./plugins)
+# plugin_dir = "./plugins"
+
+# 自动加载插件 (默认: true)
+# auto_load = true
+
+# 插件热重载 (默认: false)
+# hot_reload = false
+
+# ============================================================
+# 性能调优
+# ============================================================
+[performance]
+# 事件总线队列大小 (默认: 1000)
+# event_bus_capacity = 1000
+
+# WebSocket 心跳间隔 (秒，默认: 30)
+# ws_heartbeat_interval = 30
+
+# 数据库连接池大小 (默认: 10)
+# db_pool_size = 10
+
+# 缓存大小 (默认: 1000)
+# cache_size = 1000
+
+# ============================================================
+# 环境变量替代方案
+# ============================================================
+#
+# 如果不想使用配置文件，可以通过环境变量设置:
+#
+# LLM 相关:
+#   LLM_PROVIDER=ollama
+#   LLM_MODEL=qwen3-vl:2b
+#   OLLAMA_ENDPOINT=http://localhost:11434
+#   OPENAI_API_KEY=sk-your-key
+#   OPENAI_ENDPOINT=https://api.openai.com/v1
+#
+# MQTT 相关:
+#   MQTT_MODE=embedded
+#   MQTT_PORT=1883
+#   MQTT_LISTEN=0.0.0.0
+#
+# 服务器相关:
+#   SERVER_HOST=0.0.0.0
+#   SERVER_PORT=3000
+#   LOG_LEVEL=info
+
+# ============================================================
+# 故障排查
+# ============================================================
+#
+# 问题: LLM 连接失败
+# 解决: 检查 endpoint 是否正确，Ollama 是否运行
+#
+# 问题: 设备无法连接
+# 解决: 检查 MQTT 配置，确认模式为 embedded
+#
+# 问题: 配置未生效
+# 解决: 检查配置文件路径为 config.toml，查看启动日志

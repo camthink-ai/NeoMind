@@ -1,0 +1,21 @@
+{
+  "required": "{{field}} 是必填项",
+  "invalid": "{{field}} 无效",
+  "tooShort": "{{field}} 至少需要 {{min}} 个字符",
+  "tooLong": "{{field}} 最多 {{max}} 个字符",
+  "invalidEmail": "无效的邮箱地址",
+  "invalidUrl": "无效的 URL",
+  "invalidNumber": "必须是有效的数字",
+  "invalidJson": "无效的 JSON 格式",
+  "minValue": "{{field}} 必须至少为 {{min}}",
+  "maxValue": "{{field}} 必须至多为 {{max}}",
+  "minLength": "至少需要 {{min}} 个字符",
+  "maxLength": "最多 {{max}} 个字符",
+  "patternMismatch": "格式不正确",
+  "rangeError": "值必须在 {{min}} 和 {{max}} 之间",
+  "unique": "此值已存在",
+  "confirmPassword": "密码不匹配",
+  "fieldRequired": "此字段为必填项",
+  "selectOption": "请选择一个选项",
+  "enterValue": "请输入值"
+}

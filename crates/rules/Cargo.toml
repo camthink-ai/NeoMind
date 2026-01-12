@@ -1,0 +1,31 @@
+[package]
+name = "edge-ai-rules"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+edge-ai-sandbox = { path = "../sandbox" }
+edge-ai-devices = { path = "../devices" }
+
+tokio = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# DSL parsing
+pest = "2.7"
+pest_derive = "2.7"
+
+# Utils
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+async-trait = "0.1"
+
+# Expression evaluation
+evalexpr = "11"
+
+[features]
+default = []

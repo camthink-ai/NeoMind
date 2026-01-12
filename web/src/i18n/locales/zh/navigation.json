@@ -1,0 +1,10 @@
+{
+  "dashboard": "对话",
+  "devices": "设备",
+  "alerts": "告警",
+  "automation": "自动化",
+  "commands": "命令",
+  "decisions": "AI决策",
+  "plugins": "插件",
+  "settings": "设置"
+}

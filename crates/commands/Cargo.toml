@@ -1,0 +1,17 @@
+[package]
+name = "edge-ai-commands"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+thiserror = "2.0"
+async-trait = "0.1"
+dashmap = "6.0"
+
+edge-ai-core = { path = "../core" }
+edge-ai-storage = { path = "../storage" }

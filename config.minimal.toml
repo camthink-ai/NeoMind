@@ -1,0 +1,58 @@
+# ============================================================
+# NeoTalk 最小配置 (Quick Start)
+# ============================================================
+#
+# 这是 NeoTalk 的最小化配置文件，适合快速开始使用。
+# 大部分配置项都有默认值，无需显式指定。
+#
+# 使用方法:
+#   1. 复制此文件为 config.toml
+#   2. 根据你的环境修改 LLM 配置
+#   3. 运行: cargo run -p edge-ai-api
+#
+# 完整配置选项请参考 config.full.toml
+
+# ============================================================
+# LLM 配置 (必需)
+# ============================================================
+[llm]
+# 后端类型: ollama, openai, anthropic, google, xai
+backend = "ollama"
+
+# 模型名称
+# Ollama 常用模型: qwen3-vl:2b, qwen2.5:7b, llama3.2:3b
+# OpenAI 常用模型: gpt-4o-mini, gpt-4o, o1-mini
+model = "qwen3-vl:2b"
+
+# API 端点 (可选，使用默认值)
+# Ollama 默认: http://localhost:11434
+# OpenAI 默认: https://api.openai.com/v1
+# endpoint = "http://localhost:11434"
+
+# API 密钥 (云端 LLM 需要)
+# api_key = "sk-..."
+
+# ============================================================
+# MQTT 配置 (可选)
+# ============================================================
+[mqtt]
+# 模式: embedded (内置) 或 external (外部)
+mode = "embedded"
+
+# 监听端口 (默认: 1883)
+port = 1883
+
+# ============================================================
+# 快速开始命令
+# ============================================================
+# 1. 安装 Ollama:
+#    curl -fsSL https://ollama.com/install.sh | sh
+#
+# 2. 拉取模型:
+#    ollama pull qwen3-vl:2b
+#
+# 3. 启动 NeoTalk:
+#    cargo run -p edge-ai-api
+#
+# 4. 访问 Web UI:
+#    http://localhost:3000

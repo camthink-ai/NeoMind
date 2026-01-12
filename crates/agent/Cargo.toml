@@ -1,0 +1,32 @@
+[package]
+name = "edge-ai-agent"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+edge-ai-core = { path = "../core" }
+edge-ai-llm = { path = "../llm", features = ["cloud"] }
+edge-ai-memory = { path = "../memory" }
+edge-ai-tools = { path = "../tools" }
+edge-ai-devices = { path = "../devices" }
+edge-ai-storage = { path = "../storage" }
+edge-ai-rules = { path = "../rules" }
+edge-ai-alerts = { path = "../alerts" }
+edge-ai-scenarios = { path = "../scenarios" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+futures = { workspace = true }
+async-stream = "0.3"
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
