@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -35,6 +36,7 @@ const SCENARIO_ICONS: Record<string, string> = {
 }
 
 export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
+  const { t } = useTranslation(['automation', 'common'])
   const [scenarios, setScenarios] = useState<Scenario[]>([])
   const [loading, setLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -74,7 +76,7 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
   }
 
   const handleDeleteScenario = async (id: string) => {
-    if (!confirm('确定要删除这个场景吗？')) return
+    if (!confirm(t('automation:deleteConfirm'))) return
     try {
       await api.deleteScenario(id)
       await fetchScenarios()
@@ -155,15 +157,15 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
       case 'device_command':
         return action.device_id
           ? `${action.device_id}: ${action.command}`
-          : action.command || '执行命令'
+          : action.command || t('automation:execute')
       case 'scene':
-        return `切换场景: ${action.device_id}`
+        return `${t('automation:scenario')}: ${action.device_id}`
       case 'delay':
-        return `延迟 ${action.delay_ms ? Math.round(action.delay_ms / 1000) : 0} 秒`
+        return `${t('automation:delay')} ${action.delay_ms ? Math.round(action.delay_ms / 1000) : 0}s`
       case 'notification':
-        return '发送通知'
+        return t('automation:notification')
       default:
-        return '未知操作'
+        return t('automation:actions')
     }
   }
 
@@ -179,14 +181,14 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
       {/* Header with actions */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-semibold">场景</h2>
+          <h2 className="text-xl font-semibold">{t('automation:scenariosTitle')}</h2>
           <p className="text-sm text-muted-foreground">
-            一键执行多个设备操作
+            {t('automation:scenariosDesc')}
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          新建场景
+          {t('automation:scenariosAdd')}
         </Button>
       </div>
 
@@ -217,14 +219,14 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {loading ? (
           <div className="col-span-full py-8 text-center text-muted-foreground">
-            加载中...
+            {t('automation:loading')}
           </div>
         ) : scenarios.length === 0 ? (
           <div className="col-span-full py-8">
             <div className="flex flex-col items-center gap-3">
               <Home className="h-12 w-12 text-muted-foreground/50" />
-              <p className="text-muted-foreground">暂无场景</p>
-              <p className="text-xs text-muted-foreground">选择上方预设场景或创建新场景</p>
+              <p className="text-muted-foreground">{t('automation:noScenarios')}</p>
+              <p className="text-xs text-muted-foreground">{t('automation:scenariosEmptyHint')}</p>
             </div>
           </div>
         ) : (
@@ -262,7 +264,7 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
                   ))}
                   {scenario.actions.length > 3 && (
                     <div className="text-xs text-muted-foreground">
-                      还有 {scenario.actions.length - 3} 个操作...
+                      {t('automation:moreActions', { count: scenario.actions.length - 3 })}
                     </div>
                   )}
                 </div>
@@ -277,7 +279,7 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
                     disabled={!scenario.enabled || scenario.active}
                   >
                     <Play className="h-3 w-3 mr-1" />
-                    {scenario.active ? '激活中' : '执行'}
+                    {scenario.active ? t('automation:scenariosActive') : t('automation:scenariosExecute')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -298,7 +300,7 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
                 {/* Active badge */}
                 {scenario.active && (
                   <Badge className="w-full justify-center bg-green-500">
-                    当前激活
+                    {t('automation:scenariosActive')}
                   </Badge>
                 )}
               </CardContent>
@@ -311,23 +313,23 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>创建新场景</DialogTitle>
+            <DialogTitle>{t('automation:createScenario')}</DialogTitle>
             <DialogDescription>
-              创建一键执行多个设备操作的场景
+              {t('automation:scenariosDesc')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="scenario-name">场景名称</Label>
+              <Label htmlFor="scenario-name">{t('automation:scenarioName')}</Label>
               <Input
                 id="scenario-name"
                 value={newScenarioName}
                 onChange={(e) => setNewScenarioName(e.target.value)}
-                placeholder="例如: 回家模式"
+                placeholder={t('automation:scenarioNamePlaceholder')}
               />
             </div>
             <div>
-              <Label>图标</Label>
+              <Label>{t('automation:scenarioIcon')}</Label>
               <div className="flex gap-2 mt-2">
                 {['🏠', '🚪', '💤', '☀️', '🎬', '📖', '⚡', '🔔'].map((icon) => (
                   <button
@@ -347,26 +349,24 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
               </div>
             </div>
             <div>
-              <Label htmlFor="scenario-actions">操作 (每行一个)</Label>
+              <Label htmlFor="scenario-actions">{t('automation:actions')}</Label>
               <Textarea
                 id="scenario-actions"
                 value={newScenarioActions}
                 onChange={(e) => setNewScenarioActions(e.target.value)}
-                placeholder={`客厅灯.开关=on
-空调.温度=26
-窗帘.关闭`}
+                placeholder={t('automation:scenarioActionsPlaceholder')}
                 className="font-mono text-sm min-h-[120px]"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                格式: 设备名.命令=值
+                {t('automation:scenarioActionsHint')}
               </p>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
-                取消
+                {t('automation:cancel')}
               </Button>
               <Button onClick={handleCreateScenario} disabled={!newScenarioName}>
-                创建场景
+                {t('automation:createScenario')}
               </Button>
             </DialogFooter>
           </div>
@@ -377,15 +377,15 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
       <Dialog open={!!editScenario} onOpenChange={() => setEditScenario(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>编辑场景</DialogTitle>
+            <DialogTitle>{t('automation:edit')}</DialogTitle>
             <DialogDescription>
-              修改场景配置
+              {t('automation:editActionsHint')}
             </DialogDescription>
           </DialogHeader>
           {editScenario && (
             <div className="space-y-4">
               <div>
-                <Label htmlFor="edit-scenario-name">场景名称</Label>
+                <Label htmlFor="edit-scenario-name">{t('automation:scenarioName')}</Label>
                 <Input
                   id="edit-scenario-name"
                   value={editScenario.name}
@@ -393,7 +393,7 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
                 />
               </div>
               <div>
-                <Label>图标</Label>
+                <Label>{t('automation:scenarioIcon')}</Label>
                 <div className="flex gap-2 mt-2">
                   {['🏠', '🚪', '💤', '☀️', '🎬', '📖', '⚡', '🔔'].map((icon) => (
                     <button
@@ -413,7 +413,7 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
                 </div>
               </div>
               <div>
-                <Label>操作</Label>
+                <Label>{t('automation:actions')}</Label>
                 <Textarea
                   value={editScenario.actions.map(a => {
                     if (a.type === 'device_command') {
@@ -425,15 +425,15 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
                   className="font-mono text-sm min-h-[100px] bg-muted"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  编辑操作功能即将推出
+                  {t('automation:editActionsHint')}
                 </p>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setEditScenario(null)}>
-                  取消
+                  {t('automation:cancel')}
                 </Button>
                 <Button onClick={handleEditScenario}>
-                  保存修改
+                  {t('automation:saveChanges')}
                 </Button>
               </DialogFooter>
             </div>

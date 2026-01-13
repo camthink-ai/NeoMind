@@ -26,6 +26,7 @@
     "stopped": "已停止",
     "error": "错误"
   },
+  "systemRunning": "系统运行中",
   "selectAll": "全选 (当前页)",
   "deselectAll": "取消选择",
   "name": "名称",
@@ -65,5 +66,14 @@
   "pagination": {
     "total": "共 {{total}} 条 · 第 {{currentPage}}/{{totalPages}} 页",
     "perPage": "{{size}} 条/页"
+  },
+  "hint": "提示",
+  "actionFailed": "操作失败",
+  "timeAgo": {
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}} 分钟前",
+    "hoursAgo": "{{count}} 小时前",
+    "daysAgo": "{{count}} 天前",
+    "date": "日期"
   }
 }

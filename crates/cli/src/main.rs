@@ -44,7 +44,7 @@ enum Command {
         /// The prompt to process.
         prompt: String,
         /// Maximum tokens to generate.
-        #[arg(short, long, default_value_t = 512)]
+        #[arg(long, default_value_t = usize::MAX)]
         max_tokens: usize,
         /// Temperature.
         #[arg(short, long, default_value_t = 0.7)]

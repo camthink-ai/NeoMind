@@ -74,8 +74,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // Session management
         .route("/api/sessions", post(sessions::create_session_handler))
         .route("/api/sessions", get(sessions::list_sessions_handler))
+        .route("/api/sessions/cleanup", post(sessions::cleanup_sessions_handler))
         .route("/api/sessions/:id", get(sessions::get_session_handler))
         .route("/api/sessions/:id/history", get(sessions::get_session_history_handler))
+        .route("/api/sessions/:id", put(sessions::update_session_handler))
         .route("/api/sessions/:id", delete(sessions::delete_session_handler))
         .route("/api/sessions/:id/chat", post(sessions::chat_handler))
         // Devices API

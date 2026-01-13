@@ -4,7 +4,7 @@
   "noDecisions": "暂无决策",
   "noDecisionsDesc": "当代理提议操作时，AI 决策将在此显示",
   "decisionId": "决策 ID",
-  "title": "标题",
+  "decisionTitle": "标题",
   "description": "描述",
   "confidence": "置信度",
   "reasoning": "推理过程",
@@ -47,5 +47,16 @@
   "all": "全部",
   "loading": "加载决策记录中...",
   "deleteConfirm": "确定要删除这条决策记录吗？",
-  "deletedSuccess": "决策记录已删除"
+  "deletedSuccess": "决策记录已删除",
+  "priority": "优先级",
+  "createdAt": "创建时间",
+  "executedAt": "执行时间",
+  "executionResult": "执行结果",
+  "success": "成功",
+  "actionsExecuted": "执行操作",
+  "successCount": "成功",
+  "failureCount": "失败",
+  "error": "错误",
+  "decisionType": "决策类型",
+  "required": "必需"
 }

@@ -40,5 +40,20 @@
   "older": "Older",
   "chatReady": "Type a message to start chatting with AI",
   "connecting": "Connecting...",
-  "startChat": "Start Chatting"
+  "thinkingProcess": "Thinking Process",
+  "completed": "Completed",
+  "executing": "Executing",
+  "selectBackend": "Select Backend",
+  "noBackends": "No Backends",
+  "sessionList": "Sessions",
+  "newChat": "New Chat",
+  "noSessionsDesc": "Click + to create a new session",
+  "newChat": "New Chat",
+  "renameSession": "Rename Session",
+  "renameDesc": "Set a custom title for this session.",
+  "renamePlaceholder": "Enter session title...",
+  "deleteSessionTitle": "Delete Session",
+  "deleteDesc": "Are you sure you want to delete this session? This action cannot be undone.",
+  "defaultTitle": "New Chat",
+  "executionResult": "Execution Result"
 }

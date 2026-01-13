@@ -40,5 +40,19 @@
   "older": "更早",
   "chatReady": "输入消息开始与 AI 助手对话",
   "connecting": "连接中...",
-  "startChat": "开始对话"
+  "thinkingProcess": "思考过程",
+  "completed": "完成",
+  "executing": "执行中",
+  "selectBackend": "选择后端",
+  "noBackends": "暂无后端",
+  "sessionList": "会话列表",
+  "newChat": "新对话",
+  "noSessionsDesc": "点击 + 创建新会话",
+  "renameSession": "重命名会话",
+  "renameDesc": "为这个会话设置一个自定义标题。",
+  "renamePlaceholder": "输入会话标题...",
+  "deleteSessionTitle": "删除会话",
+  "deleteDesc": "确定要删除这个会话吗？此操作无法撤销。",
+  "defaultTitle": "新对话",
+  "executionResult": "执行结果"
 }

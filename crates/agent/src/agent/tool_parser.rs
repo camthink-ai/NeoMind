@@ -97,6 +97,7 @@ pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
                             name: tool_name.to_string(),
                             id: Uuid::new_v4().to_string(),
                             arguments: Value::Object(arguments),
+                            result: None,  // Will be populated after execution
                         };
                         tool_calls.push(call);
                     }
@@ -162,6 +163,7 @@ pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
                         name: name.to_string(),
                         id: Uuid::new_v4().to_string(),
                         arguments,
+                        result: None,  // Will be populated after execution
                     };
                     tool_calls.push(call);
                     content = text[..match_start].trim().to_string();

@@ -144,6 +144,8 @@ export interface ChatSession {
   createdAt: number
   updatedAt?: number
   messageCount?: number
+  // User-defined title for the session
+  title?: string | null
   // Preview text from last message
   preview?: string
 }

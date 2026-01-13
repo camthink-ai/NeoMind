@@ -49,6 +49,43 @@ pub use types::{
 };
 pub use fallback::{default_fallback_rules, process_fallback, FallbackRule};
 pub use streaming::{events_to_string_stream, process_stream_events};
+pub use formatter::{format_tool_result, format_summary};
+
+/// Maximum context window size in tokens (approximate)
+const MAX_CONTEXT_TOKENS: usize = 8000;
+
+/// Estimate token count for a string (rough approximation)
+fn estimate_tokens(text: &str) -> usize {
+    text.chars().count() / 4
+}
+
+/// Build conversation context with token-based windowing.
+fn build_context_window(messages: &[AgentMessage]) -> Vec<&AgentMessage> {
+    let mut selected_messages = Vec::new();
+    let mut current_tokens = 0;
+
+    for msg in messages.iter().rev() {
+        let msg_tokens = estimate_tokens(&msg.content);
+        let thinking_tokens = msg.thinking.as_ref().map_or(0, |t| estimate_tokens(t));
+
+        if current_tokens + msg_tokens + thinking_tokens > MAX_CONTEXT_TOKENS {
+            if msg.role == "system" || msg.role == "user" {
+                let max_len = (MAX_CONTEXT_TOKENS - current_tokens) * 4;
+                if max_len > 100 {
+                    selected_messages.push(msg);
+                    current_tokens += msg_tokens + thinking_tokens;
+                }
+            }
+            break;
+        }
+
+        selected_messages.push(msg);
+        current_tokens += msg_tokens + thinking_tokens;
+    }
+
+    selected_messages.reverse();
+    selected_messages
+}
 
 /// AI Agent that orchestrates components.
 pub struct Agent {
@@ -80,7 +117,7 @@ impl Agent {
             model: config.model.clone(),
             temperature: config.temperature,
             top_p: 0.95,
-            max_tokens: 1024,  // Allow longer responses
+            max_tokens: usize::MAX,  // No artificial limit - let model decide
             concurrent_limit: 3, // Default to 3 concurrent LLM requests
         };
 
@@ -294,23 +331,34 @@ impl Agent {
     async fn process_with_llm(&self, user_message: &str) -> Result<AgentResponse> {
         use tool_parser::parse_tool_calls;
 
-        // Add user message to memory
-        let user_msg = AgentMessage::user(user_message);
-        self.short_term_memory.write().await.push(user_msg);
+        // Get existing history (user message already added by caller in `process`)
+        let history: Vec<AgentMessage> = self.short_term_memory.read().await.clone();
 
-        // First call: get response from LLM (may include tool calls)
-        let chat_response = self.llm_interface.chat(user_message).await
+        // Exclude the last message (which is the user message we just added) from history
+        // The LLM interface will add the user message separately
+        let history_without_last: Vec<AgentMessage> = if history.len() > 1 {
+            history.iter().take(history.len() - 1).cloned().collect()
+        } else {
+            Vec::new()
+        };
+
+        // Build history for LLM (convert AgentMessage to Message)
+        let core_history: Vec<Message> = history_without_last.iter()
+            .map(|msg| msg.to_core())
+            .collect();
+
+        // Call LLM with conversation history (user message will be added by LLM interface)
+        let chat_response = self.llm_interface.chat_with_history(user_message, &core_history).await
             .map_err(|e| super::error::AgentError::Llm(e.to_string()))?;
 
         // Parse response for tool calls
         let (content, tool_calls) = parse_tool_calls(&chat_response.text)?;
 
-        // Save assistant response with tool call information
-        let assistant_msg = AgentMessage::assistant_with_tools(content, tool_calls.clone());
-        self.short_term_memory.write().await.push(assistant_msg.clone());
-
         // If no tool calls, return the direct response
         if tool_calls.is_empty() {
+            // Save assistant response without tool calls
+            let assistant_msg = AgentMessage::assistant(&content);
+            self.short_term_memory.write().await.push(assistant_msg.clone());
             return Ok(AgentResponse {
                 message: assistant_msg,
                 tool_calls: vec![],
@@ -320,59 +368,32 @@ impl Agent {
             });
         }
 
+        // Tool calls detected - DON'T save the initial assistant message yet
+        // We'll save a complete message (with tool_calls and final response) after tool execution
+
         // Execute tools and get results
         let mut tool_results = Vec::new();
         let mut tools_used = Vec::new();
-        let mut tool_messages = Vec::new();
 
         for tool_call in &tool_calls {
             match self.execute_tool(&tool_call.name, &tool_call.arguments).await {
                 Ok(result) => {
                     tools_used.push(tool_call.name.clone());
-                    tool_results.push(result.clone());
-                    // Save tool result as a "tool" message in memory
-                    let tool_result_msg = AgentMessage::tool_result(&tool_call.name, &result);
-                    tool_messages.push(tool_result_msg);
+                    tool_results.push((tool_call.name.clone(), result));
                 }
                 Err(e) => {
                     let error_msg = format!("Error: {}", e);
-                    tool_messages.push(AgentMessage::tool_result(&tool_call.name, &error_msg));
+                    tool_results.push((tool_call.name.clone(), error_msg));
                 }
             }
         }
 
-        // Add tool result messages to memory
-        for msg in tool_messages {
-            self.short_term_memory.write().await.push(msg);
-        }
+        // Format tool results directly (without calling LLM again)
+        // This prevents excessive thinking and model looping
+        let final_text = crate::agent::streaming::format_tool_results(&tool_results);
 
-        // Build conversation history for the follow-up call
-        let history = self.short_term_memory.read().await;
-        let conversation: Vec<String> = history.iter()
-            .take(50) // Limit context window (increased for better context retention)
-            .map(|msg| {
-                match msg.role.as_str() {
-                    "user" => format!("User: {}", msg.content),
-                    "assistant" => format!("Assistant: {}", msg.content),
-                    "tool" => format!("Tool[{}]: {}", msg.tool_call_name.as_ref().unwrap_or(&String::new()), msg.content),
-                    _ => String::new(),
-                }
-            })
-            .collect();
-        drop(history);
-
-        // Build follow-up prompt with full conversation context
-        let conversation_text = conversation.join("\n");
-        let follow_up_prompt = format!(
-            "{}\n\nBased on the conversation above and the tool results, provide a helpful response to the user.",
-            conversation_text
-        );
-
-        // Second call: get LLM's interpretation of tool results
-        let follow_up_response = self.llm_interface.chat(&follow_up_prompt).await
-            .map_err(|e| super::error::AgentError::Llm(e.to_string()))?;
-
-        let final_message = AgentMessage::assistant(follow_up_response.text);
+        // Save a SINGLE complete message with tool_calls and final response
+        let final_message = AgentMessage::assistant_with_tools(&final_text, tool_calls.clone());
         self.short_term_memory.write().await.push(final_message.clone());
 
         Ok(AgentResponse {

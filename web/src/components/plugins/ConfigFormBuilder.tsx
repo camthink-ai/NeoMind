@@ -2,6 +2,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -157,8 +158,9 @@ export function ConfigFormBuilder({
   initialValues,
   onSubmit,
   loading = false,
-  submitLabel = '保存',
+  submitLabel,
 }: ConfigFormBuilderProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const zodSchema = buildZodSchema(schema)
   const fieldOrder = schema.ui_hints?.field_order || Object.keys(schema.properties)
 
@@ -211,7 +213,7 @@ export function ConfigFormBuilder({
                     onCheckedChange={(checked) => setValue(fieldName, checked)}
                   />
                   <span className="text-sm text-muted-foreground">
-                    {watchedValues[fieldName] ? '是' : '否'}
+                    {watchedValues[fieldName] ? t('plugins:yes') : t('plugins:no')}
                   </span>
                 </div>
               ) : prop.enum && prop.enum.length > 0 ? (
@@ -220,7 +222,7 @@ export function ConfigFormBuilder({
                   onValueChange={(value) => setValue(fieldName, value)}
                 >
                   <SelectTrigger id={fieldName}>
-                    <SelectValue placeholder={`选择 ${displayName}`} />
+                    <SelectValue placeholder={t('plugins:selectPlaceholder')} />
                   </SelectTrigger>
                   <SelectContent>
                     {prop.enum.map((value) => (
@@ -235,7 +237,7 @@ export function ConfigFormBuilder({
                   id={fieldName}
                   value={Array.isArray(watchedValues[fieldName]) ? (watchedValues[fieldName] as unknown[]).join('\n') : ''}
                   onChange={(e) => setValue(fieldName, e.target.value.split('\n'))}
-                  placeholder="每行一个值"
+                  placeholder={t('plugins:onePerLine')}
                   rows={3}
                 />
               ) : (
@@ -269,7 +271,7 @@ export function ConfigFormBuilder({
 
               {error && (
                 <p className="text-xs text-destructive">
-                  {error.message as string || '此字段有错误'}
+                  {error.message as string || t('plugins:fieldError')}
                 </p>
               )}
             </div>

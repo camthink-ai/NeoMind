@@ -42,9 +42,7 @@ function DesktopSidebar() {
   const navItems = useMemo(() => [
     { id: "dashboard" as const, icon: navItemIcons.dashboard },
     { id: "devices" as const, icon: navItemIcons.devices },
-    { id: "alerts" as const, icon: navItemIcons.alerts },
     { id: "automation" as const, icon: navItemIcons.automation },
-    { id: "commands" as const, icon: navItemIcons.commands },
     { id: "decisions" as const, icon: navItemIcons.decisions },
     { id: "plugins" as const, icon: navItemIcons.plugins },
     { id: "settings" as const, icon: navItemIcons.settings },
@@ -113,7 +111,7 @@ function DesktopSidebar() {
           <div className="h-2 w-2 rounded-full bg-green-500" />
           {sidebarOpen && (
             <span className="text-xs">
-              {t('runStatus', { ns: 'common' })}
+              {t('systemRunning', { ns: 'common' })}
             </span>
           )}
         </div>
@@ -130,9 +128,7 @@ function MobileSidebar() {
   const navItems = useMemo(() => [
     { id: "dashboard" as const, icon: navItemIcons.dashboard },
     { id: "devices" as const, icon: navItemIcons.devices },
-    { id: "alerts" as const, icon: navItemIcons.alerts },
     { id: "automation" as const, icon: navItemIcons.automation },
-    { id: "commands" as const, icon: navItemIcons.commands },
     { id: "decisions" as const, icon: navItemIcons.decisions },
     { id: "plugins" as const, icon: navItemIcons.plugins },
     { id: "settings" as const, icon: navItemIcons.settings },
@@ -188,7 +184,7 @@ function MobileSidebar() {
               <div className="p-3 border-t">
                 <div className="flex items-center gap-2 text-muted-foreground text-xs">
                   <div className="h-2 w-2 rounded-full bg-green-500" />
-                  <span>{t('runStatus', { ns: 'common' })}</span>
+                  <span>{t('systemRunning', { ns: 'common' })}</span>
                 </div>
               </div>
             </div>

@@ -120,7 +120,7 @@ fn default_top_p() -> f32 {
 }
 
 fn default_max_tokens() -> usize {
-    512
+    usize::MAX
 }
 
 impl Default for LlmSettings {

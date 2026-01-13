@@ -263,7 +263,7 @@ pub async fn llm_generate_handler(
             temperature: Some(0.7),
             top_p: Some(0.9),
             top_k: None,
-            max_tokens: Some(2048),
+            max_tokens: Some(usize::MAX),
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,

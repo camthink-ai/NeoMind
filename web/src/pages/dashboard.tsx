@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Send, Bot, User, ChevronDown, ChevronUp, Settings, Copy, Check } from "lucide-react"
+import { Send, Bot, User, ChevronDown, ChevronUp, Settings, Copy, Check, CheckCircle2, Wrench, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { Message, ServerMessage, ToolCall } from "@/types"
 import { SessionSidebar } from "@/components/chat"
@@ -39,6 +39,7 @@ export function DashboardPage() {
   const [input, setInput] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
+  const [expandedToolResults, setExpandedToolResults] = useState<Set<string>>(new Set())
   const [streamingContent, setStreamingContent] = useState("")
   const [streamingThinking, setStreamingThinking] = useState("")
   const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([])
@@ -47,17 +48,6 @@ export function DashboardPage() {
   const streamingContentRef = useRef("")
   const streamingThinkingRef = useRef("")
   const streamingToolCallsRef = useRef<ToolCall[]>([])
-
-  // Keep refs in sync with state
-  useEffect(() => {
-    streamingContentRef.current = streamingContent
-  }, [streamingContent])
-  useEffect(() => {
-    streamingThinkingRef.current = streamingThinking
-  }, [streamingThinking])
-  useEffect(() => {
-    streamingToolCallsRef.current = streamingToolCalls
-  }, [streamingToolCalls])
 
   // Fetch LLM settings on mount (once)
   const hasFetchedLlm = useRef(false)
@@ -111,7 +101,50 @@ export function DashboardPage() {
     }
   }, [setWsConnected])
 
+  // Auto-create session when connected and no session exists
+  useEffect(() => {
+    if (wsConnected && !sessionId) {
+      // Create a new session via API
+      fetch('/api/sessions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.data?.id) {
+            setSessionId(data.data.id)
+            ws.setSessionId(data.data.id)
+          }
+        })
+        .catch(err => {
+          console.error('Failed to create session:', err)
+        })
+    }
+  }, [wsConnected, sessionId, setSessionId])
+
+  // Reset streaming states when sessionId changes
+  useEffect(() => {
+    // Reset all streaming states when switching sessions
+    setIsStreaming(false)
+    setStreamingContent("")
+    setStreamingThinking("")
+    setStreamingToolCalls([])
+  }, [sessionId])
+
   // Setup WebSocket message handler
+  // Use ref to avoid re-subscription when addMessage changes
+  const addMessageRef = useRef(addMessage)
+  const loadSessionsRef = useRef(loadSessions)
+  const setSessionIdRef = useRef(setSessionId)
+
+  useEffect(() => {
+    addMessageRef.current = addMessage
+    loadSessionsRef.current = loadSessions
+    setSessionIdRef.current = setSessionId
+  }, [addMessage, loadSessions, setSessionId])
+
   const handleMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
       case 'system':
@@ -120,43 +153,46 @@ export function DashboardPage() {
       case 'session_created':
       case 'session_switched':
         if (msg.sessionId) {
-          setSessionId(msg.sessionId)
+          // Update BOTH React state and WebSocket instance
+          setSessionIdRef.current(msg.sessionId)
           ws.setSessionId(msg.sessionId)
           // Refresh the sessions list to show the new/updated session
-          loadSessions()
+          loadSessionsRef.current()
         }
         break
 
       case 'Thinking':
         setIsStreaming(true)
-        setStreamingThinking((prev) => prev + (msg.content || ""))
+        // Update ref synchronously to avoid stale data in end event
+        streamingThinkingRef.current += (msg.content || "")
+        setStreamingThinking(streamingThinkingRef.current)
         break
 
       case 'Content':
         setIsStreaming(true)
-        setStreamingContent((prev) => prev + (msg.content || ""))
+        // Update ref synchronously to avoid stale data in end event
+        streamingContentRef.current += (msg.content || "")
+        setStreamingContent(streamingContentRef.current)
         break
 
       case 'ToolCallStart':
         setIsStreaming(true)
-        setStreamingToolCalls((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            name: msg.tool || "",
-            arguments: msg.arguments,
-          },
-        ])
+        const newToolCall: ToolCall = {
+          id: crypto.randomUUID(),
+          name: msg.tool || "",
+          arguments: msg.arguments,
+        }
+        streamingToolCallsRef.current.push(newToolCall)
+        setStreamingToolCalls([...streamingToolCallsRef.current])
         break
 
       case 'ToolCallEnd':
-        setStreamingToolCalls((prev) =>
-          prev.map((tc) =>
-            tc.name === msg.tool
-              ? { ...tc, result: msg.result }
-              : tc
-          )
+        streamingToolCallsRef.current = streamingToolCallsRef.current.map((tc) =>
+          tc.name === msg.tool
+            ? { ...tc, result: msg.result }
+            : tc
         )
+        setStreamingToolCalls(streamingToolCallsRef.current)
         break
 
       case 'Error':
@@ -165,9 +201,16 @@ export function DashboardPage() {
         break
 
       case 'end':
+        // Use refs directly since they're updated synchronously now
         const finalContent = streamingContentRef.current
         const finalThinking = streamingThinkingRef.current
         const finalCalls = streamingToolCallsRef.current
+
+        console.log('[dashboard] end event received', {
+          contentLength: finalContent.length,
+          thinkingLength: finalThinking.length,
+          toolCallsCount: finalCalls.length,
+        })
 
         if (finalContent || finalThinking || finalCalls.length > 0) {
           const assistantMsg: Message = {
@@ -178,8 +221,15 @@ export function DashboardPage() {
             thinking: finalThinking || undefined,
             tool_calls: finalCalls.length > 0 ? finalCalls : undefined,
           }
-          addMessage(assistantMsg)
+          addMessageRef.current(assistantMsg)
+        } else {
+          console.warn('[dashboard] end event received but no content to save')
         }
+
+        // Clear refs immediately
+        streamingContentRef.current = ""
+        streamingThinkingRef.current = ""
+        streamingToolCallsRef.current = []
 
         setStreamingContent("")
         setStreamingThinking("")
@@ -195,7 +245,7 @@ export function DashboardPage() {
             content: msg.content,
             timestamp: Date.now(),
           }
-          addMessage(assistantMsg)
+          addMessageRef.current(assistantMsg)
         }
         setIsStreaming(false)
         break
@@ -203,7 +253,7 @@ export function DashboardPage() {
       case 'device_update':
         break
     }
-  }, [addMessage, setSessionId])
+  }, []) // No dependencies - use refs inside
 
   // Register message handler once
   useEffect(() => {
@@ -243,6 +293,18 @@ export function DashboardPage() {
         next.delete(msgId)
       } else {
         next.add(msgId)
+      }
+      return next
+    })
+  }
+
+  const toggleToolResult = (key: string) => {
+    setExpandedToolResults((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
       }
       return next
     })
@@ -330,7 +392,7 @@ export function DashboardPage() {
                         onClick={() => toggleThinking(msg.id)}
                         className="flex items-center gap-1 font-medium text-muted-foreground"
                       >
-                        思考过程
+                        {t('dashboard:thinkingProcess')}
                         {expandedThinking.has(msg.id) ? (
                           <ChevronUp className="h-3 w-3" />
                         ) : (
@@ -338,26 +400,92 @@ export function DashboardPage() {
                         )}
                       </button>
                       {expandedThinking.has(msg.id) && (
-                        <div className="mt-2 whitespace-pre-wrap text-muted-foreground">
+                        <div className="mt-2 max-h-[200px] overflow-y-auto whitespace-pre-wrap text-muted-foreground scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent">
                           {msg.thinking}
                         </div>
                       )}
                     </div>
                   )}
 
-                  {/* Tool Calls */}
+                  {/* Tool Calls - Improved Visual Flow */}
                   {msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0 && (
-                    <div className="mb-2 rounded-md bg-muted/50 px-3 py-2 text-xs">
-                      <div className="font-medium text-muted-foreground mb-1">工具调用</div>
-                      <div className="space-y-1">
-                        {msg.tool_calls.map((tc, i) => (
-                          <div key={i} className="flex items-center gap-2">
-                            <span className="font-mono bg-background px-2 py-0.5 rounded">{tc.name}</span>
-                            <span className="text-muted-foreground">
-                              {tc.result ? '✓ 完成' : '执行中'}
-                            </span>
-                          </div>
-                        ))}
+                    <div className="mb-3 rounded-lg border border-border/50 bg-muted/30 overflow-hidden">
+                      {/* Header */}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border/50">
+                        <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="font-medium text-xs text-muted-foreground">
+                          {t('dashboard:toolCalls')} ({msg.tool_calls.length})
+                        </span>
+                      </div>
+
+                      {/* Tool List with Timeline */}
+                      <div className="divide-y divide-border/30">
+                        {msg.tool_calls.map((tc, i) => {
+                          const resultKey = `${msg.id}-${i}`
+                          const isExpanded = expandedToolResults.has(resultKey)
+                          const hasResult = tc.result !== undefined && tc.result !== null
+
+                          return (
+                            <div key={i} className="px-3 py-2">
+                              {/* Tool Name Row */}
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  {/* Timeline indicator */}
+                                  <div className="flex flex-col items-center">
+                                    <div className={`h-5 w-5 rounded-full flex items-center justify-center ${
+                                      hasResult ? 'bg-green-500/20 text-green-600' : 'bg-amber-500/20 text-amber-600'
+                                    }`}>
+                                      {hasResult ? (
+                                        <CheckCircle2 className="h-3 w-3" />
+                                      ) : (
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                      )}
+                                    </div>
+                                    {i < (msg.tool_calls?.length ?? 0) - 1 && (
+                                      <div className="w-px h-4 bg-border/50 mt-1" />
+                                    )}
+                                  </div>
+
+                                  {/* Tool info */}
+                                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                                    <span className="font-mono text-xs font-medium bg-background px-2 py-0.5 rounded border border-border/50 truncate">
+                                      {tc.name}
+                                    </span>
+                                    <span className={`text-xs ${
+                                      hasResult ? 'text-green-600' : 'text-amber-600'
+                                    }`}>
+                                      {hasResult ? t('completed') : t('executing')}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Expand button for results */}
+                                {hasResult && (
+                                  <button
+                                    onClick={() => toggleToolResult(resultKey)}
+                                    className="p-1 hover:bg-background/50 rounded transition-colors"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="h-3.5 w-3.5 text-muted-foreground" />
+                                    ) : (
+                                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Expandable Result */}
+                              {isExpanded && hasResult && (
+                                <div className="mt-2 ml-7 p-2 bg-background rounded border border-border/50">
+                                  <div className="text-xs text-muted-foreground mb-1">{t('executionResult')}:</div>
+                                  <pre className="text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-words">
+                                    {typeof tc.result === 'string' ? tc.result : JSON.stringify(tc.result, null, 2)}
+                                  </pre>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
                   )}
@@ -400,19 +528,33 @@ export function DashboardPage() {
                 <div className="max-w-[80%]">
                   {streamingThinking && (
                     <div className="mb-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                      思考过程
-                      <p className="mt-2 whitespace-pre-wrap">{streamingThinking}</p>
+                      {t('dashboard:thinkingProcess')}
+                      <p className="mt-2 max-h-[200px] overflow-y-auto whitespace-pre-wrap scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent">{streamingThinking}</p>
                     </div>
                   )}
                   {streamingToolCalls.length > 0 && (
-                    <div className="mb-2 rounded-md bg-muted/50 px-3 py-2 text-xs">
-                      工具调用
-                      {streamingToolCalls.map((tc, i) => (
-                        <div key={i} className="flex items-center gap-2 mt-1">
-                          <span className="font-mono bg-background px-2 py-0.5 rounded">{tc.name}</span>
-                          <span className="text-muted-foreground">执行中</span>
-                        </div>
-                      ))}
+                    <div className="mb-3 rounded-lg border border-border/50 bg-muted/30 overflow-hidden">
+                      <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border/50">
+                        <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="font-medium text-xs text-muted-foreground">
+                          {t('dashboard:toolCalls')} ({streamingToolCalls.length})
+                        </span>
+                      </div>
+                      <div className="divide-y divide-border/30">
+                        {streamingToolCalls.map((tc, i) => (
+                          <div key={i} className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <div className="h-5 w-5 rounded-full flex items-center justify-center bg-amber-500/20 text-amber-600">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              </div>
+                              <span className="font-mono text-xs font-medium bg-background px-2 py-0.5 rounded border border-border/50">
+                                {tc.name}
+                              </span>
+                              <span className="text-xs text-amber-600">{t('executing')}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                   <div className="rounded-lg px-3 py-2 text-sm bg-muted">
@@ -453,7 +595,7 @@ export function DashboardPage() {
             disabled={isStreaming || llmBackendLoading || !llmBackends || llmBackends.length === 0}
           >
             <SelectTrigger className="h-9 w-[140px] text-xs shrink-0">
-              <SelectValue placeholder="选择后端" />
+              <SelectValue placeholder={t('dashboard:selectBackend')} />
             </SelectTrigger>
             <SelectContent>
               {llmBackends && llmBackends.length > 0 ? (
@@ -469,7 +611,7 @@ export function DashboardPage() {
                 ))
               ) : (
                 <div className="p-2 text-xs text-muted-foreground text-center">
-                  暂无后端
+                  {t('dashboard:noBackends')}
                 </div>
               )}
             </SelectContent>

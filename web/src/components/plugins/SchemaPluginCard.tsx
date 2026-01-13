@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Card,
   CardContent,
@@ -71,6 +72,7 @@ export function SchemaPluginCard({
   onToggle,
   onViewDevices,
 }: SchemaPluginCardProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const { schema, config, state, enabled } = instance
   const isRunning = state === 'running'
 
@@ -94,10 +96,10 @@ export function SchemaPluginCard({
             <div className="flex items-center gap-2 mb-1">
               <CardTitle className="text-base">{config.name as string || schema.name}</CardTitle>
               {schema.builtin && (
-                <Badge variant="outline" className="text-xs">内置</Badge>
+                <Badge variant="outline" className="text-xs">{t('plugins:builtin')}</Badge>
               )}
               <Badge variant={isRunning ? "default" : "secondary"} className="text-xs">
-                {isRunning ? "运行中" : "已停止"}
+                {isRunning ? t('plugins:running') : t('plugins:stopped')}
               </Badge>
             </div>
             <CardDescription className="flex items-center gap-2 text-xs">
@@ -122,20 +124,20 @@ export function SchemaPluginCard({
               {onEdit && (
                 <DropdownMenuItem onClick={onEdit}>
                   <Edit className="mr-2 h-4 w-4" />
-                  编辑
+                  {t('plugins:edit')}
                 </DropdownMenuItem>
               )}
               {onTest && (
                 <DropdownMenuItem onClick={onTest}>
                   <TestTube className="mr-2 h-4 w-4" />
-                  测试连接
+                  {t('plugins:llm.testConnection')}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               {onViewDevices && instance.deviceCount !== undefined && (
                 <DropdownMenuItem onClick={onViewDevices}>
                   <Wifi className="mr-2 h-4 w-4" />
-                  查看设备 ({instance.deviceCount})
+                  {t('plugins:viewDevicesWithCount', { count: instance.deviceCount })}
                 </DropdownMenuItem>
               )}
               {onDelete && !schema.builtin && (
@@ -143,7 +145,7 @@ export function SchemaPluginCard({
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
                     <Trash2 className="mr-2 h-4 w-4" />
-                    删除
+                    {t('plugins:delete')}
                   </DropdownMenuItem>
                 </>
               )}
@@ -157,23 +159,23 @@ export function SchemaPluginCard({
           {/* Device Count */}
           {instance.deviceCount !== undefined && (
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">设备数:</span>
+              <span className="text-muted-foreground">{t('plugins:deviceCount')}:</span>
               <span className="font-medium">{instance.deviceCount}</span>
             </div>
           )}
           {/* Connection Status */}
           {instance.connected !== undefined && (
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">连接状态:</span>
+              <span className="text-muted-foreground">{t('plugins:llm.endpoint')}:</span>
               <span className={instance.connected ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
-                {instance.connected ? "已连接" : "未连接"}
+                {instance.connected ? t('plugins:connected') : t('plugins:disconnected')}
               </span>
             </div>
           )}
           {/* Config display */}
           {getConfigDisplay() && (
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">配置:</span>
+              <span className="text-muted-foreground">{t('plugins:pluginConfig')}:</span>
               <span className="font-mono text-xs">{getConfigDisplay()}</span>
             </div>
           )}
@@ -189,14 +191,14 @@ export function SchemaPluginCard({
               disabled={isRunning}
             />
             <span className="text-xs text-muted-foreground">
-              {enabled ? "已启用" : "已禁用"}
+              {enabled ? t('plugins:enabled') : t('plugins:disabled')}
             </span>
           </div>
         )}
         {onViewDevices && instance.deviceCount !== undefined && (
           <Button variant="outline" size="sm" onClick={onViewDevices}>
             <Wifi className="mr-2 h-4 w-4" />
-            查看设备
+            {t('plugins:viewDevices')}
           </Button>
         )}
       </CardFooter>
@@ -221,6 +223,7 @@ export function SchemaPluginTypeCard({
   isActive,
   onClick,
 }: SchemaPluginTypeCardProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const getIconBg = () => {
     switch (schema.category) {
       case 'ai': return 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
@@ -252,15 +255,15 @@ export function SchemaPluginTypeCard({
       </CardHeader>
       <CardContent className="text-sm">
         <div className="flex justify-between items-center">
-          <span className="text-muted-foreground">状态:</span>
+          <span className="text-muted-foreground">{t('plugins:status')}:</span>
           <span className={isActive ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
-            {isActive ? "运行中" : instanceCount > 0 ? "已配置" : "未配置"}
+            {isActive ? t('plugins:running') : instanceCount > 0 ? t('plugins:configured') : t('plugins:notConfigured')}
           </span>
         </div>
         {instanceCount > 0 && (
           <div className="flex justify-between items-center mt-2">
-            <span className="text-muted-foreground">实例:</span>
-            <span className="font-medium">{instanceCount} 个</span>
+            <span className="text-muted-foreground">{t('plugins:instanceCount')}:</span>
+            <span className="font-medium">{instanceCount}{t('plugins:count')}</span>
           </div>
         )}
       </CardContent>
@@ -289,6 +292,7 @@ export function SchemaPluginConfigDialog({
   saving = false,
   onSave,
 }: SchemaPluginConfigDialogProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const [config, setConfig] = useState<Record<string, unknown>>({})
 
   // Initialize config when dialog opens with instance
@@ -328,7 +332,7 @@ export function SchemaPluginConfigDialog({
             )}>
               <Icon className="h-5 w-5" />
             </div>
-            {instance ? '编辑' : '添加'} {schema.name}
+            {instance ? t('plugins:edit') : t('plugins:add')} {schema.name}
           </DialogTitle>
           <DialogDescription>
             {schema.description}
@@ -343,11 +347,11 @@ export function SchemaPluginConfigDialog({
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-            取消
+            {t('common:cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={saving}>
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {saving ? '保存中...' : '保存'}
+            {saving ? t('plugins:saving') : t('plugins:save')}
           </Button>
         </DialogFooter>
       </DialogContent>

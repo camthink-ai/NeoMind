@@ -45,7 +45,7 @@ import type {
   SearchSuggestion,
   EventStats,
   Event as NeoTalkEvent,
-  SessionListResponse,
+  ChatSession,
   SessionHistoryResponse,
   LlmBackendInstance,
   CreateLlmBackendRequest,
@@ -401,13 +401,19 @@ export const api = {
     }),
 
   // Sessions
+  // Note: Backend returns paginated response with data as array (auto-unwrapped by fetchAPI)
   listSessions: (page = 1, pageSize = 20) =>
-    fetchAPI<SessionListResponse>(`/sessions?page=${page}&page_size=${pageSize}`),
+    fetchAPI<ChatSession[]>(`/sessions?page=${page}&page_size=${pageSize}`),
   createSession: () =>
     fetchAPI<{ sessionId: string }>('/sessions', {
       method: 'POST',
     }),
   getSession: (id: string) => fetchAPI<{ sessionId: string; state: { id: string; created_at: number; last_activity: number; message_count: number } }>(`/sessions/${id}`),
+  updateSession: (id: string, title?: string) =>
+    fetchAPI<{ sessionId: string; updated: boolean }>(`/sessions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ title }),
+    }),
   getSessionHistory: (id: string) => fetchAPI<SessionHistoryResponse>(`/sessions/${id}/history`),
   deleteSession: (id: string) =>
     fetchAPI<{ deleted: boolean; sessionId: string }>(`/sessions/${id}`, {

@@ -288,51 +288,22 @@ impl LlmInterface {
             return self.system_prompt.clone();
         }
 
-        let mut prompt = self.system_prompt.clone();
-        prompt.push_str("\n\n## Available Tools\n\n");
-        prompt.push_str("You can use the following tools to help users:\n\n");
+        // IMPORTANT: Put output format requirements at the very beginning
+        // This is critical for models with thinking enabled
+        let mut prompt = "你是一个物联网设备管理助手。请直接用自然语言回答用户的问题。\n\n".to_string();
 
-        for tool in tools.iter() {
-            prompt.push_str(&format!("### {}\n{}\n\n", tool.name, tool.description));
+        prompt.push_str("【输出要求】\n");
+        prompt.push_str("1. 必须在content字段输出最终回复，用户只能看到这个\n");
+        prompt.push_str("2. 不要只在thinking中思考，必须输出可读的回复\n");
+        prompt.push_str("3. 回复要简洁友好，直接回答问题\n\n");
 
-            // Extract parameter descriptions
-            if let Some(props) = tool.parameters.get("properties") {
-                if let Some(obj) = props.as_object() {
-                    if !obj.is_empty() {
-                        prompt.push_str("**Parameters:**\n");
-                        for (param_name, param_info) in obj {
-                            let desc = param_info.get("description")
-                                .and_then(|d| d.as_str())
-                                .unwrap_or("No description");
-                            prompt.push_str(&format!("- `{}`: {}\n", param_name, desc));
-                        }
-                        prompt.push('\n');
-                    }
-                }
-            }
+        prompt.push_str(&self.system_prompt.clone());
 
-            // List required parameters
-            if let Some(required) = tool.parameters.get("required") {
-                if let Some(arr) = required.as_array() {
-                    if !arr.is_empty() {
-                        let req_names: Vec<&str> = arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect();
-                        prompt.push_str(&format!("**Required:** {}\n\n", req_names.join(", ")));
-                    }
-                }
-            }
-        }
-
-        prompt.push_str("## Tool Call Format\n\n");
-        prompt.push_str("When you need to use a tool, format your response as:\n\n");
-        prompt.push_str("```\n<tool_calls>\n");
-        prompt.push_str("<invoke name=\"tool_name\">\n");
-        prompt.push_str("  <parameter name=\"param1\">value1</parameter>\n");
-        prompt.push_str("  <parameter name=\"param2\">value2</parameter>\n");
-        prompt.push_str("</invoke>\n");
-        prompt.push_str("</tool_calls>\n```\n\n");
-        prompt.push_str("Only use tools when explicitly requested by the user or when it clearly helps answer their question.\n");
+        // Clear guidance to prevent confusion and looping
+        prompt.push_str("\n\n## 工具使用规则\n\n");
+        prompt.push_str("- 只在用户明确提到设备、传感器、数据查询时使用工具\n");
+        prompt.push_str("- 问候、闲聊、一般问题直接回答，不用工具\n");
+        prompt.push_str("- 回复要简短友好\n");
 
         prompt
     }
@@ -359,6 +330,43 @@ impl LlmInterface {
         &self,
         user_message: impl Into<String>,
     ) -> Result<ChatResponse, AgentError> {
+        self.chat_internal(user_message, true, None).await
+    }
+
+    /// Send a chat message with conversation history.
+    pub async fn chat_with_history(
+        &self,
+        user_message: impl Into<String>,
+        history: &[Message],
+    ) -> Result<ChatResponse, AgentError> {
+        self.chat_internal(user_message, true, Some(history)).await
+    }
+
+    /// Send a chat message without tools and get a response.
+    /// This is useful for Phase 2 where tools have already been executed.
+    pub async fn chat_without_tools(
+        &self,
+        user_message: impl Into<String>,
+    ) -> Result<ChatResponse, AgentError> {
+        self.chat_internal(user_message, false, None).await
+    }
+
+    /// Send a chat message without tools, with conversation history.
+    pub async fn chat_without_tools_with_history(
+        &self,
+        user_message: impl Into<String>,
+        history: &[Message],
+    ) -> Result<ChatResponse, AgentError> {
+        self.chat_internal(user_message, false, Some(history)).await
+    }
+
+    /// Internal chat implementation.
+    async fn chat_internal(
+        &self,
+        user_message: impl Into<String>,
+        include_tools: bool,
+        history: Option<&[Message]>,
+    ) -> Result<ChatResponse, AgentError> {
         // Acquire permit for concurrency limiting
         let _permit = self.limiter.acquire().await;
 
@@ -367,8 +375,13 @@ impl LlmInterface {
 
         let model_arc = Arc::clone(&self.model);
 
-        // Build system prompt with tools
-        let system_prompt = self.build_system_prompt_with_tools().await;
+        // Build system prompt (with or without tools based on phase)
+        let system_prompt = if include_tools {
+            self.build_system_prompt_with_tools().await
+        } else {
+            // Simple system prompt for Phase 2 (no tools needed)
+            "You are NeoTalk, an edge computing and IoT device management assistant. Help users based on the provided conversation context.".to_string()
+        };
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
@@ -387,12 +400,31 @@ impl LlmInterface {
 
         let system_msg = Message::system(&system_prompt);
         let user_msg = Message::user(user_message);
-        let messages = vec![system_msg, user_msg];
 
-        // Get tool definitions
-        let tools = self.tool_definitions.read().await;
-        let tools_input = if tools.is_empty() { None } else { Some(tools.clone()) };
-        drop(tools);
+        // Build messages with history if provided
+        let messages = if let Some(hist) = history {
+            let mut msgs = vec![system_msg];
+            // Add historical messages (excluding system prompts from history)
+            for msg in hist {
+                if msg.role != edge_ai_core::MessageRole::System {
+                    msgs.push(msg.clone());
+                }
+            }
+            msgs.push(user_msg);
+            msgs
+        } else {
+            vec![system_msg, user_msg]
+        };
+
+        // Get tool definitions (only if include_tools is true)
+        let tools_input = if include_tools {
+            let tools = self.tool_definitions.read().await;
+            let result = if tools.is_empty() { None } else { Some(tools.clone()) };
+            drop(tools);
+            result
+        } else {
+            None
+        };
 
         let input = LlmInput {
             messages,
@@ -426,6 +458,24 @@ impl LlmInterface {
         &self,
         user_message: impl Into<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), AgentError>> + Send>>, AgentError> {
+        self.chat_stream_internal(user_message, None).await
+    }
+
+    /// Send a chat message with streaming response, with conversation history.
+    pub async fn chat_stream_with_history(
+        &self,
+        user_message: impl Into<String>,
+        history: &[Message],
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), AgentError>> + Send>>, AgentError> {
+        self.chat_stream_internal(user_message, Some(history)).await
+    }
+
+    /// Internal streaming chat implementation.
+    async fn chat_stream_internal(
+        &self,
+        user_message: impl Into<String>,
+        history: Option<&[Message]>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), AgentError>> + Send>>, AgentError> {
         let user_message = user_message.into();
 
         let model_arc = Arc::clone(&self.model);
@@ -450,11 +500,27 @@ impl LlmInterface {
 
         let system_msg = Message::system(&system_prompt);
         let user_msg = Message::user(user_message);
-        let messages = vec![system_msg, user_msg];
+
+        // Build messages with history if provided
+        let messages = if let Some(hist) = history {
+            let mut msgs = vec![system_msg];
+            // Add historical messages (excluding system prompts from history)
+            for msg in hist {
+                if msg.role != edge_ai_core::MessageRole::System {
+                    msgs.push(msg.clone());
+                }
+            }
+            msgs.push(user_msg);
+            msgs
+        } else {
+            vec![system_msg, user_msg]
+        };
 
         // Get tool definitions
         let tools = self.tool_definitions.read().await;
+        eprintln!("[DEBUG LLM] Tool definitions count: {}", tools.len());
         let tools_input = if tools.is_empty() { None } else { Some(tools.clone()) };
+        eprintln!("[DEBUG LLM] tools_input is_some: {:?}", tools_input.is_some());
         drop(tools);
 
         let input = LlmInput {
@@ -464,6 +530,7 @@ impl LlmInterface {
             stream: true,
             tools: tools_input,
         };
+        eprintln!("[DEBUG LLM] LlmInput created with tools: {:?}", input.tools.as_ref().map(|t| t.len()));
 
         // Get runtime using instance manager if enabled
         let llm = self.get_runtime().await?;
@@ -515,7 +582,7 @@ impl Default for ChatConfig {
             model: "qwen3-vl:2b".to_string(),
             temperature: 0.4,
             top_p: 0.95,
-            max_tokens: 1024,
+            max_tokens: usize::MAX,  // No limit for complex tasks
             concurrent_limit: DEFAULT_CONCURRENT_LIMIT,
         }
     }

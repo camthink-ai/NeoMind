@@ -26,6 +26,7 @@
     "stopped": "Stopped",
     "error": "Error"
   },
+  "systemRunning": "System Running",
   "selectAll": "Select All (Current Page)",
   "deselectAll": "Deselect All",
   "name": "Name",
@@ -65,5 +66,14 @@
   "pagination": {
     "total": "{{total}} total · Page {{currentPage}}/{{totalPages}}",
     "perPage": "{{size}} /page"
+  },
+  "hint": "Hint",
+  "actionFailed": "Action failed",
+  "timeAgo": {
+    "justNow": "Just now",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "daysAgo": "{{count}}d ago",
+    "date": "Date"
   }
 }

@@ -4,7 +4,7 @@
   "noDecisions": "No decisions",
   "noDecisionsDesc": "AI decisions will appear here when the agent proposes actions",
   "decisionId": "Decision ID",
-  "title": "Title",
+  "decisionTitle": "Title",
   "description": "Description",
   "confidence": "Confidence",
   "reasoning": "Reasoning",
@@ -47,5 +47,16 @@
   "all": "All",
   "loading": "Loading decisions...",
   "deleteConfirm": "Are you sure you want to delete this decision?",
-  "deletedSuccess": "Decision deleted successfully"
+  "deletedSuccess": "Decision deleted successfully",
+  "priority": "Priority",
+  "createdAt": "Created",
+  "executedAt": "Executed",
+  "executionResult": "Execution Result",
+  "success": "Success",
+  "actionsExecuted": "Actions Executed",
+  "successCount": "Success",
+  "failureCount": "Failure",
+  "error": "Error",
+  "decisionType": "Decision Type",
+  "required": "Required"
 }

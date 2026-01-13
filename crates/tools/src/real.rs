@@ -178,12 +178,7 @@ impl Tool for ControlDeviceTool {
             serde_json::json!({
                 "device_id": string_property("要控制的设备ID，例如：actuator_1, switch_living_room"),
                 "command": string_property("控制命令，例如：turn_on（打开）、turn_off（关闭）、set_value（设置值）"),
-                "parameters": object_schema(serde_json::json!({
-                    "description": "命令参数，可选。对于set_value命令，需要传递value参数",
-                    "properties": {
-                        "value": {"type": ["number", "string", "boolean"], "description": "命令参数值"}
-                    }
-                }), vec![])
+                "value": string_property("命令参数值（可选），对于set_value命令需要传递此参数，例如：25、true、auto")
             }),
             vec!["device_id".to_string(), "command".to_string()],
         )
@@ -573,10 +568,7 @@ impl Tool for TriggerWorkflowTool {
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "workflow_id": string_property("要触发的工作流ID，例如：daily_backup、data_collection"),
-                "parameters": object_schema(serde_json::json!({
-                    "description": "可选参数，会传递给工作流使用"
-                }), vec![])
+                "workflow_id": string_property("要触发的工作流ID，例如：daily_backup、data_collection")
             }),
             vec!["workflow_id".to_string()],
         )

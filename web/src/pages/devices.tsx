@@ -160,9 +160,9 @@ export function DevicesPage() {
     if (confirm(t('devices:deleteConfirm'))) {
       const success = await deleteDevice(id)
       if (success) {
-        toast({ title: "成功", description: "设备已删除" })
+        toast({ title: t('common:success'), description: t('devices:deviceDeleted') })
       } else {
-        toast({ title: "失败", description: "设备删除失败", variant: "destructive" })
+        toast({ title: t('common:failed'), description: t('devices:deleteFailed'), variant: "destructive" })
       }
     }
   }
@@ -224,15 +224,15 @@ export function DevicesPage() {
 
   const handleAddDiscoveredDevice = async (device: DiscoveredDevice) => {
     if (!device.device_type) {
-      toast({ title: "失败", description: t('devices:unknownType'), variant: "destructive" })
+      toast({ title: t('common:failed'), description: t('devices:unknownType'), variant: "destructive" })
       return
     }
     const success = await addDevice(device.device_type, device.id)
     if (success) {
       setDiscoveryOpen(false)
-      toast({ title: "成功", description: "设备已添加" })
+      toast({ title: t('common:success'), description: t('devices:add.successGeneric') })
     } else {
-      toast({ title: "失败", description: t('devices:addDeviceFailed'), variant: "destructive" })
+      toast({ title: t('common:failed'), description: t('devices:addDeviceFailed'), variant: "destructive" })
     }
   }
 
@@ -265,8 +265,8 @@ export function DevicesPage() {
       setViewDeviceTypeOpen(true)
     } else {
       toast({
-        title: "加载失败",
-        description: "无法加载设备类型详情",
+        title: t('devices:loadFailed'),
+        description: t('devices:failedToLoadDetails'),
         variant: "destructive",
       })
     }
@@ -286,20 +286,20 @@ export function DevicesPage() {
       setEditDeviceTypeOpen(true)
     } else {
       toast({
-        title: "加载失败",
-        description: "无法加载设备类型详情",
+        title: t('devices:loadFailed'),
+        description: t('devices:failedToLoadDetails'),
         variant: "destructive",
       })
     }
   }
 
   const handleDeleteDeviceType = async (id: string) => {
-    if (confirm("确定要删除此设备类型吗？")) {
+    if (confirm(t('devices:deleteTypeConfirm'))) {
       const success = await deleteDeviceType(id)
       if (success) {
-        toast({ title: "成功", description: "设备类型已删除" })
+        toast({ title: t('common:success'), description: t('devices:deviceTypeDeleted') })
       } else {
-        toast({ title: "失败", description: "设备类型删除失败", variant: "destructive" })
+        toast({ title: t('common:failed'), description: t('devices:deviceTypeDeleteFailed'), variant: "destructive" })
       }
     }
   }

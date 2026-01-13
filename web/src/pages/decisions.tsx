@@ -178,7 +178,7 @@ export function DecisionsPage() {
                                 : 'text-red-600 border-red-600'
                             }`}
                           >
-                            置信度 {(decision.confidence * 100).toFixed(0)}%
+                            {t('decisions:confidence')} {(decision.confidence * 100).toFixed(0)}%
                           </Badge>
                         </div>
                         <CardDescription className="text-xs">
@@ -201,7 +201,7 @@ export function DecisionsPage() {
                               disabled={processingId === decision.id}
                             >
                               <Play className="h-3 w-3 mr-1" />
-                              执行
+                              {t('decisions:execute')}
                             </Button>
                             <Button
                               onClick={() => handleApprove(decision.id)}
@@ -210,7 +210,7 @@ export function DecisionsPage() {
                               disabled={processingId === decision.id}
                             >
                               <CheckCircle className="h-3 w-3 mr-1" />
-                              批准
+                              {t('decisions:approve')}
                             </Button>
                             <Button
                               onClick={() => handleReject(decision.id)}
@@ -219,7 +219,7 @@ export function DecisionsPage() {
                               disabled={processingId === decision.id}
                             >
                               <X className="h-3 w-3 mr-1" />
-                              拒绝
+                              {t('decisions:reject')}
                             </Button>
                           </>
                         )}
@@ -239,7 +239,7 @@ export function DecisionsPage() {
                   <CardContent className="text-sm">
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-muted-foreground mb-3">
                       <div>
-                        <span className="font-medium">优先级:</span>{' '}
+                        <span className="font-medium">{t('decisions:priority')}:</span>{' '}
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
                           decision.priority === 'high' || decision.priority === 'critical'
                             ? 'bg-red-100 text-red-700'
@@ -251,12 +251,12 @@ export function DecisionsPage() {
                         </span>
                       </div>
                       <div>
-                        <span className="font-medium">创建时间:</span>{' '}
+                        <span className="font-medium">{t('decisions:createdAt')}:</span>{' '}
                         {formatTimestamp(decision.created_at)}
                       </div>
                       {decision.executed_at && (
                         <div>
-                          <span className="font-medium">执行时间:</span>{' '}
+                          <span className="font-medium">{t('decisions:executedAt')}:</span>{' '}
                           {formatTimestamp(decision.executed_at)}
                         </div>
                       )}
@@ -265,7 +265,7 @@ export function DecisionsPage() {
                     {decision.reasoning && (
                       <details className="mb-3">
                         <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                          推理过程
+                          {t('decisions:reasoning')}
                         </summary>
                         <div className="mt-2 p-3 bg-muted rounded text-sm whitespace-pre-wrap max-h-40 overflow-y-auto">
                           {decision.reasoning}
@@ -276,7 +276,7 @@ export function DecisionsPage() {
                     {decision.actions && decision.actions.length > 0 && (
                       <details>
                         <summary className="cursor-pointer text-muted-foreground hover:text-foreground">
-                          建议操作 ({decision.actions.length})
+                          {t('decisions:proposedActions')} ({decision.actions.length})
                         </summary>
                         <div className="mt-2 space-y-2">
                           {decision.actions.map((action, index) => (
@@ -287,7 +287,7 @@ export function DecisionsPage() {
                                 </Badge>
                                 <span className="font-medium">{action.action_type}</span>
                                 {action.required && (
-                                  <Badge variant="destructive" className="text-xs">必需</Badge>
+                                  <Badge variant="destructive" className="text-xs">{t('decisions:required')}</Badge>
                                 )}
                               </div>
                               <p className="text-xs text-muted-foreground">{action.description}</p>
@@ -305,21 +305,21 @@ export function DecisionsPage() {
                     {decision.execution_result && (
                       <div className="mt-3 p-3 bg-muted rounded">
                         <div className="flex items-center gap-2 mb-2">
-                          <span className="font-medium">执行结果:</span>{' '}
+                          <span className="font-medium">{t('decisions:executionResult')}:</span>{' '}
                           {decision.execution_result.success ? (
-                            <Badge variant="outline" className="text-green-600">成功</Badge>
+                            <Badge variant="outline" className="text-green-600">{t('decisions:success')}</Badge>
                           ) : (
-                            <Badge variant="destructive">失败</Badge>
+                            <Badge variant="destructive">{t('decisions:failed')}</Badge>
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          执行操作: {decision.execution_result.actions_executed} •
-                          成功: {decision.execution_result.success_count} •
-                          失败: {decision.execution_result.failure_count}
+                          {t('decisions:actionsExecuted')}: {decision.execution_result.actions_executed} •
+                          {t('decisions:successCount')}: {decision.execution_result.success_count} •
+                          {t('decisions:failureCount')}: {decision.execution_result.failure_count}
                         </div>
                         {decision.execution_result.error && (
                           <div className="mt-1 text-xs text-red-600">
-                            错误: {decision.execution_result.error}
+                            {t('decisions:error')}: {decision.execution_result.error}
                           </div>
                         )}
                       </div>
@@ -348,33 +348,33 @@ export function DecisionsPage() {
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-muted-foreground">决策类型:</span>{' '}
+                  <span className="text-muted-foreground">{t('decisions:decisionType')}:</span>{' '}
                   <span className="font-medium">{selectedDecision.decision_type}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">优先级:</span>{' '}
+                  <span className="text-muted-foreground">{t('decisions:priority')}:</span>{' '}
                   <span className="font-medium">{selectedDecision.priority}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">置信度:</span>{' '}
+                  <span className="text-muted-foreground">{t('decisions:confidence')}:</span>{' '}
                   <span className={`font-medium ${getConfidenceColor(selectedDecision.confidence)}`}>
                     {(selectedDecision.confidence * 100).toFixed(1)}%
                   </span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground">创建时间:</span>{' '}
+                  <span className="text-muted-foreground">{t('decisions:createdAt')}:</span>{' '}
                   <span className="font-medium">{formatTimestamp(selectedDecision.created_at)}</span>
                 </div>
               </div>
 
               <div>
-                <h4 className="font-medium mb-2">描述</h4>
+                <h4 className="font-medium mb-2">{t('decisions:description')}</h4>
                 <p className="text-sm text-muted-foreground">{selectedDecision.description}</p>
               </div>
 
               {selectedDecision.reasoning && (
                 <div>
-                  <h4 className="font-medium mb-2">推理过程</h4>
+                  <h4 className="font-medium mb-2">{t('decisions:reasoning')}</h4>
                   <div className="p-3 bg-muted rounded text-sm whitespace-pre-wrap max-h-48 overflow-y-auto">
                     {selectedDecision.reasoning}
                   </div>
@@ -383,7 +383,7 @@ export function DecisionsPage() {
 
               {selectedDecision.actions && selectedDecision.actions.length > 0 && (
                 <div>
-                  <h4 className="font-medium mb-2">建议操作</h4>
+                  <h4 className="font-medium mb-2">{t('decisions:proposedActions')}</h4>
                   <div className="space-y-2">
                     {selectedDecision.actions.map((action, index) => (
                       <div key={action.id} className="p-3 bg-muted rounded">
@@ -400,7 +400,7 @@ export function DecisionsPage() {
 
               {selectedDecision.execution_result && (
                 <div>
-                  <h4 className="font-medium mb-2">执行结果</h4>
+                  <h4 className="font-medium mb-2">{t('decisions:executionResult')}</h4>
                   <div className="p-3 bg-muted rounded">
                     <div className="flex items-center gap-2">
                       {selectedDecision.execution_result.success ? (
@@ -409,13 +409,13 @@ export function DecisionsPage() {
                         <AlertCircle className="h-4 w-4 text-red-600" />
                       )}
                       <span className="text-sm">
-                        {selectedDecision.execution_result.success ? '成功' : '失败'}
+                        {selectedDecision.execution_result.success ? t('decisions:success') : t('decisions:failed')}
                       </span>
                     </div>
                     <div className="mt-2 text-xs text-muted-foreground">
-                      执行操作: {selectedDecision.execution_result.actions_executed} •
-                      成功: {selectedDecision.execution_result.success_count} •
-                      失败: {selectedDecision.execution_result.failure_count}
+                      {t('decisions:actionsExecuted')}: {selectedDecision.execution_result.actions_executed} •
+                      {t('decisions:successCount')}: {selectedDecision.execution_result.success_count} •
+                      {t('decisions:failureCount')}: {selectedDecision.execution_result.failure_count}
                     </div>
                   </div>
                 </div>
@@ -424,7 +424,7 @@ export function DecisionsPage() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelectedDecision(null)}>
-              关闭
+              {t('common:close')}
             </Button>
           </DialogFooter>
         </DialogContent>

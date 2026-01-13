@@ -60,7 +60,7 @@ pub struct CreateBackendRequest {
 
 fn default_temperature() -> f32 { 0.7 }
 fn default_top_p() -> f32 { 0.9 }
-fn default_max_tokens() -> usize { 2048 }
+fn default_max_tokens() -> usize { usize::MAX }
 
 /// Request to update an LLM backend instance
 #[derive(Debug, Deserialize)]

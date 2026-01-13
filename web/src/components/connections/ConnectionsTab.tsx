@@ -43,52 +43,26 @@ import { LoadingState, EmptyState } from '@/components/shared'
 
 type View = 'list' | 'detail'
 
-// Connection type definitions
-const CONNECTION_TYPES: Record<string, {
-  id: string
-  name: string
-  icon: React.ReactNode
-  iconBg: string
-  description: string
-  canAddMultiple: boolean
-  builtin: boolean
-}> = {
-  builtin_mqtt: {
-    id: 'builtin_mqtt',
-    name: '内置 MQTT Broker',
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400',
-    description: '系统内置的 MQTT 消息服务器',
-    canAddMultiple: false,
-    builtin: true,
-  },
-  external_mqtt: {
-    id: 'external_mqtt',
-    name: '外部 MQTT Broker',
-    icon: <Network className="h-6 w-6" />,
-    iconBg: 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
-    description: '连接到外部 MQTT 服务器',
-    canAddMultiple: true,
-    builtin: false,
-  },
-  hass: {
-    id: 'hass',
-    name: 'Home Assistant',
-    icon: <Home className="h-6 w-6" />,
-    iconBg: 'bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400',
-    description: 'Home Assistant REST API 集成',
-    canAddMultiple: false,
-    builtin: false,
-  },
-  modbus: {
-    id: 'modbus',
-    name: 'Modbus TCP',
-    icon: <Wifi className="h-6 w-6" />,
-    iconBg: 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400',
-    description: 'Modbus TCP 工业设备连接',
-    canAddMultiple: true,
-    builtin: false,
-  },
+// Connection type definitions - will be populated by useTranslation
+const CONNECTION_ICONS: Record<string, React.ReactNode> = {
+  builtinMqtt: <Server className="h-6 w-6" />,
+  externalMqtt: <Network className="h-6 w-6" />,
+  hass: <Home className="h-6 w-6" />,
+  modbus: <Wifi className="h-6 w-6" />,
+}
+
+const CONNECTION_ICON_BGS: Record<string, string> = {
+  builtinMqtt: 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400',
+  externalMqtt: 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
+  hass: 'bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400',
+  modbus: 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400',
+}
+
+const CONNECTION_CONFIG: Record<string, { canAddMultiple: boolean; builtin: boolean }> = {
+  builtinMqtt: { canAddMultiple: false, builtin: true },
+  externalMqtt: { canAddMultiple: true, builtin: false },
+  hass: { canAddMultiple: false, builtin: false },
+  modbus: { canAddMultiple: true, builtin: false },
 }
 
 export function ConnectionsTab() {
@@ -162,11 +136,11 @@ export function ConnectionsTab() {
 
   // Get device count for a connection
   const getDeviceCount = (type: string, id?: string) => {
-    if (type === 'builtin_mqtt') {
+    if (type === 'builtinMqtt') {
       return devices.filter((d: any) =>
         !d.plugin_id || d.plugin_id === 'internal-mqtt' || d.plugin_id === 'builtin'
       ).length
-    } else if (type === 'external_mqtt' && id) {
+    } else if (type === 'externalMqtt' && id) {
       return devices.filter((d: any) => d.plugin_id === id).length
     } else if (type === 'hass') {
       return devices.filter((d: any) => d.plugin_id === 'hass-discovery').length
@@ -178,9 +152,9 @@ export function ConnectionsTab() {
 
   // Get status for a connection type
   const getConnectionStatus = (type: string) => {
-    if (type === 'builtin_mqtt') {
+    if (type === 'builtinMqtt') {
       return mqttStatus?.connected || false
-    } else if (type === 'external_mqtt') {
+    } else if (type === 'externalMqtt') {
       return externalBrokers.some((b) => b.connected)
     } else if (type === 'hass') {
       return hassStatus?.hass_discovery?.enabled || false
@@ -193,22 +167,22 @@ export function ConnectionsTab() {
   const handleViewDevices = async (type: string, id?: string) => {
     let filteredDevices: any[] = []
 
-    if (type === 'builtin_mqtt') {
+    if (type === 'builtinMqtt') {
       filteredDevices = devices.filter((d: any) =>
         !d.plugin_id || d.plugin_id === 'internal-mqtt' || d.plugin_id === 'builtin'
       )
-      setConnectionName('内置 MQTT Broker')
-    } else if (type === 'external_mqtt' && id) {
+      setConnectionName(t('devices:connections.builtinMqtt.title'))
+    } else if (type === 'externalMqtt' && id) {
       filteredDevices = devices.filter((d: any) => d.plugin_id === id)
       const broker = externalBrokers.find((b) => b.id === id)
-      setConnectionName(broker?.name || '外部 MQTT')
+      setConnectionName(broker?.name || t('devices:connections.externalMqtt.name'))
     } else if (type === 'hass') {
       filteredDevices = devices.filter((d: any) => d.plugin_id === 'hass-discovery')
-      setConnectionName('Home Assistant')
+      setConnectionName(t('devices:connections.hass.name'))
     } else if (type === 'modbus' && id) {
       filteredDevices = devices.filter((d: any) => d.plugin_id === id)
       const adapter = modbusAdapters.find((a) => a.id === id)
-      setConnectionName(adapter?.name || 'Modbus')
+      setConnectionName(adapter?.name || t('devices:connections.modbus.name'))
     }
 
     setConnectionDevices(filteredDevices)
@@ -216,52 +190,52 @@ export function ConnectionsTab() {
   }
 
   const handleDelete = async (type: string, id: string) => {
-    if (type === 'external_mqtt') {
-      if (!confirm(`确定要删除这个 MQTT Broker 连接吗？`)) return
+    if (type === 'externalMqtt') {
+      if (!confirm(t('devices:connections.externalMqtt.deleteConfirm'))) return
       try {
         await api.deleteBroker(id)
         await loadData()
-        toast({ title: '已删除', description: 'MQTT Broker 已删除' })
+        toast({ title: t('devices:connections.externalMqtt.deleted'), description: t('devices:connections.externalMqtt.deletedDesc') })
       } catch (error) {
-        toast({ title: '删除失败', description: (error as Error).message, variant: 'destructive' })
+        toast({ title: t('devices:connections.externalMqtt.deleteFailed'), description: (error as Error).message, variant: 'destructive' })
       }
     } else if (type === 'modbus') {
-      if (!confirm(`确定要删除这个 Modbus 连接吗？`)) return
+      if (!confirm(t('devices:connections.modbus.deleteConfirm'))) return
       try {
         await api.unregisterPlugin(id)
         await loadData()
-        toast({ title: '已删除', description: 'Modbus 连接已删除' })
+        toast({ title: t('devices:connections.modbus.deleted'), description: t('devices:connections.modbus.deletedDesc') })
       } catch (error) {
-        toast({ title: '删除失败', description: (error as Error).message, variant: 'destructive' })
+        toast({ title: t('devices:connections.modbus.deleteFailed'), description: (error as Error).message, variant: 'destructive' })
       }
     } else if (type === 'hass') {
       toast({
-        title: '提示',
-        description: '请在设置页面禁用 Home Assistant 集成',
+        title: t('common:hint'),
+        description: t('devices:connections.hass.configureInSettings'),
       })
     }
   }
 
   const handleTest = async (type: string, id?: string) => {
-    if (type === 'external_mqtt' && id) {
+    if (type === 'externalMqtt' && id) {
       try {
         const result = await api.testBroker(id)
         if (result.success) {
-          toast({ title: '连接成功', description: result.message })
+          toast({ title: t('devices:connections.externalMqtt.connectionSuccess'), description: result.message })
         } else {
-          toast({ title: '连接失败', description: result.message, variant: 'destructive' })
+          toast({ title: t('devices:connections.externalMqtt.connectionFailed'), description: result.message, variant: 'destructive' })
         }
         await loadData()
       } catch (error) {
-        toast({ title: '测试失败', description: (error as Error).message, variant: 'destructive' })
+        toast({ title: t('devices:connections.externalMqtt.testFailed'), description: (error as Error).message, variant: 'destructive' })
       }
     } else {
-      toast({ title: '提示', description: '此连接类型不支持测试连接' })
+      toast({ title: t('common:hint'), description: t('devices:connections.externalMqtt.testNotSupported') })
     }
   }
 
   const handleToggle = async (type: string, id?: string) => {
-    if (type === 'external_mqtt' && id) {
+    if (type === 'externalMqtt' && id) {
       try {
         const broker = externalBrokers.find(b => b.id === id)
         if (!broker) return
@@ -276,22 +250,26 @@ export function ConnectionsTab() {
           enabled: !broker.enabled,
         })
 
+        const enabled = !broker.enabled
         toast({
-          title: !broker.enabled ? '已启用' : '已禁用',
-          description: `MQTT Broker 已${!broker.enabled ? '启用' : '禁用'}`
+          title: enabled ? t('devices:connections.externalMqtt.enabled') : t('devices:connections.externalMqtt.disabled'),
+          description: `MQTT Broker ${enabled ? t('devices:connections.externalMqtt.enabled') : t('devices:connections.externalMqtt.disabled')}`
         })
         await loadData()
       } catch (error) {
-        toast({ title: '操作失败', description: (error as Error).message, variant: 'destructive' })
+        toast({ title: t('common:actionFailed'), description: (error as Error).message, variant: 'destructive' })
       }
     } else {
-      toast({ title: '提示', description: '此连接类型不支持切换状态' })
+      toast({ title: t('common:hint'), description: t('devices:connections.externalMqtt.toggleNotSupported') })
     }
   }
 
   if (loading) {
-    return <LoadingState text="加载中..." />
+    return <LoadingState text={t('common:loading')} />
   }
+
+  // Connection types with i18n
+  const connectionTypes = ['builtinMqtt', 'externalMqtt', 'hass', 'modbus'] as const
 
   // ========== LIST VIEW ==========
   if (view === 'list') {
@@ -302,48 +280,50 @@ export function ConnectionsTab() {
           <div>
             <h2 className="text-2xl font-bold tracking-tight">{t('devices:deviceAdapters')}</h2>
             <p className="text-muted-foreground text-sm">
-              管理设备连接方式，接入各种协议的设备
+              {t('devices:connections.description')}
             </p>
           </div>
         </div>
 
         {/* Connection Type Cards */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {Object.values(CONNECTION_TYPES).map((type) => {
-            const isActive = getConnectionStatus(type.id)
-            const deviceCount = getDeviceCount(type.id)
+          {connectionTypes.map((typeId) => {
+            const isActive = getConnectionStatus(typeId)
+            const deviceCount = getDeviceCount(typeId)
+            const icon = CONNECTION_ICONS[typeId]
+            const iconBg = CONNECTION_ICON_BGS[typeId]
 
             return (
               <Card
-                key={type.id}
+                key={typeId}
                 className={cn(
                   "cursor-pointer transition-all duration-200 hover:shadow-md",
                   isActive && "border-green-500 border-2"
                 )}
                 onClick={() => {
-                  setSelectedType(type.id)
+                  setSelectedType(typeId)
                   setView('detail')
                 }}
               >
                 <CardHeader className="pb-3">
-                  <div className={cn("flex items-center justify-center w-12 h-12 rounded-lg", type.iconBg)}>
-                    {type.icon}
+                  <div className={cn("flex items-center justify-center w-12 h-12 rounded-lg", iconBg)}>
+                    {icon}
                   </div>
-                  <CardTitle className="text-base mt-3">{type.name}</CardTitle>
+                  <CardTitle className="text-base mt-3">{t(`devices:connections.${typeId}.name`)}</CardTitle>
                   <CardDescription className="mt-1 text-xs">
-                    {type.description}
+                    {t(`devices:connections.${typeId}.description`)}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="text-sm">
                   <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">状态:</span>
+                    <span className="text-muted-foreground">{t('devices:connections.status')}:</span>
                     <span className={isActive ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
-                      {isActive ? "运行中" : "未配置"}
+                      {isActive ? t('devices:connections.running') : t('devices:connections.notConfigured')}
                     </span>
                   </div>
                   <div className="flex justify-between items-center mt-2">
-                    <span className="text-muted-foreground">设备:</span>
-                    <span className="font-medium">{deviceCount} 个</span>
+                    <span className="text-muted-foreground">{t('devices:connections.devices')}:</span>
+                    <span className="font-medium">{deviceCount}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -364,7 +344,9 @@ export function ConnectionsTab() {
 
   // ========== DETAIL VIEW ==========
   if (view === 'detail' && selectedType) {
-    const typeInfo = CONNECTION_TYPES[selectedType]
+    const icon = CONNECTION_ICONS[selectedType]
+    const iconBg = CONNECTION_ICON_BGS[selectedType]
+    const config = CONNECTION_CONFIG[selectedType]
 
     return (
       <>
@@ -372,59 +354,59 @@ export function ConnectionsTab() {
         <div className="flex items-center gap-4 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setView('list')} className="gap-1">
             <ArrowLeft className="h-4 w-4" />
-            返回
+            {t('devices:connections.back')}
           </Button>
           <div className="flex items-center gap-3">
-            <div className={cn("flex items-center justify-center w-10 h-10 rounded-lg", typeInfo.iconBg)}>
-              {typeInfo.icon}
+            <div className={cn("flex items-center justify-center w-10 h-10 rounded-lg", iconBg)}>
+              {icon}
             </div>
             <div>
-              <h2 className="text-2xl font-bold">{typeInfo.name}</h2>
-              <p className="text-sm text-muted-foreground">{typeInfo.description}</p>
+              <h2 className="text-2xl font-bold">{t(`devices:connections.${selectedType}.name`)}</h2>
+              <p className="text-sm text-muted-foreground">{t(`devices:connections.${selectedType}.description`)}</p>
             </div>
           </div>
-          {typeInfo.canAddMultiple && (
+          {config.canAddMultiple && (
             <div className="ml-auto">
               <Button onClick={() => {
                 setEditingItem(null)
                 setConfigDialogOpen(true)
               }}>
                 <Plus className="mr-2 h-4 w-4" />
-                添加连接
+                {t('devices:connections.addConnection')}
               </Button>
             </div>
           )}
         </div>
 
         {/* Builtin MQTT Detail */}
-        {selectedType === 'builtin_mqtt' && (
+        {selectedType === 'builtinMqtt' && (
           <BuiltinMqttCard
             mqttStatus={mqttStatus}
-            deviceCount={getDeviceCount('builtin_mqtt')}
-            onViewDevices={() => handleViewDevices('builtin_mqtt')}
+            deviceCount={getDeviceCount('builtinMqtt')}
+            onViewDevices={() => handleViewDevices('builtinMqtt')}
             onRefresh={loadData}
           />
         )}
 
         {/* External MQTT Detail */}
-        {selectedType === 'external_mqtt' && (
+        {selectedType === 'externalMqtt' && (
           <div className="space-y-4">
             {externalBrokers.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="flex flex-col items-center justify-center py-12">
-                  <div className={cn("flex items-center justify-center w-16 h-16 rounded-lg mb-4", typeInfo.iconBg)}>
-                    {typeInfo.icon}
+                  <div className={cn("flex items-center justify-center w-16 h-16 rounded-lg mb-4", iconBg)}>
+                    {icon}
                   </div>
-                  <h3 className="text-lg font-semibold mb-1">暂无外部 MQTT 连接</h3>
+                  <h3 className="text-lg font-semibold mb-1">{t('devices:connections.externalMqtt.noConnections')}</h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    添加外部 MQTT Broker 以扩展设备接入能力
+                    {t('devices:connections.externalMqtt.addDesc')}
                   </p>
                   <Button onClick={() => {
                     setEditingItem(null)
                     setConfigDialogOpen(true)
                   }}>
                     <Plus className="mr-2 h-4 w-4" />
-                    添加 MQTT Broker
+                    {t('devices:connections.externalMqtt.addBroker')}
                   </Button>
                 </CardContent>
               </Card>
@@ -433,15 +415,15 @@ export function ConnectionsTab() {
                 <ExternalBrokerCard
                   key={broker.id}
                   broker={broker}
-                  deviceCount={getDeviceCount('external_mqtt', broker.id)}
+                  deviceCount={getDeviceCount('externalMqtt', broker.id)}
                   onEdit={() => {
                     setEditingItem(broker)
                     setConfigDialogOpen(true)
                   }}
-                  onDelete={() => handleDelete('external_mqtt', broker.id)}
-                  onTest={() => handleTest('external_mqtt', broker.id)}
-                  onToggle={() => handleToggle('external_mqtt', broker.id)}
-                  onViewDevices={() => handleViewDevices('external_mqtt', broker.id)}
+                  onDelete={() => handleDelete('externalMqtt', broker.id)}
+                  onTest={() => handleTest('externalMqtt', broker.id)}
+                  onToggle={() => handleToggle('externalMqtt', broker.id)}
+                  onViewDevices={() => handleViewDevices('externalMqtt', broker.id)}
                 />
               ))
             )}
@@ -468,19 +450,19 @@ export function ConnectionsTab() {
             {modbusAdapters.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="flex flex-col items-center justify-center py-12">
-                  <div className={cn("flex items-center justify-center w-16 h-16 rounded-lg mb-4", typeInfo.iconBg)}>
-                    {typeInfo.icon}
+                  <div className={cn("flex items-center justify-center w-16 h-16 rounded-lg mb-4", iconBg)}>
+                    {icon}
                   </div>
-                  <h3 className="text-lg font-semibold mb-1">暂无 Modbus 连接</h3>
+                  <h3 className="text-lg font-semibold mb-1">{t('devices:connections.modbus.noConnections')}</h3>
                   <p className="text-sm text-muted-foreground mb-4">
-                    添加 Modbus TCP 设备连接
+                    {t('devices:connections.modbus.addDesc')}
                   </p>
                   <Button onClick={() => {
                     setEditingItem(null)
                     setConfigDialogOpen(true)
                   }}>
                     <Plus className="mr-2 h-4 w-4" />
-                    添加 Modbus 连接
+                    {t('devices:connections.modbus.addConnection')}
                   </Button>
                 </CardContent>
               </Card>
@@ -550,6 +532,7 @@ function BuiltinMqttCard({ mqttStatus, deviceCount, onViewDevices, onRefresh }: 
   onViewDevices: () => void
   onRefresh: () => void
 }) {
+  const { t } = useTranslation(['devices'])
   const connected = mqttStatus?.connected || false
 
   return (
@@ -561,27 +544,27 @@ function BuiltinMqttCard({ mqttStatus, deviceCount, onViewDevices, onRefresh }: 
               <Server className="h-5 w-5" />
             </div>
             <div>
-              <CardTitle className="text-base">内置 MQTT Broker</CardTitle>
+              <CardTitle className="text-base">{t('devices:connections.builtinMqtt.title')}</CardTitle>
               <CardDescription className="text-xs">
                 {mqttStatus?.server_ip}:{mqttStatus?.listen_port || 1883}
               </CardDescription>
             </div>
           </div>
           <Badge variant={connected ? "default" : "secondary"}>
-            {connected ? "运行中" : "已停止"}
+            {connected ? t('devices:connections.builtinMqtt.running') : t('devices:connections.builtinMqtt.stopped')}
           </Badge>
         </div>
       </CardHeader>
       <CardContent className="pb-3">
         <div className="space-y-2 text-sm">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">状态:</span>
+            <span className="text-muted-foreground">{t('devices:connections.status')}:</span>
             <span className={connected ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
-              {connected ? "已连接" : "未连接"}
+              {connected ? t('devices:connections.builtinMqtt.connected') : t('devices:connections.builtinMqtt.disconnected')}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">设备数:</span>
+            <span className="text-muted-foreground">{t('devices:connections.builtinMqtt.deviceCount')}:</span>
             <span className="font-medium">{deviceCount}</span>
           </div>
         </div>
@@ -589,10 +572,10 @@ function BuiltinMqttCard({ mqttStatus, deviceCount, onViewDevices, onRefresh }: 
       <CardFooter className="pt-3 border-t justify-between">
         <Button variant="outline" size="sm" onClick={onViewDevices}>
           <Wifi className="mr-2 h-4 w-4" />
-          查看设备
+          {t('devices:connections.builtinMqtt.viewDevices')}
         </Button>
         <Button variant="ghost" size="sm" onClick={onRefresh}>
-          刷新状态
+          {t('devices:connections.builtinMqtt.refreshStatus')}
         </Button>
       </CardFooter>
     </Card>
@@ -609,6 +592,7 @@ function ExternalBrokerCard({ broker, deviceCount, onEdit, onDelete, onTest, onT
   onToggle: () => void
   onViewDevices: () => void
 }) {
+  const { t } = useTranslation(['devices'])
   const connected = broker.connected || false
   const enabled = broker.enabled || false
 
@@ -620,10 +604,10 @@ function ExternalBrokerCard({ broker, deviceCount, onEdit, onDelete, onTest, onT
             <div className="flex items-center gap-2 mb-1">
               <CardTitle className="text-base">{broker.name}</CardTitle>
               <Badge variant={connected ? "default" : "secondary"} className="text-xs">
-                {connected ? "已连接" : "未连接"}
+                {connected ? t('devices:connections.externalMqtt.connected') : t('devices:connections.externalMqtt.disconnected')}
               </Badge>
               <Badge variant={enabled ? "outline" : "secondary"} className="text-xs">
-                {enabled ? "已启用" : "已禁用"}
+                {enabled ? t('devices:connections.externalMqtt.enabled') : t('devices:connections.externalMqtt.disabled')}
               </Badge>
             </div>
             <CardDescription className="font-mono text-xs">
@@ -639,20 +623,20 @@ function ExternalBrokerCard({ broker, deviceCount, onEdit, onDelete, onTest, onT
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={onToggle}>
                 <Power className="mr-2 h-4 w-4" />
-                {enabled ? "禁用" : "启用"}
+                {enabled ? t('devices:connections.externalMqtt.disable') : t('devices:connections.externalMqtt.enable')}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onEdit}>
                 <Edit className="mr-2 h-4 w-4" />
-                编辑
+                {t('devices:connections.externalMqtt.edit')}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onTest}>
                 <TestTube className="mr-2 h-4 w-4" />
-                测试连接
+                {t('devices:connections.externalMqtt.testConnection')}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
-                删除
+                {t('devices:connections.externalMqtt.delete')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -661,19 +645,19 @@ function ExternalBrokerCard({ broker, deviceCount, onEdit, onDelete, onTest, onT
       <CardContent className="pb-3">
         <div className="space-y-2 text-sm">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">设备数:</span>
+            <span className="text-muted-foreground">{t('devices:connections.externalMqtt.deviceCount')}:</span>
             <span className="font-medium">{deviceCount}</span>
           </div>
           {broker.tls && (
             <div className="flex items-center gap-2">
               <CheckCircle2 className="h-3 w-3 text-green-600" />
-              <span className="text-xs text-muted-foreground">启用 TLS</span>
+              <span className="text-xs text-muted-foreground">{t('devices:connections.externalMqtt.tlsEnabled')}</span>
             </div>
           )}
           {broker.username && (
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">认证:</span>
-              <span className="text-xs">已配置</span>
+              <span className="text-muted-foreground">{t('devices:connections.externalMqtt.auth')}:</span>
+              <span className="text-xs">{t('devices:connections.externalMqtt.configured')}</span>
             </div>
           )}
           {broker.last_error && (
@@ -686,7 +670,7 @@ function ExternalBrokerCard({ broker, deviceCount, onEdit, onDelete, onTest, onT
       <CardFooter className="pt-3 border-t justify-between">
         <Button variant="outline" size="sm" onClick={onViewDevices}>
           <Wifi className="mr-2 h-4 w-4" />
-          查看设备
+          {t('devices:connections.externalMqtt.viewDevices')}
         </Button>
       </CardFooter>
     </Card>
@@ -701,6 +685,7 @@ function HassCard({ hassStatus, deviceCount, onViewDevices, onRefresh, onConfigu
   onRefresh: () => void
   onConfigure: () => void
 }) {
+  const { t } = useTranslation(['devices'])
   const connected = hassStatus?.hass_integration?.connected || false
   const configured = hassStatus?.hass_integration?.url || false
 
@@ -713,50 +698,50 @@ function HassCard({ hassStatus, deviceCount, onViewDevices, onRefresh, onConfigu
               <Home className="h-5 w-5" />
             </div>
             <div>
-              <CardTitle className="text-base">Home Assistant 集成</CardTitle>
+              <CardTitle className="text-base">{t('devices:connections.hass.title')}</CardTitle>
               <CardDescription className="text-xs">
-                {hassStatus?.hass_integration?.url || '未配置'}
+                {hassStatus?.hass_integration?.url || t('devices:connections.hass.notConfigured')}
               </CardDescription>
             </div>
           </div>
           <Badge variant={connected ? "default" : "secondary"}>
-            {connected ? "已连接" : configured ? "未连接" : "未配置"}
+            {connected ? t('devices:connections.hass.connected') : configured ? t('devices:connections.hass.disconnected') : t('devices:connections.hass.notConfigured')}
           </Badge>
         </div>
       </CardHeader>
       <CardContent className="pb-3">
         <div className="space-y-2 text-sm">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">连接状态:</span>
+            <span className="text-muted-foreground">{t('devices:connections.hass.connectionStatus')}:</span>
             <span className={connected ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
-              {connected ? "已连接" : "未连接"}
+              {connected ? t('devices:connections.hass.connected') : t('devices:connections.hass.disconnected')}
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">设备数:</span>
+            <span className="text-muted-foreground">{t('devices:connections.hass.deviceCount')}:</span>
             <span className="font-medium">{deviceCount}</span>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            通过 REST API 与 Home Assistant 集成，用于查询和控制 HASS 设备
+            {t('devices:connections.hass.description1')}
           </p>
           <p className="text-xs text-muted-foreground">
-            HASS MQTT 设备发现功能已移至设备模块
+            {t('devices:connections.hass.description2')}
           </p>
         </div>
       </CardContent>
       <CardFooter className="pt-3 border-t flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={onViewDevices}>
           <Wifi className="mr-2 h-4 w-4" />
-          查看设备
+          {t('devices:connections.hass.viewDevices')}
         </Button>
         <div className="flex gap-2 ml-auto">
           <Button variant="ghost" size="sm" onClick={onRefresh}>
             <RefreshCw className="mr-2 h-4 w-4" />
-            刷新
+            {t('devices:connections.hass.refresh')}
           </Button>
           <Button variant="ghost" size="sm" onClick={onConfigure}>
             <Settings className="mr-2 h-4 w-4" />
-            配置
+            {t('devices:connections.hass.configure')}
           </Button>
         </div>
       </CardFooter>
@@ -772,6 +757,7 @@ function ModbusCard({ adapter, deviceCount, onEdit, onDelete, onViewDevices }: {
   onDelete: () => void
   onViewDevices: () => void
 }) {
+  const { t } = useTranslation(['devices'])
   const running = adapter.running || false
 
   return (
@@ -782,7 +768,7 @@ function ModbusCard({ adapter, deviceCount, onEdit, onDelete, onViewDevices }: {
             <div className="flex items-center gap-2 mb-1">
               <CardTitle className="text-base">{adapter.name}</CardTitle>
               <Badge variant={running ? "default" : "secondary"} className="text-xs">
-                {running ? "运行中" : "已停止"}
+                {running ? t('devices:connections.modbus.running') : t('devices:connections.modbus.stopped')}
               </Badge>
             </div>
             <CardDescription className="font-mono text-xs">
@@ -798,12 +784,12 @@ function ModbusCard({ adapter, deviceCount, onEdit, onDelete, onViewDevices }: {
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={onEdit}>
                 <Edit className="mr-2 h-4 w-4" />
-                编辑
+                {t('devices:connections.modbus.edit')}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={onDelete} className="text-destructive focus:text-destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
-                删除
+                {t('devices:connections.modbus.delete')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -812,11 +798,11 @@ function ModbusCard({ adapter, deviceCount, onEdit, onDelete, onViewDevices }: {
       <CardContent className="pb-3">
         <div className="space-y-2 text-sm">
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">从站 ID:</span>
+            <span className="text-muted-foreground">{t('devices:connections.modbus.slaveId')}:</span>
             <span className="font-medium">{adapter.config?.slave_id}</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">设备数:</span>
+            <span className="text-muted-foreground">{t('devices:connections.modbus.deviceCount')}:</span>
             <span className="font-medium">{deviceCount}</span>
           </div>
         </div>
@@ -824,7 +810,7 @@ function ModbusCard({ adapter, deviceCount, onEdit, onDelete, onViewDevices }: {
       <CardFooter className="pt-3 border-t">
         <Button variant="outline" size="sm" onClick={onViewDevices}>
           <Wifi className="mr-2 h-4 w-4" />
-          查看设备
+          {t('devices:connections.modbus.viewDevices')}
         </Button>
       </CardFooter>
     </Card>
@@ -840,6 +826,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
   onSave: () => Promise<void>
   saving: boolean
 }) {
+  const { t } = useTranslation(['devices', 'common'])
   const [name, setName] = useState(editing?.name || '')
   const [broker, setBroker] = useState(editing?.broker || '')
   const [port, setPort] = useState(editing?.port || 1883)
@@ -865,7 +852,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
 
   useEffect(() => {
     if (open) {
-      if (type === 'external_mqtt') {
+      if (type === 'externalMqtt') {
         setName(editing?.name || '')
         setBroker(editing?.broker || '')
         setPort(editing?.port || 1883)
@@ -894,7 +881,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
     e.preventDefault()
 
     try {
-      if (type === 'external_mqtt') {
+      if (type === 'externalMqtt') {
         const brokerData: any = {
           name: name.trim(),
           broker: broker.trim(),
@@ -958,49 +945,50 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
 
   if (!open) return null
 
-  const typeInfo = CONNECTION_TYPES[type]
+  const icon = CONNECTION_ICONS[type]
+  const iconBg = CONNECTION_ICON_BGS[type]
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <div className={cn("p-2 rounded-lg", typeInfo?.iconBg)}>
-              {typeInfo?.icon}
+            <div className={cn("p-2 rounded-lg", iconBg)}>
+              {icon}
             </div>
-            {editing ? "编辑" : "添加"} {typeInfo?.name}
+            {editing ? t('devices:connectionDialog.editTitle') : t('devices:connectionDialog.addTitle')} {t(`devices:connections.${type}.name`)}
           </DialogTitle>
           <DialogDescription>
-            {editing ? "修改" : "配置"} {typeInfo?.name} 连接信息
+            {editing ? t('devices:connectionDialog.editDesc') : t('devices:connectionDialog.addDesc')} {t(`devices:connections.${type}.name`)} {t('devices:connectionDialog.connectionInfo')}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label htmlFor="name">显示名称 *</Label>
+            <Label htmlFor="name">{t('devices:connectionDialog.displayNameRequired')}</Label>
             <Input
               id="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={type === 'external_mqtt' ? '我的 MQTT Broker' : 'Modbus 设备'}
+              placeholder={type === 'externalMqtt' ? t('devices:connectionDialog.displayNamePlaceholderMqtt') : t('devices:connectionDialog.displayNamePlaceholderModbus')}
               required
             />
           </div>
 
-          {type === 'external_mqtt' && (
+          {type === 'externalMqtt' && (
             <>
               <div>
-                <Label htmlFor="broker">Broker 地址 *</Label>
+                <Label htmlFor="broker">{t('devices:connectionDialog.brokerAddress')}</Label>
                 <Input
                   id="broker"
                   value={broker}
                   onChange={(e) => setBroker(e.target.value)}
-                  placeholder="broker.example.com"
+                  placeholder={t('devices:connectionDialog.brokerPlaceholder')}
                   required
                 />
               </div>
               <div>
-                <Label htmlFor="port">端口</Label>
+                <Label htmlFor="port">{t('devices:connectionDialog.port')}</Label>
                 <Input
                   id="port"
                   type="number"
@@ -1009,22 +997,22 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
                 />
               </div>
               <div>
-                <Label htmlFor="username">用户名（可选）</Label>
+                <Label htmlFor="username">{t('devices:connectionDialog.username')}</Label>
                 <Input
                   id="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="username"
+                  placeholder={t('devices:connectionDialog.usernamePlaceholder')}
                 />
               </div>
               <div>
-                <Label htmlFor="password">密码（可选）</Label>
+                <Label htmlFor="password">{t('devices:connectionDialog.password')}</Label>
                 <Input
                   id="password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={editing ? '留空保持不变' : '••••••••'}
+                  placeholder={editing ? t('devices:connectionDialog.passwordKeepHint') : t('devices:connectionDialog.passwordPlaceholder')}
                 />
               </div>
               <div className="flex items-center gap-2">
@@ -1041,17 +1029,17 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
                   }}
                   className="h-4 w-4"
                 />
-                <Label htmlFor="tls" className="cursor-pointer">启用 TLS/MQTTS</Label>
+                <Label htmlFor="tls" className="cursor-pointer">{t('devices:connectionDialog.enableTls')}</Label>
               </div>
 
               {/* TLS Certificate Configuration */}
               {tls && (
                 <div className="space-y-3 p-3 border rounded-md bg-muted/30">
                   <div className="text-xs font-medium text-blue-600 dark:text-blue-400">
-                    🔒 TLS 证书配置
+                    🔒 {t('devices:connectionDialog.tlsCertConfig')}
                   </div>
                   <div>
-                    <Label htmlFor="caCert" className="text-xs">CA 证书 (PEM) - 可选</Label>
+                    <Label htmlFor="caCert" className="text-xs">{t('devices:connectionDialog.caCert')}</Label>
                     <textarea
                       id="caCert"
                       value={caCert}
@@ -1061,7 +1049,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
                     />
                   </div>
                   <div>
-                    <Label htmlFor="clientCert" className="text-xs">客户端证书 (PEM) - 可选</Label>
+                    <Label htmlFor="clientCert" className="text-xs">{t('devices:connectionDialog.clientCert')}</Label>
                     <textarea
                       id="clientCert"
                       value={clientCert}
@@ -1071,7 +1059,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
                     />
                   </div>
                   <div>
-                    <Label htmlFor="clientKey" className="text-xs">客户端私钥 (PEM) - 可选</Label>
+                    <Label htmlFor="clientKey" className="text-xs">{t('devices:connectionDialog.clientKey')}</Label>
                     <textarea
                       id="clientKey"
                       value={clientKey}
@@ -1088,17 +1076,17 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
           {type === 'modbus' && (
             <>
               <div>
-                <Label htmlFor="modbusHost">主机地址 *</Label>
+                <Label htmlFor="modbusHost">{t('devices:connectionDialog.hostAddress')}</Label>
                 <Input
                   id="modbusHost"
                   value={modbusHost}
                   onChange={(e) => setModbusHost(e.target.value)}
-                  placeholder="192.168.1.100"
+                  placeholder={t('devices:connectionDialog.hostPlaceholder')}
                   required
                 />
               </div>
               <div>
-                <Label htmlFor="modbusPort">端口</Label>
+                <Label htmlFor="modbusPort">{t('devices:connectionDialog.modbusPort')}</Label>
                 <Input
                   id="modbusPort"
                   type="number"
@@ -1107,7 +1095,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
                 />
               </div>
               <div>
-                <Label htmlFor="slaveId">从站 ID</Label>
+                <Label htmlFor="slaveId">{t('devices:connectionDialog.modbusSlaveId')}</Label>
                 <Input
                   id="slaveId"
                   type="number"
@@ -1121,31 +1109,31 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
           {type === 'hass' && (
             <>
               <div>
-                <Label htmlFor="hassUrl">Home Assistant URL *</Label>
+                <Label htmlFor="hassUrl">{t('devices:connectionDialog.hassUrl')}</Label>
                 <Input
                   id="hassUrl"
                   type="url"
                   value={hassUrl}
                   onChange={(e) => setHassUrl(e.target.value)}
-                  placeholder="http://homeassistant.local:8123"
+                  placeholder={t('devices:connectionDialog.hassUrlPlaceholder')}
                   required
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Home Assistant 的访问地址
+                  {t('devices:connectionDialog.hassUrlHint')}
                 </p>
               </div>
               <div>
-                <Label htmlFor="hassToken">访问令牌 (Long-Lived Access Token) *</Label>
+                <Label htmlFor="hassToken">{t('devices:connectionDialog.hassToken')}</Label>
                 <Input
                   id="hassToken"
                   type="password"
                   value={hassToken}
                   onChange={(e) => setHassToken(e.target.value)}
-                  placeholder="eyJ0eXAiOiAi..."
+                  placeholder={t('devices:connectionDialog.hassTokenPlaceholder')}
                   required
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  在 Home Assistant 用户设置中生成
+                  {t('devices:connectionDialog.hassTokenHint')}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1156,7 +1144,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
                   onChange={(e) => setHassVerifySsl(e.target.checked)}
                   className="h-4 w-4"
                 />
-                <Label htmlFor="hassVerifySsl" className="cursor-pointer">验证 SSL 证书</Label>
+                <Label htmlFor="hassVerifySsl" className="cursor-pointer">{t('devices:connectionDialog.verifySsl')}</Label>
               </div>
               <div className="flex items-center gap-2">
                 <input
@@ -1166,20 +1154,20 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
                   onChange={(e) => setHassAutoImport(e.target.checked)}
                   className="h-4 w-4"
                 />
-                <Label htmlFor="hassAutoImport" className="cursor-pointer">自动导入发现的设备</Label>
+                <Label htmlFor="hassAutoImport" className="cursor-pointer">{t('devices:connectionDialog.autoImport')}</Label>
               </div>
             </>
           )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              取消
+              {t('devices:connectionDialog.cancel')}
             </Button>
             <Button
               type="submit"
               disabled={saving || (type === 'hass' ? !hassUrl.trim() || !hassToken.trim() : !name.trim())}
             >
-              {saving ? "保存中..." : "保存"}
+              {saving ? t('devices:connectionDialog.saving') : t('devices:connectionDialog.save')}
             </Button>
           </DialogFooter>
         </form>
@@ -1195,19 +1183,21 @@ function DevicesDialog({ open, onClose, devices, connectionName }: {
   devices: any[]
   connectionName: string
 }) {
+  const { t } = useTranslation(['devices'])
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>连接的设备</DialogTitle>
+          <DialogTitle>{t('devices:devicesDialog.title')}</DialogTitle>
           <DialogDescription>
-            {connectionName} 管理的设备列表
+            {t('devices:devicesDialog.description', { connection: connectionName })}
           </DialogDescription>
         </DialogHeader>
         {devices.length === 0 ? (
           <EmptyState
-            title="暂无设备"
-            description="此连接当前没有管理的设备"
+            title={t('devices:devicesDialog.noDevices')}
+            description={t('devices:devicesDialog.noDevicesDesc')}
           />
         ) : (
           <div className="max-h-96 overflow-y-auto space-y-2">
@@ -1224,7 +1214,7 @@ function DevicesDialog({ open, onClose, devices, connectionName }: {
                   </div>
                 </div>
                 <Badge variant={device.status === "online" ? "default" : "secondary"}>
-                  {device.status === "online" ? "在线" : "离线"}
+                  {device.status === "online" ? t('devices:devicesDialog.online') : t('devices:devicesDialog.offline')}
                 </Badge>
               </div>
             ))}

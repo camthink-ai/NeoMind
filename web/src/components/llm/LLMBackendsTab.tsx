@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Plus,
   Loader2,
@@ -50,49 +51,51 @@ interface LlmBackendsTabProps {
   onTestBackend: (id: string) => Promise<BackendTestResult>
 }
 
-// LLM Provider info
-const LLM_PROVIDER_INFO: Record<string, {
+// LLM Provider info function
+function getLlmProviderInfo(t: (key: string) => string): Record<string, {
   name: string
   icon: React.ReactNode
   iconBg: string
   iconColor: string
   description: string
-}> = {
-  ollama: {
-    name: 'Ollama',
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400',
-    iconColor: 'text-green-600',
-    description: '本地开源大模型',
-  },
-  openai: {
-    name: 'OpenAI',
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400',
-    iconColor: 'text-emerald-600',
-    description: 'GPT 系列 API',
-  },
-  anthropic: {
-    name: 'Anthropic',
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400',
-    iconColor: 'text-orange-600',
-    description: 'Claude 系列 API',
-  },
-  google: {
-    name: 'Google',
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
-    iconColor: 'text-blue-600',
-    description: 'Gemini 系列 API',
-  },
-  xai: {
-    name: 'xAI',
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-gray-100 text-gray-700 dark:bg-gray-900/20 dark:text-gray-400',
-    iconColor: 'text-gray-600',
-    description: 'Grok 系列 API',
-  },
+}> {
+  return {
+    ollama: {
+      name: 'Ollama',
+      icon: <Server className="h-6 w-6" />,
+      iconBg: 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400',
+      iconColor: 'text-green-600',
+      description: t('plugins:llm.localOpenSource'),
+    },
+    openai: {
+      name: 'OpenAI',
+      icon: <Server className="h-6 w-6" />,
+      iconBg: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400',
+      iconColor: 'text-emerald-600',
+      description: t('plugins:llm.openaiGpt'),
+    },
+    anthropic: {
+      name: 'Anthropic',
+      icon: <Server className="h-6 w-6" />,
+      iconBg: 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400',
+      iconColor: 'text-orange-600',
+      description: t('plugins:llm.anthropicClaude'),
+    },
+    google: {
+      name: 'Google',
+      icon: <Server className="h-6 w-6" />,
+      iconBg: 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
+      iconColor: 'text-blue-600',
+      description: t('plugins:llm.googleGemini'),
+    },
+    xai: {
+      name: 'xAI',
+      icon: <Server className="h-6 w-6" />,
+      iconBg: 'bg-gray-100 text-gray-700 dark:bg-gray-900/20 dark:text-gray-400',
+      iconColor: 'text-gray-600',
+      description: t('plugins:llm.xaiGrok'),
+    },
+  }
 }
 
 export function LLMBackendsTab({
@@ -101,6 +104,8 @@ export function LLMBackendsTab({
   onDeleteBackend,
   onTestBackend,
 }: LlmBackendsTabProps) {
+  const { t } = useTranslation(['plugins', 'common'])
+  const LLM_PROVIDER_INFO = getLlmProviderInfo(t)
   const [view, setView] = useState<View>('list')
   const [loading, setLoading] = useState(true)
   const [backendTypes, setBackendTypes] = useState<BackendTypeDefinition[]>([])
@@ -159,20 +164,20 @@ export function LLMBackendsTab({
     try {
       await fetchAPI(`/llm-backends/${id}/activate`, { method: 'POST' })
       await loadData()
-      toast({ title: '已激活', description: 'LLM 后端已设为活跃' })
+      toast({ title: t('plugins:llm.activated'), description: t('plugins:llm.activatedDesc') })
     } catch (error) {
-      toast({ title: '激活失败', description: (error as Error).message, variant: 'destructive' })
+      toast({ title: t('plugins:llm.activateFailed'), description: (error as Error).message, variant: 'destructive' })
     }
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个 LLM 后端实例吗？')) return
+    if (!confirm(t('plugins:llm.deleteConfirm2'))) return
     try {
       await onDeleteBackend(id)
       await loadData()
-      toast({ title: '已删除', description: 'LLM 后端实例已删除' })
+      toast({ title: t('plugins:llm.deleted'), description: t('plugins:llm.deletedDesc') })
     } catch (error) {
-      toast({ title: '删除失败', description: (error as Error).message, variant: 'destructive' })
+      toast({ title: t('plugins:llm.deleteFailed'), description: (error as Error).message, variant: 'destructive' })
     }
   }
 
@@ -181,9 +186,9 @@ export function LLMBackendsTab({
       const result = await onTestBackend(id)
       setTestResults(prev => ({ ...prev, [id]: result }))
       if (result.success) {
-        toast({ title: '连接成功', description: `延迟: ${result.latency_ms?.toFixed(0)}ms` })
+        toast({ title: t('plugins:llm.connectionSuccess2', { latency: result.latency_ms?.toFixed(0) || '0' }), description: `${t('plugins:llm.latency')}: ${result.latency_ms?.toFixed(0)}ms` })
       } else {
-        toast({ title: '连接失败', description: result.error, variant: 'destructive' })
+        toast({ title: t('plugins:llm.connectionFailed2', { error: result.error }), description: result.error, variant: 'destructive' })
       }
     } catch (error) {
       const result: BackendTestResult = { success: false, error: (error as Error).message }
@@ -206,9 +211,9 @@ export function LLMBackendsTab({
         {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h2 className="text-2xl font-bold tracking-tight">LLM 后端</h2>
+            <h2 className="text-2xl font-bold tracking-tight">{t('plugins:llmBackends')}</h2>
             <p className="text-muted-foreground text-sm">
-              管理多个 LLM 后端，支持运行时切换
+              {t('plugins:llm.manageBackends')}
             </p>
           </div>
         </div>
@@ -244,14 +249,14 @@ export function LLMBackendsTab({
                 </CardHeader>
                 <CardContent className="text-sm">
                   <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">状态:</span>
+                    <span className="text-muted-foreground">{t('plugins:llm.status')}:</span>
                     <span className={hasActive ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
-                      {hasActive ? "运行中" : "未配置"}
+                      {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
                     </span>
                   </div>
                   <div className="flex justify-between items-center mt-2">
-                    <span className="text-muted-foreground">实例:</span>
-                    <span className="font-medium">{typeInstances.length} 个</span>
+                    <span className="text-muted-foreground">{t('plugins:llm.instances')}:</span>
+                    <span className="font-medium">{t('plugins:llm.instancesCount', { count: typeInstances.length })}</span>
                   </div>
                 </CardContent>
               </Card>
@@ -280,9 +285,9 @@ export function LLMBackendsTab({
                 await loadData()
                 setConfigDialogOpen(false)
                 setEditingInstance(null)
-                toast({ title: '保存成功', description: 'LLM 后端配置已保存' })
+                toast({ title: t('plugins:llm.saveSuccess'), description: t('plugins:llm.saveSuccessDesc') })
               } catch (error) {
-                toast({ title: '保存失败', description: (error as Error).message, variant: 'destructive' })
+                toast({ title: t('plugins:llm.saveFailed'), description: (error as Error).message, variant: 'destructive' })
               } finally {
                 setSaving(false)
               }
@@ -305,7 +310,7 @@ export function LLMBackendsTab({
         <div className="flex items-center gap-4 mb-4">
           <Button variant="ghost" size="sm" onClick={() => setView('list')} className="gap-1">
             <ArrowLeft className="h-4 w-4" />
-            返回
+            {t('plugins:llm.back')}
           </Button>
           <div className="flex items-center gap-3">
             <div className={cn("flex items-center justify-center w-10 h-10 rounded-lg", info.iconBg)}>
@@ -319,7 +324,7 @@ export function LLMBackendsTab({
           <div className="ml-auto">
             <Button onClick={handleCreate}>
               <Plus className="mr-2 h-4 w-4" />
-              添加实例
+              {t('plugins:llm.addInstance')}
             </Button>
           </div>
         </div>
@@ -328,20 +333,20 @@ export function LLMBackendsTab({
         <div className="flex flex-wrap gap-2 text-sm mb-4">
           {selectedType.requires_api_key && (
             <Badge variant="outline" className="text-orange-600 border-orange-600">
-              需要 API Key
+              {t('plugins:llm.requiresApiKey')}
             </Badge>
           )}
           {selectedType.supports_streaming && (
-            <Badge variant="outline">流式输出</Badge>
+            <Badge variant="outline">{t('plugins:llm.streamingOutput')}</Badge>
           )}
           {selectedType.supports_thinking && (
-            <Badge variant="outline">思维链</Badge>
+            <Badge variant="outline">{t('plugins:llm.thinking')}</Badge>
           )}
           {selectedType.supports_multimodal && (
-            <Badge variant="outline">多模态</Badge>
+            <Badge variant="outline">{t('plugins:llm.multimodal')}</Badge>
           )}
           <Badge variant="outline" className="text-muted-foreground">
-            默认模型: {selectedType.default_model}
+            {t('plugins:llm.defaultModel')}: {selectedType.default_model}
           </Badge>
         </div>
 
@@ -352,13 +357,13 @@ export function LLMBackendsTab({
               <div className={cn("flex items-center justify-center w-16 h-16 rounded-lg mb-4", info.iconBg)}>
                 {info.icon}
               </div>
-              <h3 className="text-lg font-semibold mb-1">暂无 {info.name} 实例</h3>
+              <h3 className="text-lg font-semibold mb-1">{t('plugins:llm.noInstanceYet', { name: info.name })}</h3>
               <p className="text-sm text-muted-foreground mb-4">
-                配置 {info.name} 连接以开始使用
+                {t('plugins:llm.configureToStart', { name: info.name })}
               </p>
               <Button onClick={handleCreate}>
                 <Plus className="mr-2 h-4 w-4" />
-                添加 {info.name} 实例
+                {t('plugins:llm.addInstance2', { name: info.name })}
               </Button>
             </CardContent>
           </Card>
@@ -381,7 +386,7 @@ export function LLMBackendsTab({
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <CardTitle className="text-base">{instance.name}</CardTitle>
-                          {isActive && <Badge variant="default" className="text-xs">活跃</Badge>}
+                          {isActive && <Badge variant="default" className="text-xs">{t('plugins:llm.active')}</Badge>}
                         </div>
                         <CardDescription className="font-mono text-xs">{instance.model}</CardDescription>
                       </div>
@@ -394,11 +399,11 @@ export function LLMBackendsTab({
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => handleEdit(instance)}>
                             <Edit className="mr-2 h-4 w-4" />
-                            编辑
+                            {t('plugins:llm.edit')}
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleTest(instance.id)}>
                             <TestTube className="mr-2 h-4 w-4" />
-                            测试连接
+                            {t('plugins:llm.testConnection2')}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
@@ -407,7 +412,7 @@ export function LLMBackendsTab({
                             className="text-destructive focus:text-destructive"
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
-                            删除
+                            {t('plugins:llm.delete')}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -418,7 +423,7 @@ export function LLMBackendsTab({
                     <div className="space-y-2 text-sm">
                       {instance.endpoint && (
                         <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">端点:</span>
+                          <span className="text-muted-foreground">{t('plugins:llm.endpoint')}:</span>
                           <span className="font-mono text-xs truncate max-w-[200px]">{instance.endpoint}</span>
                         </div>
                       )}
@@ -428,18 +433,18 @@ export function LLMBackendsTab({
                           "text-xs",
                           instance.api_key_configured ? "text-green-600" : "text-muted-foreground"
                         )}>
-                          {instance.api_key_configured ? "已配置" : "未配置"}
+                          {instance.api_key_configured ? t('plugins:llm.configured') : t('plugins:llm.notConfigured2')}
                         </span>
                       </div>
                       <div className="flex gap-1 flex-wrap mt-2">
                         {instance.capabilities.supports_streaming && (
-                          <Badge variant="outline" className="text-xs">流式</Badge>
+                          <Badge variant="outline" className="text-xs">{t('plugins:llm.streaming')}</Badge>
                         )}
                         {instance.capabilities.supports_thinking && (
-                          <Badge variant="outline" className="text-xs">思维链</Badge>
+                          <Badge variant="outline" className="text-xs">{t('plugins:llm.thinking')}</Badge>
                         )}
                         {instance.capabilities.supports_multimodal && (
-                          <Badge variant="outline" className="text-xs">多模态</Badge>
+                          <Badge variant="outline" className="text-xs">{t('plugins:llm.multimodal')}</Badge>
                         )}
                       </div>
                       {testResult && (
@@ -450,8 +455,8 @@ export function LLMBackendsTab({
                             : "bg-red-50 text-red-700 dark:bg-red-900 dark:text-red-300"
                         )}>
                           {testResult.success
-                            ? `连接成功 (${testResult.latency_ms?.toFixed(0)}ms)`
-                            : `连接失败: ${testResult.error}`}
+                            ? t('plugins:llm.connectionSuccess2', { latency: testResult.latency_ms?.toFixed(0) || '0' })
+                            : t('plugins:llm.connectionFailed2', { error: testResult.error })}
                         </div>
                       )}
                     </div>
@@ -465,7 +470,7 @@ export function LLMBackendsTab({
                         disabled={isActive}
                       />
                       <span className="text-sm text-muted-foreground">
-                        {isActive ? "当前活跃" : "设为活跃"}
+                        {isActive ? t('plugins:llm.currentActive') : t('plugins:llm.setAsActive')}
                       </span>
                     </div>
                   </CardFooter>
@@ -496,9 +501,9 @@ export function LLMBackendsTab({
                 await loadData()
                 setConfigDialogOpen(false)
                 setEditingInstance(null)
-                toast({ title: '保存成功', description: 'LLM 后端配置已保存' })
+                toast({ title: t('plugins:llm.saveSuccess'), description: t('plugins:llm.saveSuccessDesc') })
               } catch (error) {
-                toast({ title: '保存失败', description: (error as Error).message, variant: 'destructive' })
+                toast({ title: t('plugins:llm.saveFailed'), description: (error as Error).message, variant: 'destructive' })
               } finally {
                 setSaving(false)
               }
@@ -531,13 +536,16 @@ function LLMConfigDialog({
   onSave,
   saving,
 }: LLMConfigDialogProps) {
+  const { t } = useTranslation(['plugins', 'common'])
+  const LLM_PROVIDER_INFO = getLlmProviderInfo(t)
+
   const [name, setName] = useState(editing?.name || '')
   const [endpoint, setEndpoint] = useState(editing?.endpoint || type.default_endpoint || '')
   const [model, setModel] = useState(editing?.model || type.default_model || '')
   const [apiKey, setApiKey] = useState('')
   const [temperature, setTemperature] = useState(editing?.temperature?.toString() || '0.7')
   const [topP, setTopP] = useState(editing?.top_p?.toString() || '0.9')
-  const [maxTokens, setMaxTokens] = useState(editing?.max_tokens?.toString() || '2048')
+  const [maxTokens, setMaxTokens] = useState(editing?.max_tokens?.toString() || '')
 
   useEffect(() => {
     if (open) {
@@ -547,7 +555,7 @@ function LLMConfigDialog({
       setApiKey('')
       setTemperature(editing?.temperature?.toString() || '0.7')
       setTopP(editing?.top_p?.toString() || '0.9')
-      setMaxTokens(editing?.max_tokens?.toString() || '2048')
+      setMaxTokens(editing?.max_tokens?.toString() || '')
     }
   }, [open, editing, type])
 
@@ -564,7 +572,7 @@ function LLMConfigDialog({
         api_key: apiKey.trim() || undefined,
         temperature: parseFloat(temperature),
         top_p: parseFloat(topP),
-        max_tokens: parseInt(maxTokens),
+        max_tokens: maxTokens ? parseInt(maxTokens) : undefined,
       }
       await onSave(true, updateData)
     } else {
@@ -576,7 +584,7 @@ function LLMConfigDialog({
         api_key: apiKey.trim() || undefined,
         temperature: parseFloat(temperature),
         top_p: parseFloat(topP),
-        max_tokens: parseInt(maxTokens),
+        max_tokens: maxTokens ? parseInt(maxTokens) : undefined,
       }
       await onSave(false, createData)
     }
@@ -594,28 +602,28 @@ function LLMConfigDialog({
             <div className={cn("p-2 rounded-lg", info.iconBg)}>
               {info.icon}
             </div>
-            {editing ? "编辑" : "添加"} {info.name} 实例
+            {t('plugins:llm.editInstance', { name: info.name })}
           </DialogTitle>
           <DialogDescription>
-            {editing ? "修改" : "配置"} {info.name} LLM 后端连接信息
+            {t('plugins:llm.configureInstance', { name: info.name })}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <Label htmlFor="name">显示名称 *</Label>
+            <Label htmlFor="name">{t('plugins:llm.displayName')} *</Label>
             <Input
               id="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={`我的 ${info.name}`}
+              placeholder={t('plugins:llm.myName', { name: info.name })}
               required
             />
           </div>
 
           <div>
             <Label htmlFor="endpoint">
-              API 端点 {!type.requires_api_key && "(可选)"}
+              {t('plugins:llm.apiEndpoint')} {!type.requires_api_key && t('plugins:llm.endpointOptional')}
             </Label>
             <Input
               id="endpoint"
@@ -626,7 +634,7 @@ function LLMConfigDialog({
           </div>
 
           <div>
-            <Label htmlFor="model">模型名称 *</Label>
+            <Label htmlFor="model">{t('plugins:llm.modelName')} *</Label>
             <Input
               id="model"
               value={model}
@@ -638,7 +646,7 @@ function LLMConfigDialog({
 
           {type.requires_api_key && (
             <div>
-              <Label htmlFor="apiKey">API Key {editing && "(留空保持不变)"}</Label>
+              <Label htmlFor="apiKey">{t('plugins:llm.apiKey')} {editing && t('plugins:llm.apiKeyKeep2')}</Label>
               <Input
                 id="apiKey"
                 type="password"
@@ -651,11 +659,11 @@ function LLMConfigDialog({
 
           <details className="pt-2">
             <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
-              高级设置
+              {t('plugins:llm.advancedSettings')}
             </summary>
             <div className="mt-3 space-y-3">
               <div>
-                <Label htmlFor="temperature">Temperature (0-2)</Label>
+                <Label htmlFor="temperature">{t('plugins:llm.temperature')} (0-2)</Label>
                 <Input
                   id="temperature"
                   type="number"
@@ -667,7 +675,7 @@ function LLMConfigDialog({
                 />
               </div>
               <div>
-                <Label htmlFor="topP">Top-P (0-1)</Label>
+                <Label htmlFor="topP">{t('plugins:llm.topP')} (0-1)</Label>
                 <Input
                   id="topP"
                   type="number"
@@ -679,7 +687,7 @@ function LLMConfigDialog({
                 />
               </div>
               <div>
-                <Label htmlFor="maxTokens">最大 Token 数</Label>
+                <Label htmlFor="maxTokens">{t('plugins:llm.maxTokens')}</Label>
                 <Input
                   id="maxTokens"
                   type="number"
@@ -693,10 +701,10 @@ function LLMConfigDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
-              取消
+              {t('plugins:llm.cancel')}
             </Button>
             <Button type="submit" disabled={saving || !name.trim() || !model.trim()}>
-              {saving ? "保存中..." : "保存"}
+              {saving ? t('plugins:llm.saving') : t('plugins:llm.save')}
             </Button>
           </DialogFooter>
         </form>

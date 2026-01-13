@@ -57,7 +57,7 @@ endpoint = "http://localhost:11434"
 
 # 生成参数 (可选)
 # temperature = 0.7        # 0.0-2.0, 越高越随机
-# max_tokens = 4096        # 最大生成 token 数
+# max_tokens = 0           # 最大生成 token 数 (0 或不设置 = 无限制，让模型自然输出)
 # top_p = 0.9              # 0.0-1.0, 核采样
 # frequency_penalty = 0.0  # -2.0-2.0, 降低重复频率
 # presence_penalty = 0.0   # -2.0-2.0, 鼓励新话题

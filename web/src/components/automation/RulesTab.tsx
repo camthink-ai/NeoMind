@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -31,6 +32,7 @@ interface RulesTabProps {
 }
 
 export function RulesTab({ onRefresh }: RulesTabProps) {
+  const { t } = useTranslation(['automation', 'common'])
   const [rules, setRules] = useState<Rule[]>([])
   const [loading, setLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -71,7 +73,7 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
   }
 
   const handleDeleteRule = async (id: string) => {
-    if (!confirm('确定要删除这个规则吗？')) return
+    if (!confirm(t('automation:deleteConfirm'))) return
     try {
       await api.deleteRule(id)
       await fetchRules()
@@ -87,7 +89,7 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
       const result = await api.validateRuleDSL(newRuleDSL)
       setValidation(result)
     } catch (error) {
-      setValidation({ valid: false, errors: ['验证失败'] })
+      setValidation({ valid: false, errors: [t('automation:dslInvalid')] })
     } finally {
       setValidating(false)
     }
@@ -142,9 +144,9 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
     const now = new Date()
     const diff = now.getTime() - date.getTime()
 
-    if (diff < 60000) return '刚刚'
-    if (diff < 3600000) return `${Math.floor(diff / 60000)} 分钟前`
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`
+    if (diff < 60000) return t('automation:justNow')
+    if (diff < 3600000) return `${Math.floor(diff / 60000)} ${t('automation:minutesAgo')}`
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)} ${t('automation:hoursAgo')}`
 
     return date.toLocaleString('zh-CN', {
       month: '2-digit',
@@ -159,14 +161,14 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
       {/* Header with actions */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-semibold">规则引擎</h2>
+          <h2 className="text-xl font-semibold">{t('automation:rulesTitle')}</h2>
           <p className="text-sm text-muted-foreground">
-            基于条件的自动化触发规则
+            {t('automation:rulesDesc')}
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          新建规则
+          {t('automation:rulesAdd')}
         </Button>
       </div>
 
@@ -174,18 +176,18 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>规则名称</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>触发次数</TableHead>
-              <TableHead>最后触发</TableHead>
-              <TableHead className="text-right">操作</TableHead>
+              <TableHead>{t('automation:ruleName')}</TableHead>
+              <TableHead>{t('automation:enabled')}</TableHead>
+              <TableHead>{t('automation:todayTriggered')}</TableHead>
+              <TableHead>{t('automation:lastExecution')}</TableHead>
+              <TableHead className="text-right">{t('automation:actions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                  加载中...
+                  {t('automation:loading')}
                 </TableCell>
               </TableRow>
             ) : rules.length === 0 ? (
@@ -193,10 +195,10 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
                 <TableCell colSpan={5} className="text-center py-8">
                   <div className="flex flex-col items-center gap-3">
                     <Zap className="h-12 w-12 text-muted-foreground/50" />
-                    <p className="text-muted-foreground">暂无规则</p>
+                    <p className="text-muted-foreground">{t('automation:noRules')}</p>
                     <Button variant="outline" size="sm" onClick={() => setCreateDialogOpen(true)}>
                       <Plus className="h-4 w-4 mr-2" />
-                      创建第一个规则
+                      {t('automation:createFirstRule')}
                     </Button>
                   </div>
                 </TableCell>
@@ -219,7 +221,7 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
                         onCheckedChange={() => handleToggleRule(rule)}
                       />
                       <Badge variant={rule.enabled ? 'default' : 'secondary'}>
-                        {rule.enabled ? '启用' : '禁用'}
+                        {rule.enabled ? t('automation:enabled') : t('automation:disabled')}
                       </Badge>
                     </div>
                   </TableCell>
@@ -236,7 +238,7 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
                         {formatTimestamp(rule.last_triggered)}
                       </div>
                     ) : (
-                      <span className="text-xs text-muted-foreground">从未触发</span>
+                      <span className="text-xs text-muted-foreground">{t('automation:noHistory')}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -268,48 +270,46 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>创建新规则</DialogTitle>
+            <DialogTitle>{t('automation:createRuleTitle')}</DialogTitle>
             <DialogDescription>
-              使用规则 DSL 定义触发条件和执行动作
+              {t('automation:createRuleDesc')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="rule-name">规则名称</Label>
+              <Label htmlFor="rule-name">{t('automation:ruleName')}</Label>
               <Input
                 id="rule-name"
                 value={newRuleName}
                 onChange={(e) => setNewRuleName(e.target.value)}
-                placeholder="例如: 高温开空调"
+                placeholder={t('automation:ruleNamePlaceholder')}
               />
             </div>
             <div>
-              <Label htmlFor="rule-dsl">规则 DSL</Label>
+              <Label htmlFor="rule-dsl">{t('automation:ruleDSL')}</Label>
               <Textarea
                 id="rule-dsl"
                 value={newRuleDSL}
                 onChange={(e) => setNewRuleDSL(e.target.value)}
-                placeholder="// 示例规则
-WHEN sensor.temp > 30
-THEN device.ac.turn_on()"
+                placeholder={t('automation:ruleDSLPlaceholder')}
                 className="min-h-[120px] font-mono text-sm"
               />
             </div>
             {validation && (
               <div className={validation.valid ? "text-green-600 text-sm" : "text-red-600 text-sm"}>
-                {validation.valid ? "✓ DSL 语法正确" : `✗ 验证失败: ${validation.errors?.join(', ')}`}
+                {validation.valid ? t('automation:dslValid') : `✗ ${t('automation:dslInvalid')}: ${validation.errors?.join(', ')}`}
               </div>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
-              取消
+              {t('automation:cancel')}
             </Button>
             <Button variant="outline" onClick={handleValidate} disabled={validating || !newRuleDSL.trim()}>
-              {validating ? '验证中...' : '验证 DSL'}
+              {validating ? t('automation:validating') : t('automation:validateDSL')}
             </Button>
             <Button onClick={handleCreateRule} disabled={!newRuleName.trim() || !newRuleDSL.trim()}>
-              创建规则
+              {t('automation:saveRule')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -319,15 +319,15 @@ THEN device.ac.turn_on()"
       <Dialog open={!!editRule} onOpenChange={(open) => !open && setEditRule(null)}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>编辑规则</DialogTitle>
+            <DialogTitle>{t('automation:editRuleTitle')}</DialogTitle>
             <DialogDescription>
-              修改规则名称和 DSL 定义
+              {t('automation:editRuleDesc')}
             </DialogDescription>
           </DialogHeader>
           {editRule && (
             <div className="space-y-4">
               <div>
-                <Label htmlFor="edit-rule-name">规则名称</Label>
+                <Label htmlFor="edit-rule-name">{t('automation:ruleName')}</Label>
                 <Input
                   id="edit-rule-name"
                   value={editRule.name}
@@ -335,7 +335,7 @@ THEN device.ac.turn_on()"
                 />
               </div>
               <div>
-                <Label htmlFor="edit-rule-dsl">规则 DSL</Label>
+                <Label htmlFor="edit-rule-dsl">{t('automation:ruleDSL')}</Label>
                 <Textarea
                   id="edit-rule-dsl"
                   value={editRule.dsl}
@@ -347,10 +347,10 @@ THEN device.ac.turn_on()"
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditRule(null)}>
-              取消
+              {t('automation:cancel')}
             </Button>
             <Button onClick={handleEditRule}>
-              保存修改
+              {t('automation:saveChanges')}
             </Button>
           </DialogFooter>
         </DialogContent>

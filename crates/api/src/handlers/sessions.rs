@@ -119,11 +119,54 @@ pub async fn delete_session_handler(
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     state.session_manager.remove_session(&id).await
-        .map_err(|_| ErrorResponse::not_found("Session"))?;
+        .map_err(|e| {
+            // Check if it's a NotFound error
+            if format!("{}", e).contains("Session:") || format!("{}", e).contains("not found") {
+                ErrorResponse::not_found("Session")
+            } else {
+                // Other error - return the actual message
+                ErrorResponse::with_message(e.to_string())
+            }
+        })?;
 
     Ok(Json(ApiResponse::success(json!({
         "deleted": true,
         "sessionId": id,
+    }))))
+}
+
+/// Request body for updating session.
+#[derive(Debug, Deserialize)]
+pub struct UpdateSessionRequest {
+    /// Session title (optional)
+    pub title: Option<String>,
+}
+
+/// Update a session (e.g., rename).
+pub async fn update_session_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateSessionRequest>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    state.session_manager.update_session_title(&id, req.title).await
+        .map_err(|e| ErrorResponse::with_message(e.to_string()))?;
+
+    Ok(Json(ApiResponse::success(json!({
+        "sessionId": id,
+        "updated": true,
+    }))))
+}
+
+/// Clean up invalid sessions (dirty data).
+/// Removes sessions that appear in the list but don't have valid data.
+pub async fn cleanup_sessions_handler(
+    State(state): State<ServerState>,
+) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    let cleaned_count = state.session_manager.cleanup_invalid_sessions().await;
+
+    Ok(Json(ApiResponse::success(json!({
+        "cleaned": cleaned_count,
+        "message": format!("Cleaned up {} invalid session(s)", cleaned_count),
     }))))
 }
 
@@ -279,75 +322,151 @@ async fn handle_ws_socket(
                                         .clone();
                                     drop(session_id_guard);
 
+                                    // Filter out control messages (commands starting with '/')
+                                    // These are not user messages and should not be sent to the LLM
+                                    let message = chat_req.message.trim();
+                                    if message.starts_with('/') {
+                                        tracing::info!(
+                                            "Ignoring control message: '{}', length={}",
+                                            message,
+                                            message.chars().count()
+                                        );
+                                        // Control messages are handled by the sessionId field above,
+                                        // no need to process them through the LLM
+                                        continue;
+                                    }
+
                                     // Try event streaming first (rich response with tool calls)
                                     match state.session_manager.process_message_events(&session_id, &chat_req.message).await {
                                         Ok(mut stream) => {
                                             let mut error_occurred = false;
+                                            let mut end_event_sent = false;
+                                            let mut event_count = 0u32;
 
-                                            while let Some(event) = StreamExt::next(&mut stream).await {
-                                                // Convert AgentEvent to JSON manually
-                                                let event_json = match &event {
-                                                    AgentEvent::Thinking { content } => {
-                                                        json!({
-                                                            "type": "Thinking",
-                                                            "content": content,
-                                                            "sessionId": session_id,
-                                                        })
+                                            // Add timeout for each stream operation (5 minutes max per event)
+                                            let stream_timeout = Duration::from_secs(300);
+
+                                            loop {
+                                                // Apply timeout to each next() call
+                                                let next_event = tokio::time::timeout(stream_timeout, StreamExt::next(&mut stream)).await;
+
+                                                match next_event {
+                                                    Ok(Some(event)) => {
+                                                        event_count += 1;
+                                                        // Convert AgentEvent to JSON manually
+                                                        let event_json = match &event {
+                                                            AgentEvent::Thinking { content } => {
+                                                                println!("[sessions.rs] Sending Thinking event: {} chars", content.chars().count());
+                                                                json!({
+                                                                    "type": "Thinking",
+                                                                    "content": content,
+                                                                    "sessionId": session_id,
+                                                                })
+                                                            }
+                                                            AgentEvent::Content { content } => {
+                                                                println!("[sessions.rs] Sending Content event: {} chars (event #{})",
+                                                                    content.chars().count(), event_count);
+                                                                json!({
+                                                                    "type": "Content",
+                                                                    "content": content,
+                                                                    "sessionId": session_id,
+                                                                })
+                                                            }
+                                                            AgentEvent::ToolCallStart { tool, arguments } => {
+                                                                println!("[sessions.rs] Sending ToolCallStart event: {}", tool);
+                                                                json!({
+                                                                    "type": "ToolCallStart",
+                                                                    "tool": tool,
+                                                                    "arguments": arguments,
+                                                                    "sessionId": session_id,
+                                                                })
+                                                            }
+                                                            AgentEvent::ToolCallEnd { tool, result, success } => {
+                                                                println!("[sessions.rs] Sending ToolCallEnd event: {}, success: {}", tool, success);
+                                                                json!({
+                                                                    "type": "ToolCallEnd",
+                                                                    "tool": tool,
+                                                                    "result": result,
+                                                                    "success": success,
+                                                                    "sessionId": session_id,
+                                                                })
+                                                            }
+                                                            AgentEvent::Error { message } => {
+                                                                println!("[sessions.rs] Sending Error event: {}", message);
+                                                                json!({
+                                                                    "type": "Error",
+                                                                    "message": message,
+                                                                    "sessionId": session_id,
+                                                                })
+                                                            }
+                                                            AgentEvent::End => {
+                                                                println!("[sessions.rs] Sending End event (total events: {})", event_count);
+                                                                end_event_sent = true;
+                                                                json!({
+                                                                    "type": "end",
+                                                                    "sessionId": session_id,
+                                                                })
+                                                            }
+                                                        };
+
+                                                        if socket.send(AxumMessage::Text(event_json.to_string())).await.is_err() {
+                                                            println!("[sessions.rs] Failed to send event, error_occurred=true");
+                                                            error_occurred = true;
+                                                            // Try to send end event before breaking
+                                                            if !end_event_sent {
+                                                                let end_json = json!({
+                                                                    "type": "end",
+                                                                    "sessionId": session_id,
+                                                                });
+                                                                let _ = socket.send(AxumMessage::Text(end_json.to_string())).await;
+                                                            }
+                                                            break;
+                                                        }
                                                     }
-                                                    AgentEvent::Content { content } => {
-                                                        json!({
-                                                            "type": "Content",
-                                                            "content": content,
-                                                            "sessionId": session_id,
-                                                        })
+                                                    Ok(None) => {
+                                                        // Stream ended naturally
+                                                        println!("[sessions.rs] Stream ended naturally (total events: {})", event_count);
+                                                        break;
                                                     }
-                                                    AgentEvent::ToolCallStart { tool, arguments } => {
-                                                        json!({
-                                                            "type": "ToolCallStart",
-                                                            "tool": tool,
-                                                            "arguments": arguments,
-                                                            "sessionId": session_id,
-                                                        })
-                                                    }
-                                                    AgentEvent::ToolCallEnd { tool, result, success } => {
-                                                        json!({
-                                                            "type": "ToolCallEnd",
-                                                            "tool": tool,
-                                                            "result": result,
-                                                            "success": success,
-                                                            "sessionId": session_id,
-                                                        })
-                                                    }
-                                                    AgentEvent::Error { message } => {
-                                                        json!({
+                                                    Err(_) => {
+                                                        // Timeout occurred
+                                                        println!("[sessions.rs] Stream timeout after {:?}", stream_timeout);
+                                                        let timeout_json = json!({
                                                             "type": "Error",
-                                                            "message": message,
+                                                            "message": "Stream timeout: response took too long",
                                                             "sessionId": session_id,
-                                                        })
+                                                        });
+                                                        if socket.send(AxumMessage::Text(timeout_json.to_string())).await.is_err() {
+                                                            error_occurred = true;
+                                                        }
+                                                        // Try to send end event after timeout
+                                                        if !end_event_sent {
+                                                            let end_json = json!({
+                                                                "type": "end",
+                                                                "sessionId": session_id,
+                                                            });
+                                                            let _ = socket.send(AxumMessage::Text(end_json.to_string())).await;
+                                                        }
+                                                        break;
                                                     }
-                                                    AgentEvent::End => {
-                                                        json!({
-                                                            "type": "end",
-                                                            "sessionId": session_id,
-                                                        })
-                                                    }
-                                                };
+                                                }
+                                            }
 
-                                                if socket.send(AxumMessage::Text(event_json.to_string())).await.is_err() {
+                                            // If stream ended without End event, try to send it
+                                            if !end_event_sent && !error_occurred {
+                                                println!("[sessions.rs] Stream ended without End event, sending it now");
+                                                let end_json = json!({
+                                                    "type": "end",
+                                                    "sessionId": session_id,
+                                                });
+                                                if socket.send(AxumMessage::Text(end_json.to_string())).await.is_err() {
+                                                    println!("[sessions.rs] Failed to send late end event");
                                                     error_occurred = true;
-                                                    break;
                                                 }
                                             }
 
                                             if !error_occurred {
-                                                let end_msg = json!({
-                                                    "type": "end",
-                                                    "sessionId": session_id,
-                                                }).to_string();
-                                                if socket.send(AxumMessage::Text(end_msg)).await.is_err() {
-                                                    // ignore
-                                                }
-
+                                                // end event is already sent in the loop when AgentEvent::End is received
                                                 // Persist history after stream completes
                                                 if let Err(e) = state.session_manager.persist_history(&session_id).await {
                                                     tracing::warn!(category = "session", error = %e, "Failed to persist history");

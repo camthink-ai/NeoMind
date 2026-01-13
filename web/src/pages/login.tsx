@@ -56,7 +56,7 @@ export function LoginPage() {
     try {
       await login(username, password, rememberMe)
     } catch (err) {
-      setError(translateError(err instanceof Error ? err.message : "登录失败", t))
+      setError(translateError(err instanceof Error ? err.message : String(t('auth:loginFailed')), t))
     } finally {
       setIsLoading(false)
     }

@@ -36,6 +36,8 @@ pub use sessions::{
     get_session_handler,
     get_session_history_handler,
     list_sessions_handler,
+    update_session_handler,
+    cleanup_sessions_handler,
     chat_handler,
     ws_chat_handler,
 };

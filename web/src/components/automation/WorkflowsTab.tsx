@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -24,6 +25,7 @@ interface WorkflowsTabProps {
 }
 
 export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
+  const { t } = useTranslation(['automation', 'common'])
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loading, setLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -61,7 +63,7 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
   }
 
   const handleDeleteWorkflow = async (id: string) => {
-    if (!confirm('确定要删除这个工作流吗？')) return
+    if (!confirm(t('automation:deleteConfirm'))) return
     try {
       await api.deleteWorkflow(id)
       await fetchWorkflows()
@@ -75,7 +77,7 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
     setExecutingId(id)
     try {
       const result = await api.executeWorkflow(id)
-      alert(`工作流已开始执行: ${result.execution_id}`)
+      alert(`${t('automation:workflowCompleted')}: ${result.execution_id}`)
     } catch (error) {
       console.error('Failed to execute workflow:', error)
     } finally {
@@ -155,30 +157,30 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
       {/* Header with actions */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-semibold">工作流</h2>
+          <h2 className="text-xl font-semibold">{t('automation:workflowsTitle')}</h2>
           <p className="text-sm text-muted-foreground">
-            多步骤自动化流程编排
+            {t('automation:workflowsDesc')}
           </p>
         </div>
         <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
-          新建工作流
+          {t('automation:workflowsAdd')}
         </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? (
           <div className="col-span-full py-8 text-center text-muted-foreground">
-            加载中...
+            {t('automation:loading')}
           </div>
         ) : workflows.length === 0 ? (
           <div className="col-span-full py-8">
             <div className="flex flex-col items-center gap-3">
               <WorkflowIcon className="h-12 w-12 text-muted-foreground/50" />
-              <p className="text-muted-foreground">暂无工作流</p>
+              <p className="text-muted-foreground">{t('automation:noWorkflows')}</p>
               <Button variant="outline" size="sm" onClick={() => setCreateDialogOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />
-                创建第一个工作流
+                {t('automation:createFirstWorkflow')}
               </Button>
             </div>
           </div>
@@ -205,14 +207,14 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
                 {/* Triggers */}
                 {workflow.triggers && workflow.triggers.length > 0 && (
                 <div>
-                  <div className="text-xs text-muted-foreground mb-2">触发器</div>
+                  <div className="text-xs text-muted-foreground mb-2">{t('automation:triggers')}</div>
                   <div className="flex flex-wrap gap-1">
                     {workflow.triggers.map((trigger, i) => (
                       <Badge key={i} variant="outline" className="text-xs">
-                        {trigger.type === 'manual' && '手动'}
-                        {trigger.type === 'event' && '事件'}
-                        {trigger.type === 'schedule' && '定时'}
-                        {trigger.type === 'device_state' && '设备状态'}
+                        {trigger.type === 'manual' && t('automation:manual')}
+                        {trigger.type === 'event' && t('automation:event')}
+                        {trigger.type === 'schedule' && t('automation:scheduleLabel')}
+                        {trigger.type === 'device_state' && t('automation:deviceState')}
                       </Badge>
                     ))}
                   </div>
@@ -222,7 +224,7 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
                 {/* Steps */}
                 {workflow.steps && workflow.steps.length > 0 && (
                 <div>
-                  <div className="text-xs text-muted-foreground mb-2">步骤</div>
+                  <div className="text-xs text-muted-foreground mb-2">{t('automation:stepsLabel')}</div>
                   <div className="flex items-center gap-1 overflow-x-auto pb-1">
                     {workflow.steps.slice(0, 4).map((step, i) => (
                       <div key={step.id} className="flex items-center">
@@ -246,8 +248,8 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
 
                 {/* Stats */}
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
-                  <span>执行次数: {workflow.execution_count || 0}</span>
-                  <span>更新于: {formatTimestamp(workflow.updated_at)}</span>
+                  <span>{t('automation:executionCount')}: {workflow.execution_count || 0}</span>
+                  <span>{t('automation:updatedAt')}: {formatTimestamp(workflow.updated_at)}</span>
                 </div>
 
                 {/* Actions */}
@@ -260,7 +262,7 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
                     disabled={!workflow.enabled || executingId === workflow.id}
                   >
                     <Play className="h-3 w-3 mr-1" />
-                    {executingId === workflow.id ? '执行中...' : '执行'}
+                    {executingId === workflow.id ? t('automation:executing') : t('automation:execute')}
                   </Button>
                   <Button
                     variant="ghost"
@@ -287,38 +289,38 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>创建新工作流</DialogTitle>
+            <DialogTitle>{t('automation:createWorkflow')}</DialogTitle>
             <DialogDescription>
-              定义多步骤自动化流程
+              {t('automation:workflowsDesc')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="workflow-name">工作流名称</Label>
+              <Label htmlFor="workflow-name">{t('automation:workflowName')}</Label>
               <Input
                 id="workflow-name"
                 value={newWorkflowName}
                 onChange={(e) => setNewWorkflowName(e.target.value)}
-                placeholder="例如: 每日晨间唤醒"
+                placeholder={t('automation:workflowNamePlaceholder')}
               />
             </div>
             <div>
-              <Label htmlFor="workflow-description">描述</Label>
+              <Label htmlFor="workflow-description">{t('automation:description')}</Label>
               <Textarea
                 id="workflow-description"
                 value={newWorkflowDescription}
                 onChange={(e) => setNewWorkflowDescription(e.target.value)}
-                placeholder="描述这个工作流的作用..."
+                placeholder={t('automation:workflowDescriptionPlaceholder')}
                 className="min-h-[80px]"
               />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
-              取消
+              {t('automation:cancel')}
             </Button>
             <Button onClick={handleCreateWorkflow} disabled={!newWorkflowName.trim()}>
-              创建工作流
+              {t('automation:createWorkflow')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -328,15 +330,15 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
       <Dialog open={!!editWorkflow} onOpenChange={(open) => !open && setEditWorkflow(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>编辑工作流</DialogTitle>
+            <DialogTitle>{t('automation:edit')}</DialogTitle>
             <DialogDescription>
-              修改工作流配置
+              {t('automation:workflowsDesc')}
             </DialogDescription>
           </DialogHeader>
           {editWorkflow && (
             <div className="space-y-4">
               <div>
-                <Label htmlFor="edit-workflow-name">工作流名称</Label>
+                <Label htmlFor="edit-workflow-name">{t('automation:workflowName')}</Label>
                 <Input
                   id="edit-workflow-name"
                   value={editWorkflow.name}
@@ -344,7 +346,7 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
                 />
               </div>
               <div>
-                <Label htmlFor="edit-workflow-description">描述</Label>
+                <Label htmlFor="edit-workflow-description">{t('automation:description')}</Label>
                 <Textarea
                   id="edit-workflow-description"
                   value={editWorkflow.description || ''}
@@ -356,10 +358,10 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditWorkflow(null)}>
-              取消
+              {t('automation:cancel')}
             </Button>
             <Button onClick={handleEditWorkflow}>
-              保存修改
+              {t('automation:saveChanges')}
             </Button>
           </DialogFooter>
         </DialogContent>

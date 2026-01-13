@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { useTranslation } from 'react-i18next'
 import {
   Dialog,
   DialogContent,
@@ -23,77 +24,79 @@ import {
 import { Loader2 } from 'lucide-react'
 import type { LlmBackendInstance, LlmBackendType, CreateLlmBackendRequest, UpdateLlmBackendRequest, BackendTypeDefinition } from '@/types'
 
-// Backend type configurations
-const BACKEND_TYPES: Record<LlmBackendType, BackendTypeDefinition> = {
-  ollama: {
-    id: 'ollama',
-    name: 'Ollama',
-    description: '本地开源模型运行时',
-    default_model: 'qwen3-vl:2b',
-    default_endpoint: 'http://localhost:11434',
-    requires_api_key: false,
-    supports_streaming: true,
-    supports_thinking: true,
-    supports_multimodal: true,
-  },
-  openai: {
-    id: 'openai',
-    name: 'OpenAI',
-    description: 'OpenAI GPT 模型',
-    default_model: 'gpt-4',
-    default_endpoint: 'https://api.openai.com/v1',
-    requires_api_key: true,
-    supports_streaming: true,
-    supports_thinking: false,
-    supports_multimodal: true,
-  },
-  anthropic: {
-    id: 'anthropic',
-    name: 'Anthropic',
-    description: 'Anthropic Claude 模型',
-    default_model: 'claude-3-opus-20240229',
-    default_endpoint: 'https://api.anthropic.com/v1',
-    requires_api_key: true,
-    supports_streaming: true,
-    supports_thinking: false,
-    supports_multimodal: true,
-  },
-  google: {
-    id: 'google',
-    name: 'Google',
-    description: 'Google Gemini 模型',
-    default_model: 'gemini-pro',
-    default_endpoint: 'https://generativelanguage.googleapis.com/v1',
-    requires_api_key: true,
-    supports_streaming: true,
-    supports_thinking: false,
-    supports_multimodal: true,
-  },
-  xai: {
-    id: 'xai',
-    name: 'xAI',
-    description: 'xAI Grok 模型',
-    default_model: 'grok-beta',
-    default_endpoint: 'https://api.x.ai/v1',
-    requires_api_key: true,
-    supports_streaming: true,
-    supports_thinking: false,
-    supports_multimodal: false,
-  },
+// Helper function to get backend type definitions with translations
+function getBackendTypes(t: (key: string) => string): Record<LlmBackendType, BackendTypeDefinition> {
+  return {
+    ollama: {
+      id: 'ollama',
+      name: 'Ollama',
+      description: t('plugins:llm.localOpenSource'),
+      default_model: 'qwen3-vl:2b',
+      default_endpoint: 'http://localhost:11434',
+      requires_api_key: false,
+      supports_streaming: true,
+      supports_thinking: true,
+      supports_multimodal: true,
+    },
+    openai: {
+      id: 'openai',
+      name: 'OpenAI',
+      description: t('plugins:llm.openaiGpt'),
+      default_model: 'gpt-4',
+      default_endpoint: 'https://api.openai.com/v1',
+      requires_api_key: true,
+      supports_streaming: true,
+      supports_thinking: false,
+      supports_multimodal: true,
+    },
+    anthropic: {
+      id: 'anthropic',
+      name: 'Anthropic',
+      description: t('plugins:llm.anthropicClaude'),
+      default_model: 'claude-3-opus-20240229',
+      default_endpoint: 'https://api.anthropic.com/v1',
+      requires_api_key: true,
+      supports_streaming: true,
+      supports_thinking: false,
+      supports_multimodal: true,
+    },
+    google: {
+      id: 'google',
+      name: 'Google',
+      description: t('plugins:llm.googleGemini'),
+      default_model: 'gemini-pro',
+      default_endpoint: 'https://generativelanguage.googleapis.com/v1',
+      requires_api_key: true,
+      supports_streaming: true,
+      supports_thinking: false,
+      supports_multimodal: true,
+    },
+    xai: {
+      id: 'xai',
+      name: 'xAI',
+      description: t('plugins:llm.xaiGrok'),
+      default_model: 'grok-beta',
+      default_endpoint: 'https://api.x.ai/v1',
+      requires_api_key: true,
+      supports_streaming: true,
+      supports_thinking: false,
+      supports_multimodal: false,
+    },
+  }
 }
 
-const schema = z.object({
-  name: z.string().min(2, '名称至少2个字符'),
+const getSchema = (t: (key: string) => string) => z.object({
+  name: z.string().min(2, t('plugins:llm.nameMinChars')),
   backend_type: z.enum(['ollama', 'openai', 'anthropic', 'google', 'xai']),
   endpoint: z.string().optional(),
-  model: z.string().min(1, '请输入模型名称'),
+  model: z.string().min(1, t('plugins:llm.modelRequired')),
   api_key: z.string().optional(),
   temperature: z.number().min(0).max(2).optional(),
   top_p: z.number().min(0).max(1).optional(),
   max_tokens: z.number().min(1).optional(),
 })
 
-type FormValues = z.infer<typeof schema>
+type FormValues = z.infer<ReturnType<typeof getSchema>>
 
 interface LlmBackendDialogProps {
   open: boolean
@@ -103,8 +106,12 @@ interface LlmBackendDialogProps {
 }
 
 export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBackendDialogProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const [submitting, setSubmitting] = useState(false)
   const [selectedType, setSelectedType] = useState<LlmBackendType>(editing?.backend_type || 'ollama')
+
+  const schema = getSchema(t)
+  const BACKEND_TYPES = getBackendTypes(t)
 
   const {
     register,
@@ -113,7 +120,7 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
     setValue,
     reset,
   } = useForm<FormValues>({
-    resolver: zodResolver(schema),
+    resolver: zodResolver(schema as any),
     defaultValues: editing ? {
       name: editing.name,
       backend_type: editing.backend_type,
@@ -129,7 +136,7 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
       model: BACKEND_TYPES.ollama.default_model,
       temperature: 0.7,
       top_p: 0.9,
-      max_tokens: 2048,
+      max_tokens: undefined,
     },
   })
 
@@ -154,11 +161,11 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
         model: BACKEND_TYPES.ollama.default_model,
         temperature: 0.7,
         top_p: 0.9,
-        max_tokens: 2048,
+        max_tokens: undefined,
       })
       setSelectedType('ollama')
     }
-  }, [editing, reset])
+  }, [editing, reset, BACKEND_TYPES])
 
   const handleTypeChange = (type: LlmBackendType) => {
     setSelectedType(type)
@@ -191,19 +198,19 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
     <Dialog open={open} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>{editing ? '编辑 LLM 后端' : '添加 LLM 后端'}</DialogTitle>
+          <DialogTitle>{editing ? t('plugins:llm.editBackend') : t('plugins:llm.addBackend')}</DialogTitle>
           <DialogDescription>
-            {editing ? '修改现有 LLM 后端配置。' : '添加新的 LLM 后端实例。'}
+            {editing ? t('plugins:llm.editDesc') : t('plugins:llm.addDesc')}
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit(handleFormSubmit)} className="space-y-4">
           {/* Name */}
           <div className="space-y-2">
-            <Label htmlFor="name">显示名称 *</Label>
+            <Label htmlFor="name">{t('plugins:llm.displayName')} *</Label>
             <Input
               id="name"
-              placeholder="例如: 本地 Ollama、OpenAI 主账号"
+              placeholder={t('plugins:llm.displayNamePlaceholder')}
               {...register('name')}
             />
             {errors.name && (
@@ -213,7 +220,7 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
 
           {/* Backend Type */}
           <div className="space-y-2">
-            <Label htmlFor="backend_type">后端类型 *</Label>
+            <Label htmlFor="backend_type">{t('plugins:llm.backendType')} *</Label>
             <Select
               value={selectedType}
               onValueChange={(v) => handleTypeChange(v as LlmBackendType)}
@@ -237,20 +244,20 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
 
           {/* Endpoint */}
           <div className="space-y-2">
-            <Label htmlFor="endpoint">API 端点</Label>
+            <Label htmlFor="endpoint">{t('plugins:llm.apiEndpoint')}</Label>
             <Input
               id="endpoint"
               placeholder={backendConfig.default_endpoint}
               {...register('endpoint')}
             />
             <p className="text-xs text-muted-foreground">
-              默认: {backendConfig.default_endpoint}
+              {t('plugins:llm.default')}: {backendConfig.default_endpoint}
             </p>
           </div>
 
           {/* Model */}
           <div className="space-y-2">
-            <Label htmlFor="model">模型名称 *</Label>
+            <Label htmlFor="model">{t('plugins:llm.modelName')} *</Label>
             <Input
               id="model"
               placeholder={backendConfig.default_model}
@@ -264,16 +271,16 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
           {/* API Key (for cloud providers) */}
           {backendConfig.requires_api_key && (
             <div className="space-y-2">
-              <Label htmlFor="api_key">API 密钥</Label>
+              <Label htmlFor="api_key">{t('plugins:llm.apiKey')}</Label>
               <Input
                 id="api_key"
                 type="password"
-                placeholder={editing ? '保持现有密钥不变' : '输入 API 密钥'}
+                placeholder={editing ? t('plugins:llm.apiKeyKeep') : t('plugins:llm.apiKeyPlaceholder')}
                 {...register('api_key')}
               />
               {!editing && (
                 <p className="text-xs text-muted-foreground">
-                  留空可在创建后配置，或使用环境变量
+                  {t('plugins:llm.apiKeyHint')}
                 </p>
               )}
             </div>
@@ -281,11 +288,11 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
 
           {/* Advanced Settings */}
           <div className="space-y-3 pt-2 border-t">
-            <p className="text-sm font-medium">高级设置</p>
+            <p className="text-sm font-medium">{t('plugins:llm.advancedSettings')}</p>
 
             <div className="grid grid-cols-3 gap-4">
               <div className="space-y-1">
-                <Label htmlFor="temperature" className="text-xs">Temperature</Label>
+                <Label htmlFor="temperature" className="text-xs">{t('plugins:llm.temperature')}</Label>
                 <Input
                   id="temperature"
                   type="number"
@@ -298,7 +305,7 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="top_p" className="text-xs">Top-P</Label>
+                <Label htmlFor="top_p" className="text-xs">{t('plugins:llm.topP')}</Label>
                 <Input
                   id="top_p"
                   type="number"
@@ -311,7 +318,7 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
               </div>
 
               <div className="space-y-1">
-                <Label htmlFor="max_tokens" className="text-xs">Max Tokens</Label>
+                <Label htmlFor="max_tokens" className="text-xs">{t('plugins:llm.maxTokens')}</Label>
                 <Input
                   id="max_tokens"
                   type="number"
@@ -330,11 +337,11 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
               onClick={onClose}
               disabled={submitting}
             >
-              取消
+              {t('plugins:llm.cancel')}
             </Button>
             <Button type="submit" disabled={submitting}>
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {editing ? '保存' : '创建'}
+              {editing ? t('plugins:llm.save') : t('plugins:llm.create')}
             </Button>
           </DialogFooter>
         </form>

@@ -134,7 +134,7 @@ fn default_top_p() -> f32 {
 }
 
 fn default_max_tokens() -> usize {
-    2048
+    usize::MAX
 }
 
 fn default_max_context() -> usize {

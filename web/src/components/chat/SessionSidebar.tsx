@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
-import { Plus, MessageSquare, Trash2 } from "lucide-react"
+import { Plus, MessageSquare, Trash2, Edit2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -17,26 +19,31 @@ interface SessionSidebarProps {
   onNewChat?: () => void
 }
 
-function formatTimeAgo(timestamp: number): string {
+function formatTimeAgo(timestamp: number, t: (key: string, params?: any) => string): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000)
-  if (seconds < 60) return "刚刚"
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟前`
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} 小时前`
-  if (seconds < 604800) return `${Math.floor(seconds / 86400)} 天前`
+  if (seconds < 60) return t('timeAgo.justNow')
+  if (seconds < 3600) return t('timeAgo.minutesAgo', { count: Math.floor(seconds / 60) })
+  if (seconds < 86400) return t('timeAgo.hoursAgo', { count: Math.floor(seconds / 3600) })
+  if (seconds < 604800) return t('timeAgo.daysAgo', { count: Math.floor(seconds / 86400) })
   return new Date(timestamp).toLocaleDateString()
 }
 
 export function SessionSidebar({ onNewChat }: SessionSidebarProps) {
+  const { t } = useTranslation(['common', 'dashboard'])
   const {
     sessions,
     sessionId,
     switchSession,
     deleteSession,
+    updateSessionTitle,
     createSession,
     loadSessions,
   } = useStore()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [sessionToDelete, setSessionToDelete] = useState<string | null>(null)
+  const [sessionToRename, setSessionToRename] = useState<string | null>(null)
+  const [newTitle, setNewTitle] = useState("")
   const [loading, setLoading] = useState(false)
 
   // Load sessions on mount (once)
@@ -78,12 +85,36 @@ export function SessionSidebar({ onNewChat }: SessionSidebarProps) {
     }
   }
 
+  const handleRenameClick = (e: React.MouseEvent, id: string, currentTitle: string) => {
+    e.stopPropagation()
+    setSessionToRename(id)
+    setNewTitle(currentTitle || "")
+    setRenameDialogOpen(true)
+  }
+
+  const handleRenameConfirm = async () => {
+    if (sessionToRename) {
+      setLoading(true)
+      await updateSessionTitle(sessionToRename, newTitle)
+      setLoading(false)
+      setRenameDialogOpen(false)
+      setSessionToRename(null)
+      setNewTitle("")
+    }
+  }
+
+  const getDisplayName = (session: { title?: string | null; preview?: string }) => {
+    if (session.title) return session.title
+    if (session.preview) return session.preview
+    return t('defaultTitle')
+  }
+
   return (
     <>
       <div className="flex h-full w-64 flex-col border-r bg-muted/10">
         {/* Header */}
         <div className="flex items-center justify-between border-b p-3">
-          <h2 className="text-sm font-semibold">会话列表</h2>
+          <h2 className="text-sm font-semibold">{t('sessionList')}</h2>
           <Button
             variant="ghost"
             size="icon"
@@ -101,8 +132,8 @@ export function SessionSidebar({ onNewChat }: SessionSidebarProps) {
             {sessions.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
                 <MessageSquare className="mx-auto mb-2 h-8 w-8 opacity-50" />
-                <p>暂无会话</p>
-                <p className="text-xs">点击 + 创建新会话</p>
+                <p>{t('noSessions')}</p>
+                <p className="text-xs">{t('noSessionsDesc')}</p>
               </div>
             ) : (
               sessions.map((session, index) => (
@@ -116,31 +147,45 @@ export function SessionSidebar({ onNewChat }: SessionSidebarProps) {
                   }`}
                 >
                   <MessageSquare className="h-4 w-4 shrink-0" />
-                  <div className="min-w-0 flex-1 truncate">
+                  <div className="min-w-0 flex-1 truncate text-left">
                     <div className="truncate font-medium">
-                      {session.preview || "新对话"}
+                      {getDisplayName(session)}
                     </div>
                     <div className={`text-xs ${
                       sessionId === session.sessionId
                         ? "text-primary-foreground/70"
                         : "text-muted-foreground"
                     }`}>
-                      {formatTimeAgo(session.createdAt)}
+                      {formatTimeAgo(session.createdAt, t)}
                     </div>
                   </div>
 
-                  {/* Delete button */}
+                  {/* Action buttons */}
                   {session.sessionId && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={`h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 ${
-                        sessionId === session.sessionId ? "hover:bg-primary-foreground/20" : ""
-                      }`}
-                      onClick={(e) => handleDeleteClick(e, session.sessionId)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                      {/* Rename button */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-6 w-6 shrink-0 ${
+                          sessionId === session.sessionId ? "hover:bg-primary-foreground/20" : ""
+                        }`}
+                        onClick={(e) => handleRenameClick(e, session.sessionId, session.title || session.preview || "")}
+                      >
+                        <Edit2 className="h-3 w-3" />
+                      </Button>
+                      {/* Delete button */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-6 w-6 shrink-0 ${
+                          sessionId === session.sessionId ? "hover:bg-primary-foreground/20" : ""
+                        }`}
+                        onClick={(e) => handleDeleteClick(e, session.sessionId)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   )}
                 </button>
               ))
@@ -153,17 +198,50 @@ export function SessionSidebar({ onNewChat }: SessionSidebarProps) {
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>删除会话</DialogTitle>
+            <DialogTitle>{t('deleteSessionTitle')}</DialogTitle>
             <DialogDescription>
-              确定要删除这个会话吗？此操作无法撤销。
+              {t('deleteDesc')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
-              取消
+              {t('cancel')}
             </Button>
             <Button variant="destructive" onClick={handleDeleteConfirm}>
-              删除
+              {t('delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Dialog */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('renameSession')}</DialogTitle>
+            <DialogDescription>
+              {t('renameDesc')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              placeholder={t('renamePlaceholder')}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleRenameConfirm()
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>
+              {t('cancel')}
+            </Button>
+            <Button onClick={handleRenameConfirm}>
+              {t('save')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   Card,
   CardContent,
@@ -78,6 +79,7 @@ export function PluginCard({
   onViewDevices,
   badge,
 }: PluginCardProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const [toggling, setToggling] = useState(false)
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -126,7 +128,7 @@ export function PluginCard({
 
   const handleDelete = async () => {
     if (!onDelete) return
-    if (!confirm(`确定要删除插件 "${name}" 吗？`)) return
+    if (!confirm(t('plugins:deleteConfirm', { name }))) return
     setDeleting(true)
     try {
       await onDelete(id)
@@ -142,9 +144,9 @@ export function PluginCard({
   }
 
   const getStatusText = () => {
-    if (running) return '运行中'
-    if (enabled) return '已启用'
-    return '已禁用'
+    if (running) return t('plugins:running')
+    if (enabled) return t('plugins:enabled')
+    return t('plugins:disabled')
   }
 
   const getTypeBadgeColor = () => {
@@ -202,19 +204,19 @@ export function PluginCard({
                 {onConfigure && (
                   <DropdownMenuItem onClick={() => onConfigure(id)}>
                     <Settings className="mr-2 h-4 w-4" />
-                    配置
+                    {t('plugins:configure')}
                   </DropdownMenuItem>
                 )}
                 {onRefresh && (
                   <DropdownMenuItem onClick={handleRefresh} disabled={refreshing}>
                     <RefreshCw className={cn('mr-2 h-4 w-4', refreshing && 'animate-spin')} />
-                    刷新状态
+                    {t('plugins:refreshing')}
                   </DropdownMenuItem>
                 )}
                 {onViewDevices && deviceCount !== undefined && (
                   <DropdownMenuItem onClick={() => onViewDevices(id)}>
                     <Circle className="mr-2 h-4 w-4" />
-                    查看设备 ({deviceCount})
+                    {t('plugins:viewDevicesWithCount', { count: deviceCount })}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
@@ -225,7 +227,7 @@ export function PluginCard({
                     className="text-destructive focus:text-destructive"
                   >
                     <Trash2 className="mr-2 h-4 w-4" />
-                    {deleting ? '删除中...' : '删除'}
+                    {deleting ? t('plugins:deleting') : t('plugins:delete')}
                   </DropdownMenuItem>
                 )}
               </DropdownMenuContent>
@@ -242,13 +244,13 @@ export function PluginCard({
 
       <CardContent className="pb-3">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">状态:</span>
+          <span className="text-muted-foreground">{t('plugins:status')}:</span>
           <span className="font-medium">{getStatusText()}</span>
         </div>
 
         {deviceCount !== undefined && (
           <div className="flex items-center justify-between text-sm mt-1">
-            <span className="text-muted-foreground">设备数:</span>
+            <span className="text-muted-foreground">{t('plugins:deviceCount')}:</span>
             <span className="font-medium">{deviceCount}</span>
           </div>
         )}
@@ -256,13 +258,13 @@ export function PluginCard({
         {stats && (
           <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
             {stats.start_count !== undefined && (
-              <span>启动: {stats.start_count}</span>
+              <span>{t('plugins:startCount')}: {stats.start_count}</span>
             )}
             {stats.error_count !== undefined && stats.error_count > 0 && (
-              <span className="text-red-500">错误: {stats.error_count}</span>
+              <span className="text-red-500">{t('plugins:errorCount')}: {stats.error_count}</span>
             )}
             {stats.avg_response_time_ms !== undefined && (
-              <span>平均: {stats.avg_response_time_ms.toFixed(0)}ms</span>
+              <span>{t('plugins:avgResponseTime')}: {stats.avg_response_time_ms.toFixed(0)}ms</span>
             )}
           </div>
         )}
@@ -278,7 +280,7 @@ export function PluginCard({
                 disabled={toggling || running}
               />
               <span className="text-sm text-muted-foreground">
-                {enabled ? '已启用' : '已禁用'}
+                {enabled ? t('plugins:enabled') : t('plugins:disabled')}
               </span>
             </>
           )}
@@ -295,12 +297,12 @@ export function PluginCard({
               {starting ? (
                 <>
                   <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                  启动中
+                  {t('plugins:starting')}
                 </>
               ) : (
                 <>
                   <Play className="mr-2 h-4 w-4" />
-                  启动
+                  {t('plugins:start')}
                 </>
               )}
             </Button>
@@ -315,12 +317,12 @@ export function PluginCard({
               {stopping ? (
                 <>
                   <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                  停止中
+                  {t('plugins:stopping')}
                 </>
               ) : (
                 <>
                   <Square className="mr-2 h-4 w-4" />
-                  停止
+                  {t('plugins:stop')}
                 </>
               )}
             </Button>

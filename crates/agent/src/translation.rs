@@ -545,7 +545,7 @@ impl NlToDslConverter {
         None
     }
 
-    fn extract_actions(text: &str, device_id: &str, context: &ConversionContext) -> Vec<RuleAction> {
+    fn extract_actions(text: &str, _device_id: &str, context: &ConversionContext) -> Vec<RuleAction> {
         let mut actions = Vec::new();
 
         // Check for notification intent

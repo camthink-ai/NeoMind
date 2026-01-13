@@ -117,7 +117,7 @@ pub struct LlmPluginParams {
 }
 
 fn default_max_tokens() -> usize {
-    512
+    usize::MAX
 }
 
 fn default_temperature() -> f32 {

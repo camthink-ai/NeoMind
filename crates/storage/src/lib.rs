@@ -92,7 +92,7 @@ pub use vector::{
 };
 
 pub use session::{
-    SessionStore, SessionMessage,
+    SessionStore, SessionMessage, SessionMetadata,
 };
 
 pub use multimodal::{

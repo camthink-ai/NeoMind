@@ -18,6 +18,7 @@ export interface SessionSlice extends SessionState {
   createSession: () => Promise<string | null>
   switchSession: (sessionId: string) => Promise<void>
   deleteSession: (sessionId: string) => Promise<void>
+  updateSessionTitle: (sessionId: string, title: string) => Promise<void>
   loadSessions: () => Promise<void>
   fetchSessionHistory: (sessionId: string) => Promise<void>
 }
@@ -86,8 +87,8 @@ export const createSessionSlice: StateCreator<
       const { ws } = await import('@/lib/websocket')
       ws.setSessionId(sessionId)
 
-      // Send session switch message via WebSocket
-      ws.sendMessage(`/switch:${sessionId}`)
+      // Session switch is handled via sessionId field in next message,
+      // no need to send a separate control message
     } catch (error) {
       console.error('Failed to switch session:', error)
       // If no history, start fresh
@@ -118,15 +119,32 @@ export const createSessionSlice: StateCreator<
     }
   },
 
+  updateSessionTitle: async (sessionId: string, title: string) => {
+    try {
+      await api.updateSession(sessionId, title)
+      set((state) => ({
+        sessions: state.sessions.map(s =>
+          s.sessionId === sessionId ? { ...s, title } : s
+        ),
+      }))
+    } catch (error) {
+      console.error('Failed to update session title:', error)
+      throw error
+    }
+  },
+
   loadSessions: async () => {
     try {
       const result = await api.listSessions()
-      const sessions: ChatSession[] = result.sessions.map((s: any) => ({
+      // Backend returns an array directly (after ApiResponse auto-unwrap)
+      const sessionsArray = Array.isArray(result) ? result : (result as any).sessions || []
+      const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
         sessionId: s.sessionId || s.id,
         id: s.sessionId || s.id,
         createdAt: s.createdAt || s.created_at || Date.now(),
         updatedAt: s.updatedAt || s.updated_at,
-        messageCount: s.messageCount || s.message_count,
+        messageCount: s.messageCount || s.message_count || 0,
+        title: s.title ?? undefined,
         preview: s.preview,
       }))
       set({ sessions })

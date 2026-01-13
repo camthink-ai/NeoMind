@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { CheckCircle, XCircle, Loader2, Trash2, Edit, Zap, MoreVertical } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -30,6 +31,7 @@ export function LlmBackendCard({
   onDelete,
   onTest,
 }: LlmBackendCardProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const [activating, setActivating] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -46,7 +48,7 @@ export function LlmBackendCard({
   }
 
   const handleDelete = async () => {
-    if (!confirm(`确定要删除后端 "${backend.name}" 吗？`)) return
+    if (!confirm(t('plugins:llm.deleteConfirm', { name: backend.name }))) return
     setDeleting(true)
     const success = await onDelete()
     setDeleting(false)
@@ -114,7 +116,7 @@ export function LlmBackendCard({
               <CardTitle className="text-lg flex items-center gap-2">
                 {backend.name}
                 {backend.is_active && (
-                  <Badge variant="default" className="text-xs">活跃</Badge>
+                  <Badge variant="default" className="text-xs">{t('plugins:llm.active')}</Badge>
                 )}
               </CardTitle>
               <CardDescription className="flex items-center gap-2 mt-1">
@@ -142,11 +144,11 @@ export function LlmBackendCard({
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={onEdit}>
                   <Edit className="mr-2 h-4 w-4" />
-                  编辑
+                  {t('plugins:edit')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleTest} disabled={testing}>
                   <Zap className="mr-2 h-4 w-4" />
-                  {testing ? '测试中...' : '测试连接'}
+                  {testing ? t('plugins:llm.activating') : t('plugins:llm.testConnection')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={handleDelete}
@@ -154,7 +156,7 @@ export function LlmBackendCard({
                   className="text-destructive focus:text-destructive"
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
-                  {deleting ? '删除中...' : '删除'}
+                  {deleting ? t('plugins:deleting') : t('plugins:delete')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -167,7 +169,7 @@ export function LlmBackendCard({
           {/* Endpoint */}
           {backend.endpoint && (
             <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">端点:</span>
+              <span className="text-muted-foreground">{t('plugins:llm.endpoint')}:</span>
               <span className="font-mono text-xs truncate max-w-[200px]">{backend.endpoint}</span>
             </div>
           )}
@@ -175,16 +177,16 @@ export function LlmBackendCard({
           {/* Capabilities */}
           <div className="flex gap-1 flex-wrap">
             {backend.capabilities.supports_streaming && (
-              <Badge variant="outline" className="text-xs">流式</Badge>
+              <Badge variant="outline" className="text-xs">{t('plugins:llm.streaming')}</Badge>
             )}
             {backend.capabilities.supports_thinking && (
-              <Badge variant="outline" className="text-xs">思维链</Badge>
+              <Badge variant="outline" className="text-xs">{t('plugins:llm.thinking')}</Badge>
             )}
             {backend.capabilities.supports_multimodal && (
-              <Badge variant="outline" className="text-xs">多模态</Badge>
+              <Badge variant="outline" className="text-xs">{t('plugins:llm.multimodal')}</Badge>
             )}
             <Badge variant="outline" className="text-xs">
-              上下文: {backend.capabilities.max_context >= 1000
+              {t('plugins:llm.context')}: {backend.capabilities.max_context >= 1000
                 ? `${Math.round(backend.capabilities.max_context / 1000)}k`
                 : backend.capabilities.max_context}
             </Badge>
@@ -199,8 +201,8 @@ export function LlmBackendCard({
                 : 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'
             )}>
               {currentTestResult.success
-                ? `连接成功 (${currentTestResult.latency_ms?.toFixed(0)}ms)`
-                : `连接失败: ${currentTestResult.error}`}
+                ? t('plugins:llm.connectionSuccess', { latency: currentTestResult.latency_ms?.toFixed(0) || '0' })
+                : t('plugins:llm.connectionFailed', { error: currentTestResult.error })}
             </div>
           )}
         </div>
@@ -215,7 +217,7 @@ export function LlmBackendCard({
               disabled={activating || backend.is_active}
             />
             <span className="text-sm text-muted-foreground">
-              {backend.is_active ? '当前活跃' : '设为活跃'}
+              {backend.is_active ? t('plugins:llm.currentActive') : t('plugins:llm.setAsActive')}
             </span>
           </div>
 
@@ -229,10 +231,10 @@ export function LlmBackendCard({
               {activating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  激活中
+                  {t('plugins:llm.activating')}
                 </>
               ) : (
-                '激活'
+                t('plugins:llm.activate')
               )}
             </Button>
           )}

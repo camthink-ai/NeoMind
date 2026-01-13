@@ -241,9 +241,47 @@ impl LlmRuntime for OllamaRuntime {
             None
         };
 
-        // Enable thinking by default for models that support it
-        // This gives the model's reasoning process separately from the final answer
-        let think = Some(OllamaThink::Bool(true));
+        // Convert tools to Ollama/OpenAI format
+        let tools = if let Some(input_tools) = &input.tools {
+            if !input_tools.is_empty() {
+                let ollama_tools: Vec<OllamaTool> = input_tools.iter().map(|tool| {
+                    OllamaTool {
+                        tool_type: "function".to_string(),
+                        function: OllamaToolFunction {
+                            name: tool.name.clone(),
+                            description: tool.description.clone(),
+                            parameters: tool.parameters.clone(),
+                        },
+                    }
+                }).collect();
+                tracing::debug!("Ollama: sending {} tools in request", ollama_tools.len());
+                Some(ollama_tools)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Enable thinking for all models that support it
+        // Disable when tools are present - excessive thinking interferes with tool calling
+        // Based on Ollama docs: https://docs.ollama.com/capabilities/thinking
+        let has_tools = tools.as_ref().map_or(false, |t| !t.is_empty());
+
+        // When tools are present, completely omit the think field (not even false)
+        // This prevents Ollama from generating thinking content during tool calls
+        let think = if !has_tools {
+            Some(OllamaThink::Bool(true))  // Enable thinking when no tools
+        } else {
+            None  // Omit think field when tools are present
+        };
+
+        if has_tools {
+            tracing::debug!("Ollama: thinking omitted for tool call request");
+        }
+
+        // No format parameter needed - let Ollama handle thinking naturally
+        let format: Option<String> = None;
 
         let request = OllamaChatRequest {
             model: model.clone(),
@@ -251,6 +289,8 @@ impl LlmRuntime for OllamaRuntime {
             stream: false,
             options,
             think,
+            tools,
+            format,
         };
 
         let request_json = serde_json::to_string(&request).map_err(|e| LlmError::Serialization(e))?;
@@ -282,12 +322,39 @@ impl LlmRuntime for OllamaRuntime {
         let ollama_response: OllamaChatResponse = serde_json::from_str(&body)
             .map_err(|e| LlmError::Serialization(e))?;
 
-        // Use content (final answer), fallback to thinking if content is empty
-        let response_text = if ollama_response.message.content.is_empty() {
+        // Handle native tool calls - convert to XML format for compatibility
+        let mut response_text = if ollama_response.message.content.is_empty() {
             ollama_response.message.thinking.clone()
         } else {
             ollama_response.message.content.clone()
         };
+
+        // If tool_calls are present, append them in XML format
+        if !ollama_response.message.tool_calls.is_empty() {
+            tracing::debug!("Ollama: received {} tool calls in non-streaming response", ollama_response.message.tool_calls.len());
+            let mut xml_buffer = String::from("<tool_calls>");
+            for tool_call in &ollama_response.message.tool_calls {
+                xml_buffer.push_str(&format!(
+                    "<invoke name=\"{}\">",
+                    tool_call.function.name
+                ));
+                // Convert arguments JSON to XML parameter format
+                if let Some(obj) = tool_call.function.arguments.as_object() {
+                    for (key, value) in obj {
+                        xml_buffer.push_str(&format!(
+                            "<parameter name=\"{}\">{}</parameter>",
+                            key,
+                            value.as_str().unwrap_or(&value.to_string())
+                        ));
+                    }
+                }
+                xml_buffer.push_str("</invoke>");
+            }
+            xml_buffer.push_str("</tool_calls>");
+            // Append tool calls to response text
+            response_text.push_str(&xml_buffer);
+            tracing::debug!("Ollama: converted tool_calls to XML: {}", xml_buffer);
+        }
 
         let result = Ok(LlmOutput {
             text: response_text,
@@ -334,25 +401,75 @@ impl LlmRuntime for OllamaRuntime {
         let url = format!("{}/api/chat", self.config.endpoint);
         let client = self.client.clone();
 
+        // Handle max_tokens: usize::MAX means "no limit" - don't send num_predict to Ollama
+        // This lets the model use its natural token limit without artificial constraints
+        let num_predict = match input.params.max_tokens {
+            Some(v) if v >= usize::MAX - 1000 => None,  // No limit - don't send num_predict
+            Some(v) => Some(v),                        // Use specified limit
+            None => None,                              // No limit specified
+        };
+
         let options = if input.params.temperature.is_some()
-            || input.params.max_tokens.is_some()
+            || num_predict.is_some()
             || input.params.top_p.is_some()
         {
             Some(OllamaOptions {
                 temperature: input.params.temperature,
-                num_predict: input.params.max_tokens,
+                num_predict,
                 top_p: input.params.top_p,
             })
         } else {
             None
         };
 
-        // Enable thinking by default
-        let think = Some(OllamaThink::Bool(true));
+        // Convert tools to Ollama/OpenAI format
+        let tools = if let Some(input_tools) = &input.tools {
+            if !input_tools.is_empty() {
+                let ollama_tools: Vec<OllamaTool> = input_tools.iter().map(|tool| {
+                    OllamaTool {
+                        tool_type: "function".to_string(),
+                        function: OllamaToolFunction {
+                            name: tool.name.clone(),
+                            description: tool.description.clone(),
+                            parameters: tool.parameters.clone(),
+                        },
+                    }
+                }).collect();
+                tracing::debug!("Ollama: sending {} tools in stream request", ollama_tools.len());
+                Some(ollama_tools)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Enable thinking for all models that support it
+        // Disable when tools are present - excessive thinking interferes with tool calling
+        // Based on Ollama docs: https://docs.ollama.com/capabilities/thinking
+        let has_tools = tools.as_ref().map_or(false, |t| !t.is_empty());
+
+        // When tools are present, completely omit the think field (not even false)
+        // This prevents Ollama from generating thinking content during tool calls
+        // TEMPORARILY DISABLED: Some models like qwen3-vl:2b only output thinking when think=true
+        // TODO: Re-enable once model behavior is fixed or we handle thinking properly
+        let think = None; /*
+        let think = if !has_tools {
+            tracing::debug!("Enabling think=true for model {}", model);
+            Some(OllamaThink::Bool(true))
+        } else {
+            tracing::debug!("Thinking disabled for tool call request on model {}", model);
+            None
+        };
+        */
 
         // Convert messages to Ollama format before spawning the task
         let messages = self.messages_to_ollama(&input.messages);
         tracing::debug!("Ollama: generate_stream - URL: {}, messages count: {}", url, messages.len());
+        eprintln!("[DEBUG OLLAMA] has_tools: {}, think set: {}", has_tools, think.is_some());
+
+        // No format parameter needed - let Ollama handle thinking naturally
+        let format: Option<String> = None;
 
         tokio::spawn(async move {
             let request = OllamaChatRequest {
@@ -361,11 +478,28 @@ impl LlmRuntime for OllamaRuntime {
                 stream: true,
                 options,
                 think,
+                tools,
+                format,
             };
 
             let request_json = match serde_json::to_string(&request) {
                 Ok(json) => {
                     tracing::debug!("Ollama: stream request prepared for model: {}", model);
+                    // Print request details for debugging
+                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json) {
+                        // Print options (num_predict, temperature, etc.)
+                        if let Some(opts) = value.get("options") {
+                            println!("[ollama.rs] Request options: {}", serde_json::to_string_pretty(opts).unwrap_or_default());
+                        }
+                        // Print think setting
+                        if let Some(think_val) = value.get("think") {
+                            println!("[ollama.rs] Request think: {}", think_val);
+                        }
+                        // Print tools section
+                        if let Some(tools) = value.get("tools") {
+                            println!("[ollama.rs] Tools being sent: {}", serde_json::to_string_pretty(tools).unwrap_or_default());
+                        }
+                    }
                     json
                 },
                 Err(e) => {
@@ -383,9 +517,11 @@ impl LlmRuntime for OllamaRuntime {
 
             match result {
                 Ok(response) => {
+                    println!("[ollama.rs] Got response, status: {}", response.status());
                     let status = response.status();
                     if !status.is_success() {
                         let body = response.text().await.unwrap_or_default();
+                        println!("[ollama.rs] Ollama error response: {}", body);
                         let _ = tx
                             .send(Err(LlmError::Generation(format!(
                                 "Ollama error {}: {}",
@@ -401,13 +537,19 @@ impl LlmRuntime for OllamaRuntime {
                     let mut byte_stream = response.bytes_stream();
                     let mut buffer = Vec::new();
                     let mut sent_done = false;
+                    let mut total_bytes = 0usize;
 
                     while let Some(chunk_result) = byte_stream.next().await {
                         match chunk_result {
                             Ok(chunk) => {
+                                // Empty chunks are normal in HTTP streaming - don't break on them
+                                // Just skip empty chunks but continue processing
                                 if chunk.is_empty() {
-                                    break;
+                                    tracing::debug!("[ollama.rs] Skipping empty chunk, continuing stream");
+                                    continue;
                                 }
+                                total_bytes += chunk.len();
+                                println!("[ollama.rs] Received chunk: {} bytes, total: {}", chunk.len(), total_bytes);
                                 buffer.extend_from_slice(&chunk);
 
                                 let mut search_start = 0;
@@ -432,21 +574,85 @@ impl LlmRuntime for OllamaRuntime {
                                             &line
                                         };
 
+                                        // Debug: log the raw response
+                                        tracing::debug!("Ollama raw response: {}", json_str);
+                                        println!("[ollama.rs] Parsing JSON: {}", if json_str.len() > 150 { &json_str[..150] } else { &json_str });
+
+                                        // Log the full JSON for chunks with done=true to debug missing content
+                                        if json_str.contains("\"done\":true") {
+                                            println!("[ollama.rs] FULL JSON for done=true: {}", json_str);
+                                        }
+
                                         if let Ok(ollama_chunk) =
                                             serde_json::from_str::<OllamaStreamResponse>(json_str)
                                         {
-                                            // Send thinking content first
+                                            println!("[ollama.rs] Parsed ollama_chunk: thinking={}, content={}, tool_calls={}, done={}",
+                                                !ollama_chunk.message.thinking.is_empty(),
+                                                !ollama_chunk.message.content.is_empty(),
+                                                !ollama_chunk.message.tool_calls.is_empty(),
+                                                ollama_chunk.done);
+                                            // Log actual content lengths
                                             if !ollama_chunk.message.thinking.is_empty() {
+                                                println!("[ollama.rs] -> thinking content: '{}' (len={})", ollama_chunk.message.thinking, ollama_chunk.message.thinking.chars().count());
+                                            }
+                                            if !ollama_chunk.message.content.is_empty() {
+                                                println!("[ollama.rs] -> response content: '{}' (len={})", ollama_chunk.message.content, ollama_chunk.message.content.chars().count());
+                                            }
+                                            // Handle native tool calls - convert to XML format for compatibility
+                                            if !ollama_chunk.message.tool_calls.is_empty() {
+                                                tracing::debug!("Ollama: received {} tool calls", ollama_chunk.message.tool_calls.len());
+                                                // Convert tool_calls to XML format for streaming.rs compatibility
+                                                let mut xml_buffer = String::from("<tool_calls>");
+                                                for tool_call in &ollama_chunk.message.tool_calls {
+                                                    xml_buffer.push_str(&format!(
+                                                        "<invoke name=\"{}\">",
+                                                        tool_call.function.name
+                                                    ));
+                                                    // Convert arguments JSON to XML parameter format
+                                                    if let Some(obj) = tool_call.function.arguments.as_object() {
+                                                        for (key, value) in obj {
+                                                            xml_buffer.push_str(&format!(
+                                                                "<parameter name=\"{}\">{}</parameter>",
+                                                                key,
+                                                                value.as_str().unwrap_or(&value.to_string())
+                                                            ));
+                                                        }
+                                                    }
+                                                    xml_buffer.push_str("</invoke>");
+                                                }
+                                                xml_buffer.push_str("</tool_calls>");
+                                                tracing::debug!("Ollama: converted tool_calls to XML: {}", xml_buffer);
+                                                let _ = tx.send(Ok((xml_buffer, false))).await;
+                                            }
+
+                                            // Send thinking content first (reasoning process)
+                                            if !ollama_chunk.message.thinking.is_empty() {
+                                                tracing::debug!("Ollama thinking chunk: {}", ollama_chunk.message.thinking);
+                                                println!("[ollama.rs] Sending thinking chunk (len={})", ollama_chunk.message.thinking.chars().count());
                                                 let _ = tx.send(Ok((ollama_chunk.message.thinking.clone(), true))).await;
                                             }
 
-                                            // Then send response content
+                                            // Then send response content (final answer)
                                             if !ollama_chunk.message.content.is_empty() {
+                                                tracing::debug!("Ollama content chunk: {}", ollama_chunk.message.content);
+                                                println!("[ollama.rs] Sending content chunk (len={})", ollama_chunk.message.content.chars().count());
                                                 let _ = tx.send(Ok((ollama_chunk.message.content.clone(), false))).await;
                                             }
 
                                             if ollama_chunk.done {
-                                                let _ = tx.send(Ok((String::new(), false))).await;
+                                                // Ollama has finished generation - log and close stream
+                                                // Log what content was in this final chunk
+                                                let final_content = ollama_chunk.message.content.clone();
+                                                let final_thinking = ollama_chunk.message.thinking.clone();
+                                                println!("[ollama.rs] Ollama sent done=true, total_bytes: {}, final_content_len: {}, final_thinking_len: {}, closing stream",
+                                                    total_bytes, final_content.chars().count(), final_thinking.chars().count());
+                                                if !final_content.is_empty() {
+                                                    println!("[ollama.rs] Final content: '{}'", final_content);
+                                                }
+                                                if !final_thinking.is_empty() {
+                                                    println!("[ollama.rs] Final thinking: '{}'", final_thinking);
+                                                }
+                                                tracing::info!("Ollama stream complete: {} bytes transferred", total_bytes);
                                                 sent_done = true;
                                                 return;
                                             }
@@ -464,10 +670,14 @@ impl LlmRuntime for OllamaRuntime {
                     }
 
                     if !sent_done {
-                        let _ = tx.send(Ok((String::new(), false))).await;
+                        // Channel closed without done signal - log this as it might indicate a problem
+                        println!("[ollama.rs] Stream closed without done=true signal, total_bytes: {}", total_bytes);
+                        tracing::warn!("Ollama stream closed prematurely without done signal, {} bytes transferred", total_bytes);
+                        // Receiver will handle EOF
                     }
                 }
                 Err(e) => {
+                    println!("[ollama.rs] Request failed: {}", e);
                     let _ = tx.send(Err(LlmError::Network(e.to_string()))).await;
                 }
             }
@@ -513,6 +723,12 @@ struct OllamaChatRequest {
     /// Enable thinking/reasoning output (true/false or "high"/"medium"/"low")
     #[serde(skip_serializing_if = "Option::is_none")]
     think: Option<OllamaThink>,
+    /// Tools for function calling (OpenAI-compatible format)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OllamaTool>>,
+    /// Output format - use "json" to disable thinking for tool calls
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
 }
 
 /// Thinking level for Ollama models that support reasoning.
@@ -555,6 +771,86 @@ struct OllamaOptions {
     top_p: Option<f32>,
 }
 
+/// Tool definition in OpenAI-compatible format for Ollama.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OllamaTool {
+    /// Tool type (always "function" for function calling)
+    #[serde(rename = "type")]
+    tool_type: String,
+    /// Function definition
+    function: OllamaToolFunction,
+}
+
+/// Function definition for tool calling.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OllamaToolFunction {
+    /// Function name
+    name: String,
+    /// Function description
+    description: String,
+    /// Function parameters as JSON Schema
+    parameters: serde_json::Value,
+}
+
+/// Tool call returned by the model.
+#[derive(Debug, Clone, Deserialize)]
+struct OllamaToolCall {
+    /// Tool call ID (for tracking)
+    id: Option<String>,
+    /// Type of tool call (always "function")
+    #[serde(rename = "type")]
+    call_type: Option<String>,
+    /// Function to call
+    function: OllamaCalledFunction,
+}
+
+/// Function call details.
+#[derive(Debug, Clone, Deserialize)]
+struct OllamaCalledFunction {
+    /// Function name
+    name: String,
+    /// Function arguments - can be either a JSON object or string
+    #[serde(deserialize_with = "deserialize_arguments")]
+    arguments: serde_json::Value,
+}
+
+/// Deserialize arguments field - handles both JSON object and string formats
+fn deserialize_arguments<'de, D>(deserializer: D) -> Result<serde_json::Value, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+
+    // Create a visitor that can handle both string and object
+    struct ArgumentsVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for ArgumentsVisitor {
+        type Value = serde_json::Value;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a JSON object or string")
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            // Try to parse the string as JSON
+            serde_json::from_str(value).map_err(E::custom)
+        }
+
+        fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+        where
+            M: serde::de::MapAccess<'de>,
+        {
+            // Deserialize as a JSON object directly
+            serde_json::Value::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+        }
+    }
+
+    deserializer.deserialize_any(ArgumentsVisitor)
+}
+
 #[derive(Debug, Deserialize)]
 struct OllamaChatResponse {
     model: String,
@@ -582,6 +878,9 @@ struct OllamaResponseMessage {
     content: String,
     #[serde(default)]
     thinking: String,
+    /// Tool calls made by the model (OpenAI-compatible format)
+    #[serde(default)]
+    tool_calls: Vec<OllamaToolCall>,
 }
 
 use tokio_stream;

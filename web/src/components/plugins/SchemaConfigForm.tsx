@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { useTranslation } from 'react-i18next'
 import type { PluginUISchema, FieldSchema } from '@/types/plugin-schema'
 
 interface SchemaConfigFormProps {
@@ -81,6 +82,7 @@ interface FormFieldProps {
 }
 
 function FormField({ field, value, onChange }: FormFieldProps) {
+  const { t } = useTranslation(['plugins', 'common'])
   const id = `field-${field.name}`
   const isReadOnly = field.readonly
   const currentValue = value !== undefined ? value : field.default
@@ -189,7 +191,7 @@ function FormField({ field, value, onChange }: FormFieldProps) {
             disabled={isReadOnly}
           >
             <SelectTrigger id={id}>
-              <SelectValue placeholder={field.placeholder || '请选择...'} />
+              <SelectValue placeholder={field.placeholder || t('plugins:selectPlaceholder')} />
             </SelectTrigger>
             <SelectContent>
               {field.options?.map((option) => (
@@ -246,7 +248,7 @@ function FormField({ field, value, onChange }: FormFieldProps) {
             onChange={(e) => onChange(e.target.value)}
             disabled={isReadOnly}
           />
-          <p className="text-xs text-muted-foreground">Unsupported field type: {field.type}</p>
+          <p className="text-xs text-muted-foreground">{t('plugins:unsupportedFieldType', { type: field.type })}</p>
         </div>
       )
   }

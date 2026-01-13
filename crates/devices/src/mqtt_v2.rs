@@ -408,9 +408,8 @@ impl MqttDeviceManager {
                 let device_id = instance.device_id.clone();
                 let device_type = instance.device_type.clone();
 
-                // Set status to Offline on startup (will be updated when device reconnects)
+                // Keep the persisted status instead of resetting to Offline
                 let mut updated_instance = instance.clone();
-                updated_instance.status = super::mdl_format::ConnectionStatus::Offline;
 
                 // Restore current_values from time-series storage
                 // Load the latest value for each metric defined in the device type

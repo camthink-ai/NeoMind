@@ -120,14 +120,26 @@ export function PageTabsGrid({
   gridCols = 3,
   children,
 }: PageTabsGridProps) {
+  // Map gridCols to Tailwind classes
+  const gridColsClass: Record<2 | 3 | 4 | 5 | 6, string> = {
+    2: 'grid-cols-2',
+    3: 'grid-cols-3',
+    4: 'grid-cols-4',
+    5: 'grid-cols-5',
+    6: 'grid-cols-6',
+  }
+
+  // Adjust max-width based on number of columns
+  const maxWidthClass = gridCols >= 5 ? 'max-w-2xl' : gridCols === 4 ? 'max-w-xl' : 'max-w-md'
+
   return (
     <Tabs value={activeTab} onValueChange={onTabChange} className={className}>
       <div className="flex items-center justify-between mb-4 shrink-0">
-        <TabsList className={`grid w-full max-w-md grid-cols-${gridCols}`}>
+        <TabsList className={`grid w-full ${maxWidthClass} ${gridColsClass[gridCols]}`}>
           {tabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} disabled={tab.disabled}>
-              {tab.icon && <span className="mr-2">{tab.icon}</span>}
-              {tab.label}
+              {tab.icon && <span className="mr-1.5">{tab.icon}</span>}
+              <span className="truncate">{tab.label}</span>
             </TabsTrigger>
           ))}
         </TabsList>

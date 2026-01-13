@@ -86,8 +86,12 @@ impl ServerState {
         let started_at = chrono::Utc::now().timestamp();
         let value_provider = Arc::new(InMemoryValueProvider::new());
 
-        // Use in-memory SessionManager to avoid database lock conflicts
-        let session_manager = SessionManager::memory();
+        // Use persistent SessionManager for session recovery after restart
+        // Sessions are stored in data/sessions.redb and restored on startup
+        let session_manager = SessionManager::new().unwrap_or_else(|e| {
+            tracing::warn!(category = "storage", error = %e, "Failed to create persistent SessionManager, using in-memory");
+            SessionManager::memory()
+        });
 
         // Load MQTT configuration (connects to embedded broker on localhost)
         let mqtt_config = edge_ai_devices::MqttManagerConfig::default();
@@ -244,14 +248,27 @@ impl ServerState {
     }
 
     /// Initialize LLM backend using the unified config loader.
+    /// Falls back to LlmBackendInstanceManager if no config file is found.
     pub async fn init_llm(&self) {
+        // First try to load from config file
         if let Some(backend) = crate::config::load_llm_config() {
             match self.session_manager.set_llm_backend(backend).await {
-                Ok(_) => tracing::info!(category = "ai", "Configured LLM backend successfully"),
-                Err(e) => tracing::error!(category = "ai", error = %e, "Failed to configure LLM backend"),
+                Ok(_) => {
+                    tracing::info!(category = "ai", "Configured LLM backend successfully from config file");
+                    return;
+                }
+                Err(e) => tracing::error!(category = "ai", error = %e, "Failed to configure LLM backend from config file"),
             }
-        } else {
-            tracing::warn!(category = "ai", "No LLM backend configured. Create config.toml or set environment variables");
+        }
+
+        // Fallback: try to load from LlmBackendInstanceManager (database-stored backends)
+        match self.session_manager.configure_llm_from_instance_manager().await {
+            Ok(_) => {
+                tracing::info!(category = "ai", "Configured LLM backend successfully from instance manager");
+            }
+            Err(e) => {
+                tracing::warn!(category = "ai", error = %e, "No LLM backend configured. Set up via Web UI or create config.toml");
+            }
         }
     }
 
