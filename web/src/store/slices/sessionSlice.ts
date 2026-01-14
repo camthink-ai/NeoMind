@@ -123,16 +123,26 @@ export const createSessionSlice: StateCreator<
   createSession: async () => {
     try {
       const result = await api.createSession()
-      const newSession: ChatSession = {
-        sessionId: result.sessionId,
-        id: result.sessionId,
-        createdAt: Date.now(),
-      }
-      set((state) => ({
+
+      // Reload sessions from server to ensure consistency
+      // This avoids issues where local state diverges from server state
+      const listResult = await api.listSessions()
+      const sessionsArray = Array.isArray(listResult) ? listResult : (listResult as any).sessions || []
+      const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
+        sessionId: s.sessionId || s.id,
+        id: s.sessionId || s.id,
+        createdAt: s.createdAt || s.created_at || Date.now(),
+        updatedAt: s.updatedAt || s.updated_at,
+        messageCount: s.messageCount || s.message_count || 0,
+        title: s.title ?? undefined,
+        preview: s.preview,
+      }))
+
+      set({
         sessionId: result.sessionId,
         messages: [],
-        sessions: [newSession, ...state.sessions],
-      }))
+        sessions,
+      })
 
       // Update WebSocket to use the new session
       const { ws } = await import('@/lib/websocket')
@@ -242,73 +252,58 @@ export const createSessionSlice: StateCreator<
     }
   },
 
-  deleteSession: async (sessionId: string) => {
+  deleteSession: async (sessionIdToDelete: string) => {
     try {
-      await api.deleteSession(sessionId)
+      await api.deleteSession(sessionIdToDelete)
+
+      // After successful deletion, reload sessions from server
+      // This ensures consistency between server and client state
+      const result = await api.listSessions()
+      const sessionsArray = Array.isArray(result) ? result : (result as any).sessions || []
+      const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
+        sessionId: s.sessionId || s.id,
+        id: s.sessionId || s.id,
+        createdAt: s.createdAt || s.created_at || Date.now(),
+        updatedAt: s.updatedAt || s.updated_at,
+        messageCount: s.messageCount || s.message_count || 0,
+        title: s.title ?? undefined,
+        preview: s.preview,
+      }))
+
       set((state) => {
-        const filtered = state.sessions.filter(s => s.sessionId !== sessionId)
-        // If deleting current session, switch to the first available or null
-        const wasCurrentSession = state.sessionId === sessionId
-        const newSessionId = wasCurrentSession
-          ? (filtered.length > 0 ? filtered[0].sessionId : null)
-          : state.sessionId
+        const wasCurrentSession = state.sessionId === sessionIdToDelete
+
+        // If no sessions left, return empty list
+        if (sessions.length === 0) {
+          return {
+            sessions: [],
+            sessionId: null,
+            messages: [],
+          }
+        }
+
+        // If we deleted the current session, switch to the first available
+        if (wasCurrentSession) {
+          const firstSessionId = sessions[0].sessionId
+          import('@/lib/websocket').then(({ ws }) => {
+            ws.setSessionId(firstSessionId)
+          })
+          return {
+            sessions,
+            sessionId: firstSessionId,
+            messages: [],
+          }
+        }
+
+        // Otherwise, just update the sessions list, keep current state
         return {
-          sessions: filtered,
-          sessionId: newSessionId,
-          messages: wasCurrentSession ? [] : state.messages, // Clear messages if we switched
+          ...state,
+          sessions,
         }
       })
-
-      // Reload sessions from server to ensure sync
-      try {
-        const result = await api.listSessions()
-        const sessionsArray = Array.isArray(result) ? result : (result as any).sessions || []
-        const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
-          sessionId: s.sessionId || s.id,
-          id: s.sessionId || s.id,
-          createdAt: s.createdAt || s.created_at || Date.now(),
-          updatedAt: s.updatedAt || s.updated_at,
-          messageCount: s.messageCount || s.message_count || 0,
-          title: s.title ?? undefined,
-          preview: s.preview,
-        }))
-
-        // Check if we need to create a new session or update WebSocket
-        set((state) => {
-          // Update sessions list with server data
-          const updatedSessions = sessions
-
-          // If no sessions exist after reload, create one
-          if (updatedSessions.length === 0) {
-            // Async create will be handled by SessionSidebar component
-            return { sessions: [] }
-          }
-
-          // Update WebSocket if session changed
-          const currentSessionId = state.sessionId
-          if (currentSessionId && updatedSessions.some(s => s.sessionId === currentSessionId)) {
-            // Current session still valid, keep it
-            return { sessions: updatedSessions }
-          } else if (updatedSessions.length > 0) {
-            // Switch to first available session
-            const firstSessionId = updatedSessions[0].sessionId
-            import('@/lib/websocket').then(({ ws }) => {
-              ws.setSessionId(firstSessionId)
-            })
-            return {
-              sessions: updatedSessions,
-              sessionId: firstSessionId,
-              messages: [],
-            }
-          }
-
-          return { sessions: updatedSessions }
-        })
-      } catch (loadError) {
-        console.error('Failed to reload sessions after delete:', loadError)
-      }
     } catch (error) {
       console.error('Failed to delete session:', error)
+      throw error
     }
   },
 
@@ -388,7 +383,13 @@ export const createSessionSlice: StateCreator<
         title: s.title ?? undefined,
         preview: s.preview,
       }))
-      set({ sessions })
+
+      // Only update sessions list, preserve sessionId and messages
+      // This prevents accidental session switching or message loss
+      set((state) => ({
+        ...state,
+        sessions,
+      }))
     } catch (error) {
       console.error('Failed to load sessions:', error)
     }

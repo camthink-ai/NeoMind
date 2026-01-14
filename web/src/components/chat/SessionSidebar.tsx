@@ -84,25 +84,15 @@ export function SessionSidebar({ onNewChat, onClose, mode = 'full', onNewChatFro
   const handleDeleteConfirm = async () => {
     if (sessionToDelete) {
       setLoading(true)
-      const wasCurrentSession = sessionToDelete === sessionId
 
       await deleteSession(sessionToDelete)
 
-      // Reload sessions after deletion to get fresh state
-      await loadSessions()
+      // Get updated state after deletion
+      const { sessions: updatedSessions, createSession } = useStore.getState()
 
-      // Check if we need to create a new session (no sessions left)
-      const { sessions: updatedSessions, sessionId: currentSessionId, createSession } = useStore.getState()
-
+      // If no sessions left after deletion, create a new one
       if (updatedSessions.length === 0) {
-        // No sessions left, create a new one
         await createSession()
-      } else if (wasCurrentSession && !currentSessionId) {
-        // We deleted the current session but didn't get a new one, switch to first available
-        const firstSessionId = updatedSessions[0].sessionId
-        if (firstSessionId) {
-          await switchSession(firstSessionId)
-        }
       }
 
       setLoading(false)
