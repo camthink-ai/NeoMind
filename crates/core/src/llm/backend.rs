@@ -263,6 +263,9 @@ pub struct LlmOutput {
 
     /// Tokens used (prompt + completion)
     pub usage: Option<TokenUsage>,
+
+    /// Thinking content (for models that support reasoning/thinking)
+    pub thinking: Option<String>,
 }
 
 /// Finish reason.

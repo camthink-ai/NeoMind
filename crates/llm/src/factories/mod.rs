@@ -279,6 +279,7 @@ impl LlmRuntime for MockRuntime {
             text: format!("Mock response to: {}", last_msg),
             finish_reason: edge_ai_core::llm::backend::FinishReason::Stop,
             usage: Some(edge_ai_core::llm::backend::TokenUsage::new(10, 20)),
+            thinking: None,
         })
     }
 

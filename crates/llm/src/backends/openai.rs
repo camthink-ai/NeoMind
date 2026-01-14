@@ -370,6 +370,8 @@ impl LlmRuntime for CloudRuntime {
                 completion_tokens: u.completion_tokens,
                 total_tokens: u.total_tokens,
             }),
+            // OpenAI doesn't have thinking field in this format
+            thinking: None,
         });
 
         // Record metrics
