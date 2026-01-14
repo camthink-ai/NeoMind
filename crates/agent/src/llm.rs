@@ -414,6 +414,7 @@ impl LlmInterface {
                 tokens_used: 0,
                 duration: Duration::from_millis(0),
                 finish_reason: "stop".to_string(),
+                thinking: None,
             });
         }
 
@@ -532,6 +533,7 @@ impl LlmInterface {
             tokens_used,
             duration,
             finish_reason: format!("{:?}", output.finish_reason),
+            thinking: output.thinking,
         })
     }
 
@@ -752,6 +754,8 @@ pub struct ChatResponse {
     pub duration: std::time::Duration,
     /// Finish reason.
     pub finish_reason: String,
+    /// Thinking content (if the model generated any).
+    pub thinking: Option<String>,
 }
 
 /// Agent error type.

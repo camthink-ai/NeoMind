@@ -34,6 +34,7 @@
 //! }
 //! ```
 
+pub mod concurrency;
 pub mod error;
 pub mod agent;
 pub mod session;
@@ -45,6 +46,15 @@ pub mod translation;
 pub mod prompts;
 
 // Re-export commonly used types
+pub use concurrency::{
+    SessionConcurrencyLimiter,
+    GlobalConcurrencyLimiter,
+    SessionPermit,
+    GlobalPermit,
+    ConcurrencyStats,
+    DEFAULT_PER_SESSION_LIMIT,
+    DEFAULT_GLOBAL_LIMIT,
+};
 pub use error::{AgentError, NeoTalkError, Result};
 pub use agent::{
     Agent,
