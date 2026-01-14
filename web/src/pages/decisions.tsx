@@ -121,9 +121,9 @@ export function DecisionsPage() {
   }
 
   const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 0.8) return 'text-green-600'
+    if (confidence >= 0.8) return 'text-success'
     if (confidence >= 0.6) return 'text-yellow-600'
-    return 'text-red-600'
+    return 'text-error'
   }
 
   const tabs = [
@@ -172,10 +172,10 @@ export function DecisionsPage() {
                             variant="outline"
                             className={`text-xs ${
                               decision.confidence >= 0.8
-                                ? 'text-green-600 border-green-600'
+                                ? 'text-success border-green-600'
                                 : decision.confidence >= 0.6
                                 ? 'text-yellow-600 border-yellow-600'
-                                : 'text-red-600 border-red-600'
+                                : 'text-error border-red-600'
                             }`}
                           >
                             {t('decisions:confidence')} {(decision.confidence * 100).toFixed(0)}%
@@ -307,7 +307,7 @@ export function DecisionsPage() {
                         <div className="flex items-center gap-2 mb-2">
                           <span className="font-medium">{t('decisions:executionResult')}:</span>{' '}
                           {decision.execution_result.success ? (
-                            <Badge variant="outline" className="text-green-600">{t('decisions:success')}</Badge>
+                            <Badge variant="outline" className="text-success">{t('decisions:success')}</Badge>
                           ) : (
                             <Badge variant="destructive">{t('decisions:failed')}</Badge>
                           )}
@@ -318,7 +318,7 @@ export function DecisionsPage() {
                           {t('decisions:failureCount')}: {decision.execution_result.failure_count}
                         </div>
                         {decision.execution_result.error && (
-                          <div className="mt-1 text-xs text-red-600">
+                          <div className="mt-1 text-xs text-error">
                             {t('decisions:error')}: {decision.execution_result.error}
                           </div>
                         )}
@@ -404,9 +404,9 @@ export function DecisionsPage() {
                   <div className="p-3 bg-muted rounded">
                     <div className="flex items-center gap-2">
                       {selectedDecision.execution_result.success ? (
-                        <CheckCircle className="h-4 w-4 text-green-600" />
+                        <CheckCircle className="h-4 w-4 text-success" />
                       ) : (
-                        <AlertCircle className="h-4 w-4 text-red-600" />
+                        <AlertCircle className="h-4 w-4 text-error" />
                       )}
                       <span className="text-sm">
                         {selectedDecision.execution_result.success ? t('decisions:success') : t('decisions:failed')}

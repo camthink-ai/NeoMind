@@ -58,5 +58,7 @@
   "executionResult": "Execution Result",
   "expandSidebar": "Expand sidebar",
   "collapseSidebar": "Collapse sidebar",
-  "openMenu": "Open menu"
+  "openMenu": "Open menu",
+  "selectSession": "Select session",
+  "enterToSend": "Enter to send, Shift+Enter for new line"
 }

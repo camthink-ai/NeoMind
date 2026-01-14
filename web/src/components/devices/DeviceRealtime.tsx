@@ -321,7 +321,7 @@ export function DeviceRealtime({
       case "DeviceOffline":
         return <XCircle className="h-4 w-4 text-red-500" />
       case "DeviceMetric":
-        return <Activity className="h-4 w-4 text-blue-500" />
+        return <Activity className="h-4 w-4 text-info" />
       case "AlertCreated":
         return <AlertTriangle className="h-4 w-4 text-yellow-500" />
       default:

@@ -361,10 +361,10 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
                           <span className="text-muted-foreground text-xs whitespace-nowrap">{model.parameter_size}</span>
                           <div className="flex items-center gap-1 shrink-0 ml-auto">
                             {model.capabilities.supports_thinking && (
-                              <Brain className="h-3 w-3 text-blue-500" />
+                              <Brain className="h-3 w-3 text-info" />
                             )}
                             {model.capabilities.supports_tools && (
-                              <Wrench className="h-3 w-3 text-green-500" />
+                              <Wrench className="h-3 w-3 text-success" />
                             )}
                           </div>
                         </div>
@@ -375,13 +375,13 @@ export function LlmBackendDialog({ open, onClose, onSubmit, editing }: LlmBacken
                 {modelCapabilities && (
                   <div className="flex items-center gap-2 text-xs">
                     {modelCapabilities.supports_thinking && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-info/20 text-info border border-info/30">
                         <Brain className="h-3 w-3" />
                         <span>Thinking</span>
                       </span>
                     )}
                     {modelCapabilities.supports_tools && (
-                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/10 text-green-600 border border-green-500/20">
+                      <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/20 text-success border border-success/30">
                         <Wrench className="h-3 w-3" />
                         <span>Tools</span>
                       </span>

@@ -286,7 +286,7 @@ export function AddDeviceTypeDialog({
                   {generating ? t('devices:types.validating') : t('devices:types.validate.button')}
                 </Button>
                 {advancedValidation && (
-                  <div className={`text-sm ${advancedValidation.valid ? "text-green-600" : "text-red-600"}`}>
+                  <div className={`text-sm ${advancedValidation.valid ? "text-green-600" : "text-error"}`}>
                     {advancedValidation.valid ? "✓ " : "✗ "}{advancedValidation.message}
                   </div>
                 )}
@@ -420,7 +420,7 @@ export function AddDeviceTypeDialog({
                     readOnly={generating}
                   />
                   {aiValidation && (
-                    <div className={`text-sm ${aiValidation.valid ? "text-green-600" : "text-red-600"}`}>
+                    <div className={`text-sm ${aiValidation.valid ? "text-green-600" : "text-error"}`}>
                       {aiValidation.valid ? "✓ " : "✗ "}{aiValidation.message}
                     </div>
                   )}

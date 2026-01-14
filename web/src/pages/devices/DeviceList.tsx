@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   Table,
@@ -12,8 +12,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { LoadingState, EmptyState, Pagination, BulkActionBar } from "@/components/shared"
-import { Eye, Trash2, RefreshCw, Radar, Plus, Home } from "lucide-react"
+import { LoadingState, EmptyStateInline, Pagination, BulkActionBar, ActionBar, StatusBadge } from "@/components/shared"
+import { Eye, Trash2, Home, Server, Plus, Radar } from "lucide-react"
 import { Dialog, DialogTrigger } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { Device } from "@/types"
@@ -113,43 +113,44 @@ export function DeviceList({
   return (
     <>
       {/* Toolbar */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-2">
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button size="sm" onClick={onAddDevice}>
-                <Plus className="mr-2 h-4 w-4" />
-                {t('devices:addDevice')}
-              </Button>
-            </DialogTrigger>
-            {addDeviceDialog}
-          </Dialog>
-          <Button variant="outline" size="sm" onClick={onRefresh}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            {t('common:refresh')}
-          </Button>
-          <Dialog open={discoveryDialogOpen} onOpenChange={onDiscoveryOpenChange}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm">
-                <Radar className="mr-2 h-4 w-4" />
-                {t('devices:localNetworkScan')}
-              </Button>
-            </DialogTrigger>
-            {discoveryDialog}
-          </Dialog>
-          {onHassDiscoveryOpenChange && hassDiscoveryDialog && (
-            <Dialog open={hassDiscoveryDialogOpen} onOpenChange={onHassDiscoveryOpenChange}>
+      <ActionBar
+        title={t('devices:deviceList')}
+        titleIcon={<Server className="h-5 w-5" />}
+        description={`${devices.length} ${t('devices:totalDevices')}`}
+        actions={
+          <>
+            <Dialog>
               <DialogTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Home className="mr-2 h-4 w-4" />
-                  {t('devices:hassDiscovery')}
+                <Button size="sm" onClick={onAddDevice}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  {t('devices:addDevice')}
                 </Button>
               </DialogTrigger>
-              {hassDiscoveryDialog}
+              {addDeviceDialog}
             </Dialog>
-          )}
-        </div>
-      </div>
+            <Dialog open={discoveryDialogOpen} onOpenChange={onDiscoveryOpenChange}>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Radar className="mr-2 h-4 w-4" />
+                  {t('devices:localNetworkScan')}
+                </Button>
+              </DialogTrigger>
+              {discoveryDialog}
+            </Dialog>
+            {onHassDiscoveryOpenChange && hassDiscoveryDialog && (
+              <Dialog open={hassDiscoveryDialogOpen} onOpenChange={onHassDiscoveryOpenChange}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <Home className="mr-2 h-4 w-4" />
+                    {t('devices:hassDiscovery')}
+                  </Button>
+                </DialogTrigger>
+                {hassDiscoveryDialog}
+              </Dialog>
+            )}
+          </>
+        }
+      />
 
       {/* Bulk Actions Bar */}
       <BulkActionBar
@@ -169,79 +170,69 @@ export function DeviceList({
       {loading ? (
         <LoadingState text={t('devices:loading')} />
       ) : devices.length === 0 ? (
-        <EmptyState
-          icon={<Radar className="h-12 w-12 text-muted-foreground" />}
-          title={t('devices:noDevices')}
-          description={t('devices:startUsing')}
-        />
+        <EmptyStateInline title={t('devices:noDevices')} colSpan={8} />
       ) : (
-        <ScrollArea className="flex-1">
-          <div className="px-4">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[50px]">
-                    <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
-                  </TableHead>
-                  <TableHead>{t('devices:headers.id')}</TableHead>
-                  <TableHead>{t('devices:headers.name')}</TableHead>
-                  <TableHead>{t('devices:headers.type')}</TableHead>
-                  <TableHead>{t('devices:headers.adapter')}</TableHead>
-                  <TableHead>{t('devices:headers.status')}</TableHead>
-                  <TableHead>{t('devices:headers.lastOnline')}</TableHead>
-                  <TableHead>{t('devices:headers.actions')}</TableHead>
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead align="center" className="w-[50px]">
+                  <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
+                </TableHead>
+                <TableHead>{t('devices:headers.id')}</TableHead>
+                <TableHead>{t('devices:headers.name')}</TableHead>
+                <TableHead>{t('devices:headers.type')}</TableHead>
+                <TableHead>{t('devices:headers.adapter')}</TableHead>
+                <TableHead align="center">{t('devices:headers.status')}</TableHead>
+                <TableHead>{t('devices:headers.lastOnline')}</TableHead>
+                <TableHead align="right">{t('devices:headers.actions')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedDevices.map((device) => (
+                <TableRow key={device.id} className={cn(selectedIds.has(device.id) && "bg-muted/50")}>
+                  <TableCell align="center">
+                    <Checkbox
+                      checked={selectedIds.has(device.id)}
+                      onCheckedChange={() => toggleSelection(device.id)}
+                    />
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{device.id}</TableCell>
+                  <TableCell>{device.name || "-"}</TableCell>
+                  <TableCell className="text-xs">{device.device_type}</TableCell>
+                  <TableCell>{device.plugin_name || "-"}</TableCell>
+                  <TableCell align="center">
+                    <StatusBadge status={device.status} />
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {new Date(device.last_seen).toLocaleString()}
+                  </TableCell>
+                  <TableCell align="right">
+                    <div className="flex justify-end gap-1">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewDetails(device)}>
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onDelete(device.id)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedDevices.map((device) => (
-                  <TableRow key={device.id} className={cn(selectedIds.has(device.id) && "bg-muted/50")}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selectedIds.has(device.id)}
-                        onCheckedChange={() => toggleSelection(device.id)}
-                      />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{device.id}</TableCell>
-                    <TableCell>{device.name || "-"}</TableCell>
-                    <TableCell className="text-xs">{device.device_type}</TableCell>
-                    <TableCell>{device.plugin_name || "-"}</TableCell>
-                    <TableCell>
-                      {device.status === "online" ? (
-                        <Badge className="bg-green-500 text-white">{t('devices:status.online')}</Badge>
-                      ) : (
-                        <Badge variant="secondary">{t('devices:status.offline')}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {new Date(device.last_seen).toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" onClick={() => onViewDetails(device)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" onClick={() => onDelete(device.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
 
-          {devices.length > devicesPerPage && (
-            <div className="px-4 pt-4">
-              <Pagination
-                total={devices.length}
-                pageSize={devicesPerPage}
-                currentPage={devicePage}
-                onPageChange={onPageChange}
-              />
-            </div>
-          )}
-        </ScrollArea>
+      {devices.length > devicesPerPage && (
+        <div className="pt-4">
+          <Pagination
+            total={devices.length}
+            pageSize={devicesPerPage}
+            currentPage={devicePage}
+            onPageChange={onPageChange}
+          />
+        </div>
       )}
     </>
   )

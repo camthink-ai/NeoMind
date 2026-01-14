@@ -5,11 +5,11 @@ import type { CommandDto } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { LoadingState, EmptyState } from '@/components/shared'
+import { LoadingState, EmptyState, ActionBar } from '@/components/shared'
 import { useApiData } from '@/hooks/useApiData'
 import { formatTimestamp } from '@/lib/utils/format'
 import { useToast } from '@/hooks/use-toast'
-import { RefreshCw, RotateCcw } from 'lucide-react'
+import { Terminal, RotateCcw } from 'lucide-react'
 
 type CommandFilter = 'all' | 'pending' | 'completed' | 'failed'
 
@@ -109,18 +109,12 @@ export function CommandsTab() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">{t('automation:commands')}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t('automation:commandsDesc')}
-          </p>
-        </div>
-        <Button onClick={refetch} variant="outline" size="sm">
-          <RefreshCw className="h-4 w-4 mr-2" />
-          {t('common:refresh')}
-        </Button>
-      </div>
+      <ActionBar
+        title={t('automation:commands')}
+        titleIcon={<Terminal className="h-5 w-5" />}
+        description={t('automation:commandsDesc')}
+        onRefresh={refetch}
+      />
 
       {/* Filter tabs */}
       <div className="flex gap-2">

@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Plus, Trash2, Edit, Play, Workflow as WorkflowIcon, ArrowRight } from 'lucide-react'
+import { ActionBar, EmptyState } from '@/components/shared'
 import { api } from '@/lib/api'
 import type { Workflow, WorkflowStep } from '@/types'
 import { cn } from '@/lib/utils'
@@ -155,34 +156,36 @@ export function WorkflowsTab({ onRefresh }: WorkflowsTabProps) {
   return (
     <>
       {/* Header with actions */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-xl font-semibold">{t('automation:workflowsTitle')}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t('automation:workflowsDesc')}
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          {t('automation:workflowsAdd')}
-        </Button>
-      </div>
+      <ActionBar
+        title={t('automation:workflowsTitle')}
+        titleIcon={<WorkflowIcon className="h-5 w-5" />}
+        description={t('automation:workflowsDesc')}
+        actions={[
+          {
+            label: t('automation:workflowsAdd'),
+            icon: <Plus className="h-4 w-4" />,
+            onClick: () => setCreateDialogOpen(true),
+          },
+        ]}
+        onRefresh={onRefresh}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {loading ? (
-          <div className="col-span-full py-8 text-center text-muted-foreground">
-            {t('automation:loading')}
+          <div className="col-span-full flex items-center justify-center py-12">
+            <p className="text-muted-foreground">{t('automation:loading')}</p>
           </div>
         ) : workflows.length === 0 ? (
-          <div className="col-span-full py-8">
-            <div className="flex flex-col items-center gap-3">
-              <WorkflowIcon className="h-12 w-12 text-muted-foreground/50" />
-              <p className="text-muted-foreground">{t('automation:noWorkflows')}</p>
-              <Button variant="outline" size="sm" onClick={() => setCreateDialogOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />
-                {t('automation:createFirstWorkflow')}
-              </Button>
-            </div>
+          <div className="col-span-full">
+            <EmptyState
+              icon="workflow"
+              title={t('automation:noWorkflows')}
+              action={{
+                label: t('automation:createFirstWorkflow'),
+                onClick: () => setCreateDialogOpen(true),
+                icon: <Plus className="h-4 w-4" />,
+              }}
+            />
           </div>
         ) : (
           workflows.map((workflow) => (

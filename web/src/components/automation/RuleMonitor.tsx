@@ -39,6 +39,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { MonitorStatsGrid, EmptyStateInline } from "@/components/shared"
 
 export interface RuleEvaluation {
   ruleId: string
@@ -313,13 +314,13 @@ export function RuleMonitor({
   const getEventIcon = useCallback((eventType: string) => {
     switch (eventType) {
       case "RuleEvaluated":
-        return <Activity className="h-4 w-4 text-blue-500" />
+        return <Activity className="h-4 w-4 text-info" />
       case "RuleTriggered":
-        return <Zap className="h-4 w-4 text-yellow-500" />
+        return <Zap className="h-4 w-4 text-warning" />
       case "RuleExecuted":
         return <CheckCircle className="h-4 w-4 text-green-500" />
       case "AlertCreated":
-        return <AlertTriangle className="h-4 w-4 text-red-500" />
+        return <AlertTriangle className="h-4 w-4 text-error" />
       default:
         return <Activity className="h-4 w-4 text-gray-500" />
     }
@@ -467,7 +468,7 @@ export function RuleMonitor({
                       <div className="flex items-center gap-1">
                         <span className="font-medium">{recentTriggers}</span>
                         {trend === "up" && <TrendingUp className="h-3 w-3 text-green-500" />}
-                        {trend === "down" && <TrendingDown className="h-3 w-3 text-red-500" />}
+                        {trend === "down" && <TrendingDown className="h-3 w-3 text-error" />}
                         {trend === "stable" && <Minus className="h-3 w-3 text-gray-400" />}
                       </div>
                     </div>
@@ -487,54 +488,38 @@ export function RuleMonitor({
 
       {/* Statistics Summary */}
       {showStats && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">总评估次数</span>
-              </div>
-              <p className="text-2xl font-bold mt-2">
-                {ruleStats.reduce((sum, s) => sum + s.totalEvaluations, 0)}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <Zap className="h-4 w-4 text-yellow-500" />
-                <span className="text-sm text-muted-foreground">总触发次数</span>
-              </div>
-              <p className="text-2xl font-bold mt-2">
-                {ruleStats.reduce((sum, s) => sum + s.triggerCount, 0)}
-              </p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-4 w-4 text-green-500" />
-                <span className="text-sm text-muted-foreground">活跃规则</span>
-              </div>
-              <p className="text-2xl font-bold mt-2">{ruleStats.length}</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-blue-500" />
-                <span className="text-sm text-muted-foreground">事件/分钟</span>
-              </div>
-              <p className="text-2xl font-bold mt-2">
-                {events.length > 0
-                  ? (
-                      events.filter((e) => e.timestamp > Date.now() / 1000 - 60).length
-                    ).toFixed(1)
-                  : "0"}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
+        <MonitorStatsGrid
+          stats={[
+            {
+              label: '总评估次数',
+              value: ruleStats.reduce((sum, s) => sum + s.totalEvaluations, 0),
+              icon: <Activity className="h-5 w-5" />,
+              color: 'default',
+            },
+            {
+              label: '总触发次数',
+              value: ruleStats.reduce((sum, s) => sum + s.triggerCount, 0),
+              icon: <Zap className="h-5 w-5" />,
+              color: 'warning',
+            },
+            {
+              label: '活跃规则',
+              value: ruleStats.length,
+              icon: <CheckCircle className="h-5 w-5" />,
+              color: 'success',
+            },
+            {
+              label: '事件/分钟',
+              value: events.length > 0
+                ? (
+                    events.filter((e) => e.timestamp > Date.now() / 1000 - 60).length
+                  ).toFixed(1)
+                : "0",
+              icon: <BarChart3 className="h-5 w-5" />,
+              color: 'info',
+            },
+          ]}
+        />
       )}
 
       {/* Event Log Table */}
@@ -562,11 +547,7 @@ export function RuleMonitor({
                 </TableHeader>
                 <TableBody>
                   {filteredEvents.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                        {isConnected ? "等待事件..." : "未连接到事件流"}
-                      </TableCell>
-                    </TableRow>
+                    <EmptyStateInline title={isConnected ? "等待事件..." : "未连接到事件流"} colSpan={4} />
                   ) : (
                     filteredEvents
                       .slice()
@@ -589,11 +570,11 @@ export function RuleMonitor({
                             <TableCell>
                               <div className="flex items-center gap-2">
                                 {getEventIcon(event.type)}
-                                <span className="font-medium">{getEventTypeName(event.type)}</span>
+                                <span>{getEventTypeName(event.type)}</span>
                               </div>
                             </TableCell>
-                            <TableCell>
-                              <span className="font-mono text-sm">{data.rule_name || data.rule_id || "-"}</span>
+                            <TableCell className="font-mono text-xs">
+                              {data.rule_name || data.rule_id || "-"}
                             </TableCell>
                             <TableCell className="text-sm text-muted-foreground">
                               {event.type === "RuleTriggered" && (

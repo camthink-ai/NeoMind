@@ -111,7 +111,7 @@ export function HassDiscoveryDialog({
                 <p className="text-xs text-muted-foreground">运行状态</p>
                 <p className="text-sm font-medium">
                   {hassDiscoveryStatus?.hass_discovery?.enabled ? (
-                    <span className="text-green-600">运行中</span>
+                    <span className="text-success">运行中</span>
                   ) : (
                     <span className="text-muted-foreground">未启动</span>
                   )}

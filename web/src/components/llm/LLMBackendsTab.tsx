@@ -219,7 +219,7 @@ export function LLMBackendsTab({
         </div>
 
         {/* Provider Cards Grid */}
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {backendTypes.map((type) => {
             const typeInstances = getInstancesForType(type.id)
             const info = LLM_PROVIDER_INFO[type.id] || LLM_PROVIDER_INFO.ollama
@@ -250,7 +250,7 @@ export function LLMBackendsTab({
                 <CardContent className="text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground">{t('plugins:llm.status')}:</span>
-                    <span className={hasActive ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
+                    <span className={hasActive ? "text-success font-medium" : "text-muted-foreground font-medium"}>
                       {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
                     </span>
                   </div>
@@ -332,7 +332,7 @@ export function LLMBackendsTab({
         {/* Type Info Badges */}
         <div className="flex flex-wrap gap-2 text-sm mb-4">
           {selectedType.requires_api_key && (
-            <Badge variant="outline" className="text-orange-600 border-orange-600">
+            <Badge variant="outline" className="text-warning border-warning">
               {t('plugins:llm.requiresApiKey')}
             </Badge>
           )}

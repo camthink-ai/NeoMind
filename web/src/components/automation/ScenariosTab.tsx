@@ -16,6 +16,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Plus, Trash2, Edit, Play, Home } from 'lucide-react'
+import { ActionBar, EmptyState } from '@/components/shared'
 import { api } from '@/lib/api'
 import type { Scenario, ScenarioAction } from '@/types'
 import { cn } from '@/lib/utils'
@@ -179,18 +180,19 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
   return (
     <>
       {/* Header with actions */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-xl font-semibold">{t('automation:scenariosTitle')}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t('automation:scenariosDesc')}
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          {t('automation:scenariosAdd')}
-        </Button>
-      </div>
+      <ActionBar
+        title={t('automation:scenariosTitle')}
+        titleIcon={<Home className="h-5 w-5" />}
+        description={t('automation:scenariosDesc')}
+        actions={[
+          {
+            label: t('automation:scenariosAdd'),
+            icon: <Plus className="h-4 w-4" />,
+            onClick: () => setCreateDialogOpen(true),
+          },
+        ]}
+        onRefresh={onRefresh}
+      />
 
       {/* Preset Scenarios */}
       {scenarios.length === 0 && !loading && (
@@ -218,16 +220,16 @@ export function ScenariosTab({ onRefresh }: ScenariosTabProps) {
       {/* Scenario Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {loading ? (
-          <div className="col-span-full py-8 text-center text-muted-foreground">
-            {t('automation:loading')}
+          <div className="col-span-full flex items-center justify-center py-12">
+            <p className="text-muted-foreground">{t('automation:loading')}</p>
           </div>
         ) : scenarios.length === 0 ? (
-          <div className="col-span-full py-8">
-            <div className="flex flex-col items-center gap-3">
-              <Home className="h-12 w-12 text-muted-foreground/50" />
-              <p className="text-muted-foreground">{t('automation:noScenarios')}</p>
-              <p className="text-xs text-muted-foreground">{t('automation:scenariosEmptyHint')}</p>
-            </div>
+          <div className="col-span-full">
+            <EmptyState
+              icon="scenario"
+              title={t('automation:noScenarios')}
+              description={t('automation:scenariosEmptyHint')}
+            />
           </div>
         ) : (
           scenarios.map((scenario) => (

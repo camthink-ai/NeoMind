@@ -130,9 +130,9 @@ export function LlmBackendCard({
           {/* Health status indicator */}
           <div className="flex items-center gap-2">
             {healthStatus === true ? (
-              <CheckCircle className="h-5 w-5 text-green-500" />
+              <CheckCircle className="h-5 w-5 text-success" />
             ) : healthStatus === false ? (
-              <XCircle className="h-5 w-5 text-red-500" />
+              <XCircle className="h-5 w-5 text-error" />
             ) : null}
 
             <DropdownMenu>
@@ -196,9 +196,7 @@ export function LlmBackendCard({
           {currentTestResult && (
             <div className={cn(
               'text-xs p-2 rounded',
-              currentTestResult.success
-                ? 'bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300'
-                : 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'
+              currentTestResult.success ? 'badge-success' : 'badge-error'
             )}>
               {currentTestResult.success
                 ? t('plugins:llm.connectionSuccess', { latency: currentTestResult.latency_ms?.toFixed(0) || '0' })

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { SubPageHeader } from "@/components/layout"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import {
@@ -27,6 +28,7 @@ import { toast } from "@/components/ui/use-toast"
 import { formatTimestamp } from "@/lib/utils/format"
 import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse, CommandHistoryResponse, MqttSettings } from "@/types"
 import { formatMetricValue, isBase64Image, getImageDataUrl } from "./utils"
+import { EmptyStateInline } from "@/components/shared"
 
 interface DeviceDetailProps {
   device: Device | null
@@ -169,32 +171,23 @@ export function DeviceDetail({
     <>
       <div className="flex-1 flex flex-col overflow-hidden -mt-6">
         {/* Header */}
-        <div className="border-b px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="sm" onClick={onBack}>
-                <ChevronLeft className="mr-1 h-4 w-4" />
-                {t('common:back')}
-              </Button>
-              <div>
-                <h2 className="text-2xl font-bold flex items-center gap-2">
-                  {device.name || device.id}
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  {t('devices:detail.deviceInfo', { deviceId: device.device_id || device.id, deviceType: device.device_type })}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
+        <SubPageHeader
+          title={device.name || device.id}
+          description={t('devices:detail.deviceInfo', { deviceId: device.device_id || device.id, deviceType: device.device_type })}
+          onBack={onBack}
+          backLabel={t('common:back')}
+          actions={
+            <>
               <Badge variant={device.status === "online" ? "default" : "secondary"}>
                 {device.status === "online" ? t('devices:status.online') : t('devices:status.offline')}
               </Badge>
               <Button variant="outline" size="sm" onClick={onRefresh} disabled={telemetryLoading}>
                 <RefreshCw className={`h-4 w-4 ${telemetryLoading ? "animate-spin" : ""}`} />
               </Button>
-            </div>
-          </div>
-        </div>
+            </>
+          }
+          className="border-b px-6 py-4 -mx-6"
+        />
 
         {/* Content with Tabs */}
         <div className="flex-1 overflow-hidden">
@@ -311,7 +304,7 @@ export function DeviceDetail({
                         <TableBody>
                           {hassStateTopics.map(({ metric, topic }) => (
                             <TableRow key={metric}>
-                              <TableCell className="font-medium text-sm">{metric}</TableCell>
+                              <TableCell>{metric}</TableCell>
                               <TableCell className="font-mono text-xs">{topic}</TableCell>
                             </TableRow>
                           ))}
@@ -361,20 +354,14 @@ export function DeviceDetail({
                               .slice(0, 100)
                               .map((point, index) => (
                                 <TableRow key={index}>
-                                  <TableCell className="text-sm text-muted-foreground align-baseline">
+                                  <TableCell className="text-sm text-muted-foreground">
                                     {formatTimestamp(point.timestamp)}
                                   </TableCell>
-                                  <TableCell className="font-medium">
-                                    {renderMetricValue(point.value, undefined, handleImageClick, t)}
-                                  </TableCell>
+                                  <TableCell>{renderMetricValue(point.value, undefined, handleImageClick, t)}</TableCell>
                                 </TableRow>
                               ))
                           ) : (
-                            <TableRow>
-                              <TableCell colSpan={2} className="text-center text-muted-foreground py-8">
-                                {t('devices:detail.metricHistory.noData')}
-                              </TableCell>
-                            </TableRow>
+                            <EmptyStateInline title={t('devices:detail.metricHistory.noData')} colSpan={2} />
                           )}
                         </TableBody>
                       </Table>
@@ -492,7 +479,7 @@ export function DeviceDetail({
                       <TableHead>{t('devices:history.time')}</TableHead>
                       <TableHead>{t('devices:history.command')}</TableHead>
                       <TableHead>{t('devices:history.parameters')}</TableHead>
-                      <TableHead>{t('devices:history.status')}</TableHead>
+                      <TableHead align="center">{t('devices:history.status')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -502,13 +489,13 @@ export function DeviceDetail({
                           <TableCell className="text-sm">
                             {entry.timestamp ? formatTimestamp(entry.timestamp) : "-"}
                           </TableCell>
-                          <TableCell className="font-medium">{entry.command}</TableCell>
+                          <TableCell className="font-mono text-xs">{entry.command}</TableCell>
                           <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                             {JSON.stringify(entry.parameters)}
                           </TableCell>
-                          <TableCell>
+                          <TableCell align="center">
                             {entry.success ? (
-                              <Badge variant="default" className="bg-green-500">{t('devices:history.success')}</Badge>
+                              <Badge className="badge-success">{t('devices:history.success')}</Badge>
                             ) : (
                               <Badge variant="destructive">{t('devices:history.failed')}</Badge>
                             )}
@@ -516,11 +503,7 @@ export function DeviceDetail({
                         </TableRow>
                       ))
                     ) : (
-                      <TableRow>
-                        <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                          {commandHistory?.note || t('devices:history.noRecords')}
-                        </TableCell>
-                      </TableRow>
+                      <EmptyStateInline title={commandHistory?.note || t('devices:history.noRecords')} colSpan={4} />
                     )}
                   </TableBody>
                 </Table>

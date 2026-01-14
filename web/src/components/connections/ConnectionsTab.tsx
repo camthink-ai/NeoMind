@@ -52,8 +52,8 @@ const CONNECTION_ICONS: Record<string, React.ReactNode> = {
 }
 
 const CONNECTION_ICON_BGS: Record<string, string> = {
-  builtinMqtt: 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400',
-  externalMqtt: 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400',
+  builtinMqtt: 'badge-success',
+  externalMqtt: 'badge-info',
   hass: 'bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400',
   modbus: 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400',
 }
@@ -317,7 +317,7 @@ export function ConnectionsTab() {
                 <CardContent className="text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground">{t('devices:connections.status')}:</span>
-                    <span className={isActive ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
+                    <span className={isActive ? "text-success font-medium" : "text-muted-foreground font-medium"}>
                       {isActive ? t('devices:connections.running') : t('devices:connections.notConfigured')}
                     </span>
                   </div>
@@ -540,7 +540,7 @@ function BuiltinMqttCard({ mqttStatus, deviceCount, onViewDevices, onRefresh }: 
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400">
+            <div className="p-2 rounded-lg badge-success">
               <Server className="h-5 w-5" />
             </div>
             <div>
@@ -559,7 +559,7 @@ function BuiltinMqttCard({ mqttStatus, deviceCount, onViewDevices, onRefresh }: 
         <div className="space-y-2 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">{t('devices:connections.status')}:</span>
-            <span className={connected ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
+            <span className={connected ? "text-success font-medium" : "text-muted-foreground font-medium"}>
               {connected ? t('devices:connections.builtinMqtt.connected') : t('devices:connections.builtinMqtt.disconnected')}
             </span>
           </div>
@@ -650,7 +650,7 @@ function ExternalBrokerCard({ broker, deviceCount, onEdit, onDelete, onTest, onT
           </div>
           {broker.tls && (
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-3 w-3 text-green-600" />
+              <CheckCircle2 className="h-3 w-3 text-success" />
               <span className="text-xs text-muted-foreground">{t('devices:connections.externalMqtt.tlsEnabled')}</span>
             </div>
           )}
@@ -713,7 +713,7 @@ function HassCard({ hassStatus, deviceCount, onViewDevices, onRefresh, onConfigu
         <div className="space-y-2 text-sm">
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">{t('devices:connections.hass.connectionStatus')}:</span>
-            <span className={connected ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
+            <span className={connected ? "text-success font-medium" : "text-muted-foreground font-medium"}>
               {connected ? t('devices:connections.hass.connected') : t('devices:connections.hass.disconnected')}
             </span>
           </div>
@@ -1035,7 +1035,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
               {/* TLS Certificate Configuration */}
               {tls && (
                 <div className="space-y-3 p-3 border rounded-md bg-muted/30">
-                  <div className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                  <div className="text-xs font-medium text-info dark:text-blue-400">
                     🔒 {t('devices:connectionDialog.tlsCertConfig')}
                   </div>
                   <div>

@@ -29,6 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { MonitorStatsGrid } from "@/components/shared"
 
 export interface WorkflowExecution {
   executionId: string
@@ -339,7 +340,7 @@ export function WorkflowMonitor({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             {isConnected ? (
-              <Workflow className="h-5 w-5 text-green-500" />
+              <Workflow className="h-5 w-5 text-success" />
             ) : (
               <Workflow className="h-5 w-5 text-gray-400" />
             )}
@@ -409,53 +410,40 @@ export function WorkflowMonitor({
       </div>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Workflow className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">总执行数</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{stats.totalExecutions}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <Play className="h-4 w-4 text-blue-500" />
-              <span className="text-sm text-muted-foreground">运行中</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{stats.runningCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <CheckCircle className="h-4 w-4 text-green-500" />
-              <span className="text-sm text-muted-foreground">已完成</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{stats.completedCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <XCircle className="h-4 w-4 text-red-500" />
-              <span className="text-sm text-muted-foreground">失败</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{stats.failedCount}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-purple-500" />
-              <span className="text-sm text-muted-foreground">成功率</span>
-            </div>
-            <p className="text-2xl font-bold mt-2">{stats.successRate}%</p>
-          </CardContent>
-        </Card>
-      </div>
+      <MonitorStatsGrid
+        stats={[
+          {
+            label: '总执行数',
+            value: stats.totalExecutions,
+            icon: <Workflow className="h-5 w-5" />,
+            color: 'default',
+          },
+          {
+            label: '运行中',
+            value: stats.runningCount,
+            icon: <Play className="h-5 w-5" />,
+            color: 'info',
+          },
+          {
+            label: '已完成',
+            value: stats.completedCount,
+            icon: <CheckCircle className="h-5 w-5" />,
+            color: 'success',
+          },
+          {
+            label: '失败',
+            value: stats.failedCount,
+            icon: <XCircle className="h-5 w-5" />,
+            color: 'error',
+          },
+          {
+            label: '成功率',
+            value: `${stats.successRate}%`,
+            icon: <TrendingUp className="h-5 w-5" />,
+            color: 'purple',
+          },
+        ]}
+      />
 
       {/* Executions List */}
       <div className="flex-1 min-h-0">
@@ -495,7 +483,7 @@ export function WorkflowMonitor({
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <Workflow className="h-4 w-4 text-blue-500 shrink-0" />
+                            <Workflow className="h-4 w-4 text-info shrink-0" />
                             <CardTitle className="text-base truncate">{execution.workflowName}</CardTitle>
                           </div>
                           <CardDescription className="flex items-center gap-2 text-xs">

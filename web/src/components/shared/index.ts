@@ -11,6 +11,7 @@ export * from './SearchBar'
 export * from './SearchResultsDialog'
 export * from './PageTabs'
 export * from './BulkActionBar'
+export * from './MonitorStatsGrid'
 
 // Event components
 export { EventHistory } from '../events/EventHistory'

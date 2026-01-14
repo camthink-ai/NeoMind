@@ -146,7 +146,8 @@ fn default_max_tokens() -> usize {
 }
 
 fn default_thinking_enabled() -> bool {
-    // Default to true for models that support thinking
+    // Default to true - let models with thinking capability use it
+    // The models should naturally decide when to use thinking
     true
 }
 

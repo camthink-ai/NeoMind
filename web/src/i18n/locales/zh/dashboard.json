@@ -57,5 +57,7 @@
   "executionResult": "执行结果",
   "expandSidebar": "展开侧边栏",
   "collapseSidebar": "收起侧边栏",
-  "openMenu": "打开菜单"
+  "openMenu": "打开菜单",
+  "selectSession": "选择会话",
+  "enterToSend": "Enter 发送，Shift+Enter 换行"
 }

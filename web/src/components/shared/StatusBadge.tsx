@@ -3,20 +3,20 @@ import { getStatusColor, getStatusLabel } from '@/lib/utils/status'
 import { cn } from '@/lib/utils'
 
 const badgeVariants = cva(
-  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors',
+  'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium transition-colors',
   {
     variants: {
       variant: {
-        success: 'bg-success/10 text-success border border-success/20',
-        warning: 'bg-warning/10 text-warning border border-warning/20',
-        error: 'bg-error/10 text-error border border-error/20',
-        info: 'bg-info/10 text-info border border-info/20',
-        muted: 'bg-muted/50 text-muted-foreground',
+        success: 'badge-success',
+        warning: 'badge-warning',
+        error: 'badge-error',
+        info: 'badge-info',
+        muted: 'bg-muted text-muted-foreground',
       },
       size: {
-        sm: 'px-2 py-0.5 text-[10px]',
-        md: 'px-2.5 py-1 text-xs',
-        lg: 'px-3 py-1.5 text-sm',
+        sm: 'px-1.5 py-0.5 text-[10px]',
+        md: 'px-2 py-0.5 text-xs',
+        lg: 'px-2.5 py-1 text-sm',
       },
     },
     defaultVariants: {
@@ -28,7 +28,6 @@ const badgeVariants = cva(
 
 export interface StatusBadgeProps extends VariantProps<typeof badgeVariants> {
   status: string
-  showDot?: boolean
   className?: string
 }
 
@@ -37,27 +36,15 @@ export interface StatusBadgeProps extends VariantProps<typeof badgeVariants> {
  *
  * @example
  * <StatusBadge status="online" />
- * <StatusBadge status="pending" showDot />
+ * <StatusBadge status="pending" />
  * <StatusBadge status="failed" size="sm" />
  */
-export function StatusBadge({ status, showDot = true, size, className }: StatusBadgeProps) {
+export function StatusBadge({ status, className }: StatusBadgeProps) {
   const color = getStatusColor(status)
   const label = getStatusLabel(status)
 
   return (
-    <span className={cn(badgeVariants({ variant: color, size }), className)}>
-      {showDot && (
-        <span
-          className={cn(
-            'h-1.5 w-1.5 rounded-full animate-pulse',
-            color === 'success' && 'bg-success',
-            color === 'warning' && 'bg-warning',
-            color === 'error' && 'bg-error',
-            color === 'info' && 'bg-info',
-            color === 'muted' && 'bg-muted-foreground'
-          )}
-        />
-      )}
+    <span className={cn(badgeVariants({ variant: color }), className)}>
       {label}
     </span>
   )

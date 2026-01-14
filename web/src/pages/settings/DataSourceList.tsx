@@ -1,5 +1,6 @@
 import type { MqttStatus, ExternalBroker, HassDiscoveryStatus, HassDiscoveredDevice } from "@/types"
 import { Badge } from "@/components/ui/badge"
+import { StatusBadge } from "@/components/shared"
 import { Server, ExternalLink, Home, Wifi, WifiOff, Sparkles, ChevronRight } from "lucide-react"
 
 type DataSourceView = "list" | "builtin" | "external" | "hass"
@@ -31,7 +32,7 @@ export function DataSourceList({
         >
           <div className="flex flex-col h-full">
             <div className="flex items-start justify-between mb-3">
-              <div className={`p-3 rounded-lg ${mqttStatus?.connected ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"}`}>
+              <div className={`p-3 rounded-lg ${mqttStatus?.connected ? "badge-success" : "badge-error"}`}>
                 <Server className="h-6 w-6" />
               </div>
               <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -65,7 +66,7 @@ export function DataSourceList({
         >
           <div className="flex flex-col h-full">
             <div className="flex items-start justify-between mb-3">
-              <div className="p-3 rounded-lg bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400">
+              <div className="p-3 rounded-lg badge-info">
                 <ExternalLink className="h-6 w-6" />
               </div>
               <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />

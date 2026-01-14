@@ -138,8 +138,8 @@ export function PluginCard({
   }
 
   const getStatusIcon = () => {
-    if (running) return <CheckCircle className="h-4 w-4 text-green-500" />
-    if (enabled) return <AlertCircle className="h-4 w-4 text-yellow-500" />
+    if (running) return <CheckCircle className="h-4 w-4 text-success" />
+    if (enabled) return <AlertCircle className="h-4 w-4 text-warning" />
     return <XCircle className="h-4 w-4 text-muted-foreground" />
   }
 
@@ -152,26 +152,26 @@ export function PluginCard({
   const getTypeBadgeColor = () => {
     switch (type.toLowerCase()) {
       case 'llm_backend':
-        return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300'
+        return 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300'
       case 'device_adapter':
       case 'mqtt':
       case 'modbus':
       case 'hass':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300'
+        return 'badge-info'
       case 'tool':
-        return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+        return 'badge-success'
       case 'integration':
-        return 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300'
+        return 'badge-warning'
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+        return 'bg-muted text-muted-foreground'
     }
   }
 
   return (
     <Card className={cn(
       'transition-all duration-200',
-      running && 'border-green-500 dark:border-green-700',
-      !running && enabled && 'border-yellow-500 dark:border-yellow-700',
+      running && 'border-success',
+      !running && enabled && 'border-warning',
     )}>
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
@@ -261,7 +261,7 @@ export function PluginCard({
               <span>{t('plugins:startCount')}: {stats.start_count}</span>
             )}
             {stats.error_count !== undefined && stats.error_count > 0 && (
-              <span className="text-red-500">{t('plugins:errorCount')}: {stats.error_count}</span>
+              <span className="text-error">{t('plugins:errorCount')}: {stats.error_count}</span>
             )}
             {stats.avg_response_time_ms !== undefined && (
               <span>{t('plugins:avgResponseTime')}: {stats.avg_response_time_ms.toFixed(0)}ms</span>

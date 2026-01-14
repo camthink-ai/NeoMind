@@ -262,12 +262,46 @@ impl AgentMessage {
     }
 
     /// Convert to core Message.
+    /// IMPORTANT: When tool_calls exist, include them in content for LLM context.
+    /// This ensures the model knows what tools were called in previous turns.
     pub fn to_core(&self) -> Message {
         match self.role.as_str() {
             "user" => Message::user(&self.content),
-            "assistant" => Message::assistant(&self.content),
+            "assistant" => {
+                // If this message has tool calls, include them in the content
+                // so the LLM knows what tools were called in the conversation
+                if let Some(ref calls) = self.tool_calls {
+                    if !calls.is_empty() {
+                        let mut full_content = self.content.clone();
+                        // Don't append tool calls if content already ends with them (from streaming)
+                        if !full_content.contains("<tool_calls>") {
+                            full_content.push_str("\n\n[Tools called: ");
+                            for (i, call) in calls.iter().enumerate() {
+                                if i > 0 {
+                                    full_content.push_str(", ");
+                                }
+                                full_content.push_str(&call.name);
+                            }
+                            full_content.push(']');
+                        }
+                        Message::assistant(&full_content)
+                    } else {
+                        Message::assistant(&self.content)
+                    }
+                } else {
+                    Message::assistant(&self.content)
+                }
+            },
             "system" => Message::system(&self.content),
-            "tool" => Message::user(&self.content), // Tool messages as user for now
+            "tool" => {
+                // Tool result messages - include which tool was called
+                if let Some(ref tool_name) = self.tool_call_name {
+                    let tool_content = format!("[Tool: {} returned]\n{}", tool_name, self.content);
+                    Message::user(&tool_content)
+                } else {
+                    Message::user(&self.content)
+                }
+            },
             _ => Message::user(&self.content),
         }
     }

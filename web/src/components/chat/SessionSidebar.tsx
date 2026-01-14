@@ -194,9 +194,17 @@ export function SessionSidebar({ onNewChat, onClose, mode = 'full', onNewChatFro
                 </div>
               ) : (
                 sessions.map((session, index) => (
-                  <button
+                  <div
                     key={session.sessionId || `session-${index}`}
                     onClick={() => session.sessionId && handleSwitchSession(session.sessionId)}
+                    onKeyDown={(e) => {
+                      if ((e.key === 'Enter' || e.key === ' ') && session.sessionId) {
+                        e.preventDefault()
+                        handleSwitchSession(session.sessionId)
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                     className={cn(
                       "group relative w-full flex items-center gap-2 rounded-md px-2 py-2 text-sm cursor-pointer transition-colors text-left overflow-hidden",
                       sessionId === session.sessionId
@@ -247,7 +255,7 @@ export function SessionSidebar({ onNewChat, onClose, mode = 'full', onNewChatFro
                         </Button>
                       </div>
                     )}
-                  </button>
+                  </div>
                 ))
               )}
             </div>

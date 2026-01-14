@@ -11,8 +11,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { LoadingState, EmptyState, Pagination, BulkActionBar } from "@/components/shared"
-import { Eye, Pencil, Trash2, RefreshCw, Plus, FileJson } from "lucide-react"
+import { LoadingState, EmptyStateInline, Pagination, BulkActionBar, ActionBar } from "@/components/shared"
+import { Card } from "@/components/ui/card"
+import { Eye, Pencil, Trash2, FileJson, Plus } from "lucide-react"
 import { Dialog, DialogTrigger } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { DeviceType } from "@/types"
@@ -100,23 +101,25 @@ export function DeviceTypeList({
   return (
     <>
       {/* Toolbar */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-2">
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button size="sm" onClick={onAddType}>
-                <Plus className="mr-2 h-4 w-4" />
-                {t('devices:addDeviceType')}
-              </Button>
-            </DialogTrigger>
-            {addTypeDialog}
-          </Dialog>
-          <Button variant="outline" size="sm" onClick={onRefresh}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            {t('common:refresh')}
-          </Button>
-        </div>
-      </div>
+      <ActionBar
+        title={t('devices:types.deviceTypes')}
+        titleIcon={<FileJson className="h-5 w-5" />}
+        description={`${deviceTypes.length} ${t('devices:types.totalTypes')}`}
+        actions={
+          <>
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button size="sm" onClick={onAddType}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  {t('devices:addDeviceType')}
+                </Button>
+              </DialogTrigger>
+              {addTypeDialog}
+            </Dialog>
+          </>
+        }
+        onRefresh={onRefresh}
+      />
 
       {/* Bulk Actions Bar */}
       <BulkActionBar
@@ -136,71 +139,61 @@ export function DeviceTypeList({
       {loading ? (
         <LoadingState text={t('devices:types.loading')} />
       ) : deviceTypes.length === 0 ? (
-        <EmptyState
-          icon={<FileJson className="h-12 w-12 text-muted-foreground" />}
-          title={t('devices:types.noTypes')}
-          description={t('devices:types.startUsing')}
-        />
+        <Card>
+          <Table>
+            <TableBody>
+              <EmptyStateInline title={t('devices:types.noTypes')} colSpan={7} />
+            </TableBody>
+          </Table>
+        </Card>
       ) : (
-        <ScrollArea className="flex-1">
-          <div className="px-4">
+        <>
+          <Card>
             <Table>
-              <TableHeader>
+            <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[50px]">
+                  <TableHead align="center" className="w-[50px]">
                     <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
                   </TableHead>
-                  <TableHead className="text-center">{t('devices:types.headers.id')}</TableHead>
-                  <TableHead className="text-center">{t('devices:types.headers.name')}</TableHead>
-                  <TableHead className="text-center">{t('devices:types.headers.description')}</TableHead>
-                  <TableHead className="text-center">{t('devices:types.headers.metrics')}</TableHead>
-                  <TableHead className="text-center">{t('devices:types.headers.commands')}</TableHead>
-                  <TableHead className="text-center">{t('devices:types.headers.actions')}</TableHead>
+                  <TableHead>{t('devices:types.headers.id')}</TableHead>
+                  <TableHead>{t('devices:types.headers.name')}</TableHead>
+                  <TableHead>{t('devices:types.headers.description')}</TableHead>
+                  <TableHead align="center">{t('devices:types.headers.metrics')}</TableHead>
+                  <TableHead align="center">{t('devices:types.headers.commands')}</TableHead>
+                  <TableHead align="right">{t('devices:types.headers.actions')}</TableHead>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
+            </TableHeader>
+            <TableBody>
                 {paginatedDeviceTypes.map((type) => (
                   <TableRow key={type.device_type} className={cn(selectedIds.has(type.device_type) && "bg-muted/50")}>
-                    <TableCell>
+                    <TableCell align="center">
                       <Checkbox
                         checked={selectedIds.has(type.device_type)}
                         onCheckedChange={() => toggleSelection(type.device_type)}
                       />
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-center">
+                    <TableCell className="font-mono text-xs">
                       {type.device_type}
                     </TableCell>
-                    <TableCell className="text-center">{type.name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground text-center">
+                    <TableCell>{type.name}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
                       {type.description || "-"}
                     </TableCell>
-                    <TableCell className="text-center">
+                    <TableCell align="center">
                       {type.uplink?.metrics?.length ?? type.metric_count ?? 0}
                     </TableCell>
-                    <TableCell className="text-center">
+                    <TableCell align="center">
                       {type.downlink?.commands?.length ?? type.command_count ?? 0}
                     </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex justify-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onViewDetails(type)}
-                        >
+                    <TableCell align="right">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewDetails(type)}>
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onEdit(type)}
-                        >
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(type)}>
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onDelete(type.device_type)}
-                        >
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onDelete(type.device_type)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -209,11 +202,11 @@ export function DeviceTypeList({
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Card>
 
           {/* Pagination Controls */}
           {deviceTypes.length > deviceTypesPerPage && (
-            <div className="px-4 pt-4">
+            <div className="pt-4">
               <Pagination
                 total={deviceTypes.length}
                 pageSize={deviceTypesPerPage}
@@ -222,7 +215,7 @@ export function DeviceTypeList({
               />
             </div>
           )}
-        </ScrollArea>
+        </>
       )}
     </>
   )

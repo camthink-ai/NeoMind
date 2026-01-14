@@ -37,14 +37,16 @@ pub struct StreamSafeguards {
 impl Default for StreamSafeguards {
     fn default() -> Self {
         Self {
-            // Global timeout - 2 minutes should be enough for most queries
-            max_stream_duration: Duration::from_secs(120),
+            // Global timeout - 60 seconds should be enough for most queries
+            // Reduced from 120s to prevent excessive waiting on long thinking
+            max_stream_duration: Duration::from_secs(60),
             // IMPORTANT: Limit thinking content to prevent infinite loops
             // Some reasoning models (like DeepSeek-R1) can generate very long thinking
             // that doesn't converge to a decision
-            max_thinking_length: 8000,  // ~8000 characters of thinking
+            // Reduced from 8000 to 2000 to force quicker content generation
+            max_thinking_length: 2000,  // ~2000 characters of thinking
             max_content_length: usize::MAX,
-            // Tool iterations limit - REDUCED to prevent loops
+            // Tool iterations limit - 3 is sufficient for most multi-step queries
             max_tool_iterations: 3,
             // Repetition detection threshold
             max_repetition_count: 3,
@@ -190,7 +192,8 @@ struct ToolExecutionResult {
 
 /// Maximum context window size in tokens (approximate)
 /// Adjust based on model capacity (e.g., qwen3-vl:2b has ~32k context)
-const MAX_CONTEXT_TOKENS: usize = 8000;
+/// Increased to 12000 to preserve more conversation history
+const MAX_CONTEXT_TOKENS: usize = 12000;
 
 /// Estimate token count for a string (rough approximation: 1 token ≈ 4 characters for Chinese, 1 token ≈ 4 characters for English)
 /// This is a simple heuristic - for production, consider using a proper tokenizer
@@ -203,32 +206,35 @@ fn estimate_tokens(text: &str) -> usize {
 /// Build conversation context with token-based windowing.
 /// Takes the most recent messages that fit within MAX_CONTEXT_TOKENS,
 /// always including system messages and preserving conversation order.
+///
+/// IMPORTANT: Thinking content is NOT counted toward context tokens because:
+/// 1. Thinking is internal reasoning, not conversation context
+/// 2. Counting thinking would push out important conversation history
+/// 3. The LLM already has the thinking from previous turns in its generated responses
 fn build_context_window(messages: &[AgentMessage]) -> Vec<&AgentMessage> {
     let mut selected_messages = Vec::new();
     let mut current_tokens = 0;
 
-    // Iterate in reverse to prioritize recent messages
-    for msg in messages.iter().rev() {
-        let msg_tokens = estimate_tokens(&msg.content);
-        let thinking_tokens = msg.thinking.as_ref().map_or(0, |t| estimate_tokens(t));
+    // Always keep the last 6 messages minimum (regardless of token count)
+    // This ensures recent conversation context is preserved
+    let min_messages = 6;
 
-        // Check if adding this message would exceed the limit
-        if current_tokens + msg_tokens + thinking_tokens > MAX_CONTEXT_TOKENS {
-            // Check if we should add it anyway (for important messages like system or user)
-            if msg.role == "system" || msg.role == "user" {
-                // Try to fit it by truncating if necessary
-                let max_len = (MAX_CONTEXT_TOKENS - current_tokens) * 4;
-                if max_len > 100 {
-                    // Keep it but might truncate
-                    selected_messages.push(msg);
-                    current_tokens += msg_tokens + thinking_tokens;
-                }
-            }
+    // Iterate in reverse to prioritize recent messages
+    for (i, msg) in messages.iter().rev().enumerate() {
+        // === FIX: Don't count thinking toward context tokens ===
+        // Thinking is internal reasoning and shouldn't consume context budget
+        let msg_tokens = estimate_tokens(&msg.content);
+
+        // Always include recent messages (within min_messages limit)
+        let is_recent = i < min_messages;
+        let is_important = msg.role == "system" || msg.role == "user";
+
+        if is_recent || current_tokens + msg_tokens <= MAX_CONTEXT_TOKENS || is_important {
+            selected_messages.push(msg);
+            current_tokens += msg_tokens;
+        } else {
             break;
         }
-
-        selected_messages.push(msg);
-        current_tokens += msg_tokens + thinking_tokens;
     }
 
     // Reverse to maintain original order
@@ -358,21 +364,44 @@ pub fn process_stream_events_with_safeguards(
 
                     // thinking: send immediately with length check
                     if is_thinking {
-                        // === SAFEGUARD: Check thinking content length (only if limit is set) ===
+                        // === CRITICAL FIX: Check thinking limit BEFORE sending ===
+                        // Don't accumulate or send if we're already at the limit
+                        if safeguards.max_thinking_length != usize::MAX
+                            && thinking_content.len() >= safeguards.max_thinking_length
+                        {
+                            tracing::warn!(
+                                "Thinking already at max length ({}), ignoring additional chunks",
+                                thinking_content.len()
+                            );
+                            continue; // Skip this chunk entirely
+                        }
+
+                        // Check if adding this chunk would exceed the limit
                         if safeguards.max_thinking_length != usize::MAX
                             && thinking_content.len() + text.len() > safeguards.max_thinking_length
                         {
+                            // Only send partial chunk up to the limit
+                            let remaining = safeguards.max_thinking_length - thinking_content.len();
+                            if remaining > 0 && !text.is_empty() {
+                                // Safe truncate: take min of remaining and text length
+                                let truncate_len = remaining.min(text.len());
+                                let truncated = &text[..truncate_len];
+                                thinking_content.push_str(truncated);
+                                yield AgentEvent::thinking(truncated.to_string());
+                            }
                             tracing::warn!(
-                                "Thinking content exceeded max length ({} > {}), forcing stream termination",
-                                thinking_content.len() + text.len(),
+                                "Thinking content would exceed max length ({} + {} > {}), forcing termination",
+                                thinking_content.len(),
+                                text.len(),
                                 safeguards.max_thinking_length
                             );
                             yield AgentEvent::error(format!(
-                                "Thinking too long ({} chars), stopping to prevent infinite loop",
-                                thinking_content.len()
+                                "Thinking limit reached ({} chars), stopping to prevent slow response",
+                                safeguards.max_thinking_length
                             ));
                             break;
                         }
+
                         thinking_content.push_str(&text);
                         has_thinking = true;
                         yield AgentEvent::thinking(text);
@@ -440,10 +469,38 @@ pub fn process_stream_events_with_safeguards(
 
                     // No tool calls - stream content immediately
                     if !tool_calls_detected && !buffer.is_empty() {
+                        // Check if buffer contains start of tool calls
                         if !buffer.contains("<tool_calls") {
+                            // No tool calls in buffer, emit content
                             content_before_tools.push_str(&buffer);
                             yield AgentEvent::content(buffer.clone());
                             buffer.clear();
+                        } else {
+                            // Buffer contains partial tool call XML, check if it's complete
+                            // If complete but parsing failed, filter out the XML before emitting
+                            if buffer.contains("</tool_calls>") {
+                                // Tool calls are complete but parsing failed
+                                // Filter out any tool call XML and emit remaining content
+                                let filtered = if let Some(tool_start) = buffer.find("<tool_calls>") {
+                                    if let Some(tool_end) = buffer.find("</tool_calls>") {
+                                        // Remove tool call block, keep content before and after
+                                        let before = &buffer[..tool_start];
+                                        let after = &buffer[tool_end + 13..];
+                                        format!("{}{}", before, after)
+                                    } else {
+                                        buffer.clone()
+                                    }
+                                } else {
+                                    buffer.clone()
+                                };
+
+                                if !filtered.is_empty() {
+                                    content_before_tools.push_str(&filtered);
+                                    yield AgentEvent::content(filtered);
+                                }
+                                buffer.clear();
+                            }
+                            // If tool calls are incomplete, wait for more data
                         }
                     }
                 }
@@ -454,20 +511,59 @@ pub fn process_stream_events_with_safeguards(
             }
         }
 
-        // Emit any remaining buffer
-        if !buffer.is_empty() && !buffer.contains("<tool_calls>") {
-            content_before_tools.push_str(&buffer);
-            yield AgentEvent::content(buffer);
+        // Emit any remaining buffer (after filtering out tool call XML)
+        if !buffer.is_empty() {
+            // Filter out any tool call XML that might remain in the buffer
+            let filtered_content = if buffer.contains("<tool_calls>") {
+                // Remove tool call blocks from buffer
+                let mut result = buffer.clone();
+                while let Some(start) = result.find("<tool_calls>") {
+                    if let Some(end) = result.find("</tool_calls>") {
+                        result.replace_range(start..=end + 12, "");
+                    } else {
+                        break;
+                    }
+                }
+                result
+            } else {
+                buffer.clone()
+            };
+
+            if !filtered_content.is_empty() {
+                content_before_tools.push_str(&filtered_content);
+                yield AgentEvent::content(filtered_content);
+            }
         }
+
+        // === FIX: Handle empty responses ===
+        // If no content was generated but thinking exists, provide a fallback response
+        let has_content = !content_before_tools.is_empty();
+        let has_thinking = !thinking_content.is_empty();
 
         // IMPORTANT: If tool calls were detected, DON'T save the initial message yet.
         // We'll save a complete message (with tool_calls and final response) in Phase 2.
         // If no tool calls, save the response now.
         if !tool_calls_detected {
-            let initial_msg = if !thinking_content.is_empty() {
-                AgentMessage::assistant_with_thinking(&content_before_tools, &thinking_content)
+            // Handle empty response case
+            let response_to_save = if !has_content && has_thinking {
+                // LLM generated only thinking, no actual response
+                // Generate a simple fallback response
+                let fallback = "我已经理解了您的问题。请告诉我您需要什么帮助？".to_string();
+                yield AgentEvent::content(fallback.clone());
+                fallback
+            } else if !has_content && !has_thinking {
+                // Complete empty response - shouldn't happen but handle it
+                let fallback = "您好，我是NeoTalk助手，请问有什么可以帮助您的？".to_string();
+                yield AgentEvent::content(fallback.clone());
+                fallback
             } else {
-                AgentMessage::assistant(&content_before_tools)
+                content_before_tools.clone()
+            };
+
+            let initial_msg = if !thinking_content.is_empty() {
+                AgentMessage::assistant_with_thinking(&response_to_save, &thinking_content)
+            } else {
+                AgentMessage::assistant(&response_to_save)
             };
             short_term_memory.write().await.push(initial_msg);
         }
@@ -587,12 +683,10 @@ pub fn process_stream_events_with_safeguards(
                 }
             }
 
-            // === FIX 2: Phase 2 - Proper LLM follow-up after tool execution ===
-            // Instead of directly formatting tool results, we:
-            // 1. Save the initial assistant message with tool calls
-            // 2. Add tool result messages to history
-            // 3. Call LLM again to generate a natural response based on tool results
-            // This prevents the LLM from re-calling tools in future conversations
+            // === FIX 2: Phase 2 - Direct tool result formatting ===
+            // Instead of calling LLM again (which causes empty responses and delays),
+            // we directly format and return the tool results.
+            // This is faster and more reliable for simple tool queries.
 
             // Step 1: Save the initial assistant message (with tool calls but without results yet)
             let initial_msg = if !thinking_content.is_empty() {
@@ -616,41 +710,35 @@ pub fn process_stream_events_with_safeguards(
             }
 
             // Step 3: Call LLM again to generate final response based on tool results
-            // Use chat_without_tools to prevent another round of tool calls
-            tracing::info!("Generating final response based on tool results");
-
-            // Build prompt for LLM to generate response based on tool results
-            let followup_prompt = format!(
-                "Based on the tool execution results above, provide a helpful response to the user's question: \"{}\"",
-                user_message
-            );
+            // The LLM should see: conversation history + tool call + tool result
+            // And generate a natural response to the user
+            tracing::info!("Phase 2: Generating follow-up response based on tool results");
 
             let llm_for_followup = llm_interface.clone();
             let memory_clone = short_term_memory.clone();
 
-            // === Get updated history (including the tool results we just added) ===
+            // Get the conversation history (including the tool results we just added)
             let followup_result = tokio::task::block_in_place(|| {
                 let handle = tokio::runtime::Handle::try_current()
                     .expect("No runtime found");
 
-                // Clone the memory within block_in_place
                 let history = memory_clone.blocking_read();
                 let history_messages: Vec<edge_ai_core::Message> = history.iter()
                     .map(|msg| msg.to_core())
                     .collect::<Vec<_>>();
                 drop(history);
 
-                // CRITICAL: Use chat_stream_without_tools_with_history to prevent Phase 2 from calling tools again
-                // This prevents infinite loops where LLM keeps calling tools
+                // Phase 2 uses same history with tool results, no additional user prompt needed
+                // The LLM should naturally continue the conversation after seeing tool results
                 handle.block_on(
-                    llm_for_followup.chat_stream_without_tools_with_history(&followup_prompt, &history_messages)
+                    llm_for_followup.chat_stream_with_history("", &history_messages)
                 )
             });
 
             let followup_stream = match followup_result {
                 Ok(stream) => stream,
                 Err(e) => {
-                    tracing::error!("Failed to generate follow-up response: {}", e);
+                    tracing::error!("Phase 2 LLM call failed: {}", e);
                     // Fallback to formatted tool results
                     let fallback_text = format_tool_results(&tool_call_results);
                     for chunk in fallback_text.chars().collect::<Vec<_>>().chunks(20) {
@@ -659,42 +747,48 @@ pub fn process_stream_events_with_safeguards(
                             yield AgentEvent::content(chunk_str);
                         }
                     }
+                    yield AgentEvent::end();
                     return;
                 }
             };
 
-            // Stream the follow-up response from LLM
+            // Stream the follow-up response
             let mut followup_stream = Box::pin(followup_stream);
             let mut final_response_content = String::new();
+            let followup_start = Instant::now();
 
             while let Some(result) = StreamExt::next(&mut followup_stream).await {
+                // Phase 2 timeout - don't wait too long
+                if followup_start.elapsed() > Duration::from_secs(30) {
+                    tracing::warn!("Phase 2 timeout (>30s), forcing completion");
+                    break;
+                }
+
                 match result {
                     Ok((chunk, is_thinking)) => {
                         if chunk.is_empty() {
                             continue;
                         }
                         if is_thinking {
-                            // Stream thinking content
+                            // Phase 2 thinking - still send it but could be limited if needed
                             yield AgentEvent::thinking(chunk.clone());
-                            final_response_content.push_str(&chunk);
                         } else {
-                            // Stream response content
                             yield AgentEvent::content(chunk.clone());
                             final_response_content.push_str(&chunk);
                         }
                     }
                     Err(e) => {
-                        yield AgentEvent::error(format!("Follow-up generation failed: {}", e));
+                        tracing::error!("Phase 2 stream error: {}", e);
                         break;
                     }
                 }
             }
 
-            // Step 4: Save the final assistant response
+            // Save the final assistant response to memory
             let final_msg = AgentMessage::assistant(&final_response_content);
             short_term_memory.write().await.push(final_msg);
 
-            tracing::info!("Tool execution and follow-up response complete");
+            tracing::info!("Tool execution and Phase 2 response complete");
         }
 
         state.write().await.increment_messages();

@@ -45,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { EmptyStateInline } from "@/components/shared"
 
 export interface CommandDefinition {
   name: string
@@ -180,9 +181,9 @@ export function DeviceControl({
   const getStatusIcon = useCallback((status: CommandExecution["status"]) => {
     switch (status) {
       case "pending":
-        return <Clock className="h-4 w-4 text-yellow-500" />
+        return <Clock className="h-4 w-4 text-warning" />
       case "sent":
-        return <Send className="h-4 w-4 text-blue-500" />
+        return <Send className="h-4 w-4 text-info" />
       case "success":
         return <CheckCircle className="h-4 w-4 text-green-500" />
       case "failed":
@@ -670,16 +671,12 @@ export function DeviceControl({
                     <TableHead className="w-[180px]">时间</TableHead>
                     <TableHead>设备</TableHead>
                     <TableHead>命令</TableHead>
-                    <TableHead>状态</TableHead>
+                    <TableHead align="center">状态</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredHistory.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                        暂无命令历史
-                      </TableCell>
-                    </TableRow>
+                    <EmptyStateInline title="暂无命令历史" colSpan={4} />
                   ) : (
                     filteredHistory.map((entry) => {
                       const isExpanded = expandedHistory.has(entry.id)
@@ -693,10 +690,10 @@ export function DeviceControl({
                             <TableCell className="text-sm text-muted-foreground">
                               {formatTimestamp(entry.timestamp)}
                             </TableCell>
-                            <TableCell className="text-sm">{entry.deviceName}</TableCell>
-                            <TableCell className="font-mono text-sm">{entry.command}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
+                            <TableCell>{entry.deviceName}</TableCell>
+                            <TableCell className="font-mono text-xs">{entry.command}</TableCell>
+                            <TableCell align="center">
+                              <div className="flex items-center justify-center gap-2">
                                 {getStatusIcon(entry.status)}
                                 <span className="text-sm">{getStatusLabel(entry.status)}</span>
                               </div>

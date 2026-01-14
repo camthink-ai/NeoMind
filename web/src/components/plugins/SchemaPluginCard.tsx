@@ -167,7 +167,7 @@ export function SchemaPluginCard({
           {instance.connected !== undefined && (
             <div className="flex items-center justify-between">
               <span className="text-muted-foreground">{t('plugins:llm.endpoint')}:</span>
-              <span className={instance.connected ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
+              <span className={instance.connected ? "text-success font-medium" : "text-muted-foreground font-medium"}>
                 {instance.connected ? t('plugins:connected') : t('plugins:disconnected')}
               </span>
             </div>
@@ -226,11 +226,11 @@ export function SchemaPluginTypeCard({
   const { t } = useTranslation(['plugins', 'common'])
   const getIconBg = () => {
     switch (schema.category) {
-      case 'ai': return 'bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400'
-      case 'devices': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400'
+      case 'ai': return 'bg-success text-success dark:bg-success/20'
+      case 'devices': return 'bg-info text-info dark:bg-info/20'
       case 'storage': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400'
-      case 'notify': return 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400'
-      default: return 'bg-gray-100 text-gray-700 dark:bg-gray-900/20 dark:text-gray-400'
+      case 'notify': return 'bg-warning text-warning dark:bg-warning/20'
+      default: return 'bg-muted text-muted-foreground'
     }
   }
 
@@ -240,7 +240,7 @@ export function SchemaPluginTypeCard({
     <Card
       className={cn(
         "transition-all duration-200 cursor-pointer hover:shadow-md",
-        isActive && "border-green-500 border-2"
+        isActive && "border-success border-2"
       )}
       onClick={onClick}
     >
@@ -256,7 +256,7 @@ export function SchemaPluginTypeCard({
       <CardContent className="text-sm">
         <div className="flex justify-between items-center">
           <span className="text-muted-foreground">{t('plugins:status')}:</span>
-          <span className={isActive ? "text-green-600 font-medium" : "text-muted-foreground font-medium"}>
+          <span className={isActive ? "text-success font-medium" : "text-muted-foreground font-medium"}>
             {isActive ? t('plugins:running') : instanceCount > 0 ? t('plugins:configured') : t('plugins:notConfigured')}
           </span>
         </div>
@@ -327,8 +327,8 @@ export function SchemaPluginConfigDialog({
           <DialogTitle className="flex items-center gap-2">
             <div className={cn(
               "p-2 rounded-lg",
-              schema.category === 'ai' && "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400",
-              schema.category === 'devices' && "bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400",
+              schema.category === 'ai' && "bg-success text-success dark:bg-success/20",
+              schema.category === 'devices' && "bg-info text-info dark:bg-info/20",
             )}>
               <Icon className="h-5 w-5" />
             </div>

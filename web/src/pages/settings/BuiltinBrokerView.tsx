@@ -1,6 +1,8 @@
 import type { MqttStatus } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { SubPageHeader } from "@/components/layout"
 import { Server, RefreshCw } from "lucide-react"
 
 interface BuiltinBrokerViewProps {
@@ -18,34 +20,30 @@ export function BuiltinBrokerView({
 }: BuiltinBrokerViewProps) {
   return (
     <div className="py-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={onBack} className="gap-1">
-          返回
-        </Button>
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Server className="h-6 w-6" />
-            内置 MQTT Broker
-          </h2>
-          <p className="text-sm text-muted-foreground">系统内置的 MQTT Broker 状态信息</p>
-        </div>
-      </div>
+      <SubPageHeader
+        title="内置 MQTT Broker"
+        description="系统内置的 MQTT Broker 状态信息"
+        icon={<Server className="h-6 w-6" />}
+        onBack={onBack}
+      />
 
       {/* Status Card */}
-      <div className="border rounded-lg p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold">连接状态</h3>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onRefreshStatus}
-            disabled={isRefreshingStatus}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshingStatus ? "animate-spin" : ""}`} />
-            刷新
-          </Button>
-        </div>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>连接状态</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRefreshStatus}
+              disabled={isRefreshingStatus}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isRefreshingStatus ? "animate-spin" : ""}`} />
+              刷新
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
 
         {mqttStatus ? (
           <div className="space-y-4">
@@ -81,7 +79,7 @@ export function BuiltinBrokerView({
                 <h4 className="text-sm font-medium mb-3">已订阅的外部 Broker</h4>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {mqttStatus.external_brokers.map((broker) => (
-                    <div key={broker.id} className="border rounded p-3 space-y-2">
+                    <Card key={broker.id} className="p-3 space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <div className={`h-2 w-2 rounded-full ${broker.connected ? "bg-green-500" : "bg-red-500"}`} />
@@ -97,7 +95,7 @@ export function BuiltinBrokerView({
                       {!broker.connected && broker.last_error && (
                         <p className="text-xs text-destructive">{broker.last_error}</p>
                       )}
-                    </div>
+                    </Card>
                   ))}
                 </div>
               </div>
@@ -106,7 +104,8 @@ export function BuiltinBrokerView({
         ) : (
           <div className="text-sm text-muted-foreground">正在加载状态...</div>
         )}
-      </div>
+      </CardContent>
+    </Card>
     </div>
   )
 }

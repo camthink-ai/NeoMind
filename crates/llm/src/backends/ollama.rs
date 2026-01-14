@@ -108,19 +108,33 @@ impl OllamaRuntime {
 
     /// Format tools for text-based tool calling (for models without native tool support).
     fn format_tools_for_text_calling(tools: &[edge_ai_core::llm::backend::ToolDefinition]) -> String {
-        let mut result = String::from("可用工具:\n\n");
+        let mut result = String::from("## 工具调用要求\n");
+        result.push_str("你必须使用以下XML格式调用工具，不要只描述要做什么：\n\n");
+        result.push_str("<tool_calls>\n");
+        result.push_str("  <invoke name=\"工具名称\">\n");
+        result.push_str("    <parameter name=\"参数名\">参数值</parameter>\n");
+        result.push_str("  </invoke>\n");
+        result.push_str("</tool_calls>\n\n");
+
+        result.push_str("## 使用示例\n");
+        result.push_str("用户: 有哪些设备？\n");
+        result.push_str("助手: <tool_calls><invoke name=\"list_devices\"></invoke></tool_calls>\n\n");
+
+        result.push_str("## 可用工具\n\n");
 
         for tool in tools {
-            result.push_str(&format!("## {}\n", tool.name));
-            result.push_str(&format!("{}\n", tool.description));
-            result.push_str("参数:\n");
+            result.push_str(&format!("### {}\n", tool.name));
+            result.push_str(&format!("描述: {}\n", tool.description));
 
             if let Some(props) = tool.parameters.get("properties") {
                 if let Some(obj) = props.as_object() {
-                    for (name, prop) in obj {
-                        let desc = prop.get("description").and_then(|d| d.as_str()).unwrap_or("无描述");
-                        let type_name = prop.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
-                        result.push_str(&format!("- {}: {} ({})\n", name, desc, type_name));
+                    if !obj.is_empty() {
+                        result.push_str("参数:\n");
+                        for (name, prop) in obj {
+                            let desc = prop.get("description").and_then(|d| d.as_str()).unwrap_or("无描述");
+                            let type_name = prop.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+                            result.push_str(&format!("- {}: {} ({})\n", name, desc, type_name));
+                        }
                     }
                 }
             }
@@ -129,7 +143,7 @@ impl OllamaRuntime {
                 if let Some(arr) = required.as_array() {
                     if !arr.is_empty() {
                         let required_names: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
-                        result.push_str(&format!("必填: {}\n", required_names.join(", ")));
+                        result.push_str(&format!("必填参数: {}\n", required_names.join(", ")));
                     }
                 }
             }
@@ -137,12 +151,11 @@ impl OllamaRuntime {
             result.push('\n');
         }
 
-        result.push_str("工具调用格式: 当需要使用工具时，请输出如下格式的XML:\n\n");
-        result.push_str("<tool_calls>\n");
-        result.push_str("  <invoke name=\"工具名称\">\n");
-        result.push_str("    <parameter name=\"参数名\">参数值</parameter>\n");
-        result.push_str("  </invoke>\n");
-        result.push_str("</tool_calls>\n");
+        result.push_str("## 关键规则\n");
+        result.push_str("1. 用户询问设备时必须调用 list_devices 工具\n");
+        result.push_str("2. 用户询问数据时必须调用 query_data 工具\n");
+        result.push_str("3. 用户询问控制设备时必须调用 control_device 工具\n");
+        result.push_str("4. 不要过度解释，直接调用工具并返回结果\n");
 
         result
     }
@@ -185,6 +198,8 @@ impl OllamaRuntime {
                     .to_string(),
                     content: text,
                     images,
+                    tool_calls: None,  // Will be populated from AgentMessage.tool_calls if needed
+                    tool_call_id: None,
                 }
             })
             .collect()
@@ -368,10 +383,32 @@ impl LlmRuntime for OllamaRuntime {
         };
 
         // Thinking: user controls via thinking_enabled parameter
+        // IMPORTANT: If model doesn't support thinking, explicitly disable it
+        let model_supports_thinking = caps.supports_thinking;
         let think = match input.params.thinking_enabled {
-            Some(true) => None,  // Let model use its default behavior
-            Some(false) => Some(OllamaThink::Bool(false)),  // Explicitly disable
-            None => None,  // Let model decide
+            Some(true) => {
+                if model_supports_thinking {
+                    println!("[ollama.rs] NON-STREAM DEBUG: thinking_enabled=Some(true), setting think=None (model default)");
+                    None
+                } else {
+                    println!("[ollama.rs] NON-STREAM DEBUG: Model doesn't support thinking, overriding to disable");
+                    Some(OllamaThink::Bool(false))
+                }
+            },
+            Some(false) => {
+                println!("[ollama.rs] NON-STREAM DEBUG: thinking_enabled=Some(false), setting think=Bool(false) to DISABLE thinking");
+                Some(OllamaThink::Bool(false))
+            },
+            None => {
+                // If not specified, check if model supports thinking
+                if model_supports_thinking {
+                    println!("[ollama.rs] NON-STREAM DEBUG: thinking_enabled=None, model supports thinking, using default");
+                    None
+                } else {
+                    println!("[ollama.rs] NON-STREAM DEBUG: thinking_enabled=None, model doesn't support thinking, disabling");
+                    Some(OllamaThink::Bool(false))
+                }
+            },
         };
 
         let format: Option<String> = None;
@@ -565,10 +602,32 @@ impl LlmRuntime for OllamaRuntime {
         };
 
         // Thinking: user controls via thinking_enabled parameter
+        // IMPORTANT: If model doesn't support thinking, explicitly disable it
+        let model_supports_thinking = caps.supports_thinking;
         let think = match input.params.thinking_enabled {
-            Some(true) => None,
-            Some(false) => Some(OllamaThink::Bool(false)),
-            None => None,
+            Some(true) => {
+                if model_supports_thinking {
+                    tracing::info!("[ollama.rs] DEBUG: thinking_enabled=Some(true), setting think=None (model default)");
+                    None
+                } else {
+                    tracing::warn!("[ollama.rs] DEBUG: Model doesn't support thinking, overriding to disable");
+                    Some(OllamaThink::Bool(false))
+                }
+            },
+            Some(false) => {
+                tracing::warn!("[ollama.rs] DEBUG: thinking_enabled=Some(false), setting think=Bool(false) to DISABLE thinking");
+                Some(OllamaThink::Bool(false))
+            },
+            None => {
+                // If not specified, check if model supports thinking
+                if model_supports_thinking {
+                    tracing::info!("[ollama.rs] DEBUG: thinking_enabled=None, model supports thinking, using default");
+                    None
+                } else {
+                    tracing::info!("[ollama.rs] DEBUG: thinking_enabled=None, model doesn't support thinking, disabling");
+                    Some(OllamaThink::Bool(false))
+                }
+            },
         };
 
         // Convert messages with tool injection for non-native models
@@ -604,9 +663,10 @@ impl LlmRuntime for OllamaRuntime {
                         if let Some(opts) = value.get("options") {
                             println!("[ollama.rs] Request options: {}", serde_json::to_string_pretty(opts).unwrap_or_default());
                         }
-                        // Print think setting
-                        if let Some(think_val) = value.get("think") {
-                            println!("[ollama.rs] Request think: {}", think_val);
+                        // Print think setting - always show
+                        match value.get("think") {
+                            Some(think_val) => tracing::warn!("[ollama.rs] Request think: {}", think_val),
+                            None => tracing::info!("[ollama.rs] Request think: null (not set, model default)"),
                         }
                         // Print tools section
                         if let Some(tools) = value.get("tools") {
@@ -895,6 +955,12 @@ struct OllamaMessage {
     content: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     images: Vec<String>,
+    /// Tool calls made by the assistant (for multi-turn conversations)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<serde_json::Value>>,
+    /// Tool call ID (for tool response messages)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -925,9 +991,11 @@ fn detect_model_capabilities(model_name: &str) -> ModelCapability {
     let name_lower = model_name.to_lowercase();
 
     // Models that support thinking/reasoning
+    // NOTE: Only DeepSeek-R1 models have explicit thinking mode
+    // qwen3 models do NOT have thinking mode in Ollama
     let supports_thinking = name_lower.contains("thinking")
         || name_lower.contains("deepseek-r1")
-        || name_lower.starts_with("qwen3");
+        || name_lower.contains("qwq");  // QwQ models have thinking, not qwen3
 
     // Models that support function calling
     // Note: Smaller models like gemma3:270m do NOT support tools

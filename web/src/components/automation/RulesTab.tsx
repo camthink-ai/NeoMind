@@ -24,6 +24,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Plus, Trash2, Edit, Zap, Clock } from 'lucide-react'
+import { ActionBar, EmptyStateInline } from '@/components/shared'
 import { api } from '@/lib/api'
 import type { Rule } from '@/types'
 
@@ -159,50 +160,36 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
   return (
     <>
       {/* Header with actions */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h2 className="text-xl font-semibold">{t('automation:rulesTitle')}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t('automation:rulesDesc')}
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          {t('automation:rulesAdd')}
-        </Button>
-      </div>
+      <ActionBar
+        title={t('automation:rulesTitle')}
+        titleIcon={<Zap className="h-5 w-5" />}
+        description={t('automation:rulesDesc')}
+        actions={[
+          {
+            label: t('automation:rulesAdd'),
+            icon: <Plus className="h-4 w-4" />,
+            onClick: () => setCreateDialogOpen(true),
+          },
+        ]}
+        onRefresh={onRefresh}
+      />
 
       <Card>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>{t('automation:ruleName')}</TableHead>
-              <TableHead>{t('automation:enabled')}</TableHead>
-              <TableHead>{t('automation:todayTriggered')}</TableHead>
+              <TableHead align="center">{t('automation:enabled')}</TableHead>
+              <TableHead align="center">{t('automation:todayTriggered')}</TableHead>
               <TableHead>{t('automation:lastExecution')}</TableHead>
-              <TableHead className="text-right">{t('automation:actions')}</TableHead>
+              <TableHead align="right">{t('automation:actions')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                  {t('automation:loading')}
-                </TableCell>
-              </TableRow>
+              <EmptyStateInline title={t('automation:loading')} colSpan={5} />
             ) : rules.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5} className="text-center py-8">
-                  <div className="flex flex-col items-center gap-3">
-                    <Zap className="h-12 w-12 text-muted-foreground/50" />
-                    <p className="text-muted-foreground">{t('automation:noRules')}</p>
-                    <Button variant="outline" size="sm" onClick={() => setCreateDialogOpen(true)}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      {t('automation:createFirstRule')}
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
+              <EmptyStateInline title={t('automation:noRules')} colSpan={5} />
             ) : (
               rules.map((rule) => (
                 <TableRow key={rule.id}>
@@ -214,8 +201,8 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
+                  <TableCell align="center">
+                    <div className="flex items-center justify-center gap-2">
                       <Switch
                         checked={rule.enabled}
                         onCheckedChange={() => handleToggleRule(rule)}
@@ -225,37 +212,29 @@ export function RulesTab({ onRefresh }: RulesTabProps) {
                       </Badge>
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-1">
-                      <Zap className="h-3 w-3 text-yellow-500" />
+                  <TableCell align="center">
+                    <div className="flex items-center justify-center gap-1">
+                      <Zap className="h-4 w-4 text-warning" />
                       {rule.trigger_count || 0}
                     </div>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
                     {rule.last_triggered ? (
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                        <Clock className="h-3 w-3" />
+                      <div className="flex items-center gap-1">
+                        <Clock className="h-4 w-4" />
                         {formatTimestamp(rule.last_triggered)}
                       </div>
                     ) : (
                       <span className="text-xs text-muted-foreground">{t('automation:noHistory')}</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setEditRule(rule)}
-                      >
-                        <Edit className="h-3 w-3" />
+                  <TableCell align="right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setEditRule(rule)}>
+                        <Edit className="h-4 w-4" />
                       </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteRule(rule.id)}
-                      >
-                        <Trash2 className="h-3 w-3 text-destructive" />
+                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDeleteRule(rule.id)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
                       </Button>
                     </div>
                   </TableCell>

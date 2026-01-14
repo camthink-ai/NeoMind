@@ -137,6 +137,9 @@ pub struct LlmInterface {
     limiter: ConcurrencyLimiter,
     /// Whether to use instance manager for runtime retrieval.
     use_instance_manager: Arc<AtomicUsize>,
+    /// Whether thinking mode is enabled (for direct mode when not using instance manager).
+    /// Defaults to false for faster responses.
+    thinking_enabled: Arc<RwLock<Option<bool>>>,
 }
 
 impl LlmInterface {
@@ -154,6 +157,7 @@ impl LlmInterface {
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
             limiter: ConcurrencyLimiter::new(concurrent_limit),
             use_instance_manager: Arc::new(AtomicUsize::new(0)),
+            thinking_enabled: Arc::new(RwLock::new(None)), // Use backend default (from storage)
         }
     }
 
@@ -171,7 +175,18 @@ impl LlmInterface {
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
             limiter: ConcurrencyLimiter::new(concurrent_limit),
             use_instance_manager: Arc::new(AtomicUsize::new(1)),
+            thinking_enabled: Arc::new(RwLock::new(None)), // Will use instance manager setting
         }
+    }
+
+    /// Set the thinking mode for direct LLM usage (when not using instance manager).
+    pub async fn set_thinking_enabled(&self, enabled: bool) {
+        *self.thinking_enabled.write().await = Some(enabled);
+    }
+
+    /// Get the thinking mode setting.
+    pub async fn get_thinking_enabled(&self) -> Option<bool> {
+        *self.thinking_enabled.read().await
     }
 
     /// Enable or disable instance manager mode.
@@ -218,6 +233,9 @@ impl LlmInterface {
 
     /// Set the LLM runtime (direct mode).
     pub async fn set_llm(&self, llm: Arc<dyn LlmRuntime>) {
+        // Update the model name when setting a custom LLM
+        let model_name = llm.model_name().to_string();
+        *self.model.write().await = Some(model_name);
         let mut llm_guard = self.llm.write().await;
         *llm_guard = Some(llm);
     }
@@ -288,18 +306,61 @@ impl LlmInterface {
             return self.system_prompt.clone();
         }
 
-        let mut prompt = String::with_capacity(1024);
+        let mut prompt = String::with_capacity(4096);
 
-        // Simple, clear system prompt without restrictive instructions
+        // Clear, concise system prompt
         prompt.push_str("你是NeoTalk物联网助手，帮助用户管理设备和查询数据。\n\n");
 
-        // Append the base system prompt
-        prompt.push_str(&self.system_prompt);
+        // CRITICAL: Tool calling instructions - MUST be followed
+        prompt.push_str("## 重要：工具调用要求\n");
+        prompt.push_str("当用户询问以下内容时，你必须调用相应工具：\n");
+        prompt.push_str("- 询问设备/装置 → 使用 list_devices 工具\n");
+        prompt.push_str("- 询问数据/传感器/温度/湿度 → 使用 query_data 工具\n");
+        prompt.push_str("- 询问控制设备/打开/关闭 → 使用 control_device 工具\n");
+        prompt.push_str("- 询问规则/自动化 → 使用 list_rules 或 create_rule 工具\n");
+        prompt.push_str("- 询问工作流/触发 → 使用 trigger_workflow 工具\n\n");
 
-        // Tool usage rules
-        prompt.push_str("\n\n## 工具使用\n");
-        prompt.push_str("- 设备/数据相关问题使用工具\n");
-        prompt.push_str("- 闲聊直接回答，不使用工具\n");
+        prompt.push_str("## 工具调用格式\n");
+        prompt.push_str("你必须使用以下XML格式调用工具：\n\n");
+        prompt.push_str("<tool_calls>\n");
+        prompt.push_str("  <invoke name=\"工具名称\">\n");
+        prompt.push_str("    <parameter name=\"参数名\">参数值</parameter>\n");
+        prompt.push_str("  </invoke>\n");
+        prompt.push_str("</tool_calls>\n\n");
+
+        // List available tools with descriptions
+        prompt.push_str("## 可用工具列表\n");
+        for tool in tools.iter() {
+            prompt.push_str(&format!("- **{}**: {}\n", tool.name, tool.description));
+
+            // Add parameter info
+            if let Some(props) = tool.parameters.get("properties") {
+                if let Some(obj) = props.as_object() {
+                    if !obj.is_empty() {
+                        prompt.push_str("  参数: ");
+                        for (name, prop) in obj {
+                            let desc = prop.get("description").and_then(|d| d.as_str()).unwrap_or("无描述");
+                            prompt.push_str(&format!("\n    - {}: {}", name, desc));
+                        }
+                        prompt.push('\n');
+                    }
+                }
+            }
+        }
+
+        // Usage examples
+        prompt.push_str("## 使用示例\n");
+        prompt.push_str("用户: 有哪些设备？\n");
+        prompt.push_str("助手: <tool_calls><invoke name=\"list_devices\"></invoke></tool_calls>\n\n");
+        prompt.push_str("用户: 查询温度\n");
+        prompt.push_str("助手: <tool_calls><invoke name=\"query_data\"><parameter name=\"metric\">温度</parameter></invoke></tool_calls>\n\n");
+
+        // Critical rules
+        prompt.push_str("## 关键规则\n");
+        prompt.push_str("1. 必须使用XML格式调用工具，不要只描述要做什么\n");
+        prompt.push_str("2. 工具调用后简洁回答用户（不超过50字）\n");
+        prompt.push_str("3. 快速响应，不要过度思考\n");
+        prompt.push_str("4. 如果用户问题不明确，直接调用最相关的工具\n");
 
         prompt
     }
@@ -326,7 +387,7 @@ impl LlmInterface {
         &self,
         user_message: impl Into<String>,
     ) -> Result<ChatResponse, AgentError> {
-        self.chat_internal(user_message, true, None).await
+        self.chat_internal(user_message, None).await
     }
 
     /// Send a chat message with conversation history.
@@ -335,7 +396,7 @@ impl LlmInterface {
         user_message: impl Into<String>,
         history: &[Message],
     ) -> Result<ChatResponse, AgentError> {
-        self.chat_internal(user_message, true, Some(history)).await
+        self.chat_internal(user_message, Some(history)).await
     }
 
     /// Send a chat message without tools and get a response.
@@ -344,7 +405,7 @@ impl LlmInterface {
         &self,
         user_message: impl Into<String>,
     ) -> Result<ChatResponse, AgentError> {
-        self.chat_internal(user_message, false, None).await
+        self.chat_internal(user_message, None).await
     }
 
     /// Send a chat message without tools, with conversation history.
@@ -353,14 +414,13 @@ impl LlmInterface {
         user_message: impl Into<String>,
         history: &[Message],
     ) -> Result<ChatResponse, AgentError> {
-        self.chat_internal(user_message, false, Some(history)).await
+        self.chat_internal(user_message, Some(history)).await
     }
 
     /// Internal chat implementation.
     async fn chat_internal(
         &self,
         user_message: impl Into<String>,
-        include_tools: bool,
         history: Option<&[Message]>,
     ) -> Result<ChatResponse, AgentError> {
         // Acquire permit for concurrency limiting
@@ -371,29 +431,50 @@ impl LlmInterface {
 
         let model_arc = Arc::clone(&self.model);
 
-        // Build system prompt (with or without tools based on phase)
-        let system_prompt = if include_tools {
+        // Check if we have tools registered
+        let has_tools = !self.tool_definitions.read().await.is_empty();
+
+        let system_prompt = if has_tools {
             self.build_system_prompt_with_tools().await
         } else {
-            // Simple system prompt for Phase 2 (no tools needed)
-            "You are NeoTalk, an edge computing and IoT device management assistant. Help users based on the provided conversation context.".to_string()
+            self.system_prompt.clone()
         };
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
-        let model = model_guard.as_ref().cloned().unwrap_or_else(|| "qwen3-vl:2b".to_string());
+        let model_from_config = model_guard.as_ref().cloned();
         drop(model_guard);
+
+        // If no model is configured, try to get it from the LLM runtime
+        let model = if let Some(m) = model_from_config {
+            m
+        } else {
+            // Try to get model name from the runtime
+            let llm_guard = self.llm.read().await;
+            if let Some(ref llm) = *llm_guard {
+                llm.model_name().to_string()
+            } else {
+                // Ultimate fallback
+                "qwen3-vl:2b".to_string()
+            }
+        };
 
         // Get thinking_enabled from active backend instance if using instance manager
         let thinking_enabled = if self.uses_instance_manager() {
+            // Instance manager mode - use backend setting
             if let Some(manager) = &self.instance_manager {
                 manager.get_active_instance().map(|inst| inst.thinking_enabled)
             } else {
                 None
             }
         } else {
-            None
+            // Direct mode - use local setting (defaults to false)
+            *self.thinking_enabled.read().await
         };
+
+        // DEBUG: Log thinking_enabled value
+        eprintln!("[LlmInterface] chat_stream_internal: thinking_enabled={:?}, uses_instance_manager={}",
+            thinking_enabled, self.uses_instance_manager());
 
         let params = edge_ai_core::llm::backend::GenerationParams {
             temperature: Some(self.temperature),
@@ -424,8 +505,8 @@ impl LlmInterface {
             vec![system_msg, user_msg]
         };
 
-        // Get tool definitions (only if include_tools is true)
-        let tools_input = if include_tools {
+        // Get tool definitions
+        let tools_input = if has_tools {
             let tools = self.tool_definitions.read().await;
             let result = if tools.is_empty() { None } else { Some(tools.clone()) };
             drop(tools);
@@ -497,6 +578,21 @@ impl LlmInterface {
         self.chat_stream_internal(user_message, Some(history), false).await
     }
 
+    /// Send a chat message with streaming response, without tools, without thinking.
+    /// This is for Phase 2 follow-up where we want a quick response based on tool results.
+    pub async fn chat_stream_no_tools_no_thinking_with_history(
+        &self,
+        user_message: impl Into<String>,
+        history: &[Message],
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), AgentError>> + Send>>, AgentError> {
+        // Temporarily disable thinking for this call
+        let old_value = *self.thinking_enabled.read().await;
+        *self.thinking_enabled.write().await = Some(false);
+        let result = self.chat_stream_internal(user_message, Some(history), false).await;
+        *self.thinking_enabled.write().await = old_value;
+        result
+    }
+
     /// Internal streaming chat implementation.
     async fn chat_stream_internal(
         &self,
@@ -518,19 +614,39 @@ impl LlmInterface {
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
-        let model = model_guard.as_ref().cloned().unwrap_or_else(|| "qwen3-vl:2b".to_string());
+        let model_from_config = model_guard.as_ref().cloned();
         drop(model_guard);
+
+        // If no model is configured, try to get it from the LLM runtime
+        let model = if let Some(m) = model_from_config {
+            m
+        } else {
+            // Try to get model name from the runtime
+            let llm_guard = self.llm.read().await;
+            if let Some(ref llm) = *llm_guard {
+                llm.model_name().to_string()
+            } else {
+                // Ultimate fallback
+                "qwen3-vl:2b".to_string()
+            }
+        };
 
         // Get thinking_enabled from active backend instance if using instance manager
         let thinking_enabled = if self.uses_instance_manager() {
+            // Instance manager mode - use backend setting
             if let Some(manager) = &self.instance_manager {
                 manager.get_active_instance().map(|inst| inst.thinking_enabled)
             } else {
                 None
             }
         } else {
-            None
+            // Direct mode - use local setting (defaults to false)
+            *self.thinking_enabled.read().await
         };
+
+        // DEBUG: Log thinking_enabled value
+        eprintln!("[LlmInterface] chat_stream_internal: thinking_enabled={:?}, uses_instance_manager={}",
+            thinking_enabled, self.uses_instance_manager());
 
         let params = edge_ai_core::llm::backend::GenerationParams {
             temperature: Some(self.temperature),

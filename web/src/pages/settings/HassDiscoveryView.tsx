@@ -2,6 +2,9 @@ import { useState } from "react"
 import type { HassDiscoveryStatus, HassDiscoveredDevice } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { EmptyState } from "@/components/shared"
+import { SubPageHeader } from "@/components/layout"
 import { Home, RefreshCw, Radar, Square, Trash2 } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 
@@ -98,36 +101,32 @@ export function HassDiscoveryView({
 
   return (
     <div className="py-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={handleBack} className="gap-1">
-          返回
-        </Button>
-        <div>
-          <h2 className="text-2xl font-bold flex items-center gap-2">
-            <Home className="h-6 w-6" />
-            HASS 设备发现
-          </h2>
-          <p className="text-sm text-muted-foreground">Home Assistant MQTT 设备自动发现</p>
-        </div>
-      </div>
+      <SubPageHeader
+        title="HASS 设备发现"
+        description="Home Assistant MQTT 设备自动发现"
+        icon={<Home className="h-6 w-6" />}
+        onBack={handleBack}
+      />
 
       {/* Status Card */}
-      <div className="border rounded-lg p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-semibold">发现状态</h3>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              await fetchHassDiscoveryStatus()
-              await fetchHassDiscoveredDevices()
-            }}
-          >
-            <RefreshCw className="h-4 w-4 mr-2" />
-            刷新
-          </Button>
-        </div>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>发现状态</CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await fetchHassDiscoveryStatus()
+                await fetchHassDiscoveredDevices()
+              }}
+            >
+              <RefreshCw className="h-4 w-4 mr-2" />
+              刷新
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="space-y-1">
@@ -210,28 +209,31 @@ export function HassDiscoveryView({
             {hassMessage}
           </div>
         )}
-      </div>
+      </CardContent>
+    </Card>
 
       {/* Discovered Devices */}
-      <div className="border rounded-lg p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold">已发现的设备</h3>
-        </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>已发现的设备</CardTitle>
+        </CardHeader>
+        <CardContent>
 
         {hassDiscoveredDevices.length === 0 ? (
-          <div className="text-center py-12 text-muted-foreground">
-            <Home className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>暂无已发现的设备</p>
-            <p className="text-xs mt-2">
-              {hassDiscoveryStatus?.hass_discovery?.enabled
+          <EmptyState
+            icon="device"
+            title="暂无已发现的设备"
+            description={
+              hassDiscoveryStatus?.hass_discovery?.enabled
                 ? "等待 HASS 设备发布配置消息..."
-                : "启动 HASS 发现以自动检测设备"}
-            </p>
-          </div>
+                : "启动 HASS 发现以自动检测设备"
+            }
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {hassDiscoveredDevices.map((device) => (
-              <div key={device.device_id} className="border rounded-lg p-4 space-y-3">
+              <Card key={device.device_id} className="space-y-3">
+                <CardContent className="p-4 space-y-3">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
                     <h4 className="font-medium">{device.name || device.device_id}</h4>
@@ -301,15 +303,18 @@ export function HassDiscoveryView({
                     </Button>
                   )}
                 </div>
-              </div>
+              </CardContent>
+            </Card>
             ))}
           </div>
         )}
-      </div>
+      </CardContent>
+    </Card>
 
       {/* Info Card */}
-      <div className="p-4 border rounded-lg bg-muted/50">
-        <h4 className="font-medium text-sm mb-2">关于 HASS MQTT 发现</h4>
+      <Card className="bg-muted/50">
+        <CardContent className="p-4">
+          <h4 className="font-medium text-sm mb-2">关于 HASS MQTT 发现</h4>
         <p className="text-xs text-muted-foreground mb-2">
           Home Assistant 设备通过 MQTT 发布配置消息来声明自己的存在。
           支持的设备包括 Tasmota、Shelly、ESPHome 等 HASS 生态系统设备。
@@ -318,7 +323,8 @@ export function HassDiscoveryView({
           设备会发布配置到 <code>homeassistant/&lt;component&gt;/&lt;object_id&gt;/config</code> 主题。
           启动发现后，系统会自动监听这些主题并解析设备信息。
         </p>
-      </div>
+      </CardContent>
+    </Card>
     </div>
   )
 }

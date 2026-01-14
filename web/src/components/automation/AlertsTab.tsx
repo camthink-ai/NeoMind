@@ -23,8 +23,8 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, Plus, Check, Trash2, Eye, Bell, RefreshCw } from "lucide-react"
-import { LoadingState, EmptyState, Pagination, AlertBadge, BulkActionBar } from "@/components/shared"
+import { AlertCircle, Plus, Check, Trash2, Eye, Bell } from "lucide-react"
+import { LoadingState, EmptyState, Pagination, AlertBadge, BulkActionBar, ActionBar } from "@/components/shared"
 import { formatTimestamp } from "@/lib/utils/format"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -199,24 +199,19 @@ export function AlertsTab() {
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">{t('automation:alerts')}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t('automation:alertsDesc')}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={fetchAlerts}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            {t('common:refresh')}
-          </Button>
-          <Button size="sm" onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            {t('alerts:createAlert')}
-          </Button>
-        </div>
-      </div>
+      <ActionBar
+        title={t('automation:alerts')}
+        titleIcon={<Bell className="h-5 w-5" />}
+        description={t('automation:alertsDesc')}
+        actions={[
+          {
+            label: t('alerts:createAlert'),
+            icon: <Plus className="h-4 w-4" />,
+            onClick: () => setCreateDialogOpen(true),
+          },
+        ]}
+        onRefresh={fetchAlerts}
+      />
 
       {/* Filter tabs */}
       <div className="flex gap-2">
@@ -330,7 +325,7 @@ export function AlertsTab() {
 
           {/* Pagination */}
           {filteredAlerts.length > alertsPerPage && (
-            <div className="pt-4">
+            <div className="px-4 pt-4">
               <Pagination
                 total={filteredAlerts.length}
                 pageSize={alertsPerPage}

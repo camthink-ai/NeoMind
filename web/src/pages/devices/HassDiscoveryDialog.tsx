@@ -181,7 +181,7 @@ export function HassDiscoveryDialog({
                 <p className="text-xs text-muted-foreground">{t('devices:hass.runningStatus')}</p>
                 <p className="text-sm font-medium">
                   {hassDiscoveryStatus?.hass_discovery?.enabled ? (
-                    <span className="text-green-600">{t('devices:hass.running')}</span>
+                    <span className="text-success">{t('devices:hass.running')}</span>
                   ) : (
                     <span className="text-muted-foreground">{t('devices:hass.notStarted')}</span>
                   )}
