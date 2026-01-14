@@ -9,6 +9,8 @@ pub mod analysis;
 pub mod mdl;
 pub mod dsl;
 pub mod rule_gen;
+pub mod tool_search;
+pub mod think;
 
 pub use event_integration::{
     EventIntegratedToolRegistry,
@@ -31,3 +33,7 @@ pub use rule_gen::{
     GenerateRuleDslTool, ValidateRuleDslTool, CreateRuleTool,
     DeviceInfo, ValidationResult, RuleSummary as RuleGenSummary, CreateResult,
 };
+
+pub use tool_search::{ToolSearchTool, ToolSearchResult};
+
+pub use think::{ThinkTool, ThinkStorage, ThoughtRecord};

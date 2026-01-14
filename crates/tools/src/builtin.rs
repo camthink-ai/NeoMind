@@ -13,19 +13,54 @@ use super::tool::{object_schema, string_property, number_property, boolean_prope
 pub struct MockTimeSeriesStore;
 
 impl MockTimeSeriesStore {
-    pub async fn query(&self, _device_id: &str, _metric: &str, start: i64, end: i64) -> Result<Vec<DataPoint>> {
-        Ok(vec![
-            DataPoint {
-                timestamp: start,
-                value: 25.0,
-                quality: Some(1.0),
-            },
-            DataPoint {
-                timestamp: end,
-                value: 27.5,
-                quality: Some(1.0),
-            },
-        ])
+    /// Query time series data for a specific metric or all metrics.
+    /// If metric is None, returns data for all available metrics.
+    pub async fn query(&self, _device_id: &str, metric: Option<&str>, start: i64, end: i64) -> Result<Vec<MetricDataPoint>> {
+        // If specific metric requested, return only that metric's data
+        if let Some(m) = metric {
+            Ok(vec![
+                MetricDataPoint {
+                    timestamp: start,
+                    metric: m.to_string(),
+                    value: 25.0,
+                    quality: Some(1.0),
+                },
+                MetricDataPoint {
+                    timestamp: end,
+                    metric: m.to_string(),
+                    value: 27.5,
+                    quality: Some(1.0),
+                },
+            ])
+        } else {
+            // Return all metrics for the device
+            Ok(vec![
+                MetricDataPoint {
+                    timestamp: start,
+                    metric: "temperature".to_string(),
+                    value: 25.0,
+                    quality: Some(1.0),
+                },
+                MetricDataPoint {
+                    timestamp: start,
+                    metric: "humidity".to_string(),
+                    value: 60.0,
+                    quality: Some(1.0),
+                },
+                MetricDataPoint {
+                    timestamp: end,
+                    metric: "temperature".to_string(),
+                    value: 27.5,
+                    quality: Some(1.0),
+                },
+                MetricDataPoint {
+                    timestamp: end,
+                    metric: "humidity".to_string(),
+                    value: 65.0,
+                    quality: Some(1.0),
+                },
+            ])
+        }
     }
 
     pub async fn query_latest(&self, _device_id: &str, _metric: &str) -> Result<Option<DataPoint>> {
@@ -41,6 +76,15 @@ impl MockTimeSeriesStore {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataPoint {
     pub timestamp: i64,
+    pub value: f64,
+    pub quality: Option<f32>,
+}
+
+/// A data point with metric name for multi-metric queries.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricDataPoint {
+    pub timestamp: i64,
+    pub metric: String,
     pub value: f64,
     pub quality: Option<f32>,
 }
@@ -76,12 +120,12 @@ impl Tool for QueryDataTool {
         object_schema(
             serde_json::json!({
                 "device_id": string_property("The ID of the device to query"),
-                "metric": string_property("The metric name to query (e.g., 'temperature', 'humidity')"),
+                "metric": string_property("The metric name to query (e.g., 'temperature', 'humidity'). Optional, if not specified returns all available metrics."),
                 "start_time": number_property("Start timestamp (Unix epoch). Optional, defaults to 24 hours ago."),
                 "end_time": number_property("End timestamp (Unix epoch). Optional, defaults to now."),
                 "limit": number_property("Maximum number of data points to return. Optional.")
             }),
-            vec!["device_id".to_string(), "metric".to_string()],
+            vec!["device_id".to_string()],
         )
     }
 
@@ -92,9 +136,7 @@ impl Tool for QueryDataTool {
             .as_str()
             .ok_or_else(|| ToolError::InvalidArguments("device_id must be a string".to_string()))?;
 
-        let metric = args["metric"]
-            .as_str()
-            .ok_or_else(|| ToolError::InvalidArguments("metric must be a string".to_string()))?;
+        let metric = args["metric"].as_str();
 
         let end_time = args["end_time"]
             .as_i64()
@@ -155,14 +197,16 @@ impl MockDeviceManager {
             DeviceInfo {
                 id: "sensor_1".to_string(),
                 name: "Temperature Sensor 1".to_string(),
-                device_type: "sensor".to_string(),
+                device_type: "DHT22".to_string(),
                 status: "online".to_string(),
+                metrics_summary: Some(vec!["temperature".to_string(), "humidity".to_string()]),
             },
             DeviceInfo {
                 id: "actuator_1".to_string(),
                 name: "Fan Controller".to_string(),
-                device_type: "actuator".to_string(),
+                device_type: "Relay".to_string(),
                 status: "online".to_string(),
+                metrics_summary: Some(vec!["state".to_string()]),
             },
         ])
     }
@@ -175,6 +219,9 @@ pub struct DeviceInfo {
     pub name: String,
     pub device_type: String,
     pub status: String,
+    /// Summary of available metrics for this device
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metrics_summary: Option<Vec<String>>,
 }
 
 /// Tool for controlling devices.
@@ -263,7 +310,7 @@ impl Tool for ListDevicesTool {
     }
 
     fn description(&self) -> &str {
-        "List all available devices with their information including status and capabilities."
+        "列出所有可用设备及其信息，包括状态、设备类型和可用的指标摘要。"
     }
 
     fn parameters(&self) -> Value {
@@ -475,8 +522,8 @@ impl TriggerWorkflowTool {
     }
 
     /// Create a mock tool for testing.
-    pub fn mock() -> Arc<Self> {
-        Arc::new(Self::new())
+    pub fn mock() -> Self {
+        Self::new()
     }
 }
 
@@ -525,6 +572,319 @@ impl Tool for TriggerWorkflowTool {
             "workflow_id": workflow_id,
             "execution_id": execution_id,
             "status": "triggered"
+        })))
+    }
+}
+
+// ============================================================================
+// New Tools for Device Discovery and Schema Query
+// ============================================================================
+
+/// Mock device type registry for MDL queries
+pub struct MockDeviceTypeRegistry;
+
+impl MockDeviceTypeRegistry {
+    pub async fn get_device_metrics(&self, _device_id: &str) -> Result<Vec<MetricInfo>> {
+        // Simulate getting metrics from device type definition
+        // In production, this would query the actual device type registry
+        Ok(vec![
+            MetricInfo {
+                name: "temperature".to_string(),
+                display_name: "温度".to_string(),
+                data_type: "float".to_string(),
+                unit: "°C".to_string(),
+                description: "当前温度读数".to_string(),
+            },
+            MetricInfo {
+                name: "humidity".to_string(),
+                display_name: "湿度".to_string(),
+                data_type: "float".to_string(),
+                unit: "%".to_string(),
+                description: "当前相对湿度".to_string(),
+            },
+        ])
+    }
+
+    pub async fn get_device_type_schema(&self, device_type: &str) -> Result<DeviceTypeSchema> {
+        // Return MDL schema for the device type
+        Ok(DeviceTypeSchema {
+            device_type: device_type.to_string(),
+            display_name: format!("{} Type", device_type),
+            description: format!("{}设备的MDL定义", device_type),
+            capabilities: vec!["读数".to_string(), "历史数据".to_string()],
+            metrics: vec![
+                MetricInfo {
+                    name: "temperature".to_string(),
+                    display_name: "温度".to_string(),
+                    data_type: "float".to_string(),
+                    unit: "°C".to_string(),
+                    description: "当前温度读数".to_string(),
+                },
+                MetricInfo {
+                    name: "humidity".to_string(),
+                    display_name: "湿度".to_string(),
+                    data_type: "float".to_string(),
+                    unit: "%".to_string(),
+                    description: "当前相对湿度".to_string(),
+                },
+            ],
+            commands: vec![
+                CommandInfo {
+                    name: "refresh".to_string(),
+                    display_name: "刷新数据".to_string(),
+                    description: "请求设备刷新数据".to_string(),
+                    parameters: vec![],
+                },
+            ],
+        })
+    }
+
+    pub async fn list_device_types(&self) -> Result<Vec<DeviceTypeInfo>> {
+        Ok(vec![
+            DeviceTypeInfo {
+                name: "DHT22".to_string(),
+                display_name: "DHT22温湿度传感器".to_string(),
+                category: "sensor".to_string(),
+                description: "数字温湿度传感器，提供温度和湿度读数".to_string(),
+            },
+            DeviceTypeInfo {
+                name: "Relay".to_string(),
+                display_name: "继电器".to_string(),
+                category: "actuator".to_string(),
+                description: "开关控制设备，支持开/关操作".to_string(),
+            },
+        ])
+    }
+}
+
+/// Metric information for devices.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricInfo {
+    pub name: String,
+    pub display_name: String,
+    pub data_type: String,
+    pub unit: String,
+    pub description: String,
+}
+
+/// Command information for devices.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    pub parameters: Vec<serde_json::Value>,
+}
+
+/// Device type MDL schema.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceTypeSchema {
+    pub device_type: String,
+    pub display_name: String,
+    pub description: String,
+    pub capabilities: Vec<String>,
+    pub metrics: Vec<MetricInfo>,
+    pub commands: Vec<CommandInfo>,
+}
+
+/// Device type information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceTypeInfo {
+    pub name: String,
+    pub display_name: String,
+    pub category: String,
+    pub description: String,
+}
+
+/// Tool for getting device metrics (what metrics are available for a device).
+pub struct GetDeviceMetricsTool {
+    registry: Arc<MockDeviceTypeRegistry>,
+}
+
+impl GetDeviceMetricsTool {
+    /// Create a new get device metrics tool.
+    pub fn new(registry: Arc<MockDeviceTypeRegistry>) -> Self {
+        Self { registry }
+    }
+
+    /// Create with a mock registry for testing.
+    pub fn mock() -> Arc<Self> {
+        Arc::new(Self::new(Arc::new(MockDeviceTypeRegistry)))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for GetDeviceMetricsTool {
+    fn name(&self) -> &str {
+        "get_device_metrics"
+    }
+
+    fn description(&self) -> &str {
+        "获取设备可查询的所有指标名称和数据类型。使用此工具了解设备有哪些可查询的指标。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "device_id": string_property("设备ID，要查询的设备标识符"),
+                "include_history": boolean_property("是否包含历史数据能力，默认为false")
+            }),
+            vec!["device_id".to_string()],
+        )
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+
+        let device_id = args["device_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("device_id must be a string".to_string()))?;
+
+        let metrics = self
+            .registry
+            .get_device_metrics(device_id)
+            .await
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+
+        let include_history = args["include_history"].as_bool().unwrap_or(false);
+
+        Ok(ToolOutput::success_with_metadata(
+            serde_json::json!({
+                "device_id": device_id,
+                "metrics": metrics,
+                "count": metrics.len()
+            }),
+            serde_json::json!({
+                "query_type": "device_metrics",
+                "includes_history_capability": include_history
+            })
+        ))
+    }
+}
+
+/// Tool for getting device type schema (MDL definition).
+pub struct GetDeviceTypeSchemaTool {
+    registry: Arc<MockDeviceTypeRegistry>,
+}
+
+impl GetDeviceTypeSchemaTool {
+    /// Create a new get device type schema tool.
+    pub fn new(registry: Arc<MockDeviceTypeRegistry>) -> Self {
+        Self { registry }
+    }
+
+    /// Create with a mock registry for testing.
+    pub fn mock() -> Arc<Self> {
+        Arc::new(Self::new(Arc::new(MockDeviceTypeRegistry)))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for GetDeviceTypeSchemaTool {
+    fn name(&self) -> &str {
+        "get_device_type_schema"
+    }
+
+    fn description(&self) -> &str {
+        "获取设备类型的完整MDL定义，包括所有指标和命令。使用此工具了解设备的完整功能和可用操作。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "device_type": string_property("设备类型名称（如'DHT22'、'Relay'），不指定则返回所有类型"),
+                "include_examples": boolean_property("是否包含使用示例，默认为false")
+            }),
+            vec![]
+        )
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        let device_type = args["device_type"].as_str();
+
+        if let Some(dt) = device_type {
+            // Get schema for specific device type
+            let schema = self
+                .registry
+                .get_device_type_schema(dt)
+                .await
+                .map_err(|e| ToolError::Execution(e.to_string()))?;
+
+            Ok(ToolOutput::success(serde_json::json!({
+                "device_type": schema.device_type,
+                "display_name": schema.display_name,
+                "description": schema.description,
+                "capabilities": schema.capabilities,
+                "metrics": schema.metrics,
+                "commands": schema.commands
+            })))
+        } else {
+            // List all available device types
+            let types = self
+                .registry
+                .list_device_types()
+                .await
+                .map_err(|e| ToolError::Execution(e.to_string()))?;
+
+            Ok(ToolOutput::success(serde_json::json!({
+                "device_types": types,
+                "count": types.len(),
+                "note": "使用 device_type 参数获取特定类型的完整MDL定义"
+            })))
+        }
+    }
+}
+
+/// Tool for listing device types.
+pub struct ListDeviceTypesTool {
+    registry: Arc<MockDeviceTypeRegistry>,
+}
+
+impl ListDeviceTypesTool {
+    /// Create a new list device types tool.
+    pub fn new(registry: Arc<MockDeviceTypeRegistry>) -> Self {
+        Self { registry }
+    }
+
+    /// Create with a mock registry for testing.
+    pub fn mock() -> Arc<Self> {
+        Arc::new(Self::new(Arc::new(MockDeviceTypeRegistry)))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for ListDeviceTypesTool {
+    fn name(&self) -> &str {
+        "list_device_types"
+    }
+
+    fn description(&self) -> &str {
+        "列出系统中所有注册的设备类型，包括它们的描述和功能类别。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "category": string_property("可选的类别过滤（如'sensor'、'actuator'）")
+            }),
+            vec![]
+        )
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        let mut types = self
+            .registry
+            .list_device_types()
+            .await
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+
+        if let Some(category) = args["category"].as_str() {
+            types.retain(|t| t.category == category);
+        }
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "device_types": types,
+            "count": types.len()
         })))
     }
 }

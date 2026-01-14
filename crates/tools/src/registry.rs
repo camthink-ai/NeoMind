@@ -121,6 +121,59 @@ impl ToolRegistry {
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
     }
+
+    /// Search for tools by keyword.
+    ///
+    /// Searches tool names and descriptions for the given keyword.
+    /// Returns a list of tool definitions that match.
+    pub fn search(&self, keyword: &str) -> Vec<ToolDefinition> {
+        let keyword_lower = keyword.to_lowercase();
+        self.tools
+            .values()
+            .filter(|tool| {
+                let name_matches = tool.name().to_lowercase().contains(&keyword_lower);
+                let desc_matches = tool.description().to_lowercase().contains(&keyword_lower);
+                name_matches || desc_matches
+            })
+            .map(|t| t.definition())
+            .collect()
+    }
+
+    /// Search for tools by keyword with category filter.
+    ///
+    /// Allows filtering by tool category prefix (e.g., "device", "rule", "workflow").
+    pub fn search_with_category(&self, keyword: &str, category_prefix: Option<&str>) -> Vec<ToolDefinition> {
+        let results = self.search(keyword);
+        if let Some(prefix) = category_prefix {
+            let prefix_lower = prefix.to_lowercase();
+            results
+                .into_iter()
+                .filter(|def| def.name.to_lowercase().starts_with(&prefix_lower))
+                .collect()
+        } else {
+            results
+        }
+    }
+
+    /// Get tool categories (prefixes).
+    ///
+    /// Returns unique category prefixes from tool names.
+    /// For example, "list_devices", "get_device" -> ["device", "list", "get"]
+    pub fn categories(&self) -> Vec<String> {
+        let mut categories = std::collections::HashSet::new();
+        for tool_name in self.tools.keys() {
+            // Extract common prefixes
+            for (i, _) in tool_name.match_indices('_') {
+                let prefix = &tool_name[..i];
+                if prefix.len() >= 3 {
+                    categories.insert(prefix.to_string());
+                }
+            }
+        }
+        let mut result: Vec<String> = categories.into_iter().collect();
+        result.sort();
+        result
+    }
 }
 
 impl Default for ToolRegistry {
@@ -213,7 +266,22 @@ impl ToolRegistryBuilder {
 
     /// Add the trigger workflow tool (mock).
     pub fn with_trigger_workflow_tool(self) -> Self {
-        self.with_tool(super::builtin::TriggerWorkflowTool::mock())
+        self.with_tool(Arc::new(super::builtin::TriggerWorkflowTool::mock()))
+    }
+
+    /// Add the get device metrics tool (mock).
+    pub fn with_get_device_metrics_tool(self) -> Self {
+        self.with_tool(super::builtin::GetDeviceMetricsTool::mock())
+    }
+
+    /// Add the get device type schema tool (mock).
+    pub fn with_get_device_type_schema_tool(self) -> Self {
+        self.with_tool(super::builtin::GetDeviceTypeSchemaTool::mock())
+    }
+
+    /// Add the list device types tool (mock).
+    pub fn with_list_device_types_tool(self) -> Self {
+        self.with_tool(super::builtin::ListDeviceTypesTool::mock())
     }
 
     /// Add the query data tool with real storage.
@@ -251,6 +319,9 @@ impl ToolRegistryBuilder {
         self.with_query_data_tool()
             .with_control_device_tool()
             .with_list_devices_tool()
+            .with_get_device_metrics_tool()
+            .with_get_device_type_schema_tool()
+            .with_list_device_types_tool()
             .with_create_rule_tool()
             .with_list_rules_tool()
             .with_trigger_workflow_tool()
