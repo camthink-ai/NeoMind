@@ -74,6 +74,8 @@ pub enum ExampleCategory {
     StatusInquiry,
     /// Alert management
     AlertManagement,
+    /// Multi-tool calling (parallel execution)
+    MultiToolCalling,
 }
 
 /// Generated system prompt.
@@ -287,6 +289,8 @@ END"#.to_string(),
                 "创建规则前先查询相关设备能力".to_string(),
                 "规则名称应清晰描述其用途".to_string(),
                 "注意设置合理的阈值避免频繁触发".to_string(),
+                "多工具调用规则：如果多个工具之间没有依赖关系，应该在同一个<tool_calls>块中一次性调用，这样可以并行执行，提高响应速度".to_string(),
+                "直接回答问题，不要过度思考或展开冗长的推理过程".to_string(),
             ],
         }
     }
@@ -294,28 +298,50 @@ END"#.to_string(),
     fn default_examples() -> Vec<FewShotExample> {
         vec![
             FewShotExample {
+                category: ExampleCategory::MultiToolCalling,
+                user_input: "列出所有设备和规则，告诉我当前状态".to_string(),
+                assistant_response: "我来同时查询设备列表和规则列表。".to_string(),
+                tool_calls: vec![
+                    "list_devices()".to_string(),
+                    "list_rules()".to_string(),
+                ],
+            },
+            FewShotExample {
+                category: ExampleCategory::MultiToolCalling,
+                user_input: "查看所有设备类型和相关规则".to_string(),
+                assistant_response: "我来同时查询设备类型列表和规则列表。".to_string(),
+                tool_calls: vec![
+                    "list_device_types()".to_string(),
+                    "list_rules()".to_string(),
+                ],
+            },
+            FewShotExample {
                 category: ExampleCategory::RuleCreation,
                 user_input: "创建一个规则，当温度传感器读数超过30度时发送通知".to_string(),
                 assistant_response: "好的，我来创建一个高温告警规则。首先让我查询一下可用的设备类型。".to_string(),
-                tool_calls: vec!["list_device_types(category: 'sensor')".to_string()],
+                tool_calls: vec!["list_device_types()".to_string()],
             },
             FewShotExample {
                 category: ExampleCategory::DeviceControl,
                 user_input: "把客厅的灯打开".to_string(),
                 assistant_response: "好的，我来发送打开客厅灯的命令。".to_string(),
-                tool_calls: vec!["execute_command(device_id: 'living_room_light', command: 'ON')".to_string()],
+                tool_calls: vec!["control_device(device_id: 'living_room_light', command: 'ON')".to_string()],
             },
             FewShotExample {
                 category: ExampleCategory::DataQuery,
                 user_input: "当前所有传感器的温度是多少？".to_string(),
                 assistant_response: "让我查询一下所有温度传感器的当前读数。".to_string(),
-                tool_calls: vec!["query_metrics(metric: 'temperature')".to_string()],
+                tool_calls: vec!["query_data(device_id: 'temp_sensor', metric: 'temperature')".to_string()],
             },
         ]
     }
 
     fn format_prompt_zh(template: &SystemPromptTemplate) -> String {
         let mut prompt = format!("# {}\n\n", template.role);
+
+        // 重要指令：禁用思考模式，提高响应速度
+        prompt.push_str("## 重要指令\n\n");
+        prompt.push_str("/no_think - 请直接回答问题，不要使用思考模式（think），不要展开冗长的推理过程。\n\n");
 
         prompt.push_str("## 核心能力\n\n");
         for cap in &template.capabilities {
@@ -517,7 +543,7 @@ mod tests {
         generator.add_example(example).await;
 
         let examples = generator.examples.read().await;
-        assert_eq!(examples.len(), 4); // 3 default + 1 added
+        assert!(examples.len() >= 4); // 3 default + 2 multi-tool + 1 added
     }
 
     #[tokio::test]

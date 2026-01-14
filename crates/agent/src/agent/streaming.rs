@@ -37,12 +37,11 @@ pub struct StreamSafeguards {
 impl Default for StreamSafeguards {
     fn default() -> Self {
         Self {
-            // Reduced timeout - 30 seconds is sufficient for most queries
-            // If a query takes longer, it's likely stuck in thinking loop
-            max_stream_duration: Duration::from_secs(30),
-            // IMPORTANT: Limit thinking content to prevent infinite loops
-            // Set based on actual usage - qwen3 models generate moderate thinking
-            max_thinking_length: 8000,  // Reduced from 15000 to catch loops faster
+            // Increased timeout to 40 seconds for thinking models
+            max_stream_duration: Duration::from_secs(40),
+            // Since thinking is NOT included in context, we can allow much more
+            // qwen3-vl:2b can generate extensive thinking before responding
+            max_thinking_length: 100000,  // 100K chars - thinking not in context
             max_content_length: usize::MAX,
             // Tool iterations limit - 3 is sufficient for most multi-step queries
             max_tool_iterations: 3,
@@ -52,12 +51,137 @@ impl Default for StreamSafeguards {
     }
 }
 
+/// Clean up repetitive thinking content by removing excessive repeated phrases
+/// This preserves the core thinking while removing the repetitive noise
+pub fn cleanup_thinking_content(thinking: &str) -> String {
+    if thinking.len() < 200 {
+        return thinking.to_string();
+    }
+
+    let mut result = thinking.to_string();
+    let mut reduced = true;
+
+    // Pass 1: Remove immediate repetitions of the same phrase
+    // This handles cases like "可能可能可能可能" -> "可能"
+    while reduced {
+        reduced = false;
+        let original = result.clone();
+
+        // Common repetitive patterns in qwen3-vl:2b thinking
+        let patterns = [
+            ("可能可能", "可能"),
+            ("或者或者", "或者"),
+            ("也许也许", "也许"),
+            ("温度温度", "温度"),
+            ("。。", "。"),
+            ("，，", "，"),
+            ("??", "?"),
+            ("  ", " "),
+        ];
+
+        for (pattern, replacement) in patterns {
+            result = result.replace(pattern, replacement);
+        }
+
+        if result != original {
+            reduced = true;
+        }
+    }
+
+    // Pass 2: Limit consecutive occurrences of common filler words
+    // Using character-based iteration to avoid UTF-8 issues
+    let filler_words = [
+        ("可能", 3),  // Max 3 consecutive "可能"
+        ("或者", 2),  // Max 2 consecutive "或者"
+        ("也许", 2),
+    ];
+
+    for (word, max_consecutive) in filler_words {
+        let chars: Vec<char> = result.chars().collect();
+        let mut new_result = String::new();
+        let mut consecutive = 0;
+        let mut last_was_word = false;
+        let mut char_idx = 0;
+
+        while char_idx < chars.len() {
+            // Check if the word starts at this position
+            let word_chars: Vec<char> = word.chars().collect();
+            let matches = if char_idx + word_chars.len() <= chars.len() {
+                chars[char_idx..char_idx + word_chars.len()] == word_chars[..]
+            } else {
+                false
+            };
+
+            if matches {
+                if last_was_word {
+                    consecutive += 1;
+                    if consecutive <= max_consecutive {
+                        for &ch in &word_chars {
+                            new_result.push(ch);
+                        }
+                    }
+                } else {
+                    consecutive = 1;
+                    last_was_word = true;
+                    for &ch in &word_chars {
+                        new_result.push(ch);
+                    }
+                }
+                char_idx += word_chars.len();
+            } else {
+                consecutive = 0;
+                last_was_word = false;
+                new_result.push(chars[char_idx]);
+                char_idx += 1;
+            }
+        }
+        result = new_result;
+    }
+
+    // Pass 3: If still too long, truncate with ellipsis at char boundary
+    if result.chars().count() > 500 {
+        let char_count = result.chars().count();
+        // Take first 500 chars and add ellipsis
+        result = result.chars().take(500).collect::<String>();
+        result.push_str("...");
+    }
+
+    result
+}
+
 /// Detect if content is repetitive (indicating a loop)
 fn detect_repetition(recent_chunks: &[String], new_chunk: &str, threshold: usize) -> bool {
+    // === SINGLE-CHUNK REPETITION DETECTION ===
+    // Check for repetitive words/phrases within a single chunk first
+    // This catches cases where the model returns one large chunk with repetitive thinking
+    let repetitive_phrases = [
+        ("可能", 10),   // "maybe" - shouldn't appear >10 times
+        ("或者", 8),   // "or"
+        ("也许", 8),   // "perhaps"
+        ("temperature", 8),
+        ("温度", 10),
+        ("sensor", 8),
+        ("传感器", 8),
+        ("可能", 10),  // "possible" (Chinese)
+    ];
+
+    for (phrase, limit) in repetitive_phrases {
+        let count = new_chunk.matches(phrase).count();
+        if count > limit {
+            tracing::warn!(
+                "Single-chunk repetition detected: '{}' appears {} times (limit: {})",
+                phrase, count, limit
+            );
+            return true;
+        }
+    }
+
+    // === MULTI-CHUNK REPETITION DETECTION ===
+    // Check if chunks are similar to each other
     if recent_chunks.len() < threshold || new_chunk.len() < 10 {
         return false;
     }
-    
+
     // Check if the last N chunks are very similar
     let recent = &recent_chunks[recent_chunks.len().saturating_sub(threshold)..];
     let similar_count = recent.iter()
@@ -71,8 +195,31 @@ fn detect_repetition(recent_chunks: &[String], new_chunk: &str, threshold: usize
             max_len > 0 && overlap * 100 / max_len >= 80
         })
         .count();
-    
-    similar_count >= threshold - 1
+
+    if similar_count >= threshold - 1 {
+        return true;
+    }
+
+    // === COMBINED PHRASE-LEVEL REPETITION DETECTION ===
+    // Check for repetitive words/phrases across all chunks
+    let combined: String = recent_chunks.iter()
+        .map(|s| s.as_str())
+        .chain(std::iter::once(new_chunk))
+        .collect::<Vec<&str>>()
+        .join("");
+
+    for (phrase, limit) in repetitive_phrases {
+        let count = combined.matches(phrase).count();
+        if count > limit * 2 {  // Higher limit for combined text
+            tracing::warn!(
+                "Combined repetition detected: '{}' appears {} times (limit: {})",
+                phrase, count, limit * 2
+            );
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Simple in-memory cache for tool results with TTL
@@ -189,8 +336,10 @@ struct ToolExecutionResult {
 }
 
 /// Maximum context window size in tokens (approximate)
-/// Adjust based on model capacity (e.g., qwen3-vl:2b has ~32k context)
-const MAX_CONTEXT_TOKENS: usize = 12000;
+/// Reduced from 12000 to 6000 to improve response speed for qwen3-vl:2b
+/// Smaller context = faster processing, less repetitive thinking
+/// Streaming can handle slightly larger context than non-streaming
+const MAX_CONTEXT_TOKENS: usize = 6000;
 
 /// Estimate token count for a string (rough approximation: 1 token ≈ 4 characters for Chinese, 1 token ≈ 4 characters for English)
 /// This is a simple heuristic - for production, consider using a proper tokenizer
@@ -303,7 +452,7 @@ fn build_context_window(messages: &[AgentMessage]) -> Vec<AgentMessage> {
 /// - Maximum content length (20000 chars)
 /// - Repetition detection to catch loops
 /// - Maximum tool call iterations (5)
-pub fn process_stream_events(
+pub async fn process_stream_events(
     llm_interface: Arc<LlmInterface>,
     short_term_memory: Arc<tokio::sync::RwLock<Vec<AgentMessage>>>,
     state: Arc<RwLock<SessionState>>,
@@ -317,11 +466,12 @@ pub fn process_stream_events(
         tools,
         user_message,
         StreamSafeguards::default(),
-    )
+    ).await
 }
 
 /// Process a user message with streaming response and custom safeguards.
-pub fn process_stream_events_with_safeguards(
+/// Now async - no more block_in_place causing thread pool exhaustion
+pub async fn process_stream_events_with_safeguards(
     llm_interface: Arc<LlmInterface>,
     short_term_memory: Arc<tokio::sync::RwLock<Vec<AgentMessage>>>,
     state: Arc<RwLock<SessionState>>,
@@ -353,17 +503,9 @@ pub fn process_stream_events_with_safeguards(
             • 查看所有规则 - 说「列出规则」"
         );
 
-        // Use block_in_place for async operations in sync context
-        let state_clone = state.clone();
-        let memory_clone = short_term_memory.clone();
-        tokio::task::block_in_place(|| {
-            let handle = tokio::runtime::Handle::try_current()
-                .expect("No runtime found");
-            handle.block_on(async move {
-                memory_clone.write().await.push(greeting_response);
-                state_clone.write().await.increment_messages();
-            })
-        });
+        // Pure async - no block_in_place
+        short_term_memory.write().await.push(greeting_response);
+        state.write().await.increment_messages();
 
         let response_content = "您好！我是 NeoTalk 智能助手。我可以帮您：\n\
             • 查看设备列表 - 说「列出设备」\n\
@@ -377,35 +519,24 @@ pub fn process_stream_events_with_safeguards(
         }));
     }
 
-    let llm_clone = llm_interface.clone();
-
     // === FIX 1: Get conversation history and pass to LLM ===
     // This prevents the LLM from repeating actions or calling tools again
-    let history_for_llm: Vec<edge_ai_core::Message> = tokio::task::block_in_place(|| {
-        let handle = tokio::runtime::Handle::try_current()
-            .expect("No runtime found");
-        handle.block_on(async {
-            let memory = short_term_memory.read().await;
-            let history_messages = memory.clone();
-            // Use context window to limit history size (most recent messages first)
-            build_context_window(&history_messages)
-                .iter()
-                .map(|msg| msg.to_core())
-                .collect::<Vec<_>>()
-        })
-    });
+    // Pure async - no block_in_place
+    let memory = short_term_memory.read().await;
+    let history_messages = memory.clone();
+    drop(memory); // Release lock before calling LLM
+
+    let history_for_llm: Vec<edge_ai_core::Message> = build_context_window(&history_messages)
+        .iter()
+        .map(|msg| msg.to_core())
+        .collect::<Vec<_>>();
 
     tracing::debug!("Passing {} messages from history to LLM", history_for_llm.len());
 
-    // Get the stream from llm_interface - use block_in_place for sync→async transition
-    let stream = tokio::task::block_in_place(|| {
-        let handle = tokio::runtime::Handle::try_current()
-            .map_err(|e| format!("No runtime: {}", e))?;
-        handle.block_on(llm_clone.chat_stream_with_history(&user_message, &history_for_llm))
-            .map_err(|e| format!("Chat stream failed: {}", e))
-    });
-
-    let stream = stream.map_err(|e| AgentError::Llm(e))?;
+    // Get the stream from llm_interface - pure async call
+    let stream = llm_interface.chat_stream_with_history(&user_message, &history_for_llm)
+        .await
+        .map_err(|e| AgentError::Llm(e.to_string()))?;
 
     Ok(Box::pin(async_stream::stream! {
         let mut stream = stream;
@@ -627,8 +758,8 @@ pub fn process_stream_events_with_safeguards(
             }
         }
 
-        // === FIX: Handle empty responses ===
-        // If no content was generated but thinking exists, provide a fallback response
+        // === Handle empty responses ===
+        // With increased thinking limit, model should complete and output actual content
         let has_content = !content_before_tools.is_empty();
         let has_thinking = !thinking_content.is_empty();
 
@@ -636,14 +767,8 @@ pub fn process_stream_events_with_safeguards(
         // We'll save a complete message (with tool_calls and final response) in Phase 2.
         // If no tool calls, save the response now.
         if !tool_calls_detected {
-            // Handle empty response case
-            let response_to_save = if !has_content && has_thinking {
-                // LLM generated only thinking, no actual response
-                // Generate a simple fallback response
-                let fallback = "我已经理解了您的问题。请告诉我您需要什么帮助？".to_string();
-                yield AgentEvent::content(fallback.clone());
-                fallback
-            } else if !has_content && !has_thinking {
+            // Handle empty response case (should be rare with increased thinking limit)
+            let response_to_save = if !has_content && !has_thinking {
                 // Complete empty response - shouldn't happen but handle it
                 let fallback = "您好，我是NeoTalk助手，请问有什么可以帮助您的？".to_string();
                 yield AgentEvent::content(fallback.clone());
@@ -653,7 +778,21 @@ pub fn process_stream_events_with_safeguards(
             };
 
             let initial_msg = if !thinking_content.is_empty() {
-                AgentMessage::assistant_with_thinking(&response_to_save, &thinking_content)
+                // Clean up repetitive thinking content before storing
+                let cleaned_thinking = cleanup_thinking_content(&thinking_content);
+                let original_len = thinking_content.len();
+                let cleaned_len = cleaned_thinking.len();
+
+                if original_len > cleaned_len {
+                    tracing::info!(
+                        "Thinking content cleaned: {} chars -> {} chars ({}% reduction)",
+                        original_len,
+                        cleaned_len,
+                        (original_len - cleaned_len) * 100 / original_len
+                    );
+                }
+
+                AgentMessage::assistant_with_thinking(&response_to_save, &cleaned_thinking)
             } else {
                 AgentMessage::assistant(&response_to_save)
             };
@@ -807,29 +946,22 @@ pub fn process_stream_events_with_safeguards(
             // And generate a natural response to the user
             tracing::info!("Phase 2: Generating follow-up response based on tool results");
 
-            let llm_for_followup = llm_interface.clone();
-            let memory_clone = short_term_memory.clone();
-
             // Get the conversation history (including the tool results we just added)
-            let followup_result = tokio::task::block_in_place(|| {
-                let handle = tokio::runtime::Handle::try_current()
-                    .expect("No runtime found");
+            // Pure async - no block_in_place
+            let history = short_term_memory.read().await;
+            let history_messages: Vec<edge_ai_core::Message> = history.iter()
+                .map(|msg| msg.to_core())
+                .collect::<Vec<_>>();
+            drop(history); // Release lock
 
-                let history = memory_clone.blocking_read();
-                let history_messages: Vec<edge_ai_core::Message> = history.iter()
-                    .map(|msg| msg.to_core())
-                    .collect::<Vec<_>>();
-                drop(history);
+            // Phase 2: Use the specialized function that disables both tools and thinking
+            // This prevents infinite thinking loops and provides faster responses
+            // The history already contains tool calls and results, so LLM knows what happened
+            let followup_stream_result = llm_interface.chat_stream_no_tools_no_thinking_with_history(
+                "请根据工具执行结果生成简洁的回复。", &history_messages
+            ).await;
 
-                // Phase 2: Use the specialized function that disables both tools and thinking
-                // This prevents infinite thinking loops and provides faster responses
-                // The history already contains tool calls and results, so LLM knows what happened
-                handle.block_on(
-                    llm_for_followup.chat_stream_no_tools_no_thinking_with_history("请根据工具执行结果生成简洁的回复。", &history_messages)
-                )
-            });
-
-            let followup_stream = match followup_result {
+            let followup_stream = match followup_stream_result {
                 Ok(stream) => stream,
                 Err(e) => {
                     tracing::error!("Phase 2 LLM call failed: {}", e);

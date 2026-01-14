@@ -55,7 +55,9 @@ pub use formatter::{format_tool_result, format_summary};
 const MAX_TOOL_CALLS_PER_REQUEST: usize = 5;
 
 /// Maximum context window size in tokens (approximate)
-const MAX_CONTEXT_TOKENS: usize = 8000;
+/// Reduced from 8000 to 5000 to improve response speed for qwen3-vl:2b
+/// Smaller context = faster processing, less repetitive thinking
+const MAX_CONTEXT_TOKENS: usize = 5000;
 
 /// Estimate token count for a string (rough approximation)
 fn estimate_tokens(text: &str) -> usize {
@@ -217,12 +219,27 @@ impl Agent {
 
     /// Create a new agent with default (mock) tools.
     pub fn new(config: AgentConfig, session_id: String) -> Self {
-        let tools = Arc::new(
-            edge_ai_tools::ToolRegistryBuilder::new()
-                .with_standard_tools()
-                .build(),
-        );
-        Self::with_tools(config, session_id, tools)
+        // Build tool registry with standard tools + agent-specific tools
+        let mut registry = edge_ai_tools::ToolRegistryBuilder::new()
+            .with_standard_tools()
+            .build();
+
+        // Add agent-specific tools
+        use crate::tools::ToolSearchTool;
+        use crate::tools::ThinkTool;
+
+        // Collect tool definitions from standard tools
+        let standard_tool_defs = registry.definitions();
+
+        // Create tool search tool with standard tool info
+        let tool_search = ToolSearchTool::from_definitions(&standard_tool_defs);
+        registry.register(std::sync::Arc::new(tool_search));
+
+        // Create and register think tool
+        let think_tool = ThinkTool::new();
+        registry.register(std::sync::Arc::new(think_tool));
+
+        Self::with_tools(config, session_id, Arc::new(registry))
     }
 
     /// Create with default config and mock tools.
@@ -379,6 +396,35 @@ impl Agent {
             });
         }
 
+        // === FAST PATH: Simple acknowledgments and common responses ===
+        // Bypass LLM for simple responses to improve latency and avoid timeout issues
+        let trimmed = user_message.trim();
+        let simple_responses: &[(&str, &str)] = &[
+            ("好的", "好的，我明白了。"),
+            ("好的，", "好的。"),
+            ("明白", "好的，我明白了。"),
+            ("明白了", "好的，我明白了。"),
+            ("知道了", "好的，我知道了。"),
+            ("收到", "好的，收到了。"),
+            ("嗯", "好的，我明白了。"),
+            ("行", "好的，没问题。"),
+            ("是", "是的，我明白了。"),
+            ("对", "是的，正确。"),
+        ];
+
+        for (pattern, response) in simple_responses.iter() {
+            if trimmed == *pattern || trimmed.starts_with(pattern) {
+                let processing_time = start.elapsed().as_millis() as u64;
+                return Ok(AgentResponse {
+                    message: AgentMessage::assistant(*response),
+                    tool_calls: vec![],
+                    memory_context_used: true,
+                    tools_used: vec![],
+                    processing_time_ms: processing_time,
+                });
+            }
+        }
+
         // Try to process with real LLM
         match self.process_with_llm(user_message).await {
             Ok(response) => {
@@ -455,10 +501,23 @@ impl Agent {
         // Parse response for tool calls
         let (content, mut tool_calls) = parse_tool_calls(&chat_response.text)?;
 
+        // Extract thinking content if present
+        let thinking = chat_response.thinking;
+
         // If no tool calls, return the direct response
         if tool_calls.is_empty() {
-            // Save assistant response without tool calls
-            let assistant_msg = AgentMessage::assistant(&content);
+            // Save assistant response with or without thinking
+            let assistant_msg = if let Some(thinking_content) = thinking {
+                // Apply cleanup to thinking if it's too long
+                let cleaned_thinking = if thinking_content.len() > 200 {
+                    crate::agent::streaming::cleanup_thinking_content(&thinking_content)
+                } else {
+                    thinking_content
+                };
+                AgentMessage::assistant_with_thinking(&content, &cleaned_thinking)
+            } else {
+                AgentMessage::assistant(&content)
+            };
             self.short_term_memory.write().await.push(assistant_msg.clone());
             return Ok(AgentResponse {
                 message: assistant_msg,
@@ -518,8 +577,18 @@ impl Agent {
         // This prevents excessive thinking and model looping
         let final_text = crate::agent::streaming::format_tool_results(&tool_results);
 
-        // Save a SINGLE complete message with tool_calls (WITH results) and final response
-        let final_message = AgentMessage::assistant_with_tools(&final_text, tool_calls_with_results);
+        // Save a complete message with tool_calls, results, and optionally thinking
+        let final_message = if let Some(thinking_content) = thinking {
+            // Clean up thinking if it's too long
+            let cleaned_thinking = if thinking_content.len() > 200 {
+                crate::agent::streaming::cleanup_thinking_content(&thinking_content)
+            } else {
+                thinking_content
+            };
+            AgentMessage::assistant_with_tools_and_thinking(&final_text, tool_calls_with_results, &cleaned_thinking)
+        } else {
+            AgentMessage::assistant_with_tools(&final_text, tool_calls_with_results)
+        };
         self.short_term_memory.write().await.push(final_message.clone());
 
         Ok(AgentResponse {
@@ -631,7 +700,7 @@ impl Agent {
             self.state.clone(),
             self.tools.clone(),
             user_message,
-        ) {
+        ).await {
             Ok(stream) => Ok(stream),
             Err(e) => {
                 // On error, fall back to simple response

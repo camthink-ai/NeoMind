@@ -110,7 +110,9 @@ enum PluginCommand {
     },
 }
 
-#[tokio::main]
+// Custom runtime with increased worker threads for better concurrent performance
+// Default is num_cpus, but we use more to handle block_in_place alternatives
+#[tokio::main(flavor = "multi_thread", worker_threads = 16)]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
