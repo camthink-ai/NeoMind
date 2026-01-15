@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::error::{Result, ToolError};
-use super::tool::{object_schema, string_property, number_property, Tool, ToolOutput, ToolDefinition, ToolExample};
+use super::tool::{object_schema, string_property, number_property, Tool, ToolOutput, ToolDefinition, ToolExample, ResponseFormat};
 
 use edge_ai_devices::{MqttDeviceManager, TimeSeriesStorage};
 use edge_ai_rules::RuleEngine;
@@ -81,7 +81,28 @@ impl Tool for QueryDataTool {
                 }),
                 description: "查询传感器最近24小时的温度数据".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "device_id": "sensor_1",
+                        "metric": "temperature"
+                    }),
+                    result: serde_json::json!({
+                        "device_id": "sensor_1",
+                        "metric": "temperature",
+                        "count": 24,
+                        "data": [{"timestamp": 1735718400, "value": 22.5}]
+                    }),
+                    description: "查询设备指标数据".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("data".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("data")
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -195,14 +216,59 @@ impl Tool for ControlDeviceTool {
                     "command": "turn_on"
                 }),
                 result: serde_json::json!({
-                    "status": "success",
+                    "success": true,
                     "device_id": "actuator_1",
-                    "command": "turn_on",
-                    "message": "Command sent successfully"
+                    "command": "turn_on"
                 }),
                 description: "打开执行器设备".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "device_id": "actuator_1",
+                        "command": "turn_on"
+                    }),
+                    result: serde_json::json!({
+                        "success": true,
+                        "device_id": "actuator_1",
+                        "command": "turn_on"
+                    }),
+                    description: "打开设备".to_string(),
+                },
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "device_id": "switch_living",
+                        "command": "turn_off"
+                    }),
+                    result: serde_json::json!({
+                        "success": true,
+                        "device_id": "switch_living",
+                        "command": "turn_off"
+                    }),
+                    description: "关闭设备".to_string(),
+                },
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "device_id": "thermostat_1",
+                        "command": "set_value",
+                        "value": "22"
+                    }),
+                    result: serde_json::json!({
+                        "success": true,
+                        "device_id": "thermostat_1",
+                        "command": "set_value",
+                        "value": "22"
+                    }),
+                    description: "设置设备参数值".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("device".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("device")
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -304,19 +370,48 @@ impl Tool for ListDevicesTool {
             description: self.description().to_string(),
             parameters: self.parameters(),
             example: Some(ToolExample {
-                arguments: serde_json::json!({
-                    "filter_type": "sensor"
-                }),
+                arguments: serde_json::json!({}),
                 result: serde_json::json!({
-                    "count": 2,
+                    "count": 3,
                     "devices": [
                         {"id": "sensor_1", "name": "温度传感器1", "type": "sensor", "status": "online"},
-                        {"id": "sensor_2", "name": "湿度传感器1", "type": "sensor", "status": "online"}
+                        {"id": "actuator_1", "name": "开关1", "type": "actuator", "status": "online"},
+                        {"id": "sensor_2", "name": "湿度传感器1", "type": "sensor", "status": "offline"}
                     ]
                 }),
-                description: "列出所有传感器设备".to_string(),
+                description: "列出所有设备".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({}),
+                    result: serde_json::json!({
+                        "count": 3,
+                        "devices": [
+                            {"id": "sensor_1", "name": "温度传感器1", "type": "sensor", "status": "online"},
+                            {"id": "actuator_1", "name": "开关1", "type": "actuator", "status": "online"}
+                        ]
+                    }),
+                    description: "获取所有设备列表".to_string(),
+                },
+                ToolExample {
+                    arguments: serde_json::json!({"filter_type": "sensor"}),
+                    result: serde_json::json!({
+                        "count": 2,
+                        "devices": [
+                            {"id": "sensor_1", "name": "温度传感器1", "type": "sensor", "status": "online"},
+                            {"id": "sensor_2", "name": "湿度传感器1", "type": "sensor", "status": "online"}
+                        ]
+                    }),
+                    description: "仅列出传感器设备".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("device".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("device")
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -376,7 +471,9 @@ impl Tool for CreateRuleTool {
 - 多条件组合的复杂自动化逻辑
 
 ## DSL 语法格式
-RULE \"规则名称\" WHEN <条件> [FOR <持续时间>] DO <动作> END
+RULE "规则名称" WHEN <条件> [FOR <持续时间>] DO <动作> END
+
+## 重要：输出纯DSL文本，不要使用markdown代码块
 
 ## 条件示例
 - sensor.temperature > 50: 温度大于50
@@ -384,12 +481,15 @@ RULE \"规则名称\" WHEN <条件> [FOR <持续时间>] DO <动作> END
 - sensor.value == 1: 值等于1
 
 ## 动作类型
-- NOTIFY \"消息\": 发送通知
-- CONTROL device_id command: 控制设备
-- EXECUTE workflow_id: 执行工作流
+- NOTIFY "消息": 发送通知
+- EXECUTE device.command(param=value): 执行设备命令
+- LOG info: 记录日志
 
 ## 完整示例
-RULE \"高温告警\" WHEN sensor.temperature > 35 FOR 5 minutes DO NOTIFY \"温度过高\" END"#
+RULE "高温告警" WHEN sensor.temperature > 35 FOR 5 minutes DO NOTIFY "温度过高" END
+
+## 多个动作示例
+RULE "温度控制" WHEN sensor.temperature > 30 DO EXECUTE fan.turn_on NOTIFY "已开启风扇" END"#
     }
 
     fn parameters(&self) -> Value {
@@ -418,7 +518,26 @@ RULE \"高温告警\" WHEN sensor.temperature > 35 FOR 5 minutes DO NOTIFY \"温
                 }),
                 description: "创建一个温度超过35度时触发告警的规则".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "name": "高温告警",
+                        "dsl": "RULE \"高温告警\" WHEN sensor.temperature > 35 FOR 5 minutes DO NOTIFY \"温度过高，请注意\" END"
+                    }),
+                    result: serde_json::json!({
+                        "rule_id": "rule_123",
+                        "status": "created"
+                    }),
+                    description: "创建温度告警规则".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("rule".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("rule")
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -502,7 +621,25 @@ impl Tool for ListRulesTool {
                 }),
                 description: "列出所有自动化规则".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({}),
+                    result: serde_json::json!({
+                        "count": 2,
+                        "rules": [
+                            {"id": "rule_1", "name": "高温告警", "enabled": true, "trigger_count": 5}
+                        ]
+                    }),
+                    description: "获取所有规则列表".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("rule".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("rule")
     }
 
     async fn execute(&self, _args: Value) -> Result<ToolOutput> {
@@ -591,7 +728,26 @@ impl Tool for TriggerWorkflowTool {
                 }),
                 description: "触发日常备份工作流".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "workflow_id": "daily_backup"
+                    }),
+                    result: serde_json::json!({
+                        "workflow_id": "daily_backup",
+                        "execution_id": "exec_abc123",
+                        "status": "triggered"
+                    }),
+                    description: "触发工作流".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("workflow".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("workflow")
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -683,7 +839,28 @@ impl Tool for QueryRuleHistoryTool {
                 }),
                 description: "查询指定规则的执行历史".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "rule_id": "rule_1",
+                        "limit": 5
+                    }),
+                    result: serde_json::json!({
+                        "count": 5,
+                        "history": [
+                            {"id": "h1", "rule_id": "rule_1", "rule_name": "高温告警", "success": true, "actions_executed": 1, "timestamp": 1735804800}
+                        ]
+                    }),
+                    description: "查询规则执行历史".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("rule".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("rule")
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -794,7 +971,28 @@ impl Tool for QueryWorkflowStatusTool {
                 }),
                 description: "查询指定工作流的执行状态".to_string(),
             }),
+            examples: vec![
+                ToolExample {
+                    arguments: serde_json::json!({
+                        "workflow_id": "daily_backup",
+                        "limit": 5
+                    }),
+                    result: serde_json::json!({
+                        "count": 2,
+                        "executions": [
+                            {"execution_id": "exec_1", "workflow_id": "daily_backup", "status": "completed", "started_at": 1735804800}
+                        ]
+                    }),
+                    description: "查询工作流执行状态".to_string(),
+                },
+            ],
+            response_format: ResponseFormat::Concise,
+            namespace: Some("workflow".to_string()),
         }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("workflow")
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {

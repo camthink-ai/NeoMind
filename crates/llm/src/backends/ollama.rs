@@ -385,34 +385,10 @@ impl LlmRuntime for OllamaRuntime {
             None
         };
 
-        // Thinking: user controls via thinking_enabled parameter
-        // IMPORTANT: DISABLE thinking by default for performance (qwen3-vl:2b thinking takes 90+ seconds)
-        let model_supports_thinking = caps.supports_thinking;
-        let think = match input.params.thinking_enabled {
-            Some(true) => {
-                if model_supports_thinking {
-                    println!("[ollama.rs] NON-STREAM DEBUG: thinking_enabled=Some(true), setting think=None (model default)");
-                    None
-                } else {
-                    println!("[ollama.rs] NON-STREAM DEBUG: Model doesn't support thinking, overriding to disable");
-                    Some(OllamaThink::Bool(false))
-                }
-            },
-            Some(false) => {
-                println!("[ollama.rs] NON-STREAM DEBUG: thinking_enabled=Some(false), setting think=Bool(false) to DISABLE thinking");
-                Some(OllamaThink::Bool(false))
-            },
-            None => {
-                // DISABLE thinking by default for performance (set to Some(true) to enable)
-                if model_supports_thinking {
-                    println!("[ollama.rs] NON-STREAM DEBUG: thinking_enabled=None, DISABLED by default for performance");
-                    Some(OllamaThink::Bool(false))
-                } else {
-                    println!("[ollama.rs] NON-STREAM DEBUG: Model doesn't support thinking");
-                    Some(OllamaThink::Bool(false))
-                }
-            },
-        };
+        // Thinking: Don't explicitly set think parameter
+        // Let the model decide - setting think=false may cause issues with qwen3-vl:2b
+        // where it generates only thinking with no content
+        let think = None;
 
         let format: Option<String> = None;
 
@@ -610,43 +586,16 @@ impl LlmRuntime for OllamaRuntime {
             None
         };
 
-        // Thinking: user controls via thinking_enabled parameter
-        // IMPORTANT: Respect user's choice - if they want thinking, send it
+        // Thinking: Don't explicitly set think parameter
+        // Let the model decide - setting think=false may cause issues with qwen3-vl:2b
+        // where it generates only thinking with no content
+        let think = None;
+
+        // Determine if we should send thinking to the client (for display purposes)
+        // Default to true for models that support thinking - user can disable if desired
         let model_supports_thinking = caps.supports_thinking;
-        let user_requested_thinking = input.params.thinking_enabled.unwrap_or(true);  // Default to true, matching storage default
-
-        // Determine if we should actually send thinking to the client
-        // RESPECT USER'S CHOICE: If user enabled thinking, send it regardless of model
-        // Safety mechanisms (max_thinking_chars, timeout) will prevent infinite loops
+        let user_requested_thinking = input.params.thinking_enabled.unwrap_or(true);  // Default to true - send thinking
         let should_send_thinking = user_requested_thinking;
-
-        let think = match input.params.thinking_enabled {
-            Some(true) => {
-                // User explicitly requested thinking - let them have it
-                // Safety mechanisms (max_thinking_chars, timeout) will prevent issues
-                if model_supports_thinking {
-                    tracing::info!("[ollama.rs] thinking_enabled=true, model supports thinking, using model default");
-                } else {
-                    tracing::info!("[ollama.rs] thinking_enabled=true, model doesn't officially support thinking, but respecting user's choice");
-                }
-                None  // Let Ollama/model decide
-            },
-            Some(false) => {
-                tracing::info!("[ollama.rs] thinking_enabled=false, explicitly disabling thinking");
-                Some(OllamaThink::Bool(false))
-            },
-            None => {
-                // DISABLE thinking by default for qwen3-vl:2b performance
-                // The model takes 60-120 seconds when thinking is enabled
-                if model_supports_thinking {
-                    tracing::info!("[ollama.rs] thinking_enabled not set, DISABLED for performance (qwen3-vl:2b takes 60-120s with thinking)");
-                    Some(OllamaThink::Bool(false))
-                } else {
-                    tracing::info!("[ollama.rs] thinking_enabled not set, model doesn't support thinking");
-                    Some(OllamaThink::Bool(false))
-                }
-            },
-        };
 
         // Convert messages with tool injection for non-native models
         let messages = self.messages_to_ollama_with_tools(

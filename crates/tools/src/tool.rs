@@ -118,19 +118,6 @@ impl Parameter {
     }
 }
 
-/// Tool definition for LLM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    /// Tool name
-    pub name: String,
-    /// Tool description
-    pub description: String,
-    /// Parameters as JSON Schema
-    pub parameters: Value,
-    /// Example usage (optional)
-    pub example: Option<ToolExample>,
-}
-
 /// Example usage of a tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolExample {
@@ -140,6 +127,37 @@ pub struct ToolExample {
     pub result: Value,
     /// Description of what this example does
     pub description: String,
+}
+
+/// Response format controls tool output verbosity.
+/// Based on Anthropic research: concise format reduces tokens by ~40%.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponseFormat {
+    /// Concise: minimal output, just the essential data
+    #[default]
+    Concise,
+    /// Detailed: full output with explanations and context
+    Detailed,
+}
+
+/// Tool definition for LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefinition {
+    /// Tool name
+    pub name: String,
+    /// Tool description
+    pub description: String,
+    /// Parameters as JSON Schema
+    pub parameters: Value,
+    /// Example usage (optional) - single example for backward compatibility
+    pub example: Option<ToolExample>,
+    /// Multiple examples (optional) - for better tool use guidance
+    pub examples: Vec<ToolExample>,
+    /// Response format hint (optional)
+    pub response_format: ResponseFormat,
+    /// Tool namespace for grouping related tools (e.g., "device", "rule", "workflow")
+    pub namespace: Option<String>,
 }
 
 /// Tool trait for function calling.
@@ -166,7 +184,20 @@ pub trait Tool: Send + Sync {
             description: self.description().to_string(),
             parameters: self.parameters(),
             example: None,
+            examples: Vec::new(),
+            response_format: ResponseFormat::default(),
+            namespace: None,
         }
+    }
+
+    /// Get the tool's namespace (optional, for grouping related tools).
+    fn namespace(&self) -> Option<&str> {
+        None
+    }
+
+    /// Get the tool's response format preference.
+    fn response_format(&self) -> ResponseFormat {
+        ResponseFormat::default()
     }
 
     /// Validate arguments before execution.
