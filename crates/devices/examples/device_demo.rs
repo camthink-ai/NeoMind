@@ -11,8 +11,9 @@ use std::sync::Arc;
 use edge_ai_core::EventBus;
 use edge_ai_devices::{
     CommandDefinition, ConnectionConfig, DeviceConfig, DeviceDiscovery, DeviceRegistry,
-    DeviceService, DeviceTypeTemplate, DiscoveredDevice, ParameterDefinition,
+    DeviceService, DeviceTypeTemplate, DiscoveredDevice, MetricDataType,
 };
+use edge_ai_devices::mdl_format::{MetricDefinition, ParameterDefinition};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -29,39 +30,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // === Example 1: Register Device Type Template ===
     println!("--- Example 1: Register Device Type Template ---");
 
-    let dht22_template = DeviceTypeTemplate {
-        device_type: "dht22_sensor".to_string(),
-        name: "DHT22 温湿度传感器".to_string(),
-        description: "基于 DHT22 的温湿度传感器".to_string(),
-        categories: vec!["sensor".to_string(), "climate".to_string()],
-        metrics: vec![
-            edge_ai_devices::mdl_format::MetricDefinition {
-                name: "temperature".to_string(),
-                display_name: "温度".to_string(),
-                description: Some("空气温度".to_string()),
-                data_type: edge_ai_devices::MetricDataType::Float,
-                unit: Some("°C".to_string()),
-                min: Some(-40.0),
-                max: Some(80.0),
-            },
-            edge_ai_devices::mdl_format::MetricDefinition {
-                name: "humidity".to_string(),
-                display_name: "湿度".to_string(),
-                description: Some("相对湿度".to_string()),
-                data_type: edge_ai_devices::MetricDataType::Float,
-                unit: Some("%".to_string()),
-                min: Some(0.0),
-                max: Some(100.0),
-            },
-        ],
-        commands: vec![],
-        uplink: Some(edge_ai_devices::mdl_format::UplinkConfig {
-            format: "json".to_string(),
-            topic_pattern: Some("sensors/{device_id}/data".to_string()),
-            extraction: None,
-        }),
-        downlink: None,
-    };
+    let dht22_template = DeviceTypeTemplate::new("dht22_sensor", "DHT22 温湿度传感器")
+        .with_description("基于 DHT22 的温湿度传感器")
+        .with_category("sensor")
+        .with_category("climate")
+        .with_metric(MetricDefinition {
+            name: "temperature".to_string(),
+            display_name: "温度".to_string(),
+            data_type: MetricDataType::Float,
+            unit: "°C".to_string(),
+            min: Some(-40.0),
+            max: Some(80.0),
+            required: false,
+        })
+        .with_metric(MetricDefinition {
+            name: "humidity".to_string(),
+            display_name: "湿度".to_string(),
+            data_type: MetricDataType::Float,
+            unit: "%".to_string(),
+            min: Some(0.0),
+            max: Some(100.0),
+            required: false,
+        });
 
     device_service.register_template(dht22_template).await?;
     println!("Registered DHT22 device type template\n");
@@ -74,16 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: "Greenhouse Temperature Sensor 1".to_string(),
         device_type: "dht22_sensor".to_string(),
         adapter_type: "mqtt".to_string(),
-        connection_config: ConnectionConfig::Mqtt {
-            broker: "localhost".to_string(),
-            port: 1883,
-            client_id: None,
-            username: None,
-            password: None,
-            topic_prefix: "sensors/greenhouse/temp1".to_string(),
-            qos: 0,
-            retain: false,
-        },
+        connection_config: ConnectionConfig::mqtt("sensors/greenhouse/temp1", None::<String>),
         adapter_id: Some("main-mqtt".to_string()),
     };
 
@@ -91,50 +72,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Registered temperature sensor: greenhouse_temp_1\n");
 
     // === Example 3: Register Relay Actuator ===
-    println!("--- Example 3: Register Relay Actuator ---");
+    println!("--- Example 3: Register Relay Actuator ===");
 
-    let relay_template = DeviceTypeTemplate {
-        device_type: "relay_actuator".to_string(),
-        name: "继电器执行器".to_string(),
-        description: "单路继电器控制".to_string(),
-        categories: vec!["actuator".to_string(), "switch".to_string()],
-        metrics: vec![edge_ai_devices::mdl_format::MetricDefinition {
+    let relay_template = DeviceTypeTemplate::new("relay_actuator", "继电器执行器")
+        .with_description("单路继电器控制")
+        .with_category("actuator")
+        .with_category("switch")
+        .with_metric(MetricDefinition {
             name: "state".to_string(),
             display_name: "状态".to_string(),
-            description: Some("继电器状态".to_string()),
-            data_type: edge_ai_devices::MetricDataType::Boolean,
-            unit: None,
+            data_type: MetricDataType::Boolean,
+            unit: String::new(),
             min: None,
             max: None,
-        }],
-        commands: vec![
-            CommandDefinition {
-                name: "turn_on".to_string(),
-                display_name: "开启".to_string(),
-                description: Some("打开继电器".to_string()),
-                payload_template: r#"{"state": "ON"}"#.to_string(),
-                topic_suffix: Some("/set".to_string()),
-                parameters: vec![],
-            },
-            CommandDefinition {
-                name: "turn_off".to_string(),
-                display_name: "关闭".to_string(),
-                description: Some("关闭继电器".to_string()),
-                payload_template: r#"{"state": "OFF"}"#.to_string(),
-                topic_suffix: Some("/set".to_string()),
-                parameters: vec![],
-            },
-        ],
-        uplink: Some(edge_ai_devices::mdl_format::UplinkConfig {
-            format: "json".to_string(),
-            topic_pattern: Some("actuators/{device_id}/state".to_string()),
-            extraction: None,
-        }),
-        downlink: Some(edge_ai_devices::mdl_format::DownlinkConfig {
-            format: "json".to_string(),
-            topic_template: Some("actuators/{device_id}/set".to_string()),
-        }),
-    };
+            required: false,
+        })
+        .with_command(CommandDefinition {
+            name: "turn_on".to_string(),
+            display_name: "开启".to_string(),
+            payload_template: r#"{"state": "ON"}"#.to_string(),
+            parameters: vec![],
+            samples: vec![],
+            llm_hints: "打开继电器".to_string(),
+        })
+        .with_command(CommandDefinition {
+            name: "turn_off".to_string(),
+            display_name: "关闭".to_string(),
+            payload_template: r#"{"state": "OFF"}"#.to_string(),
+            parameters: vec![],
+            samples: vec![],
+            llm_hints: "关闭继电器".to_string(),
+        });
 
     device_service.register_template(relay_template).await?;
 
@@ -143,16 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: "Greenhouse Fan 1".to_string(),
         device_type: "relay_actuator".to_string(),
         adapter_type: "mqtt".to_string(),
-        connection_config: ConnectionConfig::Mqtt {
-            broker: "localhost".to_string(),
-            port: 1883,
-            client_id: None,
-            username: None,
-            password: None,
-            topic_prefix: "actuators/greenhouse/fan1".to_string(),
-            qos: 0,
-            retain: false,
-        },
+        connection_config: ConnectionConfig::mqtt("actuators/greenhouse/fan1", None::<String>),
         adapter_id: Some("main-mqtt".to_string()),
     };
 

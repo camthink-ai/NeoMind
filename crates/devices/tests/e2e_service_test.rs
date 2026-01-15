@@ -157,6 +157,8 @@ async fn test_e2e_device_registration_and_command() {
                 default_value: None,
                 allowed_values: vec![],
             }],
+            samples: vec![],
+            llm_hints: String::new(),
         });
 
     service.register_template(template.clone()).await.unwrap();

@@ -134,6 +134,8 @@ async fn test_service_template_operations() {
                 unit: "rpm".to_string(),
                 allowed_values: vec![],
             }],
+            samples: vec![],
+            llm_hints: String::new(),
         });
 
     service.register_template(template).await.unwrap();
@@ -224,6 +226,8 @@ async fn test_service_command_validation() {
                 unit: String::new(),
                 allowed_values: vec![],
             }],
+            samples: vec![],
+            llm_hints: String::new(),
         },
     );
     service.register_template(template).await.unwrap();

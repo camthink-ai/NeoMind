@@ -54,6 +54,21 @@ pub struct DeviceTypeTemplate {
     pub commands: Vec<CommandDefinition>,
 }
 
+impl Default for DeviceTypeTemplate {
+    fn default() -> Self {
+        Self {
+            device_type: String::new(),
+            name: String::new(),
+            description: String::new(),
+            categories: Vec::new(),
+            mode: DeviceTypeMode::default(),
+            metrics: Vec::new(),
+            uplink_samples: Vec::new(),
+            commands: Vec::new(),
+        }
+    }
+}
+
 /// Metric definition (matches edge_ai_devices::mdl_format::MetricDefinition)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetricDefinition {
@@ -156,6 +171,19 @@ pub struct DeviceConfig {
     pub connection_config: ConnectionConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_id: Option<String>,
+}
+
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        Self {
+            device_id: String::new(),
+            name: String::new(),
+            device_type: String::new(),
+            adapter_type: String::new(),
+            connection_config: ConnectionConfig::default(),
+            adapter_id: None,
+        }
+    }
 }
 
 /// Connection configuration.
@@ -846,16 +874,17 @@ mod tests {
             name: "DHT22 Sensor".to_string(),
             description: "Temperature and humidity sensor".to_string(),
             categories: vec!["sensor".to_string(), "climate".to_string()],
+            mode: DeviceTypeMode::Full,
             metrics: vec![MetricDefinition {
                 name: "temperature".to_string(),
                 display_name: "Temperature".to_string(),
-                description: Some("Air temperature".to_string()),
                 data_type: MetricDataType::Float,
-                unit: Some("°C".to_string()),
+                unit: "°C".to_string(),
                 min: Some(-40.0),
                 max: Some(80.0),
                 required: false,
             }],
+            uplink_samples: vec![],
             commands: vec![],
         };
 

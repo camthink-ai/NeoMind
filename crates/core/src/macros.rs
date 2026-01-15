@@ -151,7 +151,7 @@ macro_rules! enum_from_str {
 
             fn from_str(s: &str) -> Result<Self, Self::Err> {
                 match s {
-                    $($str => Ok($enum_name::$variant)),*
+                    $($str => Ok($enum_name::$variant),)*
                     _ => Err(format!("Unknown {}: {}", stringify!($enum_name), s)),
                 }
             }
@@ -178,13 +178,13 @@ mod tests {
     fn test_newtype_wrapper() {
         newtype_wrapper!(struct TestId(String));
 
-        let id: TestId = "test_123".into();
+        let id: TestId = "test_123".to_string().into();
         assert_eq!(id.as_inner(), "test_123");
 
         let s: String = id.into();
         assert_eq!(s, "test_123");
 
-        let id2 = TestId::new("another");
+        let id2 = TestId::new("another".to_string());
         assert_eq!(id2.to_string(), "another");
     }
 

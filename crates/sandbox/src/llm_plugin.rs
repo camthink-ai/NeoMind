@@ -462,7 +462,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry() {
-        let registry = WasmLlmPluginRegistry::new();
+        let sandbox = Arc::new(Sandbox::new(Config::default()));
+        let registry = WasmLlmPluginRegistry::new(sandbox);
         assert_eq!(registry.list().await.len(), 0);
     }
 }
