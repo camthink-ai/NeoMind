@@ -730,6 +730,7 @@ export const api = {
     type?: string      // Filter by plugin_type (llm_backend, device_adapter, etc.)
     state?: string     // Filter by state (Loaded, Running, Stopped, etc.)
     enabled?: boolean  // Filter by enabled status
+    builtin?: boolean  // Include built-in plugins (true=default, false=extension only)
   }) =>
     fetchAPI<{ plugins: Plugin[]; count: number }>(
       `/plugins${params ? `?${new URLSearchParams(

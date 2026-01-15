@@ -35,7 +35,7 @@ export interface PluginSlice extends PluginState {
   setCommandDialogOpen: (open: boolean) => void
   setAdapterDialogOpen: (open: boolean) => void
 
-  fetchPlugins: (params?: { type?: string; state?: string; enabled?: boolean }) => Promise<void>
+  fetchPlugins: (params?: { type?: string; state?: string; enabled?: boolean; builtin?: boolean }) => Promise<void>
   getPlugin: (id: string) => Promise<Plugin | null>
   registerPlugin: (plugin: {
     id: string
@@ -351,7 +351,9 @@ export const createPluginSlice: StateCreator<
       const response = await api.listDeviceAdapters()
       set({ deviceAdapters: response.adapters || [] })
     } catch (error) {
-      console.error('Failed to fetch device adapters:', error)
+      // Device adapter registry might not be initialized - this is okay
+      // Just treat it as having no device adapters
+      console.info('Device adapter registry not available:', error)
       set({ deviceAdapters: [] })
     } finally {
       set({ deviceAdaptersLoading: false })

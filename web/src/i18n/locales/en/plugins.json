@@ -1,6 +1,10 @@
 {
   "title": "Plugin Management",
   "description": "Manage system extension plugins (dynamically loaded)",
+  "llmBackends": "LLM Backends",
+  "deviceConnections": "Device Connections",
+  "extensionPlugins": "Extension Plugins",
+  "extensionsDesc": "Extend system functionality via plugin files",
   "noPlugins": "No extension plugins",
   "noPluginsDesc": "Extend system functionality via plugin files (.so/.wasm). Manage LLM backends and device connections in their respective tabs.",
   "addPlugin": "Add Plugin",

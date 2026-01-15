@@ -27,6 +27,9 @@ pub struct PluginListQuery {
     pub state: Option<String>,
     /// Show only enabled plugins
     pub enabled: Option<bool>,
+    /// Exclude built-in plugins (LLM backends, device adapters, internal MQTT)
+    /// When false, returns only dynamically loaded .so/.wasm extension plugins
+    pub builtin: Option<bool>,
 }
 
 /// Plugin registration request.
@@ -98,6 +101,9 @@ pub struct PluginDto {
     /// Whether the plugin is currently running (derived from state)
     #[serde(default)]
     pub running: bool,
+    /// Number of devices managed by this plugin (for device adapters)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_count: Option<usize>,
 }
 
 /// Plugin statistics DTO.
@@ -154,17 +160,14 @@ impl From<PluginInfo> for PluginDto {
             loaded_at: DateTime::from_timestamp(info.loaded_at, 0).unwrap_or_default(),
             path: info.path.as_ref().map(|p| p.to_string_lossy().to_string()),
             running: is_running,
+            device_count: None,
         }
     }
 }
 
 /// Get the global plugin registry.
-fn get_plugin_registry() -> Arc<UnifiedPluginRegistry> {
-    use std::sync::OnceLock;
-    static REGISTRY: OnceLock<Arc<UnifiedPluginRegistry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| {
-        Arc::new(UnifiedPluginRegistry::default())
-    }).clone()
+fn get_plugin_registry(state: &ServerState) -> Arc<UnifiedPluginRegistry> {
+    state.plugin_registry.clone()
 }
 
 /// Convert device adapter to unified PluginDto.
@@ -184,12 +187,16 @@ fn adapter_to_plugin_dto(adapter: AdapterPluginDto) -> PluginDto {
         loaded_at: DateTime::from_timestamp(adapter.last_activity, 0).unwrap_or_default(),
         path: None,
         running: adapter.running,
+        device_count: Some(adapter.device_count),
     }
 }
 
 /// List all extension plugins (dynamically loaded .so/.wasm files).
 ///
-/// This endpoint returns only extension plugins loaded from plugin files.
+/// This endpoint returns plugins based on the `builtin` query parameter:
+/// - `builtin=true` (default): Returns all plugins including built-in ones
+/// - `builtin=false`: Returns only dynamically loaded .so/.wasm extension plugins
+///
 /// Built-in system components (LLM backend, device connections, etc.) are managed
 /// in their respective dedicated tabs in the UI.
 ///
@@ -199,7 +206,7 @@ fn adapter_to_plugin_dto(adapter: AdapterPluginDto) -> PluginDto {
 /// - type: Filter by plugin type (llm_backend, storage_backend, etc.)
 /// - state: Filter by state (Loaded, Initialized, Running, Stopped, etc.)
 /// - enabled: Show only enabled plugins (true/false)
-/// - category: Filter by category (ai, devices, notify)
+/// - builtin: Include built-in plugins (true=default, false=extension plugins only)
 pub async fn list_plugins_handler(
     State(state): State<ServerState>,
     Query(query): Query<PluginListQuery>,
@@ -207,32 +214,71 @@ pub async fn list_plugins_handler(
     use edge_ai_devices::DeviceAdapterPluginRegistry;
     use edge_ai_core::plugin::types::PluginCategory;
 
+    let exclude_builtin = query.builtin == Some(false);
+
     let mut all_plugins: Vec<PluginDto> = Vec::new();
 
     // 1. Get plugins from UnifiedPluginRegistry
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
     let registry_plugins = registry.list().await;
     for plugin in registry_plugins {
+        // Skip built-in LLM backend plugins when exclude_builtin is true
+        if exclude_builtin && plugin.plugin_type == PluginType::LlmBackend {
+            continue;
+        }
         all_plugins.push(PluginDto::from(plugin));
     }
 
     // 2. Get device adapter plugins from DeviceAdapterPluginRegistry
-    // Note: Only dynamically loaded adapters are shown here.
-    // Built-in MQTT broker is managed in the Device Connections tab.
-    if let Some(_event_bus) = &state.event_bus {
-        // Try to get the global registry
-        if let Some(adapter_registry) = edge_ai_devices::DeviceAdapterPluginRegistry::try_get() {
-            let adapter_stats = adapter_registry.get_stats().await;
-            for adapter in adapter_stats.adapters {
-                // Only show external adapters (exclude built-in internal-mqtt which is managed elsewhere)
-                if adapter.id != "internal-mqtt" {
+    // Skip these entirely when exclude_builtin is true
+    if !exclude_builtin {
+        if let Some(_event_bus) = &state.event_bus {
+            // Try to get the global registry
+            if let Some(adapter_registry) = edge_ai_devices::DeviceAdapterPluginRegistry::try_get() {
+                let adapter_stats = adapter_registry.get_stats().await;
+                for adapter in adapter_stats.adapters {
                     all_plugins.push(adapter_to_plugin_dto(AdapterPluginDto::from(adapter)));
                 }
             }
         }
+
+        // 3. Add the internal MQTT device manager as a built-in plugin
+        // The MqttDeviceManager is managed by ServerState and not in the plugin registry,
+        // but we expose it as a plugin for unified management
+        let mqtt_manager = &state.mqtt_device_manager;
+        let status = mqtt_manager.connection_status().await;
+        let is_connected = matches!(status, edge_ai_devices::ConnectionStatus::Connected);
+        let devices = mqtt_manager.list_devices().await;
+        let device_count = devices.len();
+
+        all_plugins.push(PluginDto {
+            id: "internal-mqtt".to_string(),
+            name: "内置 MQTT".to_string(),
+            plugin_type: "device_adapter_mqtt".to_string(),
+            category: "devices".to_string(),
+            state: if is_connected { "Running".to_string() } else { "Stopped".to_string() },
+            enabled: true,
+            version: "1.0.0".to_string(),
+            description: "内置 MQTT 代理，用于连接和管理 MQTT 设备".to_string(),
+            author: Some("NeoTalk".to_string()),
+            required_version: "1.0.0".to_string(),
+            stats: PluginStatsDto {
+                start_count: 1,
+                stop_count: 0,
+                error_count: 0,
+                total_execution_ms: 0,
+                avg_response_time_ms: 0.0,
+                last_start_time: None,
+                last_stop_time: None,
+            },
+            loaded_at: chrono::Utc::now(),
+            path: None,
+            running: is_connected,
+            device_count: Some(device_count),
+        });
     }
 
-    // 3. Apply filters
+    // 4. Apply filters
     if let Some(type_filter) = &query.r#type {
         all_plugins.retain(|p| {
             // Match exact plugin_type or match the base type (e.g., device_adapter_* matches device_adapter)
@@ -259,10 +305,10 @@ pub async fn list_plugins_handler(
 ///
 /// GET /api/plugins/:id
 pub async fn get_plugin_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     let info = registry.get_info(&id).await
         .ok_or_else(|| ErrorResponse::not_found(format!("Plugin {}", id)))?;
@@ -289,10 +335,10 @@ pub async fn get_plugin_handler(
 /// Note: Built-in system components (LLM backend, device connections) are
 /// managed in their respective dedicated tabs, not through this endpoint.
 pub async fn register_plugin_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Json(req): Json<RegisterPluginRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     // Parse plugin type
     let _plugin_type = PluginType::from_str(&req.plugin_type);
@@ -361,10 +407,10 @@ pub async fn register_plugin_handler(
 ///
 /// DELETE /api/plugins/:id
 pub async fn unregister_plugin_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     registry.unregister(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to unregister plugin: {}", e)))?;
@@ -378,10 +424,10 @@ pub async fn unregister_plugin_handler(
 ///
 /// POST /api/plugins/:id/enable
 pub async fn enable_plugin_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     registry.enable(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to enable plugin: {}", e)))?;
@@ -395,10 +441,10 @@ pub async fn enable_plugin_handler(
 ///
 /// POST /api/plugins/:id/disable
 pub async fn disable_plugin_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     registry.disable(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to disable plugin: {}", e)))?;
@@ -412,10 +458,10 @@ pub async fn disable_plugin_handler(
 ///
 /// POST /api/plugins/:id/start
 pub async fn start_plugin_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     registry.start(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to start plugin: {}", e)))?;
@@ -429,10 +475,10 @@ pub async fn start_plugin_handler(
 ///
 /// POST /api/plugins/:id/stop
 pub async fn stop_plugin_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     registry.stop(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to stop plugin: {}", e)))?;
@@ -446,10 +492,10 @@ pub async fn stop_plugin_handler(
 ///
 /// GET /api/plugins/:id/health
 pub async fn plugin_health_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     registry.health_check(&id).await
         .map_err(|e| ErrorResponse::service_unavailable(format!("Plugin {} unhealthy: {}", id, e)))?;
@@ -469,10 +515,10 @@ pub async fn plugin_health_handler(
 ///
 /// GET /api/plugins/:id/config
 pub async fn get_plugin_config_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     let info = registry.get_info(&id).await
         .ok_or_else(|| ErrorResponse::not_found(format!("Plugin {}", id)))?;
@@ -487,11 +533,11 @@ pub async fn get_plugin_config_handler(
 ///
 /// PUT /api/plugins/:id/config
 pub async fn update_plugin_config_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
     Json(req): Json<UpdatePluginConfigRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     // Update config by re-initializing with new config
     registry.initialize(&id, &req.config).await
@@ -512,11 +558,11 @@ pub async fn update_plugin_config_handler(
 ///
 /// POST /api/plugins/:id/command
 pub async fn execute_plugin_command_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
     Json(req): Json<PluginCommandRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     let args = req.args.unwrap_or_else(|| json!({}));
     let result = registry.execute_command(&id, &req.command, &args).await
@@ -531,10 +577,10 @@ pub async fn execute_plugin_command_handler(
 ///
 /// GET /api/plugins/:id/stats
 pub async fn get_plugin_stats_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     let stats = registry.get_stats(&id).await
         .ok_or_else(|| ErrorResponse::not_found(format!("Plugin {}", id)))?;
@@ -549,9 +595,9 @@ pub async fn get_plugin_stats_handler(
 ///
 /// POST /api/plugins/discover
 pub async fn discover_plugins_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
 
     let count = registry.discover_native_plugins().await
         .map_err(|e| ErrorResponse::internal(format!("Plugin discovery failed: {}", e)))?;
@@ -566,10 +612,10 @@ pub async fn discover_plugins_handler(
 ///
 /// GET /api/plugins/type/:type
 pub async fn list_plugins_by_type_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(plugin_type): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
     let plugin_type_parsed = PluginType::from_str(&plugin_type);
 
     let plugins = registry.list_by_type(plugin_type_parsed).await;
@@ -586,9 +632,9 @@ pub async fn list_plugins_by_type_handler(
 ///
 /// GET /api/plugins/types
 pub async fn get_plugin_types_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = get_plugin_registry();
+    let registry = get_plugin_registry(&state);
     let plugins = registry.list().await;
 
     let mut summary: HashMap<String, usize> = HashMap::new();
