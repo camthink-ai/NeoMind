@@ -26,6 +26,7 @@ pub mod tokenizer;
 pub mod factories;
 pub mod rate_limited_client;
 pub mod instance_manager;
+pub mod plugin_adapter;
 
 // Re-export backend types based on features
 #[cfg(feature = "ollama")]
@@ -45,6 +46,12 @@ pub use backend_plugin::{BackendRegistry, LlmBackendPlugin, DynBackendPlugin};
 pub use instance_manager::{
     LlmBackendInstanceManager, BackendTypeDefinition,
     get_instance_manager,
+};
+
+// Plugin adapter
+pub use plugin_adapter::{
+    LlmBackendUnifiedPlugin, DynLlmBackendPlugin, llm_backend_to_unified_plugin,
+    LlmBackendPluginFactory,
 };
 
 #[cfg(feature = "cloud")]

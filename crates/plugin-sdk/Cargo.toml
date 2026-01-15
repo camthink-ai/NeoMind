@@ -1,0 +1,21 @@
+[package]
+name = "neotalk-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SDK for building NeoTalk dynamic plugins"
+
+[lib]
+name = "neotalk_plugin_sdk"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = []
+test-utils = []

@@ -16,6 +16,7 @@ members = [
     "crates/workflow",
     "crates/commands",
     "crates/integrations",
+    "crates/plugin-sdk",
 ]
 resolver = "2"
 

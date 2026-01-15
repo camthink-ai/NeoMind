@@ -22,3 +22,5 @@ semver = { version = "1", features = ["serde"] }
 libloading = "0.8"
 notify = "6.1"
 toml = "0.8"
+bitflags = "2"
+dirs = "5"

@@ -24,6 +24,7 @@ use std::sync::Arc;
 // Core plugin types and traits
 pub mod native;
 pub mod wasm;
+pub mod dynamic;
 pub mod types;
 pub mod watcher;
 pub mod registry;
@@ -31,6 +32,10 @@ pub mod registry;
 // Re-exports
 pub use native::{NativePluginLoader, LoadedNativePlugin, NativePluginWrapper};
 pub use wasm::{WasmPluginLoader, WasmPlugin, LoadedWasmPlugin, ValidationResult};
+pub use dynamic::{
+    DynamicPluginLoader, LoadedPlugin, DynamicPluginWrapper, SecurityContext,
+    PluginDescriptor, PluginCapabilities, PLUGIN_ABI_VERSION,
+};
 pub use types::{
     PluginType, PluginState, ExtendedPluginMetadata, PluginDependency, ResourceLimits,
     PluginPermission, StateMachine, UnifiedPlugin, DynUnifiedPlugin, PluginStats,
@@ -68,6 +73,26 @@ pub enum PluginError {
     /// WASM loading failed.
     #[error("WASM loading failed: {0}")]
     WasmLoadFailed(String),
+
+    /// Invalid plugin file.
+    #[error("Invalid plugin: {0}")]
+    InvalidPlugin(String),
+
+    /// Failed to load plugin library.
+    #[error("Failed to load plugin: {0}")]
+    LoadFailed(String),
+
+    /// Serialization/deserialization error.
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    /// Unsupported platform for native plugins.
+    #[error("Unsupported platform for native plugins")]
+    UnsupportedPlatform,
+
+    /// Security violation detected.
+    #[error("Security violation: {0}")]
+    SecurityViolation(String),
 
     /// Other error.
     #[error("Plugin error: {0}")]
