@@ -3,6 +3,7 @@ export { PluginCard } from './PluginCard'
 export type { PluginCardProps } from './PluginCard'
 export { PluginUploadDialog } from './PluginUploadDialog'
 export type { PluginUploadDialogProps } from './PluginUploadDialog'
+export { AlertChannelPluginConfigDialog } from './AlertChannelPluginConfigDialog'
 
 // Schema-based components
 export { SchemaPluginCard, SchemaPluginTypeCard, SchemaPluginConfigDialog } from './SchemaPluginCard'

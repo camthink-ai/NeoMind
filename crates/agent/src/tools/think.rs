@@ -165,35 +165,16 @@ impl Tool for ThinkTool {
             name: self.name().to_string(),
             description: self.description().to_string(),
             parameters: self.parameters(),
-            example: Some(edge_ai_tools::tool::ToolExample {
-                arguments: serde_json::json!({
-                    "thought": "User wants to create a temperature alert rule. I should: 1) Check existing devices, 2) Verify temperature sensors exist, 3) Create the rule with appropriate threshold.",
-                    "task_breakdown": [
-                        "List available devices to find temperature sensors",
-                        "Verify sensor capabilities and current readings",
-                        "Create rule with threshold of 30 degrees",
-                        "Test the rule to ensure it works correctly"
-                    ]
-                }),
-                result: serde_json::json!({
-                    "thought": "User wants to create a temperature alert rule...",
-                    "formatted": "🧠 Thinking: User wants to create a temperature alert rule...\n\nPlan:\n  1. List available devices...\n  2. Verify sensor capabilities...",
-                    "timestamp": 1234567890
-                }),
-                description: "Use think tool to plan complex tasks".to_string(),
-            }),
-            examples: vec![edge_ai_tools::tool::ToolExample {
-                arguments: serde_json::json!({
-                    "thought": "User wants to create a temperature alert rule. I should: 1) Check existing devices, 2) Verify temperature sensors exist, 3) Create the rule with appropriate threshold."
-                }),
-                result: serde_json::json!({
-                    "thought": "User wants to create a temperature alert rule...",
-                    "formatted": "🧠 Thinking: User wants to create a temperature alert rule..."
-                }),
-                description: "规划复杂任务".to_string(),
-            }],
-            response_format: ResponseFormat::Concise,
-            namespace: Some("system".to_string()),
+            example: None,
+            category: self.category(),
+            scenarios: self.scenarios(),
+            relationships: self.relationships(),
+            deprecated: self.is_deprecated(),
+            replaced_by: None,
+            version: self.version().to_string(),
+            examples: vec![],
+            response_format: None,
+            namespace: self.namespace().map(|s| s.to_string()),
         }
     }
 

@@ -53,8 +53,11 @@ pub async fn get_device_telemetry_handler(
     {
         Ok((_, template)) => {
             if template.metrics.is_empty() {
-                // Device has no defined metrics - use _raw for raw payload data
-                vec!["_raw".to_string()]
+                // Device has no defined metrics - query actual metrics from storage
+                match state.time_series_storage.list_metrics(&device_id).await {
+                    Ok(metrics) if !metrics.is_empty() => metrics,
+                    _ => vec!["_raw".to_string()],
+                }
             } else {
                 template.metrics.iter().map(|m| m.name.clone()).collect()
             }
@@ -177,7 +180,11 @@ pub async fn get_device_telemetry_summary_handler(
     {
         Ok((_, template)) => {
             if template.metrics.is_empty() {
-                (vec!["_raw".to_string()], true)
+                // Device has no defined metrics - query actual metrics from storage
+                match state.time_series_storage.list_metrics(&device_id).await {
+                    Ok(metrics) if !metrics.is_empty() => (metrics, true),
+                    _ => (vec!["_raw".to_string()], true),
+                }
             } else {
                 (template.metrics.iter().map(|m| m.name.clone()).collect(), false)
             }
@@ -185,7 +192,7 @@ pub async fn get_device_telemetry_summary_handler(
         Err(_) => {
             // Device not found - try actual metrics from storage
             match state.time_series_storage.list_metrics(&device_id).await {
-                Ok(metrics) if !metrics.is_empty() => (metrics, false),
+                Ok(metrics) if !metrics.is_empty() => (metrics, true),
                 _ => (vec!["_raw".to_string()], true),
             }
         }
@@ -287,7 +294,14 @@ fn metric_value_to_json(value: &edge_ai_devices::MetricValue) -> serde_json::Val
     match value {
         MetricValue::Float(v) => json!(v),
         MetricValue::Integer(v) => json!(v),
-        MetricValue::String(v) => json!(v),
+        MetricValue::String(v) => {
+            // Try to parse as JSON first (for stored JSON objects like _raw data)
+            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(v) {
+                json_val
+            } else {
+                json!(v)
+            }
+        }
         MetricValue::Boolean(v) => json!(v),
         // Return binary data as base64 string for frontend to detect images
         MetricValue::Binary(v) => json!(STANDARD.encode(v)),
@@ -344,5 +358,57 @@ pub async fn get_device_command_history_handler(
         "device_id": device_id,
         "commands": commands_json,
         "count": commands_json.len(),
+    }))
+}
+
+/// Debug endpoint: List all metrics in storage for a device.
+///
+/// GET /api/devices/:id/metrics/list
+///
+/// This endpoint directly queries the time series storage to see what metrics
+/// exist for a device, bypassing the device service and template logic.
+pub async fn list_device_metrics_debug_handler(
+    State(state): State<ServerState>,
+    Path(device_id): Path<String>,
+) -> HandlerResult<serde_json::Value> {
+    // Query all metrics for this device from storage
+    let metrics = state
+        .time_series_storage
+        .list_metrics(&device_id)
+        .await
+        .unwrap_or_default();
+
+    // For each metric, get the latest data point
+    let mut metric_info = serde_json::Map::new();
+    for metric in &metrics {
+        if let Ok(Some(point)) = state
+            .time_series_storage
+            .latest(&device_id, metric)
+            .await
+        {
+            metric_info.insert(
+                metric.clone(),
+                json!({
+                    "latest_timestamp": point.timestamp,
+                    "latest_value": point.value,
+                    "quality": point.quality,
+                }),
+            );
+        } else {
+            metric_info.insert(
+                metric.clone(),
+                json!({
+                    "latest_timestamp": null,
+                    "latest_value": null,
+                }),
+            );
+        }
+    }
+
+    ok(json!({
+        "device_id": device_id,
+        "metrics_count": metrics.len(),
+        "metrics": metrics,
+        "latest_values": metric_info,
     }))
 }

@@ -17,9 +17,11 @@
   "view": "View",
   "back": "Back",
   "submit": "Submit",
+  "create": "Create",
   "creating": "Creating...",
   "saving": "Saving...",
   "deleting": "Deleting...",
+  "testing": "Testing...",
   "processing": "Processing...",
   "runStatus": {
     "running": "Running",

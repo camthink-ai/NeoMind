@@ -80,12 +80,16 @@ pub use builtin::{
     ListDevicesTool, ListRulesTool, MetricDataPoint, MetricInfo, MockDeviceManager,
     MockDeviceTypeRegistry, MockRuleEngine, MockTimeSeriesStore, QueryDataTool, RuleInfo,
     TriggerWorkflowTool,
+    // New tools
+    DeleteRuleTool, EnableRuleTool, DisableRuleTool, UpdateRuleTool,
+    QueryDeviceStatusTool, GetDeviceConfigTool, SetDeviceConfigTool, BatchControlDevicesTool,
 };
 
 // Feature-gated real tools
 #[cfg(feature = "real")]
 pub use real::{
     ControlDeviceTool as RealControlDeviceTool, CreateRuleTool as RealCreateRuleTool,
+    GetDeviceDataTool as RealGetDeviceDataTool,
     ListDevicesTool as RealListDevicesTool, ListRulesTool as RealListRulesTool,
     QueryDataTool as RealQueryDataTool, QueryRuleHistoryTool, QueryWorkflowStatusTool,
     TriggerWorkflowTool as RealTriggerWorkflowTool,

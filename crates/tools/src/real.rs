@@ -4,12 +4,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
+use base64::{Engine as _, engine::general_purpose};
 
 use super::error::{Result, ToolError};
-use super::tool::{
-    ResponseFormat, Tool, ToolDefinition, ToolExample, ToolOutput, number_property, object_schema,
-    string_property,
-};
+use super::tool::{Tool, ToolDefinition, ToolOutput, number_property, object_schema, string_property};
+use edge_ai_core::tools::ToolExample;
 
 use edge_ai_devices::{DeviceService, TimeSeriesStorage};
 use edge_ai_rules::RuleEngine;
@@ -84,6 +83,12 @@ impl Tool for QueryDataTool {
                 }),
                 description: "查询传感器最近24小时的温度数据".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Data,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![ToolExample {
                 arguments: serde_json::json!({
                     "device_id": "sensor_1",
@@ -97,7 +102,7 @@ impl Tool for QueryDataTool {
                 }),
                 description: "查询设备指标数据".to_string(),
             }],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("data".to_string()),
         }
     }
@@ -224,6 +229,12 @@ impl Tool for ControlDeviceTool {
                 }),
                 description: "打开执行器设备".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Device,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![
                 ToolExample {
                     arguments: serde_json::json!({
@@ -264,7 +275,7 @@ impl Tool for ControlDeviceTool {
                     description: "设置设备参数值".to_string(),
                 },
             ],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("device".to_string()),
         }
     }
@@ -380,6 +391,12 @@ impl Tool for ListDevicesTool {
                 }),
                 description: "列出所有设备".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Device,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![
                 ToolExample {
                     arguments: serde_json::json!({}),
@@ -404,7 +421,7 @@ impl Tool for ListDevicesTool {
                     description: "仅列出传感器设备".to_string(),
                 },
             ],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("device".to_string()),
         }
     }
@@ -521,6 +538,12 @@ RULE "温度控制" WHEN sensor.temperature > 30 DO EXECUTE fan.turn_on NOTIFY "
                 }),
                 description: "创建一个温度超过35度时触发告警的规则".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Rule,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![ToolExample {
                 arguments: serde_json::json!({
                     "name": "高温告警",
@@ -532,7 +555,7 @@ RULE "温度控制" WHEN sensor.temperature > 30 DO EXECUTE fan.turn_on NOTIFY "
                 }),
                 description: "创建温度告警规则".to_string(),
             }],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("rule".to_string()),
         }
     }
@@ -619,6 +642,12 @@ impl Tool for ListRulesTool {
                 }),
                 description: "列出所有自动化规则".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Rule,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![ToolExample {
                 arguments: serde_json::json!({}),
                 result: serde_json::json!({
@@ -629,7 +658,7 @@ impl Tool for ListRulesTool {
                 }),
                 description: "获取所有规则列表".to_string(),
             }],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("rule".to_string()),
         }
     }
@@ -727,6 +756,12 @@ impl Tool for TriggerWorkflowTool {
                 }),
                 description: "触发日常备份工作流".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Workflow,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![ToolExample {
                 arguments: serde_json::json!({
                     "workflow_id": "daily_backup"
@@ -738,7 +773,7 @@ impl Tool for TriggerWorkflowTool {
                 }),
                 description: "触发工作流".to_string(),
             }],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("workflow".to_string()),
         }
     }
@@ -837,6 +872,12 @@ impl Tool for QueryRuleHistoryTool {
                 }),
                 description: "查询指定规则的执行历史".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Data,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![ToolExample {
                 arguments: serde_json::json!({
                     "rule_id": "rule_1",
@@ -850,7 +891,7 @@ impl Tool for QueryRuleHistoryTool {
                 }),
                 description: "查询规则执行历史".to_string(),
             }],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("rule".to_string()),
         }
     }
@@ -896,6 +937,235 @@ impl Tool for QueryRuleHistoryTool {
         Ok(ToolOutput::success(serde_json::json!({
             "count": history_list.len(),
             "history": history_list
+        })))
+    }
+}
+
+/// Tool for getting all current device data (simplified interface).
+///
+/// This tool provides a simpler interface than query_data - it doesn't require
+/// specifying a metric name and returns all available device data at once.
+pub struct GetDeviceDataTool {
+    service: Arc<DeviceService>,
+    storage: Arc<TimeSeriesStorage>,
+}
+
+impl GetDeviceDataTool {
+    /// Create a new get device data tool.
+    pub fn new(service: Arc<DeviceService>, storage: Arc<TimeSeriesStorage>) -> Self {
+        Self { service, storage }
+    }
+}
+
+#[async_trait]
+impl Tool for GetDeviceDataTool {
+    fn name(&self) -> &str {
+        "get_device_data"
+    }
+
+    fn description(&self) -> &str {
+        r#"获取设备的所有当前数据（简化版查询）。
+
+## 使用场景
+- 查看设备的实时数据
+- 获取设备所有指标的当前值
+- 不需要知道具体指标名称，一次获取所有数据
+- 快速了解设备状态
+
+## 返回信息
+- 设备ID和名称
+- 所有可用的指标及其当前值
+- 每个指标的数据类型和单位
+- 数据时间戳
+
+## 注意事项
+- 此工具返回所有指标的当前值，不需要指定具体指标名称
+- 如果设备离线或没有数据，会返回相应提示
+- 数据来自最新的遥测记录"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "device_id": string_property("设备ID，例如：sensor_1, temp_sensor_02")
+            }),
+            vec!["device_id".to_string()],
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "device_id": "sensor_1"
+                }),
+                result: serde_json::json!({
+                    "device_id": "sensor_1",
+                    "device_name": "温度传感器1",
+                    "device_type": "DHT22",
+                    "metrics": {
+                        "temperature": {
+                            "value": 25.3,
+                            "unit": "°C",
+                            "display_name": "温度",
+                            "timestamp": 1735804800
+                        },
+                        "humidity": {
+                            "value": 65,
+                            "unit": "%",
+                            "display_name": "湿度",
+                            "timestamp": 1735804800
+                        }
+                    }
+                }),
+                description: "获取设备的所有当前数据".to_string(),
+            }),
+            category: edge_ai_core::tools::ToolCategory::Data,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![ToolExample {
+                arguments: serde_json::json!({
+                    "device_id": "sensor_1"
+                }),
+                result: serde_json::json!({
+                    "device_id": "sensor_1",
+                    "metrics": {
+                        "temperature": {"value": 25.3, "unit": "°C"}
+                    }
+                }),
+                description: "获取设备数据".to_string(),
+            }],
+            response_format: Some("concise".to_string()),
+            namespace: Some("data".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("data")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+
+        let device_id = args["device_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("device_id must be a string".to_string()))?;
+
+        // Try to get device info first
+        let (device_config, device_template) = self
+            .service
+            .get_device_with_template(device_id)
+            .await
+            .map_err(|e| ToolError::Execution(format!("Device not found: {}", e)))?;
+
+        // Get current metrics for all defined metrics in template
+        let mut metrics_data = serde_json::Map::new();
+
+        if !device_template.metrics.is_empty() {
+            // Template has defined metrics - get current values for each
+            for metric_def in &device_template.metrics {
+                let metric_name = &metric_def.name;
+
+                // Try to get the latest value from storage
+                if let Ok(Some(point)) = self.storage.latest(device_id, metric_name).await {
+                    let value_json = match point.value {
+                        edge_ai_devices::MetricValue::Float(v) => serde_json::json!(v),
+                        edge_ai_devices::MetricValue::Integer(v) => serde_json::json!(v),
+                        edge_ai_devices::MetricValue::String(ref v) => {
+                            // Try to parse as JSON first
+                            if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(v) {
+                                json_val
+                            } else {
+                                serde_json::json!(v)
+                            }
+                        }
+                        edge_ai_devices::MetricValue::Boolean(v) => serde_json::json!(v),
+                        edge_ai_devices::MetricValue::Binary(ref v) => {
+                            serde_json::json!(general_purpose::STANDARD.encode(v))
+                        }
+                        edge_ai_devices::MetricValue::Null => serde_json::json!(null),
+                    };
+
+                    metrics_data.insert(
+                        metric_name.clone(),
+                        serde_json::json!({
+                            "value": value_json,
+                            "unit": metric_def.unit,
+                            "display_name": metric_def.display_name,
+                            "timestamp": point.timestamp,
+                        })
+                    );
+                } else {
+                    // No data available for this metric
+                    metrics_data.insert(
+                        metric_name.clone(),
+                        serde_json::json!({
+                            "value": null,
+                            "unit": metric_def.unit,
+                            "display_name": metric_def.display_name,
+                            "status": "no_data"
+                        })
+                    );
+                }
+            }
+        } else {
+            // Template has no defined metrics - try to list actual metrics from storage
+            if let Ok(actual_metrics) = self.storage.list_metrics(device_id).await {
+                if !actual_metrics.is_empty() {
+                    for metric_name in actual_metrics {
+                        if let Ok(Some(point)) = self.storage.latest(device_id, &metric_name).await {
+                            let value_json = match point.value {
+                                edge_ai_devices::MetricValue::Float(v) => serde_json::json!(v),
+                                edge_ai_devices::MetricValue::Integer(v) => serde_json::json!(v),
+                                edge_ai_devices::MetricValue::String(ref v) => {
+                                    if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(v) {
+                                        json_val
+                                    } else {
+                                        serde_json::json!(v)
+                                    }
+                                }
+                                edge_ai_devices::MetricValue::Boolean(v) => serde_json::json!(v),
+                                edge_ai_devices::MetricValue::Binary(ref v) => {
+                                    serde_json::json!(general_purpose::STANDARD.encode(v))
+                                }
+                                edge_ai_devices::MetricValue::Null => serde_json::json!(null),
+                            };
+
+                            metrics_data.insert(
+                                metric_name.clone(),
+                                serde_json::json!({
+                                    "value": value_json,
+                                    "timestamp": point.timestamp,
+                                })
+                            );
+                        }
+                    }
+                } else {
+                    return Err(ToolError::Execution(format!(
+                        "No data available for device '{}'. The device may not be reporting data.",
+                        device_id
+                    )));
+                }
+            } else {
+                return Err(ToolError::Execution(format!(
+                    "Cannot retrieve data for device '{}'. Device may be offline or not configured.",
+                    device_id
+                )));
+            }
+        }
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "device_id": device_id,
+            "device_name": device_config.name,
+            "device_type": device_config.device_type,
+            "metrics": metrics_data,
+            "metric_count": metrics_data.len()
         })))
     }
 }
@@ -970,6 +1240,12 @@ impl Tool for QueryWorkflowStatusTool {
                 }),
                 description: "查询指定工作流的执行状态".to_string(),
             }),
+            category: edge_ai_core::tools::ToolCategory::Workflow,
+            scenarios: vec![],
+            relationships: edge_ai_core::tools::ToolRelationships::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
             examples: vec![ToolExample {
                 arguments: serde_json::json!({
                     "workflow_id": "daily_backup",
@@ -983,7 +1259,7 @@ impl Tool for QueryWorkflowStatusTool {
                 }),
                 description: "查询工作流执行状态".to_string(),
             }],
-            response_format: ResponseFormat::Concise,
+            response_format: Some("concise".to_string()),
             namespace: Some("workflow".to_string()),
         }
     }

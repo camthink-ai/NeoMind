@@ -271,17 +271,61 @@ WHEN sensor.temperature > 50
 DO
     NOTIFY "温度过高: ${temperature}°C"
 END"#.to_string(),
-                    explanation: "当传感器温度超过50度时发送通知".to_string(),
+                    explanation: "当传感器温度超过50度时发送通知，使用 ${temperature} 引用当前值".to_string(),
                 },
                 DslExample {
-                    title: "定时检查规则".to_string(),
-                    dsl: r#"RULE "每分钟检查"
-WHEN system.uptime > 0
-FOR 60 seconds
+                    title: "带持续时间的规则".to_string(),
+                    dsl: r#"RULE "高温持续告警"
+WHEN sensor.temperature > 50
+FOR 5 minutes
 DO
-    LOG info "系统运行中"
+    NOTIFY "温度持续5分钟超过50度"
 END"#.to_string(),
-                    explanation: "每分钟记录一次系统运行日志".to_string(),
+                    explanation: "只有当温度连续5分钟超过阈值时才触发，避免瞬时波动".to_string(),
+                },
+                DslExample {
+                    title: "多动作规则".to_string(),
+                    dsl: r#"RULE "高温综合处理"
+WHEN sensor.temperature > 60
+DO
+    NOTIFY "高温警告！正在开启降温设备"
+    EXECUTE fan.device(speed=100)
+    LOG alert, severity="high"
+END"#.to_string(),
+                    explanation: "高温时同时执行多个动作：发送通知、开启风扇、记录日志".to_string(),
+                },
+                DslExample {
+                    title: "不同比较运算符".to_string(),
+                    dsl: r#"RULE "低温告警"
+WHEN sensor.temperature <= 10
+DO
+    NOTIFY "温度过低: ${temperature}°C"
+    EXECUTE heater.device(power=80)
+END"#.to_string(),
+                    explanation: "支持的比较运算符: >, <, >=, <=, ==, !=".to_string(),
+                },
+                DslExample {
+                    title: "设备控制规则".to_string(),
+                    dsl: r#"RULE "自动灌溉"
+WHEN soil_sensor.moisture < 30
+DO
+    EXECUTE pump.device(duration=300)
+    LOG info, severity="low"
+    NOTIFY "土壤干燥，已启动灌溉系统"
+END"#.to_string(),
+                    explanation: "根据土壤湿度自动控制灌溉设备，EXECUTE 可传多个参数".to_string(),
+                },
+                DslExample {
+                    title: "复杂条件组合".to_string(),
+                    dsl: r#"RULE "设备故障检测"
+WHEN device.status == 1
+FOR 10 minutes
+DO
+    NOTIFY "设备异常运行已超过10分钟"
+    EXECUTE alert.device(type="fault", code=101)
+    LOG error, severity="critical"
+END"#.to_string(),
+                    explanation: "使用 == 检测状态值，配合持续时间判断设备故障".to_string(),
                 },
             ],
             guidelines: vec![

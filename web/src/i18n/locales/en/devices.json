@@ -128,7 +128,9 @@
     "rawData": {
       "title": "Raw Data",
       "records": "records",
-      "noData": "No raw data available"
+      "noData": "No raw data available",
+      "viewData": "View data",
+      "chars": "chars"
     }
   },
   "history": {

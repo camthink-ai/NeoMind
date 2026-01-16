@@ -274,6 +274,45 @@ impl Alert {
             self.severity, self.title, self.message, self.source
         )
     }
+
+    /// Convert to the core Alert type for use in notification channels.
+    ///
+    /// This converts the local full-featured Alert to the minimal core Alert
+    /// type used by the AlertChannel trait. Extra fields like source_type,
+    /// tags, and occurrence_count are merged into metadata.
+    pub fn to_core_alert(&self) -> edge_ai_core::alerts::Alert {
+        use edge_ai_core::alerts::{AlertSeverity as CoreSeverity, AlertStatus as CoreStatus};
+
+        // Build metadata including extra fields
+        let mut metadata = self.metadata.clone();
+        if let serde_json::Value::Object(ref mut map) = metadata {
+            map.insert("source_type".to_string(), serde_json::json!(self.source_type));
+            map.insert("tags".to_string(), serde_json::json!(self.tags));
+            map.insert("occurrence_count".to_string(), serde_json::json!(self.occurrence_count));
+            map.insert("status_updated_at".to_string(), serde_json::json!(self.status_updated_at.timestamp()));
+        }
+
+        edge_ai_core::alerts::Alert {
+            id: self.id.to_string(),
+            severity: match self.severity {
+                AlertSeverity::Info => CoreSeverity::Info,
+                AlertSeverity::Warning => CoreSeverity::Warning,
+                AlertSeverity::Critical => CoreSeverity::Critical,
+                AlertSeverity::Emergency => CoreSeverity::Emergency,
+            },
+            title: self.title.clone(),
+            message: self.message.clone(),
+            source: self.source.clone(),
+            timestamp: self.timestamp.timestamp(),
+            status: match self.status {
+                AlertStatus::Active => CoreStatus::Active,
+                AlertStatus::Acknowledged => CoreStatus::Acknowledged,
+                AlertStatus::Resolved => CoreStatus::Resolved,
+                AlertStatus::FalsePositive => CoreStatus::FalsePositive,
+            },
+            metadata,
+        }
+    }
 }
 
 impl Default for Alert {

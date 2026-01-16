@@ -1,90 +1,40 @@
-//! Notification channels for sending alerts.
+//! Built-in notification channel implementations.
 //!
-//! This module defines the channel types and built-in channel implementations.
+//! This module provides concrete implementations of the `AlertChannel` trait
+//! for common notification methods.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use super::alert::Alert;
+use async_trait::async_trait;
+
+use edge_ai_core::alerts::{Alert, AlertChannel, AlertError, Result as CoreResult};
+
 use super::error::{Error, Result};
 
-/// Channel type enum.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChannelType {
-    Memory,
-    Console,
-    #[cfg(feature = "webhook")]
-    Webhook,
-    #[cfg(feature = "email")]
-    Email,
-}
-
-/// Notification channel.
-#[derive(Debug, Clone)]
-pub enum NotificationChannel {
-    Memory(MemoryChannel),
-    Console(ConsoleChannel),
-    #[cfg(feature = "webhook")]
-    Webhook(WebhookChannel),
-    #[cfg(feature = "email")]
-    Email(EmailChannel),
-}
-
-impl NotificationChannel {
-    /// Get the channel name.
-    pub fn name(&self) -> &str {
-        match self {
-            Self::Memory(ch) => ch.name(),
-            Self::Console(ch) => ch.name(),
-            #[cfg(feature = "webhook")]
-            Self::Webhook(ch) => ch.name(),
-            #[cfg(feature = "email")]
-            Self::Email(ch) => ch.name(),
-        }
-    }
-
-    /// Get the channel type.
-    pub fn channel_type(&self) -> ChannelType {
-        match self {
-            Self::Memory(_) => ChannelType::Memory,
-            Self::Console(_) => ChannelType::Console,
-            #[cfg(feature = "webhook")]
-            Self::Webhook(_) => ChannelType::Webhook,
-            #[cfg(feature = "email")]
-            Self::Email(_) => ChannelType::Email,
-        }
-    }
-
-    /// Check if the channel is enabled.
-    pub fn is_enabled(&self) -> bool {
-        match self {
-            Self::Memory(ch) => ch.is_enabled(),
-            Self::Console(ch) => ch.is_enabled(),
-            #[cfg(feature = "webhook")]
-            Self::Webhook(ch) => ch.is_enabled(),
-            #[cfg(feature = "email")]
-            Self::Email(ch) => ch.is_enabled(),
-        }
-    }
-
-    /// Send an alert through this channel.
-    pub async fn send(&self, alert: &Alert) -> Result<()> {
-        match self {
-            Self::Memory(ch) => ch.send(alert).await,
-            Self::Console(ch) => ch.send(alert).await,
-            #[cfg(feature = "webhook")]
-            Self::Webhook(ch) => ch.send(alert).await,
-            #[cfg(feature = "email")]
-            Self::Email(ch) => ch.send(alert).await,
+/// Convert core AlertError to local Error
+impl From<AlertError> for Error {
+    fn from(err: AlertError) -> Self {
+        match err {
+            AlertError::ChannelDisabled(n) => Error::ChannelDisabled(n),
+            AlertError::ChannelNotFound(n) => Error::NotFound(n),
+            AlertError::SendFailed(m) => Error::SendError(m),
+            AlertError::InvalidConfiguration(m) => Error::Validation(m),
+            AlertError::Other(e) => Error::Other(e),
         }
     }
 }
+
+// ============================================================================
+// Built-in Channel Implementations
+// ============================================================================
 
 /// In-memory channel for testing.
 #[derive(Debug, Clone)]
 pub struct MemoryChannel {
     name: String,
     enabled: bool,
-    alerts: std::sync::Arc<std::sync::Mutex<Vec<Alert>>>,
+    alerts: Arc<std::sync::Mutex<Vec<Alert>>>,
 }
 
 impl MemoryChannel {
@@ -93,7 +43,16 @@ impl MemoryChannel {
         Self {
             name,
             enabled: true,
-            alerts: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            alerts: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Create a disabled memory channel.
+    pub fn disabled(name: String) -> Self {
+        Self {
+            name,
+            enabled: false,
+            alerts: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
 
@@ -112,20 +71,34 @@ impl MemoryChannel {
         self.alerts.lock().unwrap().len()
     }
 
-    /// Get the channel name.
-    pub fn name(&self) -> &str {
+    /// Enable the channel.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+    }
+
+    /// Disable the channel.
+    pub fn disable(&mut self) {
+        self.enabled = false;
+    }
+}
+
+#[async_trait]
+impl AlertChannel for MemoryChannel {
+    fn name(&self) -> &str {
         &self.name
     }
 
-    /// Check if enabled.
-    pub fn is_enabled(&self) -> bool {
+    fn channel_type(&self) -> &str {
+        "memory"
+    }
+
+    fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Send an alert.
-    pub async fn send(&self, alert: &Alert) -> Result<()> {
+    async fn send(&self, alert: &Alert) -> CoreResult<()> {
         if !self.enabled {
-            return Err(Error::ChannelDisabled(self.name.clone()));
+            return Err(AlertError::ChannelDisabled(self.name.clone()));
         }
         self.alerts.lock().unwrap().push(alert.clone());
         Ok(())
@@ -156,40 +129,51 @@ impl ConsoleChannel {
         self
     }
 
-    /// Disable the channel.
+    /// Create a disabled console channel.
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
         self
     }
 
-    /// Get the channel name.
-    pub fn name(&self) -> &str {
+    /// Enable the channel.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+    }
+
+    /// Disable the channel.
+    pub fn disable(&mut self) {
+        self.enabled = false;
+    }
+}
+
+#[async_trait]
+impl AlertChannel for ConsoleChannel {
+    fn name(&self) -> &str {
         &self.name
     }
 
-    /// Check if enabled.
-    pub fn is_enabled(&self) -> bool {
+    fn channel_type(&self) -> &str {
+        "console"
+    }
+
+    fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Send an alert.
-    pub async fn send(&self, alert: &Alert) -> Result<()> {
+    async fn send(&self, alert: &Alert) -> CoreResult<()> {
         if !self.enabled {
-            return Err(Error::ChannelDisabled(self.name.clone()));
+            return Err(AlertError::ChannelDisabled(self.name.clone()));
         }
 
         println!("=== {} ===", alert.severity);
-        println!("时间: {}", alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC"));
+        println!("时间: {}", alert.timestamp);
         println!("标题: {}", alert.title);
         println!("消息: {}", alert.message);
         println!("来源: {}", alert.source);
 
         if self.include_details {
-            if !alert.tags.is_empty() {
-                println!("标签: {}", alert.tags.join(", "));
-            }
-            if alert.occurrence_count > 1 {
-                println!("发生次数: {}", alert.occurrence_count);
+            if alert.metadata.get("tags").is_some() {
+                println!("标签: {:?}", alert.metadata.get("tags"));
             }
             println!("状态: {}", alert.status);
         }
@@ -200,6 +184,11 @@ impl ConsoleChannel {
     }
 }
 
+// ============================================================================
+// Webhook Channel (feature-gated)
+// ============================================================================
+
+/// Webhook channel for sending alerts via HTTP POST.
 #[cfg(feature = "webhook")]
 #[derive(Debug, Clone)]
 pub struct WebhookChannel {
@@ -209,6 +198,142 @@ pub struct WebhookChannel {
     headers: HashMap<String, String>,
     client: reqwest::Client,
 }
+
+#[cfg(feature = "webhook")]
+impl WebhookChannel {
+    /// Create a new webhook channel.
+    pub fn new(name: String, url: String) -> Self {
+        Self {
+            name,
+            enabled: true,
+            url,
+            headers: HashMap::new(),
+            client: reqwest::Client::new(),
+        }
+    }
+
+    /// Add a header to the webhook request.
+    pub fn with_header(mut self, key: String, value: String) -> Self {
+        self.headers.insert(key, value);
+        self
+    }
+
+    /// Set headers for the webhook request.
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// Disable the channel.
+    pub fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+
+    /// Enable the channel.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+    }
+
+    /// Disable the channel.
+    pub fn disable(&mut self) {
+        self.enabled = false;
+    }
+}
+
+#[cfg(feature = "webhook")]
+#[async_trait]
+impl AlertChannel for WebhookChannel {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn channel_type(&self) -> &str {
+        "webhook"
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    async fn send(&self, alert: &Alert) -> CoreResult<()> {
+        if !self.enabled {
+            return Err(AlertError::ChannelDisabled(self.name.clone()));
+        }
+
+        let mut request = self.client.post(&self.url);
+
+        for (key, value) in &self.headers {
+            request = request.header(key, value);
+        }
+
+        let response = request
+            .json(alert)
+            .send()
+            .await
+            .map_err(|e| AlertError::SendFailed(format!("Webhook request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            return Err(AlertError::SendFailed(format!(
+                "Webhook returned error: {}",
+                response.status()
+            )));
+        }
+
+        Ok(())
+    }
+}
+
+/// Factory for creating webhook channels.
+#[cfg(feature = "webhook")]
+pub struct WebhookChannelFactory;
+
+#[cfg(feature = "webhook")]
+impl edge_ai_core::alerts::ChannelFactory for WebhookChannelFactory {
+    fn channel_type(&self) -> &str {
+        "webhook"
+    }
+
+    fn create(&self, config: &serde_json::Value) -> CoreResult<std::sync::Arc<dyn AlertChannel>> {
+        let url = config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AlertError::InvalidConfiguration("Missing url".to_string()))?;
+
+        let mut channel = WebhookChannel::new(
+            config
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("webhook")
+                .to_string(),
+            url.to_string(),
+        );
+
+        if let Some(headers) = config.get("headers") {
+            if let Some(obj) = headers.as_object() {
+                for (key, value) in obj {
+                    if let Some(str_val) = value.as_str() {
+                        channel = channel.with_header(key.clone(), str_val.to_string());
+                    }
+                }
+            }
+        }
+
+        if config
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+        {
+            Ok(Arc::new(channel))
+        } else {
+            Ok(Arc::new(channel.disabled()))
+        }
+    }
+}
+
+// ============================================================================
+// Email Channel (feature-gated)
+// ============================================================================
 
 /// Email attachment for sending files with alerts.
 #[cfg(feature = "email")]
@@ -222,6 +347,7 @@ pub struct EmailAttachment {
     pub content_type: String,
 }
 
+/// Email channel for sending alerts via SMTP.
 #[cfg(feature = "email")]
 #[derive(Debug, Clone)]
 pub struct EmailChannel {
@@ -284,14 +410,14 @@ impl EmailChannel {
         self
     }
 
-    /// Get the channel name.
-    pub fn name(&self) -> &str {
-        &self.name
+    /// Enable the channel.
+    pub fn enable(&mut self) {
+        self.enabled = true;
     }
 
-    /// Check if enabled.
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
+    /// Disable the channel.
+    pub fn disable(&mut self) {
+        self.enabled = false;
     }
 
     /// Build HTML email body from alert.
@@ -318,40 +444,42 @@ impl EmailChannel {
         <p class="timestamp">时间: {}</p>
         <p><strong>来源:</strong> <span class="source">{}</span></p>
         <p><strong>消息:</strong> {}</p>
-        {}
-        {}
     </div>
 </body>
 </html>"#,
             alert.severity.to_string().to_lowercase(),
             alert.title,
-            alert.timestamp.format("%Y-%m-%d %H:%M:%S UTC"),
+            alert.timestamp,
             alert.source,
-            alert.message,
-            if !alert.tags.is_empty() {
-                format!("<p><strong>标签:</strong> {}</p>", alert.tags.join(", "))
-            } else {
-                String::new()
-            },
-            if alert.occurrence_count > 1 {
-                format!(
-                    "<p><strong>发生次数:</strong> {}</p>",
-                    alert.occurrence_count
-                )
-            } else {
-                String::new()
-            }
+            alert.message
         )
     }
+}
 
-    /// Send an alert.
-    pub async fn send(&self, alert: &Alert) -> Result<()> {
+#[cfg(feature = "email")]
+#[async_trait]
+impl AlertChannel for EmailChannel {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn channel_type(&self) -> &str {
+        "email"
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    async fn send(&self, alert: &Alert) -> CoreResult<()> {
         if !self.enabled {
-            return Err(Error::ChannelDisabled(self.name.clone()));
+            return Err(AlertError::ChannelDisabled(self.name.clone()));
         }
 
         if self.to_addresses.is_empty() {
-            return Err(Error::SendError("No recipients configured".to_string()));
+            return Err(AlertError::SendFailed(
+                "No recipients configured".to_string(),
+            ));
         }
 
         // Build email message
@@ -362,7 +490,7 @@ impl EmailChannel {
         let from_mailbox: lettre::message::Mailbox = self
             .from_address
             .parse()
-            .map_err(|e| Error::SendError(format!("Invalid from address: {}", e)))?;
+            .map_err(|e| AlertError::InvalidConfiguration(format!("Invalid from address: {}", e)))?;
 
         // Build email with recipients
         let mut email_builder = lettre::Message::builder()
@@ -373,7 +501,7 @@ impl EmailChannel {
         for to_addr in &self.to_addresses {
             let mailbox: lettre::message::Mailbox = to_addr
                 .parse()
-                .map_err(|e| Error::SendError(format!("Invalid to address: {}", e)))?;
+                .map_err(|e| AlertError::InvalidConfiguration(format!("Invalid to address: {}", e)))?;
             email_builder = email_builder.to(mailbox);
         }
 
@@ -392,7 +520,7 @@ impl EmailChannel {
                             .body(html_body),
                     ),
             )
-            .map_err(|e| Error::SendError(format!("Failed to build email: {}", e)))?;
+            .map_err(|e| AlertError::SendFailed(format!("Failed to build email: {}", e)))?;
 
         // Clone data for spawn_blocking
         let smtp_server = self.smtp_server.clone();
@@ -407,234 +535,184 @@ impl EmailChannel {
                 lettre::transport::smtp::authentication::Credentials::new(username, password);
             let relay = format!("{}:{}", smtp_server, smtp_port);
             let mailer = lettre::SmtpTransport::relay(&relay)
-                .map_err(|e| Error::SendError(format!("Invalid SMTP server: {}", e)))?
+                .map_err(|e| AlertError::SendFailed(format!("Invalid SMTP server: {}", e)))?
                 .credentials(creds)
                 .build();
 
             // Send email
             lettre::Transport::send(&mailer, &email)
-                .map_err(|e| Error::SendError(format!("Failed to send email: {}", e)))?;
+                .map_err(|e| AlertError::SendFailed(format!("Failed to send email: {}", e)))?;
 
-            Ok::<(), Error>(())
+            Ok::<(), AlertError>(())
         })
         .await
-        .map_err(|e| Error::SendError(format!("Task join error: {}", e)))?
-    }
-
-    /// Send an email with attachments.
-    pub async fn send_with_attachments(
-        &self,
-        subject: &str,
-        body: &str,
-        _attachments: Vec<EmailAttachment>,
-    ) -> Result<()> {
-        if !self.enabled {
-            return Err(Error::ChannelDisabled(self.name.clone()));
-        }
-
-        if self.to_addresses.is_empty() {
-            return Err(Error::SendError("No recipients configured".to_string()));
-        }
-
-        // Parse from address
-        let from_mailbox: lettre::message::Mailbox = self
-            .from_address
-            .parse()
-            .map_err(|e| Error::SendError(format!("Invalid from address: {}", e)))?;
-
-        // Build email with recipients
-        let mut email_builder = lettre::Message::builder()
-            .from(from_mailbox.clone())
-            .subject(subject);
-
-        // Add all recipients
-        for to_addr in &self.to_addresses {
-            let mailbox: lettre::message::Mailbox = to_addr
-                .parse()
-                .map_err(|e| Error::SendError(format!("Invalid to address: {}", e)))?;
-            email_builder = email_builder.to(mailbox);
-        }
-
-        // Build email body (with attachments support - simplified for now)
-        let email = email_builder
-            .body(body.to_string())
-            .map_err(|e| Error::SendError(format!("Failed to build email: {}", e)))?;
-
-        // Clone data for spawn_blocking
-        let smtp_server = self.smtp_server.clone();
-        let smtp_port = self.smtp_port;
-        let username = self.username.clone();
-        let password = self.password.clone();
-
-        // Configure and send via tokio executor
-        tokio::task::spawn_blocking(move || {
-            // Configure SMTP transport
-            let creds =
-                lettre::transport::smtp::authentication::Credentials::new(username, password);
-            let relay = format!("{}:{}", smtp_server, smtp_port);
-            let mailer = lettre::SmtpTransport::relay(&relay)
-                .map_err(|e| Error::SendError(format!("Invalid SMTP server: {}", e)))?
-                .credentials(creds)
-                .build();
-
-            // Send email
-            lettre::Transport::send(&mailer, &email)
-                .map_err(|e| Error::SendError(format!("Failed to send email: {}", e)))?;
-
-            Ok::<(), Error>(())
-        })
-        .await
-        .map_err(|e| Error::SendError(format!("Task join error: {}", e)))?
+        .map_err(|e| AlertError::SendFailed(format!("Task join error: {}", e)))?
     }
 }
 
-#[cfg(feature = "webhook")]
-impl WebhookChannel {
-    /// Create a new webhook channel.
-    pub fn new(name: String, url: String) -> Self {
-        Self {
-            name,
-            enabled: true,
-            url,
-            headers: HashMap::new(),
-            client: reqwest::Client::new(),
-        }
+/// Factory for creating email channels.
+#[cfg(feature = "email")]
+pub struct EmailChannelFactory;
+
+#[cfg(feature = "email")]
+impl edge_ai_core::alerts::ChannelFactory for EmailChannelFactory {
+    fn channel_type(&self) -> &str {
+        "email"
     }
 
-    /// Add a header to the webhook request.
-    pub fn with_header(mut self, key: String, value: String) -> Self {
-        self.headers.insert(key, value);
-        self
-    }
+    fn create(&self, config: &serde_json::Value) -> CoreResult<std::sync::Arc<dyn AlertChannel>> {
+        let smtp_server = config
+            .get("smtp_server")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AlertError::InvalidConfiguration("Missing smtp_server".to_string()))?;
 
-    /// Set headers for the webhook request.
-    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
-        self.headers = headers;
-        self
-    }
+        let smtp_port = config
+            .get("smtp_port")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| AlertError::InvalidConfiguration("Missing smtp_port".to_string()))?
+            as u16;
 
-    /// Disable the channel.
-    pub fn disabled(mut self) -> Self {
-        self.enabled = false;
-        self
-    }
+        let username = config
+            .get("username")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AlertError::InvalidConfiguration("Missing username".to_string()))?
+            .to_string();
 
-    /// Get the channel name.
-    pub fn name(&self) -> &str {
-        &self.name
-    }
+        let password = config
+            .get("password")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AlertError::InvalidConfiguration("Missing password".to_string()))?
+            .to_string();
 
-    /// Check if enabled.
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
-    }
+        let from_address = config
+            .get("from_address")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| AlertError::InvalidConfiguration("Missing from_address".to_string()))?
+            .to_string();
 
-    /// Send an alert.
-    pub async fn send(&self, alert: &Alert) -> Result<()> {
-        if !self.enabled {
-            return Err(Error::ChannelDisabled(self.name.clone()));
-        }
+        let mut channel = EmailChannel::new(
+            config
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("email")
+                .to_string(),
+            smtp_server.to_string(),
+            smtp_port,
+            username,
+            password,
+            from_address,
+        );
 
-        let mut request = self.client.post(&self.url);
-
-        for (key, value) in &self.headers {
-            request = request.header(key, value);
-        }
-
-        let response = request
-            .json(alert)
-            .send()
-            .await
-            .map_err(|e| Error::SendError(format!("Webhook request failed: {}", e)))?;
-
-        if !response.status().is_success() {
-            return Err(Error::SendError(format!(
-                "Webhook returned error: {}",
-                response.status()
-            )));
-        }
-
-        Ok(())
-    }
-}
-
-/// Channel registry for managing multiple channels.
-#[derive(Debug, Clone)]
-pub struct ChannelRegistry {
-    channels: HashMap<String, NotificationChannel>,
-}
-
-impl ChannelRegistry {
-    /// Create a new channel registry.
-    pub fn new() -> Self {
-        Self {
-            channels: HashMap::new(),
-        }
-    }
-
-    /// Add a channel to the registry.
-    pub fn add_channel(&mut self, channel: NotificationChannel) {
-        self.channels.insert(channel.name().to_string(), channel);
-    }
-
-    /// Remove a channel from the registry.
-    pub fn remove_channel(&mut self, name: &str) -> bool {
-        self.channels.remove(name).is_some()
-    }
-
-    /// Get a channel by name.
-    pub fn get_channel(&self, name: &str) -> Option<&NotificationChannel> {
-        self.channels.get(name)
-    }
-
-    /// List all channel names.
-    pub fn list_channels(&self) -> Vec<String> {
-        self.channels.keys().cloned().collect()
-    }
-
-    /// Send an alert to all enabled channels.
-    pub async fn send_all(&self, alert: &Alert) -> Vec<(String, Result<()>)> {
-        let mut results = Vec::new();
-
-        for (name, channel) in &self.channels {
-            if !channel.is_enabled() {
-                continue;
+        // Add recipients
+        if let Some(recipients) = config.get("recipients") {
+            if let Some(arr) = recipients.as_array() {
+                for addr in arr {
+                    if let Some(str_addr) = addr.as_str() {
+                        channel = channel.add_recipient(str_addr.to_string());
+                    }
+                }
             }
-
-            let result = channel.send(alert).await;
-            results.push((name.clone(), result));
         }
 
-        results
-    }
-
-    /// Send an alert to a specific channel.
-    pub async fn send_to(&self, name: &str, alert: &Alert) -> Result<()> {
-        if let Some(channel) = self.get_channel(name) {
-            channel.send(alert).await
+        // Configure TLS
+        if config.get("use_tls").and_then(|v| v.as_bool()).unwrap_or(true) {
+            // TLS is enabled by default
         } else {
-            Err(Error::NotFound(format!("Channel not found: {}", name)))
+            channel = channel.without_tls();
+        }
+
+        // Set enabled state
+        if config
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+        {
+            Ok(Arc::new(channel))
+        } else {
+            Ok(Arc::new(channel.disabled()))
         }
     }
 }
 
-impl Default for ChannelRegistry {
-    fn default() -> Self {
-        Self::new()
+// ============================================================================
+// Built-in Channel Factories
+// ============================================================================
+
+/// Factory for creating memory channels.
+pub struct MemoryChannelFactory;
+
+impl edge_ai_core::alerts::ChannelFactory for MemoryChannelFactory {
+    fn channel_type(&self) -> &str {
+        "memory"
+    }
+
+    fn create(&self, config: &serde_json::Value) -> CoreResult<std::sync::Arc<dyn AlertChannel>> {
+        let name = config
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("memory")
+            .to_string();
+
+        let enabled = config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        let channel = if enabled {
+            MemoryChannel::new(name)
+        } else {
+            MemoryChannel::disabled(name)
+        };
+
+        Ok(Arc::new(channel))
     }
 }
+
+/// Factory for creating console channels.
+pub struct ConsoleChannelFactory;
+
+impl edge_ai_core::alerts::ChannelFactory for ConsoleChannelFactory {
+    fn channel_type(&self) -> &str {
+        "console"
+    }
+
+    fn create(&self, config: &serde_json::Value) -> CoreResult<std::sync::Arc<dyn AlertChannel>> {
+        let name = config
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("console")
+            .to_string();
+
+        let include_details = config
+            .get("include_details")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let enabled = config.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+
+        let mut channel = ConsoleChannel::new(name).with_details(include_details);
+
+        if !enabled {
+            channel = channel.disabled();
+        }
+
+        Ok(Arc::new(channel))
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
-    use super::super::alert::{Alert, AlertSeverity};
     use super::*;
+    use edge_ai_core::alerts::ChannelFactory;
 
     #[tokio::test]
     async fn test_memory_channel() {
         let channel = MemoryChannel::new("test".to_string());
 
         let alert = Alert::new(
-            AlertSeverity::Warning,
+            "test-1",
+            edge_ai_core::alerts::AlertSeverity::Warning,
             "Test".to_string(),
             "Test message".to_string(),
             "test".to_string(),
@@ -649,11 +727,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_memory_channel_disabled() {
+        let channel = MemoryChannel::disabled("test".to_string());
+
+        let alert = Alert::new(
+            "test-1",
+            edge_ai_core::alerts::AlertSeverity::Warning,
+            "Test".to_string(),
+            "Test message".to_string(),
+            "test".to_string(),
+        );
+
+        let result = channel.send(&alert).await;
+        assert!(result.is_err());
+        assert_eq!(channel.count(), 0);
+    }
+
+    #[tokio::test]
     async fn test_console_channel() {
         let channel = ConsoleChannel::new("console".to_string());
 
         let alert = Alert::new(
-            AlertSeverity::Critical,
+            "test-1",
+            edge_ai_core::alerts::AlertSeverity::Critical,
             "Critical Alert".to_string(),
             "Something bad happened".to_string(),
             "sensor_1".to_string(),
@@ -664,60 +760,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_channel_registry() {
-        let mut registry = ChannelRegistry::new();
+    async fn test_memory_channel_factory() {
+        let factory = MemoryChannelFactory;
 
-        let channel1 = NotificationChannel::Memory(MemoryChannel::new("channel1".to_string()));
-        let channel2 = NotificationChannel::Memory(MemoryChannel::new("channel2".to_string()));
+        let config = serde_json::json!({
+            "name": "test_memory",
+            "enabled": true
+        });
 
-        registry.add_channel(channel1);
-        registry.add_channel(channel2);
-
-        assert_eq!(registry.list_channels().len(), 2);
-
-        let alert = Alert::new(
-            AlertSeverity::Info,
-            "Test".to_string(),
-            "Test".to_string(),
-            "test".to_string(),
-        );
-
-        let results = registry.send_all(&alert).await;
-        assert_eq!(results.len(), 2);
+        let channel = factory.create(&config).unwrap();
+        assert_eq!(channel.name(), "test_memory");
+        assert!(channel.is_enabled());
+        assert_eq!(channel.channel_type(), "memory");
     }
 
     #[tokio::test]
-    async fn test_send_to_specific_channel() {
-        let mut registry = ChannelRegistry::new();
+    async fn test_console_channel_factory() {
+        let factory = ConsoleChannelFactory;
 
-        let channel1 = NotificationChannel::Memory(MemoryChannel::new("channel1".to_string()));
-        let channel2 = NotificationChannel::Memory(MemoryChannel::new("channel2".to_string()));
+        let config = serde_json::json!({
+            "name": "test_console",
+            "include_details": false,
+            "enabled": true
+        });
 
-        registry.add_channel(channel1);
-        registry.add_channel(channel2);
-
-        let alert = Alert::new(
-            AlertSeverity::Info,
-            "Test".to_string(),
-            "Test".to_string(),
-            "test".to_string(),
-        );
-
-        registry.send_to("channel1", &alert).await.unwrap();
-
-        // Verify the channel has the alert
-        let ch1 = registry.get_channel("channel1").unwrap();
-        if let NotificationChannel::Memory(mem_ch) = ch1 {
-            assert_eq!(mem_ch.count(), 1);
-        } else {
-            panic!("Expected MemoryChannel");
-        }
-
-        let ch2 = registry.get_channel("channel2").unwrap();
-        if let NotificationChannel::Memory(mem_ch) = ch2 {
-            assert_eq!(mem_ch.count(), 0);
-        } else {
-            panic!("Expected MemoryChannel");
-        }
+        let channel = factory.create(&config).unwrap();
+        assert_eq!(channel.name(), "test_console");
+        assert!(channel.is_enabled());
+        assert_eq!(channel.channel_type(), "console");
     }
 }

@@ -11,6 +11,9 @@ use super::tool::{
     Tool, ToolOutput, array_property, boolean_property, number_property, object_schema,
     string_property,
 };
+use edge_ai_core::tools::{
+    ToolCategory, ToolRelationships, UsageScenario,
+};
 
 /// Mock time series store for testing (replace with real storage in production)
 pub struct MockTimeSeriesStore;
@@ -122,20 +125,54 @@ impl Tool for QueryDataTool {
     }
 
     fn description(&self) -> &str {
-        "Query time series data from device metrics. Use this to get historical or current data from devices."
+        "查询设备的时序数据。使用此工具获取设备的历史或当前数据。\
+        **重要**: 在查询数据前，建议先使用 get_device_metrics 了解设备有哪些可用指标。"
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "device_id": string_property("The ID of the device to query"),
-                "metric": string_property("The metric name to query (e.g., 'temperature', 'humidity'). Optional, if not specified returns all available metrics."),
-                "start_time": number_property("Start timestamp (Unix epoch). Optional, defaults to 24 hours ago."),
-                "end_time": number_property("End timestamp (Unix epoch). Optional, defaults to now."),
-                "limit": number_property("Maximum number of data points to return. Optional.")
+                "device_id": string_property("设备ID，要查询的设备标识符"),
+                "metric": string_property("指标名称（如'temperature'、'humidity'）。可选，不指定则返回所有可用指标。\
+                    **提示**: 使用 get_device_metrics 工具可以查看设备的所有可用指标。"),
+                "start_time": number_property("开始时间戳（Unix时间戳）。可选，默认为24小时前。"),
+                "end_time": number_property("结束时间戳（Unix时间戳）。可选，默认为当前时间。"),
+                "limit": number_property("返回的最大数据点数量。可选。")
             }),
             vec!["device_id".to_string()],
         )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Data
+    }
+
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![
+            UsageScenario {
+                description: "用户询问设备当前读数".to_string(),
+                example_query: "传感器现在的温度是多少？".to_string(),
+                suggested_call: Some("query_data(device_id=\"sensor_1\", metric=\"temperature\")".to_string()),
+            },
+            UsageScenario {
+                description: "用户询问历史数据".to_string(),
+                example_query: "过去一小时的温度数据".to_string(),
+                suggested_call: Some("query_data(device_id=\"sensor_1\", metric=\"temperature\", start_time=<1小时前>)".to_string()),
+            },
+            UsageScenario {
+                description: "用户需要数据分析".to_string(),
+                example_query: "分析一下设备的温度趋势".to_string(),
+                suggested_call: Some("query_data(device_id=\"sensor_1\", metric=\"temperature\", start_time=<24小时前>)".to_string()),
+            },
+        ]
+    }
+
+    fn relationships(&self) -> ToolRelationships {
+        ToolRelationships {
+            call_after: vec!["get_device_metrics".to_string(), "list_devices".to_string()],
+            output_to: vec!["analyze_trends".to_string(), "detect_anomalies".to_string()],
+            exclusive_with: vec![],
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -422,18 +459,77 @@ impl Tool for CreateRuleTool {
     }
 
     fn description(&self) -> &str {
-        "Create a new automation rule using a simple DSL. Use this to define when certain actions should be triggered based on device data."
+        "创建自动化规则。**重要**: 创建规则前应先调用 get_device_metrics 了解设备有哪些可用指标。使用简单的 DSL 语法定义规则。"
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "name": string_property("The name of the rule"),
-                "description": string_property("A description of what the rule does"),
-                "dsl": string_property("The rule definition in DSL format. Example: 'RULE \"High Temp\" WHEN sensor.temperature > 50 FOR 5 minutes DO NOTIFY \"High temperature detected\" END'")
+                "name": string_property("规则名称"),
+                "description": string_property("规则描述（可选）"),
+                "dsl": string_property(
+                    "规则定义的 DSL 语法。完整格式:\n\
+                    RULE \"规则名\" \n\
+                    WHEN device.metric operator value \n\
+                    [FOR duration] \n\
+                    DO \n\
+                      action1 \n\
+                      action2 \n\
+                    END \n\
+                    \n\
+                    比较运算符: >, <, >=, <=, ==, != \n\
+                    持续时间: FOR X seconds/minutes/hours (可选) \n\
+                    \n\
+                    支持的动作: \n\
+                    - NOTIFY \"消息\" - 发送通知，可用 ${metric} 引用变量 \n\
+                    - EXECUTE device.command(param=value,...) - 执行设备命令 \n\
+                    - LOG level [severity=\"...\"] - 记录日志，level: alert/info/warning/error \n\
+                    \n\
+                    示例: \n\
+                    RULE \"高温告警\" \n\
+                    WHEN sensor.temperature > 50 \n\
+                    FOR 5 minutes \n\
+                    DO \n\
+                      NOTIFY \"温度过高: ${temperature}°C\" \n\
+                      EXECUTE fan.device(speed=100) \n\
+                      LOG alert, severity=\"high\" \n\
+                    END"
+                )
             }),
             vec!["name".to_string(), "dsl".to_string()],
         )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Rule
+    }
+
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![
+            UsageScenario {
+                description: "创建温度阈值告警规则".to_string(),
+                example_query: "当温度超过50度时告警".to_string(),
+                suggested_call: Some(r#"{"name": "create_rule", "arguments": {"name": "高温告警", "dsl": "RULE \"高温告警\" WHEN sensor.temperature > 50 DO NOTIFY \"温度过高\" END"}}"#.to_string()),
+            },
+            UsageScenario {
+                description: "创建带持续时间的规则".to_string(),
+                example_query: "温度持续5分钟超过50度时开启风扇".to_string(),
+                suggested_call: Some(r#"{"name": "create_rule", "arguments": {"name": "高温自动降温", "dsl": "RULE \"高温降温\" WHEN sensor.temperature > 50 FOR 5 minutes DO EXECUTE fan.device(speed=100) END"}}"#.to_string()),
+            },
+            UsageScenario {
+                description: "创建多动作规则".to_string(),
+                example_query: "高温时同时告警并开启设备".to_string(),
+                suggested_call: Some(r#"{"name": "create_rule", "arguments": {"name": "高温综合处理", "dsl": "RULE \"高温处理\" WHEN sensor.temperature > 60 DO NOTIFY \"高温告警\" EXECUTE fan.device(speed=100) LOG alert END"}}"#.to_string()),
+            },
+        ]
+    }
+
+    fn relationships(&self) -> ToolRelationships {
+        ToolRelationships {
+            call_after: vec!["get_device_metrics".to_string(), "list_device_types".to_string()],
+            output_to: vec!["list_rules".to_string()],
+            exclusive_with: vec![],
+        }
     }
 
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
@@ -731,7 +827,9 @@ impl Tool for GetDeviceMetricsTool {
     }
 
     fn description(&self) -> &str {
-        "获取设备可查询的所有指标名称和数据类型。使用此工具了解设备有哪些可查询的指标。"
+        "获取设备可查询的所有指标名称、数据类型和单位。**重要**: 在查询设备数据前，\
+        应该先调用此工具了解设备有哪些可用指标，然后再使用 query_data 查询具体数据。\
+        例如：有些设备有温度、湿度、压力等多个指标，先调用此工具可以避免猜测。"
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -742,6 +840,38 @@ impl Tool for GetDeviceMetricsTool {
             }),
             vec!["device_id".to_string()],
         )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Device
+    }
+
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![
+            UsageScenario {
+                description: "用户询问设备有什么数据/指标".to_string(),
+                example_query: "这个传感器能测什么数据？".to_string(),
+                suggested_call: Some("get_device_metrics(device_id=\"sensor_1\")".to_string()),
+            },
+            UsageScenario {
+                description: "用户想查询数据但不知道具体指标".to_string(),
+                example_query: "查询一下传感器_1的数据".to_string(),
+                suggested_call: Some("get_device_metrics(device_id=\"sensor_1\")".to_string()),
+            },
+            UsageScenario {
+                description: "用户需要了解设备能力".to_string(),
+                example_query: "这个设备支持哪些测量？".to_string(),
+                suggested_call: Some("get_device_metrics(device_id=\"sensor_1\")".to_string()),
+            },
+        ]
+    }
+
+    fn relationships(&self) -> ToolRelationships {
+        ToolRelationships {
+            call_after: vec!["list_devices".to_string()],
+            output_to: vec!["query_data".to_string()],
+            exclusive_with: vec![],
+        }
     }
 
     async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
@@ -763,7 +893,8 @@ impl Tool for GetDeviceMetricsTool {
             serde_json::json!({
                 "device_id": device_id,
                 "metrics": metrics,
-                "count": metrics.len()
+                "count": metrics.len(),
+                "hint": "现在可以使用 query_data 工具查询具体的指标数据"
             }),
             serde_json::json!({
                 "query_type": "device_metrics",
@@ -896,6 +1027,524 @@ impl Tool for ListDeviceTypesTool {
         Ok(ToolOutput::success(serde_json::json!({
             "device_types": types,
             "count": types.len()
+        })))
+    }
+}
+
+// ============================================================================
+// 新增工具：规则管理补充
+// ============================================================================
+
+/// Tool for deleting rules.
+pub struct DeleteRuleTool {
+    engine: Arc<MockRuleEngine>,
+}
+
+impl DeleteRuleTool {
+    /// Create a new delete rule tool.
+    pub fn new(engine: Arc<MockRuleEngine>) -> Self {
+        Self { engine }
+    }
+
+    /// Create with a mock engine for testing.
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockRuleEngine))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for DeleteRuleTool {
+    fn name(&self) -> &str {
+        "delete_rule"
+    }
+
+    fn description(&self) -> &str {
+        "删除一个已存在的自动化规则。删除后规则将被永久移除，无法恢复。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "rule_id": string_property("要删除的规则ID")
+            }),
+            vec!["rule_id".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Rule
+    }
+
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![
+            UsageScenario {
+                description: "用户要求删除规则".to_string(),
+                example_query: "删除高温报警规则".to_string(),
+                suggested_call: Some("delete_rule(rule_id=\"rule_123\")".to_string()),
+            },
+        ]
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+
+        let rule_id = args["rule_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("rule_id must be a string".to_string()))?;
+
+        // Mock deletion - in real implementation, call engine.delete_rule(rule_id)
+        Ok(ToolOutput::success(serde_json::json!({
+            "rule_id": rule_id,
+            "status": "deleted",
+            "message": format!("规则 {} 已删除", rule_id)
+        })))
+    }
+}
+
+/// Tool for enabling rules.
+pub struct EnableRuleTool {
+    engine: Arc<MockRuleEngine>,
+}
+
+impl EnableRuleTool {
+    pub fn new(engine: Arc<MockRuleEngine>) -> Self {
+        Self { engine }
+    }
+
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockRuleEngine))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for EnableRuleTool {
+    fn name(&self) -> &str {
+        "enable_rule"
+    }
+
+    fn description(&self) -> &str {
+        "启用一个已禁用的自动化规则。启用后规则将开始正常工作。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "rule_id": string_property("要启用的规则ID")
+            }),
+            vec!["rule_id".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Rule
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+        let rule_id = args["rule_id"].as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("rule_id required".to_string()))?;
+
+        self.engine.enable_rule(rule_id).await
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "rule_id": rule_id,
+            "status": "enabled"
+        })))
+    }
+}
+
+/// Tool for disabling rules.
+pub struct DisableRuleTool {
+    engine: Arc<MockRuleEngine>,
+}
+
+impl DisableRuleTool {
+    pub fn new(engine: Arc<MockRuleEngine>) -> Self {
+        Self { engine }
+    }
+
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockRuleEngine))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for DisableRuleTool {
+    fn name(&self) -> &str {
+        "disable_rule"
+    }
+
+    fn description(&self) -> &str {
+        "禁用一个正在运行的自动化规则。禁用后规则将停止工作，但不会被删除。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "rule_id": string_property("要禁用的规则ID")
+            }),
+            vec!["rule_id".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Rule
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+        let rule_id = args["rule_id"].as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("rule_id required".to_string()))?;
+
+        self.engine.disable_rule(rule_id).await
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "rule_id": rule_id,
+            "status": "disabled"
+        })))
+    }
+}
+
+/// Tool for updating rules.
+pub struct UpdateRuleTool {
+    engine: Arc<MockRuleEngine>,
+}
+
+impl UpdateRuleTool {
+    pub fn new(engine: Arc<MockRuleEngine>) -> Self {
+        Self { engine }
+    }
+
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockRuleEngine))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for UpdateRuleTool {
+    fn name(&self) -> &str {
+        "update_rule"
+    }
+
+    fn description(&self) -> &str {
+        "更新一个已存在的规则。可以修改规则的名称、描述或DSL定义。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "rule_id": string_property("要更新的规则ID"),
+                "name": string_property("新的规则名称（可选）"),
+                "description": string_property("新的规则描述（可选）"),
+                "dsl": string_property("新的DSL定义（可选）")
+            }),
+            vec!["rule_id".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Rule
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+        let rule_id = args["rule_id"].as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("rule_id required".to_string()))?;
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "rule_id": rule_id,
+            "status": "updated",
+            "message": "规则已更新"
+        })))
+    }
+}
+
+// ============================================================================
+// 新增工具：设备状态查询
+// ============================================================================
+
+/// Tool for querying device status.
+pub struct QueryDeviceStatusTool {
+    manager: Arc<MockDeviceManager>,
+}
+
+impl QueryDeviceStatusTool {
+    pub fn new(manager: Arc<MockDeviceManager>) -> Self {
+        Self { manager }
+    }
+
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockDeviceManager))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for QueryDeviceStatusTool {
+    fn name(&self) -> &str {
+        "query_device_status"
+    }
+
+    fn description(&self) -> &str {
+        "查询设备的在线状态和连接状态。使用此工具检查设备是否在线、是否响应等信息。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "device_id": string_property("设备ID")
+            }),
+            vec!["device_id".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Device
+    }
+
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![
+            UsageScenario {
+                description: "用户询问设备是否在线".to_string(),
+                example_query: "传感器1在线吗？".to_string(),
+                suggested_call: Some("query_device_status(device_id=\"sensor_1\")".to_string()),
+            },
+            UsageScenario {
+                description: "用户询问设备状态".to_string(),
+                example_query: "设备现在什么状态？".to_string(),
+                suggested_call: Some("query_device_status(device_id=\"sensor_1\")".to_string()),
+            },
+        ]
+    }
+
+    fn relationships(&self) -> ToolRelationships {
+        ToolRelationships {
+            call_after: vec!["list_devices".to_string()],
+            output_to: vec!["control_device".to_string(), "query_data".to_string()],
+            exclusive_with: vec![],
+        }
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+        let device_id = args["device_id"].as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("device_id required".to_string()))?;
+
+        // Mock implementation - check if device exists
+        let devices = self.manager.get_devices().await
+            .map_err(|e| ToolError::Execution(e.to_string()))?;
+
+        let device = devices.iter()
+            .find(|d| d.id == device_id);
+
+        match device {
+            Some(d) => Ok(ToolOutput::success(serde_json::json!({
+                "device_id": device_id,
+                "online": d.status == "online",
+                "status": d.status,
+                "last_seen": chrono::Utc::now().timestamp()
+            }))),
+            None => Ok(ToolOutput::error_with_metadata(
+                "设备不存在",
+                serde_json::json!({"device_id": device_id, "exists": false})
+            )),
+        }
+    }
+}
+
+/// Tool for getting device configuration.
+pub struct GetDeviceConfigTool {
+    manager: Arc<MockDeviceManager>,
+}
+
+impl GetDeviceConfigTool {
+    pub fn new(manager: Arc<MockDeviceManager>) -> Self {
+        Self { manager }
+    }
+
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockDeviceManager))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for GetDeviceConfigTool {
+    fn name(&self) -> &str {
+        "get_device_config"
+    }
+
+    fn description(&self) -> &str {
+        "获取设备的配置信息，包括采样率、报警阈值等参数。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "device_id": string_property("设备ID")
+            }),
+            vec!["device_id".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Config
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+        let device_id = args["device_id"].as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("device_id required".to_string()))?;
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "device_id": device_id,
+            "config": {
+                "sample_rate": 60,
+                "unit": "celsius",
+                "enabled": true
+            }
+        })))
+    }
+}
+
+/// Tool for setting device configuration.
+pub struct SetDeviceConfigTool {
+    manager: Arc<MockDeviceManager>,
+}
+
+impl SetDeviceConfigTool {
+    pub fn new(manager: Arc<MockDeviceManager>) -> Self {
+        Self { manager }
+    }
+
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockDeviceManager))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for SetDeviceConfigTool {
+    fn name(&self) -> &str {
+        "set_device_config"
+    }
+
+    fn description(&self) -> &str {
+        "设置设备的配置参数，如采样率、报警阈值等。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "device_id": string_property("设备ID"),
+                "config": object_schema(serde_json::json!({
+                    "description": "配置参数对象",
+                    "example": "{\"sample_rate\": 30, \"alarm_threshold\": 80}"
+                }), vec![])
+            }),
+            vec!["device_id".to_string(), "config".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Config
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+        let device_id = args["device_id"].as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("device_id required".to_string()))?;
+
+        let config = args.get("config").cloned().unwrap_or(Value::Null);
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "device_id": device_id,
+            "config": config,
+            "status": "updated",
+            "message": "设备配置已更新"
+        })))
+    }
+}
+
+/// Tool for batch controlling multiple devices.
+pub struct BatchControlDevicesTool {
+    manager: Arc<MockDeviceManager>,
+}
+
+impl BatchControlDevicesTool {
+    pub fn new(manager: Arc<MockDeviceManager>) -> Self {
+        Self { manager }
+    }
+
+    pub fn mock() -> Self {
+        Self::new(Arc::new(MockDeviceManager))
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for BatchControlDevicesTool {
+    fn name(&self) -> &str {
+        "batch_control_devices"
+    }
+
+    fn description(&self) -> &str {
+        "批量控制多个设备，发送相同的命令。适用于场景控制（如打开所有灯）。"
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        object_schema(
+            serde_json::json!({
+                "device_ids": array_property("string", "设备ID列表"),
+                "command": string_property("要执行的命令"),
+                "parameters": array_property("object", "命令参数（可选，每个设备对应一个参数对象）")
+            }),
+            vec!["device_ids".to_string(), "command".to_string()],
+        )
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Device
+    }
+
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![
+            UsageScenario {
+                description: "批量控制设备".to_string(),
+                example_query: "把所有灯都打开".to_string(),
+                suggested_call: Some("batch_control_devices(device_ids=[\"light1\", \"light2\"], command=\"turn_on\")".to_string()),
+            },
+        ]
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput> {
+        self.validate_args(&args)?;
+
+        let device_ids = args["device_ids"].as_array()
+            .ok_or_else(|| ToolError::InvalidArguments("device_ids must be an array".to_string()))?;
+
+        let command = args["command"].as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("command required".to_string()))?;
+
+        let mut results = Vec::new();
+        for device_id_value in device_ids {
+            if let Some(device_id) = device_id_value.as_str() {
+                match self.manager.write_command(device_id, command, Value::Null).await {
+                    Ok(_) => results.push(serde_json::json!({
+                        "device_id": device_id,
+                        "status": "success"
+                    })),
+                    Err(e) => results.push(serde_json::json!({
+                        "device_id": device_id,
+                        "status": "error",
+                        "error": e.to_string()
+                    })),
+                }
+            }
+        }
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "command": command,
+            "total": device_ids.len(),
+            "results": results
         })))
     }
 }

@@ -6,6 +6,95 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Tool category for grouping and organization.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum ToolCategory {
+    /// Device operations (control, query, configure)
+    Device,
+    /// Data operations (query, aggregate, export)
+    Data,
+    /// Analysis operations (trends, anomalies, predictions)
+    Analysis,
+    /// Rule operations (create, update, delete, enable/disable)
+    Rule,
+    /// Workflow operations (trigger, query status)
+    Workflow,
+    /// Alert operations (query, acknowledge)
+    Alert,
+    /// System operations (search, thinking)
+    System,
+    /// Configuration operations
+    Config,
+}
+
+impl ToolCategory {
+    /// Get category identifier for LLM prompts
+    pub fn as_str(&self) -> &str {
+        match self {
+            ToolCategory::Device => "device",
+            ToolCategory::Data => "data",
+            ToolCategory::Analysis => "analysis",
+            ToolCategory::Rule => "rule",
+            ToolCategory::Workflow => "workflow",
+            ToolCategory::Alert => "alert",
+            ToolCategory::System => "system",
+            ToolCategory::Config => "config",
+        }
+    }
+
+    /// Get display name
+    pub fn display_name(&self) -> &str {
+        match self {
+            ToolCategory::Device => "设备管理",
+            ToolCategory::Data => "数据查询",
+            ToolCategory::Analysis => "数据分析",
+            ToolCategory::Rule => "规则管理",
+            ToolCategory::Workflow => "工作流",
+            ToolCategory::Alert => "告警管理",
+            ToolCategory::System => "系统工具",
+            ToolCategory::Config => "配置管理",
+        }
+    }
+}
+
+/// Usage scenario for tool guidance.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsageScenario {
+    /// Scenario description
+    pub description: String,
+    /// Example user query that triggers this scenario
+    pub example_query: String,
+    /// Suggested tool call for this scenario
+    pub suggested_call: Option<String>,
+}
+
+/// Tool relationship metadata for guiding LLM behavior.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolRelationships {
+    /// Tools that should typically be called before this tool
+    pub call_after: Vec<String>,
+    /// Tools that can use this tool's output as input
+    pub output_to: Vec<String>,
+    /// Tools that are mutually exclusive with this tool
+    pub exclusive_with: Vec<String>,
+}
+
+impl Default for ToolRelationships {
+    fn default() -> Self {
+        Self {
+            call_after: vec![],
+            output_to: vec![],
+            exclusive_with: vec![],
+        }
+    }
+}
+
+impl Default for ToolCategory {
+    fn default() -> Self {
+        Self::System
+    }
+}
+
 /// Result type for tool operations.
 pub type Result<T> = std::result::Result<T, ToolError>;
 
@@ -82,6 +171,16 @@ impl ToolOutput {
             metadata: None,
         }
     }
+
+    /// Create a failed output with metadata.
+    pub fn error_with_metadata(error: impl Into<String>, metadata: Value) -> Self {
+        Self {
+            success: false,
+            data: metadata.clone(),
+            error: Some(error.into()),
+            metadata: Some(metadata),
+        }
+    }
 }
 
 /// Tool parameter definition.
@@ -149,7 +248,40 @@ pub struct ToolDefinition {
     /// Parameters as JSON Schema.
     pub parameters: Value,
     /// Example usage (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub example: Option<ToolExample>,
+    /// Tool category for grouping.
+    #[serde(default)]
+    pub category: ToolCategory,
+    /// Usage scenarios for LLM guidance.
+    #[serde(default)]
+    pub scenarios: Vec<UsageScenario>,
+    /// Tool relationships for call ordering.
+    #[serde(default)]
+    pub relationships: ToolRelationships,
+    /// Whether this tool is deprecated.
+    #[serde(default)]
+    pub deprecated: bool,
+    /// Suggested replacement if deprecated.
+    #[serde(default)]
+    pub replaced_by: Option<String>,
+    /// Tool version.
+    #[serde(default = "default_version")]
+    pub version: String,
+    /// Multiple examples (optional) - for backward compatibility.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub examples: Vec<ToolExample>,
+    /// Response format hint (optional) - for backward compatibility.
+    #[serde(default)]
+    pub response_format: Option<String>,
+    /// Tool namespace - for backward compatibility.
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+fn default_version() -> String {
+    "1.0.0".to_string()
 }
 
 /// Example usage of a tool.
@@ -180,6 +312,31 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with the given arguments.
     async fn execute(&self, args: Value) -> Result<ToolOutput>;
 
+    /// Get the tool category.
+    fn category(&self) -> ToolCategory {
+        ToolCategory::System
+    }
+
+    /// Get usage scenarios for this tool.
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![]
+    }
+
+    /// Get tool relationships.
+    fn relationships(&self) -> ToolRelationships {
+        ToolRelationships::default()
+    }
+
+    /// Get tool version.
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
+
+    /// Check if this tool is deprecated.
+    fn is_deprecated(&self) -> bool {
+        false
+    }
+
     /// Get the full tool definition.
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
@@ -187,6 +344,15 @@ pub trait Tool: Send + Sync {
             description: self.description().to_string(),
             parameters: self.parameters(),
             example: None,
+            category: self.category(),
+            scenarios: self.scenarios(),
+            relationships: self.relationships(),
+            deprecated: self.is_deprecated(),
+            replaced_by: None,
+            version: self.version().to_string(),
+            examples: vec![],
+            response_format: None,
+            namespace: None,
         }
     }
 

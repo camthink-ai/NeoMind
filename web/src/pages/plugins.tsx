@@ -4,14 +4,14 @@ import { useStore } from "@/store"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
 import { PluginGrid } from "@/components/plugins/PluginGrid"
-import { PluginUploadDialog } from "@/components/plugins"
+import { PluginUploadDialog, AlertChannelPluginConfigDialog } from "@/components/plugins"
 import { LLMBackendsTab } from "@/components/llm/LLMBackendsTab"
 import { ConnectionsTab } from "@/components/connections"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
 import { Upload } from "lucide-react"
 
-type PluginTabValue = "llm" | "connections" | "extensions"
+type PluginTabValue = "llm" | "connections" | "alerts" | "extensions"
 
 export function PluginsPage() {
   const { t } = useTranslation(["common", "plugins"])
@@ -38,6 +38,11 @@ export function PluginsPage() {
 
   const [activeTab, setActiveTab] = useState<PluginTabValue>("llm")
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
+
+  // Alert channel config dialog state
+  const [configDialogOpen, setConfigDialogOpen] = useState(false)
+  const [configPluginId, setConfigPluginId] = useState("")
+  const [configPluginName, setConfigPluginName] = useState("")
 
   // Fetch plugins on mount and when tab changes
   useEffect(() => {
@@ -93,9 +98,18 @@ export function PluginsPage() {
   }
 
   const handleConfigure = async (id: string) => {
-    const config = await getPluginConfig(id)
-    // Show config dialog
-    console.log("Configure plugin:", id, config)
+    // For alert channel plugins, show the alert channel config dialog
+    if (id.startsWith("alert-channel-")) {
+      // Find the plugin to get its name
+      const plugin = plugins.find((p: { id: string }) => p.id === id)
+      setConfigPluginId(id)
+      setConfigPluginName(plugin?.name || t("plugins:configure"))
+      setConfigDialogOpen(true)
+    } else {
+      // For other plugins, show generic config (placeholder for now)
+      const config = await getPluginConfig(id)
+      console.log("Configure plugin:", id, config)
+    }
   }
 
   const handleViewDevices = (id: string) => {
@@ -177,6 +191,14 @@ export function PluginsPage() {
             title: t("plugins:pluginLoaded", { id: pluginId }),
           })
         }}
+      />
+
+      {/* Alert Channel Plugin Config Dialog */}
+      <AlertChannelPluginConfigDialog
+        open={configDialogOpen}
+        onOpenChange={setConfigDialogOpen}
+        pluginId={configPluginId}
+        pluginName={configPluginName}
       />
     </PageLayout>
   )

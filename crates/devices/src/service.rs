@@ -295,7 +295,11 @@ impl DeviceService {
 
                             if let Err(e) = storage.write(&device_id, &metric, data_point).await {
                                 tracing::warn!("Failed to write telemetry to storage: {}", e);
+                            } else {
+                                tracing::debug!("DeviceService wrote metric {} for device {}", metric, device_id);
                             }
+                        } else {
+                            tracing::warn!("DeviceService telemetry_storage is None, cannot write metric {} for device {}", metric, device_id);
                         }
                     }
                     _ => {}
@@ -311,6 +315,16 @@ impl DeviceService {
 
     /// Register an adapter for command sending
     pub async fn register_adapter(&self, adapter_id: String, adapter: Arc<dyn DeviceAdapter>) {
+        // Set telemetry storage for the adapter if available
+        let telemetry_storage = self.telemetry_storage.read().await;
+        if let Some(storage) = telemetry_storage.as_ref() {
+            tracing::info!("Setting telemetry storage for adapter '{}'", adapter_id);
+            adapter.set_telemetry_storage(storage.clone());
+        } else {
+            tracing::warn!("Cannot set telemetry storage for adapter '{}': DeviceService telemetry_storage is None", adapter_id);
+        }
+        drop(telemetry_storage);
+
         let mut adapters = self.adapters.write().await;
         adapters.insert(adapter_id, adapter);
     }
@@ -669,15 +683,21 @@ impl DeviceService {
             let start = start_time.unwrap_or(i64::MIN);
             let end = end_time.unwrap_or(i64::MAX);
 
+            tracing::debug!("Querying telemetry for {}/{} from {} to {}", device_id, metric_name, start, end);
+
             let points = storage
                 .query(device_id, metric_name, start, end)
                 .await
                 .map_err(|e| {
+                    tracing::error!("Telemetry query failed for {}/{}: {}", device_id, metric_name, e);
                     DeviceError::Communication(format!("Telemetry query failed: {}", e))
                 })?;
 
+            tracing::debug!("Query returned {} points for {}/{}", points.len(), device_id, metric_name);
+
             Ok(points.into_iter().map(|p| (p.timestamp, p.value)).collect())
         } else {
+            tracing::warn!("Telemetry storage not configured when querying {}/{}", device_id, metric_name);
             Err(DeviceError::InvalidParameter(
                 "Telemetry storage not configured".into(),
             ))

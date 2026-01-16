@@ -209,14 +209,10 @@ impl ServerState {
             (*event_bus).clone(),
         ));
 
-        // Set telemetry storage for device service
-        let device_service_clone = device_service.clone();
-        let time_series_storage_clone = time_series_storage.clone();
-        tokio::spawn(async move {
-            device_service_clone
-                .set_telemetry_storage(time_series_storage_clone)
-                .await;
-        });
+        // Set telemetry storage for device service (synchronously)
+        device_service
+            .set_telemetry_storage(time_series_storage.clone())
+            .await;
 
         Self {
             session_manager: Arc::new(session_manager),
@@ -419,8 +415,10 @@ impl ServerState {
 
         // Build tool registry with real implementations
         let mut builder = ToolRegistryBuilder::new()
-            // Query time series data
+            // Query time series data (requires metric name)
             .with_real_query_data_tool(self.time_series_storage.clone())
+            // Get device data (simplified - returns all metrics)
+            .with_real_get_device_data_tool(self.device_service.clone(), self.time_series_storage.clone())
             // Control devices via DeviceService
             .with_real_control_device_tool(self.device_service.clone())
             // List devices

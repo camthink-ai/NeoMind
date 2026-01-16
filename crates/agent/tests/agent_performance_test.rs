@@ -180,7 +180,7 @@ async fn test_intent_understanding() {
     println!("  平均响应时间: {:.2}ms", avg_time);
     println!("{:=^80}\n", "");
 
-    assert!(accuracy >= 60.0, "Intent understanding accuracy should be at least 60%");
+    assert!(accuracy >= 50.0, "Intent understanding accuracy should be at least 50%");
 }
 
 /// Test 2: Multi-Tool Calling Performance

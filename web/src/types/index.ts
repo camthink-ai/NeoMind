@@ -150,6 +150,92 @@ export interface Alert {
   source?: string
 }
 
+// Alert Channel Types
+export interface AlertChannel {
+  name: string
+  channel_type: 'console' | 'memory' | 'webhook' | 'email'
+  enabled: boolean
+}
+
+export interface ChannelTypeInfo {
+  id: string
+  name: string
+  name_zh: string
+  description: string
+  description_zh: string
+  icon: string
+  category: string
+}
+
+export interface ChannelStats {
+  total: number
+  enabled: number
+  disabled: number
+  by_type: Record<string, number>
+}
+
+export interface ChannelListResponse {
+  channels: AlertChannel[]
+  count: number
+  stats: ChannelStats
+}
+
+export interface ChannelTestResult {
+  success: boolean
+  message: string
+  message_zh: string
+  duration_ms: number
+}
+
+export interface CreateChannelRequest {
+  name: string
+  channel_type: string
+  [key: string]: unknown  // Additional config fields
+}
+
+export interface ChannelSchemaResponse {
+  id: string
+  name: string
+  name_zh: string
+  description: string
+  description_zh: string
+  icon: string
+  category: string
+  config_schema: JsonSchema
+}
+
+export type JsonSchema = {
+  type?: string
+  title?: string
+  title_zh?: string
+  description?: string
+  description_zh?: string
+  properties?: Record<string, JsonSchema>
+  required?: string[]
+  default?: unknown
+  enum?: unknown[]
+  minimum?: number
+  maximum?: number
+  format?: string
+  x_secret?: boolean
+  ui_hints?: {
+    field_order?: string[]
+    display_names?: Record<string, string>
+    placeholders?: Record<string, string>
+    help_texts?: Record<string, string>
+    visibility_rules?: Array<{
+      field: string
+      condition: string
+      value: unknown
+      then_show?: string[]
+      then_hide?: string[]
+      then_disable?: string[]
+    }>
+  }
+  items?: JsonSchema
+  additionalProperties?: boolean | JsonSchema
+}
+
 // Chat Types
 export interface Message {
   id: string

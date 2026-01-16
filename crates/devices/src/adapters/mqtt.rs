@@ -772,14 +772,21 @@ impl MqttAdapter {
         });
 
         // Store to time series storage
-        if let Some(storage) = self.telemetry_storage.read().await.as_ref() {
-            let data_point = crate::telemetry::DataPoint {
-                timestamp: timestamp.timestamp(),
-                value: value.clone(),
-                quality: None,
-            };
-            if let Err(e) = storage.write(&device_id, &metric_name, data_point).await {
-                error!("Failed to write telemetry: {}", e);
+        {
+            let storage_guard = self.telemetry_storage.read().await;
+            if let Some(storage) = storage_guard.as_ref() {
+                let data_point = crate::telemetry::DataPoint {
+                    timestamp: timestamp.timestamp(),
+                    value: value.clone(),
+                    quality: None,
+                };
+                if let Err(e) = storage.write(&device_id, &metric_name, data_point).await {
+                    error!("Failed to write telemetry for {}/{}: {}", device_id, metric_name, e);
+                } else {
+                    debug!("Successfully wrote telemetry for {}/{} at {}", device_id, metric_name, timestamp.timestamp());
+                }
+            } else {
+                warn!("Telemetry storage not set for MQTT adapter, cannot write metric {} for device {}", metric_name, device_id);
             }
         }
 
@@ -796,8 +803,8 @@ impl MqttAdapter {
             };
 
             debug!(
-                "Publishing DeviceMetric to EventBus: device_id={}, metric={:?}",
-                device_id, metric_name
+                "Publishing DeviceMetric to EventBus: device_id={}, metric={}, ts={}",
+                device_id, metric_name, timestamp.timestamp()
             );
             bus.publish(NeoTalkEvent::DeviceMetric {
                 device_id,
@@ -896,6 +903,20 @@ impl DeviceAdapter for MqttAdapter {
 
     fn is_running(&self) -> bool {
         self.running.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn set_telemetry_storage(&self, storage: Arc<crate::TimeSeriesStorage>) {
+        // Use a oneshot channel to ensure storage is set synchronously
+        let telemetry_storage = self.telemetry_storage.clone();
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+
+        tokio::spawn(async move {
+            *telemetry_storage.write().await = Some(storage);
+            let _ = tx.send(());
+        });
+
+        // Wait for the storage to be set (with timeout)
+        let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
     }
 
     async fn start(&self) -> AdapterResult<()> {
@@ -1212,9 +1233,9 @@ impl MqttAdapter {
                         // Publish to EventBus
                         if let Some(bus) = event_bus {
                             let core_value = convert_to_core_metric(value.clone());
-                            info!(
-                                "Publishing DeviceMetric to EventBus: device_id={}, metric={}, value={:?}",
-                                device_id, metric_name, core_value
+                            debug!(
+                                "Publishing DeviceMetric to EventBus: device_id={}, metric={}",
+                                device_id, metric_name
                             );
                             bus.publish(NeoTalkEvent::DeviceMetric {
                                 device_id: device_id.clone(),

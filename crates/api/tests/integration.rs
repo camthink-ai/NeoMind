@@ -6,6 +6,12 @@
 // - Device Event → Workflow → Action
 // - LLM Periodic Review → Decision → Execution
 
+// Include common test utilities
+pub mod common;
+
+// Include handler tests
+mod handlers;
+
 use std::time::Duration;
 use tokio::time::sleep;
 

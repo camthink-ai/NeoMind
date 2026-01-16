@@ -11,13 +11,92 @@ use crate::error::{AgentError, Result};
 /// **Supported formats**:
 /// 1. JSON array format: [{"name": "tool1", "arguments": {...}}, {"name": "tool2", "arguments": {...}}]
 /// 2. JSON object format: {"name": "tool_name", "arguments": {...}}
+/// 3. XML format: <tool_calls><invoke name="tool_name"><parameter name="key" value="val"/></invoke></tool_calls>
 ///
 /// Returns the remaining text along with any parsed tool calls.
 pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
     let mut content = text.to_string();
     let mut tool_calls = Vec::new();
 
-    // First, try to parse JSON array format: [{"name": "tool1", "arguments": {...}}, ...]
+    // First, try to parse XML format: <tool_calls><invoke name="tool_name">...</invoke></tool_calls>
+    if let Some(start) = text.find("<tool_calls>") {
+        if let Some(end) = text.find("</tool_calls>") {
+            let xml_section = &text[start..end + 13]; // 13 = len("</tool_calls>")
+            content = format!("{}{}", &text[..start], &text[end + 13..]);
+
+            // Parse <invoke name="..."> entries
+            let mut remaining = xml_section;
+            while let Some(invoke_start) = remaining.find("<invoke") {
+                let invoke_end = match remaining.find("</invoke>") {
+                    Some(pos) => pos,
+                    None => break,
+                };
+
+                let invoke_section = &remaining[invoke_start..invoke_end + 8]; // 8 = len("</invoke>")
+
+                // Extract tool name from <invoke name="tool_name">
+                if let Some(name_start) = invoke_section.find("name=\"") {
+                    let name_section = &invoke_section[name_start + 6..];
+                    if let Some(name_end) = name_section.find('"') {
+                        let tool_name = &name_section[..name_end];
+
+                        // Extract parameters from <parameter name="key" value="value"/>
+                        let mut arguments = serde_json::Map::new();
+                        let mut param_remaining = invoke_section;
+                        while let Some(param_start) = param_remaining.find("<parameter") {
+                            let param_end = match param_remaining.find("/>") {
+                                Some(pos) => pos,
+                                None => break,
+                            };
+                            let param_section = &param_remaining[param_start..param_end + 2];
+
+                            // Extract parameter name
+                            let param_name = if let Some(pn_start) = param_section.find("name=\"") {
+                                let pn_section = &param_section[pn_start + 6..];
+                                if let Some(pn_end) = pn_section.find('"') {
+                                    pn_section[..pn_end].to_string()
+                                } else {
+                                    continue;
+                                }
+                            } else {
+                                continue;
+                            };
+
+                            // Extract parameter value
+                            let param_value = if let Some(pv_start) = param_section.find("value=\"") {
+                                let pv_section = &param_section[pv_start + 7..];
+                                if let Some(pv_end) = pv_section.find('"') {
+                                    pv_section[..pv_end].to_string()
+                                } else {
+                                    continue;
+                                }
+                            } else {
+                                continue;
+                            };
+
+                            arguments.insert(param_name, Value::String(param_value));
+                            param_remaining = &param_remaining[param_end + 2..];
+                        }
+
+                        tool_calls.push(ToolCall {
+                            name: tool_name.to_string(),
+                            id: Uuid::new_v4().to_string(),
+                            arguments: Value::Object(arguments),
+                            result: None,
+                        });
+                    }
+                }
+
+                remaining = &remaining[invoke_end + 8..];
+            }
+
+            if !tool_calls.is_empty() {
+                return Ok((content.trim().to_string(), tool_calls));
+            }
+        }
+    }
+
+    // Second, try to parse JSON array format: [{"name": "tool1", "arguments": {...}}, ...]
     if let Some(start) = text.find('[') {
         // Find the matching closing bracket by counting brackets
         let mut bracket_count = 0;
@@ -181,6 +260,15 @@ pub fn parse_tool_call_json(content: &str) -> Result<(String, Value)> {
 /// Remove tool call markers from response for memory storage.
 pub fn remove_tool_calls_from_response(response: &str) -> String {
     let mut result = response.to_string();
+
+    // Remove XML format: <tool_calls>...</tool_calls>
+    while let Some(start) = result.find("<tool_calls>") {
+        if let Some(end) = result.find("</tool_calls>") {
+            result.replace_range(start..end + 13, "");
+            continue;
+        }
+        break;
+    }
 
     // Remove JSON array format: [{...}, {...}]
     while let Some(start) = result.find('[') {

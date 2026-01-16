@@ -80,7 +80,9 @@ impl DataPoint {
             }
             Value::Bool(b) => Some(MetricValue::Boolean(*b)),
             Value::Null => Some(MetricValue::Null),
-            Value::Array(_) | Value::Object(_) => None,
+            // For arrays and objects, serialize to JSON string (important for _raw data)
+            Value::Array(_) => Some(MetricValue::String(serde_json::to_string(value).ok()?)),
+            Value::Object(_) => Some(MetricValue::String(serde_json::to_string(value).ok()?)),
         }
     }
 
@@ -211,22 +213,32 @@ impl TimeSeriesStorage {
         start_timestamp: i64,
         end_timestamp: i64,
     ) -> Result<Vec<DataPoint>, DeviceError> {
+        tracing::debug!("TimeSeriesStorage::query: device_id={}, metric={}, start={}, end={}",
+            device_id, metric, start_timestamp, end_timestamp);
+
         let result = self
             .store
             .query_range(device_id, metric, start_timestamp, end_timestamp)
             .await
             .map_err(|e| {
+                tracing::error!("query_range failed for {}/{}: {}", device_id, metric, e);
                 DeviceError::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     e.to_string(),
                 ))
             })?;
 
-        Ok(result
+        tracing::debug!("query_range returned {} raw points for {}/{}", result.points.len(), device_id, metric);
+
+        let filtered: Vec<DataPoint> = result
             .points
             .into_iter()
             .filter_map(DataPoint::from_storage)
-            .collect())
+            .collect();
+
+        tracing::debug!("After filter_map, {} points remain for {}/{}", filtered.len(), device_id, metric);
+
+        Ok(filtered)
     }
 
     /// Get the latest data point

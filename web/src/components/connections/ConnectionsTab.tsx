@@ -827,6 +827,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
   saving: boolean
 }) {
   const { t } = useTranslation(['devices', 'common'])
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [name, setName] = useState(editing?.name || '')
   const [broker, setBroker] = useState(editing?.broker || '')
   const [port, setPort] = useState(editing?.port || 1883)
@@ -880,6 +881,7 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    setIsSubmitting(true)
     try {
       if (type === 'externalMqtt') {
         const brokerData: any = {
@@ -940,6 +942,8 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
       await onSave()
     } catch (error) {
       throw error
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -1160,14 +1164,14 @@ function ConnectionConfigDialog({ open, type, editing, onClose, onSave, saving }
           )}
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} disabled={saving}>
+            <Button type="button" variant="outline" onClick={onClose} disabled={saving || isSubmitting}>
               {t('devices:connectionDialog.cancel')}
             </Button>
             <Button
               type="submit"
-              disabled={saving || (type === 'hass' ? !hassUrl.trim() || !hassToken.trim() : !name.trim())}
+              disabled={saving || isSubmitting || (type === 'hass' ? !hassUrl.trim() || !hassToken.trim() : !name.trim())}
             >
-              {saving ? t('devices:connectionDialog.saving') : t('devices:connectionDialog.save')}
+              {saving || isSubmitting ? t('devices:connectionDialog.saving') : t('devices:connectionDialog.save')}
             </Button>
           </DialogFooter>
         </form>

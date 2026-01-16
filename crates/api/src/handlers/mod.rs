@@ -1,6 +1,7 @@
 //! API handlers organized by domain.
 
 pub mod alerts;
+pub mod alert_channels;
 pub mod auth;
 pub mod auth_users;
 pub mod basic;
@@ -32,6 +33,11 @@ pub use crate::server::ServerState;
 pub use alerts::{
     acknowledge_alert_handler, create_alert_handler, get_alert_handler, list_alerts_handler,
 };
+pub use alert_channels::{
+    create_channel_handler, delete_channel_handler, get_channel_handler,
+    get_channel_stats_handler, get_channel_type_schema_handler, list_channel_types_handler,
+    list_channels_handler, test_channel_handler,
+};
 pub use basic::health_handler;
 pub use devices::{
     add_device_handler, aggregate_metric_handler, clear_hass_discovered_devices_handler,
@@ -39,8 +45,8 @@ pub use devices::{
     discover_hass_devices_handler, discovery_info_handler, generate_mdl_handler,
     get_device_command_history_handler, get_device_handler, get_device_telemetry_handler,
     get_device_telemetry_summary_handler, get_device_type_handler,
-    get_hass_discovered_devices_handler, hass_discovery_status_handler, list_device_types_handler,
-    list_devices_handler, process_hass_discovery_handler, query_metric_handler,
+    get_hass_discovered_devices_handler, hass_discovery_status_handler, list_device_metrics_debug_handler,
+    list_device_types_handler, list_devices_handler, process_hass_discovery_handler, query_metric_handler,
     read_metric_handler, register_aggregated_hass_device_handler, register_device_type_handler,
     send_command_handler, stop_hass_discovery_handler, validate_device_type_handler,
 };

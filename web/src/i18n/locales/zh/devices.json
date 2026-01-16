@@ -128,7 +128,9 @@
     "rawData": {
       "title": "原始数据",
       "records": "条记录",
-      "noData": "暂无原始数据"
+      "noData": "暂无原始数据",
+      "viewData": "查看数据",
+      "chars": "字符"
     }
   },
   "history": {

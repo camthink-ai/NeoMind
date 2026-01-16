@@ -10,6 +10,7 @@ use tracing::info;
 use edge_ai_core::EventBus;
 use edge_ai_core::plugin::{PluginType, UnifiedPlugin, UnifiedPluginRegistry};
 use edge_ai_devices::DeviceAdapterPluginRegistry;
+use edge_ai_alerts::{AlertChannelPluginFactory, AlertChannelUnifiedPlugin};
 use edge_ai_llm::instance_manager::get_instance_manager;
 use edge_ai_llm::plugin_adapter::{LlmBackendUnifiedPlugin, llm_backend_to_unified_plugin};
 
@@ -31,6 +32,11 @@ impl ServerState {
         // Register built-in device adapters as plugins
         if let Err(e) = self.register_builtin_device_adapters().await {
             tracing::error!(category = "plugins", error = %e, "Failed to register device adapter plugins");
+        }
+
+        // Register alert channel plugins
+        if let Err(e) = self.register_alert_channel_plugins().await {
+            tracing::error!(category = "plugins", error = %e, "Failed to register alert channel plugins");
         }
 
         info!(category = "plugins", "Built-in plugins initialized");
@@ -122,6 +128,40 @@ impl ServerState {
             "Device adapter registry initialized with {} adapters",
             stats.adapters.len()
         );
+
+        Ok(())
+    }
+
+    /// Register built-in alert channel plugins.
+    ///
+    /// This registers webhook and email channel types as plugins so they appear
+    /// in the unified plugin system. Debug channels (console, memory) are excluded.
+    async fn register_alert_channel_plugins(&self) -> anyhow::Result<()> {
+        // Get user-facing alert channel plugins (excludes debug/internal channels)
+        let channel_plugins = AlertChannelPluginFactory::create_user_facing_plugins();
+
+        for (plugin_id, plugin) in channel_plugins {
+            // Get plugin ID from metadata
+            let plugin_id = {
+                let plugin_guard = plugin.read().await;
+                // Deref to access the UnifiedPlugin trait method
+                let plugin_ref: &AlertChannelUnifiedPlugin = &*plugin_guard;
+                plugin_ref.metadata().base.id.clone()
+            };
+
+            // Register to unified plugin registry
+            self.plugin_registry
+                .register(plugin_id.clone(), plugin, PluginType::AlertChannel)
+                .await
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to register alert channel plugin {}: {}", plugin_id, e)
+                })?;
+
+            info!(
+                category = "plugins",
+                "Registered alert channel plugin: {}", plugin_id
+            );
+        }
 
         Ok(())
     }

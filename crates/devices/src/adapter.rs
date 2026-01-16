@@ -296,6 +296,14 @@ pub trait DeviceAdapter: Send + Sync {
     /// Events should be automatically parsed using device templates.
     fn subscribe(&self) -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send + '_>>;
 
+    /// Set telemetry storage for this adapter (optional, default implementation does nothing).
+    ///
+    /// Adapters that can write directly to telemetry storage should implement this
+    /// to enable direct data writing. If not set, data will only be published via EventBus.
+    fn set_telemetry_storage(&self, _storage: Arc<crate::TimeSeriesStorage>) {
+        // Default: do nothing - adapter will only publish via EventBus
+    }
+
     /// Get the number of devices currently managed by this adapter.
     fn device_count(&self) -> usize;
 

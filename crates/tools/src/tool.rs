@@ -8,6 +8,11 @@ use serde_json::Value;
 
 use super::error::{Result, ToolError};
 
+// Re-export from core for unified types
+pub use edge_ai_core::tools::{
+    ToolCategory, ToolRelationships, UsageScenario, ToolDefinition as CoreToolDefinition,
+};
+
 /// Tool execution result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolOutput {
@@ -59,6 +64,16 @@ impl ToolOutput {
             data,
             error: Some(error.into()),
             metadata: None,
+        }
+    }
+
+    /// Create a failed output with metadata.
+    pub fn error_with_metadata(error: impl Into<String>, metadata: Value) -> Self {
+        Self {
+            success: false,
+            data: metadata.clone(),
+            error: Some(error.into()),
+            metadata: Some(metadata),
         }
     }
 }
@@ -142,23 +157,9 @@ pub enum ResponseFormat {
 }
 
 /// Tool definition for LLM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    /// Tool name
-    pub name: String,
-    /// Tool description
-    pub description: String,
-    /// Parameters as JSON Schema
-    pub parameters: Value,
-    /// Example usage (optional) - single example for backward compatibility
-    pub example: Option<ToolExample>,
-    /// Multiple examples (optional) - for better tool use guidance
-    pub examples: Vec<ToolExample>,
-    /// Response format hint (optional)
-    pub response_format: ResponseFormat,
-    /// Tool namespace for grouping related tools (e.g., "device", "rule", "workflow")
-    pub namespace: Option<String>,
-}
+///
+/// This re-exports the core ToolDefinition for consistency.
+pub type ToolDefinition = CoreToolDefinition;
 
 /// Tool trait for function calling.
 ///
@@ -177,17 +178,29 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with the given arguments.
     async fn execute(&self, args: Value) -> Result<ToolOutput>;
 
-    /// Get the full tool definition.
-    fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: self.name().to_string(),
-            description: self.description().to_string(),
-            parameters: self.parameters(),
-            example: None,
-            examples: Vec::new(),
-            response_format: ResponseFormat::default(),
-            namespace: None,
-        }
+    /// Get the tool category.
+    fn category(&self) -> ToolCategory {
+        ToolCategory::System
+    }
+
+    /// Get usage scenarios for this tool.
+    fn scenarios(&self) -> Vec<UsageScenario> {
+        vec![]
+    }
+
+    /// Get tool relationships.
+    fn relationships(&self) -> ToolRelationships {
+        ToolRelationships::default()
+    }
+
+    /// Get tool version.
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
+
+    /// Check if this tool is deprecated.
+    fn is_deprecated(&self) -> bool {
+        false
     }
 
     /// Get the tool's namespace (optional, for grouping related tools).
@@ -198,6 +211,25 @@ pub trait Tool: Send + Sync {
     /// Get the tool's response format preference.
     fn response_format(&self) -> ResponseFormat {
         ResponseFormat::default()
+    }
+
+    /// Get the full tool definition.
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: None,
+            category: self.category(),
+            scenarios: self.scenarios(),
+            relationships: self.relationships(),
+            deprecated: self.is_deprecated(),
+            replaced_by: None,
+            version: self.version().to_string(),
+            examples: vec![],
+            response_format: None,
+            namespace: self.namespace().map(|s| s.to_string()),
+        }
     }
 
     /// Validate arguments before execution.

@@ -189,34 +189,16 @@ impl Tool for ToolSearchTool {
             name: self.name().to_string(),
             description: self.description().to_string(),
             parameters: self.parameters(),
-            example: Some(edge_ai_tools::tool::ToolExample {
-                arguments: serde_json::json!({
-                    "keyword": "device"
-                }),
-                result: serde_json::json!({
-                    "keyword": "device",
-                    "found": 3,
-                    "tools": [
-                        {"name": "list_devices", "description": "List all available devices", "matched_field": "name"},
-                        {"name": "get_device", "description": "Get details of a specific device", "matched_field": "name"},
-                        {"name": "control_device", "description": "Control a device by sending commands", "matched_field": "name"}
-                    ]
-                }),
-                description: "Search for tools related to devices".to_string(),
-            }),
-            examples: vec![edge_ai_tools::tool::ToolExample {
-                arguments: serde_json::json!({"keyword": "device"}),
-                result: serde_json::json!({
-                    "keyword": "device",
-                    "found": 3,
-                    "tools": [
-                        {"name": "list_devices", "description": "List all available devices", "matched_field": "name"}
-                    ]
-                }),
-                description: "搜索设备相关工具".to_string(),
-            }],
-            response_format: ResponseFormat::Concise,
-            namespace: Some("system".to_string()),
+            example: None,
+            category: self.category(),
+            scenarios: self.scenarios(),
+            relationships: self.relationships(),
+            deprecated: self.is_deprecated(),
+            replaced_by: None,
+            version: self.version().to_string(),
+            examples: vec![],
+            response_format: None,
+            namespace: self.namespace().map(|s| s.to_string()),
         }
     }
 

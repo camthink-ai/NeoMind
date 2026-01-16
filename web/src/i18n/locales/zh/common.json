@@ -17,9 +17,11 @@
   "view": "查看",
   "back": "返回",
   "submit": "提交",
+  "create": "创建",
   "creating": "创建中...",
   "saving": "保存中...",
   "deleting": "删除中...",
+  "testing": "测试中...",
   "processing": "处理中...",
   "runStatus": {
     "running": "运行中",

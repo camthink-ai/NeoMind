@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/table"
 import { LoadingState, EmptyStateInline, Pagination, BulkActionBar, ActionBar } from "@/components/shared"
 import { Card } from "@/components/ui/card"
-import { Eye, Pencil, Trash2, FileJson, Plus } from "lucide-react"
+import { Eye, Pencil, Trash2, FileJson, Plus, Download, Upload } from "lucide-react"
 import { Dialog, DialogTrigger } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 import type { DeviceType } from "@/types"
@@ -32,6 +32,7 @@ interface DeviceTypeListProps {
   onPageChange: (page: number) => void
   onAddType: () => void
   addTypeDialog: React.ReactNode
+  onImportDeviceType?: (definition: DeviceType) => Promise<void>
 }
 
 export function DeviceTypeList({
@@ -47,11 +48,14 @@ export function DeviceTypeList({
   onPageChange,
   onAddType,
   addTypeDialog,
+  onImportDeviceType,
 }: DeviceTypeListProps) {
   const { t } = useTranslation(['common', 'devices'])
   const { toast } = useToast()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkProcessing, setBulkProcessing] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const toggleSelection = (id: string) => {
     setSelectedIds((prev) => {
@@ -95,10 +99,130 @@ export function DeviceTypeList({
     }
   }
 
+  // Export single device type as JSON file
+  const handleExportSingle = (deviceType: DeviceType) => {
+    const data = JSON.stringify(deviceType, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `device-type-${deviceType.device_type}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    toast({ title: t('common:success'), description: `Exported ${deviceType.name}` })
+  }
+
+  // Export selected device types
+  const handleExportSelected = () => {
+    if (selectedIds.size === 0) {
+      toast({ title: t('common:failed'), description: 'No device types selected', variant: 'destructive' })
+      return
+    }
+    const selectedTypes = deviceTypes.filter(t => selectedIds.has(t.device_type))
+    const data = JSON.stringify(selectedTypes, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `device-types-${selectedIds.size}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    toast({ title: t('common:success'), description: `Exported ${selectedIds.size} device types` })
+  }
+
+  // Export all device types
+  const handleExportAll = () => {
+    const data = JSON.stringify(deviceTypes, null, 2)
+    const blob = new Blob([data], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `all-device-types.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    toast({ title: t('common:success'), description: `Exported ${deviceTypes.length} device types` })
+  }
+
+  // Import device types from JSON file
+  const handleImportClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setImporting(true)
+    try {
+      const text = await file.text()
+      const imported = JSON.parse(text)
+
+      // Handle single device type or array
+      const typesToImport = Array.isArray(imported) ? imported : [imported]
+
+      let successCount = 0
+      let errorCount = 0
+
+      for (const type of typesToImport) {
+        try {
+          if (onImportDeviceType) {
+            await onImportDeviceType(type)
+          } else {
+            await api.addDeviceType(type)
+          }
+          successCount++
+        } catch (err) {
+          errorCount++
+          console.error(`Failed to import ${type.device_type}:`, err)
+        }
+      }
+
+      if (successCount > 0) {
+        toast({
+          title: t('common:success'),
+          description: `Imported ${successCount} device type${successCount > 1 ? 's' : ''}${errorCount > 0 ? ` (${errorCount} failed)` : ''}`
+        })
+        onRefresh()
+      } else {
+        toast({
+          title: t('common:failed'),
+          description: 'No device types were imported',
+          variant: 'destructive'
+        })
+      }
+    } catch (error) {
+      toast({
+        title: t('common:failed'),
+        description: 'Failed to parse JSON file',
+        variant: 'destructive'
+      })
+    } finally {
+      setImporting(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   const allOnPageSelected = paginatedDeviceTypes.length > 0 && paginatedDeviceTypes.every((t) => selectedIds.has(t.device_type))
 
   return (
     <>
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       {/* Toolbar */}
       <ActionBar
         title={t('devices:types.deviceTypes')}
@@ -106,6 +230,14 @@ export function DeviceTypeList({
         description={`${deviceTypes.length} ${t('devices:types.totalTypes')}`}
         actions={
           <>
+            <Button variant="outline" size="sm" onClick={handleImportClick} disabled={importing}>
+              <Upload className="mr-2 h-4 w-4" />
+              {importing ? 'Importing...' : 'Import'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleExportAll} disabled={deviceTypes.length === 0}>
+              <Download className="mr-2 h-4 w-4" />
+              Export All
+            </Button>
             <Dialog>
               <DialogTrigger asChild>
                 <Button size="sm" onClick={onAddType}>
@@ -124,6 +256,13 @@ export function DeviceTypeList({
       <BulkActionBar
         selectedCount={selectedIds.size}
         actions={[
+          {
+            label: 'Export Selected',
+            icon: <Download className="h-4 w-4" />,
+            onClick: handleExportSelected,
+            disabled: bulkProcessing,
+            variant: "outline",
+          },
           {
             label: t('common:delete'),
             icon: <Trash2 className="h-4 w-4" />,
@@ -182,6 +321,9 @@ export function DeviceTypeList({
                       <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewDetails(type)}>
                           <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleExportSingle(type)} title="Export">
+                          <Download className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(type)}>
                           <Pencil className="h-4 w-4" />

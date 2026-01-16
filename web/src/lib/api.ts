@@ -53,6 +53,13 @@ import type {
   LlmBackendListResponse,
   BackendTypeDefinition,
   BackendTestResult,
+  AlertChannel,
+  ChannelListResponse,
+  ChannelStats,
+  ChannelTypeInfo,
+  ChannelTestResult,
+  ChannelSchemaResponse,
+  CreateChannelRequest,
 } from '@/types'
 
 const API_BASE = '/api'
@@ -313,6 +320,28 @@ export const api = {
     fetchAPI<{ acknowledged: boolean; alertId: string }>(`/alerts/${id}/acknowledge`, {
       method: 'POST',
     }),
+
+  // ========== Alert Channels API ==========
+  listAlertChannels: () => fetchAPI<ChannelListResponse>('/alert-channels'),
+  getAlertChannel: (name: string) => fetchAPI<AlertChannel>(`/alert-channels/${encodeURIComponent(name)}`),
+  listChannelTypes: () => fetchAPI<{ types: ChannelTypeInfo[]; count: number }>('/alert-channels/types'),
+  getChannelSchema: (type: string) =>
+    fetchAPI<ChannelSchemaResponse>(`/alert-channels/types/${encodeURIComponent(type)}/schema`),
+  createAlertChannel: (req: CreateChannelRequest) =>
+    fetchAPI<{ message: string; message_zh: string; channel: AlertChannel }>('/alert-channels', {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+  deleteAlertChannel: (name: string) =>
+    fetchAPI<{ message: string; message_zh: string; name: string }>(
+      `/alert-channels/${encodeURIComponent(name)}`,
+      { method: 'DELETE' }
+    ),
+  testAlertChannel: (name: string) =>
+    fetchAPI<ChannelTestResult>(`/alert-channels/${encodeURIComponent(name)}/test`, {
+      method: 'POST',
+    }),
+  getChannelStats: () => fetchAPI<ChannelStats>('/alert-channels/stats'),
 
   // Settings
   getLlmSettings: () => fetchAPI<LlmSettings>('/settings/llm'),

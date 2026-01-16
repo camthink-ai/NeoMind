@@ -1,24 +1,38 @@
 import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CodeEditor } from "@/components/ui/code-editor"
+import { Card } from "@/components/ui/card"
 import { toast } from "@/components/ui/use-toast"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Plus, Trash2, ArrowDown, FileText, Sparkles, Code, ChevronDown, ChevronUp, Settings, AlertCircle, Wand2, Check, Zap } from "lucide-react"
+  Plus,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Check,
+  AlertCircle,
+  Sparkles,
+  Wand2,
+  FileText,
+  ArrowDown,
+  Settings,
+  Zap,
+  Code,
+  Database,
+} from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { DeviceType, MetricDefinition, CommandDefinition, ParameterDefinition } from "@/types"
+import type { DeviceType, MetricDefinition, CommandDefinition } from "@/types"
 
 // Validation result type
 interface ValidationResult {
@@ -38,7 +52,7 @@ interface FormErrors {
 }
 
 // ============================================================================
-// Add Device Type Dialog (Full Screen with JSON Editor + AI Generation)
+// TYPES
 // ============================================================================
 
 interface AddDeviceTypeDialogProps {
@@ -50,7 +64,15 @@ interface AddDeviceTypeDialogProps {
   adding: boolean
   validating: boolean
   generating: boolean
+  // Optional: When provided, dialog operates in edit mode
+  editDeviceType?: DeviceType | null
 }
+
+type Step = 'basic' | 'data' | 'commands' | 'review' | 'finish'
+
+// ============================================================================
+// STEP WIZARD DIALOG
+// ============================================================================
 
 export function AddDeviceTypeDialog({
   open,
@@ -61,17 +83,17 @@ export function AddDeviceTypeDialog({
   adding,
   validating,
   generating,
+  editDeviceType,
 }: AddDeviceTypeDialogProps) {
   const { t } = useTranslation(['common', 'devices'])
-  const [addTypeMode, setAddTypeMode] = useState<"form" | "json" | "ai">("form")
+  const isEditMode = !!editDeviceType
 
-  // JSON mode state
-  const [jsonDefinition, setJsonDefinition] = useState("")
-  const [jsonError, setJsonError] = useState("")
-  const [jsonValidation, setJsonValidation] = useState<ValidationResult | null>(null)
+  // Step state
+  const [currentStep, setCurrentStep] = useState<Step>('basic')
+  const [completedSteps, setCompletedSteps] = useState<Set<Step>>(new Set())
 
-  // Form mode state
-  const [formData, setFormData] = useState<DeviceType>({
+  // Form data
+  const [formData, setFormData] = useState<Partial<DeviceType>>({
     device_type: "",
     name: "",
     description: "",
@@ -81,231 +103,160 @@ export function AddDeviceTypeDialog({
     commands: [],
     uplink_samples: [],
   })
-  const [formErrors, setFormErrors] = useState<FormErrors>({})
-  const [touched, setTouched] = useState<Record<string, boolean>>({})
 
-  // AI mode state
-  const [aiDeviceName, setAiDeviceName] = useState("")
-  const [aiDeviceDesc, setAiDeviceDesc] = useState("")
+  // UI states
+  const [formErrors, setFormErrors] = useState<FormErrors>({})
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
+  const [rawSamplesText, setRawSamplesText] = useState("")
+
+  // AI generation states
   const [aiMetricsExample, setAiMetricsExample] = useState("")
   const [aiCommandsExample, setAiCommandsExample] = useState("")
-  const [aiGenerated, setAiGenerated] = useState(false)
+  const [aiCommandDesc, setAiCommandDesc] = useState("")
 
-  // Reset form when dialog opens/closes
+  // Reset when dialog opens or editDeviceType changes
   useEffect(() => {
     if (open) {
-      setFormData({
-        device_type: "",
-        name: "",
-        description: "",
-        categories: [],
-        mode: "simple",
-        metrics: [],
-        commands: [],
-        uplink_samples: [],
-      })
+      setCurrentStep('basic')
+      setCompletedSteps(new Set())
+
+      if (editDeviceType) {
+        // Load existing data for edit mode
+        setFormData(editDeviceType)
+        // Also load sample data as JSON string
+        if (editDeviceType.uplink_samples && editDeviceType.uplink_samples.length > 0) {
+          setRawSamplesText(editDeviceType.uplink_samples.map(s => JSON.stringify(s, null, 2)).join('\n'))
+        } else {
+          setRawSamplesText("")
+        }
+      } else {
+        // Reset to empty for add mode
+        setFormData({
+          device_type: "",
+          name: "",
+          description: "",
+          categories: [],
+          mode: "simple",
+          metrics: [],
+          commands: [],
+          uplink_samples: [],
+        })
+        setRawSamplesText("")
+      }
+
       setFormErrors({})
-      setTouched({})
-      setJsonDefinition("")
-      setJsonError("")
-      setJsonValidation(null)
-      setAiDeviceName("")
-      setAiDeviceDesc("")
+      setValidationResult(null)
       setAiMetricsExample("")
       setAiCommandsExample("")
-      setAiGenerated(false)
+      setAiCommandDesc("")
     }
-  }, [open])
+  }, [open, editDeviceType])
 
-  // Validate form in real-time
-  useEffect(() => {
+  // Update field (auto-generation now handled in BasicInfoStep on blur)
+  const updateField = <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+    // Clear error for this field
+    if (formErrors[field as string]) {
+      setFormErrors(prev => ({ ...prev, [field]: undefined }))
+    }
+  }
+
+  // Validate current step
+  const validateStep = (step: Step): boolean => {
     const errors: FormErrors = {}
 
-    if (touched.device_type || touched.name) {
-      if (!formData.device_type?.trim()) {
-        errors.device_type = t('devices:types.validation.deviceTypeRequired')
-      }
+    if (step === 'basic') {
       if (!formData.name?.trim()) {
         errors.name = t('devices:types.validation.nameRequired')
       }
+      if (!formData.device_type?.trim()) {
+        errors.device_type = t('devices:types.validation.deviceTypeRequired')
+      }
     }
 
-    const metricErrors: Record<number, string> = {}
-    formData.metrics?.forEach((metric, i) => {
-      if (!metric.name?.trim()) {
-        metricErrors[i] = t('devices:types.validation.metricNameRequired')
-      }
-    })
-    if (Object.keys(metricErrors).length > 0) {
-      errors.metrics = metricErrors
+    if (step === 'data' && formData.mode === 'full') {
+      formData.metrics?.forEach((metric, i) => {
+        if (!metric.name?.trim()) {
+          if (!errors.metrics) errors.metrics = {}
+          errors.metrics[i] = t('devices:types.validation.metricNameRequired')
+        }
+      })
     }
 
-    const commandErrors: Record<number, string> = {}
-    formData.commands?.forEach((cmd, i) => {
-      if (!cmd.name?.trim()) {
-        commandErrors[i] = t('devices:types.validation.commandNameRequired')
-      }
-    })
-    if (Object.keys(commandErrors).length > 0) {
-      errors.commands = commandErrors
+    if (step === 'commands') {
+      formData.commands?.forEach((cmd, i) => {
+        if (!cmd.name?.trim()) {
+          if (!errors.commands) errors.commands = {}
+          errors.commands[i] = t('devices:types.validation.commandNameRequired')
+        }
+      })
     }
 
     setFormErrors(errors)
-  }, [formData, touched, t])
-
-  const isFormValid = () => {
-    // Basic validation
-    if (!formData.device_type?.trim() || !formData.name?.trim()) {
-      return false
-    }
-
-    // For Simple mode, metrics are optional (using samples instead)
-    const isSimpleMode = formData.mode === "simple"
-
-    // For Full mode, validate metrics
-    if (!isSimpleMode && formData.metrics?.some(m => !m.name?.trim())) {
-      return false
-    }
-
-    // Commands are required in both modes
-    if (formData.commands?.some(c => !c.name?.trim())) {
-      return false
-    }
-
-    return true
+    return Object.keys(errors).length === 0
   }
 
-  const handleFieldChange = <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => {
-    setTouched(prev => ({ ...prev, [field]: true }))
-    setFormData(prev => ({ ...prev, [field]: value }))
-  }
+  // Navigate to next step
+  const handleNext = async () => {
+    if (!validateStep(currentStep)) return
 
-  const generateDeviceTypeId = (name: string): string => {
-    return name.toLowerCase()
-      .replace(/\s+/g, "_")
-      .replace(/[^a-z0-9_]/g, "")
-      .replace(/_+/g, "_")
-      .replace(/^_|_$/g, "")
-  }
+    const newCompleted = new Set(completedSteps)
+    newCompleted.add(currentStep)
+    setCompletedSteps(newCompleted)
 
-  const handleAdd = async () => {
-    let definition: DeviceType
-
-    if (addTypeMode === "json") {
-      if (!jsonDefinition.trim()) {
-        setJsonError(t('devices:types.add.definitionRequired'))
-        return
-      }
-      try {
-        definition = JSON.parse(jsonDefinition)
-      } catch (e) {
-        setJsonError(t('devices:types.add.jsonError', { error: (e as Error).message }))
-        return
-      }
-      if (!definition.device_type || !definition.name) {
-        setJsonError(t('devices:types.add.missingFields'))
-        return
-      }
-    } else {
-      if (!isFormValid()) {
-        setTouched({ device_type: true, name: true })
-        toast({
-          title: t('devices:types.validationError'),
-          description: t('devices:types.requiredFields'),
-          variant: "destructive",
-        })
-        return
-      }
-      definition = formData
-    }
-
-    const success = await onAdd(definition)
-    if (success) {
-      onOpenChange(false)
-      toast({
-        title: t('devices:types.save.success'),
-        description: t('devices:types.save.added', { name: definition.name }),
-      })
-    } else {
-      toast({
-        title: t('devices:types.save.error'),
-        description: t('devices:types.save.retry'),
-        variant: "destructive",
-      })
+    const steps: Step[] = ['basic', 'data', 'commands', 'review', 'finish']
+    const currentIndex = steps.indexOf(currentStep)
+    if (currentIndex < steps.length - 1) {
+      setCurrentStep(steps[currentIndex + 1])
     }
   }
 
-  const handleValidate = async () => {
-    let definition: DeviceType
-    let errorSetter: (e: string) => void
-    let validationSetter: (v: ValidationResult) => void
-
-    if (addTypeMode === "json") {
-      if (!jsonDefinition.trim()) {
-        setJsonError(t('devices:types.add.definitionRequired'))
-        return
-      }
-      try {
-        definition = JSON.parse(jsonDefinition)
-        errorSetter = setJsonError
-        validationSetter = setJsonValidation
-      } catch (e) {
-        setJsonError(t('devices:types.add.jsonError', { error: (e as Error).message }))
-        return
-      }
-    } else {
-      definition = formData
-      errorSetter = () => {}
-      validationSetter = () => {}
-    }
-
-    const result = await onValidate(definition)
-    validationSetter(result)
-    if (!result.valid && result.errors) {
-      errorSetter(result.errors.join("; "))
+  // Navigate to previous step
+  const handlePrevious = () => {
+    const steps: Step[] = ['basic', 'data', 'commands', 'review', 'finish']
+    const currentIndex = steps.indexOf(currentStep)
+    if (currentIndex > 0) {
+      setCurrentStep(steps[currentIndex - 1])
     }
   }
 
-  const handleGenerateMDL = async () => {
-    if (!aiDeviceName.trim()) {
+  // Skip current step (for optional steps)
+  const handleSkip = () => {
+    const steps: Step[] = ['basic', 'data', 'commands', 'review', 'finish']
+    const currentIndex = steps.indexOf(currentStep)
+    if (currentIndex < steps.length - 1) {
+      setCurrentStep(steps[currentIndex + 1])
+    }
+  }
+
+  // Generate metrics from AI
+  const handleGenerateMetrics = async () => {
+    if (!aiMetricsExample.trim()) {
       toast({
         title: t('devices:types.validationError'),
-        description: t('devices:types.add.nameRequired'),
+        description: "Please paste sample data first",
         variant: "destructive",
       })
       return
     }
 
     try {
-      const mdlData = await onGenerateMDL(aiDeviceName, aiDeviceDesc, aiMetricsExample, aiCommandsExample)
-      const parsed = JSON.parse(mdlData)
+      const result = await onGenerateMDL(
+        formData.name || "device",
+        formData.description || "",
+        aiMetricsExample,
+        "" // No commands for metrics generation
+      )
+      const parsed = JSON.parse(result)
 
-      // Convert from backend format (uplink/downlink) to frontend format (flat metrics/commands)
-      const converted: DeviceType = {
-        device_type: parsed.device_type || generateDeviceTypeId(aiDeviceName),
-        name: parsed.name || aiDeviceName,
-        description: parsed.description || aiDeviceDesc,
-        categories: parsed.categories || [],
+      setFormData(prev => ({
+        ...prev,
         metrics: parsed.uplink?.metrics || parsed.metrics || [],
-        commands: parsed.downlink?.commands || parsed.commands || [],
-        metric_count: parsed.uplink?.metrics?.length || parsed.metrics?.length || 0,
-        command_count: parsed.downlink?.commands?.length || parsed.commands?.length || 0,
-      }
-
-      // Fill form with generated data and switch to form mode
-      setFormData(converted)
-      setTouched({ device_type: true, name: true })
-      setAiGenerated(true)
-      setAddTypeMode("form")
+      }))
 
       toast({
         title: t('common:success'),
-        description: (
-          <div className="flex items-center gap-2">
-            <Check className="h-4 w-4 text-green-600" />
-            <span>{t('devices:types.generatedFilled')}</span>
-          </div>
-        ),
+        description: `Generated ${parsed.metrics?.length || 0} metrics`,
       })
     } catch (e) {
       toast({
@@ -316,318 +267,403 @@ export function AddDeviceTypeDialog({
     }
   }
 
-  const loadJsonExample = () => {
-    const example = {
-      device_type: "example_sensor",
-      name: t('devices:types.example.sensor'),
-      description: t('devices:types.example.description'),
-      categories: ["sensor", "example"],
-      metrics: [
-        {
-          name: "temperature",
-          display_name: t('devices:types.example.temperature'),
-          data_type: "float",
-          unit: "°C",
-          min: -40,
-          max: 100,
-        },
-      ],
-      commands: [
-        {
-          name: "set_interval",
-          display_name: t('devices:types.example.setInterval'),
-          payload_template: '{"action":"set_interval","interval":${interval}}',
-          parameters: [
-            {
-              name: "interval",
-              display_name: t('devices:types.example.interval'),
-              data_type: "integer",
-              default_value: { Integer: 60 },
-              min: 10,
-              max: 3600,
-              unit: "s",
-            },
-          ],
-        },
-      ],
+  // Generate commands from AI
+  const handleGenerateCommands = async () => {
+    if (!aiCommandsExample.trim() && !aiCommandDesc.trim()) {
+      toast({
+        title: t('devices:types.validationError'),
+        description: "Please paste sample data or describe the command",
+        variant: "destructive",
+      })
+      return
     }
-    setJsonDefinition(JSON.stringify(example, null, 2))
+
+    try {
+      const result = await onGenerateMDL(
+        formData.name || "device",
+        formData.description || "",
+        "", // No metrics for commands generation
+        aiCommandsExample || JSON.stringify({ description: aiCommandDesc })
+      )
+      const parsed = JSON.parse(result)
+
+      setFormData(prev => ({
+        ...prev,
+        commands: parsed.downlink?.commands || parsed.commands || [],
+      }))
+
+      toast({
+        title: t('common:success'),
+        description: `Generated ${parsed.commands?.length || 0} commands`,
+      })
+    } catch (e) {
+      toast({
+        title: t('devices:types.generate.failed'),
+        description: (e as Error).message,
+        variant: "destructive",
+      })
+    }
   }
+
+  // Final save
+  const handleSave = async () => {
+    const definition: DeviceType = {
+      device_type: formData.device_type!,
+      name: formData.name!,
+      description: formData.description || "",
+      categories: formData.categories || [],
+      mode: formData.mode || "simple",
+      metrics: formData.metrics || [],
+      commands: formData.commands || [],
+      uplink_samples: formData.uplink_samples || [],
+    }
+
+    const success = await onAdd(definition)
+    if (success) {
+      setCurrentStep('finish')
+    }
+  }
+
+  // Step navigation config
+  const steps: { key: Step; label: string; icon: React.ReactNode }[] = [
+    { key: 'basic', label: 'Basic Info', icon: <Settings className="h-4 w-4" /> },
+    { key: 'data', label: 'Data Definition', icon: <ArrowDown className="h-4 w-4" /> },
+    { key: 'commands', label: 'Commands', icon: <FileText className="h-4 w-4" /> },
+    { key: 'review', label: 'Review', icon: <Check className="h-4 w-4" /> },
+    { key: 'finish', label: 'Finish', icon: <Sparkles className="h-4 w-4" /> },
+  ]
+
+  const stepIndex = steps.findIndex(s => s.key === currentStep)
+  const isFirstStep = currentStep === 'basic'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl h-[95vh] max-h-[95vh] flex flex-col p-0">
-        <DialogHeader className="px-6 pt-6 pb-4 border-b">
+      <DialogContent className="max-w-4xl h-[90vh] max-h-[90vh] flex flex-col p-0 overflow-hidden">
+        {/* Header with Steps */}
+        <DialogHeader className="px-6 pt-6 pb-2 border-b space-y-4">
+          <DialogTitle className="text-xl">
+            {isEditMode ? 'Edit Device Type' : t('devices:types.add.title')}
+          </DialogTitle>
+
+          {/* Step Indicator */}
           <div className="flex items-center justify-between">
-            <DialogTitle className="text-xl">{t('devices:types.add.title')}</DialogTitle>
-            {aiGenerated && addTypeMode === "form" && (
-              <Badge variant="default" className="gap-1">
-                <Check className="h-3 w-3" />
-                {t('devices:types.generatedFilled')}
-              </Badge>
-            )}
+            {steps.map((step, index) => {
+              const isCompleted = completedSteps.has(step.key)
+              const isCurrent = step.key === currentStep
+              const isPast = index < stepIndex
+
+              return (
+                <div key={step.key} className="flex items-center gap-2 flex-1">
+                  <div
+                    className={cn(
+                      "w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors shrink-0",
+                      isCompleted && "bg-primary text-primary-foreground",
+                      isCurrent && "bg-primary text-primary-foreground ring-4 ring-primary/20",
+                      !isCompleted && !isCurrent && "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    {isCompleted ? <Check className="h-4 w-4" /> : index + 1}
+                  </div>
+                  <span
+                    className={cn(
+                      "text-xs font-medium whitespace-nowrap overflow-hidden text-ellipsis",
+                      isCurrent ? "text-primary" : "text-muted-foreground"
+                    )}
+                  >
+                    {step.label}
+                  </span>
+                  {index < steps.length - 1 && (
+                    <div
+                      className={cn(
+                        "flex-1 h-0.5 transition-colors",
+                        isPast ? "bg-primary" : "bg-muted"
+                      )}
+                    />
+                  )}
+                </div>
+              )
+            })}
           </div>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-6">
-          <Tabs value={addTypeMode} onValueChange={(v) => setAddTypeMode(v as "form" | "json" | "ai")} className="w-full mt-4">
-            <TabsList className="grid w-full grid-cols-3 h-12">
-              <TabsTrigger value="form" className="flex items-center gap-2 text-base">
-                <Settings className="h-4 w-4" />
-                {t('devices:types.formMode')}
-              </TabsTrigger>
-              <TabsTrigger value="json" className="flex items-center gap-2 text-base">
-                <Code className="h-4 w-4" />
-                {t('devices:types.jsonMode')}
-              </TabsTrigger>
-              <TabsTrigger value="ai" className="flex items-center gap-2 text-base">
-                <Sparkles className="h-4 w-4" />
-                {t('devices:types.aiMode')}
-              </TabsTrigger>
-            </TabsList>
+        {/* Step Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {currentStep === 'basic' && (
+            <BasicInfoStep
+              data={formData}
+              onChange={updateField}
+              errors={formErrors}
+            />
+          )}
 
-            {/* Form Mode */}
-            <TabsContent value="form" className="mt-6 space-y-6">
-              <DeviceTypeForm
-                data={formData}
-                onChange={setFormData}
-                onFieldChange={handleFieldChange}
-                errors={formErrors}
-                touched={touched}
-                setTouched={setTouched}
-              />
-            </TabsContent>
+          {currentStep === 'data' && (
+            <DataDefinitionStep
+              data={formData}
+              onChange={updateField}
+              errors={formErrors}
+              rawSamplesText={rawSamplesText}
+              onRawSamplesChange={setRawSamplesText}
+              onGenerateMetrics={handleGenerateMetrics}
+              aiExample={aiMetricsExample}
+              onAiExampleChange={setAiMetricsExample}
+              generating={generating}
+            />
+          )}
 
-            {/* JSON Mode */}
-            <TabsContent value="json" className="mt-6 space-y-4">
-              <div className="rounded-lg bg-muted/50 p-4 text-sm">
-                <p className="font-medium text-foreground mb-2">
-                  {t('devices:types.advanced.format')}
-                </p>
-                <p className="text-muted-foreground mb-3">{t('devices:types.advanced.supported')}</p>
-                <button
-                  onClick={loadJsonExample}
-                  className="text-primary hover:underline text-sm"
-                >
-                  {t('devices:types.loadExample')}
-                </button>
-              </div>
-              <CodeEditor
-                value={jsonDefinition}
-                onChange={setJsonDefinition}
-                language="json"
-                placeholder={t('devices:types.advanced.placeholder')}
-                className="min-h-[400px] max-h-[500px]"
-                error={jsonError}
-              />
-              <div className="flex items-center gap-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleValidate}
-                  disabled={validating || !jsonDefinition.trim()}
-                >
-                  {t('devices:types.validate.button')}
-                </Button>
-                {jsonValidation && (
-                  <div className={`text-sm flex items-center gap-1 ${jsonValidation.valid ? "text-green-600" : "text-destructive"}`}>
-                    {jsonValidation.valid ? <Check className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
-                    {jsonValidation.message}
-                  </div>
-                )}
-              </div>
-              {jsonValidation?.errors && jsonValidation.errors.length > 0 && (
-                <div className="rounded-lg bg-destructive/10 p-3 text-sm">
-                  <p className="font-medium text-destructive mb-2">{t('devices:types.errors')}</p>
-                  <ul className="list-disc list-inside space-y-1 text-destructive">
-                    {jsonValidation.errors.map((err, i) => <li key={i}>{err}</li>)}
-                  </ul>
-                </div>
-              )}
-              {jsonValidation?.warnings && jsonValidation.warnings.length > 0 && (
-                <div className="rounded-lg bg-muted p-3 text-sm">
-                  <p className="font-medium mb-2">{t('devices:types.warnings')}</p>
-                  <ul className="list-disc list-inside space-y-1 text-muted-foreground">
-                    {jsonValidation.warnings.map((warn, i) => <li key={i}>{warn}</li>)}
-                  </ul>
-                </div>
-              )}
-            </TabsContent>
+          {currentStep === 'commands' && (
+            <CommandsStep
+              data={formData}
+              onChange={setFormData}
+              errors={formErrors}
+              onGenerateCommands={handleGenerateCommands}
+              aiExample={aiCommandsExample}
+              onAiExampleChange={setAiCommandsExample}
+              aiDesc={aiCommandDesc}
+              onAiDescChange={setAiCommandDesc}
+              generating={generating}
+            />
+          )}
 
-            {/* AI Mode - Optimized Layout */}
-            <TabsContent value="ai" className="mt-6 space-y-6">
-              <div className="rounded-lg bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-950/30 dark:to-blue-950/30 p-6 border border-purple-100 dark:border-purple-900">
-                <div className="flex items-start gap-3">
-                  <div className="p-2 bg-gradient-to-br from-purple-500 to-blue-500 rounded-lg">
-                    <Wand2 className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-foreground mb-1">{t('devices:types.smart.title')}</p>
-                    <p className="text-sm text-muted-foreground">{t('devices:types.smart.description')}</p>
-                  </div>
-                </div>
-              </div>
+          {currentStep === 'review' && (
+            <ReviewStep
+              data={formData as DeviceType}
+              onEdit={(step) => setCurrentStep(step)}
+              onValidate={async () => {
+                const result = await onValidate(formData as DeviceType)
+                setValidationResult(result)
+                return result
+              }}
+              validating={validating}
+              validationResult={validationResult}
+            />
+          )}
 
-              {/* Device Name - Full Width */}
-              <div className="space-y-2">
-                <Label htmlFor="ai-device-name" className="text-base font-medium">
-                  {t('devices:types.smart.nameRequired')} <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="ai-device-name"
-                  value={aiDeviceName}
-                  onChange={(e) => setAiDeviceName(e.target.value)}
-                  placeholder={t('devices:types.smart.nameExample')}
-                  className="h-11 text-base"
-                />
-                {aiDeviceName && (
-                  <p className="text-sm text-muted-foreground">
-                    <span className="font-medium">{t('devices:types.add.typeId')}:</span>{" "}
-                    <code className="px-2 py-0.5 bg-muted rounded text-xs">{generateDeviceTypeId(aiDeviceName)}</code>
-                  </p>
-                )}
-              </div>
-
-              {/* Description */}
-              <div className="space-y-2">
-                <Label htmlFor="ai-device-desc" className="text-base font-medium">{t('devices:types.smart.description')}</Label>
-                <Textarea
-                  id="ai-device-desc"
-                  value={aiDeviceDesc}
-                  onChange={(e) => setAiDeviceDesc(e.target.value)}
-                  placeholder={t('devices:types.smart.descExample')}
-                  rows={2}
-                  className="text-base resize-none"
-                />
-              </div>
-
-              {/* Metrics and Commands - Side by Side */}
-              <div className="grid grid-cols-2 gap-6">
-                {/* Metrics Example */}
-                <div className="space-y-3">
-                  <Label className="flex items-center gap-2 text-base font-medium">
-                    <div className="p-1.5 bg-green-100 dark:bg-green-900/30 rounded-md">
-                      <ArrowDown className="h-4 w-4 text-green-600 dark:text-green-400" />
-                    </div>
-                    {t('devices:types.smart.metrics')}
-                  </Label>
-                  <Textarea
-                    value={aiMetricsExample}
-                    onChange={(e) => setAiMetricsExample(e.target.value)}
-                    placeholder='{"temperature": 25.5, "humidity": 60, "battery": 85}'
-                    rows={6}
-                    className="font-mono text-sm bg-green-50/50 dark:bg-green-950/20 border-green-200 dark:border-green-900"
-                  />
-                  <p className="text-xs text-muted-foreground">{t('devices:types.smart.metricsHint')}</p>
-                </div>
-
-                {/* Commands Example */}
-                <div className="space-y-3">
-                  <Label className="flex items-center gap-2 text-base font-medium">
-                    <div className="p-1.5 bg-blue-100 dark:bg-blue-900/30 rounded-md">
-                      <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                    </div>
-                    {t('devices:types.smart.commands')}
-                  </Label>
-                  <Textarea
-                    value={aiCommandsExample}
-                    onChange={(e) => setAiCommandsExample(e.target.value)}
-                    placeholder='{"action": "set_interval", "interval": 60}'
-                    rows={6}
-                    className="font-mono text-sm bg-blue-50/50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-900"
-                  />
-                  <p className="text-xs text-muted-foreground">{t('devices:types.smart.commandsHint')}</p>
-                </div>
-              </div>
-
-              {/* Generate Button */}
-              <Button
-                onClick={handleGenerateMDL}
-                disabled={!aiDeviceName || generating}
-                className="w-full h-12 text-base"
-                size="lg"
-              >
-                {generating ? (
-                  <>
-                    <Sparkles className="mr-2 h-5 w-5 animate-spin" />
-                    {t('devices:types.generating')}
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="mr-2 h-5 w-5" />
-                    {t('devices:types.generate.title')}
-                  </>
-                )}
-              </Button>
-            </TabsContent>
-          </Tabs>
+          {currentStep === 'finish' && (
+            <FinishStep
+              deviceType={formData.device_type || ""}
+              onOpenChange={onOpenChange}
+              isEditMode={isEditMode}
+            />
+          )}
         </div>
 
-        <DialogFooter className="px-6 pb-6 pt-4 border-t">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={adding} className="h-10 px-6">
-            {t('common:cancel')}
-          </Button>
-          <Button onClick={handleAdd} disabled={adding || (addTypeMode === "form" && !isFormValid())} className="h-10 px-6">
-            {adding ? t('devices:types.adding') : t('common:add')}
-          </Button>
-        </DialogFooter>
+        {/* Footer Navigation */}
+        {currentStep !== 'finish' && (
+          <DialogFooter className="px-6 pb-6 pt-4 border-t gap-2">
+            {!isFirstStep && (
+              <Button variant="outline" onClick={handlePrevious}>
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                {t('common:previous')}
+              </Button>
+            )}
+
+            <div className="flex-1" />
+
+            {/* Skip button for optional steps */}
+            {(currentStep === 'data' || currentStep === 'commands') && (
+              <Button variant="ghost" onClick={handleSkip}>
+                Skip this step
+              </Button>
+            )}
+
+            {currentStep === 'review' ? (
+              <>
+                <Button variant="outline" onClick={handleSave} disabled={adding}>
+                  {adding ? (isEditMode ? 'Saving...' : t('devices:types.adding')) : (isEditMode ? 'Save Changes' : t('common:save'))}
+                </Button>
+              </>
+            ) : (
+              <Button onClick={handleNext}>
+                {t('common:next')}
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            )}
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   )
 }
 
 // ============================================================================
-// Device Type Form Component (reusable for Add/Edit)
+// STEP 1: Basic Info
 // ============================================================================
 
-interface DeviceTypeFormProps {
-  data: DeviceType
-  onChange: (data: DeviceType) => void
-  onFieldChange?: <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => void
-  errors?: FormErrors
-  touched?: Record<string, boolean>
-  setTouched?: (touched: Record<string, boolean>) => void
-  readonly?: boolean
+interface BasicInfoStepProps {
+  data: Partial<DeviceType>
+  onChange: <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => void
+  errors: FormErrors
 }
 
-function DeviceTypeForm({
+function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
+  const [categoryInput, setCategoryInput] = useState("")
+  const [nameInput, setNameInput] = useState(data.name || "")
+
+  // Sync nameInput with data.name when it changes (e.g., when switching to edit mode)
+  useEffect(() => {
+    setNameInput(data.name || "")
+  }, [data.name])
+
+  const addCategory = () => {
+    const cat = categoryInput.trim()
+    if (cat && !data.categories?.includes(cat)) {
+      onChange('categories', [...(data.categories || []), cat])
+      setCategoryInput("")
+    }
+  }
+
+  const removeCategory = (cat: string) => {
+    onChange('categories', (data.categories || []).filter(c => c !== cat))
+  }
+
+  // Generate type ID from name
+  const generateTypeId = (name: string): string => {
+    return name.toLowerCase()
+      .replace(/\s+/g, "_")
+      .replace(/[^a-z0-9_]/g, "")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "")
+  }
+
+  // Only auto-generate on blur (when user finishes typing)
+  const handleNameBlur = () => {
+    if (!data.device_type && nameInput.trim()) {
+      onChange('device_type', generateTypeId(nameInput))
+    }
+  }
+
+  const handleNameChange = (value: string) => {
+    setNameInput(value)
+    onChange('name', value)
+  }
+
+  return (
+    <div className="space-y-6 max-w-2xl mx-auto py-4">
+      <div className="text-center mb-6">
+        <h3 className="text-lg font-semibold">Basic Information</h3>
+        <p className="text-sm text-muted-foreground">Enter the basic information for your device type</p>
+      </div>
+
+      {/* Device Type (name) */}
+      <div className="space-y-2">
+        <Label htmlFor="device-type-name" className="text-sm font-medium">
+          Device Type <span className="text-destructive">*</span>
+        </Label>
+        <Input
+          id="device-type-name"
+          value={nameInput}
+          onChange={(e) => handleNameChange(e.target.value)}
+          onBlur={handleNameBlur}
+          placeholder="e.g., Smart Temperature Sensor"
+          className={cn(errors.name && "border-destructive")}
+        />
+        {errors.name && (
+          <p className="text-xs text-destructive flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" />
+            {errors.name}
+          </p>
+        )}
+      </div>
+
+      {/* Type ID (auto-generated from Device Type) */}
+      <div className="space-y-2">
+        <Label htmlFor="type-id" className="text-sm font-medium">
+          Type ID <span className="text-destructive">*</span>
+        </Label>
+        <Input
+          id="type-id"
+          value={data.device_type || ""}
+          onChange={(e) => onChange('device_type', e.target.value)}
+          placeholder="smart_temp_sensor"
+          className={cn("font-mono", errors.device_type && "border-destructive")}
+        />
+        <p className="text-xs text-muted-foreground">
+          Auto-generated from Device Type after you finish typing
+        </p>
+        {errors.device_type && (
+          <p className="text-xs text-destructive flex items-center gap-1">
+            <AlertCircle className="h-3 w-3" />
+            {errors.device_type}
+          </p>
+        )}
+      </div>
+
+      {/* Description */}
+      <div className="space-y-2">
+        <Label htmlFor="description" className="text-sm font-medium">Description</Label>
+        <Textarea
+          id="description"
+          value={data.description || ""}
+          onChange={(e) => onChange('description', e.target.value)}
+          placeholder="Describe what this device type does..."
+          rows={3}
+          className="resize-none"
+        />
+      </div>
+
+      {/* Categories */}
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Categories</Label>
+        <div className="flex gap-2 flex-wrap">
+          {data.categories?.map((cat, i) => (
+            <Badge key={i} variant="secondary" className="pl-2 pr-1 h-7">
+              {cat}
+              <button
+                onClick={() => removeCategory(cat)}
+                className="ml-1 hover:text-destructive"
+              >
+                ×
+              </button>
+            </Badge>
+          ))}
+          <div className="flex gap-1">
+            <Input
+              placeholder="+ Add category"
+              value={categoryInput}
+              onChange={(e) => setCategoryInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory())}
+              className="h-7 w-32 text-xs"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ============================================================================
+// STEP 2: Data Definition
+// ============================================================================
+
+interface DataDefinitionStepProps {
+  data: Partial<DeviceType>
+  onChange: <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => void
+  errors: FormErrors
+  rawSamplesText: string
+  onRawSamplesChange: (value: string) => void
+  onGenerateMetrics: () => void
+  aiExample: string
+  onAiExampleChange: (value: string) => void
+  generating: boolean
+}
+
+function DataDefinitionStep({
   data,
   onChange,
-  onFieldChange,
-  errors = {},
-  touched = {},
-  setTouched,
-  readonly = false
-}: DeviceTypeFormProps) {
-  const { t } = useTranslation(['common', 'devices'])
+  errors,
+  rawSamplesText,
+  onRawSamplesChange,
+  onGenerateMetrics,
+  aiExample,
+  onAiExampleChange,
+  generating,
+}: DataDefinitionStepProps) {
+  const isRawMode = data.mode === 'simple'
 
-  // Local state for raw samples text (to allow typing incomplete JSON)
-  const [rawSamplesText, setRawSamplesText] = useState<string>(
-    (data.uplink_samples || []).map(s => JSON.stringify(s)).join('\n')
-  )
-
-  // Sync local state when data.uplink_samples changes from outside
-  useEffect(() => {
-    setRawSamplesText((data.uplink_samples || []).map(s => JSON.stringify(s)).join('\n'))
-  }, [data.uplink_samples])
-
-  const updateField = <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => {
-    if (onFieldChange) {
-      onFieldChange(field, value)
-    } else {
-      onChange({ ...data, [field]: value })
-    }
-  }
-
-  const markTouched = (field: string) => {
-    if (setTouched && !readonly) {
-      setTouched({ ...touched, [field]: true })
-    }
-  }
-
+  // Add metric
   const addMetric = () => {
     const metrics = data.metrics || []
-    updateField('metrics', [
+    onChange('metrics', [
       ...metrics,
       {
         name: `metric_${metrics.length + 1}`,
@@ -637,324 +673,356 @@ function DeviceTypeForm({
     ])
   }
 
+  // Update metric
   const updateMetric = (index: number, metric: MetricDefinition) => {
     const metrics = data.metrics || []
     const newMetrics = [...metrics]
     newMetrics[index] = metric
-    updateField('metrics', newMetrics)
+    onChange('metrics', newMetrics)
   }
 
+  // Remove metric
   const removeMetric = (index: number) => {
     const metrics = data.metrics || []
-    updateField('metrics', metrics.filter((_, i) => i !== index))
+    onChange('metrics', metrics.filter((_, i) => i !== index))
   }
 
+  // Parse raw samples
+  const parseRawSamples = () => {
+    const lines = rawSamplesText.trim().split('\n').filter(l => l.trim())
+    const samples: Record<string, unknown>[] = []
+    for (const line of lines) {
+      try {
+        samples.push(JSON.parse(line))
+      } catch {
+        // Skip invalid JSON
+      }
+    }
+    onChange('uplink_samples', samples)
+  }
+
+  return (
+    <div className="space-y-6 py-4">
+      <div className="text-center mb-6">
+        <h3 className="text-lg font-semibold">Data Definition (Uplink)</h3>
+        <p className="text-sm text-muted-foreground">Define how device data is parsed and stored</p>
+      </div>
+
+      {/* Mode Selection */}
+      <div className="flex justify-center gap-4">
+        <button
+          onClick={() => onChange('mode', 'full')}
+          className={cn(
+            "flex-1 max-w-xs p-4 rounded-lg border-2 transition-all text-left",
+            !isRawMode
+              ? "border-primary bg-primary/5"
+              : "border-muted hover:border-muted-foreground/30"
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "p-2 rounded-lg",
+              !isRawMode ? "bg-primary text-primary-foreground" : "bg-muted"
+            )}>
+              <Settings className="h-5 w-5" />
+            </div>
+            <div>
+              <p className={cn("font-medium", !isRawMode ? "text-foreground" : "text-muted-foreground")}>
+                Define Metrics
+              </p>
+              <p className="text-xs text-muted-foreground">Parse & store each field</p>
+            </div>
+          </div>
+        </button>
+
+        <button
+          onClick={() => onChange('mode', 'simple')}
+          className={cn(
+            "flex-1 max-w-xs p-4 rounded-lg border-2 transition-all text-left",
+            isRawMode
+              ? "border-primary bg-primary/5"
+              : "border-muted hover:border-muted-foreground/30"
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <div className={cn(
+              "p-2 rounded-lg",
+              isRawMode ? "bg-primary text-primary-foreground" : "bg-muted"
+            )}>
+              <Zap className="h-5 w-5" />
+            </div>
+            <div>
+              <p className={cn("font-medium", isRawMode ? "text-foreground" : "text-muted-foreground")}>
+                Raw Data Mode
+              </p>
+              <p className="text-xs text-muted-foreground">Store payload as-is</p>
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Define Metrics Mode */}
+      {!isRawMode && (
+        <div className="flex flex-col h-full space-y-4">
+          {/* Toolbar: AI Generate */}
+          <div className="flex flex-wrap items-center gap-3 p-4 rounded-lg border bg-muted/30">
+            <div className="flex items-center gap-2 text-sm shrink-0">
+              <Sparkles className="h-4 w-4 text-purple-500" />
+              <span className="font-medium">AI Generate:</span>
+            </div>
+            <Textarea
+              value={aiExample}
+              onChange={(e) => onAiExampleChange(e.target.value)}
+              placeholder='{"temperature": 25.5, "humidity": 60}'
+              rows={2}
+              className="flex-1 min-w-[200px] font-mono text-sm h-auto max-h-20"
+            />
+            <Button
+              onClick={onGenerateMetrics}
+              disabled={!aiExample.trim() || generating}
+              variant="secondary"
+              size="sm"
+              className="shrink-0"
+            >
+              {generating ? (
+                <>
+                  <Sparkles className="mr-2 h-4 w-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Wand2 className="mr-2 h-4 w-4" />
+                  Generate
+                </>
+              )}
+            </Button>
+          </div>
+
+          {/* Manual Entry List */}
+          <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-medium">Metrics ({data.metrics?.length || 0})</h4>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" className="gap-1 h-8">
+                  <Code className="h-3 w-3" />
+                  Import from JSON
+                </Button>
+                <Button onClick={addMetric} size="sm" variant="outline" className="h-8">
+                  <Plus className="mr-1 h-3 w-3" />
+                  Add Metric
+                </Button>
+              </div>
+            </div>
+
+            {(!data.metrics || data.metrics.length === 0) ? (
+              <div className="flex-1 flex items-center justify-center border-2 border-dashed rounded-lg bg-muted/20">
+                <div className="text-center py-12">
+                  <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">No metrics defined</p>
+                  <p className="text-xs text-muted-foreground mt-1">Use AI Generate above or add metrics manually</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {data.metrics.map((metric, i) => (
+                  <MetricEditorCompact
+                    key={i}
+                    metric={metric}
+                    onChange={(m) => updateMetric(i, m)}
+                    onRemove={() => removeMetric(i)}
+                    error={errors.metrics?.[i]}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Raw Data Mode */}
+      {isRawMode && (
+        <div className="max-w-2xl mx-auto space-y-4">
+          <div className="rounded-lg border bg-muted/30 p-6 text-center">
+            <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+              <Zap className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <h4 className="font-medium mb-2">Raw Data Mode</h4>
+            <p className="text-sm text-muted-foreground mb-4">
+              Payloads will be stored as-is without parsing. You can view raw data in device details.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">
+              Sample Data for AI Reference (Optional)
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              This sample data helps the AI understand your payload structure when generating metrics or commands
+            </p>
+            <Textarea
+              value={rawSamplesText}
+              onChange={(e) => onRawSamplesChange(e.target.value)}
+              onBlur={parseRawSamples}
+              placeholder='{"temperature": 25.5, "humidity": 60, "battery": 85}\n{"temperature": 26.2, "humidity": 58, "battery": 82}'
+              rows={6}
+              className="font-mono text-sm"
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================================
+// STEP 3: Commands
+// ============================================================================
+
+interface CommandsStepProps {
+  data: Partial<DeviceType>
+  onChange: (data: Partial<DeviceType>) => void
+  errors: FormErrors
+  onGenerateCommands: () => void
+  aiExample: string
+  onAiExampleChange: (value: string) => void
+  aiDesc: string
+  onAiDescChange: (value: string) => void
+  generating: boolean
+}
+
+function CommandsStep({
+  data,
+  onChange,
+  errors,
+  onGenerateCommands,
+  aiExample,
+  onAiExampleChange,
+  aiDesc,
+  onAiDescChange,
+  generating,
+}: CommandsStepProps) {
+  // Add command
   const addCommand = () => {
     const commands = data.commands || []
-    updateField('commands', [
-      ...commands,
-      {
-        name: `cmd_${commands.length + 1}`,
-        display_name: `Command ${commands.length + 1}`,
-        payload_template: '{"action": "${value}"}',
-        parameters: [],
-      },
-    ])
+    onChange({
+      ...data,
+      commands: [
+        ...commands,
+        {
+          name: `cmd_${commands.length + 1}`,
+          display_name: `Command ${commands.length + 1}`,
+          payload_template: '{"action": "${value}"}',
+          parameters: [],
+        },
+      ],
+    })
   }
 
+  // Update command
   const updateCommand = (index: number, command: CommandDefinition) => {
     const commands = data.commands || []
     const newCommands = [...commands]
     newCommands[index] = command
-    updateField('commands', newCommands)
+    onChange({ ...data, commands: newCommands })
   }
 
+  // Remove command
   const removeCommand = (index: number) => {
     const commands = data.commands || []
-    updateField('commands', commands.filter((_, i) => i !== index))
-  }
-
-  const hasFieldError = (field: string) => {
-    return touched[field] && errors[field]
+    onChange({ ...data, commands: commands.filter((_, i) => i !== index) })
   }
 
   return (
-    <div className="space-y-8">
-      {/* Basic Info */}
-      <div className="space-y-4">
-        <h3 className="text-base font-semibold flex items-center gap-2">
-          <span className="w-1 h-5 bg-primary rounded-full"></span>
-          {t('devices:types.view.basicInfo')}
-        </h3>
-
-        <div className="grid grid-cols-2 gap-5">
-          <div className="space-y-2">
-            <Label htmlFor="type-id" className="text-sm font-medium">
-              {t('devices:types.view.typeId')} <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="type-id"
-              value={data.device_type}
-              onChange={(e) => { markTouched('device_type'); updateField('device_type', e.target.value) }}
-              placeholder="sensor_temp_humidity"
-              disabled={readonly}
-              className={cn(
-                "h-10 font-mono",
-                hasFieldError('device_type') && "border-destructive focus:border-destructive"
-              )}
-            />
-            {hasFieldError('device_type') && (
-              <p className="text-xs text-destructive flex items-center gap-1">
-                <AlertCircle className="h-3 w-3" />
-                {errors.device_type}
-              </p>
-            )}
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="type-name" className="text-sm font-medium">
-              {t('devices:types.view.name')} <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="type-name"
-              value={data.name}
-              onChange={(e) => { markTouched('name'); updateField('name', e.target.value) }}
-              placeholder={t('devices:types.edit.typeNamePlaceholder')}
-              disabled={readonly}
-              className={cn(
-                "h-10",
-                hasFieldError('name') && "border-destructive focus:border-destructive"
-              )}
-            />
-            {hasFieldError('name') && (
-              <p className="text-xs text-destructive flex items-center gap-1">
-                <AlertCircle className="h-3 w-3" />
-                {errors.name}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="type-desc" className="text-sm font-medium">{t('devices:types.view.description')}</Label>
-          <Textarea
-            id="type-desc"
-            value={data.description}
-            onChange={(e) => updateField('description', e.target.value)}
-            placeholder={t('devices:types.edit.descPlaceholder')}
-            rows={2}
-            disabled={readonly}
-            className="resize-none"
-          />
-        </div>
-
-        {/* Mode Selection */}
-        {!readonly && (
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('devices:types.edit.definitionMode')}</Label>
-            <div className="flex gap-4">
-              <label className={cn(
-                "flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all",
-                data.mode !== 'simple'
-                  ? "border-primary/50 bg-primary/5"
-                  : "border-muted hover:border-muted-foreground/30"
-              )}>
-                <input
-                  type="radio"
-                  name="definition-mode"
-                  checked={data.mode !== 'simple'}
-                  onChange={() => updateField('mode', 'full')}
-                  className="sr-only"
-                />
-                <Settings className={cn("h-4 w-4", data.mode !== 'simple' ? "text-primary" : "text-muted-foreground")} />
-                <div className="text-sm">
-                  <p className={cn("font-medium", data.mode !== 'simple' ? "text-foreground" : "text-muted-foreground")}>
-                    {t('devices:types.mode.full')}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{t('devices:types.mode.fullDescription')}</p>
-                </div>
-              </label>
-              <label className={cn(
-                "flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 cursor-pointer transition-all",
-                data.mode === 'simple'
-                  ? "border-primary/50 bg-primary/5"
-                  : "border-muted hover:border-muted-foreground/30"
-              )}>
-                <input
-                  type="radio"
-                  name="definition-mode"
-                  checked={data.mode === 'simple'}
-                  onChange={() => updateField('mode', 'simple')}
-                  className="sr-only"
-                />
-                <Zap className={cn("h-4 w-4", data.mode === 'simple' ? "text-primary" : "text-muted-foreground")} />
-                <div className="text-sm">
-                  <p className={cn("font-medium", data.mode === 'simple' ? "text-foreground" : "text-muted-foreground")}>
-                    {t('devices:types.mode.simple')}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{t('devices:types.mode.simpleDescription')}</p>
-                </div>
-              </label>
-            </div>
-          </div>
-        )}
-
-        {/* Mode Display (readonly) */}
-        {readonly && (
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">{t('devices:types.edit.definitionMode')}</Label>
-            <div className="flex items-center gap-2">
-              {data.mode === 'simple' ? (
-                <>
-                  <Zap className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-medium">{t('devices:types.mode.simple')}</span>
-                  <span className="text-xs text-muted-foreground">- {t('devices:types.mode.simpleDescription')}</span>
-                </>
-              ) : (
-                <>
-                  <Settings className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-medium">{t('devices:types.mode.full')}</span>
-                  <span className="text-xs text-muted-foreground">- {t('devices:types.mode.fullDescription')}</span>
-                </>
-              )}
-            </div>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <Label className="text-sm font-medium">{t('devices:types.view.categories')}</Label>
-          <div className="flex gap-2 flex-wrap">
-            {data.categories?.map((cat, i) => (
-              <Badge key={i} variant="secondary" className="pl-2 pr-1 h-7">
-                {cat}
-                {!readonly && (
-                  <button
-                    onClick={() => {
-                      updateField('categories', data.categories.filter((_, j) => j !== i))
-                    }}
-                    className="ml-1 hover:text-destructive"
-                  >
-                    ×
-                  </button>
-                )}
-              </Badge>
-            ))}
-            {!readonly && (
-              <Input
-                placeholder="+ Add category"
-                className="h-7 w-36 text-xs"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                    updateField('categories', [...data.categories, e.currentTarget.value.trim()])
-                    e.currentTarget.value = ''
-                  }
-                }}
-              />
-            )}
-          </div>
-        </div>
+    <div className="space-y-6 py-4">
+      <div className="text-center mb-2">
+        <h3 className="text-lg font-semibold">Commands (Downlink)</h3>
+        <p className="text-sm text-muted-foreground">Define commands that can be sent to the device</p>
       </div>
 
-      {/* Metrics Section - different content based on mode */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold flex items-center gap-2">
-            <span className="w-1 h-5 bg-green-500 rounded-full"></span>
-            {data.mode === 'simple'
-              ? t('devices:types.edit.uplinkSamples')
-              : `${t('devices:types.view.metrics')} (${(data.metrics || []).length})`
-            }
-          </h3>
-          {!readonly && data.mode !== 'simple' && (
-            <Button onClick={addMetric} size="sm" variant="outline" className="h-9">
-              <Plus className="mr-2 h-4 w-4" />
-              {t('devices:types.edit.addMetric')}
-            </Button>
-          )}
+      {/* AI Generate Toolbar */}
+      <div className="flex flex-wrap items-center gap-3 p-4 rounded-lg border bg-muted/30">
+        <div className="flex items-center gap-2 text-sm shrink-0">
+          <Sparkles className="h-4 w-4 text-purple-500" />
+          <span className="font-medium">AI Generate:</span>
         </div>
 
-        {/* Simple Mode: Show samples textarea */}
-        {data.mode === 'simple' && (
-          <div className="rounded-lg border p-4 space-y-3 bg-muted/30">
-            <p className="text-sm text-muted-foreground">
-              {t('devices:types.edit.samplesDescription')}
-            </p>
-            <Textarea
-              value={rawSamplesText}
-              onChange={(e) => setRawSamplesText(e.target.value)}
-              onBlur={() => {
-                const lines = rawSamplesText.trim().split('\n').filter(l => l.trim())
-                const samples: Record<string, unknown>[] = []
-                for (const line of lines) {
-                  try {
-                    samples.push(JSON.parse(line))
-                  } catch {
-                    // Skip invalid JSON lines
-                  }
-                }
-                updateField('uplink_samples', samples)
-              }}
-              placeholder='{"temperature": 25.5, "humidity": 60}\n{"battery": 85}'
-              rows={6}
-              className="font-mono text-sm resize-y"
-              disabled={readonly}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t('devices:types.edit.samplesHint')}
-            </p>
-          </div>
-        )}
+        <Textarea
+          value={aiExample}
+          onChange={(e) => onAiExampleChange(e.target.value)}
+          placeholder='{"action": "set_interval", "interval": 60}'
+          rows={2}
+          className="flex-1 min-w-[200px] font-mono text-sm h-auto max-h-20"
+        />
 
-        {/* Full Mode: Show metrics list */}
-        {data.mode !== 'simple' && (data.metrics || []).length === 0 ? (
-          <div className="text-center py-8 border-2 border-dashed rounded-lg">
-            <p className="text-sm text-muted-foreground">{t('devices:types.edit.noMetrics')}</p>
-            <p className="text-xs text-muted-foreground mt-1">Click "Add Metric" to create your first metric</p>
-          </div>
-        ) : data.mode !== 'simple' ? (
-          <div className="space-y-3">
-            {(data.metrics || []).map((metric, i) => (
-              <MetricEditor
-                key={i}
-                metric={metric}
-                onChange={(m) => updateMetric(i, m)}
-                onRemove={() => removeMetric(i)}
-                readonly={readonly}
-                error={errors.metrics?.[i]}
-              />
-            ))}
-          </div>
-        ) : null}
+        <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
+          <div className="h-px w-8 bg-muted" />
+          <span>OR</span>
+          <div className="h-px w-8 bg-muted" />
+        </div>
+
+        <Textarea
+          value={aiDesc}
+          onChange={(e) => onAiDescChange(e.target.value)}
+          placeholder="Describe the command..."
+          rows={2}
+          className="flex-1 min-w-[200px] text-sm h-auto max-h-20"
+        />
+
+        <Button
+          onClick={onGenerateCommands}
+          disabled={(!aiExample.trim() && !aiDesc.trim()) || generating}
+          variant="secondary"
+          size="sm"
+          className="shrink-0"
+        >
+          {generating ? (
+            <>
+              <Sparkles className="mr-2 h-4 w-4 animate-spin" />
+              Generating...
+            </>
+          ) : (
+            <>
+              <Wand2 className="mr-2 h-4 w-4" />
+              Generate
+            </>
+          )}
+        </Button>
+
+        <Button variant="outline" size="sm" className="shrink-0">
+          <Code className="mr-1 h-3 w-3" />
+          Import JSON
+        </Button>
       </div>
 
-      {/* Commands */}
+      {/* Manual Entry List */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-semibold flex items-center gap-2">
-            <span className="w-1 h-5 bg-blue-500 rounded-full"></span>
-            {t('devices:types.view.commands')} ({(data.commands || []).length})
-          </h3>
-          {!readonly && (
-            <Button onClick={addCommand} size="sm" variant="outline" className="h-9">
-              <Plus className="mr-2 h-4 w-4" />
-              {t('devices:types.edit.addCommand')}
-            </Button>
-          )}
+          <h4 className="text-sm font-medium flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Commands ({data.commands?.length || 0})
+          </h4>
+          <Button onClick={addCommand} size="sm" variant="outline" className="h-8">
+            <Plus className="mr-1 h-3 w-3" />
+            Add Command
+          </Button>
         </div>
 
-        {(data.commands || []).length === 0 ? (
-          <div className="text-center py-8 border-2 border-dashed rounded-lg">
-            <p className="text-sm text-muted-foreground">{t('devices:types.edit.noCommands')}</p>
-            <p className="text-xs text-muted-foreground mt-1">Click "Add Command" to create your first command</p>
+        {(!data.commands || data.commands.length === 0) ? (
+          <div className="text-center py-12 border-2 border-dashed rounded-lg bg-muted/20">
+            <FileText className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
+            <p className="text-sm text-muted-foreground">No commands defined</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Use AI Generate above or add commands manually
+            </p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {(data.commands || []).map((cmd, i) => (
-              <CommandEditor
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {data.commands.map((cmd, i) => (
+              <CommandEditorCompact
                 key={i}
                 command={cmd}
                 onChange={(c) => updateCommand(i, c)}
                 onRemove={() => removeCommand(i)}
-                readonly={readonly}
                 error={errors.commands?.[i]}
               />
             ))}
@@ -966,459 +1034,331 @@ function DeviceTypeForm({
 }
 
 // ============================================================================
-// Metric Editor Component
+// STEP 4: Review
 // ============================================================================
 
-interface MetricEditorProps {
+interface ReviewStepProps {
+  data: DeviceType
+  onEdit: (step: Step) => void
+  onValidate: () => Promise<ValidationResult>
+  validating: boolean
+  validationResult: ValidationResult | null
+}
+
+function ReviewStep({ data, onEdit, onValidate, validating, validationResult }: ReviewStepProps) {
+  const handleValidate = async () => {
+    await onValidate()
+  }
+
+  return (
+    <div className="space-y-6 max-w-3xl mx-auto py-4">
+      <div className="text-center mb-6">
+        <h3 className="text-lg font-semibold">Review & Confirm</h3>
+        <p className="text-sm text-muted-foreground">Review your device type before saving</p>
+      </div>
+
+      {/* Summary Cards */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold text-primary">{data.metrics?.length || 0}</div>
+          <div className="text-xs text-muted-foreground">Metrics</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold text-blue-500">{data.commands?.length || 0}</div>
+          <div className="text-xs text-muted-foreground">Commands</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold text-green-500">
+            {data.mode === 'simple' ? 'Raw' : 'Full'}
+          </div>
+          <div className="text-xs text-muted-foreground">Mode</div>
+        </div>
+      </div>
+
+      {/* Basic Info */}
+      <div className="rounded-lg border bg-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="font-medium flex items-center gap-2">
+            <Settings className="h-4 w-4" />
+            Basic Info
+          </h4>
+          <Button variant="ghost" size="sm" onClick={() => onEdit('basic')}>
+            Edit
+          </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <span className="text-muted-foreground">Name:</span>
+            <span className="ml-2 font-medium">{data.name}</span>
+          </div>
+          <div>
+            <span className="text-muted-foreground">Type ID:</span>
+            <span className="ml-2 font-mono">{data.device_type}</span>
+          </div>
+          <div className="col-span-2">
+            <span className="text-muted-foreground">Description:</span>
+            <span className="ml-2">{data.description || '-'}</span>
+          </div>
+          <div className="col-span-2">
+            <span className="text-muted-foreground">Categories:</span>
+            <div className="ml-2 inline-flex gap-1">
+              {data.categories.length > 0 ? (
+                data.categories.map((cat, i) => (
+                  <Badge key={i} variant="secondary">{cat}</Badge>
+                ))
+              ) : (
+                <span className="text-muted-foreground">-</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Metrics */}
+      <div className="rounded-lg border bg-card p-4">
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="font-medium flex items-center gap-2">
+            <ArrowDown className="h-4 w-4 text-green-500" />
+            Metrics ({data.metrics?.length || 0})
+          </h4>
+          <Button variant="ghost" size="sm" onClick={() => onEdit('data')}>
+            Edit
+          </Button>
+        </div>
+        {(!data.metrics || data.metrics.length === 0) ? (
+          <p className="text-sm text-muted-foreground">
+            {data.mode === 'simple' ? 'Raw Data Mode - no metrics defined' : 'No metrics defined'}
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {data.metrics.map((metric, i) => (
+              <div key={i} className="p-3 bg-muted/50 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-mono text-sm">{metric.name}</span>
+                    <span className="text-muted-foreground mx-2">•</span>
+                    <span className="text-sm">{metric.display_name}</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs">{metric.data_type}</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Commands */}
+      <div className="rounded-lg border bg-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="font-medium flex items-center gap-2">
+            <FileText className="h-4 w-4 text-blue-500" />
+            Commands ({data.commands?.length || 0})
+          </h4>
+          <Button variant="ghost" size="sm" onClick={() => onEdit('commands')}>
+            Edit
+          </Button>
+        </div>
+        {(!data.commands || data.commands.length === 0) ? (
+          <p className="text-sm text-muted-foreground">No commands defined</p>
+        ) : (
+          <div className="space-y-2">
+            {data.commands.map((cmd, i) => (
+              <div key={i} className="text-sm p-2 bg-muted/50 rounded flex items-center justify-between">
+                <div>
+                  <span className="font-mono">{cmd.name}</span>
+                  <span className="text-muted-foreground mx-2">•</span>
+                  <span>{cmd.display_name}</span>
+                </div>
+                <Badge variant="secondary" className="text-xs">
+                  {cmd.parameters.length} params
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Validation */}
+      <div className="rounded-lg border bg-card p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="font-medium">Validation</h4>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleValidate}
+            disabled={validating}
+          >
+            {validating ? 'Validating...' : 'Validate Definition'}
+          </Button>
+        </div>
+        {validationResult && (
+          <div className={cn(
+            "p-3 rounded-lg text-sm",
+            validationResult.valid ? "bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-400" : "bg-destructive/10 text-destructive"
+          )}>
+            <div className="flex items-center gap-2 font-medium">
+              {validationResult.valid ? <Check className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
+              {validationResult.message}
+            </div>
+            {validationResult.errors && validationResult.errors.length > 0 && (
+              <ul className="mt-2 ml-6 list-disc space-y-1">
+                {validationResult.errors.map((err, i) => <li key={i}>{err}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============================================================================
+// STEP 5: Finish
+// ============================================================================
+
+interface FinishStepProps {
+  deviceType: string
+  onOpenChange: (open: boolean) => void
+  isEditMode?: boolean
+}
+
+function FinishStep({ deviceType, onOpenChange, isEditMode = false }: FinishStepProps) {
+  const { t } = useTranslation(['common', 'devices'])
+
+  return (
+    <div className="flex flex-col items-center justify-center h-full py-8">
+      <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mb-6">
+        <Check className="h-8 w-8 text-green-600 dark:text-green-400" />
+      </div>
+      <h3 className="text-xl font-semibold mb-2">
+        {isEditMode ? 'Device Type Updated Successfully!' : 'Device Type Added Successfully!'}
+      </h3>
+      <p className="text-muted-foreground mb-6">
+        {isEditMode ? (
+          <>The device type <code className="px-2 py-0.5 bg-muted rounded">{deviceType}</code> has been updated.</>
+        ) : (
+          <>The device type <code className="px-2 py-0.5 bg-muted rounded">{deviceType}</code> has been registered.</>
+        )}
+      </p>
+      <Button onClick={() => onOpenChange(false)}>
+        {t('common:close')}
+      </Button>
+    </div>
+  )
+}
+
+// ============================================================================
+// COMPACT EDITORS
+// ============================================================================
+
+function MetricEditorCompact({
+  metric,
+  onChange,
+  onRemove,
+  error,
+}: {
   metric: MetricDefinition
   onChange: (metric: MetricDefinition) => void
   onRemove: () => void
-  readonly?: boolean
   error?: string
-}
-
-function MetricEditor({ metric, onChange, onRemove, readonly = false, error }: MetricEditorProps) {
-  const { t } = useTranslation(['common', 'devices'])
-  const [expanded, setExpanded] = useState(true)
-
-  const updateField = <K extends keyof MetricDefinition>(field: K, value: MetricDefinition[K]) => {
-    onChange({ ...metric, [field]: value })
-  }
-
+}) {
   return (
     <div className={cn(
-      "rounded-lg border p-4 space-y-3 transition-all",
-      error && "border-destructive bg-destructive/5",
-      !error && "bg-card"
+      "rounded-lg border p-3 space-y-2",
+      error && "border-destructive"
     )}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </Button>
-          <span className="font-medium text-sm">{metric.display_name || metric.name}</span>
+          <span className="font-mono text-sm">{metric.name}</span>
           <Badge variant="outline" className="text-xs">{metric.data_type}</Badge>
-          {metric.unit && <Badge variant="secondary" className="text-xs">{metric.unit}</Badge>}
+          {metric.unit && <span className="text-xs text-muted-foreground">{metric.unit}</span>}
         </div>
-        {!readonly && (
-          <Button variant="ghost" size="icon" onClick={onRemove} className="h-8 w-8">
-            <Trash2 className="h-4 w-4 text-destructive" />
-          </Button>
-        )}
+        <Button variant="ghost" size="icon" onClick={onRemove} className="h-6 w-6">
+          <Trash2 className="h-3 w-3 text-destructive" />
+        </Button>
       </div>
-
-      {error && (
-        <p className="text-xs text-destructive flex items-center gap-1">
-          <AlertCircle className="h-3 w-3" />
-          {error}
-        </p>
-      )}
-
-      {expanded && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">
-                {t('devices:types.edit.fieldName')} <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                value={metric.name}
-                onChange={(e) => updateField('name', e.target.value)}
-                placeholder="temperature"
-                className={cn(
-                  "h-9 text-sm",
-                  !metric.name?.trim() && "border-destructive"
-                )}
-                disabled={readonly}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t('devices:types.edit.fieldNameHint')}
-              </p>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">{t('devices:types.edit.displayName')}</Label>
-              <Input
-                value={metric.display_name}
-                onChange={(e) => updateField('display_name', e.target.value)}
-                placeholder={t('devices:types.edit.displayNamePlaceholder')}
-                className="h-9 text-sm"
-                disabled={readonly}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">{t('devices:types.edit.dataType')}</Label>
-              <Select
-                value={metric.data_type}
-                onValueChange={(v) => updateField('data_type', v as any)}
-                disabled={readonly}
-              >
-                <SelectTrigger className="h-9 text-sm">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="string">String</SelectItem>
-                  <SelectItem value="integer">Integer</SelectItem>
-                  <SelectItem value="float">Float</SelectItem>
-                  <SelectItem value="boolean">Boolean</SelectItem>
-                  <SelectItem value="binary">Binary</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">{t('devices:types.edit.unit')}</Label>
-              <Input
-                value={metric.unit || ""}
-                onChange={(e) => updateField('unit', e.target.value)}
-                placeholder="°C"
-                className="h-9 text-sm"
-                disabled={readonly}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">Min</Label>
-              <Input
-                type="number"
-                value={metric.min ?? ""}
-                onChange={(e) => updateField('min', e.target.value ? Number(e.target.value) : undefined)}
-                placeholder="-40"
-                className="h-9 text-sm"
-                disabled={readonly}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">Max</Label>
-              <Input
-                type="number"
-                value={metric.max ?? ""}
-                onChange={(e) => updateField('max', e.target.value ? Number(e.target.value) : undefined)}
-                placeholder="100"
-                className="h-9 text-sm"
-                disabled={readonly}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-2">
+        <Input
+          value={metric.display_name}
+          onChange={(e) => onChange({ ...metric, display_name: e.target.value })}
+          placeholder="Display name"
+          className="h-8 text-sm"
+        />
+        <Input
+          value={metric.unit || ""}
+          onChange={(e) => onChange({ ...metric, unit: e.target.value })}
+          placeholder="Unit"
+          className="h-8 text-sm"
+        />
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   )
 }
 
-// ============================================================================
-// Command Editor Component
-// ============================================================================
-
-interface CommandEditorProps {
+function CommandEditorCompact({
+  command,
+  onChange,
+  onRemove,
+  error,
+}: {
   command: CommandDefinition
   onChange: (command: CommandDefinition) => void
   onRemove: () => void
-  readonly?: boolean
   error?: string
-}
-
-function CommandEditor({ command, onChange, onRemove, readonly = false, error }: CommandEditorProps) {
-  const { t } = useTranslation(['common', 'devices'])
-  const [expanded, setExpanded] = useState(true)
-
-  // Local state for raw command samples text (to allow typing incomplete JSON)
-  const [rawSamplesText, setRawSamplesText] = useState<string>(
-    (command.samples || []).map(s => JSON.stringify(s)).join('\n')
-  )
-
-  // Sync local state when command.samples changes from outside
-  useEffect(() => {
-    setRawSamplesText((command.samples || []).map(s => JSON.stringify(s)).join('\n'))
-  }, [command.samples])
-
-  const updateField = <K extends keyof CommandDefinition>(field: K, value: CommandDefinition[K]) => {
-    onChange({ ...command, [field]: value })
-  }
-
-  const addParameter = () => {
-    updateField('parameters', [
-      ...command.parameters,
-      {
-        name: `param_${command.parameters.length + 1}`,
-        display_name: `Parameter ${command.parameters.length + 1}`,
-        data_type: "string",
-      },
-    ])
-  }
-
-  const updateParameter = (index: number, param: ParameterDefinition) => {
-    const newParams = [...command.parameters]
-    newParams[index] = param
-    updateField('parameters', newParams)
-  }
-
-  const removeParameter = (index: number) => {
-    updateField('parameters', command.parameters.filter((_, i) => i !== index))
-  }
+}) {
+  const [expanded, setExpanded] = useState(false)
 
   return (
     <div className={cn(
-      "rounded-lg border p-4 space-y-3 transition-all",
-      error && "border-destructive bg-destructive/5",
-      !error && "bg-card"
+      "rounded-lg border p-3 space-y-2",
+      error && "border-destructive"
     )}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 w-7 p-0"
-            onClick={() => setExpanded(!expanded)}
-          >
-            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </Button>
-          <span className="font-medium text-sm">{command.display_name || command.name}</span>
+          <span className="font-mono text-sm">{command.name}</span>
           <Badge variant="secondary" className="text-xs">
-            {command.parameters.length} {t('devices:types.view.params')}
+            {command.parameters.length} params
           </Badge>
         </div>
-        {!readonly && (
-          <Button variant="ghost" size="icon" onClick={onRemove} className="h-8 w-8">
-            <Trash2 className="h-4 w-4 text-destructive" />
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setExpanded(!expanded)}
+            className="h-6 w-6"
+          >
+            {expanded ? <ChevronLeft className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
           </Button>
-        )}
+          <Button variant="ghost" size="icon" onClick={onRemove} className="h-6 w-6">
+            <Trash2 className="h-3 w-3 text-destructive" />
+          </Button>
+        </div>
       </div>
-
-      {error && (
-        <p className="text-xs text-destructive flex items-center gap-1">
-          <AlertCircle className="h-3 w-3" />
-          {error}
-        </p>
-      )}
 
       {expanded && (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">
-                {t('devices:types.edit.cmdName')} <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                value={command.name}
-                onChange={(e) => updateField('name', e.target.value)}
-                placeholder="set_interval"
-                className={cn(
-                  "h-9 text-sm",
-                  !command.name?.trim() && "border-destructive"
-                )}
-                disabled={readonly}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs font-medium">{t('devices:types.edit.displayName')}</Label>
-              <Input
-                value={command.display_name}
-                onChange={(e) => updateField('display_name', e.target.value)}
-                placeholder={t('devices:types.edit.cmdDisplayPlaceholder')}
-                className="h-9 text-sm"
-                disabled={readonly}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <Label className="text-xs font-medium">{t('devices:types.edit.payloadTemplate')}</Label>
-            <Input
-              value={command.payload_template}
-              onChange={(e) => updateField('payload_template', e.target.value)}
-              placeholder='{"action": "${param}"}'
-              className="h-9 font-mono text-sm"
-              disabled={readonly}
-            />
-            <p className="text-xs text-muted-foreground">{t('devices:types.edit.payloadTemplateHint')}</p>
-          </div>
-
-          {/* LLM Hints */}
-          <div className="space-y-1">
-            <Label className="text-xs font-medium">{t('devices:types.edit.llmHints')}</Label>
-            <Textarea
-              value={command.llm_hints || ""}
-              onChange={(e) => updateField('llm_hints', e.target.value)}
-              placeholder={t('devices:types.edit.llmHintsPlaceholder')}
-              rows={2}
-              className="text-sm resize-none"
-              disabled={readonly}
-            />
-            <p className="text-xs text-muted-foreground">{t('devices:types.edit.llmHintsDescription')}</p>
-          </div>
-
-          {/* Command Samples */}
-          <div className="space-y-1">
-            <Label className="text-xs font-medium">{t('devices:types.edit.commandSamples')}</Label>
-            <Textarea
-              value={rawSamplesText}
-              onChange={(e) => setRawSamplesText(e.target.value)}
-              onBlur={() => {
-                const lines = rawSamplesText.trim().split('\n').filter(l => l.trim())
-                const samples: Record<string, unknown>[] = []
-                for (const line of lines) {
-                  try {
-                    samples.push(JSON.parse(line))
-                  } catch {
-                    // Skip invalid JSON lines
-                  }
-                }
-                updateField('samples', samples)
-              }}
-              placeholder='{"action": "on"}\n{"action": "off", "interval": 60}'
-              rows={3}
-              className="font-mono text-sm resize-y"
-              disabled={readonly}
-            />
-            <p className="text-xs text-muted-foreground">{t('devices:types.edit.commandSamplesHint')}</p>
-          </div>
-
-          {/* Parameters */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium">{t('devices:types.view.parameters')}</Label>
-              {!readonly && (
-                <Button onClick={addParameter} size="sm" variant="ghost" className="h-7">
-                  <Plus className="mr-1 h-3 w-3" />
-                  {t('common:add')}
-                </Button>
-              )}
-            </div>
-
-            {command.parameters.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-3 border border-dashed rounded-md bg-muted/30">
-                {t('devices:types.edit.noParameters')}
-              </p>
-            ) : (
-              <div className="space-y-2 pl-2 border-l-2 border-muted">
-                {command.parameters.map((param, i) => (
-                  <ParameterEditor
-                    key={i}
-                    parameter={param}
-                    onChange={(p) => updateParameter(i, p)}
-                    onRemove={() => removeParameter(i)}
-                    readonly={readonly}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="space-y-2 pt-2 border-t">
+          <Input
+            value={command.display_name}
+            onChange={(e) => onChange({ ...command, display_name: e.target.value })}
+            placeholder="Display name"
+            className="h-8 text-sm"
+          />
+          <Input
+            value={command.payload_template}
+            onChange={(e) => onChange({ ...command, payload_template: e.target.value })}
+            placeholder='{"action": "${value}"}'
+            className="h-8 text-sm font-mono"
+          />
         </div>
       )}
+      {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   )
 }
 
 // ============================================================================
-// Parameter Editor Component
-// ============================================================================
-
-interface ParameterEditorProps {
-  parameter: ParameterDefinition
-  onChange: (parameter: ParameterDefinition) => void
-  onRemove: () => void
-  readonly?: boolean
-}
-
-function ParameterEditor({ parameter, onChange, onRemove, readonly = false }: ParameterEditorProps) {
-  const { t } = useTranslation(['common', 'devices'])
-
-  const updateField = <K extends keyof ParameterDefinition>(field: K, value: ParameterDefinition[K]) => {
-    onChange({ ...parameter, [field]: value })
-  }
-
-  const getDisplayValue = () => {
-    if (!parameter.default_value) return ''
-    const dv = parameter.default_value as any
-    if (dv.String !== undefined) return dv.String
-    if (dv.Integer !== undefined) return dv.Integer.toString()
-    if (dv.Float !== undefined) return dv.Float.toString()
-    if (dv.Boolean !== undefined) return dv.Boolean.toString()
-    return ''
-  }
-
-  return (
-    <div className="flex items-start gap-2">
-      {!readonly && (
-        <Button variant="ghost" size="icon" onClick={onRemove} className="h-7 w-7 mt-0.5">
-          <Trash2 className="h-3 w-3 text-destructive" />
-        </Button>
-      )}
-      <div className="flex-1 grid grid-cols-4 gap-2">
-        <div className="space-y-1">
-          <Input
-            value={parameter.name}
-            onChange={(e) => updateField('name', e.target.value)}
-            placeholder="name"
-            className="h-8 text-xs"
-            disabled={readonly}
-          />
-        </div>
-        <div className="space-y-1">
-          <Input
-            value={parameter.display_name || ""}
-            onChange={(e) => updateField('display_name', e.target.value)}
-            placeholder={t('devices:types.edit.displayName')}
-            className="h-8 text-xs"
-            disabled={readonly}
-          />
-        </div>
-        <Select
-          value={parameter.data_type}
-          onValueChange={(v) => updateField('data_type', v)}
-          disabled={readonly}
-        >
-          <SelectTrigger className="h-8 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="string">String</SelectItem>
-            <SelectItem value="integer">Integer</SelectItem>
-            <SelectItem value="float">Float</SelectItem>
-            <SelectItem value="boolean">Boolean</SelectItem>
-          </SelectContent>
-        </Select>
-        <Input
-          value={getDisplayValue()}
-          onChange={(e) => {
-            const val = e.target.value
-            let newValue: any = undefined
-            switch (parameter.data_type) {
-              case 'integer':
-                const num = parseInt(val, 10)
-                if (!isNaN(num)) newValue = { Integer: num }
-                break
-              case 'float':
-                const float = parseFloat(val)
-                if (!isNaN(float)) newValue = { Float: float }
-                break
-              case 'boolean':
-                if (val === 'true') newValue = { Boolean: true }
-                else if (val === 'false') newValue = { Boolean: false }
-                else newValue = { String: val }
-                break
-              default:
-                newValue = { String: val }
-            }
-            updateField('default_value', newValue)
-          }}
-          placeholder={t('devices:types.edit.defaultValue')}
-          className="h-8 text-xs"
-          disabled={readonly}
-        />
-      </div>
-    </div>
-  )
-}
-
-// ============================================================================
-// View Device Type Dialog (readonly, full screen)
+// VIEW DEVICE TYPE DIALOG
 // ============================================================================
 
 interface ViewDeviceTypeDialogProps {
@@ -1428,29 +1368,189 @@ interface ViewDeviceTypeDialogProps {
 }
 
 export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDeviceTypeDialogProps) {
-  const { t } = useTranslation(['common', 'devices'])
-
   if (!deviceType) return null
+
+  const isRawMode = deviceType.mode === 'simple'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl h-[90vh] max-h-[90vh] flex flex-col">
-        <DialogHeader className="border-b pb-4">
-          <DialogTitle className="text-xl">{t('devices:types.view.title')}</DialogTitle>
+      <DialogContent className="max-w-4xl h-[85vh] max-h-[85vh] flex flex-col">
+        <DialogHeader className="px-6 pt-6 pb-4 border-b">
+          <div className="flex items-center justify-between">
+            <div>
+              <DialogTitle className="text-xl">{deviceType.name}</DialogTitle>
+              <DialogDescription className="flex items-center gap-2 mt-1">
+                <code className="text-xs bg-muted px-2 py-0.5 rounded">{deviceType.device_type}</code>
+                {isRawMode && (
+                  <Badge variant="secondary" className="text-xs">
+                    <Zap className="h-3 w-3 mr-1" />
+                    Raw Data Mode
+                  </Badge>
+                )}
+              </DialogDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+              Close
+            </Button>
+          </div>
         </DialogHeader>
-        <div className="flex-1 overflow-y-auto -mx-6 px-6">
-          <DeviceTypeForm key={deviceType.device_type} data={deviceType} onChange={() => {}} readonly />
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-6 space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-3 gap-4">
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
+                    <ArrowDown className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold">{deviceType.metrics?.length || 0}</div>
+                    <div className="text-xs text-muted-foreground">Metrics</div>
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                    <FileText className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold">{deviceType.commands?.length || 0}</div>
+                    <div className="text-xs text-muted-foreground">Commands</div>
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                    <Settings className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold">{isRawMode ? 'Raw' : 'Full'}</div>
+                    <div className="text-xs text-muted-foreground">Data Mode</div>
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            {/* Description */}
+            {deviceType.description && (
+              <Card className="p-4">
+                <p className="text-sm text-muted-foreground">{deviceType.description}</p>
+              </Card>
+            )}
+
+            {/* Categories */}
+            {deviceType.categories && deviceType.categories.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm text-muted-foreground">Categories:</span>
+                {deviceType.categories.map((cat, i) => (
+                  <Badge key={i} variant="outline">{cat}</Badge>
+                ))}
+              </div>
+            )}
+
+            {/* Metrics */}
+            <Card className="p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-medium flex items-center gap-2">
+                  <ArrowDown className="h-4 w-4 text-green-500" />
+                  Metrics ({deviceType.metrics?.length || 0})
+                </h4>
+                {isRawMode && (
+                  <Badge variant="secondary" className="text-xs">
+                    <Zap className="h-3 w-3 mr-1" />
+                    Raw Data Mode
+                  </Badge>
+                )}
+              </div>
+
+              {(!deviceType.metrics || deviceType.metrics.length === 0) ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  {isRawMode ? 'Payloads stored as-is without parsing' : 'No metrics defined'}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {deviceType.metrics.map((metric, i) => (
+                    <div key={i} className="p-3 bg-muted/50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm">{metric.name}</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-sm">{metric.display_name}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">{metric.data_type}</Badge>
+                          {metric.unit && (
+                            <span className="text-xs text-muted-foreground">({metric.unit})</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {/* Commands */}
+            <Card className="p-4">
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-medium flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-blue-500" />
+                  Commands ({deviceType.commands?.length || 0})
+                </h4>
+              </div>
+
+              {(!deviceType.commands || deviceType.commands.length === 0) ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  No commands defined
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {deviceType.commands.map((cmd, i) => (
+                    <div key={i} className="p-3 bg-muted/50 rounded-lg">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-sm">{cmd.name}</span>
+                          <span className="text-muted-foreground">•</span>
+                          <span className="text-sm">{cmd.display_name}</span>
+                        </div>
+                        <Badge variant="secondary" className="text-xs">
+                          {cmd.parameters.length} params
+                        </Badge>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            {/* Sample Data */}
+            {deviceType.uplink_samples && deviceType.uplink_samples.length > 0 && (
+              <Card className="p-4">
+                <h4 className="font-medium flex items-center gap-2 mb-3">
+                  <Database className="h-4 w-4 text-orange-500" />
+                  Sample Data ({deviceType.uplink_samples.length})
+                </h4>
+                <div className="space-y-2">
+                  {deviceType.uplink_samples.map((sample, i) => (
+                    <pre key={i} className="text-xs bg-muted p-3 rounded overflow-x-auto">
+                      {JSON.stringify(sample, null, 2)}
+                    </pre>
+                  ))}
+                </div>
+              </Card>
+            )}
+          </div>
         </div>
-        <DialogFooter className="border-t pt-4">
-          <Button onClick={() => onOpenChange(false)} className="h-10 px-6">{t('common:close')}</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
 // ============================================================================
-// Edit Device Type Dialog (uses DeviceTypeForm, full screen)
+// EDIT DEVICE TYPE DIALOG (wrapper around AddDeviceTypeDialog)
 // ============================================================================
 
 interface EditDeviceTypeDialogProps {
@@ -1459,150 +1559,35 @@ interface EditDeviceTypeDialogProps {
   deviceType: DeviceType | null
   onEdit: (data: DeviceType) => Promise<boolean>
   editing: boolean
+  onGenerateMDL?: (name: string, description: string, uplinkSample: string, downlinkSample: string) => Promise<string>
 }
 
-export function EditDeviceTypeDialog({ open, onOpenChange, deviceType, onEdit, editing }: EditDeviceTypeDialogProps) {
-  const { t } = useTranslation(['common', 'devices'])
-
-  const [formData, setFormData] = useState<DeviceType>({
-    device_type: "",
-    name: "",
-    description: "",
-    categories: [],
-    mode: "simple",
-    metrics: [],
-    commands: [],
-    uplink_samples: [],
+// Reuse AddDeviceTypeDialog with editDeviceType prop
+export function EditDeviceTypeDialog({ open, onOpenChange, deviceType, onEdit, editing, onGenerateMDL }: EditDeviceTypeDialogProps) {
+  // Default no-op validator for edit mode
+  const handleValidate = async (): Promise<ValidationResult> => ({
+    valid: true,
+    message: "Ready to save"
   })
-  const [formErrors, setFormErrors] = useState<FormErrors>({})
-  const [touched, setTouched] = useState<Record<string, boolean>>({})
 
-  // Sync with props when dialog opens or deviceType changes
-  useEffect(() => {
-    if (deviceType) {
-      setFormData(deviceType)
-      setFormErrors({})
-      setTouched({})
-    }
-  }, [deviceType, open])
-
-  // Validate form in real-time
-  useEffect(() => {
-    const errors: FormErrors = {}
-
-    if (touched.device_type || touched.name) {
-      if (!formData.device_type?.trim()) {
-        errors.device_type = t('devices:types.validation.deviceTypeRequired')
-      }
-      if (!formData.name?.trim()) {
-        errors.name = t('devices:types.validation.nameRequired')
-      }
-    }
-
-    const metricErrors: Record<number, string> = {}
-    formData.metrics?.forEach((metric, i) => {
-      if (!metric.name?.trim()) {
-        metricErrors[i] = t('devices:types.validation.metricNameRequired')
-      }
-    })
-    if (Object.keys(metricErrors).length > 0) {
-      errors.metrics = metricErrors
-    }
-
-    const commandErrors: Record<number, string> = {}
-    formData.commands?.forEach((cmd, i) => {
-      if (!cmd.name?.trim()) {
-        commandErrors[i] = t('devices:types.validation.commandNameRequired')
-      }
-    })
-    if (Object.keys(commandErrors).length > 0) {
-      errors.commands = commandErrors
-    }
-
-    setFormErrors(errors)
-  }, [formData, touched, t])
-
-  const isFormValid = () => {
-    // Basic validation
-    if (!formData.device_type?.trim() || !formData.name?.trim()) {
-      return false
-    }
-
-    // For Simple mode, metrics are optional (using samples instead)
-    const isSimpleMode = formData.mode === "simple"
-
-    // For Full mode, validate metrics
-    if (!isSimpleMode && formData.metrics?.some(m => !m.name?.trim())) {
-      return false
-    }
-
-    // Commands are required in both modes
-    if (formData.commands?.some(c => !c.name?.trim())) {
-      return false
-    }
-
-    return true
+  // Default MDL generator if not provided
+  const defaultGenerateMDL = async (): Promise<string> => {
+    return JSON.stringify({ metrics: [], commands: [] })
   }
 
-  const handleFieldChange = <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => {
-    setTouched(prev => ({ ...prev, [field]: true }))
-    setFormData(prev => ({ ...prev, [field]: value }))
-  }
-
-  const handleEdit = async () => {
-    if (!isFormValid()) {
-      setTouched({ device_type: true, name: true })
-      toast({
-        title: t('devices:types.validationError'),
-        description: t('devices:types.requiredFields'),
-        variant: "destructive",
-      })
-      return
-    }
-
-    const success = await onEdit(formData)
-    if (success) {
-      onOpenChange(false)
-      toast({
-        title: t('devices:types.save.success'),
-        description: t('devices:types.save.updated', { name: formData.name }),
-      })
-    } else {
-      toast({
-        title: t('devices:types.save.error'),
-        description: t('devices:types.save.retry'),
-        variant: "destructive",
-      })
-    }
-  }
-
-  if (!deviceType) return null
+  const effectiveGenerateMDL = onGenerateMDL || defaultGenerateMDL
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl h-[90vh] max-h-[90vh] flex flex-col p-0">
-        <DialogHeader className="px-6 pt-6 pb-4 border-b">
-          <DialogTitle className="text-xl">{t('devices:types.edit.title')}</DialogTitle>
-        </DialogHeader>
-        <div className="flex-1 overflow-y-auto px-6">
-          <DeviceTypeForm
-            data={formData}
-            onChange={setFormData}
-            onFieldChange={handleFieldChange}
-            errors={formErrors}
-            touched={touched}
-            setTouched={setTouched}
-          />
-        </div>
-        <DialogFooter className="px-6 pb-6 pt-4 border-t">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={editing} className="h-10 px-6">
-            {t('common:cancel')}
-          </Button>
-          <Button onClick={handleEdit} disabled={!isFormValid() || editing} className="h-10 px-6">
-            {editing ? t('devices:types.edit.saving') : t('common:save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <AddDeviceTypeDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      onAdd={onEdit}
+      onValidate={handleValidate}
+      onGenerateMDL={effectiveGenerateMDL}
+      adding={editing}
+      validating={false}
+      generating={false}
+      editDeviceType={deviceType}
+    />
   )
 }

@@ -13,7 +13,7 @@ edge-ai-agent = { path = "../agent" }
 edge-ai-llm = { path = "../llm" }
 edge-ai-devices = { path = "../devices", features = ["embedded-broker"] }
 edge-ai-rules = { path = "../rules" }
-edge-ai-alerts = { path = "../alerts" }
+edge-ai-alerts = { path = "../alerts", features = ["webhook", "email"] }
 edge-ai-storage = { path = "../storage" }
 edge-ai-workflow = { path = "../workflow" }
 edge-ai-memory = { path = "../memory" }

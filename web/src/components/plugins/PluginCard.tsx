@@ -158,6 +158,8 @@ export function PluginCard({
       case 'modbus':
       case 'hass':
         return 'badge-info'
+      case 'alert_channel':
+        return 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300'
       case 'tool':
         return 'badge-success'
       case 'integration':

@@ -25,6 +25,9 @@ pub enum Error {
 
     #[error("UUID error: {0}")]
     Uuid(#[from] uuid::Error),
+
+    #[error("Other error: {0}")]
+    Other(#[from] anyhow::Error),
 }
 
 /// Result type for alerts operations.
@@ -41,6 +44,7 @@ impl From<Error> for NeoTalkError {
             Error::Io(e) => NeoTalkError::Storage(e.to_string()),
             Error::Serialization(s) => NeoTalkError::Serialization(s),
             Error::Uuid(e) => NeoTalkError::Validation(e.to_string()),
+            Error::Other(e) => NeoTalkError::Internal(e.to_string()),
         }
     }
 }

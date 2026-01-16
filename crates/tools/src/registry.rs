@@ -288,6 +288,50 @@ impl ToolRegistryBuilder {
         self.with_tool(super::builtin::ListDeviceTypesTool::mock())
     }
 
+    // ============================================================================
+    // New tool builders
+    // ============================================================================
+
+    /// Add the delete rule tool (mock).
+    pub fn with_delete_rule_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::DeleteRuleTool::mock()))
+    }
+
+    /// Add the enable rule tool (mock).
+    pub fn with_enable_rule_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::EnableRuleTool::mock()))
+    }
+
+    /// Add the disable rule tool (mock).
+    pub fn with_disable_rule_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::DisableRuleTool::mock()))
+    }
+
+    /// Add the update rule tool (mock).
+    pub fn with_update_rule_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::UpdateRuleTool::mock()))
+    }
+
+    /// Add the query device status tool (mock).
+    pub fn with_query_device_status_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::QueryDeviceStatusTool::mock()))
+    }
+
+    /// Add the get device config tool (mock).
+    pub fn with_get_device_config_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::GetDeviceConfigTool::mock()))
+    }
+
+    /// Add the set device config tool (mock).
+    pub fn with_set_device_config_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::SetDeviceConfigTool::mock()))
+    }
+
+    /// Add the batch control devices tool (mock).
+    pub fn with_batch_control_devices_tool(self) -> Self {
+        self.with_tool(Arc::new(super::builtin::BatchControlDevicesTool::mock()))
+    }
+
     /// Add the query data tool with real storage.
     pub fn with_real_query_data_tool(
         self,
@@ -327,16 +371,33 @@ impl ToolRegistryBuilder {
         self.with_tool(Arc::new(super::real::TriggerWorkflowTool::new(engine)))
     }
 
+    /// Add the get device data tool with real device service and storage (simplified interface).
+    pub fn with_real_get_device_data_tool(
+        self,
+        service: Arc<edge_ai_devices::DeviceService>,
+        storage: Arc<edge_ai_devices::TimeSeriesStorage>,
+    ) -> Self {
+        self.with_tool(Arc::new(super::real::GetDeviceDataTool::new(service, storage)))
+    }
+
     /// Add all standard tools (mock versions).
     pub fn with_standard_tools(self) -> Self {
         self.with_query_data_tool()
             .with_control_device_tool()
             .with_list_devices_tool()
             .with_get_device_metrics_tool()
+            .with_query_device_status_tool()
             .with_get_device_type_schema_tool()
             .with_list_device_types_tool()
+            .with_get_device_config_tool()
+            .with_set_device_config_tool()
+            .with_batch_control_devices_tool()
             .with_create_rule_tool()
             .with_list_rules_tool()
+            .with_delete_rule_tool()
+            .with_enable_rule_tool()
+            .with_disable_rule_tool()
+            .with_update_rule_tool()
             .with_trigger_workflow_tool()
     }
 
@@ -353,41 +414,125 @@ impl Default for ToolRegistryBuilder {
 }
 
 /// Helper to format tool definitions for LLM function calling.
+///
+/// This function creates a comprehensive, structured prompt that guides the LLM
+/// on how to use tools effectively, including:
+/// - Tool descriptions
+/// - Usage scenarios with example queries
+/// - Tool relationships (call order, data flow)
+/// - Tool categories for organization
 pub fn format_for_llm(definitions: &[ToolDefinition]) -> String {
-    let mut result = String::from("Available tools:\n\n");
+    let mut result = String::from("可用工具列表\n");
+    result.push_str(&"══".repeat(40));
+    result.push_str("\n\n");
 
+    // Group tools by category
+    let mut grouped: std::collections::HashMap<String, Vec<&ToolDefinition>> = std::collections::HashMap::new();
     for def in definitions {
-        result.push_str(&format!("## {}\n", def.name));
-        result.push_str(&format!("{}\n", def.description));
-        result.push_str("Parameters:\n");
-
-        if let Some(props) = def.parameters.get("properties") {
-            if let Some(obj) = props.as_object() {
-                for (name, prop) in obj {
-                    let desc = prop
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("No description");
-                    let type_name = prop
-                        .get("type")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("unknown");
-                    result.push_str(&format!("- {}: {} ({})\n", name, desc, type_name));
-                }
-            }
+        if def.deprecated {
+            continue; // Skip deprecated tools
         }
-
-        if let Some(required) = def.parameters.get("required") {
-            if let Some(arr) = required.as_array() {
-                if !arr.is_empty() {
-                    let required_names: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
-                    result.push_str(&format!("Required: {}\n", required_names.join(", ")));
-                }
-            }
-        }
-
-        result.push('\n');
+        let category = def.category.as_str();
+        grouped.entry(category.to_string()).or_default().push(def);
     }
+
+    // Define category order
+    let category_order = vec!["device", "data", "analysis", "rule", "workflow", "alert", "config", "system"];
+
+    // Output tools by category
+    for category in category_order {
+        if let Some(tools) = grouped.get(category) {
+            let category_name = match category {
+                "device" => "📟 设备管理 (Device)",
+                "data" => "📊 数据查询 (Data)",
+                "analysis" => "📈 数据分析 (Analysis)",
+                "rule" => "⚙️ 规则管理 (Rule)",
+                "workflow" => "🔄 工作流 (Workflow)",
+                "alert" => "🚨 告警管理 (Alert)",
+                "config" => "🔧 配置管理 (Config)",
+                "system" => "⚙️ 系统工具 (System)",
+                _ => category,
+            };
+            result.push_str(&format!("### {}\n\n", category_name));
+
+            for def in tools {
+                // Tool name and description
+                result.push_str(&format!("**工具**: `{}`\n", def.name));
+                result.push_str(&format!("**描述**: {}\n", def.description));
+
+                // Usage scenarios
+                if !def.scenarios.is_empty() {
+                    result.push_str("**使用场景**:\n");
+                    for (i, scenario) in def.scenarios.iter().enumerate() {
+                        result.push_str(&format!("  {}. {} - 示例: \"{}\"\n",
+                            i + 1, scenario.description, scenario.example_query));
+                    }
+                }
+
+                // Tool relationships
+                if !def.relationships.call_after.is_empty() || !def.relationships.output_to.is_empty() {
+                    result.push_str("**工具关系**:\n");
+                    if !def.relationships.call_after.is_empty() {
+                        result.push_str(&format!("  → 建议先调用: {}\n",
+                            def.relationships.call_after.join(", ")));
+                    }
+                    if !def.relationships.output_to.is_empty() {
+                        result.push_str(&format!("  → 输出可用于: {}\n",
+                            def.relationships.output_to.join(", ")));
+                    }
+                }
+
+                // Parameters
+                result.push_str("**参数**:\n");
+                if let Some(props) = def.parameters.get("properties") {
+                    if let Some(obj) = props.as_object() {
+                        for (name, prop) in obj {
+                            let desc = prop.get("description")
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("无描述");
+                            let type_name = prop.get("type")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("unknown");
+                            result.push_str(&format!("  - `{}`: {} ({})", name, desc, type_name));
+
+                            // Check if required
+                            if let Some(required) = def.parameters.get("required") {
+                                if let Some(arr) = required.as_array() {
+                                    if arr.iter().any(|v| v.as_str() == Some(name)) {
+                                        result.push_str(" **[必需]**");
+                                    }
+                                }
+                            }
+                            result.push('\n');
+                        }
+                    }
+                }
+
+                if let Some(required) = def.parameters.get("required") {
+                    if let Some(arr) = required.as_array() {
+                        if !arr.is_empty() {
+                            let required_names: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+                            result.push_str(&format!("**必需参数**: {}\n", required_names.join(", ")));
+                        }
+                    }
+                }
+
+                result.push('\n');
+            }
+        }
+    }
+
+    // Add guidance section
+    result.push_str(&"─".repeat(40));
+    result.push_str("\n**工具调用指南**\n\n");
+    result.push_str("1. **了解设备** → 先用 `list_devices` 查看设备列表\n");
+    result.push_str("2. **查看能力** → 用 `get_device_metrics` 了解设备有什么指标\n");
+    result.push_str("3. **查询数据** → 用 `query_data` 获取具体数据\n");
+    result.push_str("4. **分析数据** → 用 `analyze_trends` 或 `detect_anomalies` 分析\n\n");
+    result.push_str("**常见流程**:\n");
+    result.push_str("- 查询设备数据: list_devices → get_device_metrics → query_data\n");
+    result.push_str("- 创建规则: list_devices → create_rule\n");
+    result.push_str("- 设备控制: list_devices → query_device_status → control_device\n");
 
     result
 }

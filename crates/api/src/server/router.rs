@@ -20,9 +20,9 @@ pub async fn create_router() -> Router {
 /// Create the application router with a specific state.
 pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
-        alerts, auth as auth_handlers, auth_users, basic, bulk, commands, config, decisions,
-        devices, events, hass, llm_backends, memory, mqtt, plugins, rules, scenarios, search,
-        sessions, settings, stats, tools, workflows,
+        alert_channels, alerts, auth as auth_handlers, auth_users, basic, bulk, commands, config,
+        decisions, devices, events, hass, llm_backends, memory, mqtt, plugins, rules, scenarios,
+        search, sessions, settings, stats, tools, workflows,
     };
 
     // Public routes (no authentication required)
@@ -147,6 +147,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/devices/:id/commands",
             get(devices::get_device_command_history_handler),
         )
+        .route(
+            "/api/devices/:id/metrics/list",
+            get(devices::list_device_metrics_debug_handler),
+        )
         // Device Types API
         .route("/api/device-types", get(devices::list_device_types_handler))
         .route(
@@ -234,6 +238,39 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/alerts/:id/acknowledge",
             post(alerts::acknowledge_alert_handler),
+        )
+        // Alert Channels API
+        .route(
+            "/api/alert-channels",
+            get(alert_channels::list_channels_handler),
+        )
+        .route(
+            "/api/alert-channels",
+            post(alert_channels::create_channel_handler),
+        )
+        .route(
+            "/api/alert-channels/stats",
+            get(alert_channels::get_channel_stats_handler),
+        )
+        .route(
+            "/api/alert-channels/types",
+            get(alert_channels::list_channel_types_handler),
+        )
+        .route(
+            "/api/alert-channels/types/:type/schema",
+            get(alert_channels::get_channel_type_schema_handler),
+        )
+        .route(
+            "/api/alert-channels/:name",
+            get(alert_channels::get_channel_handler),
+        )
+        .route(
+            "/api/alert-channels/:name",
+            delete(alert_channels::delete_channel_handler),
+        )
+        .route(
+            "/api/alert-channels/:name/test",
+            post(alert_channels::test_channel_handler),
         )
         // Settings API
         .route("/api/settings/llm", get(settings::get_llm_settings_handler))

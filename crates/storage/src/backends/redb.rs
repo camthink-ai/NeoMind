@@ -4,7 +4,7 @@
 
 use edge_ai_core::storage::{Result as CoreResult, StorageBackend, StorageError};
 use redb::{Database, ReadableTable, TableDefinition};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 type Result<T> = CoreResult<T>;
@@ -61,8 +61,10 @@ fn make_key(table: &str, key: &str) -> String {
 pub struct RedbBackend {
     /// redb database instance.
     db: Arc<Database>,
-    /// Storage path.
+    /// Storage path (":memory:" for in-memory).
     path: String,
+    /// Actual file path for temporary databases (for cleanup).
+    temp_path: Option<PathBuf>,
 }
 
 impl RedbBackend {
@@ -70,12 +72,13 @@ impl RedbBackend {
     pub fn new(config: RedbBackendConfig) -> Result<Self> {
         let path = &config.path;
 
-        let db = if path == ":memory:" {
+        let (db, temp_path) = if path == ":memory:" {
             // redb doesn't support true in-memory databases.
             // Use a temporary file instead.
             let temp_dir = std::env::temp_dir();
             let temp_path = temp_dir.join(format!("redb_{}", uuid::Uuid::new_v4()));
-            Database::create(&temp_path).map_err(|e| StorageError::Backend(e.to_string()))?
+            let db = Database::create(&temp_path).map_err(|e| StorageError::Backend(e.to_string()))?;
+            (db, Some(temp_path))
         } else {
             let path_ref = Path::new(path);
             if config.create_dirs {
@@ -84,16 +87,18 @@ impl RedbBackend {
                 }
             }
 
-            if path_ref.exists() {
+            let db = if path_ref.exists() {
                 Database::open(path_ref).map_err(|e| StorageError::Backend(e.to_string()))?
             } else {
                 Database::create(path_ref).map_err(|e| StorageError::Backend(e.to_string()))?
-            }
+            };
+            (db, None)
         };
 
         Ok(Self {
             db: Arc::new(db),
             path: config.path,
+            temp_path,
         })
     }
 
@@ -225,6 +230,24 @@ impl StorageBackend for RedbBackend {
 
     fn is_persistent(&self) -> bool {
         self.path != ":memory:"
+    }
+}
+
+/// Cleanup temporary database file when RedbBackend is dropped.
+impl Drop for RedbBackend {
+    fn drop(&mut self) {
+        if let Some(temp_path) = &self.temp_path {
+            // Clean up the temporary file
+            if let Err(e) = std::fs::remove_file(temp_path) {
+                // Log warning but don't panic - cleanup failures are non-critical
+                tracing::debug!("Failed to remove temporary database file {}: {}", temp_path.display(), e);
+            }
+            // Also try to remove the -journal file if it exists
+            let journal_path = temp_path.with_extension("redb-journal");
+            if journal_path.exists() {
+                let _ = std::fs::remove_file(journal_path);
+            }
+        }
     }
 }
 

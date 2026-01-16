@@ -621,10 +621,10 @@ impl SessionManager {
             // Get preview from database (first user message)
             let preview = self.load_history(&session_id).ok().and_then(|msgs| {
                 msgs.iter().find(|m| m.role == "user").map(|m| {
-                    // Truncate content to 50 chars
+                    // Truncate content to 50 chars (using char boundary for Unicode safety)
                     let content = m.content.trim();
-                    if content.len() > 50 {
-                        format!("{}...", &content[..50])
+                    if content.chars().count() > 50 {
+                        format!("{}...", content.chars().take(50).collect::<String>())
                     } else {
                         content.to_string()
                     }

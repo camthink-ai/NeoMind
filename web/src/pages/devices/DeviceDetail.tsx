@@ -27,7 +27,7 @@ import { ChevronLeft, RefreshCw, Activity, Send, Clock, Server, Info } from "luc
 import { toast } from "@/components/ui/use-toast"
 import { formatTimestamp } from "@/lib/utils/format"
 import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse, CommandHistoryResponse, MqttSettings } from "@/types"
-import { formatMetricValue, isBase64Image, getImageDataUrl } from "./utils"
+import { formatMetricValue, isBase64Image } from "./utils"
 import { EmptyStateInline } from "@/components/shared"
 
 interface DeviceDetailProps {
@@ -45,11 +45,11 @@ interface DeviceDetailProps {
   onSendCommand: (commandName: string, params: string) => void
 }
 
-// Render metric value - returns either a text string or an img element
+// Render metric value - returns either a text string or an img element (truncated for table)
 function renderMetricValue(
   value: unknown,
   dataType: string | undefined,
-  onImageClick: (dataUrl: string) => void,
+  _onImageClick: (dataUrl: string) => void,
   t: (key: string) => string
 ): React.ReactNode {
   if (value === null || value === undefined) return <span className="text-muted-foreground">-</span>
@@ -61,18 +61,27 @@ function renderMetricValue(
     return parseFloat(value.toFixed(2)).toString()
   }
   if (typeof value === "string" && isBase64Image(value)) {
-    const dataUrl = getImageDataUrl(value)
-    return (
-      <img
-        src={dataUrl || undefined}
-        alt="Base64 image"
-        className="h-12 w-auto object-contain rounded cursor-pointer hover:opacity-80 transition-opacity"
-        onClick={(e) => {
-          e.stopPropagation()
-          if (dataUrl) onImageClick(dataUrl)
-        }}
-      />
-    )
+    return <span className="text-blue-500">📷 Image</span>
+  }
+  // Handle objects and arrays - show brief preview
+  if (typeof value === "object" && value !== null) {
+    if (Array.isArray(value)) {
+      return <span className="text-muted-foreground">[{value.length} items]</span>
+    }
+    const keys = Object.keys(value)
+    if (keys.length > 5) {
+      return <span className="text-muted-foreground">{`{${keys[0]}, ${keys[1]}, ...} (${keys.length})`}</span>
+    }
+    // For objects with image field, show preview
+    const objValue = value as Record<string, unknown>
+    if (typeof objValue.image === 'string' && objValue.image.startsWith('data:image')) {
+      return <span className="text-blue-500">📷 {keys.length} fields</span>
+    }
+    const compact = JSON.stringify(value)
+    if (compact.length > 50) {
+      return <span className="text-muted-foreground">{compact.substring(0, 47)}...</span>
+    }
+    return <span className="text-xs font-mono">{compact}</span>
   }
   return String(value)
 }
@@ -188,7 +197,7 @@ export function DeviceDetail({
               </Button>
             </>
           }
-          className="border-b px-6 py-4 -mx-6"
+          className="border-b px-6 py-2 -mx-6 mb-2"
         />
 
         {/* Content with Tabs */}
@@ -366,19 +375,12 @@ export function DeviceDetail({
               {selectedMetric ? (
                 // Metric History Detail View
                 <div className="space-y-4">
-                  <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
                     <Button variant="ghost" size="sm" onClick={onMetricBack}>
                       <ChevronLeft className="mr-1 h-4 w-4" />
                       {t('common:back')}
                     </Button>
-                    <div>
-                      <h3 className="text-lg font-semibold">
-                        {getMetricDisplayName(selectedMetric)} {t('devices:detail.metricHistory.title')}
-                      </h3>
-                      <p className="text-sm text-muted-foreground">
-                        {t('devices:detail.metricHistory.device', { name: device.name || device.id })}
-                      </p>
-                    </div>
+                    <span className="text-sm text-muted-foreground">{getMetricDisplayName(selectedMetric)}</span>
                   </div>
 
                   {telemetryData && selectedMetric in telemetryData.data ? (
@@ -463,13 +465,6 @@ export function DeviceDetail({
               ) : (
                 // No metrics defined - show raw data table
                 <div className="space-y-4">
-                  <div>
-                    <h3 className="text-lg font-semibold">{t('devices:detail.tabs.metrics')}</h3>
-                    <p className="text-sm text-muted-foreground">
-                      {t('devices:detail.noMetrics')} - {t('devices:detail.rawData.title')}
-                    </p>
-                  </div>
-
                   {telemetryData && Object.keys(telemetryData.data).length > 0 ? (
                     Object.entries(telemetryData.data).map(([metricName, points]) => (
                       <Card key={metricName}>
@@ -493,16 +488,21 @@ export function DeviceDetail({
                                   .slice()
                                   .reverse()
                                   .slice(0, 50)
-                                  .map((point, index) => (
-                                    <TableRow key={index}>
-                                      <TableCell className="text-sm text-muted-foreground">
-                                        {formatTimestamp(point.timestamp)}
-                                      </TableCell>
-                                      <TableCell className="font-mono text-xs break-all">
-                                        {renderMetricValue(point.value, undefined, handleImageClick, t)}
-                                      </TableCell>
-                                    </TableRow>
-                                  ))
+                                  .map((point, index) => {
+                                    const fullValue = typeof point.value === 'object' ? JSON.stringify(point.value, null, 2) : String(point.value)
+                                    return (
+                                      <TableRow key={index}>
+                                        <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+                                          {formatTimestamp(point.timestamp)}
+                                        </TableCell>
+                                        <TableCell className="font-mono text-xs min-w-0 max-w-md">
+                                          <div className="truncate" title={fullValue}>
+                                            {renderMetricValue(point.value, undefined, handleImageClick, t)}
+                                          </div>
+                                        </TableCell>
+                                      </TableRow>
+                                    )
+                                  })
                               ) : (
                                 <EmptyStateInline title={t('devices:detail.metricHistory.noData')} colSpan={2} />
                               )}

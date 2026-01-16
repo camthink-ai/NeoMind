@@ -963,3 +963,242 @@ impl From<AgentError> for super::error::AgentError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::staged::{IntentCategory, IntentResult};
+
+    #[test]
+    fn test_chat_config_default() {
+        let config = ChatConfig::default();
+        assert_eq!(config.model, "qwen3-vl:2b");
+        assert_eq!(config.temperature, 0.4);
+        assert_eq!(config.top_p, 0.7);
+        assert_eq!(config.max_tokens, 4096);
+        assert_eq!(config.concurrent_limit, DEFAULT_CONCURRENT_LIMIT);
+    }
+
+    #[test]
+    fn test_llm_interface_new() {
+        let config = ChatConfig {
+            model: "test-model".to_string(),
+            temperature: 0.5,
+            top_p: 0.9,
+            max_tokens: 2048,
+            concurrent_limit: 2,
+        };
+        let interface = LlmInterface::new(config);
+        assert!(!interface.uses_instance_manager());
+        assert_eq!(interface.max_concurrent(), 2);
+        assert_eq!(interface.available_permits(), 2);
+    }
+
+    #[test]
+    fn test_llm_interface_with_system_prompt() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config)
+            .with_system_prompt("You are a test assistant.");
+        // The system prompt is set internally
+        assert_eq!(interface.max_concurrent(), DEFAULT_CONCURRENT_LIMIT);
+    }
+
+    #[tokio::test]
+    async fn test_thinking_enabled() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config);
+
+        // Initially None (uses backend default)
+        assert_eq!(interface.get_thinking_enabled().await, None);
+
+        // Set to true
+        interface.set_thinking_enabled(true).await;
+        assert_eq!(interface.get_thinking_enabled().await, Some(true));
+
+        // Set to false
+        interface.set_thinking_enabled(false).await;
+        assert_eq!(interface.get_thinking_enabled().await, Some(false));
+    }
+
+    #[tokio::test]
+    async fn test_tool_definitions() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config);
+
+        // Initially empty
+        assert!(interface.get_tool_definitions().await.is_empty());
+
+        // Set tool definitions
+        let tools = vec![
+            edge_ai_core::llm::backend::ToolDefinition {
+                name: "test_tool".to_string(),
+                description: "A test tool".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "input": {"type": "string"}
+                    }
+                }),
+            }
+        ];
+        interface.set_tool_definitions(tools.clone()).await;
+
+        let retrieved = interface.get_tool_definitions().await;
+        assert_eq!(retrieved.len(), 1);
+        assert_eq!(retrieved[0].name, "test_tool");
+    }
+
+    #[tokio::test]
+    async fn test_use_instance_manager() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config);
+
+        // Initially not using instance manager
+        assert!(!interface.uses_instance_manager());
+        assert!(interface.instance_manager().is_none());
+
+        // Enable instance manager mode
+        interface.set_use_instance_manager(true).await;
+        assert!(interface.uses_instance_manager());
+
+        // Disable
+        interface.set_use_instance_manager(false).await;
+        assert!(!interface.uses_instance_manager());
+    }
+
+    #[tokio::test]
+    async fn test_update_model() {
+        let config = ChatConfig {
+            model: "initial-model".to_string(),
+            ..Default::default()
+        };
+        let interface = LlmInterface::new(config);
+
+        // Update the model
+        interface.update_model("new-model".to_string()).await;
+        // Model is updated internally (verified through is_ready which checks model)
+    }
+
+    #[tokio::test]
+    async fn test_is_ready_without_llm() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config);
+
+        // Without LLM set and not using instance manager, should not be ready
+        assert!(!interface.is_ready().await);
+    }
+
+    #[test]
+    fn test_classify_intent() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config);
+
+        // Test device control intent
+        let result = interface.classify_intent("turn on the lights");
+        assert_eq!(result.category, IntentCategory::DeviceControl);
+
+        // Test information query
+        let result = interface.classify_intent("what's the temperature?");
+        assert_eq!(result.category, IntentCategory::Information);
+
+        // Test system command
+        let result = interface.classify_intent("create a new rule");
+        assert_eq!(result.category, IntentCategory::SystemCommand);
+    }
+
+    #[test]
+    fn test_get_intent_prompt() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config);
+
+        let result = IntentResult {
+            category: IntentCategory::DeviceControl,
+            confidence: 0.9,
+            entities: vec![("lights".to_string(), "device".to_string())],
+        };
+
+        let prompt = interface.get_intent_prompt(&result);
+        assert!(prompt.contains("device"));
+        assert!(prompt.contains("control"));
+    }
+
+    #[tokio::test]
+    async fn test_filter_tools_by_intent() {
+        let config = ChatConfig::default();
+        let interface = LlmInterface::new(config);
+
+        let all_tools = vec![
+            edge_ai_core::llm::backend::ToolDefinition {
+                name: "device_control".to_string(),
+                description: "Control a device".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+            edge_ai_core::llm::backend::ToolDefinition {
+                name: "get_weather".to_string(),
+                description: "Get weather information".to_string(),
+                parameters: serde_json::json!({"type": "object"}),
+            },
+        ];
+
+        let intent = IntentResult {
+            category: IntentCategory::DeviceControl,
+            confidence: 0.9,
+            entities: vec![],
+        };
+
+        let filtered = interface.filter_tools_by_intent(&all_tools, &intent).await;
+        // Device control tools should be prioritized
+        assert!(!filtered.is_empty());
+    }
+
+    #[test]
+    fn test_concurrent_limit() {
+        let config = ChatConfig {
+            concurrent_limit: 5,
+            ..Default::default()
+        };
+        let interface = LlmInterface::new(config);
+
+        assert_eq!(interface.max_concurrent(), 5);
+        assert_eq!(interface.available_permits(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_chat_response_structure() {
+        let response = ChatResponse {
+            text: "Test response".to_string(),
+            tokens_used: 10,
+            duration: std::time::Duration::from_millis(100),
+            finish_reason: "stop".to_string(),
+            thinking: None,
+        };
+
+        assert_eq!(response.text, "Test response");
+        assert_eq!(response.tokens_used, 10);
+        assert_eq!(response.finish_reason, "stop");
+        assert!(response.thinking.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_chat_response_with_thinking() {
+        let response = ChatResponse {
+            text: "Test response".to_string(),
+            tokens_used: 15,
+            duration: std::time::Duration::from_millis(200),
+            finish_reason: "stop".to_string(),
+            thinking: Some("Let me think...".to_string()),
+        };
+
+        assert!(response.thinking.is_some());
+        assert_eq!(response.thinking.as_ref().unwrap(), "Let me think...");
+    }
+
+    #[test]
+    fn test_agent_error_display() {
+        let err = AgentError::LlmNotReady;
+        assert!(err.to_string().contains("not ready"));
+
+        let err = AgentError::Generation("test error".to_string());
+        assert!(err.to_string().contains("test error"));
+    }
+}

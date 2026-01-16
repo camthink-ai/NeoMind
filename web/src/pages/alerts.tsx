@@ -29,9 +29,10 @@ import { LoadingState, EmptyState, Pagination, AlertBadge, PageTabs, PageTabsCon
 import { formatTimestamp } from "@/lib/utils/format"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { AlertChannelsTab } from "@/components/alerts"
 import type { Alert } from "@/types"
 
-type AlertFilter = 'all' | 'unacknowledged' | 'info' | 'warning' | 'critical'
+type AlertFilter = 'all' | 'unacknowledged' | 'info' | 'warning' | 'critical' | 'channels'
 
 export function AlertsPage() {
   const { t } = useTranslation(['common', 'alerts'])
@@ -195,6 +196,7 @@ export function AlertsPage() {
     { value: 'info' as AlertFilter, label: t('alerts:info') },
     { value: 'warning' as AlertFilter, label: t('alerts:warning') },
     { value: 'critical' as AlertFilter, label: t('alerts:critical') },
+    { value: 'channels' as AlertFilter, label: t('alerts:channels') },
   ]
 
   return (
@@ -209,114 +211,120 @@ export function AlertsPage() {
         ]}
       >
         <PageTabsContent value={filter} activeTab={filter}>
-          {/* Bulk Actions Bar */}
-          <BulkActionBar
-            selectedCount={selectedIds.size}
-            actions={[
-              { label: t('alerts:acknowledgeSelected'), icon: <Check className="h-4 w-4" />, onClick: handleBulkAcknowledge, disabled: bulkProcessing },
-              { label: t('alerts:deleteSelected'), icon: <Trash2 className="h-4 w-4" />, onClick: handleBulkDelete, disabled: bulkProcessing, variant: 'outline' },
-            ]}
-            onCancel={() => setSelectedIds(new Set())}
-          />
-
-          {/* Content */}
-          {alertsLoading ? (
-            <LoadingState text={t('common:loading')} />
-          ) : filteredAlerts.length === 0 ? (
-            <EmptyState
-              icon={<AlertCircle className="h-12 w-12 text-muted-foreground" />}
-              title={t('alerts:noAlerts')}
-              description={t('alerts:noAlertsDesc')}
-            />
+          {filter === 'channels' ? (
+            <AlertChannelsTab />
           ) : (
-            <div className="space-y-4">
-              {/* Header with Select All */}
-              <div className="flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
-                <Checkbox
-                  checked={allOnPageSelected}
-                  onCheckedChange={toggleAll}
-                />
-                <span>{t('common:selectAll')}</span>
-              </div>
+            <>
+              {/* Bulk Actions Bar */}
+              <BulkActionBar
+                selectedCount={selectedIds.size}
+                actions={[
+                  { label: t('alerts:acknowledgeSelected'), icon: <Check className="h-4 w-4" />, onClick: handleBulkAcknowledge, disabled: bulkProcessing },
+                  { label: t('alerts:deleteSelected'), icon: <Trash2 className="h-4 w-4" />, onClick: handleBulkDelete, disabled: bulkProcessing, variant: 'outline' },
+                ]}
+                onCancel={() => setSelectedIds(new Set())}
+              />
 
-              {paginatedAlerts.map((alert) => (
-                <Card
-                  key={alert.id}
-                  className={
-                    !alert.acknowledged
-                      ? alert.severity === 'critical'
-                        ? 'border-l-4 border-l-red-500'
-                        : alert.severity === 'warning'
-                        ? 'border-l-4 border-l-yellow-500'
-                        : 'border-l-4 border-l-blue-500'
-                      : ''
-                  }
-                >
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3 flex-1">
-                        <Checkbox
-                          checked={selectedIds.has(alert.id)}
-                          onCheckedChange={() => toggleSelection(alert.id)}
-                        />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1 flex-wrap">
-                            <CardTitle className="text-base">{alert.title}</CardTitle>
-                            <AlertBadge level={alert.severity as "critical" | "warning" | "info" | "emergency"} />
+              {/* Content */}
+              {alertsLoading ? (
+                <LoadingState text={t('common:loading')} />
+              ) : filteredAlerts.length === 0 ? (
+                <EmptyState
+                  icon={<AlertCircle className="h-12 w-12 text-muted-foreground" />}
+                  title={t('alerts:noAlerts')}
+                  description={t('alerts:noAlertsDesc')}
+                />
+              ) : (
+                <div className="space-y-4">
+                  {/* Header with Select All */}
+                  <div className="flex items-center gap-2 px-2 py-1 text-sm text-muted-foreground">
+                    <Checkbox
+                      checked={allOnPageSelected}
+                      onCheckedChange={toggleAll}
+                    />
+                    <span>{t('common:selectAll')}</span>
+                  </div>
+
+                  {paginatedAlerts.map((alert) => (
+                    <Card
+                      key={alert.id}
+                      className={
+                        !alert.acknowledged
+                          ? alert.severity === 'critical'
+                            ? 'border-l-4 border-l-red-500'
+                            : alert.severity === 'warning'
+                            ? 'border-l-4 border-l-yellow-500'
+                            : 'border-l-4 border-l-blue-500'
+                          : ''
+                      }
+                    >
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start gap-3 flex-1">
+                            <Checkbox
+                              checked={selectedIds.has(alert.id)}
+                              onCheckedChange={() => toggleSelection(alert.id)}
+                            />
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                <CardTitle className="text-base">{alert.title}</CardTitle>
+                                <AlertBadge level={alert.severity as "critical" | "warning" | "info" | "emergency"} />
+                                {!alert.acknowledged && (
+                                  <Badge variant="default" className="text-xs">{t('alerts:unacknowledged')}</Badge>
+                                )}
+                                {alert.source && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {alert.source}
+                                  </Badge>
+                                )}
+                              </div>
+                              <CardDescription className="text-xs">
+                                {formatTimestamp(alert.created_at)}
+                              </CardDescription>
+                            </div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              onClick={() => setSelectedAlert(alert)}
+                              variant="ghost"
+                              size="sm"
+                            >
+                              <Eye className="h-3 w-3" />
+                            </Button>
                             {!alert.acknowledged && (
-                              <Badge variant="default" className="text-xs">{t('alerts:unacknowledged')}</Badge>
-                            )}
-                            {alert.source && (
-                              <Badge variant="outline" className="text-xs">
-                                {alert.source}
-                              </Badge>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleAcknowledge(alert.id)}
+                                disabled={acknowledgingId === alert.id}
+                              >
+                                <Check className="mr-1 h-3 w-3" />
+                                {acknowledgingId === alert.id ? t('alerts:acknowledging') : t('alerts:acknowledge')}
+                              </Button>
                             )}
                           </div>
-                          <CardDescription className="text-xs">
-                            {formatTimestamp(alert.created_at)}
-                          </CardDescription>
                         </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={() => setSelectedAlert(alert)}
-                          variant="ghost"
-                          size="sm"
-                        >
-                          <Eye className="h-3 w-3" />
-                        </Button>
-                        {!alert.acknowledged && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleAcknowledge(alert.id)}
-                            disabled={acknowledgingId === alert.id}
-                          >
-                            <Check className="mr-1 h-3 w-3" />
-                            {acknowledgingId === alert.id ? t('alerts:acknowledging') : t('alerts:acknowledge')}
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="text-sm">
-                    <p className="text-muted-foreground">{alert.message}</p>
-                  </CardContent>
-                </Card>
-              ))}
+                      </CardHeader>
+                      <CardContent className="text-sm">
+                        <p className="text-muted-foreground">{alert.message}</p>
+                      </CardContent>
+                    </Card>
+                  ))}
 
-              {/* Pagination */}
-              {filteredAlerts.length > alertsPerPage && (
-                <div className="pt-4">
-                  <Pagination
-                    total={filteredAlerts.length}
-                    pageSize={alertsPerPage}
-                    currentPage={page}
-                    onPageChange={setPage}
-                  />
+                  {/* Pagination */}
+                  {filteredAlerts.length > alertsPerPage && (
+                    <div className="pt-4">
+                      <Pagination
+                        total={filteredAlerts.length}
+                        pageSize={alertsPerPage}
+                        currentPage={page}
+                        onPageChange={setPage}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </>
           )}
         </PageTabsContent>
       </PageTabs>

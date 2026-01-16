@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::alert::{Alert, AlertId, AlertSeverity, AlertStatus};
-use super::channels::{ChannelRegistry, NotificationChannel};
+use super::plugin::{ChannelPluginRegistry, DynAlertChannel};
 use super::error::{Error, Result};
 
 /// Alert manager for handling alerts.
@@ -18,7 +18,7 @@ pub struct AlertManager {
     /// Active alerts
     active_alerts: Arc<RwLock<HashMap<AlertId, Alert>>>,
     /// Notification channels
-    channels: Arc<RwLock<ChannelRegistry>>,
+    channels: Arc<RwLock<ChannelPluginRegistry>>,
     /// Alert history
     history: Arc<RwLock<Vec<Alert>>>,
     /// Maximum history size
@@ -33,7 +33,19 @@ impl AlertManager {
         Self {
             alerts: Arc::new(RwLock::new(HashMap::new())),
             active_alerts: Arc::new(RwLock::new(HashMap::new())),
-            channels: Arc::new(RwLock::new(ChannelRegistry::new())),
+            channels: Arc::new(RwLock::new(ChannelPluginRegistry::new())),
+            history: Arc::new(RwLock::new(Vec::new())),
+            max_history_size: 10000,
+            rules: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    /// Create a new alert manager with a custom channel registry.
+    pub fn with_registry(channels: Arc<RwLock<ChannelPluginRegistry>>) -> Self {
+        Self {
+            alerts: Arc::new(RwLock::new(HashMap::new())),
+            active_alerts: Arc::new(RwLock::new(HashMap::new())),
+            channels,
             history: Arc::new(RwLock::new(Vec::new())),
             max_history_size: 10000,
             rules: Arc::new(RwLock::new(Vec::new())),
@@ -209,21 +221,28 @@ impl AlertManager {
     }
 
     /// Add a notification channel.
-    pub async fn add_channel(&self, channel: NotificationChannel) {
-        let mut channels = self.channels.write().await;
-        channels.add_channel(channel);
+    pub async fn add_channel(&self, channel: DynAlertChannel) {
+        let channels = self.channels.read().await;
+        let name = channel.name().to_string();
+        channels.register_channel(name, channel).await;
     }
 
     /// Remove a notification channel.
     pub async fn remove_channel(&self, name: &str) -> bool {
-        let mut channels = self.channels.write().await;
-        channels.remove_channel(name)
+        let channels = self.channels.read().await;
+        channels.unregister_channel(name).await
     }
 
     /// List notification channels.
     pub async fn list_channels(&self) -> Vec<String> {
         let channels = self.channels.read().await;
-        channels.list_channels()
+        channels.list_channels().await
+    }
+
+    /// Get channel statistics.
+    pub async fn get_channel_stats(&self) -> super::plugin::ChannelStats {
+        let channels = self.channels.read().await;
+        channels.get_stats().await
     }
 
     /// Get alert statistics.
@@ -283,6 +302,11 @@ impl AlertManager {
         if history.len() > self.max_history_size {
             history.remove(0);
         }
+    }
+
+    /// Get the internal channel registry for advanced operations.
+    pub async fn channel_registry(&self) -> Arc<RwLock<ChannelPluginRegistry>> {
+        self.channels.clone()
     }
 }
 
@@ -408,7 +432,7 @@ impl CustomRule {
 
 #[cfg(test)]
 mod tests {
-    use super::super::channels::MemoryChannel;
+    use super::super::channels::ConsoleChannel;
     use super::*;
 
     #[tokio::test]
@@ -503,7 +527,7 @@ mod tests {
     async fn test_channel_integration() {
         let manager = AlertManager::new();
 
-        let channel = NotificationChannel::Memory(MemoryChannel::new("test_channel".to_string()));
+        let channel = Arc::new(ConsoleChannel::new("test_channel".to_string()));
         manager.add_channel(channel).await;
 
         let alert = manager

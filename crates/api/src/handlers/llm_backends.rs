@@ -518,9 +518,48 @@ pub async fn activate_backend_handler(
     // Update all existing sessions to use the new backend
     state
         .session_manager
-        .set_llm_backend(backend)
+        .set_llm_backend(backend.clone())
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+
+    // Also save to SettingsStore for persistence across server restarts
+    // This ensures init_llm() will load the correct backend on startup
+    let settings_request = match instance.backend_type {
+        LlmBackendType::Ollama => crate::config::LlmSettingsRequest {
+            backend: "ollama".to_string(),
+            model: instance.model.clone(),
+            endpoint: instance.endpoint.clone(),
+            api_key: None,
+        },
+        LlmBackendType::OpenAi => crate::config::LlmSettingsRequest {
+            backend: "openai".to_string(),
+            model: instance.model.clone(),
+            endpoint: instance.endpoint.clone(),
+            api_key: instance.api_key.clone(),
+        },
+        LlmBackendType::Anthropic => crate::config::LlmSettingsRequest {
+            backend: "anthropic".to_string(),
+            model: instance.model.clone(),
+            endpoint: instance.endpoint.clone(),
+            api_key: instance.api_key.clone(),
+        },
+        LlmBackendType::Google => crate::config::LlmSettingsRequest {
+            backend: "google".to_string(),
+            model: instance.model.clone(),
+            endpoint: instance.endpoint.clone(),
+            api_key: instance.api_key.clone(),
+        },
+        LlmBackendType::XAi => crate::config::LlmSettingsRequest {
+            backend: "xai".to_string(),
+            model: instance.model.clone(),
+            endpoint: instance.endpoint.clone(),
+            api_key: instance.api_key.clone(),
+        },
+    };
+
+    if let Err(e) = state.save_llm_config(&settings_request).await {
+        tracing::warn!(category = "settings", error = %e, "Failed to save LLM config to SettingsStore after backend activation");
+    }
 
     ok(json!({
         "id": id,

@@ -153,7 +153,12 @@ export function DevicesPage() {
 
   // Handlers
   const handleAddDevice = async (request: import('@/types').AddDeviceRequest) => {
-    return await addDevice(request)
+    setAddingDevice(true)
+    try {
+      return await addDevice(request)
+    } finally {
+      setAddingDevice(false)
+    }
   }
 
   const handleDeleteDevice = async (id: string) => {
@@ -172,6 +177,10 @@ export function DevicesPage() {
     setSelectedMetric(null)
     await fetchDeviceDetails(device.id)
     await fetchDeviceTypeDetails(device.device_type)
+    // Fetch all telemetry data (no specific metric = get all metrics)
+    const end = Math.floor(Date.now() / 1000)
+    const start = end - 86400 // 24 hours
+    await fetchTelemetryData(device.id, undefined, start, end, 100)
     await fetchCommandHistory(device.id, 50)
   }
 
@@ -185,6 +194,11 @@ export function DevicesPage() {
       await fetchDeviceDetails(deviceDetailView)
       if (selectedMetric) {
         await fetchTelemetryData(deviceDetailView, selectedMetric, undefined, undefined, 1000)
+      } else {
+        // Fetch all metrics if no specific metric selected
+        const end = Math.floor(Date.now() / 1000)
+        const start = end - 86400
+        await fetchTelemetryData(deviceDetailView, undefined, start, end, 100)
       }
       await fetchCommandHistory(deviceDetailView, 50)
     }
@@ -244,6 +258,8 @@ export function DevicesPage() {
       toast({ title: t('common:failed'), description: t('devices:addDeviceFailed'), variant: "destructive" })
     }
   }
+
+  const [addingDevice, setAddingDevice] = useState(false)
 
   // Device Type dialog states
   const [addDeviceTypeOpen, setAddDeviceTypeOpen] = useState(false)
@@ -405,7 +421,7 @@ export function DevicesPage() {
                   onOpenChange={setAddDeviceDialogOpen}
                   deviceTypes={deviceTypes}
                   onAdd={handleAddDevice}
-                  adding={false}
+                  adding={addingDevice}
                 />
               }
               hassDiscoveryDialogOpen={hassDiscoveryOpen}
@@ -485,6 +501,7 @@ export function DevicesPage() {
         deviceType={editingDeviceType}
         onEdit={handleEditDeviceTypeSubmit}
         editing={addingType}
+        onGenerateMDL={handleGenerateMDL}
       />
     </PageLayout>
   )
