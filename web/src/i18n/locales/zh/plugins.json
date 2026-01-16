@@ -3,6 +3,7 @@
   "description": "管理系统扩展插件（动态加载）",
   "llmBackends": "LLM 后端",
   "deviceConnections": "设备连接",
+  "alertChannels": "告警通道",
   "extensionPlugins": "扩展插件",
   "extensionsDesc": "通过插件文件扩展系统功能",
   "noPlugins": "暂无扩展插件",

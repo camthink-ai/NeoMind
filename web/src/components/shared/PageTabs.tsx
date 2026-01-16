@@ -43,7 +43,7 @@ export function PageTabs({
   return (
     <Tabs value={activeTab} onValueChange={onTabChange} className={className}>
       {/* Tabs + Actions Bar */}
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex items-center justify-between mb-2 shrink-0">
         <TabsList className={tabsClassName}>
           {tabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} disabled={tab.disabled}>
@@ -97,7 +97,7 @@ export function PageTabsContent({ value, activeTab, children, className }: PageT
     <TabsContent
       value={value}
       className={cn(
-        'space-y-4 min-h-0 overflow-auto',
+        'min-h-0 overflow-auto',
         className
       )}
     >
@@ -134,7 +134,7 @@ export function PageTabsGrid({
 
   return (
     <Tabs value={activeTab} onValueChange={onTabChange} className={className}>
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex items-center justify-between mb-2 shrink-0">
         <TabsList className={`grid w-full ${maxWidthClass} ${gridColsClass[gridCols]}`}>
           {tabs.map((tab) => (
             <TabsTrigger key={tab.value} value={tab.value} disabled={tab.disabled}>

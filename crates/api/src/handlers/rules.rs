@@ -367,3 +367,437 @@ pub async fn get_rule_history_handler(
         "executions": history,
     }))
 }
+
+/// Export all rules as JSON.
+///
+/// GET /api/rules/export
+pub async fn export_rules_handler(
+    State(state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    // Get all rules
+    let rules = state.rule_engine.list_rules().await;
+
+    // Build export structure
+    let export = json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "count": rules.len(),
+        "rules": rules,
+    });
+
+    ok(export)
+}
+
+/// Import rules from JSON.
+///
+/// POST /api/rules/import
+pub async fn import_rules_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<serde_json::Value>,
+) -> HandlerResult<serde_json::Value> {
+    let rules_data = req
+        .get("rules")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ErrorResponse::bad_request("Missing 'rules' array"))?;
+
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut errors = Vec::new();
+
+    for rule_value in rules_data {
+        // Try to serialize to DSL format
+        let dsl = serde_json::to_string_pretty(rule_value)
+            .map_err(|e| ErrorResponse::bad_request(format!("Invalid rule format: {}", e)))?;
+
+        match state.rule_engine.add_rule_from_dsl(&dsl).await {
+            Ok(_) => imported += 1,
+            Err(e) => {
+                let name = rule_value
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                errors.push(format!("Rule {}: {}", name, e));
+                skipped += 1;
+            }
+        }
+    }
+
+    ok(json!({
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+    }))
+}
+
+/// Get available resources for rule validation.
+///
+/// GET /api/rules/resources
+pub async fn get_resources_handler(
+    State(state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    use edge_ai_rules::{DeviceInfo, MetricInfo, MetricDataType, CommandInfo};
+
+    let mut devices = Vec::new();
+
+    // Get devices from device service
+    let all_devices = state.device_service.list_devices().await;
+    for device in all_devices {
+        // Convert device to DeviceInfo format
+        let mut metrics = Vec::new();
+
+        // Add common metrics based on device type
+        match device.device_type.as_str() {
+            "sensor" | "temperature_sensor" => {
+                metrics.push(MetricInfo {
+                    name: "temperature".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: Some("°C".to_string()),
+                    min_value: Some(-50.0),
+                    max_value: Some(150.0),
+                });
+                metrics.push(MetricInfo {
+                    name: "humidity".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: Some("%".to_string()),
+                    min_value: Some(0.0),
+                    max_value: Some(100.0),
+                });
+            }
+            "switch" | "light" => {
+                metrics.push(MetricInfo {
+                    name: "state".to_string(),
+                    data_type: MetricDataType::Boolean,
+                    unit: None,
+                    min_value: None,
+                    max_value: None,
+                });
+                metrics.push(MetricInfo {
+                    name: "power".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: Some("W".to_string()),
+                    min_value: Some(0.0),
+                    max_value: Some(5000.0),
+                });
+            }
+            _ => {
+                // Generic metrics
+                metrics.push(MetricInfo {
+                    name: "value".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: None,
+                    min_value: None,
+                    max_value: None,
+                });
+            }
+        }
+
+        let commands = vec![
+            CommandInfo {
+                name: "on".to_string(),
+                description: "Turn on".to_string(),
+                parameters: vec![],
+            },
+            CommandInfo {
+                name: "off".to_string(),
+                description: "Turn off".to_string(),
+                parameters: vec![],
+            },
+        ];
+
+        devices.push(DeviceInfo {
+            id: device.device_id.clone(),
+            name: device.name.clone(),
+            device_type: device.device_type.clone(),
+            metrics,
+            commands,
+            online: true, // Device is considered online if in the registry
+        });
+    }
+
+    // Get alert channels
+    let mut alert_channels = Vec::new();
+    // Get alert channel names from alert manager
+    let channel_names = state.alert_manager.list_channels().await;
+    for name in channel_names {
+        alert_channels.push(edge_ai_rules::AlertChannelInfo {
+            id: name.clone(),
+            name: name.clone(),
+            channel_type: "unknown".to_string(), // Type info not directly available
+            enabled: true, // Assume enabled if in the list
+        });
+    }
+
+    ok(json!({
+        "devices": devices,
+        "alert_channels": alert_channels,
+    }))
+}
+
+/// Validate a rule against available resources.
+///
+/// POST /api/rules/validate
+pub async fn validate_rule_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<serde_json::Value>,
+) -> HandlerResult<serde_json::Value> {
+    use edge_ai_rules::{RuleCondition, RuleValidator, ValidationContext};
+
+    // Parse condition from request
+    let condition_obj = req
+        .get("condition")
+        .ok_or_else(|| ErrorResponse::bad_request("Missing 'condition'"))?;
+
+    let device_id = condition_obj
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorResponse::bad_request("Missing 'condition.device_id'"))?;
+
+    let metric = condition_obj
+        .get("metric")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorResponse::bad_request("Missing 'condition.metric'"))?;
+
+    let operator_str = condition_obj
+        .get("operator")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorResponse::bad_request("Missing 'condition.operator'"))?;
+
+    let operator = match operator_str {
+        ">" => edge_ai_rules::ComparisonOperator::GreaterThan,
+        "<" => edge_ai_rules::ComparisonOperator::LessThan,
+        ">=" => edge_ai_rules::ComparisonOperator::GreaterEqual,
+        "<=" => edge_ai_rules::ComparisonOperator::LessEqual,
+        "==" => edge_ai_rules::ComparisonOperator::Equal,
+        "!=" => edge_ai_rules::ComparisonOperator::NotEqual,
+        _ => return Err(ErrorResponse::bad_request(format!("Invalid operator: {}", operator_str))),
+    };
+
+    let threshold = condition_obj
+        .get("threshold")
+        .and_then(|v| v.as_f64())
+        .ok_or_else(|| ErrorResponse::bad_request("Missing or invalid 'condition.threshold'"))?;
+
+    let condition = RuleCondition {
+        device_id: device_id.to_string(),
+        metric: metric.to_string(),
+        operator,
+        threshold,
+    };
+
+    // Build validation context
+    let mut context = ValidationContext::new();
+
+    // Add devices
+    use edge_ai_rules::{DeviceInfo, MetricInfo, MetricDataType};
+
+    let all_devices = state.device_service.list_devices().await;
+    for device in all_devices {
+        let mut metrics = Vec::new();
+        match device.device_type.as_str() {
+            "sensor" | "temperature_sensor" => {
+                metrics.push(MetricInfo {
+                    name: "temperature".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: Some("°C".to_string()),
+                    min_value: Some(-50.0),
+                    max_value: Some(150.0),
+                });
+            }
+            _ => {
+                metrics.push(MetricInfo {
+                    name: "value".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: None,
+                    min_value: None,
+                    max_value: None,
+                });
+            }
+        }
+
+        context.add_device(DeviceInfo {
+            id: device.device_id.clone(),
+            name: device.name.clone(),
+            device_type: device.device_type.clone(),
+            metrics,
+            commands: vec![],
+            online: true,
+        });
+    }
+
+    // Parse actions if present
+    let mut actions = Vec::new();
+    if let Some(actions_arr) = req.get("actions").and_then(|v| v.as_array()) {
+        for action_value in actions_arr {
+            if let Some(action_type) = action_value.get("type").and_then(|v| v.as_str()) {
+                match action_type {
+                    "notify" => {
+                        if let Some(message) = action_value.get("message").and_then(|v| v.as_str()) {
+                            actions.push(edge_ai_rules::RuleAction::Notify {
+                                message: message.to_string(),
+                            });
+                        }
+                    }
+                    "log" => {
+                        actions.push(edge_ai_rules::RuleAction::Log {
+                            level: edge_ai_rules::LogLevel::Info,
+                            message: "Rule triggered".to_string(),
+                            severity: None,
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Validate
+    let result = RuleValidator::validate_rule(&condition, &actions, &context);
+
+    ok(json!({
+        "valid": result.is_valid,
+        "errors": result.errors,
+        "warnings": result.warnings,
+        "resources": result.available_resources,
+    }))
+}
+
+/// Generate rule from natural language description.
+///
+/// POST /api/rules/generate
+pub async fn generate_rule_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<serde_json::Value>,
+) -> HandlerResult<serde_json::Value> {
+    use edge_ai_rules::{DeviceInfo, MetricInfo, MetricDataType, RuleGenerator, ValidationContext};
+
+    let description = req
+        .get("description")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorResponse::bad_request("Missing 'description'"))?;
+
+    // Build validation context
+    let mut context = ValidationContext::new();
+
+    // Add devices
+    let all_devices = state.device_service.list_devices().await;
+    for device in all_devices {
+        let mut metrics = Vec::new();
+        match device.device_type.as_str() {
+            "sensor" | "temperature_sensor" => {
+                metrics.push(MetricInfo {
+                    name: "temperature".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: Some("°C".to_string()),
+                    min_value: Some(-50.0),
+                    max_value: Some(150.0),
+                });
+                metrics.push(MetricInfo {
+                    name: "humidity".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: Some("%".to_string()),
+                    min_value: Some(0.0),
+                    max_value: Some(100.0),
+                });
+            }
+            _ => {
+                metrics.push(MetricInfo {
+                    name: "value".to_string(),
+                    data_type: MetricDataType::Number,
+                    unit: None,
+                    min_value: None,
+                    max_value: None,
+                });
+            }
+        }
+
+        context.add_device(DeviceInfo {
+            id: device.device_id.clone(),
+            name: device.name.clone(),
+            device_type: device.device_type.clone(),
+            metrics,
+            commands: vec![],
+            online: true,
+        });
+    }
+
+    // Generate rule
+    let generated = RuleGenerator::generate(description, &context, None)
+        .map_err(|e| ErrorResponse::bad_request(format!("Generation failed: {}", e)))?;
+
+    // Convert to DSL
+    let rule = &generated.rule;
+    let dsl = format!(
+        "RULE \"{}\"\n  WHEN {}.{} {} {}\n  DO {}\nEND",
+        rule.name,
+        rule.condition.device_id,
+        rule.condition.metric,
+        rule.condition.operator.as_str(),
+        rule.condition.threshold,
+        if !rule.actions.is_empty() {
+            match &rule.actions[0] {
+                edge_ai_rules::RuleAction::Notify { message } => {
+                    format!("NOTIFY \"{}\"", message)
+                }
+                edge_ai_rules::RuleAction::Execute { command, .. } => {
+                    format!("EXECUTE {}", command)
+                }
+                edge_ai_rules::RuleAction::Log { .. } => "LOG".to_string(),
+            }
+        } else {
+            "LOG".to_string()
+        }
+    );
+
+    ok(json!({
+        "rule": rule,
+        "dsl": dsl,
+        "explanation": generated.explanation,
+        "confidence": generated.confidence,
+        "warnings": generated.warnings,
+        "suggested_edits": generated.suggested_edits,
+    }))
+}
+
+/// Get available rule templates.
+///
+/// GET /api/rules/templates
+pub async fn get_templates_handler() -> HandlerResult<serde_json::Value> {
+    use edge_ai_rules::RuleTemplates;
+
+    let templates = RuleTemplates::all();
+
+    ok(json!(templates))
+}
+
+/// Fill a template with parameters.
+///
+/// POST /api/rules/templates/fill
+pub async fn fill_template_handler(
+    Json(req): Json<serde_json::Value>,
+) -> HandlerResult<serde_json::Value> {
+    use edge_ai_rules::RuleTemplates;
+
+    let template_id = req
+        .get("template_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorResponse::bad_request("Missing 'template_id'"))?;
+
+    let template = RuleTemplates::get(template_id)
+        .ok_or_else(|| ErrorResponse::not_found("Template not found"))?;
+
+    let params_map: std::collections::HashMap<String, String> = req
+        .get("parameters")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+
+    // Fill template with parameters
+    let filled = template
+        .fill(&params_map)
+        .map_err(|e| ErrorResponse::bad_request(format!("Failed to fill template: {}", e)))?;
+
+    ok(json!({
+        "template_id": filled.template_id,
+        "dsl": filled.dsl,
+        "parameters": filled.parameters,
+    }))
+}

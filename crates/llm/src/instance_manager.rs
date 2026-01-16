@@ -490,7 +490,7 @@ impl LlmBackendInstanceManager {
                 "api_key": {
                     "type": "string",
                     "title": "API 密钥",
-                    "x-security": "secret",
+                    "x_secret": true,
                 },
                 "temperature": {
                     "type": "number",

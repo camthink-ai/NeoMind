@@ -1,7 +1,7 @@
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -44,13 +44,16 @@ function buildZodSchema(schema: PluginConfigSchema): z.ZodType<Record<string, un
         }
         break
       case 'number':
-        fieldSchema = z.number().or(z.string().transform((v) => Number(v)))
+        // Build number schema with constraints first, then add string coercion
+        let numSchema = z.number()
         if (prop.minimum !== undefined) {
-          fieldSchema = (fieldSchema as z.ZodNumber).min(prop.minimum)
+          numSchema = numSchema.min(prop.minimum)
         }
         if (prop.maximum !== undefined) {
-          fieldSchema = (fieldSchema as z.ZodNumber).max(prop.maximum)
+          numSchema = numSchema.max(prop.maximum)
         }
+        // Allow string input that will be converted to number
+        fieldSchema = numSchema.or(z.string().transform((v) => Number(v)))
         break
       case 'boolean':
         fieldSchema = z.boolean().or(z.coerce.boolean())
@@ -162,7 +165,12 @@ export function ConfigFormBuilder({
 }: ConfigFormBuilderProps) {
   const { t } = useTranslation(['plugins', 'common'])
   const zodSchema = buildZodSchema(schema)
-  const fieldOrder = schema.ui_hints?.field_order || Object.keys(schema.properties)
+
+  // Memoize field order to prevent infinite re-renders
+  const fieldOrder = useMemo(
+    () => schema.ui_hints?.field_order || Object.keys(schema.properties),
+    [schema.ui_hints?.field_order, schema.properties]
+  )
 
   const { register, handleSubmit, watch, formState: { errors }, setValue } = useForm({
     resolver: zodResolver(zodSchema as any),
@@ -171,6 +179,7 @@ export function ConfigFormBuilder({
 
   const watchedValues = watch()
   const [visibleFields, setVisibleFields] = useState<Set<string>>(new Set(fieldOrder))
+  const [secretVisible, setSecretVisible] = useState<Record<string, boolean>>({})
 
   // Update visible fields when watched values change
   useEffect(() => {
@@ -181,10 +190,14 @@ export function ConfigFormBuilder({
       }
     }
     setVisibleFields(newVisible)
-  }, [watchedValues, fieldOrder, schema.ui_hints])
+  }, [watchedValues, schema.ui_hints, fieldOrder])
 
   const handleFormSubmit = async (values: Record<string, unknown>) => {
     await onSubmit(values)
+  }
+
+  const toggleSecretVisibility = (fieldName: string) => {
+    setSecretVisible(prev => ({ ...prev, [fieldName]: !prev[fieldName] }))
   }
 
   return (
@@ -198,7 +211,7 @@ export function ConfigFormBuilder({
           const displayName = getFieldDisplayName(fieldName, schema.ui_hints)
           const helpText = getFieldHelpText(fieldName, schema.ui_hints, prop)
           const isSecret = prop.secret
-          const [showSecret, setShowSecret] = useState(false)
+          const showSecret = secretVisible[fieldName] || false
           const error = errors[fieldName]
 
           return (
@@ -252,7 +265,7 @@ export function ConfigFormBuilder({
                   {isSecret && (
                     <button
                       type="button"
-                      onClick={() => setShowSecret(!showSecret)}
+                      onClick={() => toggleSecretVisibility(fieldName)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     >
                       {showSecret ? (

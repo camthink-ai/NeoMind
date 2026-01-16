@@ -1029,6 +1029,7 @@ export interface BackendTypeDefinition {
   supports_streaming: boolean
   supports_thinking: boolean
   supports_multimodal: boolean
+  config_schema?: PluginConfigSchema
 }
 
 export interface BackendTestResult {

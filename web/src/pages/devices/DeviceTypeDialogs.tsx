@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import React, { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import {
   Dialog,
@@ -16,6 +16,13 @@ import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { toast } from "@/components/ui/use-toast"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
+import {
   Plus,
   Trash2,
   ChevronLeft,
@@ -30,6 +37,7 @@ import {
   Zap,
   Code,
   Database,
+  MoreVertical,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { DeviceType, MetricDefinition, CommandDefinition } from "@/types"
@@ -112,7 +120,6 @@ export function AddDeviceTypeDialog({
   // AI generation states
   const [aiMetricsExample, setAiMetricsExample] = useState("")
   const [aiCommandsExample, setAiCommandsExample] = useState("")
-  const [aiCommandDesc, setAiCommandDesc] = useState("")
 
   // Reset when dialog opens or editDeviceType changes
   useEffect(() => {
@@ -148,7 +155,6 @@ export function AddDeviceTypeDialog({
       setValidationResult(null)
       setAiMetricsExample("")
       setAiCommandsExample("")
-      setAiCommandDesc("")
     }
   }, [open, editDeviceType])
 
@@ -216,7 +222,15 @@ export function AddDeviceTypeDialog({
     const steps: Step[] = ['basic', 'data', 'commands', 'review', 'finish']
     const currentIndex = steps.indexOf(currentStep)
     if (currentIndex > 0) {
-      setCurrentStep(steps[currentIndex - 1])
+      const prevStep = steps[currentIndex - 1]
+      setCurrentStep(prevStep)
+      // Clear completed steps that come after the previous step
+      // This ensures the completion state is accurate when navigating back
+      const newCompleted = new Set<Step>()
+      for (let i = 0; i < currentIndex - 1; i++) {
+        newCompleted.add(steps[i])
+      }
+      setCompletedSteps(newCompleted)
     }
   }
 
@@ -267,12 +281,12 @@ export function AddDeviceTypeDialog({
     }
   }
 
-  // Generate commands from AI
-  const handleGenerateCommands = async () => {
-    if (!aiCommandsExample.trim() && !aiCommandDesc.trim()) {
+  // Generate single command from AI (adds to existing commands)
+  const handleGenerateCommand = async (jsonExample: string) => {
+    if (!jsonExample.trim()) {
       toast({
         title: t('devices:types.validationError'),
-        description: "Please paste sample data or describe the command",
+        description: "Please paste a JSON example",
         variant: "destructive",
       })
       return
@@ -282,20 +296,29 @@ export function AddDeviceTypeDialog({
       const result = await onGenerateMDL(
         formData.name || "device",
         formData.description || "",
-        "", // No metrics for commands generation
-        aiCommandsExample || JSON.stringify({ description: aiCommandDesc })
+        "", // No metrics for command generation
+        jsonExample
       )
       const parsed = JSON.parse(result)
 
-      setFormData(prev => ({
-        ...prev,
-        commands: parsed.downlink?.commands || parsed.commands || [],
-      }))
-
-      toast({
-        title: t('common:success'),
-        description: `Generated ${parsed.commands?.length || 0} commands`,
-      })
+      // Get the first command from the result
+      const newCommand = parsed.downlink?.commands?.[0] || parsed.commands?.[0]
+      if (newCommand) {
+        setFormData(prev => ({
+          ...prev,
+          commands: [...(prev.commands || []), newCommand],
+        }))
+        toast({
+          title: t('common:success'),
+          description: "Generated 1 command",
+        })
+      } else {
+        toast({
+          title: 'Generation Failed',
+          description: 'No command generated from AI',
+          variant: "destructive",
+        })
+      }
     } catch (e) {
       toast({
         title: t('devices:types.generate.failed'),
@@ -340,20 +363,20 @@ export function AddDeviceTypeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl h-[90vh] max-h-[90vh] flex flex-col p-0 overflow-hidden">
         {/* Header with Steps */}
-        <DialogHeader className="px-6 pt-6 pb-2 border-b space-y-4">
+        <DialogHeader className="px-6 pt-4 pb-4 border-b space-y-3">
           <DialogTitle className="text-xl">
             {isEditMode ? 'Edit Device Type' : t('devices:types.add.title')}
           </DialogTitle>
 
           {/* Step Indicator */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-center gap-2">
             {steps.map((step, index) => {
               const isCompleted = completedSteps.has(step.key)
               const isCurrent = step.key === currentStep
               const isPast = index < stepIndex
 
               return (
-                <div key={step.key} className="flex items-center gap-2 flex-1">
+                <div key={step.key} className="flex items-center gap-2">
                   <div
                     className={cn(
                       "w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors shrink-0",
@@ -366,7 +389,7 @@ export function AddDeviceTypeDialog({
                   </div>
                   <span
                     className={cn(
-                      "text-xs font-medium whitespace-nowrap overflow-hidden text-ellipsis",
+                      "text-xs font-medium whitespace-nowrap",
                       isCurrent ? "text-primary" : "text-muted-foreground"
                     )}
                   >
@@ -375,7 +398,7 @@ export function AddDeviceTypeDialog({
                   {index < steps.length - 1 && (
                     <div
                       className={cn(
-                        "flex-1 h-0.5 transition-colors",
+                        "w-8 h-0.5 transition-colors",
                         isPast ? "bg-primary" : "bg-muted"
                       )}
                     />
@@ -387,7 +410,7 @@ export function AddDeviceTypeDialog({
         </DialogHeader>
 
         {/* Step Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {currentStep === 'basic' && (
             <BasicInfoStep
               data={formData}
@@ -415,11 +438,9 @@ export function AddDeviceTypeDialog({
               data={formData}
               onChange={setFormData}
               errors={formErrors}
-              onGenerateCommands={handleGenerateCommands}
+              onGenerateCommand={handleGenerateCommand}
               aiExample={aiCommandsExample}
               onAiExampleChange={setAiCommandsExample}
-              aiDesc={aiCommandDesc}
-              onAiDescChange={setAiCommandDesc}
               generating={generating}
             />
           )}
@@ -449,7 +470,7 @@ export function AddDeviceTypeDialog({
 
         {/* Footer Navigation */}
         {currentStep !== 'finish' && (
-          <DialogFooter className="px-6 pb-6 pt-4 border-t gap-2">
+          <DialogFooter className="px-6 pb-4 pt-4 border-t gap-2">
             {!isFirstStep && (
               <Button variant="outline" onClick={handlePrevious}>
                 <ChevronLeft className="h-4 w-4 mr-1" />
@@ -663,11 +684,21 @@ function DataDefinitionStep({
   // Add metric
   const addMetric = () => {
     const metrics = data.metrics || []
+    // Find the highest numbered metric_ and increment
+    let maxNum = 0
+    for (const m of metrics) {
+      const match = m.name.match(/^metric_(\d+)$/)
+      if (match) {
+        const num = parseInt(match[1], 10)
+        if (num > maxNum) maxNum = num
+      }
+    }
+    const newNum = maxNum + 1
     onChange('metrics', [
       ...metrics,
       {
-        name: `metric_${metrics.length + 1}`,
-        display_name: `Metric ${metrics.length + 1}`,
+        name: `metric_${newNum}`,
+        display_name: `Metric ${newNum}`,
         data_type: "float",
       },
     ])
@@ -882,11 +913,9 @@ interface CommandsStepProps {
   data: Partial<DeviceType>
   onChange: (data: Partial<DeviceType>) => void
   errors: FormErrors
-  onGenerateCommands: () => void
+  onGenerateCommand: (jsonExample: string) => void
   aiExample: string
   onAiExampleChange: (value: string) => void
-  aiDesc: string
-  onAiDescChange: (value: string) => void
   generating: boolean
 }
 
@@ -894,23 +923,31 @@ function CommandsStep({
   data,
   onChange,
   errors,
-  onGenerateCommands,
+  onGenerateCommand,
   aiExample,
   onAiExampleChange,
-  aiDesc,
-  onAiDescChange,
   generating,
 }: CommandsStepProps) {
   // Add command
   const addCommand = () => {
     const commands = data.commands || []
+    // Find the highest numbered cmd_ and increment
+    let maxNum = 0
+    for (const cmd of commands) {
+      const match = cmd.name.match(/^cmd_(\d+)$/)
+      if (match) {
+        const num = parseInt(match[1], 10)
+        if (num > maxNum) maxNum = num
+      }
+    }
+    const newNum = maxNum + 1
     onChange({
       ...data,
       commands: [
         ...commands,
         {
-          name: `cmd_${commands.length + 1}`,
-          display_name: `Command ${commands.length + 1}`,
+          name: `cmd_${newNum}`,
+          display_name: `Command ${newNum}`,
           payload_template: '{"action": "${value}"}',
           parameters: [],
         },
@@ -932,6 +969,84 @@ function CommandsStep({
     onChange({ ...data, commands: commands.filter((_, i) => i !== index) })
   }
 
+  // Import from JSON
+  const importFromJson = () => {
+    try {
+      const imported = JSON.parse(aiExample)
+      const commandsToAdd = Array.isArray(imported) ? imported : [imported]
+
+      // Convert to CommandDefinition format
+      const newCommands = commandsToAdd.map((cmd: any) => ({
+        name: cmd.name || `cmd_${Date.now()}`,
+        display_name: cmd.display_name || cmd.name || 'Imported Command',
+        payload_template: cmd.payload_template || cmd.payload || JSON.stringify(cmd),
+        parameters: cmd.parameters || [],
+      }))
+
+      onChange({
+        ...data,
+        commands: [...(data.commands || []), ...newCommands],
+      })
+
+      toast({
+        title: 'Import Successful',
+        description: `Added ${newCommands.length} command${newCommands.length > 1 ? 's' : ''}`,
+      })
+
+      onAiExampleChange('')
+    } catch {
+      toast({
+        title: 'Import Failed',
+        description: 'Invalid JSON format',
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Hidden file input for JSON import
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target?.result as string)
+        const commandsToAdd = Array.isArray(imported) ? imported : [imported]
+
+        const newCommands = commandsToAdd.map((cmd: any) => ({
+          name: cmd.name || `cmd_${Date.now()}`,
+          display_name: cmd.display_name || cmd.name || 'Imported Command',
+          payload_template: cmd.payload_template || cmd.payload || JSON.stringify(cmd),
+          parameters: cmd.parameters || [],
+        }))
+
+        onChange({
+          ...data,
+          commands: [...(data.commands || []), ...newCommands],
+        })
+
+        toast({
+          title: 'Import Successful',
+          description: `Added ${newCommands.length} command${newCommands.length > 1 ? 's' : ''}`,
+        })
+      } catch {
+        toast({
+          title: 'Import Failed',
+          description: 'Invalid JSON format',
+          variant: 'destructive',
+        })
+      } finally {
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
+      }
+    }
+    reader.readAsText(file)
+  }
+
   return (
     <div className="space-y-6 py-4">
       <div className="text-center mb-2">
@@ -945,7 +1060,6 @@ function CommandsStep({
           <Sparkles className="h-4 w-4 text-purple-500" />
           <span className="font-medium">AI Generate:</span>
         </div>
-
         <Textarea
           value={aiExample}
           onChange={(e) => onAiExampleChange(e.target.value)}
@@ -953,24 +1067,9 @@ function CommandsStep({
           rows={2}
           className="flex-1 min-w-[200px] font-mono text-sm h-auto max-h-20"
         />
-
-        <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
-          <div className="h-px w-8 bg-muted" />
-          <span>OR</span>
-          <div className="h-px w-8 bg-muted" />
-        </div>
-
-        <Textarea
-          value={aiDesc}
-          onChange={(e) => onAiDescChange(e.target.value)}
-          placeholder="Describe the command..."
-          rows={2}
-          className="flex-1 min-w-[200px] text-sm h-auto max-h-20"
-        />
-
         <Button
-          onClick={onGenerateCommands}
-          disabled={(!aiExample.trim() && !aiDesc.trim()) || generating}
+          onClick={() => onGenerateCommand(aiExample)}
+          disabled={!aiExample.trim() || generating}
           variant="secondary"
           size="sm"
           className="shrink-0"
@@ -987,11 +1086,6 @@ function CommandsStep({
             </>
           )}
         </Button>
-
-        <Button variant="outline" size="sm" className="shrink-0">
-          <Code className="mr-1 h-3 w-3" />
-          Import JSON
-        </Button>
       </div>
 
       {/* Manual Entry List */}
@@ -1001,10 +1095,37 @@ function CommandsStep({
             <FileText className="h-4 w-4" />
             Commands ({data.commands?.length || 0})
           </h4>
-          <Button onClick={addCommand} size="sm" variant="outline" className="h-8">
-            <Plus className="mr-1 h-3 w-3" />
-            Add Command
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="outline" className="h-8">
+                <Plus className="mr-1 h-3 w-3" />
+                Add Command
+                <MoreVertical className="ml-1 h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={addCommand}>
+                <Plus className="mr-2 h-3 w-3" />
+                Empty Command
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={importFromJson} disabled={!aiExample.trim()}>
+                <Code className="mr-2 h-3 w-3" />
+                Import from JSON Input
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => fileInputRef.current?.click()}>
+                <Database className="mr-2 h-3 w-3" />
+                Import from File
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json"
+            className="hidden"
+            onChange={handleFileImport}
+          />
         </div>
 
         {(!data.commands || data.commands.length === 0) ? (

@@ -636,6 +636,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ dsl }),
     }),
+  getRuleResources: () =>
+    fetchAPI<{ devices: Array<{ id: string; name: string; type: string }>; metrics: Array<string>; alert_channels: Array<string> }>('/rules/resources'),
+  getRuleTemplates: () =>
+    fetchAPI<Array<{ id: string; name: string; category: string; description: string; parameters: Array<{ name: string; label: string; default?: string; required: boolean }> }>>('/rules/templates'),
+  fillRuleTemplate: (templateId: string, parameters: Record<string, string>) =>
+    fetchAPI<{ template_id: string; dsl: string; parameters: Record<string, string> }>('/rules/templates/fill', {
+      method: 'POST',
+      body: JSON.stringify({ template_id: templateId, parameters }),
+    }),
+  generateRule: (description: string, context?: { devices?: Array<{ id: string; name: string; type: string }> }) =>
+    fetchAPI<{ confidence: number; dsl: string; explanation: string; rule: unknown; suggested_edits: Array<{ field: string; current_value: string; suggested_value: string; reason: string }>; warnings: string[] }>('/rules/generate', {
+      method: 'POST',
+      body: JSON.stringify({ description, context }),
+    }),
+  exportRules: (format?: 'json') =>
+    fetchAPI<{ rules: unknown[]; export_date: string; total_count: number }>(`/rules/export${format ? `?format=${format}` : ''}`),
+  importRules: (rules: unknown[]) =>
+    fetchAPI<{ imported: number; skipped: number; errors: Array<{ rule: { name: string }; error: string }> }>('/rules/import', {
+      method: 'POST',
+      body: JSON.stringify({ rules }),
+    }),
 
   // ========== Workflows API ==========
   listWorkflows: (params?: {

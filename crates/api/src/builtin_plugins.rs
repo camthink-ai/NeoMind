@@ -140,7 +140,7 @@ impl ServerState {
         // Get user-facing alert channel plugins (excludes debug/internal channels)
         let channel_plugins = AlertChannelPluginFactory::create_user_facing_plugins();
 
-        for (plugin_id, plugin) in channel_plugins {
+        for (_plugin_id, plugin) in channel_plugins {
             // Get plugin ID from metadata
             let plugin_id = {
                 let plugin_guard = plugin.read().await;

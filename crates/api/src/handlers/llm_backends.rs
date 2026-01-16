@@ -164,12 +164,15 @@ pub struct BackendTypeDto {
     pub supports_streaming: bool,
     pub supports_thinking: bool,
     pub supports_multimodal: bool,
+    /// Configuration schema for dynamic form generation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_schema: Option<serde_json::Value>,
 }
 
 impl From<BackendTypeDefinition> for BackendTypeDto {
     fn from(def: BackendTypeDefinition) -> Self {
         Self {
-            id: def.id,
+            id: def.id.clone(),
             name: def.name,
             description: def.description,
             default_model: def.default_model,
@@ -178,7 +181,17 @@ impl From<BackendTypeDefinition> for BackendTypeDto {
             supports_streaming: def.supports_streaming,
             supports_thinking: def.supports_thinking,
             supports_multimodal: def.supports_multimodal,
+            config_schema: None, // Will be populated by the handler
         }
+    }
+}
+
+impl BackendTypeDto {
+    /// Create from BackendTypeDefinition and include config schema
+    pub fn with_schema(def: BackendTypeDefinition, schema: serde_json::Value) -> Self {
+        let mut dto: Self = def.into();
+        dto.config_schema = Some(schema);
+        dto
     }
 }
 
@@ -596,7 +609,13 @@ pub async fn list_backend_types_handler(
     let manager = get_manager()?;
     let types = manager.get_available_types();
 
-    let dtos: Vec<BackendTypeDto> = types.into_iter().map(BackendTypeDto::from).collect();
+    let dtos: Vec<BackendTypeDto> = types
+        .into_iter()
+        .map(|def| {
+            let schema = manager.get_config_schema(&def.id);
+            BackendTypeDto::with_schema(def, schema)
+        })
+        .collect();
 
     ok(json!({
         "types": dtos,

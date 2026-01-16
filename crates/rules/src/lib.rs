@@ -37,8 +37,11 @@ pub mod device_integration;
 pub mod dsl;
 pub mod engine;
 pub mod error;
+pub mod generator;
 pub mod history;
 pub mod integration;
+pub mod store;
+pub mod validator;
 
 pub use device_integration::{
     DeviceActionExecutor, DeviceIntegratedRuleEngine, DeviceIntegrationError,
@@ -50,11 +53,25 @@ pub use engine::{
     RuleStatus, ValueProvider,
 };
 pub use error::{NeoTalkError, RuleError};
+pub use generator::{
+    ExtractedRuleInfo, GeneratedRule, GeneratorConfig, RuleGenerator,
+    RuleTemplate, RuleTemplates, SuggestedEdit, TemplatedRule, TemplateParameter,
+    GeneratorError,
+};
 pub use history::{
     HistoryError, HistoryFilter, RuleHistoryEntry, RuleHistoryStats, RuleHistoryStorage,
 };
 pub use integration::{
     CachedValueProvider, EventDrivenRuleEngine, EventEngineError, EventEngineResult,
+};
+pub use store::{
+    ImportResult, RuleHistoryStats as StoreRuleHistoryStats, RuleStore, RuleStoreConfig,
+    RulesExport, StoreError, ExportFormat,
+};
+pub use validator::{
+    AlertChannelInfo, CommandInfo, DeviceInfo, MetricDataType, MetricInfo, ParameterInfo,
+    RuleValidationResult, RuleValidator, ValidationContext, ValidationError, ValidationIssue,
+    ValidationSeverity, ValidationResult, AvailableResources, ResourceSummary,
 };
 
 /// Version information

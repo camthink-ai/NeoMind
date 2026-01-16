@@ -7,6 +7,7 @@ edition.workspace = true
 edge-ai-core = { path = "../core" }
 edge-ai-sandbox = { path = "../sandbox" }
 edge-ai-devices = { path = "../devices" }
+edge-ai-alerts = { path = "../alerts" }
 
 tokio = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -26,6 +27,9 @@ async-trait = "0.1"
 
 # Expression evaluation
 evalexpr = "11"
+
+# Storage
+redb = "2.1"
 
 [features]
 default = []

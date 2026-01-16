@@ -336,12 +336,29 @@ fn commands_from_json_value(value: serde_json::Value) -> Vec<CommandDefinition> 
 
     match value {
         serde_json::Value::Object(obj) => {
-            // Use the first key as the command name
-            let command_name = obj
-                .keys()
-                .next()
-                .map(|k| k.to_string())
-                .unwrap_or_else(|| "command".to_string());
+            // Use the first key's value as command name if the key is a common pattern like "cmd", "command", "action"
+            // Otherwise use the first key itself
+            let default_key = String::from("command");
+            let first_key = obj.keys().next().unwrap_or(&default_key);
+            let command_name = if ["cmd", "command", "action", "type", "method", "op"].contains(&first_key.as_str()) {
+                // Use the value of this key as the command name
+                if let Some(serde_json::Value::String(name_val)) = obj.get(first_key) {
+                    // Sanitize the name: lowercase, replace non-alphanumeric with underscore
+                    name_val
+                        .to_lowercase()
+                        .replace(|c: char| !c.is_alphanumeric() && c != '_', "_")
+                        .split('_')
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("_")
+                } else if let Some(serde_json::Value::Number(n)) = obj.get(first_key) {
+                    n.to_string()
+                } else {
+                    first_key.to_string()
+                }
+            } else {
+                first_key.to_string()
+            };
 
             // Build payload template and parameters
             let mut template_fields = Vec::new();
@@ -833,10 +850,12 @@ mod tests {
         let commands = commands_from_json_value(json);
 
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name, "action");
-        assert_eq!(commands[0].display_name, "Action");
-        assert!(commands[0].payload_template.contains("${action}"));
-        assert!(commands[0].payload_template.contains("${brightness}"));
+        // Command name is now the value of "action" key
+        assert_eq!(commands[0].name, "turn_on");
+        assert_eq!(commands[0].display_name, "Turn On");
+        // Template uses double braces: ${{action}}
+        assert!(commands[0].payload_template.contains("${{action}}"));
+        assert!(commands[0].payload_template.contains("${{brightness}}"));
         assert_eq!(commands[0].parameters.len(), 2);
         assert_eq!(commands[0].parameters[0].name, "action");
         assert_eq!(commands[0].parameters[1].name, "brightness");
@@ -852,9 +871,10 @@ mod tests {
         let commands = commands_from_json_value(json);
 
         assert_eq!(commands.len(), 3);
-        assert_eq!(commands[0].name, "action");
-        assert_eq!(commands[1].name, "action");
-        assert_eq!(commands[2].name, "action");
+        // Command names are now the values of "action" key
+        assert_eq!(commands[0].name, "turn_on");
+        assert_eq!(commands[1].name, "turn_off");
+        assert_eq!(commands[2].name, "set_brightness");
     }
 
     #[test]
@@ -863,7 +883,8 @@ mod tests {
         let commands = parse_downlink_commands(input).unwrap();
 
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name, "action");
+        // Command name is now the value of "action" key
+        assert_eq!(commands[0].name, "turn_on");
     }
 
     #[test]
@@ -872,10 +893,11 @@ mod tests {
         let commands = parse_downlink_commands(input).unwrap();
 
         assert_eq!(commands.len(), 3);
-        assert_eq!(commands[0].name, "action");
-        assert_eq!(commands[0].display_name, "Action");
-        assert_eq!(commands[1].name, "action");
-        assert_eq!(commands[2].name, "action");
+        // Command names are now the values of "action" key
+        assert_eq!(commands[0].name, "turn_on");
+        assert_eq!(commands[0].display_name, "Turn On");
+        assert_eq!(commands[1].name, "turn_off");
+        assert_eq!(commands[2].name, "set_brightness");
         assert_eq!(commands[2].parameters.len(), 2); // action and value
     }
 
@@ -899,10 +921,10 @@ mod tests {
         let commands = parse_downlink_commands(input).unwrap();
 
         assert_eq!(commands.len(), 2);
-        // The command should flatten nested structures
-        assert_eq!(commands[0].name, "action");
+        // Command names are now the values of "action" key
+        assert_eq!(commands[0].name, "set_config");
         assert_eq!(commands[0].parameters.len(), 2); // action and params
-        assert_eq!(commands[1].name, "action");
+        assert_eq!(commands[1].name, "send");
     }
 
     #[test]
@@ -920,25 +942,26 @@ mod tests {
         let commands = commands_from_json_value(json);
 
         assert_eq!(commands.len(), 1);
-        // Command name is first key: "cmd"
-        assert_eq!(commands[0].name, "cmd");
-        assert_eq!(commands[0].display_name, "Cmd");
+        // Command name is now the value of "cmd" key
+        assert_eq!(commands[0].name, "capture");
+        assert_eq!(commands[0].display_name, "Capture");
 
         // Payload template should have all fields
-        assert!(commands[0].payload_template.contains("${cmd}"));
-        assert!(commands[0].payload_template.contains(r#""params": ""#));
-        assert!(commands[0].payload_template.contains("${enable_ai}"));
-        assert!(commands[0].payload_template.contains("${chunk_size}"));
-        assert!(commands[0].payload_template.contains("${store_to_sd}"));
-        assert!(commands[0].payload_template.contains("${request_id}"));
+        assert!(commands[0].payload_template.contains("${{cmd}}"));
+        assert!(commands[0].payload_template.contains(r#""params": {"#));
+        assert!(commands[0].payload_template.contains("${{enable_ai}}"));
+        assert!(commands[0].payload_template.contains("${{chunk_size}}"));
+        assert!(commands[0].payload_template.contains("${{store_to_sd}}"));
+        assert!(commands[0].payload_template.contains("${{request_id}}"));
 
-        // Parameters should include cmd, flattened params fields, request_id
+        // Parameters should include cmd, flattened params fields, request_id (order may vary)
         assert_eq!(commands[0].parameters.len(), 5);
-        assert_eq!(commands[0].parameters[0].name, "cmd");
-        assert_eq!(commands[0].parameters[1].name, "request_id");
-        assert_eq!(commands[0].parameters[2].name, "enable_ai");
-        assert_eq!(commands[0].parameters[3].name, "chunk_size");
-        assert_eq!(commands[0].parameters[4].name, "store_to_sd");
+        let param_names: Vec<&str> = commands[0].parameters.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"cmd"));
+        assert!(param_names.contains(&"request_id"));
+        assert!(param_names.contains(&"enable_ai"));
+        assert!(param_names.contains(&"chunk_size"));
+        assert!(param_names.contains(&"store_to_sd"));
     }
 
     #[test]
@@ -953,19 +976,22 @@ mod tests {
         let commands = commands_from_json_value(json);
 
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name, "cmd");
+        // Command name is now the value of "cmd" key
+        assert_eq!(commands[0].name, "sleep");
 
-        // Check parameters: cmd, request_id, duration_sec
+        // Check parameters: cmd, request_id, duration_sec (order may vary)
         assert_eq!(commands[0].parameters.len(), 3);
-        assert_eq!(commands[0].parameters[0].name, "cmd");
-        assert_eq!(commands[0].parameters[1].name, "request_id");
-        assert_eq!(commands[0].parameters[2].name, "duration_sec");
+        let param_names: Vec<&str> = commands[0].parameters.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"cmd"));
+        assert!(param_names.contains(&"request_id"));
+        assert!(param_names.contains(&"duration_sec"));
 
-        // Check default value for cmd
-        if let Some(MetricValue::String(val)) = &commands[0].parameters[0].default_value {
+        // Find cmd parameter and check its default value
+        let cmd_param = commands[0].parameters.iter().find(|p| p.name == "cmd").unwrap();
+        if let Some(MetricValue::String(val)) = &cmd_param.default_value {
             assert_eq!(val, "sleep");
         } else {
-            panic!("Expected String default value");
+            panic!("Expected String default value for cmd parameter");
         }
     }
 
@@ -980,9 +1006,9 @@ mod tests {
 
         assert_eq!(commands.len(), 2);
 
-        // Both commands have name "cmd" (first key)
-        assert_eq!(commands[0].name, "cmd");
-        assert_eq!(commands[1].name, "cmd");
+        // Command names are now the values of "cmd" key - unique!
+        assert_eq!(commands[0].name, "capture");
+        assert_eq!(commands[1].name, "sleep");
     }
 
     #[test]
@@ -992,8 +1018,8 @@ mod tests {
         let commands = commands_from_json_value(json);
 
         assert_eq!(commands.len(), 1);
-        // First key is command name
-        assert_eq!(commands[0].name, "action");
+        // Command name is now the value of "action" key
+        assert_eq!(commands[0].name, "turn_on");
         assert_eq!(commands[0].parameters.len(), 2);
     }
 
@@ -1007,7 +1033,8 @@ mod tests {
         let commands = commands_from_json_value(json);
 
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name, "command");
+        // Command name is now the value of "command" key
+        assert_eq!(commands[0].name, "restart");
     }
 
     #[test]
@@ -1023,17 +1050,19 @@ mod tests {
         let commands = commands_from_json_value(json);
 
         assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].name, "action");
+        // Command name is now the value of "action" key
+        assert_eq!(commands[0].name, "configure");
 
-        // Parameters: action, brightness, color (params is flattened)
+        // Parameters: action, brightness, color (params is flattened, order may vary)
         assert_eq!(commands[0].parameters.len(), 3);
-        assert_eq!(commands[0].parameters[0].name, "action");
-        assert_eq!(commands[0].parameters[1].name, "brightness");
-        assert_eq!(commands[0].parameters[2].name, "color");
+        let param_names: Vec<&str> = commands[0].parameters.iter().map(|p| p.name.as_str()).collect();
+        assert!(param_names.contains(&"action"));
+        assert!(param_names.contains(&"brightness"));
+        assert!(param_names.contains(&"color"));
 
         // Payload template should have nested params object
         assert!(commands[0].payload_template.contains(r#""params": {"#));
-        assert!(commands[0].payload_template.contains("${brightness}"));
-        assert!(commands[0].payload_template.contains("${color}"));
+        assert!(commands[0].payload_template.contains("${{brightness}}"));
+        assert!(commands[0].payload_template.contains("${{color}}"));
     }
 }

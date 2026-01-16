@@ -1,1 +1,1 @@
-export { ConnectionsTab } from './ConnectionsTab'
+export { UnifiedDeviceConnectionsTab } from './UnifiedDeviceConnectionsTab'

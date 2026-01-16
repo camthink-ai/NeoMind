@@ -56,7 +56,7 @@ pub enum RuleStatus {
 }
 
 /// Rule execution state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleState {
     /// Number of times the rule has been triggered.
     pub trigger_count: u64,
@@ -66,11 +66,12 @@ pub struct RuleState {
     pub last_evaluation: bool,
     /// Time since condition has been true (for FOR clauses).
     /// Note: Instant is not serialized, will be reset on deserialization.
+    #[serde(skip)]
     pub condition_true_since: Option<Instant>,
 }
 
 /// Compiled rule ready for execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledRule {
     /// Unique rule identifier.
     pub id: RuleId,

@@ -37,6 +37,17 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // User authentication (public - login and register)
         .route("/api/auth/login", post(auth_users::login_handler))
         .route("/api/auth/register", post(auth_users::register_handler))
+        // LLM Backends API (public for now - TODO: add proper auth)
+        .route("/api/llm-backends", get(llm_backends::list_backends_handler))
+        .route("/api/llm-backends", post(llm_backends::create_backend_handler))
+        .route("/api/llm-backends/:id", get(llm_backends::get_backend_handler))
+        .route("/api/llm-backends/:id", put(llm_backends::update_backend_handler))
+        .route("/api/llm-backends/:id", delete(llm_backends::delete_backend_handler))
+        .route("/api/llm-backends/:id/activate", post(llm_backends::activate_backend_handler))
+        .route("/api/llm-backends/:id/test", post(llm_backends::test_backend_handler))
+        .route("/api/llm-backends/types", get(llm_backends::list_backend_types_handler))
+        .route("/api/llm-backends/types/:type/schema", get(llm_backends::get_backend_schema_handler))
+        .route("/api/llm-backends/stats", get(llm_backends::get_backend_stats_handler))
         // API documentation (public)
         .merge(crate::openapi::swagger_ui());
 
@@ -216,9 +227,16 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/devices/hass/unregister/:device_id",
             delete(devices::unregister_hass_device_handler),
         )
-        // Rules API
+        // Rules API - specific routes first, then parameterized routes
         .route("/api/rules", get(rules::list_rules_handler))
         .route("/api/rules", post(rules::create_rule_handler))
+        .route("/api/rules/export", get(rules::export_rules_handler))
+        .route("/api/rules/import", post(rules::import_rules_handler))
+        .route("/api/rules/resources", get(rules::get_resources_handler))
+        .route("/api/rules/validate", post(rules::validate_rule_handler))
+        .route("/api/rules/templates", get(rules::get_templates_handler))
+        .route("/api/rules/templates/fill", post(rules::fill_template_handler))
+        .route("/api/rules/generate", post(rules::generate_rule_handler))
         .route("/api/rules/:id", get(rules::get_rule_handler))
         .route("/api/rules/:id", put(rules::update_rule_handler))
         .route("/api/rules/:id", delete(rules::delete_rule_handler))
@@ -282,47 +300,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         )
         // LLM Generation API
         .route("/api/llm/generate", post(settings::llm_generate_handler))
-        // LLM Backends API (NEW)
-        .route(
-            "/api/llm-backends",
-            get(llm_backends::list_backends_handler),
-        )
-        .route(
-            "/api/llm-backends",
-            post(llm_backends::create_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id",
-            get(llm_backends::get_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id",
-            put(llm_backends::update_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id",
-            delete(llm_backends::delete_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id/activate",
-            post(llm_backends::activate_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/:id/test",
-            post(llm_backends::test_backend_handler),
-        )
-        .route(
-            "/api/llm-backends/types",
-            get(llm_backends::list_backend_types_handler),
-        )
-        .route(
-            "/api/llm-backends/types/:type/schema",
-            get(llm_backends::get_backend_schema_handler),
-        )
-        .route(
-            "/api/llm-backends/stats",
-            get(llm_backends::get_backend_stats_handler),
-        )
         // Workflows API
         .route("/api/workflows", get(workflows::list_workflows_handler))
         .route("/api/workflows", post(workflows::create_workflow_handler))

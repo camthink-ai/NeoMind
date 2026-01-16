@@ -4,6 +4,8 @@ export type { PluginCardProps } from './PluginCard'
 export { PluginUploadDialog } from './PluginUploadDialog'
 export type { PluginUploadDialogProps } from './PluginUploadDialog'
 export { AlertChannelPluginConfigDialog } from './AlertChannelPluginConfigDialog'
+export { UniversalPluginConfigDialog } from './UniversalPluginConfigDialog'
+export type { PluginInstance, UnifiedPluginType } from './UniversalPluginConfigDialog'
 
 // Schema-based components
 export { SchemaPluginCard, SchemaPluginTypeCard, SchemaPluginConfigDialog } from './SchemaPluginCard'

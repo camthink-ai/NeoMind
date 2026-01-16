@@ -3,6 +3,7 @@
   "description": "Manage system extension plugins (dynamically loaded)",
   "llmBackends": "LLM Backends",
   "deviceConnections": "Device Connections",
+  "alertChannels": "Alert Channels",
   "extensionPlugins": "Extension Plugins",
   "extensionsDesc": "Extend system functionality via plugin files",
   "noPlugins": "No extension plugins",
