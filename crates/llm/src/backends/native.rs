@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 
 use edge_ai_core::llm::backend::{
     BackendCapabilities, BackendId, BackendMetrics, FinishReason, LlmError, LlmInput,
-    LlmOutput, LlmRuntime, StreamChunk, TokenUsage,
+    LlmOutput, LlmRuntime, StreamChunk, TokenUsage, ToolDefinition,
 };
 use edge_ai_core::message::{Message, MessageRole};
 
@@ -383,11 +383,71 @@ impl NativeRuntime {
         Ok(repo)
     }
 
+    /// Format tools for text-based tool calling (JSON format).
+    ///
+    /// This injects tool definitions into the system prompt for models
+    /// that don't have native function calling support.
+    fn format_tools_for_text_calling(tools: &[ToolDefinition]) -> String {
+        let mut result = String::from("## Tool Calling Requirements\n");
+        result.push_str("You must call tools using JSON format. Do not just describe what to do.\n\n");
+        result.push_str("Format:\n");
+        result.push_str("[{\"name\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}]\n\n");
+
+        result.push_str("## Examples\n");
+        result.push_str("User: 有哪些设备？\n");
+        result.push_str("Assistant: [{\"name\": \"list_devices\", \"arguments\": {}}]\n\n");
+
+        result.push_str("User: 把客厅灯打开\n");
+        result.push_str("Assistant: [{\"name\": \"control_device\", \"arguments\": {\"device_id\": \"light_living\", \"action\": \"on\"}}]\n\n");
+
+        result.push_str("## Available Tools\n\n");
+
+        for tool in tools {
+            result.push_str(&format!("### {}\n", tool.name));
+            result.push_str(&format!("Description: {}\n", tool.description));
+
+            if let Some(props) = tool.parameters.get("properties")
+                && let Some(obj) = props.as_object()
+                    && !obj.is_empty() {
+                        result.push_str("Parameters:\n");
+                        for (name, prop) in obj {
+                            let desc = prop
+                                .get("description")
+                                .and_then(|d| d.as_str())
+                                .unwrap_or("No description");
+                            let type_name = prop
+                                .get("type")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("unknown");
+                            result.push_str(&format!("- {}: {} ({})\n", name, desc, type_name));
+                        }
+                    }
+
+            if let Some(required) = tool.parameters.get("required")
+                && let Some(arr) = required.as_array()
+                    && !arr.is_empty() {
+                        let required_names: Vec<&str> =
+                            arr.iter().filter_map(|v| v.as_str()).collect();
+                        result.push_str(&format!("Required: {}\n", required_names.join(", ")));
+                    }
+
+            result.push('\n');
+        }
+
+        result.push_str("## Important Rules\n");
+        result.push_str("1. ALWAYS output tool calls as a JSON array\n");
+        result.push_str("2. Output ONLY the JSON array, no other text\n");
+        result.push_str("3. If multiple tools are needed, include all in the same array\n");
+        result.push_str("4. If no tools are needed, respond normally to the user\n");
+
+        result
+    }
+
     async fn generate_inner(&self, input: LlmInput) -> Result<LlmOutput, LlmError> {
         self.ensure_model_loaded().await?;
 
         let start = Instant::now();
-        let prompt = self.format_messages(&input.messages)?;
+        let prompt = self.format_messages(&input.messages, input.tools.as_deref())?;
 
         tracing::debug!("Generating with prompt length: {}", prompt.len());
 
@@ -599,14 +659,23 @@ impl NativeRuntime {
         Ok(selected_token as u32)
     }
 
-    fn format_messages(&self, messages: &[Message]) -> Result<String, LlmError> {
+    fn format_messages(&self, messages: &[Message], tools: Option<&[ToolDefinition]>) -> Result<String, LlmError> {
         let mut prompt = String::new();
+
+        // Pre-format tool instructions if tools are provided
+        let tool_instructions = tools.is_some_and(|t| !t.is_empty())
+            .then(|| Self::format_tools_for_text_calling(tools.unwrap()));
 
         for msg in messages {
             match msg.role {
                 MessageRole::System => {
                     prompt.push_str("<|im_start|>system\n");
-                    prompt.push_str(msg.text().as_str());
+                    let mut text = msg.text();
+                    // Inject tool instructions into system message
+                    if let Some(instructions) = &tool_instructions {
+                        text = format!("{}\n\n{}", text, instructions);
+                    }
+                    prompt.push_str(text.as_str());
                     prompt.push_str("<|im_end|>\n");
                 }
                 MessageRole::User => {
@@ -643,7 +712,7 @@ impl NativeRuntime {
         let model = self.model.clone();
         let metrics = self.metrics.clone();
         let config = self.config.clone();
-        let prompt = self.format_messages(&input.messages)?;
+        let prompt = self.format_messages(&input.messages, input.tools.as_deref())?;
 
         tokio::spawn(async move {
             let start = Instant::now();
@@ -829,7 +898,7 @@ impl LlmRuntime for NativeRuntime {
         BackendCapabilities {
             streaming: true,
             multimodal: false,
-            function_calling: false,
+            function_calling: true,
             multiple_models: false,
             max_context: Some(self.max_context),
             modalities: vec!["text".to_string()],
@@ -920,7 +989,7 @@ mod tests {
             Message::user("Hello"),
         ];
 
-        let prompt = runtime.format_messages(&messages).unwrap();
+        let prompt = runtime.format_messages(&messages, None).unwrap();
         assert!(prompt.contains("<|im_start|>system"));
         assert!(prompt.contains("You are a helpful assistant"));
         assert!(prompt.contains("<|im_start|>user"));
