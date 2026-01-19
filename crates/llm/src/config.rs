@@ -310,6 +310,6 @@ mod tests {
         let params = GenerationParams::default();
         assert_eq!(params.temperature, 0.7);
         assert_eq!(params.top_p, 0.9);
-        assert_eq!(params.max_tokens, 512);
+        assert_eq!(params.max_tokens, 8192); // MAX_GENERATION_TOKENS
     }
 }

@@ -77,10 +77,8 @@ pub struct NativeConfig {
 }
 
 fn default_device() -> String {
-    #[cfg(target_os = "macos")]
-    { "metal".to_string() }
-    #[cfg(not(target_os = "macos"))]
-    { "cpu".to_string() }
+    // Always default to CPU since CUDA/Metal features may not be enabled
+    "cpu".to_string()
 }
 
 fn default_threads() -> usize {
