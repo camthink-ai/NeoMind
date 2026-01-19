@@ -782,6 +782,7 @@ impl LlmRuntime for OllamaRuntime {
                     let mut thinking_chars = 0usize; // Track thinking characters separately
                     let mut thinking_start_time: Option<Instant> = None; // Track when thinking started
                     let mut terminate_early = false; // Flag to terminate stream early
+                    let mut skip_remaining_thinking = false; // Skip thinking chunks but wait for content
                     let mut last_thinking_chunk = String::new(); // Track last thinking chunk for loop detection
                     let mut consecutive_same_thinking = 0usize; // Count consecutive identical thinking chunks
                     let stream_start = Instant::now(); // Track stream duration
@@ -910,7 +911,7 @@ impl LlmRuntime for OllamaRuntime {
                                             // IMPORTANT: Skip processing thinking/content if tool_calls were already sent
                                             if tool_calls_sent {
                                                 // Skip - don't send any more chunks to the client
-                                            } else if !ollama_chunk.message.thinking.is_empty() {
+                                            } else if !ollama_chunk.message.thinking.is_empty() && !skip_remaining_thinking {
                                                 // IMPORTANT: Process content BEFORE checking done flag
                                                 // The final chunk with done=true may still contain content that must be sent
                                                 // CRITICAL FIX: Only send thinking if user requested it AND model supports it
@@ -930,13 +931,12 @@ impl LlmRuntime for OllamaRuntime {
                                                 if let Some(start) = thinking_start_time
                                                     && start.elapsed() > Duration::from_secs(MAX_THINKING_TIME_SECS) {
                                                         tracing::warn!(
-                                                            "[ollama.rs] Thinking timeout ({:?} elapsed, {} chars). Terminating early.",
+                                                            "[ollama.rs] Thinking timeout ({:?} elapsed, {} chars). Skipping remaining thinking, waiting for content.",
                                                             start.elapsed(),
                                                             thinking_chars
                                                         );
-                                                        // Set flag to terminate stream early
-                                                        terminate_early = true;
-                                                        break;
+                                                        // Skip future thinking chunks but continue stream for content
+                                                        skip_remaining_thinking = true;
                                                     }
 
                                                 // Detect consecutive identical thinking chunks (model stuck in loop)
@@ -944,13 +944,12 @@ impl LlmRuntime for OllamaRuntime {
                                                     consecutive_same_thinking += 1;
                                                     if consecutive_same_thinking > MAX_THINKING_LOOP {
                                                         tracing::warn!(
-                                                            "[ollama.rs] Model stuck in thinking loop ({} identical chunks: \"{}\"). Terminating early.",
+                                                            "[ollama.rs] Model stuck in thinking loop ({} identical chunks: \"{}\"). Skipping remaining thinking, waiting for content.",
                                                             consecutive_same_thinking,
                                                             thinking_content
                                                         );
-                                                        // Set flag to terminate stream early
-                                                        terminate_early = true;
-                                                        break;
+                                                        // Skip future thinking chunks but continue stream for content
+                                                        skip_remaining_thinking = true;
                                                     }
                                                 } else {
                                                     consecutive_same_thinking = 0;
@@ -960,12 +959,11 @@ impl LlmRuntime for OllamaRuntime {
                                                 // SAFETY CHECK: Detect if model is stuck in thinking loop
                                                 if thinking_chars > MAX_THINKING_CHARS {
                                                     tracing::warn!(
-                                                        "[ollama.rs] Max thinking chars reached ({}). Terminating thinking phase early.",
+                                                        "[ollama.rs] Max thinking chars reached ({}). Skipping remaining thinking chunks, waiting for content.",
                                                         thinking_chars
                                                     );
-                                                    // Set flag to terminate stream early
-                                                    terminate_early = true;
-                                                    break;
+                                                    // Skip future thinking chunks but continue stream for content
+                                                    skip_remaining_thinking = true;
                                                 }
 
                                                 if should_send_thinking {
@@ -999,8 +997,8 @@ impl LlmRuntime for OllamaRuntime {
                                                 content_buffer.push_str(content);
 
                                                 // Detect if content is actually thinking (qwen3-vl puts thinking in content field)
-                                                // Check for common thinking patterns at the start
-                                                if !detected_thinking_in_content {
+                                                // Skip this detection if we've exceeded thinking limit
+                                                if !detected_thinking_in_content && !skip_remaining_thinking {
                                                     // Check initial buffer for thinking patterns
                                                     let is_likely_thinking = content_buffer
                                                         .starts_with("好的，用户")
@@ -1014,6 +1012,18 @@ impl LlmRuntime for OllamaRuntime {
 
                                                     if is_likely_thinking {
                                                         detected_thinking_in_content = true;
+                                                    }
+                                                }
+
+                                                // If we've exceeded thinking limit, treat everything as content from now on
+                                                if skip_remaining_thinking && detected_thinking_in_content {
+                                                    // Reset - treat remaining as real content
+                                                    detected_thinking_in_content = false;
+                                                    // Send any buffered thinking content first (if not already sent)
+                                                    if !content_buffer.is_empty() {
+                                                        let _ =
+                                                            tx.send(Ok((content_buffer.clone(), false))).await;
+                                                        content_buffer.clear();
                                                     }
                                                 }
 
@@ -1031,6 +1041,13 @@ impl LlmRuntime for OllamaRuntime {
                                                         let _ = tx
                                                             .send(Ok((content.clone(), true)))
                                                             .await;
+                                                    } else if !skip_remaining_thinking {
+                                                        // Just exceeded limit - set flag and continue
+                                                        skip_remaining_thinking = true;
+                                                        tracing::warn!(
+                                                            "[ollama.rs] Max thinking chars reached in content ({}). Switching to content mode.",
+                                                            thinking_chars
+                                                        );
                                                     }
                                                 } else {
                                                     // Track content characters and send content
