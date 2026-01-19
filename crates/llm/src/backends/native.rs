@@ -996,4 +996,54 @@ mod tests {
         assert!(prompt.contains("Hello"));
         assert!(prompt.contains("<|im_start|>assistant"));
     }
+
+    #[test]
+    fn test_format_messages_with_tools() {
+        use serde_json::json;
+
+        let config = NativeConfig::default();
+        let runtime = NativeRuntime::new(config).unwrap();
+
+        let messages = vec![
+            Message::system("You are a helpful assistant"),
+            Message::user("Hello"),
+        ];
+
+        let tools = vec![
+            ToolDefinition {
+                name: "test_tool".to_string(),
+                description: "A test tool".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "param1": {
+                            "type": "string",
+                            "description": "A parameter"
+                        }
+                    },
+                    "required": ["param1"]
+                }),
+            },
+        ];
+
+        let prompt = runtime.format_messages(&messages, Some(&tools)).unwrap();
+        assert!(prompt.contains("<|im_start|>system"));
+        assert!(prompt.contains("You are a helpful assistant"));
+        // Should contain tool calling instructions
+        assert!(prompt.contains("Tool Calling Requirements"));
+        assert!(prompt.contains("test_tool"));
+        assert!(prompt.contains("A test tool"));
+        assert!(prompt.contains("<|im_start|>user"));
+    }
+
+    #[test]
+    fn test_capabilities_includes_function_calling() {
+        let config = NativeConfig::default();
+        let runtime = NativeRuntime::new(config).unwrap();
+
+        let capabilities = runtime.capabilities();
+        assert!(capabilities.streaming);
+        assert!(capabilities.function_calling);
+        assert!(!capabilities.multimodal);
+    }
 }
