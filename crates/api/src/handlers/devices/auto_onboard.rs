@@ -489,14 +489,12 @@ pub async fn suggest_device_types(
         .ok_or_else(|| ErrorResponse::bad_request("Draft device has no generated type. Please analyze it first."))?;
 
     // Find matching type using signature
-    let category = edge_ai_automation::DeviceCategory::from_str(&gen_type.category)
-        .unwrap_or(edge_ai_automation::DeviceCategory::Unknown);
+    let category = gen_type.category.clone();
 
     let exact_match = manager.find_matching_type(&gen_type.metrics, &category).await;
 
     // Get all device types to find partial matches
-    let all_types = device_service.get_templates().await
-        .map_err(|e| ErrorResponse::internal(&e.to_string()))?;
+    let all_types = device_service.list_templates().await;
 
     // Build suggestions list
     let mut suggestions: Vec<SuggestedType> = Vec::new();
@@ -515,31 +513,31 @@ pub async fn suggest_device_types(
         }
     }
 
-    // Find partial matches based on metric overlap
+    // Find partial matches based on metric name overlap
     for template in all_types {
         // Skip if already added as exact match
         if suggestions.iter().any(|s| &s.device_type == &template.device_type) {
             continue;
         }
 
-        // Calculate overlap score
+        // Calculate overlap score based on metric names
         let draft_metric_names: std::collections::HashSet<_> = gen_type.metrics
             .iter()
-            .map(|m| &m.semantic_type)
+            .map(|m| m.name.as_str())
             .collect();
 
-        let type_metric_semantics: std::collections::HashSet<_> = template.metrics
+        let type_metric_names: std::collections::HashSet<_> = template.metrics
             .iter()
-            .map(|m| semantic_to_string(&m.data_type))
+            .map(|m| m.name.as_str())
             .collect();
 
-        // Count matching semantic types
+        // Count matching metric names
         let intersection = draft_metric_names
-            .intersection(&type_metric_semantics)
+            .intersection(&type_metric_names)
             .count();
 
         let union = draft_metric_names
-            .union(&type_metric_semantics)
+            .union(&type_metric_names)
             .count();
 
         if union > 0 {
@@ -565,18 +563,6 @@ pub async fn suggest_device_types(
         suggestions,
         exact_match: exact_match,
     })
-}
-
-/// Convert MetricDataType to semantic string for comparison
-fn semantic_to_string(metric_def: &edge_ai_devices::MdlMetricDefinition) -> String {
-    match metric_def.data_type {
-        edge_ai_devices::MetricDataType::Integer => "integer".to_string(),
-        edge_ai_devices::MetricDataType::Float => "float".to_string(),
-        edge_ai_devices::MetricDataType::String => "string".to_string(),
-        edge_ai_devices::MetricDataType::Boolean => "boolean".to_string(),
-        edge_ai_devices::MetricDataType::Binary => "binary".to_string(),
-        edge_ai_devices::MetricDataType::Enum { .. } => "enum".to_string(),
-    }
 }
 
 /// Get auto-onboarding configuration

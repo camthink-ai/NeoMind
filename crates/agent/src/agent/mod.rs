@@ -91,11 +91,6 @@ pub use model_selection::{
 /// Maximum number of tool calls allowed per request to prevent infinite loops
 const MAX_TOOL_CALLS_PER_REQUEST: usize = 5;
 
-/// Maximum context window size in tokens (approximate)
-/// Reduced from 8000 to 5000 to improve response speed for qwen3-vl:2b
-/// Smaller context = faster processing, less repetitive thinking
-const MAX_CONTEXT_TOKENS: usize = 5000;
-
 /// === ANTHROPIC-STYLE IMPROVEMENT: Tool Result Clearing ===
 ///
 /// Compacts old tool result messages into concise summaries.
@@ -168,7 +163,11 @@ fn compact_tool_results(messages: &[AgentMessage]) -> Vec<AgentMessage> {
 /// 1. Tool result clearing for old messages
 /// 2. Token-based windowing with accurate estimation
 /// 3. Always keep recent messages (minimum 4) for context continuity
-fn build_context_window(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+///
+/// The `max_tokens` parameter allows dynamic context sizing based on the model's actual capacity.
+/// This prevents wasting model capability (e.g., using 5k context with a 32k model) while
+/// also preventing errors from exceeding the model's limit (e.g., using 12k context with an 8k model).
+fn build_context_window(messages: &[AgentMessage], max_tokens: usize) -> Vec<AgentMessage> {
     // Use the improved tokenizer module for accurate token estimation
     use tokenizer::select_messages_within_token_limit;
 
@@ -178,13 +177,17 @@ fn build_context_window(messages: &[AgentMessage]) -> Vec<AgentMessage> {
     // Select messages within token limit using improved estimation
     let selected_refs = select_messages_within_token_limit(
         &compacted,
-        MAX_CONTEXT_TOKENS,
+        max_tokens,
         4, // Always keep at least 4 recent messages
     );
 
     // Convert references to owned messages
     selected_refs.into_iter().cloned().collect()
 }
+
+/// Default context window size to use when model capacity is unknown.
+/// This is a conservative value that works for most models.
+const DEFAULT_CONTEXT_TOKENS: usize = 8_000;
 
 /// AI Agent that orchestrates components.
 pub struct Agent {
@@ -856,9 +859,22 @@ impl Agent {
             Vec::new()
         };
 
+        // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
+        // Query the LLM backend for the actual context window size.
+        // This allows us to use the full capability of models like qwen3-vl:2b (32k)
+        // while respecting the limits of smaller models like llama3:8b (8k).
+        let max_context = self.llm_interface.max_context_length().await;
+        // For models with large context (32k+), allow up to 16k for better long conversations
+        // For smaller models (8k), use their full capacity
+        let effective_max = if max_context >= 32000 {
+            max_context.min(16_384) // Large models: cap at 16k
+        } else {
+            max_context.min(DEFAULT_CONTEXT_TOKENS) // Small models: use full capability
+        };
+
         // === ANTHROPIC-STYLE IMPROVEMENT: Apply context window with tool result clearing ===
         // This prevents context bloat from old tool calls while maintaining conversation continuity
-        let compacted_history = build_context_window(&history_without_last);
+        let compacted_history = build_context_window(&history_without_last, effective_max);
 
         tracing::debug!(
             "Context: {} messages -> {} messages (after compaction)",

@@ -118,8 +118,20 @@ impl OllamaRuntime {
     /// Create a new Ollama runtime.
     pub fn new(config: OllamaConfig) -> Result<Self, LlmError> {
         tracing::debug!("Creating Ollama runtime with endpoint: {}", config.endpoint);
+
+        // Configure HTTP client with connection pooling for better performance
+        // - pool_max_idle_per_host: Keep up to 5 idle connections ready for reuse
+        // - pool_idle_timeout: Close idle connections after 90 seconds
+        // - connect_timeout: Fail fast if server doesn't respond within 5 seconds
+        // - http2_prior_knowledge: Skip ALPN negotiation for local Ollama
         let client = Client::builder()
             .timeout(config.timeout())
+            .pool_max_idle_per_host(5)                      // Keep 5 idle connections
+            .pool_idle_timeout(Duration::from_secs(90))      // Close after 90s idle
+            .connect_timeout(Duration::from_secs(5))         // Fast connection fail
+            .http2_keep_alive_interval(Duration::from_secs(30)) // Keep HTTP/2 alive
+            .http2_keep_alive_timeout(Duration::from_secs(10))  // Keep-alive timeout
+            .http2_adaptive_window(true)                     // Adaptive flow control
             .build()
             .map_err(|e| LlmError::Network(e.to_string()))?;
 
@@ -1120,8 +1132,8 @@ impl LlmRuntime for OllamaRuntime {
     }
 
     fn max_context_length(&self) -> usize {
-        // Ollama's default context window varies by model
-        4096
+        // Detect the actual context window for the current model
+        detect_model_capabilities(&self.model).max_context
     }
 
     fn supports_multimodal(&self) -> bool {
@@ -1130,7 +1142,9 @@ impl LlmRuntime for OllamaRuntime {
 
     fn capabilities(&self) -> BackendCapabilities {
         let caps = detect_model_capabilities(&self.model);
-        let mut builder = BackendCapabilities::builder().streaming().max_context(4096);
+        let mut builder = BackendCapabilities::builder()
+            .streaming()
+            .max_context(caps.max_context);
 
         // Conditionally add capabilities based on model detection
         if caps.supports_multimodal {
@@ -1231,12 +1245,23 @@ struct ModelCapability {
     supports_tools: bool,
     supports_thinking: bool,
     supports_multimodal: bool,
+    /// Maximum context window in tokens
+    max_context: usize,
 }
 
 /// Detect model capabilities from model name
 ///
 /// Based on Ollama official documentation: https://docs.ollama.com/capabilities/thinking
 /// Supported thinking models: Qwen 3, GPT-OSS, DeepSeek-v3.1, DeepSeek R1
+///
+/// Context window sizes are based on official model documentation:
+/// - Qwen2/Qwen2.5: 32k for most variants, 128k for some
+/// - Qwen3/Qwen3-VL: 32k
+/// - Llama 3.x: 8k for 8b models
+/// - DeepSeek R1: 64k
+/// - Mistral: 32k
+/// - Gemma: 8k
+/// - Phi: 32k for Phi-3
 fn detect_model_capabilities(model_name: &str) -> ModelCapability {
     let name_lower = model_name.to_lowercase();
 
@@ -1267,11 +1292,137 @@ fn detect_model_capabilities(model_name: &str) -> ModelCapability {
     let supports_multimodal =
         name_lower.contains("vl") || name_lower.contains("vision") || name_lower.contains("mm");
 
+    // Detect maximum context window based on model family
+    let max_context = detect_model_context(model_name);
+
     ModelCapability {
         supports_tools,
         supports_thinking,
         supports_multimodal,
+        max_context,
     }
+}
+
+/// Detect maximum context window size for a model.
+///
+/// Returns the maximum context window in tokens.
+/// Falls back to 4096 for unknown models (safe default).
+fn detect_model_context(model_name: &str) -> usize {
+    let name_lower = model_name.to_lowercase();
+
+    // Qwen family (qwen, qwen2, qwen2.5, qwen3, qwen3-vl)
+    if name_lower.starts_with("qwen") {
+        // Qwen3 and Qwen3-VL support 32k context
+        if name_lower.starts_with("qwen3") {
+            return 32_768;
+        }
+        // Qwen2.5 typically supports 32k
+        if name_lower.starts_with("qwen2.5") || name_lower.contains("qwen2_5") {
+            return 32_768;
+        }
+        // Qwen2 typically supports 32k
+        if name_lower.starts_with("qwen2") {
+            return 32_768;
+        }
+        // Other Qwen models - default to 32k
+        return 32_768;
+    }
+
+    // Llama 3.x family
+    if name_lower.starts_with("llama3") || name_lower.contains("llama-3") {
+        // Llama 3.x 8b models typically support 8k context
+        if name_lower.contains("8b") {
+            return 8_192;
+        }
+        // Llama 3.x 70b+ models may support larger context
+        if name_lower.contains("70b") || name_lower.contains("405b") {
+            return 128_000;
+        }
+        // Default for llama3
+        return 8_192;
+    }
+
+    // Llama 3.1/3.2/3.3 family (extended context)
+    if name_lower.contains("llama3.1")
+        || name_lower.contains("llama3_1")
+        || name_lower.contains("llama3.2")
+        || name_lower.contains("llama3_2")
+        || name_lower.contains("llama3.3")
+        || name_lower.contains("llama3_3")
+    {
+        return 128_000;
+    }
+
+    // Llama 3.4 and beyond
+    if name_lower.contains("llama3.4") || name_lower.contains("llama3_4") {
+        return 128_000;
+    }
+
+    // DeepSeek family
+    if name_lower.starts_with("deepseek") {
+        // DeepSeek R1 supports 64k context
+        if name_lower.contains("deepseek-r1") || name_lower.contains("deepseek_r1") {
+            return 64_000;
+        }
+        // DeepSeek V3 supports 64k context
+        if name_lower.contains("deepseek-v3") || name_lower.contains("deepseek_v3") {
+            return 64_000;
+        }
+        // Default DeepSeek models
+        return 64_000;
+    }
+
+    // Mistral family
+    if name_lower.starts_with("mistral") || name_lower.contains("mixtral") {
+        // Mixtral models typically support 32k
+        if name_lower.contains("mixtral") {
+            return 32_768;
+        }
+        // Mistral 7B supports 32k
+        return 32_768;
+    }
+
+    // Gemma family
+    if name_lower.starts_with("gemma") {
+        // Gemma 2 typically supports 8k-9k depending on variant
+        if name_lower.contains("gemma2") || name_lower.contains("gemma-2") {
+            return 9_216;
+        }
+        // Gemma 1 typically supports 8k
+        return 8_192;
+    }
+
+    // Phi family
+    if name_lower.starts_with("phi") {
+        // Phi-3 supports 32k context
+        if name_lower.contains("phi-3") || name_lower.contains("phi3") {
+            return 32_768;
+        }
+        // Phi-2 supports 2k context
+        if name_lower.contains("phi-2") || name_lower.contains("phi2") {
+            return 2_048;
+        }
+        // Default Phi
+        return 32_768;
+    }
+
+    // Qwen family (another check for alternative naming)
+    if name_lower.contains("qwen") {
+        return 32_768;
+    }
+
+    // Code models
+    if name_lower.contains("codellama") || name_lower.contains("code-llama") {
+        return 16_384;
+    }
+
+    if name_lower.contains("codestral") {
+        return 32_768;
+    }
+
+    // Safe default for unknown models
+    // Using 4096 as a conservative baseline that most models should support
+    4_096
 }
 
 /// Tool definition in OpenAI-compatible format for Ollama.

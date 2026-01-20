@@ -653,12 +653,6 @@ struct ToolExecutionResult {
     result: std::result::Result<edge_ai_tools::ToolOutput, edge_ai_tools::ToolError>,
 }
 
-/// Maximum context window size in tokens (approximate)
-/// Reduced from 12000 to 6000 to improve response speed for qwen3-vl:2b
-/// Smaller context = faster processing, less repetitive thinking
-/// Streaming can handle slightly larger context than non-streaming
-const MAX_CONTEXT_TOKENS: usize = 6000;
-
 /// Estimate token count for a string (rough approximation: 1 token ≈ 4 characters for Chinese, 1 token ≈ 4 characters for English)
 /// This is a simple heuristic - for production, consider using a proper tokenizer
 fn estimate_tokens(text: &str) -> usize {
@@ -725,7 +719,9 @@ fn compact_tool_results_stream(messages: &[AgentMessage]) -> Vec<AgentMessage> {
 /// 1. Tool result clearing for old messages
 /// 2. Token-based windowing
 /// 3. Always keep recent messages for context continuity
-fn build_context_window(messages: &[AgentMessage]) -> Vec<AgentMessage> {
+///
+/// The `max_tokens` parameter allows dynamic context sizing based on the model's actual capacity.
+fn build_context_window(messages: &[AgentMessage], max_tokens: usize) -> Vec<AgentMessage> {
     let compacted = compact_tool_results_stream(messages);
 
     let mut selected_messages = Vec::new();
@@ -735,10 +731,10 @@ fn build_context_window(messages: &[AgentMessage]) -> Vec<AgentMessage> {
     for msg in compacted.iter().rev() {
         let msg_tokens = estimate_tokens(&msg.content);
 
-        if current_tokens + msg_tokens > MAX_CONTEXT_TOKENS {
+        if current_tokens + msg_tokens > max_tokens {
             let is_recent = selected_messages.len() < MIN_RECENT_MESSAGES;
             if msg.role == "system" || msg.role == "user" || is_recent {
-                let max_len = (MAX_CONTEXT_TOKENS - current_tokens) * 4;
+                let max_len = (max_tokens - current_tokens) * 4;
                 if max_len > 100 {
                     selected_messages.push(msg.clone());
                     current_tokens += msg_tokens;
@@ -910,10 +906,22 @@ pub async fn process_stream_events_with_safeguards(
     let history_messages = state_guard.memory.clone();
     drop(state_guard); // Release lock before calling LLM
 
-    let history_for_llm: Vec<edge_ai_core::Message> = build_context_window(&history_messages)
-        .iter()
-        .map(|msg| msg.to_core())
-        .collect::<Vec<_>>();
+    // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
+    let max_context = llm_interface.max_context_length().await;
+    // For models with large context (32k+), allow up to 16k for better long conversations
+    // For smaller models (8k), use their full capacity
+    const DEFAULT_MAX_CONTEXT: usize = 8_000;
+    let effective_max = if max_context >= 32000 {
+        max_context.min(16_384) // Large models: cap at 16k
+    } else {
+        max_context.min(DEFAULT_MAX_CONTEXT) // Small models: use full capability
+    };
+
+    let history_for_llm: Vec<edge_ai_core::Message> =
+        build_context_window(&history_messages, effective_max)
+            .iter()
+            .map(|msg| msg.to_core())
+            .collect::<Vec<_>>();
 
     tracing::debug!(
         "Passing {} messages from history to LLM",
@@ -1040,8 +1048,18 @@ pub async fn process_stream_events_with_safeguards(
                 tracing::info!("Starting tool iteration round {}", tool_iteration_count + 1);
 
                 // For subsequent rounds, we need a new LLM call with tools enabled
+                // Use the same dynamic context limit for consistency
                 let state_guard = internal_state.read().await;
-                let history_for_round = build_context_window(&state_guard.memory);
+
+                let max_context = llm_interface.max_context_length().await;
+                const DEFAULT_MAX_CONTEXT: usize = 8_000;
+                let effective_max = if max_context >= 32000 {
+                    max_context.min(16_384) // Large models: cap at 16k
+                } else {
+                    max_context.min(DEFAULT_MAX_CONTEXT) // Small models: use full capability
+                };
+
+                let history_for_round = build_context_window(&state_guard.memory, effective_max);
                 drop(state_guard);
 
                 let history_for_llm: Vec<edge_ai_core::Message> = history_for_round

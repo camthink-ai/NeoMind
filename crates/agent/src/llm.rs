@@ -326,6 +326,33 @@ impl LlmInterface {
             .saturating_sub(self.limiter.current.load(Ordering::Relaxed))
     }
 
+    /// Get the maximum context window size for the current LLM backend.
+    ///
+    /// This returns the actual context limit based on the model's capabilities.
+    /// For example:
+    /// - qwen3-vl:2b -> 32768
+    /// - llama3:8b -> 8192
+    /// - deepseek-r1 -> 64000
+    ///
+    /// Returns a conservative default (4096) if the LLM is not ready.
+    pub async fn max_context_length(&self) -> usize {
+        // Try instance manager first if enabled
+        if self.uses_instance_manager() {
+            if let Some(manager) = &self.instance_manager {
+                if let Some(instance) = manager.get_active_instance() {
+                    // Instance has capabilities with max_context
+                    return instance.capabilities.max_context;
+                }
+            }
+        }
+
+        // Fall back to querying the runtime directly
+        match self.get_runtime().await {
+            Ok(runtime) => runtime.max_context_length(),
+            Err(_) => 4_096, // Conservative default if LLM not ready
+        }
+    }
+
     /// Set the system prompt (builder pattern).
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         // Store the prompt in Arc<RwLock<String>>
