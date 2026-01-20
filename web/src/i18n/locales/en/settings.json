@@ -45,6 +45,8 @@
   "totalMemory": "Total Memory",
   "usedMemory": "Used Memory",
   "freeMemory": "Available Memory",
+  "memory": "Memory",
+  "gpu": "GPU",
   "appearance": "Appearance",
   "languageRegion": "Language & Region",
   "language": "Language",

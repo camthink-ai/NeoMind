@@ -11,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { LoadingState, EmptyStateInline, Pagination, BulkActionBar, StatusBadge } from "@/components/shared"
+import { EmptyStateInline, Pagination, BulkActionBar, StatusBadge } from "@/components/shared"
 import { Badge } from "@/components/ui/badge"
 import { Eye, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -125,30 +125,29 @@ export function DeviceList({
       {addDeviceDialog}
       {discoveryDialog}
 
-      {loading ? (
-        <LoadingState text={t('devices:loading')} />
-      ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead align="center" className="w-[50px]">
-                  <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
-                </TableHead>
-                <TableHead>{t('devices:headers.id')}</TableHead>
-                <TableHead>{t('devices:headers.name')}</TableHead>
-                <TableHead>{t('devices:headers.type')}</TableHead>
-                <TableHead>{t('devices:headers.adapter')}</TableHead>
-                <TableHead align="center">{t('automation:transforms', { defaultValue: 'Transforms' })}</TableHead>
-                <TableHead align="center">{t('devices:headers.status')}</TableHead>
-                <TableHead>{t('devices:headers.lastOnline')}</TableHead>
-                <TableHead align="right">{t('devices:headers.actions')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {devices.length === 0 ? (
-                <EmptyStateInline title={t('devices:noDevices')} colSpan={9} />
-              ) : (
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead align="center" className="w-[50px]">
+                <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
+              </TableHead>
+              <TableHead>{t('devices:headers.id')}</TableHead>
+              <TableHead>{t('devices:headers.name')}</TableHead>
+              <TableHead>{t('devices:headers.type')}</TableHead>
+              <TableHead>{t('devices:headers.adapter')}</TableHead>
+              <TableHead align="center">{t('automation:transforms', { defaultValue: 'Transforms' })}</TableHead>
+              <TableHead align="center">{t('devices:headers.status')}</TableHead>
+              <TableHead>{t('devices:headers.lastOnline')}</TableHead>
+              <TableHead align="right">{t('devices:headers.actions')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <EmptyStateInline title={t('common:loading')} colSpan={9} />
+            ) : devices.length === 0 ? (
+              <EmptyStateInline title={t('devices:noDevices')} colSpan={9} />
+            ) : (
                 paginatedDevices.map((device) => (
                   <TableRow key={device.id} className={cn(selectedIds.has(device.id) && "bg-muted/50")}>
                   <TableCell align="center">
@@ -186,11 +185,10 @@ export function DeviceList({
                   </TableCell>
                 </TableRow>
                 ))
-              )}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
+            )}
+          </TableBody>
+        </Table>
+      </Card>
 
       {devices.length > devicesPerPage && (
         <div className="pt-4">

@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 
 export interface LoadingStateProps {
   size?: 'sm' | 'md' | 'lg'
+  variant?: 'default' | 'page'
   text?: string
   className?: string
 }
@@ -13,8 +14,9 @@ export interface LoadingStateProps {
  * @example
  * <LoadingState /> // Default size, no text
  * <LoadingState size="lg" text="加载中..." />
+ * <LoadingState variant="page" text="加载中..." /> // Full page centered loading
  */
-export function LoadingState({ size = 'md', text, className }: LoadingStateProps) {
+export function LoadingState({ size = 'md', variant = 'default', text, className }: LoadingStateProps) {
   const sizeClasses = {
     sm: 'w-4 h-4',
     md: 'w-6 h-6',
@@ -25,6 +27,17 @@ export function LoadingState({ size = 'md', text, className }: LoadingStateProps
     sm: 'text-xs',
     md: 'text-sm',
     lg: 'text-base',
+  }
+
+  if (variant === 'page') {
+    return (
+      <div className={cn('flex flex-col items-center justify-center gap-4 py-16 min-h-[200px]', className)}>
+        <Loader2 className={cn('animate-spin text-muted-foreground', 'w-10 h-10')} />
+        {text && (
+          <p className="text-sm text-muted-foreground">{text}</p>
+        )}
+      </div>
+    )
   }
 
   return (

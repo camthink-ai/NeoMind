@@ -29,7 +29,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Plus, Trash2, TestTube, Check, X, Terminal, Database, Webhook, Mail, Loader2, Bell } from "lucide-react"
-import { EmptyState, EmptyStateInline, ActionBar } from "@/components/shared"
+import { EmptyState, EmptyStateInline, ActionBar, LoadingState } from "@/components/shared"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { ConfigFormBuilder } from "@/components/plugins/ConfigFormBuilder"
@@ -218,7 +218,7 @@ export function AlertChannelsTab() {
 
   const selectedType = channelTypes.find((t) => t.id === selectedChannelType)
 
-  // Initial loading spinner - same as LLM Backends and Device Connections
+  // Initial loading state
   if (initialLoading) {
     return (
       <>
@@ -229,9 +229,7 @@ export function AlertChannelsTab() {
           onRefresh={fetchChannels}
           refreshLoading={loading}
         />
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
+        <LoadingState variant="page" text={t('common:loading')} />
       </>
     )
   }

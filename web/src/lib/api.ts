@@ -63,6 +63,8 @@ import type {
   ChannelTestResult,
   ChannelSchemaResponse,
   CreateChannelRequest,
+  DraftDevice,
+  SuggestedDeviceType,
 } from '@/types'
 
 const API_BASE = '/api'
@@ -409,7 +411,14 @@ export const api = {
 
   // Approve a draft device - register it as a real device
   approveDraftDevice: (deviceId: string) =>
-    fetchAPI<{ device_id: string; device_type: string; registered: boolean }>(`/devices/drafts/${deviceId}/approve`, {
+    fetchAPI<{
+      original_device_id: string
+      system_device_id: string
+      device_type: string
+      recommended_topic: string
+      registered: boolean
+      message: string
+    }>(`/devices/drafts/${deviceId}/approve`, {
       method: 'POST',
     }),
 
@@ -433,6 +442,12 @@ export const api = {
       body: JSON.stringify(request),
     }),
 
+  // Enhance draft device with LLM (manual trigger for Chinese names, descriptions, units)
+  enhanceDraftWithLLM: (deviceId: string) =>
+    fetchAPI<DraftDevice>(`/devices/drafts/${deviceId}/enhance`, {
+      method: 'POST',
+    }),
+
   // Clean up old draft devices
   cleanupDraftDevices: () =>
     fetchAPI<{ cleaned: number; message: string }>('/devices/drafts/cleanup', {
@@ -443,11 +458,56 @@ export const api = {
   getTypeSignatures: () =>
     fetchAPI<{ signatures: Record<string, string>; count: string }>('/devices/drafts/type-signatures'),
 
+  // Get suggested device types for a draft device
+  suggestDeviceTypes: (deviceId: string) =>
+    fetchAPI<{
+      suggestions: SuggestedDeviceType[]
+      exact_match: string | null
+    }>(`/devices/drafts/${deviceId}/suggest-types`),
+
   // Approve draft device with optional existing type assignment
   approveDraftDeviceWithType: (deviceId: string, existingType?: string) =>
-    fetchAPI<{ device_id: string; device_type: string; registered: boolean }>(`/devices/drafts/${deviceId}/approve`, {
+    fetchAPI<{
+      original_device_id: string
+      system_device_id: string
+      device_type: string
+      recommended_topic: string
+      registered: boolean
+      message: string
+    }>(`/devices/drafts/${deviceId}/approve`, {
       method: 'POST',
       body: JSON.stringify(existingType ? { existing_type: existingType } : {}),
+    }),
+
+  // ========== Auto-onboarding Configuration ==========
+  // Get auto-onboarding configuration (simplified to 3 fields)
+  getOnboardConfig: () =>
+    fetchAPI<{
+      enabled: boolean
+      max_samples: number
+      draft_retention_secs: number
+    }>('/devices/drafts/config'),
+
+  // Update auto-onboarding configuration
+  updateOnboardConfig: (config: {
+    enabled?: boolean
+    max_samples?: number
+    draft_retention_secs?: number
+  }) =>
+    fetchAPI<{ message: string }>('/devices/drafts/config', {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    }),
+
+  // Upload device data for auto-onboarding analysis
+  uploadDeviceData: (request: {
+    device_id?: string
+    source?: string
+    data: unknown[]
+  }) =>
+    fetchAPI<{ message: string }>('/devices/drafts/upload', {
+      method: 'POST',
+      body: JSON.stringify(request),
     }),
 
   // Device Discovery
@@ -690,7 +750,7 @@ export const api = {
     }),
 
   // ========== Stats API ==========
-  getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number }>('/stats/system'),
+  getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number; gpus: Array<{ name: string; vendor: string; total_memory_mb: number | null; driver_version: string | null }> }>('/stats/system'),
   getRuleStats: () => fetchAPI<{ stats: { total_rules: number; enabled_rules: number; disabled_rules: number; by_type: Record<string, number> } }>('/stats/rules'),
 
   // ========== Rules API ==========

@@ -1203,23 +1203,24 @@ impl MqttAdapter {
 
                 info!("Received MQTT message on topic: {}, payload length: {}", topic, payload.len());
 
-                // Extract device ID
-                let device_id = extract_device_id_from_topic(&topic, config);
-                if let Some(device_id) = device_id {
-                    info!("Extracted device_id: {} from topic: {}", device_id, topic);
+                let now = chrono::Utc::now();
 
-                    // Extract device type from topic
-                    let device_type = extract_device_type_from_topic(&topic);
+                // Check if this is a standard uplink format first
+                let parts: Vec<&str> = topic.split('/').collect();
+                let is_standard_uplink = parts.len() >= 4 && parts[0] == "device" && parts.get(3) == Some(&"uplink");
 
-                    let now = chrono::Utc::now();
+                // For standard uplink format, handle normally
+                if is_standard_uplink {
+                    // Extract device ID
+                    let device_id = extract_device_id_from_topic(&topic, config);
+                    if let Some(device_id) = device_id {
+                        info!("Extracted device_id: {} from topic: {}", device_id, topic);
 
-                    // Check if this is an uplink message with device_type
-                    // Topic format: device/{device_type}/{device_id}/uplink
-                    let parts: Vec<&str> = topic.split('/').collect();
-                    let is_uplink = parts.len() >= 4 && parts[0] == "device" && parts.get(3) == Some(&"uplink");
+                        // Extract device type from topic
+                        let device_type = extract_device_type_from_topic(&topic);
 
-                    if is_uplink {
-                        // This is an uplink message - use UnifiedExtractor to properly extract metrics
+                        // Check if this is an uplink message with device_type
+                        // Topic format: device/{device_type}/{device_id}/uplink
                         if let Some(dt) = &device_type {
                             // Try to parse as JSON
                             if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&payload) {
@@ -1311,68 +1312,128 @@ impl MqttAdapter {
                     }
 
                     // Fall back to simple metric extraction for non-uplink messages
-                    if let Ok(value) = MqttAdapter::default_parse_value(&payload) {
-                        let metric_name = extract_metric_name_from_topic(&topic)
-                            .unwrap_or_else(|| "value".to_string());
+                    // This requires a device_id to be extractable from the topic
+                    let device_id_for_fallback = extract_device_id_from_topic(&topic, config);
+                    if let Some(device_id) = device_id_for_fallback {
+                        if let Ok(value) = MqttAdapter::default_parse_value(&payload) {
+                            let metric_name = extract_metric_name_from_topic(&topic)
+                                .unwrap_or_else(|| "value".to_string());
 
-                        // Update metric cache
-                        {
-                            let mut cache = metric_cache.write().await;
-                            cache
-                                .entry(device_id.clone())
-                                .or_default()
-                                .insert(metric_name.clone(), (value.clone(), now));
-                        }
+                            // Update metric cache
+                            {
+                                let mut cache = metric_cache.write().await;
+                                cache
+                                    .entry(device_id.clone())
+                                    .or_default()
+                                    .insert(metric_name.clone(), (value.clone(), now));
+                            }
 
-                        // Store in telemetry storage
-                        if let Some(storage) = telemetry_storage.read().await.as_ref() {
-                            let data_point = crate::telemetry::DataPoint {
-                                timestamp: now.timestamp(),
-                                value: value.clone(),
-                                quality: None,
-                            };
-                            let _ = storage.write(&device_id, &metric_name, data_point).await;
-                        }
+                            // Store in telemetry storage
+                            if let Some(storage) = telemetry_storage.read().await.as_ref() {
+                                let data_point = crate::telemetry::DataPoint {
+                                    timestamp: now.timestamp(),
+                                    value: value.clone(),
+                                    quality: None,
+                                };
+                                let _ = storage.write(&device_id, &metric_name, data_point).await;
+                            }
 
-                        // Emit event
-                        let _ = event_tx.send(DeviceEvent::Metric {
-                            device_id: device_id.clone(),
-                            metric: metric_name.clone(),
-                            value: value.clone(),
-                            timestamp: now.timestamp(),
-                        });
-
-                        // Publish to EventBus
-                        if let Some(bus) = event_bus {
-                            let core_value = convert_to_core_metric(value.clone());
-                            debug!(
-                                "Publishing DeviceMetric to EventBus: device_id={}, metric={}",
-                                device_id, metric_name
-                            );
-                            bus.publish(NeoTalkEvent::DeviceMetric {
+                            // Emit event
+                            let _ = event_tx.send(DeviceEvent::Metric {
                                 device_id: device_id.clone(),
                                 metric: metric_name.clone(),
-                                value: core_value,
+                                value: value.clone(),
                                 timestamp: now.timestamp(),
-                                quality: None,
-                            })
-                            .await;
+                            });
 
-                            // Publish device online event - extract device_type from topic if available
-                            let device_type = extract_device_type_from_topic(&topic);
-                            info!(
-                                "Publishing DeviceOnline to EventBus: device_id={}, device_type={:?}",
-                                device_id, device_type
-                            );
-                            bus.publish(NeoTalkEvent::DeviceOnline {
-                                device_id: device_id.clone(),
-                                device_type: device_type.unwrap_or_else(|| "unknown".to_string()),
-                                timestamp: now.timestamp(),
-                            })
-                            .await;
-                        } else {
-                            warn!("EventBus is None in handle_mqtt_notification - cannot publish events");
+                            // Publish to EventBus
+                            if let Some(bus) = event_bus {
+                                let core_value = convert_to_core_metric(value.clone());
+                                debug!(
+                                    "Publishing DeviceMetric to EventBus: device_id={}, metric={}",
+                                    device_id, metric_name
+                                );
+                                bus.publish(NeoTalkEvent::DeviceMetric {
+                                    device_id: device_id.clone(),
+                                    metric: metric_name.clone(),
+                                    value: core_value,
+                                    timestamp: now.timestamp(),
+                                    quality: None,
+                                })
+                                .await;
+
+                                // Publish device online event - extract device_type from topic if available
+                                let device_type = extract_device_type_from_topic(&topic);
+                                info!(
+                                    "Publishing DeviceOnline to EventBus: device_id={}, device_type={:?}",
+                                    device_id, device_type
+                                );
+                                bus.publish(NeoTalkEvent::DeviceOnline {
+                                    device_id: device_id.clone(),
+                                    device_type: device_type.unwrap_or_else(|| "unknown".to_string()),
+                                    timestamp: now.timestamp(),
+                                })
+                                .await;
+                            } else {
+                                warn!("EventBus is None in handle_mqtt_notification - cannot publish events");
+                            }
                         }
+                    } // Close: if let Some(device_id)
+                } // Close: if is_standard_uplink
+
+                // Auto-onboarding: For non-standard topics, trigger auto-discovery
+                // This handles arbitrary MQTT topics like "device12asdas"
+                // Supports both JSON and binary/hex data
+                // Only trigger if NOT a standard uplink format (those are handled above)
+                if !is_standard_uplink {
+                    info!("Triggering auto-onboarding for non-standard topic: {}", topic);
+
+                    // Generate a device_id for auto-discovery
+                    // Try to extract from topic, or use a hash-based ID
+                    let auto_device_id = extract_device_id_from_topic(&topic, config)
+                        .unwrap_or_else(|| {
+                            // Use topic hash as device_id
+                            format!("mqtt_{}", {
+                                use std::collections::hash_map::DefaultHasher;
+                                use std::hash::{Hash, Hasher};
+                                let mut hasher = DefaultHasher::new();
+                                topic.hash(&mut hasher);
+                                format!("{:x}", hasher.finish())
+                            })
+                        });
+
+                    // Determine data format and prepare sample
+                    // Extract the actual device data from payload.data if it exists
+                    let (sample_data, is_binary, data_format) = if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                        // Check if payload has a 'data' field containing the actual device data
+                        let actual_data = json_data.get("data").unwrap_or(&json_data);
+                        (actual_data.clone(), false, "json")
+                    } else {
+                        // Not JSON - store as base64 encoded binary data
+                        (serde_json::json!(base64::encode(&payload)), true, "base64")
+                    };
+
+                    // Publish unknown_device_data event for auto-onboarding
+                    if let Some(bus) = event_bus {
+                        let sample = serde_json::json!({
+                            "device_id": auto_device_id,
+                            "timestamp": chrono::Utc::now().timestamp(),
+                            "topic": topic,
+                            "data": sample_data,
+                            "format": data_format,
+                            "is_binary": is_binary
+                        });
+
+                        bus.publish(NeoTalkEvent::Custom {
+                            event_type: "unknown_device_data".to_string(),
+                            data: serde_json::json!({
+                                "device_id": auto_device_id,
+                                "source": "mqtt",
+                                "original_topic": topic,
+                                "sample": sample,
+                                "is_binary": is_binary
+                            }),
+                        }).await;
                     }
                 }
             }

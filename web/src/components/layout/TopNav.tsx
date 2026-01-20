@@ -177,9 +177,9 @@ export function TopNav() {
             <TooltipTrigger asChild>
               <div
                 className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs",
+                  "flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs font-medium",
                   isConnected
-                    ? "text-muted-foreground"
+                    ? "bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20"
                     : "text-destructive bg-destructive/10"
                 )}
               >
@@ -232,10 +232,6 @@ export function TopNav() {
                 <div className="px-3 py-2">
                   <p className="text-sm font-medium">{user.username}</p>
                 </div>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={toggleLanguage}>
-                  {i18n.language === 'zh' ? 'English' : '中文'}
-                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
                   <LogOut className="h-4 w-4 mr-2" />

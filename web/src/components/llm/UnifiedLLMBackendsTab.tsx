@@ -1,15 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Loader2,
   ArrowLeft,
   Server,
   CheckCircle2,
+  Loader2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { EmptyState } from '@/components/shared'
+import { EmptyState, LoadingState } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { fetchAPI } from '@/lib/api'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
@@ -237,11 +237,7 @@ export function UnifiedLLMBackendsTab({
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
+    return <LoadingState variant="page" text={t('common:loading')} />
   }
 
   // ========== LIST VIEW ==========

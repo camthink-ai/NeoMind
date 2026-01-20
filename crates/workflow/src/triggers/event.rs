@@ -319,6 +319,7 @@ fn matches_event_type(event: &NeoTalkEvent, pattern: &str) -> bool {
         NeoTalkEvent::ToolExecutionFailure { .. } => {
             pattern == "ToolExecutionFailure" || pattern == "Tool*"
         }
+        NeoTalkEvent::Custom { .. } => pattern == "Custom",
     }
 }
 
@@ -445,6 +446,9 @@ fn event_signature(event: &NeoTalkEvent) -> String {
         }
         NeoTalkEvent::ToolExecutionFailure { tool_name, .. } => {
             format!("ToolExecutionFailure:{}", tool_name)
+        }
+        NeoTalkEvent::Custom { event_type, .. } => {
+            format!("Custom:{}", event_type)
         }
     }
 }

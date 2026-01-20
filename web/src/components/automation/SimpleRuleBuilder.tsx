@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -9,50 +11,35 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
+import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
-  ArrowDown,
   Plus,
   X,
   Wand2,
   Eye,
   Code,
+  Calendar,
+  Zap,
+  Globe,
+  Play,
+  Bell,
+  FileText,
+  Trash2,
+  Sparkles,
+  Lightbulb,
+  Info,
 } from 'lucide-react'
-import type { DeviceType } from '@/types'
+import type { Rule, RuleTrigger, RuleCondition, RuleAction, DeviceType } from '@/types'
+import {
+  FullScreenBuilder,
+  BuilderSection,
+  FormGrid,
+  TipCard,
+} from './FullScreenBuilder'
 
-interface Rule {
-  id?: string
-  name: string
-  dsl?: string
-  enabled?: boolean
-}
-
-interface Condition {
-  id: string
-  deviceId: string
-  metric: string
-  operator: string
-  value: string
-}
-
-interface Action {
-  id: string
-  type: 'device' | 'notification'
-  deviceId?: string
-  command?: string
-  message?: string
-}
-
-interface SimpleRuleBuilderProps {
+interface RuleBuilderProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   rule?: Rule
@@ -64,6 +51,7 @@ interface SimpleRuleBuilderProps {
 }
 
 type Mode = 'visual' | 'code' | 'ai'
+type TriggerType = 'device_state' | 'schedule' | 'manual' | 'event'
 
 const OPERATORS = [
   { value: '>', label: '大于', symbol: '>' },
@@ -71,86 +59,62 @@ const OPERATORS = [
   { value: '>=', label: '大于等于', symbol: '≥' },
   { value: '<=', label: '小于等于', symbol: '≤' },
   { value: '==', label: '等于', symbol: '=' },
-]
-
-const COMMANDS = [
-  { value: 'turn_on', label: '打开' },
-  { value: 'turn_off', label: '关闭' },
+  { value: '!=', label: '不等于', symbol: '≠' },
 ]
 
 const AI_EXAMPLES = [
-  '温度超过30度打开空调',
-  '天黑时自动开灯',
-  '湿度低于40%开启加湿器',
+  '当温度超过30度时打开空调',
+  '每天早上8点开灯',
+  '当湿度低于40%时发送通知',
+  '当设备离线时记录日志',
 ]
 
-function parseDSL(dsl: string): { conditions: Condition[]; actions: Action[] } {
-  const conditions: Condition[] = []
-  const actions: Action[] = []
+const EVENT_TYPES = [
+  'DeviceOnline',
+  'DeviceOffline',
+  'DeviceMetric',
+  'RuleTriggered',
+  'WorkflowCompleted',
+  'LlmDecisionProposed',
+  'AlertCreated',
+]
 
-  const whenMatch = dsl.match(/WHEN\s+(.+?)\s+THEN/s)
-  if (whenMatch) {
-    const conds = whenMatch[1].split(/\s+AND\s+/)
-    conds.forEach(cond => {
-      const m = cond.match(/device\.(\w+)\.(\w+)\s*([><=!]+)\s*(\d+)/)
-      if (m) {
-        conditions.push({ id: `c-${Date.now()}-${Math.random()}`, deviceId: m[1], metric: m[2], operator: m[3], value: m[4] })
-      }
-    })
-  }
+// ============================================================================
+// Helper Functions
+// ============================================================================
 
-  const thenMatch = dsl.match(/THEN\s+(.+)/s)
-  if (thenMatch) {
-    const acts = thenMatch[1].split(/\s+\+\s+/)
-    acts.forEach(act => {
-      const dm = act.match(/device\.(\w+)\.(\w+)\(\)/)
-      if (dm) {
-        actions.push({ id: `a-${Date.now()}-${Math.random()}`, type: 'device', deviceId: dm[1], command: dm[2] })
-      }
-      const nm = act.match(/notify\("(.+?)"\)/)
-      if (nm) {
-        actions.push({ id: `a-${Date.now()}-${Math.random()}`, type: 'notification', message: nm[1] })
-      }
-    })
-  }
-
-  return { conditions, actions }
+function getDeviceType(
+  deviceId: string,
+  devices: Array<{ id: string; name: string; device_type?: string }>,
+  deviceTypes?: DeviceType[]
+): string {
+  const device = devices.find(d => d.id === deviceId)
+  return device?.device_type || deviceTypes?.[0]?.device_type || ''
 }
 
-function generateDSL(conditions: Condition[], actions: Action[]): string {
-  if (conditions.length === 0) return ''
-  const condStr = conditions.map(c => `device.${c.deviceId}.${c.metric} ${c.operator} ${c.value}`).join(' AND ')
-  const actStr = actions.map(a => {
-    if (a.type === 'device') return `device.${a.deviceId}.${a.command}()`
-    return `notify("${a.message}")`
-  }).join(' + ')
-  return `WHEN ${condStr} THEN ${actStr}`
+function getDeviceMetrics(
+  deviceId: string,
+  devices: Array<{ id: string; name: string; device_type?: string }>,
+  deviceTypes?: DeviceType[]
+): Array<{ name: string; display_name?: string }> {
+  const deviceTypeName = getDeviceType(deviceId, devices, deviceTypes)
+  const deviceType = deviceTypes?.find(t => t.device_type === deviceTypeName)
+  return deviceType?.metrics || []
 }
 
-function parseAI(text: string): { name: string; conditions: Condition[]; actions: Action[] } {
-  const conditions: Condition[] = []
-  const actions: Action[] = []
-
-  const tempMatch = text.match(/温度.*?(\d+)/)
-  const humMatch = text.match(/湿度.*?(\d+)/)
-  const luxMatch = text.match(/亮度.*?(\d+)/)
-
-  if (tempMatch) conditions.push({ id: `c-${Date.now()}`, deviceId: 'sensor', metric: 'temperature', operator: '>', value: tempMatch[1] })
-  if (humMatch) conditions.push({ id: `c-${Date.now()}`, deviceId: 'sensor', metric: 'humidity', operator: '<', value: humMatch[1] })
-  if (luxMatch) conditions.push({ id: `c-${Date.now()}`, deviceId: 'sensor', metric: 'brightness', operator: '<', value: luxMatch[1] })
-
-  if (text.includes('开空调') || text.includes('打开空调')) actions.push({ id: `a-${Date.now()}`, type: 'device', deviceId: 'ac', command: 'turn_on' })
-  if (text.includes('关空调') || text.includes('关闭空调')) actions.push({ id: `a-${Date.now()}`, type: 'device', deviceId: 'ac', command: 'turn_off' })
-  if (text.includes('开灯') || text.includes('打开灯')) actions.push({ id: `a-${Date.now()}`, type: 'device', deviceId: 'light', command: 'turn_on' })
-  if (text.includes('关灯') || text.includes('关闭灯')) actions.push({ id: `a-${Date.now()}`, type: 'device', deviceId: 'light', command: 'turn_off' })
-  if (text.includes('加湿器')) actions.push({ id: `a-${Date.now()}`, type: 'device', deviceId: 'humidifier', command: 'turn_on' })
-  if (text.includes('通知')) actions.push({ id: `a-${Date.now()}`, type: 'notification', message: '规则已触发' })
-
-  if (conditions.length === 0) conditions.push({ id: `c-${Date.now()}`, deviceId: 'sensor', metric: 'temperature', operator: '>', value: '30' })
-  if (actions.length === 0) actions.push({ id: `a-${Date.now()}`, type: 'device', deviceId: 'light', command: 'turn_on' })
-
-  return { name: text.slice(0, 20), conditions, actions }
+function getDeviceCommands(
+  deviceId: string,
+  devices: Array<{ id: string; name: string; device_type?: string }>,
+  deviceTypes?: DeviceType[]
+): Array<{ name: string; display_name?: string }> {
+  const deviceTypeName = getDeviceType(deviceId, devices, deviceTypes)
+  const deviceType = deviceTypes?.find(t => t.device_type === deviceTypeName)
+  return deviceType?.commands || []
 }
+
+// ============================================================================
+// Main Component
+// ============================================================================
 
 export function SimpleRuleBuilder({
   open,
@@ -158,416 +122,871 @@ export function SimpleRuleBuilder({
   rule,
   onSave,
   resources = { devices: [], deviceTypes: [] },
-}: SimpleRuleBuilderProps) {
+}: RuleBuilderProps) {
+  const { t } = useTranslation(['automation', 'common'])
+
+  // Basic info
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [enabled, setEnabled] = useState(true)
+
+  // Trigger state
+  const [triggerType, setTriggerType] = useState<TriggerType>('manual')
+  const [triggerDeviceId, setTriggerDeviceId] = useState('')
+  const [triggerState, setTriggerState] = useState('')
+  const [triggerCron, setTriggerCron] = useState('0 * * * *')
+  const [triggerEventType, setTriggerEventType] = useState('')
+  const [triggerEventFilters, setTriggerEventFilters] = useState('')
+
+  // Conditions state
+  const [conditions, setConditions] = useState<RuleCondition[]>([])
+
+  // Actions state
+  const [actions, setActions] = useState<RuleAction[]>([])
+
+  // Mode and AI state
   const [mode, setMode] = useState<Mode>('visual')
-  const [name, setName] = useState(rule?.name || '')
-  const [enabled, setEnabled] = useState(rule?.enabled ?? true)
-  const [conditions, setConditions] = useState<Condition[]>([])
-  const [actions, setActions] = useState<Action[]>([])
-  const [code, setCode] = useState(rule?.dsl || '')
   const [aiText, setAiText] = useState('')
-  const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // Helper functions - defined before useEffect
-  const getDeviceType = (deviceId: string) => {
-    const device = resources.devices.find(d => d.id === deviceId)
-    return device?.device_type || resources.deviceTypes?.[0]?.device_type || ''
-  }
-
-  const getDeviceMetrics = (deviceId: string) => {
-    const deviceTypeName = getDeviceType(deviceId)
-    const deviceType = resources.deviceTypes?.find(t => t.device_type === deviceTypeName)
-    return deviceType?.metrics || []
-  }
-
-  const getDeviceCommands = (deviceId: string) => {
-    const deviceTypeName = getDeviceType(deviceId)
-    const deviceType = resources.deviceTypes?.find(t => t.device_type === deviceTypeName)
-    return deviceType?.commands || []
-  }
-
-  const createDefaultCondition = (): Condition => {
-    const firstDevice = resources.devices[0]
-    if (!firstDevice) return { id: `c-${Date.now()}`, deviceId: '', metric: 'temperature', operator: '>', value: '30' }
-    const metrics = getDeviceMetrics(firstDevice.id)
-    return {
-      id: `c-${Date.now()}`,
-      deviceId: firstDevice.id,
-      metric: metrics[0]?.name || 'temperature',
-      operator: '>',
-      value: '30',
-    }
-  }
-
-  const createDefaultAction = (): Action => {
-    const firstDevice = resources.devices[0]
-    if (!firstDevice) return { id: `a-${Date.now()}`, type: 'device', deviceId: '', command: 'turn_on' }
-    const commands = getDeviceCommands(firstDevice.id)
-    return {
-      id: `a-${Date.now()}`,
-      type: 'device',
-      deviceId: firstDevice.id,
-      command: commands[0]?.name || 'turn_on',
-    }
-  }
-
+  // ============================================================================
+  // Initialize form from rule
+  // ============================================================================
   useEffect(() => {
-    if (open && rule?.dsl) {
-      setCode(rule.dsl)
-      const parsed = parseDSL(rule.dsl)
-      setConditions(parsed.conditions.length > 0 ? parsed.conditions : [createDefaultCondition()])
-      setActions(parsed.actions.length > 0 ? parsed.actions : [createDefaultAction()])
+    if (open && rule) {
       setName(rule.name || '')
+      setDescription(rule.description || '')
+      setEnabled(rule.enabled ?? true)
+
+      if (rule.trigger) {
+        setTriggerType(rule.trigger.type as TriggerType)
+        switch (rule.trigger.type) {
+          case 'device_state':
+            setTriggerDeviceId(rule.trigger.device_id || '')
+            setTriggerState(rule.trigger.state || '')
+            break
+          case 'schedule':
+            setTriggerCron(rule.trigger.cron || '0 * * * *')
+            break
+          case 'event':
+            setTriggerEventType(rule.trigger.event_type || '')
+            setTriggerEventFilters(JSON.stringify(rule.trigger.filters || {}, null, 2))
+            break
+          case 'manual':
+            break
+        }
+      }
+
+      if (rule.condition) {
+        setConditions([rule.condition])
+      } else {
+        setConditions([])
+      }
+
+      if (rule.actions && rule.actions.length > 0) {
+        setActions(rule.actions)
+      } else {
+        setActions([])
+      }
     } else if (open) {
-      // Start with one condition and one action by default
-      setConditions([createDefaultCondition()])
-      setActions([createDefaultAction()])
-      setCode('')
-      setName('')
-      setAiText('')
-      setMode('visual')
+      resetForm()
     }
-    setEnabled(rule?.enabled ?? true)
   }, [open, rule])
 
-  const deviceOptions = resources.devices.map(d => ({ value: d.id, label: d.name }))
-
-  const addCondition = () => {
-    setConditions([...conditions, createDefaultCondition()])
-  }
-
-  const updateCondition = (id: string, data: Partial<Condition>) => {
-    setConditions(conditions.map(c => c.id === id ? { ...c, ...data } : c))
-  }
-
-  const removeCondition = (id: string) => {
-    setConditions(conditions.filter(c => c.id !== id))
-  }
-
-  const addAction = () => {
-    setActions([...actions, createDefaultAction()])
-  }
-
-  const updateAction = (id: string, data: Partial<Action>) => {
-    setActions(actions.map(a => a.id === id ? { ...a, ...data } : a))
-  }
-
-  const removeAction = (id: string) => {
-    setActions(actions.filter(a => a.id !== id))
-  }
-
-  const handleAIGenerate = async () => {
-    if (!aiText.trim()) return
-    setLoading(true)
-    await new Promise(r => setTimeout(r, 600))
-    const result = parseAI(aiText)
-    setName(result.name)
-    setConditions(result.conditions)
-    setActions(result.actions)
+  const resetForm = useCallback(() => {
+    setName('')
+    setDescription('')
+    setEnabled(true)
+    setTriggerType('manual')
+    setTriggerDeviceId('')
+    setTriggerState('')
+    setTriggerCron('0 * * * *')
+    setTriggerEventType('')
+    setTriggerEventFilters('')
+    setConditions([])
+    setActions([{ type: 'Log', level: 'info', message: t('automation:logMessage', { defaultValue: '规则已触发' }) }])
+    setAiText('')
     setMode('visual')
-    setLoading(false)
+  }, [t])
+
+  // ============================================================================
+  // Trigger helpers
+  // ============================================================================
+
+  const buildTrigger = useCallback((): RuleTrigger | undefined => {
+    switch (triggerType) {
+      case 'device_state':
+        if (!triggerDeviceId || !triggerState) return undefined
+        return { type: 'device_state', device_id: triggerDeviceId, state: triggerState }
+      case 'schedule':
+        if (!triggerCron) return undefined
+        return { type: 'schedule', cron: triggerCron }
+      case 'event':
+        if (!triggerEventType) return undefined
+        let filters: Record<string, unknown> | undefined = undefined
+        if (triggerEventFilters.trim()) {
+          try {
+            filters = JSON.parse(triggerEventFilters)
+          } catch {
+            // Invalid JSON, ignore filters
+          }
+        }
+        return { type: 'event', event_type: triggerEventType, filters }
+      case 'manual':
+        return { type: 'manual' }
+    }
+  }, [triggerType, triggerDeviceId, triggerState, triggerCron, triggerEventType, triggerEventFilters])
+
+  // ============================================================================
+  // Condition helpers
+  // ============================================================================
+
+  const createDefaultCondition = useCallback((): RuleCondition => {
+    const firstDevice = resources.devices[0]
+    if (!firstDevice) {
+      return { device_id: '', metric: 'temperature', operator: '>', threshold: 30 }
+    }
+    const metrics = getDeviceMetrics(firstDevice.id, resources.devices, resources.deviceTypes)
+    return {
+      device_id: firstDevice.id,
+      metric: metrics[0]?.name || 'temperature',
+      operator: '>',
+      threshold: 30,
+    }
+  }, [resources.devices, resources.deviceTypes])
+
+  const addCondition = useCallback(() => {
+    setConditions(prev => [...prev, createDefaultCondition()])
+  }, [createDefaultCondition])
+
+  const updateCondition = useCallback((index: number, data: Partial<RuleCondition>) => {
+    setConditions(prev => prev.map((c, i) => (i === index ? { ...c, ...data } : c)))
+  }, [])
+
+  const removeCondition = useCallback((index: number) => {
+    setConditions(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  // ============================================================================
+  // Action helpers
+  // ============================================================================
+
+  const addAction = useCallback((type: 'Notify' | 'Execute' | 'Log') => {
+    setActions(prev => {
+      let newAction: RuleAction
+      if (type === 'Notify') {
+        newAction = { type: 'Notify', message: '' }
+      } else if (type === 'Execute') {
+        const firstDevice = resources.devices[0]
+        const commands = firstDevice ? getDeviceCommands(firstDevice.id, resources.devices, resources.deviceTypes) : []
+        newAction = {
+          type: 'Execute',
+          device_id: firstDevice?.id || '',
+          command: commands[0]?.name || 'turn_on',
+          params: {},
+        }
+      } else {
+        newAction = { type: 'Log', level: 'info', message: '' }
+      }
+      return [...prev, newAction]
+    })
+  }, [resources.devices, resources.deviceTypes])
+
+  const updateAction = useCallback((index: number, data: Partial<RuleAction>) => {
+    setActions(prev => prev.map((a, i) => {
+      if (i !== index) return a
+      // Type-safe merge for discriminated union
+      if (a.type === 'Notify' && data.type !== 'Notify') return { ...a, ...data } as RuleAction
+      if (a.type === 'Execute' && data.type !== 'Execute') return { ...a, ...data } as RuleAction
+      if (a.type === 'Log' && data.type !== 'Log') return { ...a, ...data } as RuleAction
+      return { ...a, ...data } as RuleAction
+    }))
+  }, [])
+
+  const removeAction = useCallback((index: number) => {
+    setActions(prev => prev.filter((_, i) => i !== index))
+  }, [])
+
+  // ============================================================================
+  // AI Generation
+  // ============================================================================
+
+  const handleAIGenerate = useCallback(async () => {
+    if (!aiText.trim()) return
+
+    // Simulate AI processing with regex-based parsing
+    await new Promise(r => setTimeout(r, 600))
+
+    const text = aiText.toLowerCase()
+
+    // Detect trigger type
+    if (text.includes('每天') || text.includes('定时') || text.includes('早上') || text.includes('晚上')) {
+      setTriggerType('schedule')
+      setTriggerCron('0 8 * * *')
+    } else if (text.includes('事件') || text.includes('event')) {
+      setTriggerType('event')
+      setTriggerEventType('DeviceMetric')
+    } else {
+      setTriggerType('device_state')
+      if (resources.devices.length > 0) {
+        setTriggerDeviceId(resources.devices[0].id)
+        setTriggerState('active')
+      }
+    }
+
+    // Detect conditions
+    const newConditions: RuleCondition[] = []
+    const tempMatch = aiText.match(/温度.*?(\d+)/)
+    const humMatch = aiText.match(/湿度.*?(\d+)/)
+
+    if (tempMatch && resources.devices.length > 0) {
+      newConditions.push({
+        device_id: resources.devices[0].id,
+        metric: 'temperature',
+        operator: '>',
+        threshold: parseFloat(tempMatch[1]) || 30,
+      })
+    }
+    if (humMatch && resources.devices.length > 0) {
+      newConditions.push({
+        device_id: resources.devices[0].id,
+        metric: 'humidity',
+        operator: '<',
+        threshold: parseFloat(humMatch[1]) || 40,
+      })
+    }
+    setConditions(newConditions)
+
+    // Detect actions
+    const newActions: RuleAction[] = []
+    if (text.includes('开空调') || text.includes('打开空调')) {
+      newActions.push({
+        type: 'Execute',
+        device_id: resources.devices[0]?.id || '',
+        command: 'turn_on',
+        params: {},
+      })
+    }
+    if (text.includes('关空调') || text.includes('关闭空调')) {
+      newActions.push({
+        type: 'Execute',
+        device_id: resources.devices[0]?.id || '',
+        command: 'turn_off',
+        params: {},
+      })
+    }
+    if (text.includes('开灯')) {
+      newActions.push({
+        type: 'Execute',
+        device_id: resources.devices[0]?.id || '',
+        command: 'turn_on',
+        params: {},
+      })
+    }
+    if (text.includes('通知') || text.includes('发送')) {
+      newActions.push({ type: 'Notify', message: '规则已触发' })
+    }
+    if (text.includes('记录')) {
+      newActions.push({ type: 'Log', level: 'info', message: '规则已执行' })
+    }
+
+    if (newActions.length === 0) {
+      newActions.push({ type: 'Log', level: 'info', message: '规则已触发' })
+    }
+    setActions(newActions)
+
+    if (!name.trim()) {
+      setName(aiText.slice(0, 30))
+    }
+
+    setMode('visual')
+  }, [aiText, name, resources.devices])
+
+  // ============================================================================
+  // Validation
+  // ============================================================================
+
+  const isValid = Boolean(name.trim() &&
+    ((triggerType === 'manual') ||
+     (triggerType === 'device_state' && triggerDeviceId) ||
+     (triggerType === 'schedule' && triggerCron) ||
+     (triggerType === 'event' && triggerEventType)))
+
+  const getValidationMessage = () => {
+    if (!name.trim()) return t('automation:validation.nameRequired', { defaultValue: '请输入规则名称' })
+    if (triggerType === 'device_state' && !triggerDeviceId) return t('automation:validation.deviceRequired', { defaultValue: '请选择设备' })
+    if (triggerType === 'schedule' && !triggerCron) return t('automation:validation.cronRequired', { defaultValue: '请输入 Cron 表达式' })
+    if (triggerType === 'event' && !triggerEventType) return t('automation:validation.eventTypeRequired', { defaultValue: '请选择事件类型' })
+    return ''
   }
+
+  // ============================================================================
+  // Save
+  // ============================================================================
 
   const handleSave = async () => {
+    if (!isValid) return
+
     setSaving(true)
     try {
-      const dsl = mode === 'code' ? code : generateDSL(conditions, actions)
-      await onSave({ name, dsl, enabled })
+      const trigger = buildTrigger()
+      const condition = triggerType === 'device_state' && conditions.length > 0
+        ? conditions[0]
+        : undefined
+
+      await onSave({
+        name,
+        description,
+        enabled,
+        trigger,
+        condition,
+        actions: actions.length > 0 ? actions : undefined,
+      })
     } finally {
       setSaving(false)
     }
   }
 
-  const isValid = name.trim() && conditions.length > 0 && actions.length > 0
+  // Device options
+  const deviceOptions = resources.devices.map(d => ({ value: d.id, label: d.name }))
 
+  // ============================================================================
+  // Side Panel Content
+  // ============================================================================
+  const sidePanelContent = (
+    <div className="space-y-4">
+      <TipCard
+        title={t('automation:tips.ruleTitle', { defaultValue: '关于规则' })}
+        variant="info"
+      >
+        {t('automation:tips.ruleDesc', {
+          defaultValue: '规则是简单的"当...时..."自动化。当触发条件满足时，自动执行配置的动作。',
+        })}
+      </TipCard>
+
+      {triggerType === 'device_state' && (
+        <TipCard
+          title={t('automation:tips.deviceStateTitle', { defaultValue: '设备状态触发' })}
+          variant="info"
+        >
+          {t('automation:tips.deviceStateDesc', {
+            defaultValue: '当指定设备的状态发生变化时触发规则。可以添加多个条件进行精确控制。',
+          })}
+        </TipCard>
+      )}
+
+      {triggerType === 'schedule' && (
+        <TipCard
+          title={t('automation:tips.scheduleTitle', { defaultValue: '定时触发' })}
+          variant="info"
+        >
+          {t('automation:tips.scheduleDesc', {
+            defaultValue: '使用 Cron 表达式设置定时触发。例如: 0 8 * * * 表示每天早上8点执行。',
+          })}
+        </TipCard>
+      )}
+
+      {triggerType === 'event' && (
+        <TipCard
+          title={t('automation:tips.eventTitle', { defaultValue: '事件触发' })}
+          variant="info"
+        >
+          {t('automation:tips.eventDesc', {
+            defaultValue: '响应系统事件，如设备上线/下线、其他规则触发等。',
+          })}
+        </TipCard>
+      )}
+
+      {mode === 'ai' && (
+        <TipCard
+          title={t('automation:tips.aiTitle', { defaultValue: 'AI 生成提示' })}
+          variant="success"
+        >
+          {t('automation:tips.aiDesc', {
+            defaultValue: '用自然语言描述你想要的自动化，AI 会自动配置触发器、条件和动作。',
+          })}
+        </TipCard>
+      )}
+    </div>
+  )
+
+  // ============================================================================
+  // Render
+  // ============================================================================
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden flex flex-col p-0 gap-0">
-        <DialogHeader className="px-6 pb-4 pt-6 border-t-0 border-x-0 border-b shrink-0 pr-12">
-          <DialogTitle>{rule ? '编辑规则' : '创建自动化规则'}</DialogTitle>
-          <DialogDescription>
-            当条件满足时，自动执行设定的动作
-          </DialogDescription>
-        </DialogHeader>
-
-        <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="flex-1 min-h-0 overflow-hidden flex flex-col">
-          <div className="px-6 pt-4 pb-2 shrink-0">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="visual" className="gap-1.5">
-                <Eye className="h-3.5 w-3.5" />
-                <span>可视化</span>
-              </TabsTrigger>
-              <TabsTrigger value="code" className="gap-1.5">
-                <Code className="h-3.5 w-3.5" />
-                <span>代码</span>
-              </TabsTrigger>
-              <TabsTrigger value="ai" className="gap-1.5">
-                <Wand2 className="h-3.5 w-3.5" />
-                <span>AI 生成</span>
-              </TabsTrigger>
-            </TabsList>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-4">
-            {/* Name Input - Always visible */}
-            <div className="space-y-3 mb-4">
-              <Label htmlFor="rule-name">规则名称</Label>
+    <FullScreenBuilder
+      open={open}
+      onClose={() => onOpenChange(false)}
+      title={rule
+        ? t('automation:editRule', { defaultValue: '编辑规则' })
+        : t('automation:createRule', { defaultValue: '创建自动化规则' })
+      }
+      description={t('automation:ruleBuilderDesc', {
+        defaultValue: '定义触发条件和执行动作，当条件满足时自动执行',
+      })}
+      icon={<Sparkles className="h-5 w-5 text-purple-500" />}
+      headerActions={
+        <Badge variant={enabled ? 'default' : 'secondary'} className="text-xs">
+          {enabled ? t('common:enabled', { defaultValue: '启用' }) : t('common:disabled', { defaultValue: '禁用' })}
+        </Badge>
+      }
+      sidePanel={{ content: sidePanelContent, title: t('automation:tips', { defaultValue: '提示' }) }}
+      isValid={isValid}
+      isDirty={true}
+      isSaving={saving}
+      saveLabel={t('common:save', { defaultValue: '保存' })}
+      onSave={handleSave}
+      validationMessage={getValidationMessage()}
+    >
+      <div className="space-y-6">
+        {/* Basic Info Section */}
+        <BuilderSection
+          title={t('automation:basicInfo', { defaultValue: '基本信息' })}
+          icon={<Info className="h-4 w-4 text-muted-foreground" />}
+        >
+          <FormGrid columns={2}>
+            <div className="space-y-2">
+              <Label htmlFor="rule-name">{t('automation:ruleName', { defaultValue: '规则名称' })} *</Label>
               <Input
                 id="rule-name"
                 value={name}
                 onChange={e => setName(e.target.value)}
-                placeholder="例如：温度过高自动开空调"
+                placeholder={t('automation:ruleNamePlaceholder', { defaultValue: '例如：温度过高自动开空调' })}
               />
             </div>
+            <div className="flex items-center gap-2 h-[42px]">
+              <Switch checked={enabled} onCheckedChange={setEnabled} id="rule-enabled" />
+              <Label htmlFor="rule-enabled" className="text-sm cursor-pointer">
+                {t('automation:enableRule', { defaultValue: '启用规则' })}
+              </Label>
+            </div>
+          </FormGrid>
+          <div className="space-y-2">
+            <Label htmlFor="rule-description">{t('common:description', { defaultValue: '描述' })}</Label>
+            <Input
+              id="rule-description"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder={t('automation:ruleDescPlaceholder', { defaultValue: '规则描述（可选）' })}
+            />
+          </div>
+        </BuilderSection>
 
-            {/* Visual Mode */}
-            <TabsContent value="visual" className="mt-0 space-y-4">
-              {/* Conditions */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">当满足以下条件</Label>
-                  {conditions.length < 5 && (
-                    <Button onClick={addCondition} variant="ghost" size="sm" className="h-7 text-xs">
-                      <Plus className="h-3 w-3 mr-1" />
-                      添加
-                    </Button>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  {conditions.map((c, i) => {
-                    const metrics = getDeviceMetrics(c.deviceId)
-                    return (
-                      <div key={c.id} className="flex items-center gap-1.5 p-2 bg-muted/40 rounded-md text-sm">
-                        <span className="text-xs text-muted-foreground w-4">{i + 1}</span>
-                        <Select value={c.deviceId} onValueChange={v => updateCondition(c.id, { deviceId: v, metric: getDeviceMetrics(v)[0]?.name || 'temperature' })}>
-                          <SelectTrigger className="h-7 w-28 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {deviceOptions.map(d => (
-                              <SelectItem key={d.value} value={d.value} className="text-xs">{d.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <span className="text-xs text-muted-foreground">的</span>
-                        {metrics.length > 0 ? (
-                          <Select value={c.metric} onValueChange={v => updateCondition(c.id, { metric: v })}>
-                            <SelectTrigger className="h-7 w-20 text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {metrics.map((m: any) => (
-                                <SelectItem key={m.name} value={m.name} className="text-xs">{m.display_name || m.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Input
-                            value={c.metric}
-                            onChange={e => updateCondition(c.id, { metric: e.target.value })}
-                            placeholder="指标"
-                            className="h-7 w-20 text-xs"
-                          />
-                        )}
-                        <Select value={c.operator} onValueChange={v => updateCondition(c.id, { operator: v })}>
-                          <SelectTrigger className="h-7 w-14 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {OPERATORS.map(o => (
-                              <SelectItem key={o.value} value={o.value} className="text-xs">{o.symbol}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Input
-                          value={c.value}
-                          onChange={e => updateCondition(c.id, { value: e.target.value })}
-                          placeholder="值"
-                          className="h-7 w-14 text-xs"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 ml-auto"
-                          onClick={() => removeCondition(c.id)}
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )
-                  })}
-                </div>
+        {/* Mode Tabs */}
+        <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="visual" className="gap-2">
+              <Eye className="h-4 w-4" />
+              <span>{t('automation:visualMode', { defaultValue: '可视化' })}</span>
+            </TabsTrigger>
+            <TabsTrigger value="code" className="gap-2">
+              <Code className="h-4 w-4" />
+              <span>{t('automation:codeMode', { defaultValue: '代码' })}</span>
+            </TabsTrigger>
+            <TabsTrigger value="ai" className="gap-2">
+              <Wand2 className="h-4 w-4" />
+              <span>{t('automation:aiMode', { defaultValue: 'AI 生成' })}</span>
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Visual Mode */}
+          <TabsContent value="visual" className="mt-6 space-y-6">
+            {/* Trigger Section */}
+            <BuilderSection
+              title={t('automation:trigger', { defaultValue: '触发器' })}
+              description={t('automation:triggerDesc', { defaultValue: '选择何时触发此规则' })}
+              icon={<Zap className="h-4 w-4 text-yellow-500" />}
+            >
+              {/* Trigger Type Buttons */}
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <Button
+                  type="button"
+                  variant={triggerType === 'manual' ? 'default' : 'outline'}
+                  onClick={() => setTriggerType('manual')}
+                  className="flex flex-col items-center gap-2 h-auto py-3"
+                >
+                  <Play className="h-5 w-5" />
+                  <span className="text-sm">{t('automation:triggers.manual', { defaultValue: '手动' })}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant={triggerType === 'device_state' ? 'default' : 'outline'}
+                  onClick={() => setTriggerType('device_state')}
+                  className="flex flex-col items-center gap-2 h-auto py-3"
+                >
+                  <Zap className="h-5 w-5" />
+                  <span className="text-sm">{t('automation:triggers.deviceState', { defaultValue: '设备状态' })}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant={triggerType === 'schedule' ? 'default' : 'outline'}
+                  onClick={() => setTriggerType('schedule')}
+                  className="flex flex-col items-center gap-2 h-auto py-3"
+                >
+                  <Calendar className="h-5 w-5" />
+                  <span className="text-sm">{t('automation:triggers.schedule', { defaultValue: '定时' })}</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant={triggerType === 'event' ? 'default' : 'outline'}
+                  onClick={() => setTriggerType('event')}
+                  className="flex flex-col items-center gap-2 h-auto py-3"
+                >
+                  <Globe className="h-5 w-5" />
+                  <span className="text-sm">{t('automation:triggers.event', { defaultValue: '事件' })}</span>
+                </Button>
               </div>
 
-              {/* Arrow */}
-              {conditions.length > 0 && actions.length > 0 && (
-                <div className="flex justify-center py-1">
-                  <ArrowDown className="h-4 w-4 text-muted-foreground" />
+              {/* Device State Trigger Config */}
+              {triggerType === 'device_state' && (
+                <div className="space-y-3">
+                  <Label className="text-sm text-muted-foreground">
+                    {t('automation:deviceStateConfig', { defaultValue: '设备状态触发配置' })}
+                  </Label>
+                  <div className="flex gap-2">
+                    <Select value={triggerDeviceId} onValueChange={setTriggerDeviceId}>
+                      <SelectTrigger className="flex-1">
+                        <SelectValue placeholder={t('automation:selectDevice', { defaultValue: '选择设备' })} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {deviceOptions.map(d => (
+                          <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={triggerState}
+                      onChange={e => setTriggerState(e.target.value)}
+                      placeholder={t('automation:stateValue', { defaultValue: '状态值 (如: active)' })}
+                      className="flex-1"
+                    />
+                  </div>
                 </div>
               )}
 
-              {/* Actions */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label className="text-sm font-medium">执行以下动作</Label>
-                  {actions.length < 5 && (
-                    <Button onClick={addAction} variant="ghost" size="sm" className="h-7 text-xs">
-                      <Plus className="h-3 w-3 mr-1" />
-                      添加
-                    </Button>
-                  )}
+              {/* Schedule Trigger Config */}
+              {triggerType === 'schedule' && (
+                <div className="space-y-3">
+                  <Label className="text-sm text-muted-foreground">
+                    {t('automation:scheduleConfig', { defaultValue: '定时触发配置' })}
+                  </Label>
+                  <Input
+                    value={triggerCron}
+                    onChange={e => setTriggerCron(e.target.value)}
+                    placeholder="* * * * *"
+                    className="font-mono"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {t('automation:cronFormat', { defaultValue: '格式: 分 时 日 月 周 (例如: 0 * * * * = 每小时)' })}
+                  </p>
                 </div>
-                <div className="space-y-1.5">
-                  {actions.map((a, i) => {
-                    const commands = a.type === 'device' ? getDeviceCommands(a.deviceId || '') : []
-                    return (
-                      <div key={a.id} className="flex items-center gap-1.5 p-2 bg-muted/40 rounded-md text-sm">
-                        <span className="text-xs text-muted-foreground w-4">{i + 1}</span>
-                        <Select
-                          value={a.type}
-                          onValueChange={(v: 'device' | 'notification') => updateAction(a.id, { type: v })}
-                        >
-                          <SelectTrigger className="h-7 w-20 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="device" className="text-xs">控制设备</SelectItem>
-                            <SelectItem value="notification" className="text-xs">发送通知</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {a.type === 'device' ? (
-                          <>
-                            <Select value={a.deviceId} onValueChange={v => updateAction(a.id, { deviceId: v, command: getDeviceCommands(v)[0]?.name || 'turn_on' })}>
-                              <SelectTrigger className="h-7 w-28 text-xs">
+              )}
+
+              {/* Event Trigger Config */}
+              {triggerType === 'event' && (
+                <div className="space-y-3">
+                  <Label className="text-sm text-muted-foreground">
+                    {t('automation:eventConfig', { defaultValue: '事件触发配置' })}
+                  </Label>
+                  <Select value={triggerEventType} onValueChange={setTriggerEventType}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('automation:selectEventType', { defaultValue: '选择事件类型' })} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {EVENT_TYPES.map(e => (
+                        <SelectItem key={e} value={e}>{e}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Textarea
+                    value={triggerEventFilters}
+                    onChange={e => setTriggerEventFilters(e.target.value)}
+                    placeholder='{"key": "value"}'
+                    rows={2}
+                    className="font-mono text-sm"
+                  />
+                </div>
+              )}
+            </BuilderSection>
+
+            {/* Conditions Section */}
+            {triggerType === 'device_state' && (
+              <BuilderSection
+                title={t('automation:conditions', { defaultValue: '触发条件' })}
+                description={t('automation:conditionsDesc', { defaultValue: '满足条件时执行动作' })}
+                icon={<Lightbulb className="h-4 w-4 text-yellow-500" />}
+                actions={
+                  <Button onClick={addCondition} variant="outline" size="sm">
+                    <Plus className="h-4 w-4 mr-1" />
+                    {t('automation:addCondition', { defaultValue: '添加条件' })}
+                  </Button>
+                }
+              >
+                {conditions.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Lightbulb className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">{t('automation:noConditions', { defaultValue: '暂无条件，点击上方按钮添加' })}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {conditions.map((cond, i) => {
+                      const metrics = getDeviceMetrics(cond.device_id, resources.devices, resources.deviceTypes)
+                      return (
+                        <div key={i} className="flex items-center gap-2 p-3 bg-muted/40 rounded-md">
+                          <span className="text-xs text-muted-foreground w-6">{i + 1}</span>
+                          <Select value={cond.device_id} onValueChange={v => updateCondition(i, {
+                            device_id: v,
+                            metric: getDeviceMetrics(v, resources.devices, resources.deviceTypes)[0]?.name || 'temperature'
+                          })}>
+                            <SelectTrigger className="w-32">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {deviceOptions.map(d => (
+                                <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <span className="text-xs text-muted-foreground">的</span>
+                          {metrics.length > 0 ? (
+                            <Select value={cond.metric} onValueChange={v => updateCondition(i, { metric: v })}>
+                              <SelectTrigger className="w-24">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {deviceOptions.map(d => (
-                                  <SelectItem key={d.value} value={d.value} className="text-xs">{d.label}</SelectItem>
+                                {metrics.map(m => (
+                                  <SelectItem key={m.name} value={m.name}>{m.display_name || m.name}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
-                            {commands.length > 0 ? (
-                              <Select value={a.command} onValueChange={v => updateAction(a.id, { command: v })}>
-                                <SelectTrigger className="h-7 w-20 text-xs">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {commands.map((c: any) => (
-                                    <SelectItem key={c.name} value={c.name} className="text-xs">{c.display_name || c.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <Select value={a.command} onValueChange={v => updateAction(a.id, { command: v })}>
-                                <SelectTrigger className="h-7 w-20 text-xs">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {COMMANDS.map(c => (
-                                    <SelectItem key={c.value} value={c.value} className="text-xs">{c.label}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            )}
-                          </>
-                        ) : (
+                          ) : (
+                            <Input
+                              value={cond.metric}
+                              onChange={e => updateCondition(i, { metric: e.target.value })}
+                              placeholder="指标"
+                              className="w-24 h-9"
+                            />
+                          )}
+                          <Select value={cond.operator} onValueChange={v => updateCondition(i, { operator: v as any })}>
+                            <SelectTrigger className="w-16">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {OPERATORS.map(o => (
+                                <SelectItem key={o.value} value={o.value}>{o.symbol}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                           <Input
-                            value={a.message}
-                            onChange={e => updateAction(a.id, { message: e.target.value })}
-                            placeholder="通知内容"
-                            className="h-7 flex-1 text-xs"
+                            type="number"
+                            value={cond.threshold}
+                            onChange={e => updateCondition(i, { threshold: parseFloat(e.target.value) || 0 })}
+                            placeholder="值"
+                            className="w-20 h-9"
                           />
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 ml-auto"
-                          onClick={() => removeAction(a.id)}
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    )
-                  })}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 ml-auto"
+                            onClick={() => removeCondition(i)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </BuilderSection>
+            )}
+
+            {/* Actions Section */}
+            <BuilderSection
+              title={t('automation:actions', { defaultValue: '执行动作' })}
+              description={t('automation:actionsDesc', { defaultValue: '触发时执行的操作' })}
+              icon={<Play className="h-4 w-4 text-green-500" />}
+            >
+              {/* Add Action Buttons */}
+              <div className="flex gap-2 mb-4">
+                <Button onClick={() => addAction('Execute')} variant="outline" size="sm">
+                  <Zap className="h-4 w-4 mr-1" />
+                  {t('automation:executeCommand', { defaultValue: '执行命令' })}
+                </Button>
+                <Button onClick={() => addAction('Notify')} variant="outline" size="sm">
+                  <Bell className="h-4 w-4 mr-1" />
+                  {t('automation:sendNotification', { defaultValue: '发送通知' })}
+                </Button>
+                <Button onClick={() => addAction('Log')} variant="outline" size="sm">
+                  <FileText className="h-4 w-4 mr-1" />
+                  {t('automation:log', { defaultValue: '记录日志' })}
+                </Button>
+              </div>
+
+              {actions.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Play className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">{t('automation:noActions', { defaultValue: '暂无动作，点击上方按钮添加' })}</p>
                 </div>
-              </div>
-            </TabsContent>
+              ) : (
+                <div className="space-y-2">
+                  {actions.map((action, i) => (
+                    <div key={i} className="flex items-center gap-2 p-3 bg-muted/40 rounded-md">
+                      {action.type === 'Execute' && <Zap className="h-4 w-4 text-yellow-500" />}
+                      {action.type === 'Notify' && <Bell className="h-4 w-4 text-blue-500" />}
+                      {action.type === 'Log' && <FileText className="h-4 w-4 text-gray-500" />}
+                      <span className="text-xs px-2 py-1 bg-background rounded">
+                        {action.type === 'Execute' && t('automation:execute', { defaultValue: '执行' })}
+                        {action.type === 'Notify' && t('automation:notify', { defaultValue: '通知' })}
+                        {action.type === 'Log' && t('automation:log', { defaultValue: '日志' })}
+                      </span>
 
-            {/* Code Mode */}
-            <TabsContent value="code" className="mt-0 space-y-3">
-              <div className="space-y-2">
-                <Label>DSL 规则代码</Label>
-                <textarea
-                  value={code}
-                  onChange={e => setCode(e.target.value)}
-                  placeholder={`WHEN device.sensor.temperature > 30\nTHEN device.ac.turn_on()`}
-                  className="w-full min-h-[160px] px-3 py-2 text-sm font-mono rounded-md border bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="p-3 bg-muted/50 rounded-md text-xs text-muted-foreground space-y-1">
-                <div><code>WHEN</code> - 触发条件</div>
-                <div><code>THEN</code> - 执行动作</div>
-                <div className="text-muted-foreground/70 mt-2">示例: WHEN device.sensor.temperature {'>'} 30 THEN device.ac.turn_on()</div>
-              </div>
-            </TabsContent>
+                      {action.type === 'Execute' && (
+                        <>
+                          <Select value={action.device_id} onValueChange={v => {
+                            const commands = getDeviceCommands(v, resources.devices, resources.deviceTypes)
+                            updateAction(i, {
+                              device_id: v,
+                              command: commands[0]?.name || 'turn_on'
+                            })
+                          }}>
+                            <SelectTrigger className="w-28">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {deviceOptions.map(d => (
+                                <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <span className="text-xs text-muted-foreground">.</span>
+                          <Select value={action.command} onValueChange={v => updateAction(i, { command: v })}>
+                            <SelectTrigger className="w-24">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {getDeviceCommands(action.device_id, resources.devices, resources.deviceTypes).map(c => (
+                                <SelectItem key={c.name} value={c.name}>{c.display_name || c.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </>
+                      )}
 
-            {/* AI Mode */}
-            <TabsContent value="ai" className="mt-0 space-y-4">
-              <div className="space-y-2">
-                <Label>描述你想要的自动化规则</Label>
-                <textarea
-                  value={aiText}
-                  onChange={e => setAiText(e.target.value)}
-                  placeholder="例如：温度超过30度时打开空调"
-                  className="w-full min-h-[100px] px-3 py-2 text-sm rounded-md border bg-background resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">快速选择</Label>
-                <div className="flex flex-wrap gap-2">
-                  {AI_EXAMPLES.map(ex => (
-                    <Button
-                      key={ex}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setAiText(ex)}
-                      className="h-7 text-xs"
-                    >
-                      {ex}
-                    </Button>
+                      {action.type === 'Notify' && (
+                        <Input
+                          value={action.message}
+                          onChange={e => updateAction(i, { message: e.target.value })}
+                          placeholder={t('automation:notificationMessage', { defaultValue: '通知内容' })}
+                          className="flex-1"
+                        />
+                      )}
+
+                      {action.type === 'Log' && (
+                        <>
+                          <Select value={action.level} onValueChange={v => updateAction(i, { level: v as any })}>
+                            <SelectTrigger className="w-16">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="debug">DEBUG</SelectItem>
+                              <SelectItem value="info">INFO</SelectItem>
+                              <SelectItem value="warn">WARN</SelectItem>
+                              <SelectItem value="error">ERROR</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            value={action.message}
+                            onChange={e => updateAction(i, { message: e.target.value })}
+                            placeholder={t('automation:logMessage', { defaultValue: '日志内容' })}
+                            className="flex-1"
+                          />
+                        </>
+                      )}
+
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 ml-auto"
+                        onClick={() => removeAction(i)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   ))}
                 </div>
-              </div>
-              <Button
-                className="w-full"
-                onClick={handleAIGenerate}
-                disabled={!aiText.trim() || loading}
-              >
-                {loading ? '生成中...' : '生成规则'}
-              </Button>
-            </TabsContent>
-          </div>
-        </Tabs>
+              )}
+            </BuilderSection>
+          </TabsContent>
 
-        <DialogFooter className="px-6 py-4 border-t shrink-0">
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-2">
-              <Switch checked={enabled} onCheckedChange={setEnabled} />
-              <Label className="text-sm cursor-pointer">启用规则</Label>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)}>
-                取消
-              </Button>
-              <Button onClick={handleSave} disabled={!isValid || saving}>
-                {saving ? '保存中...' : '保存'}
-              </Button>
-            </div>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          {/* Code Mode */}
+          <TabsContent value="code" className="mt-6">
+            <BuilderSection
+              title={t('automation:ruleConfigJSON', { defaultValue: '规则配置 (JSON)' })}
+              icon={<Code className="h-4 w-4 text-muted-foreground" />}
+            >
+              <Textarea
+                readOnly
+                value={JSON.stringify({
+                  name,
+                  description,
+                  enabled,
+                  trigger: buildTrigger(),
+                  conditions,
+                  actions,
+                }, null, 2)}
+                rows={16}
+                className="font-mono text-sm"
+              />
+            </BuilderSection>
+          </TabsContent>
+
+          {/* AI Mode */}
+          <TabsContent value="ai" className="mt-6 space-y-4">
+            <BuilderSection
+              title={t('automation:aiGenerate', { defaultValue: 'AI 智能生成' })}
+              description={t('automation:aiGenerateDesc', { defaultValue: '用自然语言描述你想要的自动化规则' })}
+              icon={<Wand2 className="h-4 w-4 text-purple-500" />}
+            >
+              <div className="space-y-4">
+                <Textarea
+                  value={aiText}
+                  onChange={e => setAiText(e.target.value)}
+                  placeholder={t('automation:aiRulePlaceholder', {
+                    defaultValue: '例如：当温度超过30度时打开空调并发送通知',
+                  })}
+                  rows={4}
+                  className="resize-none"
+                />
+
+                <div className="space-y-2">
+                  <Label className="text-sm text-muted-foreground">
+                    {t('automation:quickSelect', { defaultValue: '快速选择' })}
+                  </Label>
+                  <div className="flex flex-wrap gap-2">
+                    {AI_EXAMPLES.map(ex => (
+                      <Button
+                        key={ex}
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        onClick={() => setAiText(ex)}
+                        className="h-8 text-xs"
+                      >
+                        {ex}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <Button className="w-full" onClick={handleAIGenerate} disabled={!aiText.trim()}>
+                  <Wand2 className="h-4 w-4 mr-2" />
+                  {t('automation:generateRule', { defaultValue: '生成规则' })}
+                </Button>
+              </div>
+            </BuilderSection>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </FullScreenBuilder>
   )
 }

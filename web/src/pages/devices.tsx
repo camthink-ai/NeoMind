@@ -1,10 +1,23 @@
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { useToast } from "@/hooks/use-toast"
+import { useEvents } from "@/hooks/useEvents"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
-import { Upload, Download, Sparkles, Trash2 } from "lucide-react"
+import { Upload, Download, Sparkles, Settings } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Switch } from "@/components/ui/switch"
+import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { api } from "@/lib/api"
 import type { Device, DiscoveredDevice, DeviceType } from "@/types"
 import {
@@ -18,7 +31,7 @@ import {
   EditDeviceTypeDialog,
 } from "./devices/index"
 import { DeviceTypeGeneratorDialog } from "@/components/devices/DeviceTypeGeneratorDialog"
-import { DraftDevicesList } from "./devices/DraftDevicesList"
+import { PendingDevicesList } from "./devices/PendingDevicesList"
 
 type DeviceTabValue = "devices" | "types" | "drafts"
 
@@ -60,6 +73,60 @@ export function DevicesPage() {
   // Device type pagination state
   const [deviceTypePage, setDeviceTypePage] = useState(1)
   const deviceTypesPerPage = 10
+
+  // Auto-onboarding configuration (simplified to 3 fields)
+  interface OnboardConfig {
+    enabled: boolean
+    max_samples: number
+    draft_retention_secs: number
+  }
+  const [onboardConfig, setOnboardConfig] = useState<OnboardConfig>({
+    enabled: true,
+    max_samples: 10,
+    draft_retention_secs: 86400, // 24 hours
+  })
+  const [pendingOnboardConfig, setPendingOnboardConfig] = useState<OnboardConfig>(onboardConfig)
+  const [showOnboardConfigDialog, setShowOnboardConfigDialog] = useState(false)
+  const [savingOnboardConfig, setSavingOnboardConfig] = useState(false)
+
+  // Fetch auto-onboarding configuration
+  const fetchOnboardConfig = async () => {
+    try {
+      const config = await api.getOnboardConfig()
+      setOnboardConfig(config)
+      setPendingOnboardConfig(config)
+    } catch (error) {
+      console.error('Failed to fetch onboard config:', error)
+    }
+  }
+
+  // Save auto-onboarding configuration
+  const saveOnboardConfig = async () => {
+    setSavingOnboardConfig(true)
+    try {
+      await api.updateOnboardConfig(pendingOnboardConfig)
+      setOnboardConfig(pendingOnboardConfig)
+      toast({
+        title: t('common:success'),
+        description: t('devices:pending.configSaved'),
+      })
+      setShowOnboardConfigDialog(false)
+    } catch (error) {
+      toast({
+        title: t('common:failed'),
+        description: t('devices:pending.configSaveFailed'),
+        variant: 'destructive'
+      })
+    } finally {
+      setSavingOnboardConfig(false)
+    }
+  }
+
+  // Open config dialog and fetch current config
+  const openOnboardConfigDialog = async () => {
+    await fetchOnboardConfig()
+    setShowOnboardConfigDialog(true)
+  }
 
   // Active tab state
   const [activeTab, setActiveTab] = useState<DeviceTabValue>("devices")
@@ -111,16 +178,32 @@ export function DevicesPage() {
     }
   }, [])
 
-  // Auto-refresh device status every 10 seconds (only when not in detail view)
+  // WebSocket event handler for device status changes
+  const handleDeviceEvent = useCallback((event: { type: string; data: unknown }) => {
+    // Refresh device list on device status changes
+    if (event.type === 'DeviceOnline' || event.type === 'DeviceOffline' ||
+        event.type === 'DeviceMetric' || event.type === 'DeviceCommandResult') {
+      fetchDevices()
+    }
+  }, [fetchDevices])
+
+  // Subscribe to device events for real-time updates
+  const { isConnected: deviceEventsConnected } = useEvents({
+    enabled: !deviceDetailView, // Only when not in detail view
+    category: 'device',
+    onEvent: handleDeviceEvent,
+  })
+
+  // Fallback polling when WebSocket is not connected (only when not in detail view)
   useEffect(() => {
-    if (deviceDetailView) return
+    if (deviceDetailView || deviceEventsConnected) return
 
     const interval = setInterval(() => {
       fetchDevices()
-    }, 10000)
+    }, 30000)
 
     return () => clearInterval(interval)
-  }, [deviceDetailView])
+  }, [deviceDetailView, deviceEventsConnected, fetchDevices])
 
   // Handlers
   const handleAddDevice = async (request: import('@/types').AddDeviceRequest) => {
@@ -412,23 +495,6 @@ export function DevicesPage() {
     }
   }
 
-  // Draft cleanup handler
-  const handleDraftsCleanup = async () => {
-    try {
-      const result = await api.cleanupDraftDevices()
-      toast({
-        title: t('common:success'),
-        description: t('devices:drafts.cleaned', { count: result.cleaned }),
-      })
-    } catch (error) {
-      toast({
-        title: t('common:failed'),
-        description: t('devices:drafts.cleanupFailed'),
-        variant: 'destructive'
-      })
-    }
-  }
-
   return (
     <PageLayout
       title={t('devices:title')}
@@ -454,7 +520,7 @@ export function DevicesPage() {
           tabs={[
             { value: 'devices', label: t('devices:deviceList') },
             { value: 'types', label: t('devices:deviceTypes') },
-            { value: 'drafts', label: t('devices:drafts.tab') },
+            { value: 'drafts', label: t('devices:pending.tab') },
           ]}
           activeTab={activeTab}
           onTabChange={(v) => setActiveTab(v as DeviceTabValue)}
@@ -501,11 +567,10 @@ export function DevicesPage() {
               : activeTab === 'drafts'
               ? [
                   {
-                    label: t('devices:drafts.cleanup'),
-                    icon: <Trash2 className="h-4 w-4" />,
+                    label: t('devices:pending.config'),
+                    icon: <Settings className="h-4 w-4" />,
                     variant: 'outline',
-                    onClick: handleDraftsCleanup,
-                    disabled: false,
+                    onClick: openOnboardConfigDialog,
                   },
                 ]
               : []
@@ -579,7 +644,7 @@ export function DevicesPage() {
 
           {/* Draft Devices Tab (Auto-onboarding) */}
           <PageTabsContent value="drafts" activeTab={activeTab}>
-            <DraftDevicesList onRefresh={fetchDeviceTypes} />
+            <PendingDevicesList onRefresh={fetchDeviceTypes} />
           </PageTabsContent>
         </PageTabs>
       )}
@@ -618,6 +683,103 @@ export function DevicesPage() {
           setGeneratorOpen(false)
         }}
       />
+
+      {/* Auto-onboarding Configuration Dialog */}
+      <Dialog open={showOnboardConfigDialog} onOpenChange={setShowOnboardConfigDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('devices:pending.configTitle')}</DialogTitle>
+            <DialogDescription>
+              {t('devices:pending.configDesc')}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-4">
+            {/* Enable/Disable auto-onboarding */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label htmlFor="onboard-enabled">{t('devices:pending.configSettings.enabled')}</Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('devices:pending.configSettings.enabledDesc')}
+                </p>
+              </div>
+              <Switch
+                id="onboard-enabled"
+                checked={pendingOnboardConfig.enabled}
+                onCheckedChange={(checked) =>
+                  setPendingOnboardConfig({ ...pendingOnboardConfig, enabled: checked })
+                }
+              />
+            </div>
+
+            {/* Max samples */}
+            <div className="space-y-2">
+              <Label htmlFor="maxSamples">{t('devices:pending.configSettings.maxSamples')}</Label>
+              <Input
+                id="maxSamples"
+                type="number"
+                min={1}
+                max={100}
+                value={pendingOnboardConfig.max_samples}
+                onChange={(e) =>
+                  setPendingOnboardConfig({
+                    ...pendingOnboardConfig,
+                    max_samples: Math.max(1, parseInt(e.target.value) || 10),
+                  })
+                }
+                disabled={!pendingOnboardConfig.enabled}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('devices:pending.configSettings.maxSamplesDesc')}
+              </p>
+            </div>
+
+            {/* Draft retention time */}
+            <div className="space-y-2">
+              <Label htmlFor="retention">{t('devices:pending.configSettings.retention')}</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="retention"
+                  type="number"
+                  min={3600}
+                  max={604800}
+                  step={3600}
+                  value={pendingOnboardConfig.draft_retention_secs}
+                  onChange={(e) =>
+                    setPendingOnboardConfig({
+                      ...pendingOnboardConfig,
+                      draft_retention_secs: Math.max(3600, parseInt(e.target.value) || 86400),
+                    })
+                  }
+                  disabled={!pendingOnboardConfig.enabled}
+                />
+                <span className="text-sm text-muted-foreground whitespace-nowrap">
+                  {Math.round(pendingOnboardConfig.draft_retention_secs / 3600)} {t('devices:pending.hours')}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t('devices:pending.configSettings.retentionDesc')}
+              </p>
+            </div>
+
+            {/* Info box */}
+            <div className="rounded-md bg-muted p-3 text-sm">
+              <p className="text-muted-foreground">
+                💡 {t('devices:pending.configSettings.info')}
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowOnboardConfigDialog(false)}>
+              {t('common:cancel')}
+            </Button>
+            <Button onClick={saveOnboardConfig} disabled={savingOnboardConfig}>
+              {savingOnboardConfig ? t('common:saving') : t('common:save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageLayout>
   )
 }

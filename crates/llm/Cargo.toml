@@ -23,22 +23,11 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # HTTP client for cloud backends (optional)
 reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
 
-# Native LLM inference using candle
-candle-core = { version = "0.8", optional = true }
-candle-nn = { version = "0.8", optional = true }
-candle-transformers = { version = "0.8", optional = true }
-candle-flash-attn = { version = "0.8", optional = true }
-hf-hub = { version = "0.4", optional = true }
-tokenizers = { version = "0.20", optional = true }
-rand = { version = "0.8", optional = true }
-dirs = { version = "5.0", optional = true }
-
 [features]
 default = ["ollama"]
 
-# Local LLM backends
+# Local LLM backend
 ollama = ["reqwest"]
-native = ["candle-core", "candle-nn", "candle-transformers", "hf-hub", "tokenizers", "rand", "dirs"]
 
 # Cloud backends (requires HTTP client)
 cloud = ["reqwest"]
@@ -48,8 +37,10 @@ google = ["cloud"]
 xai = ["cloud"]
 
 # All backends
-all = ["ollama", "native", "cloud", "openai", "anthropic", "google", "xai"]
+all = ["ollama", "cloud", "openai", "anthropic", "google", "xai"]
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 futures = { workspace = true }
+
+# Examples with specific features

@@ -25,6 +25,15 @@ export type EventType =
   | 'ToolExecutionStart'
   | 'ToolExecutionSuccess'
   | 'ToolExecutionFailure'
+  | 'Custom'
+
+export interface CustomEvent extends NeoTalkEvent {
+  type: 'Custom'
+  data: {
+    event_type: string
+    [key: string]: unknown
+  }
+}
 
 export type EventCategory = 'device' | 'rule' | 'workflow' | 'llm' | 'alert' | 'tool' | 'all'
 
@@ -152,11 +161,18 @@ export class EventsWebSocket {
     }
 
     this.lastToken = currentToken
-    this.disconnect()
 
+    // Only disconnect if we're changing connection type or config significantly changed
+    // Otherwise, reuse existing connection
+    const currentlyConnected = this.isConnected()
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const category = this.config.category || 'all'
     const eventTypes = this.config.eventTypes || []
+
+    if (currentlyConnected) {
+      // Already connected, no need to reconnect
+      return
+    }
 
     if (this.config.useSSE) {
       // Use Server-Sent Events
@@ -180,7 +196,18 @@ export class EventsWebSocket {
       params.set('token', token)
     }
 
-    const wsUrl = `${protocol}//${window.location.host}/api/events/ws?${params.toString()}`
+    // Build WebSocket URL
+    // In development, use direct connection to backend server (port 3000)
+    // In production, use the same host as the frontend
+    let wsHost = window.location.host
+    if (window.location.port === '5173' || window.location.hostname === 'localhost') {
+      // Development: connect directly to backend server
+      wsHost = 'localhost:3000'
+    }
+
+    const wsUrl = `${protocol}//${wsHost}/api/events/ws?${params.toString()}`
+    console.log('[WebSocket] Connecting to:', wsUrl)
+
     this.ws = new WebSocket(wsUrl)
 
     this.ws.onopen = () => {
@@ -188,12 +215,14 @@ export class EventsWebSocket {
       this.notifyConnection(true)
     }
 
-    this.ws.onclose = () => {
+    this.ws.onclose = (event) => {
+      console.log('[WebSocket] Connection closed:', event.code, event.reason)
       this.notifyConnection(false)
       this.scheduleReconnect()
     }
 
-    this.ws.onerror = () => {
+    this.ws.onerror = (event) => {
+      console.error('[WebSocket] Error:', event)
       this.notifyError(new Error('WebSocket connection error'))
     }
 

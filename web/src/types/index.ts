@@ -1610,3 +1610,117 @@ export interface AutomationFilter {
   enabled?: boolean
   search?: string
 }
+
+// ========== Auto-onboarding Types ==========
+
+/**
+ * Draft device from auto-discovery
+ */
+/**
+ * Raw device data sample for analysis
+ */
+export interface DeviceSample {
+  raw_data: number[]  // bytes as array
+  parsed?: Record<string, unknown> | null  // parsed JSON if available
+  source: string  // e.g., "MQTT: topic/sensor/001"
+  timestamp: number
+}
+
+export interface DraftDevice {
+  id: string
+  device_id: string
+  source: string
+  status: string
+  samples?: DeviceSample[]  // Original raw samples
+  sample_count: number
+  max_samples: number
+  generated_type?: GeneratedDeviceType
+  discovered_at: number
+  updated_at: number
+  error_message?: string
+  user_name?: string
+  user_description?: string
+}
+
+/**
+ * Generated device type from auto-discovery
+ */
+export interface GeneratedDeviceType {
+  device_type: string
+  name: string
+  description: string
+  category: string
+  metrics: MetricSummary[]
+  confidence: number
+  summary: ProcessingSummary
+}
+
+/**
+ * Metric summary from auto-discovery
+ */
+export interface MetricSummary {
+  name: string
+  path: string
+  semantic_type: string
+  display_name: string
+  confidence: number
+  data_type?: string
+  unit?: string
+  description?: string
+  is_readable?: boolean
+  is_writable?: boolean
+}
+
+/**
+ * Processing summary from auto-discovery
+ */
+export interface ProcessingSummary {
+  samples_analyzed: number
+  fields_discovered: number
+  metrics_generated: number
+  inferred_category: string
+  insights: string[]
+  warnings: string[]
+  recommendations: string[]
+}
+
+/**
+ * Suggested device type for a draft device
+ */
+export interface SuggestedDeviceType {
+  device_type: string
+  name: string
+  description: string
+  match_score: number
+  is_exact_match: boolean
+  metric_count: number
+}
+
+/**
+ * New device type definition from draft
+ */
+export interface NewDeviceTypeDefinition {
+  device_type: string
+  name: string
+  description: string
+  categories: string[]
+  metrics: Array<{
+    name: string
+    display_name: string
+    data_type: string
+    unit: string
+    path?: string
+  }>
+  commands?: Array<{
+    name: string
+    display_name: string
+    parameters?: Array<{
+      name: string
+      param_type: string
+      required: boolean
+      default_value?: unknown
+    }>
+  }>
+}
+
+

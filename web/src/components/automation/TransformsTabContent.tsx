@@ -404,7 +404,3 @@ export function TransformsTabContent({ onRefresh }: TransformsTabContentProps) {
   )
 }
 
-// Wrapper export for tab compatibility
-export function TransformsTab(props: TransformsTabContentProps) {
-  return <TransformsTabContent {...props} />
-}

@@ -6,17 +6,11 @@
 #[cfg(feature = "cloud")]
 use crate::backend_plugin::BackendRegistry;
 
-// Ollama backend (local LLM runner)
+// Ollama backend (local LLM runner via llama.cpp)
 #[cfg(feature = "ollama")]
 pub mod ollama;
 #[cfg(feature = "ollama")]
 pub use ollama::{OllamaConfig, OllamaRuntime};
-
-// Native backend (using candle)
-#[cfg(feature = "native")]
-pub mod native;
-#[cfg(feature = "native")]
-pub use native::{NativeConfig, NativeRuntime};
 
 // OpenAI-compatible cloud backends (OpenAI, Anthropic, Google, xAI, etc.)
 #[cfg(feature = "cloud")]
@@ -56,13 +50,6 @@ pub fn create_backend(
             let cfg: OllamaConfig = serde_json::from_value(config.clone())
                 .map_err(|e| anyhow::anyhow!("Invalid Ollama config: {}", e))?;
             Ok(std::sync::Arc::new(OllamaRuntime::new(cfg)?))
-        }
-
-        #[cfg(feature = "native")]
-        "native" => {
-            let cfg: NativeConfig = serde_json::from_value(config.clone())
-                .map_err(|e| anyhow::anyhow!("Invalid native config: {}", e))?;
-            Ok(std::sync::Arc::new(NativeRuntime::new(cfg)?))
         }
 
         #[cfg(feature = "openai")]
@@ -108,9 +95,6 @@ pub fn available_backends() -> Vec<&'static str> {
     #[cfg(feature = "ollama")]
     backends.push("ollama");
 
-    #[cfg(feature = "native")]
-    backends.push("native");
-
     #[cfg(feature = "openai")]
     backends.push("openai");
 
@@ -142,13 +126,6 @@ mod tests {
     fn test_ollama_backend() {
         let config = OllamaConfig::new("qwen3-vl:2b");
         assert_eq!(config.model, "qwen3-vl:2b");
-    }
-
-    #[cfg(feature = "native")]
-    #[test]
-    fn test_native_backend() {
-        let config = NativeConfig::default();
-        assert_eq!(config.model, "qwen3:1.7b");
     }
 
     #[cfg(feature = "openai")]

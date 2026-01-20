@@ -50,6 +50,10 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     state.init_rule_engine_events().await;
     startup.service("Rule engine events", ServiceStatus::Started);
 
+    // Initialize auto-onboarding event listener
+    state.init_auto_onboarding_events().await;
+    startup.service("Auto-onboarding events", ServiceStatus::Started);
+
     // Configuration phase
     startup.phase_config();
 

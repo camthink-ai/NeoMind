@@ -967,8 +967,8 @@ pub enum DraftDeviceStatus {
     Collecting,
     /// AI is analyzing samples and generating device type
     Analyzing,
-    /// Draft device type generated, waiting for user review
-    PendingReview,
+    /// Waiting for user processing (review, type selection, approval)
+    WaitingProcessing,
     /// User approved, device type being registered
     Registering,
     /// Successfully registered as active device
@@ -1007,7 +1007,11 @@ pub struct DraftDevice {
     /// User-provided description override
     pub user_description: Option<String>,
     /// Whether to auto-approve (skip manual review)
+    #[serde(default)]
     pub auto_approve: bool,
+    /// Whether this device sends binary/hex data (not JSON)
+    #[serde(default)]
+    pub is_binary: bool,
 }
 
 /// A generated device type from AI analysis
@@ -1055,57 +1059,8 @@ pub struct ProcessingSummary {
 }
 
 /// Configuration for auto-onboarding behavior
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutoOnboardConfig {
-    /// Enable zero-config auto-onboarding
-    #[serde(default = "default_auto_onboard_enabled")]
-    pub enabled: bool,
-    /// Maximum number of samples to collect before analysis
-    #[serde(default = "default_max_samples")]
-    pub max_samples: usize,
-    /// Minimum samples required for analysis
-    #[serde(default = "default_min_samples")]
-    pub min_samples: usize,
-    /// Timeout (seconds) before analysis triggers
-    #[serde(default = "default_sample_timeout")]
-    pub sample_timeout_secs: u64,
-    /// Auto-approve devices with confidence >= this threshold
-    #[serde(default = "default_auto_approve_threshold")]
-    pub auto_approve_threshold: f32,
-    /// Maximum number of draft devices to keep
-    #[serde(default = "default_max_drafts")]
-    pub max_draft_devices: usize,
-    /// Draft retention time (seconds) - cleanup after this time
-    #[serde(default = "default_draft_retention")]
-    pub draft_retention_secs: u64,
-    /// Whether to persist draft devices to storage
-    #[serde(default = "default_persist_drafts")]
-    pub persist_drafts: bool,
-}
-
-impl Default for AutoOnboardConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            max_samples: 10,
-            min_samples: 3,
-            sample_timeout_secs: 60,
-            auto_approve_threshold: 0.85,
-            max_draft_devices: 50,
-            draft_retention_secs: 7 * 24 * 3600, // 7 days
-            persist_drafts: true,
-        }
-    }
-}
-
-fn default_auto_onboard_enabled() -> bool { true }
-fn default_max_samples() -> usize { 10 }
-fn default_min_samples() -> usize { 3 }
-fn default_sample_timeout() -> u64 { 60 }
-fn default_auto_approve_threshold() -> f32 { 0.85 }
-fn default_max_drafts() -> usize { 50 }
-fn default_draft_retention() -> u64 { 7 * 24 * 3600 }
-fn default_persist_drafts() -> bool { true }
+/// Re-exported from auto_onboard module
+pub use crate::discovery::auto_onboard::AutoOnboardConfig;
 
 /// Event emitted during auto-onboarding process
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1169,6 +1124,7 @@ impl DraftDevice {
             user_name: None,
             user_description: None,
             auto_approve: false,
+            is_binary: false,
         }
     }
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -12,23 +12,17 @@ import {
 } from "@/components/ui/select"
 import {
   Globe,
-  Palette,
   Clock,
-  Monitor,
-  Sun,
-  Moon,
   Check,
   Info,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
-type Theme = "light" | "dark" | "system"
 type Language = "zh" | "en"
 type TimeFormat = "12h" | "24h"
 type TimeZone = "local" | "utc"
 
 interface Preferences {
-  theme: Theme
   language: Language
   timeFormat: TimeFormat
   timeZone: TimeZone
@@ -38,7 +32,6 @@ const PREFERENCES_KEY = "neotalk_preferences"
 
 // Default preferences
 const defaultPreferences: Preferences = {
-  theme: "system",
   language: "zh",
   timeFormat: "24h",
   timeZone: "local",
@@ -49,7 +42,10 @@ function loadPreferences(): Preferences {
   try {
     const saved = localStorage.getItem(PREFERENCES_KEY)
     if (saved) {
-      return { ...defaultPreferences, ...JSON.parse(saved) }
+      const parsed = JSON.parse(saved)
+      // Remove legacy theme field if present
+      delete parsed.theme
+      return { ...defaultPreferences, ...parsed }
     }
   } catch (e) {
     console.error("Failed to load preferences:", e)
@@ -66,42 +62,11 @@ function savePreferences(pref: Preferences) {
   }
 }
 
-// Apply theme to document
-function applyTheme(theme: Theme) {
-  const root = document.documentElement
-  root.classList.remove("light", "dark")
-
-  if (theme === "system") {
-    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "light"
-    root.classList.add(systemTheme)
-  } else {
-    root.classList.add(theme)
-  }
-}
-
-// Apply language
-function applyLanguage(lang: Language, i18n?: { changeLanguage: (lng: string) => void }) {
-  try {
-    if (i18n) {
-      i18n.changeLanguage(lang)
-    }
-  } catch (e) {
-    console.error("Failed to change language:", e)
-  }
-}
-
 export function PreferencesTab() {
   const { t, i18n } = useTranslation(["common", "settings"])
   const { toast } = useToast()
   const [preferences, setPreferences] = useState<Preferences>(loadPreferences)
   const [hasChanges, setHasChanges] = useState(false)
-
-  // Apply theme on mount
-  useEffect(() => {
-    applyTheme(preferences.theme)
-  }, [preferences.theme])
 
   // Update preferences
   const updatePreference = <K extends keyof Preferences>(
@@ -115,8 +80,7 @@ export function PreferencesTab() {
   // Save all preferences
   const handleSave = () => {
     savePreferences(preferences)
-    applyTheme(preferences.theme)
-    applyLanguage(preferences.language, i18n)
+    i18n.changeLanguage(preferences.language)
     setHasChanges(false)
 
     toast({
@@ -129,12 +93,6 @@ export function PreferencesTab() {
     setPreferences(defaultPreferences)
     setHasChanges(true)
   }
-
-  const themeOptions = [
-    { value: "light" as Theme, label: t("settings:light"), icon: Sun },
-    { value: "dark" as Theme, label: t("settings:dark"), icon: Moon },
-    { value: "system" as Theme, label: t("settings:system"), icon: Monitor },
-  ]
 
   const languageOptions = [
     { value: "zh" as Language, label: "简体中文" },
@@ -181,46 +139,6 @@ export function PreferencesTab() {
           </div>
         </div>
       )}
-
-      {/* Appearance Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Palette className="h-5 w-5 text-purple-500" />
-            {t("settings:appearance")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Theme Selection */}
-          <div>
-            <Label className="text-sm text-muted-foreground mb-3 block">
-              {t("settings:theme")}
-            </Label>
-            <div className="grid grid-cols-3 gap-3">
-              {themeOptions.map((option) => {
-                const Icon = option.icon
-                const isActive = preferences.theme === option.value
-                return (
-                  <button
-                    key={option.value}
-                    onClick={() => updatePreference("theme", option.value)}
-                    className={`
-                      flex items-center justify-center gap-2 p-4 rounded-lg border-2 transition-all
-                      ${isActive
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-muted hover:border-muted-foreground/50"
-                      }
-                    `}
-                  >
-                    <Icon className="h-4 w-4" />
-                    <span className="text-sm font-medium">{option.label}</span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Language & Region Settings */}
       <Card>
@@ -374,12 +292,6 @@ export function usePreferences() {
     const newPrefs = { ...preferences, ...updates }
     setPreferences(newPrefs)
     savePreferences(newPrefs)
-
-    // Apply theme immediately
-    if (updates.theme) {
-      applyTheme(updates.theme)
-    }
-    // Language change requires i18n instance to be passed separately
   }
 
   return { preferences, updatePreferences }

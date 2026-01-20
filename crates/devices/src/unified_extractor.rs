@@ -151,7 +151,14 @@ impl UnifiedExtractor {
         let template = self.device_registry.get_template(device_type).await;
 
         let mode = if let Some(template) = template {
-            if !template.metrics.is_empty() {
+            // Check if device type is in Simple mode (raw data only)
+            if matches!(template.mode, crate::registry::DeviceTypeMode::Simple) {
+                debug!(
+                    "Device '{}' of type '{}' is in Simple (Raw Data) mode - storing raw data only",
+                    device_id, device_type
+                );
+                ExtractionMode::RawOnly
+            } else if !template.metrics.is_empty() {
                 // Template has defined metrics - extract using dot notation
                 debug!(
                     "Using template-driven extraction for device '{}' of type '{}': {} metrics defined",

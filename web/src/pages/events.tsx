@@ -8,6 +8,8 @@ import {
   Bell,
   Brain,
   RefreshCw,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { api } from '@/lib/api'
@@ -120,6 +122,7 @@ function getEventDisplayInfo(eventType: string) {
 export function EventsPage() {
   const { t } = useTranslation(['common', 'events'])
   const [activeFilter, setActiveFilter] = useState<EventFilter>('all')
+  const [expandedDataCells, setExpandedDataCells] = useState<Set<string>>(new Set())
 
   const { data: events, loading, refetch } = useApiData(
     () => fetchEvents(),
@@ -127,6 +130,19 @@ export function EventsPage() {
   )
 
   const displayEvents = events || []
+
+  // Toggle data cell expansion
+  const toggleDataCell = (eventId: string) => {
+    setExpandedDataCells(prev => {
+      const next = new Set(prev)
+      if (next.has(eventId)) {
+        next.delete(eventId)
+      } else {
+        next.add(eventId)
+      }
+      return next
+    })
+  }
 
   // Filter events by category
   const filteredEvents = useMemo(() => {
@@ -200,12 +216,12 @@ export function EventsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[90px]">ID</TableHead>
-              <TableHead className="w-[160px]">{t('events:type')}</TableHead>
-              <TableHead>{t('events:source')}</TableHead>
-              <TableHead>{t('events:data')}</TableHead>
-              <TableHead className="w-[90px] text-center">{t('events:status')}</TableHead>
-              <TableHead className="w-[140px]">{t('events:timestamp')}</TableHead>
+              <TableHead className="w-[100px]">ID</TableHead>
+              <TableHead className="w-[100px]">{t('events:type')}</TableHead>
+              <TableHead className="w-[150px]">{t('events:source')}</TableHead>
+              <TableHead className="w-[300px]">{t('events:data')}</TableHead>
+              <TableHead className="w-[100px] text-center">{t('events:status')}</TableHead>
+              <TableHead className="w-[150px]">{t('events:timestamp')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -224,41 +240,56 @@ export function EventsPage() {
               />
             ) : (
               filteredEvents.map((event) => {
-                const { styles, IconComponent } = getEventDisplayInfo(event.event_type)
+                const { styles } = getEventDisplayInfo(event.event_type)
 
                 return (
                   <TableRow key={event.id} className="group">
                     <TableCell>
-                      <span className="font-mono text-xs text-muted-foreground">
+                      <span className="font-mono text-xs text-muted-foreground truncate block" title={event.id}>
                         {event.id.slice(0, 8)}
                       </span>
                     </TableCell>
                     <TableCell>
-                      <div className={cn(
-                        "flex items-center gap-2 px-2.5 py-1.5 rounded-lg border",
-                        styles.borderColor, styles.bgColor
+                      <Badge variant="outline" className={cn(
+                        "text-xs font-medium truncate max-w-full border-0",
+                        styles.bgColor
                       )}>
-                        <IconComponent className={cn("h-4 w-4", styles.color)} />
-                        <span className={cn("text-sm font-medium", styles.color)}>
+                        <span className={cn(styles.color)} title={event.event_type}>
                           {event.event_type}
                         </span>
-                      </div>
+                      </Badge>
                     </TableCell>
                     <TableCell>
                       {event.source ? (
-                        <span className="font-mono text-xs text-muted-foreground">
-                          {event.source.length > 15 ? event.source.substring(0, 15) + '...' : event.source}
+                        <span className="font-mono text-xs text-muted-foreground truncate block" title={event.source}>
+                          {event.source.length > 18 ? event.source.substring(0, 18) + '...' : event.source}
                         </span>
                       ) : (
                         <span className="text-xs text-muted-foreground/50">-</span>
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="max-w-md">
-                        <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-sans">
-                          {JSON.stringify(event.data, null, 2)}
-                        </pre>
-                      </div>
+                      <button
+                        onClick={() => toggleDataCell(event.id)}
+                        className="text-left group/cell w-full block"
+                        title={expandedDataCells.has(event.id) ? '收起' : '展开查看完整数据'}
+                      >
+                        <div className="flex items-start gap-1 min-w-0">
+                          {expandedDataCells.has(event.id) ? (
+                            <ChevronDown className="h-3 w-3 mt-0.5 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <ChevronRight className="h-3 w-3 mt-0.5 shrink-0 text-muted-foreground" />
+                          )}
+                          <div className="min-w-0 text-xs text-muted-foreground font-sans">
+                            <pre className={cn(
+                              "whitespace-pre-wrap",
+                              expandedDataCells.has(event.id) ? "break-all" : "line-clamp-3 break-all"
+                            )}>
+                              {JSON.stringify(event.data, null, 2)}
+                            </pre>
+                          </div>
+                        </div>
+                      </button>
                     </TableCell>
                     <TableCell className="text-center">
                       <Badge variant={event.processed ? 'secondary' : 'outline'} className="text-xs">
@@ -266,7 +297,9 @@ export function EventsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {formatTimestamp(event.timestamp)}
+                      <span className="truncate block" title={formatTimestamp(event.timestamp)}>
+                        {formatTimestamp(event.timestamp)}
+                      </span>
                     </TableCell>
                   </TableRow>
                 )

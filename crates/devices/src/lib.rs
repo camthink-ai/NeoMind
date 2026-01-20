@@ -82,7 +82,7 @@ pub use mdl_format::{
 
 // New architecture exports
 pub use discovery::{DeviceDiscovery, DiscoveredDevice, DiscoveryResult};
-pub use registry::{ConnectionConfig, DeviceConfig, DeviceRegistry, DeviceTypeTemplate};
+pub use registry::{ConnectionConfig, DeviceConfig, DeviceRegistry, DeviceTypeTemplate, DeviceTypeMode};
 pub use service::{AdapterInfo, AdapterStats, CommandHistoryRecord, CommandStatus, DeviceHealth, DeviceService, DeviceStatus, HeartbeatConfig};
 pub use telemetry::{AggregatedData, DataPoint, MetricCache, TimeSeriesStorage};
 

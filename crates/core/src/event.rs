@@ -209,6 +209,17 @@ pub enum NeoTalkEvent {
         session_id: Option<String>,
         timestamp: i64,
     },
+
+    /// Custom event for extensions and plugins
+    ///
+    /// Allows third-party components to publish their own events
+    /// through the central event bus.
+    Custom {
+        /// Event type identifier (e.g., "auto_onboard", "extension_name")
+        event_type: String,
+        /// Event data as JSON value
+        data: serde_json::Value,
+    },
 }
 
 impl NeoTalkEvent {
@@ -235,6 +246,7 @@ impl NeoTalkEvent {
             Self::ToolExecutionStart { .. } => "ToolExecutionStart",
             Self::ToolExecutionSuccess { .. } => "ToolExecutionSuccess",
             Self::ToolExecutionFailure { .. } => "ToolExecutionFailure",
+            Self::Custom { .. } => "Custom",
         }
     }
 
@@ -261,6 +273,10 @@ impl NeoTalkEvent {
             | Self::ToolExecutionStart { timestamp, .. }
             | Self::ToolExecutionSuccess { timestamp, .. }
             | Self::ToolExecutionFailure { timestamp, .. } => *timestamp,
+            Self::Custom { .. } => {
+                // Custom events don't have a timestamp, use current time
+                chrono::Utc::now().timestamp()
+            }
         }
     }
 

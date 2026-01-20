@@ -15,22 +15,14 @@ use crate::backends::{CloudConfig, CloudRuntime};
 #[cfg(feature = "ollama")]
 use crate::backends::{OllamaConfig, OllamaRuntime};
 
-#[cfg(feature = "native")]
-use crate::backends::{NativeConfig, NativeRuntime};
-
 /// LLM backend configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "backend")]
 pub enum LlmBackendConfig {
-    /// Ollama (local LLM runner).
+    /// Ollama (local LLM runner via llama.cpp).
     #[serde(rename = "ollama")]
     #[cfg(feature = "ollama")]
     Ollama(OllamaConfig),
-
-    /// Native (candle-based local LLM runner).
-    #[serde(rename = "native")]
-    #[cfg(feature = "native")]
-    Native(NativeConfig),
 
     /// Cloud API (OpenAI, Anthropic, Google, xAI, etc.).
     #[serde(rename = "cloud")]
@@ -58,11 +50,9 @@ impl LlmBackendConfig {
         match self {
             #[cfg(feature = "ollama")]
             Self::Ollama(_) => BackendId::new(BackendId::OLLAMA),
-            #[cfg(feature = "native")]
-            Self::Native(_) => BackendId::new("native"),
             #[cfg(feature = "cloud")]
             Self::Cloud(_) => BackendId::new(BackendId::OPENAI),
-            #[cfg(not(any(feature = "ollama", feature = "native", feature = "cloud")))]
+            #[cfg(not(any(feature = "ollama", feature = "cloud")))]
             _ => unreachable!("No backends available without features"),
         }
     }
@@ -81,17 +71,12 @@ impl LlmBackendConfig {
                 let runtime = OllamaRuntime::new(config)?;
                 Ok(Box::new(runtime))
             }
-            #[cfg(feature = "native")]
-            Self::Native(config) => {
-                let runtime = NativeRuntime::new(config)?;
-                Ok(Box::new(runtime))
-            }
             #[cfg(feature = "cloud")]
             Self::Cloud(config) => {
                 let runtime = CloudRuntime::new(config)?;
                 Ok(Box::new(runtime))
             }
-            #[cfg(not(any(feature = "ollama", feature = "native", feature = "cloud")))]
+            #[cfg(not(any(feature = "ollama", feature = "cloud")))]
             _ => Err(LlmError::BackendUnavailable("no backend".to_string())),
         }
     }
@@ -114,10 +99,10 @@ impl LlmConfig {
     /// Reads:
     /// - `OLLAMA_ENDPOINT`: Ollama endpoint
     /// - `OPENAI_API_KEY`: API key for OpenAI
-    /// - `LLM_PROVIDER`: Backend type ("ollama", "native", or "cloud")
+    /// - `LLM_PROVIDER`: Backend type ("ollama" or "cloud")
     /// - `LLM_MODEL`: model name
     pub fn from_env() -> Result<Self, LlmError> {
-        #[cfg(any(feature = "ollama", feature = "cloud", feature = "native"))]
+        #[cfg(any(feature = "ollama", feature = "cloud"))]
         {
             let provider =
                 std::env::var(env_vars::LLM_PROVIDER).unwrap_or_else(|_| "ollama".to_string());
@@ -143,25 +128,6 @@ impl LlmConfig {
                     #[cfg(not(feature = "ollama"))]
                     {
                         return Err(LlmError::BackendUnavailable("ollama feature not enabled".to_string()));
-                    }
-                }
-                "native" => {
-                    #[cfg(feature = "native")]
-                    {
-                        let model = std::env::var(env_vars::LLM_MODEL)
-                            .unwrap_or_else(|_| "qwen3:1.7b".to_string());
-
-                        let native_config = NativeConfig::new(model);
-                        let backend_config = LlmBackendConfig::Native(native_config);
-
-                        Ok(Self {
-                            backend: backend_config,
-                            generation: GenerationParams::default(),
-                        })
-                    }
-                    #[cfg(not(feature = "native"))]
-                    {
-                        return Err(LlmError::BackendUnavailable("native feature not enabled".to_string()));
                     }
                 }
                 "cloud" | "openai" => {
@@ -192,7 +158,7 @@ impl LlmConfig {
             }
         }
 
-        #[cfg(not(any(feature = "ollama", feature = "native", feature = "cloud")))]
+        #[cfg(not(any(feature = "ollama", feature = "cloud")))]
         Err(LlmError::BackendUnavailable("no backend".to_string()))
     }
 

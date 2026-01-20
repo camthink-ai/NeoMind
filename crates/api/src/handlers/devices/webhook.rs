@@ -3,6 +3,8 @@
 //! Devices can POST data to this endpoint instead of being polled.
 //! This is useful for devices that actively push data.
 
+use std::sync::Arc;
+
 use axum::{
     Json,
     extract::{Path, State},
@@ -20,6 +22,8 @@ use crate::models::ErrorResponse;
 use edge_ai_devices::DataPoint;
 // Import automation types for transform processing
 use edge_ai_automation::Automation;
+// Import auto-onboarding types
+use edge_ai_automation::discovery::auto_onboard::AutoOnboardManager;
 
 /// Webhook data from device
 #[derive(Debug, serde::Deserialize)]
@@ -73,12 +77,61 @@ pub async fn webhook_handler(
     let device = match device_opt {
         Some(d) => d,
         None => {
-            // Device not registered - return error
-            // TODO: Implement auto-onboarding
-            return Err(ErrorResponse::not_found(&format!(
-                "Device '{}' not found. Register the device first.",
-                device_id
-            )));
+            // Device not registered - trigger auto-onboarding
+            info!(
+                device_id = %device_id,
+                "Unknown device, triggering auto-onboarding"
+            );
+
+            // Get or create auto-onboard manager (lazy initialization)
+            let mut manager_guard = state.auto_onboard_manager.write().await;
+            let manager = if let Some(m) = manager_guard.as_ref() {
+                m.clone()
+            } else {
+                // Create manager on first use
+                use edge_ai_llm::backends::{OllamaConfig, OllamaRuntime};
+                let llm = OllamaConfig::new("qwen2.5:3b")
+                    .with_endpoint("http://localhost:11434")
+                    .with_timeout_secs(120);
+                let runtime = OllamaRuntime::new(llm)
+                    .map_err(|e| ErrorResponse::internal(&format!("Failed to create LLM runtime: {}", e)))?;
+                let event_bus = state.event_bus.as_ref()
+                    .ok_or_else(|| ErrorResponse::internal("EventBus not available"))?
+                    .clone();
+                let mgr = edge_ai_automation::AutoOnboardManager::new(
+                    Arc::new(runtime) as Arc<dyn edge_ai_core::llm::backend::LlmRuntime>,
+                    event_bus,
+                );
+                let mgr = Arc::new(mgr);
+                *manager_guard = Some(mgr.clone());
+                drop(manager_guard);
+                mgr
+            };
+
+            // Convert payload to sample format for auto-onboarding
+            let sample = serde_json::json!({
+                "device_id": device_id,
+                "timestamp": payload.timestamp.unwrap_or_else(|| chrono::Utc::now().timestamp()),
+                "data": payload.data
+            });
+
+            // Trigger auto-onboarding analysis
+            // This will create a draft device if enough samples are collected
+            let source = "webhook";  // Data source identifier
+            // Webhook data is typically JSON
+            let _ = manager.process_unknown_device(&device_id, source, &sample, false).await;
+
+            info!(
+                device_id = %device_id,
+                "Auto-onboarding triggered, device will appear in Pending Devices after analysis"
+            );
+
+            return ok(serde_json::json!({
+                "success": true,
+                "device_id": device_id,
+                "status": "pending_registration",
+                "message": "Device is being analyzed. Check Pending Devices tab for status."
+            }));
         }
     };
 

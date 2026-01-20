@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Loader2,
   ArrowLeft,
   Server,
   Edit,
@@ -13,6 +12,7 @@ import {
   Copy,
   Check,
   LucideIcon,
+  Loader2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -25,7 +25,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { EmptyState } from '@/components/shared'
+import { EmptyState, LoadingState } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
@@ -355,13 +355,9 @@ export function UnifiedDeviceConnectionsTab() {
     }
   }
 
-  // Loading state - same as LLM backends
+  // Loading state
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    )
+    return <LoadingState variant="page" text={t('common:loading')} />
   }
 
   // Empty state - when no adapter types are available

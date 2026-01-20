@@ -462,7 +462,7 @@ export function DeviceRealtime({
             </CardHeader>
             <CardContent className="flex-1 overflow-auto">
               <div className="space-y-2">
-                {Array.from(deviceMetrics.get(selectedDevice)! || [])
+                {Array.from(deviceMetrics.get(selectedDevice)!)
                   .reverse()
                   .slice(0, 20)
                   .map((metric, idx) => (

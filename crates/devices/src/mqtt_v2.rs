@@ -538,6 +538,15 @@ impl MqttDeviceManager {
             .await
             .map_err(|e| DeviceError::Communication(e.to_string()))?;
 
+        // Subscribe to ALL topics for auto-discovery
+        // This captures any device data regardless of topic format
+        // Messages that don't match registered devices will trigger auto-onboarding
+        client
+            .subscribe("#", rumqttc::QoS::AtLeastOnce)
+            .await
+            .map_err(|e| DeviceError::Communication(e.to_string()))?;
+        tracing::info!("Subscribed to '#' - all MQTT topics for auto-discovery");
+
         // Subscribe to HASS discovery topics if enabled
         if saved_enabled {
             // Subscribe to both 4-part and 5-part topic formats
@@ -708,19 +717,23 @@ impl MqttDeviceManager {
                 let topic = publish.topic.to_string();
                 let payload = publish.payload;
 
-                // Check if this is a HASS discovery message
+                // Special case: HASS discovery messages (deprecated)
                 if Self::is_hass_discovery_topic(&topic) {
                     tracing::info!("Received HASS discovery message on topic: {}", topic);
                     Self::handle_hass_discovery_message(&topic, &payload, hass_discovered_devices)
                         .await;
+                    return;
                 }
-                // Check if this is a discovery announcement
-                else if topic.starts_with(discovery_prefix) && topic.ends_with("/announce") {
+
+                // Special case: Discovery announcements
+                if topic.starts_with(discovery_prefix) && topic.ends_with("/announce") {
                     Self::handle_discovery_announcement(&payload, devices, mdl_registry, event_bus)
                         .await;
+                    return;
                 }
-                // Check if this is a HASS state update
-                else if let Some((device_id, metric_name)) =
+
+                // Special case: HASS state updates for registered devices
+                if let Some((device_id, metric_name)) =
                     hass_state_topic_map.read().await.get(&topic).cloned()
                 {
                     Self::handle_hass_state_update(
@@ -735,26 +748,234 @@ impl MqttDeviceManager {
                         event_bus,
                     )
                     .await;
-                } else {
-                    // Try to match to a device metric
-                    Self::handle_metric_message(
-                        &topic,
-                        &payload,
-                        devices,
-                        mdl_registry,
-                        metric_cache,
-                        time_series_storage,
-                        storage,
-                        event_bus,
-                    )
-                    .await;
+                    return;
                 }
+
+                // Try to match to a registered device
+                // This handles our standard topic format: device/{device_type}/{device_id}/uplink
+                let device_matched = Self::try_handle_registered_device(
+                    &topic,
+                    &payload,
+                    devices,
+                    mdl_registry,
+                    metric_cache,
+                    time_series_storage,
+                    storage,
+                    event_bus,
+                ).await;
+
+                // If device was matched, we're done
+                if device_matched {
+                    return;
+                }
+
+                // Device not matched - trigger auto-onboarding for unknown devices
+                // This captures any MQTT message from unregistered devices
+                Self::handle_unknown_device_mqtt(
+                    &topic,
+                    &payload,
+                    event_bus,
+                ).await;
             }
             rumqttc::Packet::ConnAck(_) => {
                 tracing::info!("MQTT connected successfully");
             }
             _ => {}
         }
+    }
+
+    /// Try to handle message for a registered device
+    ///
+    /// Returns true if the device was matched and handled, false otherwise
+    async fn try_handle_registered_device(
+        topic: &str,
+        payload: &[u8],
+        devices: &Arc<RwLock<HashMap<String, DeviceInstance>>>,
+        mdl_registry: &MdlRegistry,
+        metric_cache: &Arc<
+            RwLock<HashMap<String, HashMap<String, (MetricValue, chrono::DateTime<chrono::Utc>)>>>,
+        >,
+        time_series_storage: &Arc<RwLock<Option<Arc<TimeSeriesStorage>>>>,
+        storage: &Arc<RwLock<Option<Arc<MdlStorage>>>>,
+        event_bus: &Option<Arc<EventBus>>,
+    ) -> bool {
+        // Our standard topic format: device/{device_type}/{device_id}/uplink
+        let parts: Vec<&str> = topic.split('/').collect();
+        if parts.len() < 4 || parts[0] != "device" {
+            return false;
+        }
+
+        let device_type_name = parts[1].to_string();
+        let device_id = parts[2].to_string();
+        let direction = parts.get(3).copied();
+
+        // Check if this device type exists
+        let device_type = match mdl_registry.get(&device_type_name).await {
+            Some(dt) => dt,
+            None => {
+                // Unknown device type, not a registered device
+                return false;
+            }
+        };
+
+        // Process uplink data
+        if direction == Some("uplink") {
+            // Parse and store the metrics
+            if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(payload) {
+                let mut cache = metric_cache.write().await;
+                let now = chrono::Utc::now();
+
+                let is_new_device = {
+                    let mut devices_mut = devices.write().await;
+                    !devices_mut.contains_key(&device_id)
+                };
+
+                if is_new_device {
+                    tracing::info!(
+                        "Auto-registered device: {} (type: {})",
+                        device_id,
+                        device_type_name
+                    );
+                }
+
+                // Update metric cache (simplified)
+                if let Some(obj) = json_value.as_object() {
+                    for (key, value) in obj {
+                        let metric_value = match value {
+                            serde_json::Value::Number(n) => {
+                                if let Some(i) = n.as_i64() {
+                                    MetricValue::Integer(i)
+                                } else if let Some(f) = n.as_f64() {
+                                    MetricValue::Float(f)
+                                } else {
+                                    MetricValue::Null
+                                }
+                            }
+                            serde_json::Value::String(s) => MetricValue::String(s.clone()),
+                            serde_json::Value::Bool(b) => MetricValue::Boolean(*b),
+                            _ => MetricValue::Null,
+                        };
+                        cache.entry(device_id.clone())
+                            .or_insert_with(HashMap::new)
+                            .insert(key.clone(), (metric_value, now));
+                    }
+                }
+
+                // Publish event
+                if let Some(bus) = event_bus {
+                    let _ = bus.publish(edge_ai_core::NeoTalkEvent::DeviceOnline {
+                        device_id: device_id.clone(),
+                        device_type: device_type_name.clone(),
+                        timestamp: now.timestamp(),
+                    }).await;
+                }
+
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Handle unknown device MQTT message for auto-onboarding
+    ///
+    /// This is called when a message doesn't match any registered device
+    async fn handle_unknown_device_mqtt(
+        topic: &str,
+        payload: &[u8],
+        event_bus: &Option<Arc<EventBus>>,
+    ) {
+        // Skip non-JSON payloads
+        let json_data: Result<serde_json::Value, _> = serde_json::from_slice(payload);
+        let data = match json_data {
+            Ok(v) => v,
+            Err(_) => {
+                tracing::debug!(
+                    "Skipping non-JSON payload for auto-onboarding: topic={}, size={}",
+                    topic,
+                    payload.len()
+                );
+                return;
+            }
+        };
+
+        // Extract device_id from topic or payload
+        let device_id = Self::extract_device_id_from_mqtt(topic, &data);
+
+        let device_id = match device_id {
+            Some(id) => id,
+            None => {
+                // Use topic as device_id (hashed to avoid conflicts)
+                format!("mqtt_{}", Self::hash_topic(topic))
+            }
+        };
+
+        tracing::info!(
+            "Unknown device data: topic='{}', device_id='{}', triggering auto-onboarding",
+            topic,
+            device_id
+        );
+
+        // Publish event for auto-onboarding
+        if let Some(bus) = event_bus {
+            let sample = serde_json::json!({
+                "device_id": device_id,
+                "timestamp": chrono::Utc::now().timestamp(),
+                "topic": topic,
+                "data": data
+            });
+
+            let event = edge_ai_core::NeoTalkEvent::Custom {
+                event_type: "unknown_device_data".to_string(),
+                data: serde_json::json!({
+                    "device_id": device_id,
+                    "source": "mqtt",
+                    "original_topic": topic,
+                    "sample": sample
+                }),
+            };
+
+            bus.publish(event).await;
+        }
+    }
+
+    /// Extract device_id from MQTT topic or payload
+    fn extract_device_id_from_mqtt(topic: &str, payload: &serde_json::Value) -> Option<String> {
+        // Try to extract from topic (last non-empty segment)
+        let parts: Vec<&str> = topic.split('/').collect();
+        for part in parts.iter().rev() {
+            if !part.is_empty() && *part != "#" && *part != "uplink" && *part != "downlink" {
+                // Skip common topic words
+                if !["tele", "stat", "cmnd", "result", "sensor", "set"].contains(&part.to_lowercase().as_str()) {
+                    return Some(part.to_string());
+                }
+            }
+        }
+
+        // Try to find device_id in payload
+        if let Some(dev_id) = payload.get("device_id").and_then(|v| v.as_str()) {
+            return Some(dev_id.to_string());
+        }
+        if let Some(dev_id) = payload.get("id").and_then(|v| v.as_str()) {
+            return Some(dev_id.to_string());
+        }
+        if let Some(dev_id) = payload.get("device").and_then(|v| v.as_str()) {
+            return Some(dev_id.to_string());
+        }
+        if let Some(dev_id) = payload.get("Topic").and_then(|v| v.as_str()) {
+            // Tasmota devices
+            return Some(dev_id.to_string());
+        }
+
+        // Try to use the second-to-last part of topic
+        if parts.len() >= 2 {
+            let candidate = parts[parts.len() - 2];
+            if !candidate.is_empty() {
+                return Some(candidate.to_string());
+            }
+        }
+
+        None
     }
 
     /// Handle HASS discovery message
@@ -774,6 +995,15 @@ impl MqttDeviceManager {
     /// Check if topic is a HASS discovery topic (stub)
     fn is_hass_discovery_topic(topic: &str) -> bool {
         topic.starts_with("homeassistant/")
+    }
+
+    /// Simple hash function for fallback device_id generation
+    fn hash_topic(s: &str) -> u64 {
+        let mut hash: u64 = 5381;
+        for c in s.chars() {
+            hash = hash.wrapping_mul(33).wrapping_add(c as u64);
+        }
+        hash
     }
 
     /// Handle HASS device state update (stub - HASS functionality deprecated)
@@ -1121,11 +1351,49 @@ impl MqttDeviceManager {
         let device_type = match mdl_registry.get(&device_type_name).await {
             Some(dt) => dt,
             None => {
-                tracing::warn!(
-                    "Unknown device type: {} from topic: {}",
+                // Unknown device type - trigger auto-onboarding
+                tracing::info!(
+                    "Unknown device type '{}' from topic: {}, triggering auto-onboarding for device '{}'",
                     device_type_name,
-                    topic
+                    topic,
+                    device_id
                 );
+
+                // Try to parse payload as JSON for auto-onboarding
+                if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(payload) {
+                    // Publish event for auto-onboarding to pick up
+                    if let Some(bus) = event_bus {
+                        let sample = serde_json::json!({
+                            "device_id": device_id,
+                            "timestamp": chrono::Utc::now().timestamp(),
+                            "data": json_value
+                        });
+
+                        let event = edge_ai_core::NeoTalkEvent::Custom {
+                            event_type: "unknown_device_data".to_string(),
+                            data: serde_json::json!({
+                                "device_id": device_id,
+                                "source": "mqtt",
+                                "original_topic": topic,
+                                "inferred_type": device_type_name,
+                                "sample": sample
+                            }),
+                        };
+
+                        bus.publish(event).await;
+                        tracing::info!(
+                            "Published auto-onboarding event for unknown device: {} (inferred type: {})",
+                            device_id,
+                            device_type_name
+                        );
+                    }
+                } else {
+                    tracing::warn!(
+                        "Failed to parse JSON payload for unknown device {}: {} bytes",
+                        device_id,
+                        payload.len()
+                    );
+                }
                 return;
             }
         };

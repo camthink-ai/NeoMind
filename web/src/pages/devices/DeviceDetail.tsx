@@ -21,7 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { ChevronLeft, RefreshCw, Send, Clock, Zap, Settings, Info, ChevronRight, X, Image as ImageIcon } from "lucide-react"
+import { ChevronLeft, RefreshCw, Send, Clock, Zap, Settings, Info, ChevronRight, X, Image as ImageIcon, Database } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 import { formatTimestamp } from "@/lib/utils/format"
 import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse } from "@/types"
@@ -87,7 +87,7 @@ export function DeviceDetail({
   const [dialogParams, setDialogParams] = useState<Record<string, unknown>>({})
 
   const commands = deviceType?.commands || []
-  const metrics = device?.current_values ? Object.entries(device.current_values) : []
+  const metricDefinitions = deviceType?.metrics || []
 
   const handleCommandClick = (cmd: CommandDefinition) => {
     setSelectedCommandDef(cmd)
@@ -224,27 +224,53 @@ export function DeviceDetail({
               </div>
             </div>
 
+            {/* Raw Data Section - for Simple Mode devices */}
+            {deviceType?.mode === 'simple' && (
+              <div className="bg-gradient-to-br from-card to-muted/30 rounded-3xl p-6 shadow-sm">
+                <div className="flex items-center gap-2 mb-4">
+                  <Database className="h-5 w-5 text-muted-foreground" />
+                  <h2 className="font-semibold">原始数据 (Raw Data)</h2>
+                  <Badge variant="outline" className="text-xs">Raw Mode</Badge>
+                </div>
+                <div className="bg-muted/50 rounded-lg p-4 overflow-x-auto">
+                  <pre className="text-xs font-mono text-muted-foreground break-all whitespace-pre-wrap">
+                    {device?.current_values?._raw ? (
+                      typeof device.current_values._raw === 'string'
+                        ? device.current_values._raw
+                        : JSON.stringify(device.current_values._raw, null, 2)
+                    ) : (
+                      <span className="text-muted-foreground/60">暂无数据</span>
+                    )}
+                  </pre>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  数据按原样存储，可通过 Transforms 解码和提取指标
+                </p>
+              </div>
+            )}
+
             {/* Metrics Grid */}
-            {metrics.length > 0 && (
+            {metricDefinitions.length > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-4">
                   <Settings className="h-5 w-5 text-muted-foreground" />
                   <h2 className="font-semibold">实时指标</h2>
-                  <span className="text-xs text-muted-foreground">({metrics.length})</span>
+                  <span className="text-xs text-muted-foreground">({metricDefinitions.length})</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {metrics.map(([key, value]) => {
+                  {metricDefinitions.map((metricDef) => {
+                    const value = device?.current_values?.[metricDef.name]
                     const hasImage = isMetricImage(value)
                     return (
                       <button
-                        key={key}
-                        onClick={() => handleMetricCardClick(key)}
+                        key={metricDef.name}
+                        onClick={() => handleMetricCardClick(metricDef.name)}
                         className="group bg-gradient-to-br from-primary/5 to-primary/0 rounded-2xl p-5 text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] border border-primary/10 hover:border-primary/30"
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1 min-w-0">
                             <p className="text-sm text-muted-foreground mb-2 truncate">
-                              {getMetricDisplayName(key)}
+                              {metricDef.display_name || metricDef.name}
                             </p>
                             <div className="flex items-center gap-2">
                               {renderMetricValue(value, (src) => {

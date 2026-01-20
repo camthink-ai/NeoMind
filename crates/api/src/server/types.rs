@@ -1,6 +1,8 @@
 //! Server state and types.
 
+use std::pin::Pin;
 use std::sync::Arc;
+use futures::Stream;
 use tokio::sync::broadcast;
 
 use edge_ai_agent::SessionManager;
@@ -13,7 +15,7 @@ use edge_ai_rules::{InMemoryValueProvider, RuleEngine};
 use edge_ai_storage::business::EventLogStore;
 use edge_ai_storage::decisions::DecisionStore;
 use edge_ai_workflow::WorkflowEngine;
-use edge_ai_automation::{store::SharedAutomationStore, intent::IntentAnalyzer, transform::TransformEngine};
+use edge_ai_automation::{AutoOnboardManager, store::SharedAutomationStore, intent::IntentAnalyzer, transform::TransformEngine};
 
 use crate::auth::AuthState;
 use crate::auth_users::AuthUserState;
@@ -85,6 +87,8 @@ pub struct ServerState {
     pub device_registry: Arc<DeviceRegistry>,
     /// Device service for unified device operations (new architecture)
     pub device_service: Arc<DeviceService>,
+    /// Auto-onboarding manager for zero-config device discovery (lazy-initialized)
+    pub auto_onboard_manager: Arc<tokio::sync::RwLock<Option<Arc<AutoOnboardManager>>>>,
     /// Rule history store for statistics.
     pub rule_history_store: Option<Arc<edge_ai_storage::business::RuleHistoryStore>>,
     /// Workflow history store for statistics.
@@ -256,6 +260,11 @@ impl ServerState {
         let transform_engine: Option<Arc<TransformEngine>> = Some(Arc::new(TransformEngine::new()));
         tracing::info!("Transform engine initialized");
 
+        // Create auto-onboarding manager for zero-config device discovery
+        // Note: Will be lazy-initialized when first accessed
+        let auto_onboard_manager: Arc<tokio::sync::RwLock<Option<Arc<AutoOnboardManager>>>> =
+            Arc::new(tokio::sync::RwLock::new(None));
+
         Self {
             session_manager: Arc::new(session_manager),
             time_series_storage,
@@ -279,6 +288,7 @@ impl ServerState {
             extension_registry,
             device_registry,
             device_service,
+            auto_onboard_manager,
             rule_history_store: {
                 use edge_ai_storage::business::RuleHistoryStore;
                 match RuleHistoryStore::open("data/rule_history.redb") {
@@ -437,7 +447,7 @@ impl ServerState {
                 topic_prefix: "device".to_string(),
                 command_topic: "downlink".to_string(),
             },
-            subscribe_topics: vec!["device/+/+/uplink".to_string()],
+            subscribe_topics: vec!["#".to_string()],  // Subscribe to ALL topics for auto-discovery
             discovery_topic: Some("device/+/+/uplink".to_string()),
             discovery_prefix: "device".to_string(),
             auto_discovery: true,
@@ -594,6 +604,144 @@ impl ServerState {
         } else {
             tracing::warn!("Rule engine event service failed to start");
         }
+    }
+
+    /// Initialize auto-onboarding event listener.
+    ///
+    /// Starts a background task that listens for unknown device data events
+    /// and routes them to the auto-onboarding manager for processing.
+    pub async fn init_auto_onboarding_events(&self) {
+        // Ensure we have event_bus
+        let event_bus = match &self.event_bus {
+            Some(bus) => bus.clone(),
+            _ => {
+                tracing::warn!("Auto-onboarding events not started: event_bus not available");
+                return;
+            }
+        };
+
+        // Get or create auto-onboard manager
+        let auto_onboard_manager = {
+            let mgr_guard = self.auto_onboard_manager.read().await;
+            if let Some(mgr) = mgr_guard.as_ref() {
+                mgr.clone()
+            } else {
+                drop(mgr_guard); // Release read lock before acquiring write lock
+                // Create manager if it doesn't exist
+                let mut mgr_guard = self.auto_onboard_manager.write().await;
+                if let Some(mgr) = mgr_guard.as_ref() {
+                    mgr.clone()
+                } else {
+                    // Create default LLM runtime
+                    use edge_ai_core::llm::backend::LlmRuntime;
+                    use edge_ai_llm::backends::{OllamaConfig, OllamaRuntime};
+
+                    let config = OllamaConfig::new("qwen2.5:3b")
+                        .with_endpoint("http://localhost:11434")
+                        .with_timeout_secs(120);
+
+                    let llm = match OllamaRuntime::new(config) {
+                        Ok(runtime) => Arc::new(runtime) as Arc<dyn LlmRuntime>,
+                        Err(_) => {
+                            // Fallback: create a dummy runtime
+                            struct DummyRuntime;
+                            #[async_trait::async_trait]
+                            impl LlmRuntime for DummyRuntime {
+                                fn backend_id(&self) -> edge_ai_core::llm::backend::BackendId {
+                                    edge_ai_core::llm::backend::BackendId::new("dummy")
+                                }
+                                fn model_name(&self) -> &str { "dummy" }
+                                fn capabilities(&self) -> edge_ai_core::llm::backend::BackendCapabilities {
+                                    edge_ai_core::llm::backend::BackendCapabilities::default()
+                                }
+                                async fn generate(&self, _input: edge_ai_core::llm::backend::LlmInput) -> Result<edge_ai_core::llm::backend::LlmOutput, edge_ai_core::llm::backend::LlmError> {
+                                    Ok(edge_ai_core::llm::backend::LlmOutput {
+                                        text: String::new(),
+                                        thinking: None,
+                                        finish_reason: edge_ai_core::llm::backend::FinishReason::Stop,
+                                        usage: Some(edge_ai_core::llm::backend::TokenUsage::new(0, 0)),
+                                    })
+                                }
+                                async fn generate_stream(
+                                    &self,
+                                    _input: edge_ai_core::llm::backend::LlmInput,
+                                ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), edge_ai_core::llm::backend::LlmError>> + Send>>, edge_ai_core::llm::backend::LlmError> {
+                                    Ok(Box::pin(futures::stream::empty()))
+                                }
+                                fn max_context_length(&self) -> usize { 4096 }
+                            }
+                            Arc::new(DummyRuntime) as Arc<dyn LlmRuntime>
+                        }
+                    };
+
+                    let manager = Arc::new(edge_ai_automation::AutoOnboardManager::new(llm, event_bus.clone()));
+                    *mgr_guard = Some(manager.clone());
+                    tracing::info!("AutoOnboardManager initialized at startup");
+                    manager
+                }
+            }
+        };
+
+        let manager = auto_onboard_manager.clone();
+        let event_bus_clone = event_bus.clone();
+
+        tokio::spawn(async move {
+            let mut rx = event_bus_clone.subscribe();
+            tracing::info!("Auto-onboarding event listener started");
+
+            while let Some((event, _metadata)) = rx.recv().await {
+                // Check if this is an unknown device data event
+                if let edge_ai_core::NeoTalkEvent::Custom { event_type, data } = event {
+                    if event_type == "unknown_device_data" {
+                        // Extract device_id and sample from the event data
+                        if let Some(device_id) = data.get("device_id").and_then(|v| v.as_str()) {
+                            if let Some(sample) = data.get("sample") {
+                                // Extract the actual payload data from sample
+                                let payload_data = sample.get("data").unwrap_or(sample);
+
+                                let is_binary = data.get("is_binary")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+
+                                tracing::info!(
+                                    "Processing unknown device data from MQTT: device_id={}, is_binary={}",
+                                    device_id, is_binary
+                                );
+
+                                let source = data.get("source")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("mqtt")
+                                    .to_string();
+
+                                // Process the payload data through auto-onboarding
+                                match manager.process_unknown_device(device_id, &source, payload_data, is_binary).await {
+                                    Ok(true) => {
+                                        tracing::info!(
+                                            "Successfully processed unknown device data: {}",
+                                            device_id
+                                        );
+                                    }
+                                    Ok(false) => {
+                                        tracing::debug!(
+                                            "Unknown device data not accepted (disabled or at capacity): {}",
+                                            device_id
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Failed to process unknown device data for {}: {}",
+                                            device_id, e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        tracing::info!("Auto-onboarding event listener initialized - MQTT unknown devices will trigger auto-onboarding");
     }
 
     /// Save LLM configuration to database.

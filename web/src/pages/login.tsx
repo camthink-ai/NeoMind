@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
-import { Bot, Languages } from "lucide-react"
+import { Bot, Languages, Lock, User, Shield } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -10,11 +10,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import {
-  Field,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field"
 
 const languages = [
   { code: 'en', name: 'English' },
@@ -138,18 +133,74 @@ export function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-sm">
-        {/* Login Card */}
-        <div className="rounded-xl border bg-card p-6 shadow-sm relative">
-          {/* Language Switcher */}
+    <div className="min-h-screen flex flex-col bg-background overflow-hidden">
+      {/* Background Effects - AI Network Theme */}
+      <div className="fixed inset-0">
+        {/* Base gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-background via-background to-muted/10" />
+
+        {/* Dot grid pattern - representing distributed nodes/edge devices */}
+        <div className="absolute inset-0" style={{
+          backgroundImage: 'radial-gradient(circle, #80808015 1px, transparent 1px)',
+          backgroundSize: '32px 32px'
+        }} />
+
+        {/* Network connection lines - subtle tech feel */}
+        <svg className="absolute inset-0 w-full h-full opacity-[0.03]" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <pattern id="network-grid" width="120" height="120" patternUnits="userSpaceOnUse">
+              <circle cx="60" cy="60" r="1.5" fill="currentColor" />
+              <line x1="60" y1="0" x2="60" y2="120" stroke="currentColor" strokeWidth="0.5" />
+              <line x1="0" y1="60" x2="120" y2="60" stroke="currentColor" strokeWidth="0.5" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#network-grid)" />
+        </svg>
+
+        {/* Central AI glow - representing intelligence hub */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 dark:bg-primary/10 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '8s' }} />
+
+        {/* Edge node glows - representing distributed edge computing */}
+        <div className="absolute top-[15%] left-[10%] w-32 h-32 bg-blue-500/5 dark:bg-blue-500/10 rounded-full blur-2xl animate-pulse" style={{ animationDuration: '6s', animationDelay: '0s' }} />
+        <div className="absolute bottom-[20%] right-[15%] w-40 h-40 bg-purple-500/5 dark:bg-purple-500/10 rounded-full blur-2xl animate-pulse" style={{ animationDuration: '7s', animationDelay: '1s' }} />
+        <div className="absolute top-[30%] right-[20%] w-24 h-24 bg-cyan-500/5 dark:bg-cyan-500/10 rounded-full blur-2xl animate-pulse" style={{ animationDuration: '5s', animationDelay: '2s' }} />
+        <div className="absolute bottom-[30%] left-[20%] w-28 h-28 bg-indigo-500/5 dark:bg-indigo-500/10 rounded-full blur-2xl animate-pulse" style={{ animationDuration: '6s', animationDelay: '3s' }} />
+
+        {/* Diagonal accent lines - tech aesthetic */}
+        <div className="absolute inset-0 opacity-[0.02]">
+          <div className="absolute top-0 left-1/4 w-px h-full bg-gradient-to-b from-transparent via-primary to-transparent" />
+          <div className="absolute top-0 right-1/4 w-px h-full bg-gradient-to-b from-transparent via-blue-500 to-transparent" />
+          <div className="absolute top-1/4 left-0 w-full h-px bg-gradient-to-r from-transparent via-purple-500 to-transparent" />
+          <div className="absolute bottom-1/4 left-0 w-full h-px bg-gradient-to-r from-transparent via-cyan-500 to-transparent" />
+        </div>
+
+        {/* Corner accents */}
+        <div className="absolute top-8 left-8 w-16 h-16 border-l border-t border-primary/10 rounded-tl-lg" />
+        <div className="absolute top-8 right-8 w-16 h-16 border-r border-t border-blue-500/10 rounded-tr-lg" />
+        <div className="absolute bottom-8 left-8 w-16 h-16 border-l border-b border-purple-500/10 rounded-bl-lg" />
+        <div className="absolute bottom-8 right-8 w-16 h-16 border-r border-b border-cyan-500/10 rounded-br-lg" />
+      </div>
+
+      {/* Top Header */}
+      <header className="relative z-10 backdrop-blur-sm">
+        <div className="flex items-center justify-between px-6 h-16">
+          {/* Left - Logo & Name */}
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-lg bg-primary/10 text-primary dark:bg-primary/20">
+              <Bot className="size-5" />
+            </div>
+            <h1 className="text-lg font-semibold">NeoTalk</h1>
+          </div>
+
+          {/* Right - Language Switcher */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="absolute top-4 right-4 h-8 w-8">
+              <Button variant="ghost" size="sm" className="gap-1.5">
                 <Languages className="h-4 w-4" />
+                {languages.find(l => l.code === i18n.language)?.name || 'Language'}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="end" className="min-w-[130px]">
               {languages.map((lang) => (
                 <DropdownMenuItem
                   key={lang.code}
@@ -161,87 +212,96 @@ export function LoginPage() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
+      </header>
 
-          {/* Header */}
-          <div className="flex flex-col items-center gap-3 text-center mb-6">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-              <Bot className="size-6" />
-            </div>
-            <h1 className="text-2xl font-bold">NeoTalk</h1>
-            <p className="text-sm text-muted-foreground">
-              {t('auth:platformTagline')}
-            </p>
-          </div>
+      {/* Main Content - Centered Login Form */}
+      <main className="relative z-10 flex-1 flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-md">
+          {/* Login Card */}
+          <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-8">
+            {/* Login Title */}
+            <h2 className="text-3xl font-semibold mb-8 text-center">{t('auth:login')}</h2>
 
-          {/* Login Form */}
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <FieldGroup>
-              <Field className="gap-2">
-                <FieldLabel htmlFor="username">{t('auth:username')}</FieldLabel>
+            {/* Login Form */}
+            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+              {/* Username Field */}
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <Input
                   id="username"
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder={t('auth:usernamePlaceholder')}
+                  placeholder={t('auth:username')}
                   autoComplete="username"
                   required
-                  className="h-10"
+                  className="pl-9 h-11 bg-background/70 dark:bg-background/30 border-border/50 dark:border-border/30 focus:bg-background dark:focus:bg-background/50 focus:border-primary/50 transition-colors"
                 />
-              </Field>
+              </div>
 
-              <Field className="gap-2">
-                <FieldLabel htmlFor="password">{t('auth:password')}</FieldLabel>
+              {/* Password Field */}
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
                 <Input
                   id="password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={t('auth:passwordPlaceholder')}
+                  placeholder={t('auth:password')}
                   autoComplete="current-password"
                   required
-                  className="h-10"
+                  className="pl-9 h-11 bg-background/70 dark:bg-background/30 border-border/50 dark:border-border/30 focus:bg-background dark:focus:bg-background/50 focus:border-primary/50 transition-colors"
                 />
-              </Field>
+              </div>
 
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  id="remember"
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300"
-                />
-                <span className="text-sm text-muted-foreground">
+              {/* Remember Me */}
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <div className="relative flex items-center">
+                  <input
+                    id="remember"
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="peer appearance-none h-4 w-4 rounded border border-border bg-background/70 dark:bg-background/30 transition-all cursor-pointer checked:bg-primary checked:border-primary dark:checked:bg-foreground/90 dark:checked:border-foreground/90"
+                  />
+                  <svg className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 text-white dark:text-background pointer-events-none opacity-0 peer-checked:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="3">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <span className="text-sm text-muted-foreground group-hover:text-foreground transition-colors leading-none">
                   {t('auth:rememberMe')}
                 </span>
               </label>
 
               {/* Error Message */}
               {error && (
-                <div className="text-sm text-error bg-error/10 rounded-md p-2">
-                  {error}
+                <div className="flex items-start gap-2 text-sm text-destructive bg-destructive/10 rounded-md p-3">
+                  <Shield className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                  <span>{error}</span>
                 </div>
               )}
 
+              {/* Submit Button */}
               <Button
                 type="submit"
                 disabled={isLoading || !username || !password}
-                className="w-full"
+                className="h-11 w-full"
+                size="default"
               >
                 {isLoading ? t('auth:loggingIn') : t('auth:login')}
               </Button>
-            </FieldGroup>
-          </form>
-        </div>
+            </form>
 
-        {/* Footer */}
-        <div className="text-center mt-4">
-          <p className="text-xs text-muted-foreground">
-            NeoTalk Edge AI Agent v1.0
-          </p>
+            {/* Footer */}
+            <div className="text-center mt-6 pt-6">
+              <p className="text-xs text-muted-foreground/70 dark:text-muted-foreground/50">
+                NeoTalk Edge AI Agent v1.0
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }

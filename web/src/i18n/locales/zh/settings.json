@@ -45,6 +45,8 @@
   "totalMemory": "总内存",
   "usedMemory": "已用内存",
   "freeMemory": "可用内存",
+  "memory": "内存",
+  "gpu": "GPU",
   "appearance": "外观设置",
   "languageRegion": "语言与地区",
   "language": "语言",

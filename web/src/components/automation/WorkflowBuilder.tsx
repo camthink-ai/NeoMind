@@ -1,20 +1,18 @@
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Badge } from '@/components/ui/badge'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
-  ArrowRight,
   Plus,
   Trash2,
   GripVertical,
   Play,
-  Save,
+  Pause,
   Clock,
   AlertTriangle,
   Database,
@@ -26,8 +24,14 @@ import {
   Bell,
   Image as ImageIcon,
   FileText,
-  Pause,
   Braces,
+  ArrowUp,
+  ArrowDown,
+  Edit3,
+  Sparkles,
+  Info,
+  Lightbulb,
+  Settings as SettingsIcon,
 } from 'lucide-react'
 import type {
   Workflow,
@@ -38,16 +42,34 @@ import type {
 } from '@/types'
 import { StepConfigDialog } from './workflow/StepConfigDialog'
 import { TriggerConfigDialog } from './workflow/TriggerConfigDialog'
+import {
+  FullScreenBuilder,
+  BuilderSection,
+  FormGrid,
+  TipCard,
+} from './FullScreenBuilder'
 
 interface WorkflowBuilderProps {
+  open: boolean
+  onClose: () => void
   workflow?: Workflow
   onSave: (workflow: Partial<Workflow>) => Promise<void>
-  onCancel: () => void
   resources?: {
     devices: Array<{ id: string; name: string }>
     metrics: string[]
     alertChannels: Array<{ id: string; name: string }>
   }
+}
+
+interface WorkflowFormData {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  steps: WorkflowStep[]
+  triggers: WorkflowTrigger[]
+  variables: Record<string, unknown>
+  timeout_seconds: number
 }
 
 // Step type definitions with icons and labels
@@ -177,19 +199,15 @@ const TRIGGER_TYPES: Array<{
   },
 ]
 
-interface WorkflowFormData {
-  id: string
-  name: string
-  description: string
-  enabled: boolean
-  steps: WorkflowStep[]
-  triggers: WorkflowTrigger[]
-  variables: Record<string, unknown>
-  timeout_seconds: number
-}
-
-export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: WorkflowBuilderProps) {
+export function WorkflowBuilder({
+  open,
+  onClose,
+  workflow,
+  onSave,
+  resources = { devices: [], metrics: [], alertChannels: [] },
+}: WorkflowBuilderProps) {
   const { t } = useTranslation(['automation', 'common'])
+
   const [formData, setFormData] = useState<WorkflowFormData>({
     id: workflow?.id || `workflow-${Date.now()}`,
     name: workflow?.name || '',
@@ -202,6 +220,33 @@ export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: Workf
   })
   const [saving, setSaving] = useState(false)
   const [activeTab, setActiveTab] = useState<'steps' | 'triggers' | 'variables' | 'settings'>('steps')
+
+  // Reset form when workflow changes
+  useState(() => {
+    if (open && workflow) {
+      setFormData({
+        id: workflow.id,
+        name: workflow.name || '',
+        description: workflow.description || '',
+        enabled: workflow.enabled ?? true,
+        steps: (workflow.steps as WorkflowStep[]) || [],
+        triggers: (workflow.triggers as WorkflowTrigger[]) || [{ type: 'manual', id: 'trigger-manual' }],
+        variables: (workflow.variables as Record<string, unknown>) || {},
+        timeout_seconds: 300,
+      })
+    } else if (open && !workflow) {
+      setFormData({
+        id: `workflow-${Date.now()}`,
+        name: '',
+        description: '',
+        enabled: true,
+        steps: [],
+        triggers: [{ type: 'manual', id: 'trigger-manual' }],
+        variables: {},
+        timeout_seconds: 300,
+      })
+    }
+  })
 
   // Step configuration dialog state
   const [stepDialogOpen, setStepDialogOpen] = useState(false)
@@ -237,44 +282,44 @@ export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: Workf
       // Set default values based on step type
       switch (type) {
         case 'delay':
-          (newStep as DelayStep).duration_seconds = 5
+          ;(newStep as any).duration_seconds = 5
           break
         case 'send_alert':
-          ;(newStep as SendAlertStep).severity = 'info'
-          ;(newStep as SendAlertStep).title = ''
-          ;(newStep as SendAlertStep).message = ''
+          ;(newStep as any).severity = 'info'
+          ;(newStep as any).title = ''
+          ;(newStep as any).message = ''
           break
         case 'log':
-          ;(newStep as LogStep).message = ''
-          ;(newStep as LogStep).level = 'info'
+          ;(newStep as any).message = ''
+          ;(newStep as any).level = 'info'
           break
         case 'condition':
-          ;(newStep as ConditionStep).condition = ''
-          ;(newStep as ConditionStep).then_steps = []
-          ;(newStep as ConditionStep).else_steps = []
+          ;(newStep as any).condition = ''
+          ;(newStep as any).then_steps = []
+          ;(newStep as any).else_steps = []
           break
         case 'parallel':
-          ;(newStep as ParallelStep).steps = []
+          ;(newStep as any).steps = []
           break
         case 'http_request':
-          ;(newStep as HttpRequestStep).method = 'GET'
-          ;(newStep as HttpRequestStep).url = ''
+          ;(newStep as any).method = 'GET'
+          ;(newStep as any).url = ''
           break
         case 'send_command':
-          ;(newStep as SendCommandStep).device_id = ''
-          ;(newStep as SendCommandStep).command = ''
-          ;(newStep as SendCommandStep).parameters = {}
+          ;(newStep as any).device_id = ''
+          ;(newStep as any).command = ''
+          ;(newStep as any).parameters = {}
           break
         case 'device_query':
-          ;(newStep as DeviceQueryStep).device_id = ''
-          ;(newStep as DeviceQueryStep).metric = ''
+          ;(newStep as any).device_id = ''
+          ;(newStep as any).metric = ''
           break
         case 'wait_for_device_state':
-          ;(newStep as WaitForDeviceStateStep).device_id = ''
-          ;(newStep as WaitForDeviceStateStep).metric = ''
-          ;(newStep as WaitForDeviceStateStep).expected_value = 0
-          ;(newStep as WaitForDeviceStateStep).timeout_seconds = 60
-          ;(newStep as WaitForDeviceStateStep).poll_interval_seconds = 5
+          ;(newStep as any).device_id = ''
+          ;(newStep as any).metric = ''
+          ;(newStep as any).expected_value = 0
+          ;(newStep as any).timeout_seconds = 60
+          ;(newStep as any).poll_interval_seconds = 5
           break
       }
 
@@ -346,15 +391,15 @@ export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: Workf
     // Set default values based on trigger type
     switch (type) {
       case 'cron':
-        ;(newTrigger as CronTrigger).expression = '0 * * * *'
+        ;(newTrigger as any).expression = '0 * * * *'
         break
       case 'event':
-        ;(newTrigger as EventTrigger).event_type = ''
+        ;(newTrigger as any).event_type = ''
         break
       case 'device':
-        ;(newTrigger as DeviceTrigger).device_id = ''
-        ;(newTrigger as DeviceTrigger).metric = ''
-        ;(newTrigger as DeviceTrigger).condition = '>'
+        ;(newTrigger as any).device_id = ''
+        ;(newTrigger as any).metric = ''
+        ;(newTrigger as any).condition = '>'
         break
     }
 
@@ -430,19 +475,19 @@ export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: Workf
     // Add additional info based on step type
     switch (step.type) {
       case 'send_command':
-        return `${t(stepType.label)} (${ (step as SendCommandStep).command || 'N/A' })`
+        return `${t(stepType.label)} (${(step as any).command || 'N/A'})`
       case 'delay':
-        return `${t(stepType.label)} (${ (step as DelayStep).duration_seconds }s)`
+        return `${t(stepType.label)} (${(step as any).duration_seconds}s)`
       case 'send_alert':
-        return `${t(stepType.label)} (${ (step as SendAlertStep).title || 'N/A' })`
+        return `${t(stepType.label)} (${(step as any).title || 'N/A'})`
       case 'log':
-        return `${t(stepType.label)}: ${(step as LogStep).message?.substring(0, 30) || ''}...`
+        return `${t(stepType.label)}: ${(step as any).message?.substring(0, 30) || ''}...`
       case 'condition':
-        return `${t(stepType.label)} (${ (step as ConditionStep).condition || 'N/A' })`
+        return `${t(stepType.label)} (${(step as any).condition || 'N/A'})`
       case 'http_request':
-        return `${t(stepType.label)} (${ (step as HttpRequestStep).method })`
+        return `${t(stepType.label)} (${(step as any).method})`
       case 'device_query':
-        return `${t(stepType.label)} (${ (step as DeviceQueryStep).metric || 'N/A' })`
+        return `${t(stepType.label)} (${(step as any).metric || 'N/A'})`
       default:
         return t(stepType.label)
     }
@@ -459,23 +504,24 @@ export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: Workf
       case 'manual':
         return t('automation:triggers.manual')
       case 'cron':
-        return `${t('automation:triggers.cron')}: ${(trigger as CronTrigger).expression}`
+        return `${t('automation:triggers.cron')}: ${(trigger as any).expression}`
       case 'event':
-        return `${t('automation:triggers.event')}: ${(trigger as EventTrigger).event_type || 'N/A'}`
+        return `${t('automation:triggers.event')}: ${(trigger as any).event_type || 'N/A'}`
       case 'device':
-        return `${t('automation:triggers.device')}: ${(trigger as DeviceTrigger).metric || 'N/A'}`
+        return `${t('automation:triggers.device')}: ${(trigger as any).metric || 'N/A'}`
     }
   }
 
   // Validate and save
-  const handleSave = useCallback(async () => {
-    if (!formData.name.trim()) {
-      return
-    }
+  const isValid = Boolean(formData.name.trim() && formData.steps.length > 0)
+  const getValidationMessage = () => {
+    if (!formData.name.trim()) return t('automation:validation.nameRequired', { defaultValue: '请输入名称' })
+    if (formData.steps.length === 0) return t('automation:validation.stepsRequired', { defaultValue: '请至少添加一个步骤' })
+    return ''
+  }
 
-    if (formData.steps.length === 0) {
-      return
-    }
+  const handleSave = useCallback(async () => {
+    if (!isValid) return
 
     setSaving(true)
     try {
@@ -492,322 +538,392 @@ export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: Workf
     } finally {
       setSaving(false)
     }
-  }, [formData, onSave])
+  }, [formData, isValid, onSave])
+
+  // Side panel content
+  const sidePanelContent = (
+    <div className="space-y-4">
+      <TipCard
+        title={t('automation:tips.workflowTitle', { defaultValue: '关于工作流' })}
+        variant="info"
+      >
+        {t('automation:tips.workflowDesc', {
+          defaultValue: '工作流是复杂的多步骤自动化，支持条件分支、并行执行、延迟等待等功能。',
+        })}
+      </TipCard>
+
+      {activeTab === 'steps' && (
+        <TipCard
+          title={t('automation:tips.stepsTitle', { defaultValue: '步骤说明' })}
+          variant="info"
+        >
+          {t('automation:tips.stepsDesc', {
+            defaultValue: '工作流步骤按顺序执行。条件步骤支持分支，并行步骤可同时执行多个任务。',
+          })}
+        </TipCard>
+      )}
+
+      {activeTab === 'triggers' && (
+        <TipCard
+          title={t('automation:tips.triggersTitle', { defaultValue: '触发器说明' })}
+          variant="info"
+        >
+          {t('automation:tips.triggersDesc', {
+            defaultValue: '定义何时启动工作流。可以手动触发、定时执行、响应事件或设备状态变化。',
+          })}
+        </TipCard>
+      )}
+
+      {activeTab === 'variables' && (
+        <TipCard
+          title={t('automation:tips.variablesTitle', { defaultValue: '变量说明' })}
+          variant="info"
+        >
+          {t('automation:tips.variablesDesc', {
+            defaultValue: '在工作流中使用变量。可以在步骤中引用这些变量，格式为 ${varName}。',
+          })}
+        </TipCard>
+      )}
+    </div>
+  )
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">
-            {workflow ? t('automation:editWorkflow') : t('automation:createWorkflow')}
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {t('automation:workflowBuilderDesc')}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={onCancel} disabled={saving}>
-            {t('common:cancel')}
-          </Button>
-          <Button onClick={handleSave} disabled={saving || !formData.name.trim()}>
-            {saving ? (
-              <>
-                <Pause className="mr-2 h-4 w-4 animate-spin" />
-                {t('common:saving')}
-              </>
-            ) : (
-              <>
-                <Save className="mr-2 h-4 w-4" />
-                {t('common:save')}
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
-
-      {/* Basic Info */}
-      <Card className="p-4 space-y-4">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="workflow-name">{t('automation:workflowName')}</Label>
-            <Input
-              id="workflow-name"
-              value={formData.name}
-              onChange={(e) => updateFormData({ name: e.target.value })}
-              placeholder={t('automation:workflowNamePlaceholder')}
+    <FullScreenBuilder
+      open={open}
+      onClose={onClose}
+      title={workflow
+        ? t('automation:editWorkflow', { defaultValue: '编辑工作流' })
+        : t('automation:createWorkflow', { defaultValue: '创建工作流' })
+      }
+      description={t('automation:workflowBuilderDesc', {
+        defaultValue: '定义复杂的多步骤自动化流程，支持条件分支、并行执行等高级功能',
+      })}
+      icon={<Sparkles className="h-5 w-5 text-blue-500" />}
+      headerActions={
+        <Badge variant={formData.enabled ? 'default' : 'secondary'} className="text-xs">
+          {formData.enabled ? t('common:enabled', { defaultValue: '启用' }) : t('common:disabled', { defaultValue: '禁用' })}
+        </Badge>
+      }
+      sidePanel={{ content: sidePanelContent, title: t('automation:tips', { defaultValue: '提示' }) }}
+      isValid={isValid}
+      isDirty={true}
+      isSaving={saving}
+      saveLabel={t('common:save', { defaultValue: '保存' })}
+      onSave={handleSave}
+      validationMessage={getValidationMessage()}
+    >
+      <div className="space-y-6">
+        {/* Basic Info Section */}
+        <BuilderSection
+          title={t('automation:basicInfo', { defaultValue: '基本信息' })}
+          icon={<Info className="h-4 w-4 text-muted-foreground" />}
+        >
+          <FormGrid columns={2}>
+            <div className="space-y-2">
+              <Label htmlFor="workflow-name">{t('automation:workflowName', { defaultValue: '工作流名称' })} *</Label>
+              <Input
+                id="workflow-name"
+                value={formData.name}
+                onChange={(e) => updateFormData({ name: e.target.value })}
+                placeholder={t('automation:workflowNamePlaceholder', { defaultValue: '例如：多步骤设备控制流程' })}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                id="workflow-enabled"
+                checked={formData.enabled}
+                onCheckedChange={(enabled) => updateFormData({ enabled })}
+              />
+              <Label htmlFor="workflow-enabled" className="text-sm cursor-pointer">
+                {t('automation:enableWorkflow', { defaultValue: '启用工作流' })}
+              </Label>
+            </div>
+          </FormGrid>
+          <div className="space-y-2">
+            <Label htmlFor="workflow-description">{t('common:description', { defaultValue: '描述' })}</Label>
+            <Textarea
+              id="workflow-description"
+              value={formData.description}
+              onChange={(e) => updateFormData({ description: e.target.value })}
+              placeholder={t('automation:workflowDescriptionPlaceholder', {
+                defaultValue: '描述这个工作流的功能和用途',
+              })}
+              rows={2}
             />
           </div>
-          <div className="flex items-center gap-4">
-            <Switch
-              id="workflow-enabled"
-              checked={formData.enabled}
-              onCheckedChange={(enabled) => updateFormData({ enabled })}
-            />
-            <Label htmlFor="workflow-enabled">{t('automation:enabled')}</Label>
-          </div>
-        </div>
-        <div>
-          <Label htmlFor="workflow-description">{t('common:description')}</Label>
-          <Textarea
-            id="workflow-description"
-            value={formData.description}
-            onChange={(e) => updateFormData({ description: e.target.value })}
-            placeholder={t('automation:workflowDescriptionPlaceholder')}
-            className="min-h-[80px]"
-          />
-        </div>
-      </Card>
+        </BuilderSection>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="steps">{t('automation:steps')}</TabsTrigger>
-          <TabsTrigger value="triggers">{t('automation:triggers')}</TabsTrigger>
-          <TabsTrigger value="variables">{t('automation:variables')}</TabsTrigger>
-          <TabsTrigger value="settings">{t('common:settings')}</TabsTrigger>
-        </TabsList>
+        {/* Main Tabs */}
+        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="steps" className="gap-2">
+              <Braces className="h-4 w-4" />
+              <span>{t('automation:steps', { defaultValue: '步骤' })}</span>
+              <Badge variant="secondary" className="ml-auto h-5 px-1.5 text-xs">
+                {formData.steps.length}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="triggers" className="gap-2">
+              <Clock className="h-4 w-4" />
+              <span>{t('automation:triggers', { defaultValue: '触发器' })}</span>
+              <Badge variant="secondary" className="ml-auto h-5 px-1.5 text-xs">
+                {formData.triggers.length}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="variables" className="gap-2">
+              <Database className="h-4 w-4" />
+              <span>{t('automation:variables', { defaultValue: '变量' })}</span>
+              <Badge variant="secondary" className="ml-auto h-5 px-1.5 text-xs">
+                {Object.keys(formData.variables).length}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="gap-2">
+              <SettingsIcon className="h-4 w-4" />
+              <span>{t('common:settings', { defaultValue: '设置' })}</span>
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Steps Tab */}
-        <TabsContent value="steps" className="space-y-4">
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">{t('automation:workflowSteps')}</h3>
-              <Badge variant="outline">{formData.steps.length} steps</Badge>
-            </div>
-
-            {/* Step Type Selector */}
-            <div className="mb-4">
-              <Label className="mb-2 block">{t('automation:addStep')}</Label>
-              <div className="flex flex-wrap gap-2">
-                {STEP_TYPES.map((stepType) => (
-                  <Button
-                    key={stepType.type}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleAddStep(stepType.type)}
-                    className="flex items-center gap-1"
-                  >
-                    {stepType.icon}
-                    <span className="hidden sm:inline">{t(stepType.label)}</span>
-                  </Button>
-                ))}
+          {/* Steps Tab */}
+          <TabsContent value="steps" className="mt-6">
+            <BuilderSection
+              title={t('automation:workflowSteps', { defaultValue: '工作流步骤' })}
+              description={t('automation:workflowStepsDesc', { defaultValue: '添加和管理工作流执行步骤' })}
+              icon={<Braces className="h-4 w-4 text-blue-500" />}
+            >
+              {/* Step Type Selector */}
+              <div className="mb-4">
+                <Label className="mb-2 block">{t('automation:addStep', { defaultValue: '添加步骤' })}</Label>
+                <div className="grid grid-cols-6 gap-2">
+                  {STEP_TYPES.map((stepType) => (
+                    <Button
+                      key={stepType.type}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleAddStep(stepType.type)}
+                      className="flex flex-col items-center gap-1 h-auto py-2"
+                      title={t(stepType.description)}
+                    >
+                      {stepType.icon}
+                      <span className="text-xs">{t(stepType.label)}</span>
+                    </Button>
+                  ))}
+                </div>
               </div>
-            </div>
 
-            {/* Steps List */}
-            {formData.steps.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
-                <Braces className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p>{t('automation:noSteps')}</p>
-                <p className="text-sm">{t('automation:noStepsDesc')}</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {formData.steps.map((step, index) => (
-                  <div
-                    key={step.id}
-                    className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border group"
-                  >
-                    <GripVertical className="h-5 w-5 text-muted-foreground cursor-move" />
-                    <div className="flex items-center gap-2 px-2 py-1 bg-background rounded">
-                      {getStepIcon(step.type)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{getStepLabel(step)}</div>
-                      <div className="text-xs text-muted-foreground truncate">
-                        {t(`automation:steps.${step.type}Desc`)}
+              {/* Steps List */}
+              {formData.steps.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-lg">
+                  <Braces className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="font-medium">{t('automation:noSteps', { defaultValue: '暂无步骤' })}</p>
+                  <p className="text-sm">{t('automation:noStepsDesc', { defaultValue: '点击上方按钮添加步骤' })}</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {formData.steps.map((step, index) => (
+                    <div
+                      key={step.id}
+                      className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border group hover:bg-muted/50 transition-colors"
+                    >
+                      <GripVertical className="h-5 w-5 text-muted-foreground cursor-move" />
+                      <span className="text-xs text-muted-foreground w-6">{index + 1}</span>
+                      <div className="flex items-center gap-2 px-2 py-1 bg-background rounded">
+                        {getStepIcon(step.type)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{getStepLabel(step)}</div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {t(`automation:steps.${step.type}Desc`)}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => handleMoveStepUp(index)}
+                          disabled={index === 0}
+                        >
+                          <ArrowUp className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => handleMoveStepDown(index)}
+                          disabled={index >= formData.steps.length - 1}
+                        >
+                          <ArrowDown className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => handleEditStep(index)}
+                        >
+                          <Edit3 className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => handleDeleteStep(index)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleMoveStepUp(index)}
-                        disabled={index === 0}
-                      >
-                        ↑
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleMoveStepDown(index)}
-                        disabled={index >= formData.steps.length - 1}
-                      >
-                        ↓
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleEditStep(index)}
-                      >
-                        ✏️
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive"
-                        onClick={() => handleDeleteStep(index)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                    {index < formData.steps.length - 1 && (
-                      <ArrowRight className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-        </TabsContent>
+                  ))}
+                </div>
+              )}
+            </BuilderSection>
+          </TabsContent>
 
-        {/* Triggers Tab */}
-        <TabsContent value="triggers" className="space-y-4">
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">{t('automation:workflowTriggers')}</h3>
-              <Badge variant="outline">{formData.triggers.length} triggers</Badge>
-            </div>
-
-            {/* Trigger Type Selector */}
-            <div className="mb-4">
-              <Label className="mb-2 block">{t('automation:addTrigger')}</Label>
-              <div className="flex flex-wrap gap-2">
-                {TRIGGER_TYPES.map((triggerType) => (
-                  <Button
-                    key={triggerType.type}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleAddTrigger(triggerType.type)}
-                    className="flex items-center gap-1"
-                  >
-                    {triggerType.icon}
-                    <span className="hidden sm:inline">{t(triggerType.label)}</span>
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            {/* Triggers List */}
-            <div className="space-y-2">
-              {formData.triggers.map((trigger, index) => (
-                <div
-                  key={trigger.id}
-                  className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border group"
-                >
-                  <div className="flex items-center gap-2 px-2 py-1 bg-background rounded">
-                    {getTriggerIcon(trigger.type)}
-                  </div>
-                  <div className="flex-1">
-                    <div className="font-medium">{getTriggerLabel(trigger)}</div>
-                  </div>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Triggers Tab */}
+          <TabsContent value="triggers" className="mt-6">
+            <BuilderSection
+              title={t('automation:workflowTriggers', { defaultValue: '工作流触发器' })}
+              description={t('automation:workflowTriggersDesc', { defaultValue: '定义何时启动此工作流' })}
+              icon={<Clock className="h-4 w-4 text-yellow-500" />}
+            >
+              {/* Trigger Type Selector */}
+              <div className="mb-4">
+                <Label className="mb-2 block">{t('automation:addTrigger', { defaultValue: '添加触发器' })}</Label>
+                <div className="flex flex-wrap gap-2">
+                  {TRIGGER_TYPES.map((triggerType) => (
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => handleEditTrigger(index)}
+                      key={triggerType.type}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleAddTrigger(triggerType.type)}
+                      className="flex items-center gap-2"
                     >
-                      ✏️
+                      {triggerType.icon}
+                      <span>{t(triggerType.label)}</span>
                     </Button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Triggers List */}
+              <div className="space-y-2">
+                {formData.triggers.map((trigger, index) => (
+                  <div
+                    key={trigger.id}
+                    className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border group hover:bg-muted/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2 px-2 py-1 bg-background rounded">
+                      {getTriggerIcon(trigger.type)}
+                    </div>
+                    <div className="flex-1 font-medium">{getTriggerLabel(trigger)}</div>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        onClick={() => handleEditTrigger(index)}
+                      >
+                        <Edit3 className="h-3 w-3" />
+                      </Button>
+                      {formData.triggers.length > 1 && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => handleDeleteTrigger(index)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </BuilderSection>
+          </TabsContent>
+
+          {/* Variables Tab */}
+          <TabsContent value="variables" className="mt-6">
+            <BuilderSection
+              title={t('automation:variables', { defaultValue: '工作流变量' })}
+              description={t('automation:workflowVariablesDesc', { defaultValue: '定义可在工作流中使用的变量' })}
+              icon={<Database className="h-4 w-4 text-green-500" />}
+            >
+              {/* Add Variable */}
+              <div className="flex gap-2 mb-4">
+                <Input
+                  placeholder={t('automation:variableName', { defaultValue: '变量名' })}
+                  value={newVarName}
+                  onChange={(e) => setNewVarName(e.target.value)}
+                  className="font-mono"
+                />
+                <Input
+                  placeholder={t('automation:variableValue', { defaultValue: '变量值' })}
+                  value={newVarValue}
+                  onChange={(e) => setNewVarValue(e.target.value)}
+                />
+                <Button onClick={handleAddVariable} disabled={!newVarName.trim()}>
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Variables List */}
+              <div className="space-y-2">
+                {Object.entries(formData.variables).map(([key, value]) => (
+                  <div
+                    key={key}
+                    className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border"
+                  >
+                    <div className="flex-1 font-mono text-sm">
+                      <span className="text-blue-500">{key}</span>
+                      <span className="text-muted-foreground mx-2">=</span>
+                      <span>{JSON.stringify(value)}</span>
+                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-destructive"
-                      onClick={() => handleDeleteTrigger(index)}
+                      onClick={() => handleDeleteVariable(key)}
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </TabsContent>
-
-        {/* Variables Tab */}
-        <TabsContent value="variables" className="space-y-4">
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-semibold">{t('automation:variables')}</h3>
-              <Badge variant="outline">{Object.keys(formData.variables).length} variables</Badge>
-            </div>
-
-            {/* Add Variable */}
-            <div className="flex gap-2 mb-4">
-              <Input
-                placeholder={t('automation:variableName')}
-                value={newVarName}
-                onChange={(e) => setNewVarName(e.target.value)}
-              />
-              <Input
-                placeholder={t('automation:variableValue')}
-                value={newVarValue}
-                onChange={(e) => setNewVarValue(e.target.value)}
-              />
-              <Button onClick={handleAddVariable} disabled={!newVarName.trim()}>
-                <Plus className="h-4 w-4" />
-              </Button>
-            </div>
-
-            {/* Variables List */}
-            <div className="space-y-2">
-              {Object.entries(formData.variables).map(([key, value]) => (
-                <div
-                  key={key}
-                  className="flex items-center gap-2 p-3 bg-muted/30 rounded-lg border"
-                >
-                  <div className="flex-1 font-mono text-sm">
-                    <span className="text-blue-500">{key}</span>
-                    <span className="text-muted-foreground mx-2">=</span>
-                    <span>{JSON.stringify(value)}</span>
+                ))}
+                {Object.keys(formData.variables).length === 0 && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Lightbulb className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">{t('automation:noVariables', { defaultValue: '暂无变量' })}</p>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 text-destructive"
-                    onClick={() => handleDeleteVariable(key)}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
-              {Object.keys(formData.variables).length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  {t('automation:noVariables')}
-                </div>
-              )}
-            </div>
-          </Card>
-        </TabsContent>
-
-        {/* Settings Tab */}
-        <TabsContent value="settings" className="space-y-4">
-          <Card className="p-4">
-            <h3 className="font-semibold mb-4">{t('automation:workflowSettings')}</h3>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="timeout">{t('automation:timeoutSeconds')}</Label>
-                <Input
-                  id="timeout"
-                  type="number"
-                  value={formData.timeout_seconds}
-                  onChange={(e) => updateFormData({ timeout_seconds: parseInt(e.target.value) || 300 })}
-                  min={1}
-                  max={3600}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('automation:timeoutDesc')}
-                </p>
+                )}
               </div>
-            </div>
-          </Card>
-        </TabsContent>
-      </Tabs>
+            </BuilderSection>
+          </TabsContent>
+
+          {/* Settings Tab */}
+          <TabsContent value="settings" className="mt-6">
+            <BuilderSection
+              title={t('automation:workflowSettings', { defaultValue: '工作流设置' })}
+              icon={<SettingsIcon className="h-4 w-4 text-muted-foreground" />}
+            >
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="timeout">{t('automation:timeoutSeconds', { defaultValue: '超时时间（秒）' })}</Label>
+                  <Input
+                    id="timeout"
+                    type="number"
+                    value={formData.timeout_seconds}
+                    onChange={(e) => updateFormData({ timeout_seconds: parseInt(e.target.value) || 300 })}
+                    min={1}
+                    max={3600}
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {t('automation:timeoutDesc', { defaultValue: '工作流执行的最长时间，超时后将自动终止' })}
+                  </p>
+                </div>
+              </div>
+            </BuilderSection>
+          </TabsContent>
+        </Tabs>
+      </div>
 
       {/* Step Configuration Dialog */}
       <StepConfigDialog
@@ -826,20 +942,6 @@ export function WorkflowBuilder({ workflow, onSave, onCancel, resources }: Workf
         onSave={handleSaveTrigger}
         resources={resources}
       />
-    </div>
+    </FullScreenBuilder>
   )
 }
-
-// Import delay step type reference
-type DelayStep = import('@/types').DelayStep
-type SendAlertStep = import('@/types').SendAlertStep
-type LogStep = import('@/types').LogStep
-type ConditionStep = import('@/types').ConditionStep
-type ParallelStep = import('@/types').ParallelStep
-type HttpRequestStep = import('@/types').HttpRequestStep
-type SendCommandStep = import('@/types').SendCommandStep
-type DeviceQueryStep = import('@/types').DeviceQueryStep
-type WaitForDeviceStateStep = import('@/types').WaitForDeviceStateStep
-type CronTrigger = import('@/types').CronTrigger
-type EventTrigger = import('@/types').EventTrigger
-type DeviceTrigger = import('@/types').DeviceTrigger

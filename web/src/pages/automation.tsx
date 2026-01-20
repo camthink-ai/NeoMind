@@ -5,69 +5,25 @@
  * Uses PageLayout + PageTabs structure consistent with other pages.
  */
 
-import { useState, useMemo, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { useTranslation } from "react-i18next"
-import {
-  Zap,
-  Workflow,
-  GitBranch,
-  Edit,
-  Trash2,
-  Play,
-  MoreVertical,
-} from "lucide-react"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
-import { Button } from "@/components/ui/button"
-import { Badge } from "@/components/ui/badge"
-import { Switch } from "@/components/ui/switch"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { Card } from "@/components/ui/card"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
-import type { TransformAutomation } from "@/types"
+import type { TransformAutomation, Rule, Workflow as WorkflowType } from "@/types"
 
-// Import dialog components for creation/editing
-import { SimpleRuleBuilder } from "@/components/automation/SimpleRuleBuilder"
-import { TransformBuilder } from "@/components/automation/TransformBuilder"
-import { WorkflowBuilder } from "@/components/automation/WorkflowBuilder"
+// Import split-pane builder components
+import { SimpleRuleBuilderSplit } from "@/components/automation/SimpleRuleBuilderSplit"
+import { TransformBuilder as TransformBuilderSplit } from "@/components/automation/TransformBuilderSplit"
+import { WorkflowBuilderSplit } from "@/components/automation/WorkflowBuilderSplit"
+
+// Import list components
+import { RulesList } from "./automation-components/RulesList"
+import { WorkflowsList } from "./automation-components/WorkflowsList"
+import { TransformsList } from "./automation-components/TransformsList"
 
 type AutomationTab = 'rules' | 'workflows' | 'transforms'
-type AutomationStatus = 'enabled' | 'disabled' | 'error' | 'running'
-
-interface AutomationItem {
-  id: string
-  name: string
-  description: string
-  status: AutomationStatus
-  type: 'rule' | 'workflow' | 'transform'
-  triggerCount: number
-  lastTriggered?: string
-  icon: React.ReactNode
-  category?: string
-  complexity?: 'simple' | 'medium' | 'complex'
-}
 
 export function AutomationPage() {
   const { t: tCommon } = useTranslation('common')
@@ -75,20 +31,20 @@ export function AutomationPage() {
   const { toast } = useToast()
   const [activeTab, setActiveTab] = useState<AutomationTab>('rules')
 
-  // Dialog states
+  // Builder states
   const [showRuleDialog, setShowRuleDialog] = useState(false)
   const [showTransformDialog, setShowTransformDialog] = useState(false)
   const [showWorkflowDialog, setShowWorkflowDialog] = useState(false)
 
   // Editing states
-  const [editingRule, setEditingRule] = useState<any>(null)
-  const [editingTransform, setEditingTransform] = useState<TransformAutomation | null>(null)
-  const [editingWorkflow, setEditingWorkflow] = useState<any>(null)
+  const [editingRule, setEditingRule] = useState<Rule | undefined>(undefined)
+  const [editingTransform, setEditingTransform] = useState<TransformAutomation | undefined>(undefined)
+  const [editingWorkflow, setEditingWorkflow] = useState<WorkflowType | undefined>(undefined)
 
   // Data state
-  const [rules, setRules] = useState<any[]>([])
-  const [workflows, setWorkflows] = useState<any[]>([])
-  const [transforms, setTransforms] = useState<any[]>([])
+  const [rules, setRules] = useState<Rule[]>([])
+  const [workflows, setWorkflows] = useState<WorkflowType[]>([])
+  const [transforms, setTransforms] = useState<TransformAutomation[]>([])
   const [loading, setLoading] = useState(false)
 
   // Resources for dialogs
@@ -138,86 +94,37 @@ export function AutomationPage() {
     loadItems()
   }, [loadItems])
 
-  // Convert API data to display items
-  const displayItems = useMemo(() => {
-    const sourceItems = activeTab === 'rules' ? rules : activeTab === 'workflows' ? workflows : transforms
-
-    return sourceItems.map((item: any) => {
-      let complexity: 'simple' | 'medium' | 'complex' | undefined = undefined
-      if (item.complexity) {
-        if (item.complexity < 3) complexity = 'simple'
-        else if (item.complexity < 5) complexity = 'medium'
-        else complexity = 'complex'
-      }
-
-      return {
-        id: item.id,
-        name: item.name,
-        description: item.description || '',
-        status: item.enabled ? 'enabled' : 'disabled',
-        type: activeTab === 'rules' ? 'rule' : activeTab === 'workflows' ? 'workflow' : 'transform',
-        triggerCount: item.trigger_count || item.execution_count || 0,
-        lastTriggered: item.last_triggered || item.last_execution,
-        icon: activeTab === 'rules' ? <Zap className="h-4 w-4" /> :
-               activeTab === 'workflows' ? <Workflow className="h-4 w-4" /> :
-               <GitBranch className="h-4 w-4" />,
-        category: item.category,
-        complexity,
-      } as AutomationItem
-    })
-  }, [rules, workflows, transforms, activeTab])
-
   // Handlers
   const handleCreate = () => {
     if (activeTab === 'rules') {
-      setEditingRule(null)
+      setEditingRule(undefined)
       setShowRuleDialog(true)
     } else if (activeTab === 'workflows') {
-      setEditingWorkflow(null)
+      setEditingWorkflow(undefined)
       setShowWorkflowDialog(true)
     } else if (activeTab === 'transforms') {
-      setEditingTransform(null)
+      setEditingTransform(undefined)
       setShowTransformDialog(true)
     }
   }
 
-  const handleEdit = (item: AutomationItem) => {
-    if (activeTab === 'rules') {
-      const sourceItems = rules
-      const originalItem = sourceItems.find((i: any) => i.id === item.id)
-      setEditingRule(originalItem)
-      setShowRuleDialog(true)
-    } else if (activeTab === 'workflows') {
-      const sourceItems = workflows
-      const originalItem = sourceItems.find((i: any) => i.id === item.id)
-      setEditingWorkflow(originalItem)
-      setShowWorkflowDialog(true)
-    } else if (activeTab === 'transforms') {
-      const sourceItems = transforms
-      const originalItem = sourceItems.find((i: any) => i.id === item.id)
-      setEditingTransform(originalItem)
-      setShowTransformDialog(true)
-    }
+  // Rule handlers
+  const handleEditRule = (rule: Rule) => {
+    setEditingRule(rule)
+    setShowRuleDialog(true)
   }
 
-  const handleDelete = async (item: AutomationItem) => {
+  const handleDeleteRule = async (rule: Rule) => {
     if (!confirm(tAuto('deleteConfirm'))) return
-
     try {
-      if (activeTab === 'rules') {
-        await api.deleteRule(item.id)
-      } else if (activeTab === 'workflows') {
-        await api.deleteWorkflow(item.id)
-      } else if (activeTab === 'transforms') {
-        await api.deleteAutomation(item.id)
-      }
+      await api.deleteRule(rule.id)
       await loadItems()
       toast({
         title: tCommon('success'),
         description: tAuto('itemDeleted'),
       })
     } catch (error) {
-      console.error('Failed to delete item:', error)
+      console.error('Failed to delete rule:', error)
       toast({
         title: tCommon('failed'),
         description: (error as Error).message,
@@ -226,23 +133,16 @@ export function AutomationPage() {
     }
   }
 
-  const handleToggleStatus = async (item: AutomationItem) => {
+  const handleToggleRule = async (rule: Rule) => {
     try {
-      const newStatus = !item.status || item.status !== 'enabled'
-      if (activeTab === 'rules') {
-        if (newStatus) {
-          await api.enableRule(item.id)
-        } else {
-          await api.disableRule(item.id)
-        }
-      } else if (activeTab === 'workflows') {
-        await api.setAutomationStatus(item.id, newStatus)
-      } else if (activeTab === 'transforms') {
-        await api.setAutomationStatus(item.id, newStatus)
+      if (rule.enabled) {
+        await api.disableRule(rule.id)
+      } else {
+        await api.enableRule(rule.id)
       }
       await loadItems()
     } catch (error) {
-      console.error('Failed to toggle status:', error)
+      console.error('Failed to toggle rule:', error)
       toast({
         title: tCommon('failed'),
         description: (error as Error).message,
@@ -251,19 +151,15 @@ export function AutomationPage() {
     }
   }
 
-  const handleExecute = async (item: AutomationItem) => {
+  const handleExecuteRule = async (rule: Rule) => {
     try {
-      if (activeTab === 'rules') {
-        await api.testRule(item.id)
-      } else if (activeTab === 'workflows') {
-        await api.executeWorkflow(item.id)
-      }
+      await api.testRule(rule.id)
       toast({
         title: tCommon('success'),
         description: tAuto('executeSuccess'),
       })
     } catch (error) {
-      console.error('Failed to execute:', error)
+      console.error('Failed to execute rule:', error)
       toast({
         title: tCommon('failed'),
         description: (error as Error).message,
@@ -272,7 +168,102 @@ export function AutomationPage() {
     }
   }
 
-  // Rule save handler
+  // Workflow handlers
+  const handleEditWorkflow = (workflow: WorkflowType) => {
+    setEditingWorkflow(workflow)
+    setShowWorkflowDialog(true)
+  }
+
+  const handleDeleteWorkflow = async (workflow: WorkflowType) => {
+    if (!confirm(tAuto('deleteConfirm'))) return
+    try {
+      await api.deleteWorkflow(workflow.id)
+      await loadItems()
+      toast({
+        title: tCommon('success'),
+        description: tAuto('itemDeleted'),
+      })
+    } catch (error) {
+      console.error('Failed to delete workflow:', error)
+      toast({
+        title: tCommon('failed'),
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleToggleWorkflow = async (workflow: WorkflowType) => {
+    try {
+      await api.updateWorkflow(workflow.id, { enabled: !workflow.enabled })
+      await loadItems()
+    } catch (error) {
+      console.error('Failed to toggle workflow:', error)
+      toast({
+        title: tCommon('failed'),
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleExecuteWorkflow = async (workflow: WorkflowType) => {
+    try {
+      await api.executeWorkflow(workflow.id)
+      toast({
+        title: tCommon('success'),
+        description: tAuto('executeSuccess'),
+      })
+    } catch (error) {
+      console.error('Failed to execute workflow:', error)
+      toast({
+        title: tCommon('failed'),
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Transform handlers
+  const handleEditTransform = (transform: TransformAutomation) => {
+    setEditingTransform(transform)
+    setShowTransformDialog(true)
+  }
+
+  const handleDeleteTransform = async (transform: TransformAutomation) => {
+    if (!confirm(tAuto('deleteConfirm'))) return
+    try {
+      await api.deleteAutomation(transform.id)
+      await loadItems()
+      toast({
+        title: tCommon('success'),
+        description: tAuto('itemDeleted'),
+      })
+    } catch (error) {
+      console.error('Failed to delete transform:', error)
+      toast({
+        title: tCommon('failed'),
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  const handleToggleTransform = async (transform: TransformAutomation) => {
+    try {
+      await api.setAutomationStatus(transform.id, !transform.enabled)
+      await loadItems()
+    } catch (error) {
+      console.error('Failed to toggle transform:', error)
+      toast({
+        title: tCommon('failed'),
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    }
+  }
+
+  // Save handlers
   const handleSaveRule = async (rule: any) => {
     try {
       if (rule.id) {
@@ -281,7 +272,7 @@ export function AutomationPage() {
         await api.createRule(rule)
       }
       setShowRuleDialog(false)
-      setEditingRule(null)
+      setEditingRule(undefined)
       await loadItems()
       toast({
         title: tCommon('success'),
@@ -298,10 +289,8 @@ export function AutomationPage() {
     }
   }
 
-  // Transform save handler
   const handleSaveTransform = async (data: Partial<TransformAutomation>) => {
     try {
-      // Transform uses unified automation API
       if (editingTransform?.id) {
         await api.updateAutomation(editingTransform.id, {
           name: data.name,
@@ -329,7 +318,7 @@ export function AutomationPage() {
         })
       }
       setShowTransformDialog(false)
-      setEditingTransform(null)
+      setEditingTransform(undefined)
       await loadItems()
       toast({
         title: tCommon('success'),
@@ -346,7 +335,6 @@ export function AutomationPage() {
     }
   }
 
-  // Workflow save handler
   const handleSaveWorkflow = async (workflow: any) => {
     try {
       if (workflow.id) {
@@ -355,7 +343,7 @@ export function AutomationPage() {
         await api.createWorkflow(workflow)
       }
       setShowWorkflowDialog(false)
-      setEditingWorkflow(null)
+      setEditingWorkflow(undefined)
       await loadItems()
       toast({
         title: tCommon('success'),
@@ -370,39 +358,6 @@ export function AutomationPage() {
       })
       throw error
     }
-  }
-
-  const getStatusBadge = (status: AutomationStatus) => {
-    const variants: Record<AutomationStatus, { variant: string; label: string }> = {
-      enabled: { variant: 'default', label: tAuto('statusEnabled') },
-      disabled: { variant: 'secondary', label: tAuto('statusDisabled') },
-      error: { variant: 'destructive', label: tAuto('statusError') },
-      running: { variant: 'outline', label: tAuto('statusRunning') },
-    }
-    const { variant, label } = variants[status]
-    return <Badge variant={variant as any}>{label}</Badge>
-  }
-
-  const getEmptyState = () => {
-    const messages = {
-      rules: { title: tAuto('noRules'), desc: tAuto('noRulesDesc') },
-      workflows: { title: tAuto('noWorkflows'), desc: tAuto('noWorkflowsDesc') },
-      transforms: { title: tAuto('noTransforms'), desc: tAuto('noTransformsDesc') },
-    }
-    const msg = messages[activeTab]
-    return (
-      <Card className="p-12 text-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="p-4 rounded-full bg-muted">
-            {activeTab === 'rules' && <Zap className="h-8 w-8 text-muted-foreground" />}
-            {activeTab === 'workflows' && <Workflow className="h-8 w-8 text-muted-foreground" />}
-            {activeTab === 'transforms' && <GitBranch className="h-8 w-8 text-muted-foreground" />}
-          </div>
-          <h3 className="text-lg font-semibold">{msg.title}</h3>
-          <p className="text-muted-foreground">{msg.desc}</p>
-        </div>
-      </Card>
-    )
   }
 
   return (
@@ -432,198 +387,44 @@ export function AutomationPage() {
           },
         ]}
       >
-        {/* Content for each tab */}
+        {/* Rules Tab */}
         <PageTabsContent value="rules" activeTab={activeTab}>
-          {displayItems.length === 0 ? getEmptyState() : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12"></TableHead>
-                  <TableHead>{tAuto('ruleName')}</TableHead>
-                  <TableHead>{tCommon('description')}</TableHead>
-                  <TableHead>{tAuto('status')}</TableHead>
-                  <TableHead>{tAuto('triggerCount')}</TableHead>
-                  <TableHead>{tAuto('lastTriggered')}</TableHead>
-                  <TableHead className="text-right">{tCommon('actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {displayItems.map((item, index) => (
-                  <TableRow key={item.id}>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell className="text-muted-foreground max-w-md truncate">
-                      {item.description || '-'}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={item.status === 'enabled'}
-                          onCheckedChange={() => handleToggleStatus(item)}
-                        />
-                        {getStatusBadge(item.status)}
-                      </div>
-                    </TableCell>
-                    <TableCell>{item.triggerCount}</TableCell>
-                    <TableCell>{item.lastTriggered || '-'}</TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleEdit(item)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            {tCommon('edit')}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleExecute(item)}>
-                            <Play className="mr-2 h-4 w-4" />
-                            {tAuto('execute')}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleDelete(item)} className="text-destructive">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            {tCommon('delete')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <RulesList
+            rules={rules}
+            loading={loading}
+            onEdit={handleEditRule}
+            onDelete={handleDeleteRule}
+            onToggleStatus={handleToggleRule}
+            onExecute={handleExecuteRule}
+          />
         </PageTabsContent>
 
+        {/* Workflows Tab */}
         <PageTabsContent value="workflows" activeTab={activeTab}>
-          {displayItems.length === 0 ? getEmptyState() : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12"></TableHead>
-                  <TableHead>{tAuto('workflowName')}</TableHead>
-                  <TableHead>{tCommon('description')}</TableHead>
-                  <TableHead>{tAuto('status')}</TableHead>
-                  <TableHead>{tAuto('executionCount')}</TableHead>
-                  <TableHead>{tAuto('updatedAt')}</TableHead>
-                  <TableHead className="text-right">{tCommon('actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {displayItems.map((item, index) => (
-                  <TableRow key={item.id}>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell className="text-muted-foreground max-w-md truncate">
-                      {item.description || '-'}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={item.status === 'enabled'}
-                          onCheckedChange={() => handleToggleStatus(item)}
-                        />
-                        {getStatusBadge(item.status)}
-                      </div>
-                    </TableCell>
-                    <TableCell>{item.triggerCount}</TableCell>
-                    <TableCell>{item.lastTriggered || '-'}</TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleEdit(item)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            {tCommon('edit')}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleExecute(item)}>
-                            <Play className="mr-2 h-4 w-4" />
-                            {tAuto('execute')}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleDelete(item)} className="text-destructive">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            {tCommon('delete')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <WorkflowsList
+            workflows={workflows}
+            loading={loading}
+            onEdit={handleEditWorkflow}
+            onDelete={handleDeleteWorkflow}
+            onToggleStatus={handleToggleWorkflow}
+            onExecute={handleExecuteWorkflow}
+          />
         </PageTabsContent>
 
+        {/* Transforms Tab */}
         <PageTabsContent value="transforms" activeTab={activeTab}>
-          {displayItems.length === 0 ? getEmptyState() : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12"></TableHead>
-                  <TableHead>{tAuto('name')}</TableHead>
-                  <TableHead>{tAuto('scope')}</TableHead>
-                  <TableHead>{tCommon('description')}</TableHead>
-                  <TableHead>{tAuto('status')}</TableHead>
-                  <TableHead className="text-right">{tCommon('actions')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {displayItems.map((item, index) => (
-                  <TableRow key={item.id}>
-                    <TableCell>{index + 1}</TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{item.category || 'global'}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground max-w-md truncate">
-                      {item.description || '-'}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={item.status === 'enabled'}
-                          onCheckedChange={() => handleToggleStatus(item)}
-                        />
-                        {getStatusBadge(item.status)}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleEdit(item)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            {tCommon('edit')}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => handleDelete(item)} className="text-destructive">
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            {tCommon('delete')}
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
+          <TransformsList
+            transforms={transforms}
+            loading={loading}
+            onEdit={handleEditTransform}
+            onDelete={handleDeleteTransform}
+            onToggleStatus={handleToggleTransform}
+          />
         </PageTabsContent>
       </PageTabs>
 
       {/* Rule Builder Dialog */}
-      <SimpleRuleBuilder
+      <SimpleRuleBuilderSplit
         open={showRuleDialog}
         onOpenChange={setShowRuleDialog}
         rule={editingRule}
@@ -632,7 +433,7 @@ export function AutomationPage() {
       />
 
       {/* Transform Builder Dialog */}
-      <TransformBuilder
+      <TransformBuilderSplit
         open={showTransformDialog}
         onOpenChange={setShowTransformDialog}
         transform={editingTransform}
@@ -640,30 +441,14 @@ export function AutomationPage() {
         onSave={handleSaveTransform}
       />
 
-      {/* Workflow Builder Dialog */}
-      {showWorkflowDialog && (
-        <Dialog open={showWorkflowDialog} onOpenChange={setShowWorkflowDialog}>
-          <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col p-0 gap-0">
-            <DialogHeader className="px-6 pb-4 pt-6 border-t-0 border-x-0 border-b shrink-0">
-              <DialogTitle>
-                {editingWorkflow ? tAuto('editWorkflow') : tAuto('createWorkflow')}
-              </DialogTitle>
-              <DialogDescription>
-                {tAuto('workflowBuilderDesc')}
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="flex-1 min-h-0 overflow-auto px-6 py-4">
-              <WorkflowBuilder
-                workflow={editingWorkflow}
-                onSave={handleSaveWorkflow}
-                onCancel={() => setShowWorkflowDialog(false)}
-                resources={{ devices, metrics: ['temperature', 'humidity'], alertChannels: [] }}
-              />
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
+      {/* Workflow Builder */}
+      <WorkflowBuilderSplit
+        open={showWorkflowDialog}
+        onClose={() => setShowWorkflowDialog(false)}
+        workflow={editingWorkflow}
+        onSave={handleSaveWorkflow}
+        resources={{ devices, metrics: ['temperature', 'humidity'], alertChannels: [] }}
+      />
     </PageLayout>
   )
 }

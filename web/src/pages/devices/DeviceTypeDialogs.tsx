@@ -115,7 +115,6 @@ export function AddDeviceTypeDialog({
   // UI states
   const [formErrors, setFormErrors] = useState<FormErrors>({})
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
-  const [rawSamplesText, setRawSamplesText] = useState("")
 
   // AI generation states
   const [aiMetricsExample, setAiMetricsExample] = useState("")
@@ -130,12 +129,6 @@ export function AddDeviceTypeDialog({
       if (editDeviceType) {
         // Load existing data for edit mode
         setFormData(editDeviceType)
-        // Also load sample data as JSON string
-        if (editDeviceType.uplink_samples && editDeviceType.uplink_samples.length > 0) {
-          setRawSamplesText(editDeviceType.uplink_samples.map(s => JSON.stringify(s, null, 2)).join('\n'))
-        } else {
-          setRawSamplesText("")
-        }
       } else {
         // Reset to empty for add mode
         setFormData({
@@ -148,7 +141,6 @@ export function AddDeviceTypeDialog({
           commands: [],
           uplink_samples: [],
         })
-        setRawSamplesText("")
       }
 
       setFormErrors({})
@@ -424,8 +416,6 @@ export function AddDeviceTypeDialog({
               data={formData}
               onChange={updateField}
               errors={formErrors}
-              rawSamplesText={rawSamplesText}
-              onRawSamplesChange={setRawSamplesText}
               onGenerateMetrics={handleGenerateMetrics}
               aiExample={aiMetricsExample}
               onAiExampleChange={setAiMetricsExample}
@@ -660,8 +650,6 @@ interface DataDefinitionStepProps {
   data: Partial<DeviceType>
   onChange: <K extends keyof DeviceType>(field: K, value: DeviceType[K]) => void
   errors: FormErrors
-  rawSamplesText: string
-  onRawSamplesChange: (value: string) => void
   onGenerateMetrics: () => void
   aiExample: string
   onAiExampleChange: (value: string) => void
@@ -672,8 +660,6 @@ function DataDefinitionStep({
   data,
   onChange,
   errors,
-  rawSamplesText,
-  onRawSamplesChange,
   onGenerateMetrics,
   aiExample,
   onAiExampleChange,
@@ -716,20 +702,6 @@ function DataDefinitionStep({
   const removeMetric = (index: number) => {
     const metrics = data.metrics || []
     onChange('metrics', metrics.filter((_, i) => i !== index))
-  }
-
-  // Parse raw samples
-  const parseRawSamples = () => {
-    const lines = rawSamplesText.trim().split('\n').filter(l => l.trim())
-    const samples: Record<string, unknown>[] = []
-    for (const line of lines) {
-      try {
-        samples.push(JSON.parse(line))
-      } catch {
-        // Skip invalid JSON
-      }
-    }
-    onChange('uplink_samples', samples)
   }
 
   return (
@@ -875,29 +847,15 @@ function DataDefinitionStep({
         <div className="max-w-2xl mx-auto space-y-4">
           <div className="rounded-lg border bg-muted/30 p-6 text-center">
             <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-              <Zap className="h-6 w-6 text-muted-foreground" />
+              <Database className="h-6 w-6 text-muted-foreground" />
             </div>
             <h4 className="font-medium mb-2">Raw Data Mode</h4>
-            <p className="text-sm text-muted-foreground mb-4">
-              Payloads will be stored as-is without parsing. You can view raw data in device details.
+            <p className="text-sm text-muted-foreground mb-2">
+              遥测数据将按原样存储，不进行自动解析
             </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">
-              Sample Data for AI Reference (Optional)
-            </Label>
             <p className="text-xs text-muted-foreground">
-              This sample data helps the AI understand your payload structure when generating metrics or commands
+              适用于 16进制/二进制协议设备，可通过 Transforms 解码和提取指标
             </p>
-            <Textarea
-              value={rawSamplesText}
-              onChange={(e) => onRawSamplesChange(e.target.value)}
-              onBlur={parseRawSamples}
-              placeholder='{"temperature": 25.5, "humidity": 60, "battery": 85}\n{"temperature": 26.2, "humidity": 58, "battery": 82}'
-              rows={6}
-              className="font-mono text-sm"
-            />
           </div>
         </div>
       )}

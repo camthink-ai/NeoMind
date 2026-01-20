@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { LoadingState, EmptyStateInline, Pagination, BulkActionBar } from "@/components/shared"
+import { EmptyStateInline, Pagination, BulkActionBar } from "@/components/shared"
 import { Card } from "@/components/ui/card"
 import { Eye, Pencil, Trash2, Download } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -172,29 +172,28 @@ export function DeviceTypeList({
         onCancel={() => setSelectedIds(new Set())}
       />
 
-      {loading ? (
-        <LoadingState text={t('devices:types.loading')} />
-      ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead align="center" className="w-[50px]">
-                  <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
-                </TableHead>
-                <TableHead>{t('devices:types.headers.id')}</TableHead>
-                <TableHead>{t('devices:types.headers.name')}</TableHead>
-                <TableHead>{t('devices:types.headers.description')}</TableHead>
-                <TableHead align="center">{t('devices:types.headers.metrics')}</TableHead>
-                <TableHead align="center">{t('devices:types.headers.commands')}</TableHead>
-                <TableHead align="center">{t('automation:transforms', { defaultValue: 'Transforms' })}</TableHead>
-                <TableHead align="right">{t('devices:types.headers.actions')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {deviceTypes.length === 0 ? (
-                <EmptyStateInline title={t('devices:types.noTypes')} colSpan={8} />
-              ) : (
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead align="center" className="w-[50px]">
+                <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
+              </TableHead>
+              <TableHead>{t('devices:types.headers.id')}</TableHead>
+              <TableHead>{t('devices:types.headers.name')}</TableHead>
+              <TableHead>{t('devices:types.headers.description')}</TableHead>
+              <TableHead align="center">{t('devices:types.headers.metrics')}</TableHead>
+              <TableHead align="center">{t('devices:types.headers.commands')}</TableHead>
+              <TableHead align="center">{t('automation:transforms', { defaultValue: 'Transforms' })}</TableHead>
+              <TableHead align="right">{t('devices:types.headers.actions')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading ? (
+              <EmptyStateInline title={t('common:loading')} colSpan={8} />
+            ) : deviceTypes.length === 0 ? (
+              <EmptyStateInline title={t('devices:types.noTypes')} colSpan={8} />
+            ) : (
                 paginatedDeviceTypes.map((type) => (
                   <TableRow key={type.device_type} className={cn(selectedIds.has(type.device_type) && "bg-muted/50")}>
                     <TableCell align="center">
@@ -237,11 +236,10 @@ export function DeviceTypeList({
                     </TableCell>
                   </TableRow>
                 ))
-              )}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
+            )}
+          </TableBody>
+        </Table>
+      </Card>
 
       {deviceTypes.length > deviceTypesPerPage && (
         <div className="pt-4">

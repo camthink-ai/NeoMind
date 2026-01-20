@@ -296,6 +296,13 @@ fn convert_to_event_log(event: NeoTalkEvent, metadata: EventMetadata) -> Option<
             format!("Tool {} execution failed: {}", tool_name, error),
             Some(serde_json::to_value(event).ok()?),
         ),
+
+        // Custom events
+        NeoTalkEvent::Custom { event_type, .. } => (
+            EventSeverity::Info,
+            format!("Custom event: {}", event_type),
+            Some(serde_json::to_value(event).ok()?),
+        ),
     };
 
     Some(EventLog {

@@ -112,6 +112,24 @@ export function useEvents(options: UseEventsOptions = {}): UseEventsResult {
   const connectionRef = useRef<ReturnType<typeof import('@/lib/events').getEventsConnection> | null>(null)
   const maxEvents = DEFAULT_MAX_EVENTS
 
+  // Use refs to store latest callbacks without causing re-renders
+  const onEventRef = useRef(onEvent)
+  const onConnectedRef = useRef(onConnected)
+  const onErrorRef = useRef(onError)
+
+  // Update refs when callbacks change
+  useEffect(() => {
+    onEventRef.current = onEvent
+  }, [onEvent])
+
+  useEffect(() => {
+    onConnectedRef.current = onConnected
+  }, [onConnected])
+
+  useEffect(() => {
+    onErrorRef.current = onError
+  }, [onError])
+
   const clearEvents = useCallback(() => {
     setEvents([])
   }, [])
@@ -159,14 +177,14 @@ export function useEvents(options: UseEventsOptions = {}): UseEventsResult {
       unsubscribeConnection = connection.onConnection((connected: boolean) => {
         if (isMounted) {
           setIsConnected(connected)
-          onConnected?.(connected)
+          onConnectedRef.current?.(connected)
         }
       })
 
       // Subscribe to errors
       unsubscribeError = connection.onError((error: unknown) => {
         if (isMounted) {
-          onError?.(error instanceof Error ? error : new Error(String(error)))
+          onErrorRef.current?.(error instanceof Error ? error : new Error(String(error)))
         }
       })
 
@@ -178,7 +196,7 @@ export function useEvents(options: UseEventsOptions = {}): UseEventsResult {
             // Keep only the most recent events
             return newEvents.slice(-maxEvents)
           })
-          onEvent?.(event)
+          onEventRef.current?.(event)
         }
       })
     }).catch((err) => {
@@ -192,7 +210,7 @@ export function useEvents(options: UseEventsOptions = {}): UseEventsResult {
       unsubscribeError?.()
       unsubscribeEvent?.()
     }
-  }, [category, eventTypes, useSSE, enabled, maxEvents, onConnected, onError, onEvent])
+  }, [category, eventTypes, useSSE, enabled, maxEvents])
 
   return {
     isConnected,
