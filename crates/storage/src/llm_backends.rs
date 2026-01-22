@@ -58,6 +58,9 @@ pub struct LlmBackendInstance {
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
 
+    #[serde(default = "default_top_k")]
+    pub top_k: usize,
+
     /// Enable thinking/reasoning mode for models that support it
     #[serde(default = "default_thinking_enabled")]
     pub thinking_enabled: bool,
@@ -133,11 +136,15 @@ impl ConnectionTestResult {
 }
 
 fn default_temperature() -> f32 {
-    0.7
+    0.6  // Lowered for faster, more focused responses
 }
 
 fn default_top_p() -> f32 {
-    0.9
+    0.85  // Lowered to reduce thinking time
+}
+
+fn default_top_k() -> usize {
+    20  // Significantly reduced for faster sampling
 }
 
 fn default_max_tokens() -> usize {
@@ -226,6 +233,7 @@ impl LlmBackendInstance {
             temperature: default_temperature(),
             top_p: default_top_p(),
             max_tokens: default_max_tokens(),
+            top_k: default_top_k(),
             thinking_enabled: default_thinking_enabled(),
             capabilities,
             updated_at: Utc::now().timestamp(),

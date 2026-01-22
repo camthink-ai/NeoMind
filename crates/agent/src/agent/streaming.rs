@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 
 use super::staged::{IntentCategory, IntentClassifier};
 use super::tool_parser::parse_tool_calls;
-use super::types::{AgentEvent, AgentInternalState, AgentMessage, ToolCall};
+use super::types::{AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, ToolCall};
 use crate::error::{AgentError, Result};
 use crate::llm::LlmInterface;
 
@@ -710,6 +710,7 @@ fn compact_tool_results_stream(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                     tool_call_id: None,
                     tool_call_name: None,
                     thinking: None, // Never keep thinking in compacted messages
+                    images: None,
                     timestamp: msg.timestamp,
                 });
             }
@@ -1292,6 +1293,7 @@ pub async fn process_stream_events_with_safeguards(
                             break;
                         }
 
+                        // Add text to buffer
                         buffer.push_str(&text);
 
                         // Check for tool calls in buffer (support both XML and JSON formats)
@@ -1332,39 +1334,48 @@ pub async fn process_stream_events_with_safeguards(
 
                             // Update buffer with remaining content
                             buffer = remaining.to_string();
-                        } else if let Some(tool_start) = buffer.find("<tool_calls>") {
-                            let before_tool = &buffer[..tool_start];
-                            if !before_tool.is_empty() {
-                                content_before_tools.push_str(before_tool);
-                                yield AgentEvent::content(before_tool.to_string());
-                            }
+                        } else {
+                            // No JSON tool calls detected - check for XML format
+                            if let Some(tool_start) = buffer.find("<tool_calls>") {
+                                let before_tool = &buffer[..tool_start];
+                                if !before_tool.is_empty() {
+                                    content_before_tools.push_str(before_tool);
+                                    yield AgentEvent::content(before_tool.to_string());
+                                }
 
-                            if let Some(tool_end) = buffer.find("</tool_calls>") {
-                                let tool_content = buffer[tool_start..tool_end + 13].to_string();
-                                buffer = buffer[tool_end + 13..].to_string();
+                                if let Some(tool_end) = buffer.find("</tool_calls>") {
+                                    let tool_content = buffer[tool_start..tool_end + 13].to_string();
+                                    buffer = buffer[tool_end + 13..].to_string();
 
-                                if let Ok((_, calls)) = parse_tool_calls(&tool_content) {
-                                    let mut duplicate_found = false;
-                                    for call in &calls {
-                                        if recently_executed_tools.contains(&call.name) {
-                                            tracing::warn!(
-                                                "Tool '{}' was recently executed - potential loop detected",
-                                                call.name
-                                            );
-                                            yield AgentEvent::error(format!(
-                                                "Tool '{}' was recently executed. To prevent infinite loops, please try a different approach.",
-                                                call.name
-                                            ));
-                                            duplicate_found = true;
-                                            tool_calls.clear();
-                                            break;
+                                    if let Ok((_, calls)) = parse_tool_calls(&tool_content) {
+                                        let mut duplicate_found = false;
+                                        for call in &calls {
+                                            if recently_executed_tools.contains(&call.name) {
+                                                tracing::warn!(
+                                                    "Tool '{}' was recently executed - potential loop detected",
+                                                    call.name
+                                                );
+                                                yield AgentEvent::error(format!(
+                                                    "Tool '{}' was recently executed. To prevent infinite loops, please try a different approach.",
+                                                    call.name
+                                                ));
+                                                duplicate_found = true;
+                                                tool_calls.clear();
+                                                break;
+                                            }
+                                        }
+
+                                        if !duplicate_found {
+                                            tool_calls_detected = true;
+                                            tool_calls.extend(calls);
                                         }
                                     }
-
-                                    if !duplicate_found {
-                                        tool_calls_detected = true;
-                                        tool_calls.extend(calls);
-                                    }
+                                }
+                            } else {
+                                // No tool calls detected in this chunk - yield the content immediately
+                                // This ensures real-time streaming even when no tools are being called
+                                if !text.is_empty() {
+                                    yield AgentEvent::content(text.clone());
                                 }
                             }
                         }
@@ -1729,7 +1740,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     let mut parts = vec![ContentPart::text(&user_message)];
 
     // Add images as ContentPart
-    for image_data in images {
+    for image_data in &images {
         if image_data.starts_with("data:image/") {
             if let Some(base64_part) = image_data.split(',').nth(1) {
                 // Extract mime type from data URL
@@ -1780,15 +1791,42 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         edge_ai_core::Content::Parts(parts),
     );
 
-    // Disable thinking for multimodal by default for faster responses
+    // Use regular multimodal chat (with thinking enabled)
+    // Thinking helps the model analyze images more thoroughly
     let stream_result = llm_interface
-        .chat_stream_multimodal_no_thinking_with_history(multimodal_user_msg, &history_for_llm)
+        .chat_stream_multimodal_with_history(multimodal_user_msg, &history_for_llm)
         .await;
 
     let stream = stream_result.map_err(|e| AgentError::Llm(e.to_string()))?;
 
-    // Store user message in history (text only, as images can't be persisted efficiently)
-    let user_msg = AgentMessage::user(&user_message);
+    // Check if images are present (before moving images)
+    let has_images = !images.is_empty();
+
+    // Store user message in history with images
+    // Convert the image strings to AgentMessageImage
+    let user_images: Vec<AgentMessageImage> = images
+        .into_iter()
+        .map(|data_url| {
+            // Extract mime type from data URL if available
+            let mime_type = if data_url.contains("data:image/jpeg") {
+                Some("image/jpeg".to_string())
+            } else if data_url.contains("data:image/png") {
+                Some("image/png".to_string())
+            } else if data_url.contains("data:image/webp") {
+                Some("image/webp".to_string())
+            } else if data_url.contains("data:image/gif") {
+                Some("image/gif".to_string())
+            } else {
+                None
+            };
+            AgentMessageImage {
+                data: data_url,
+                mime_type,
+            }
+        })
+        .collect();
+
+    let user_msg = AgentMessage::user_with_images(&user_message, user_images);
     internal_state.write().await.push_message(user_msg);
 
     Ok(Box::pin(async_stream::stream! {
@@ -1797,14 +1835,15 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         let mut tool_calls_detected = false;
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut content_before_tools = String::new();
-        let has_images = true;
 
         let stream_start = Instant::now();
         let mut last_event_time = Instant::now();
 
-        // Simple progress event
-        yield AgentEvent::progress("正在分析图像...", "analyzing", 0);
-        last_event_time = Instant::now();
+        // Simple progress event (only for images)
+        if has_images {
+            yield AgentEvent::progress("正在分析图像...", "analyzing", 0);
+            last_event_time = Instant::now();
+        }
 
         // Stream the response
         while let Some(result) = StreamExt::next(&mut stream).await {
@@ -1852,20 +1891,28 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         }
 
                         buffer = remaining.to_string();
-                    } else if let Some(tool_start) = buffer.find("<tool_calls>") {
-                        let before_tool = &buffer[..tool_start];
-                        if !before_tool.is_empty() {
-                            content_before_tools.push_str(before_tool);
-                            yield AgentEvent::content(before_tool.to_string());
-                        }
+                    } else {
+                        // No JSON tool calls detected - check for XML format
+                        if let Some(tool_start) = buffer.find("<tool_calls>") {
+                            let before_tool = &buffer[..tool_start];
+                            if !before_tool.is_empty() {
+                                content_before_tools.push_str(before_tool);
+                                yield AgentEvent::content(before_tool.to_string());
+                            }
 
-                        if let Some(tool_end) = buffer.find("</tool_calls>") {
-                            let tool_content = buffer[tool_start..tool_end + 13].to_string();
-                            buffer = buffer[tool_end + 13..].to_string();
+                            if let Some(tool_end) = buffer.find("</tool_calls>") {
+                                let tool_content = buffer[tool_start..tool_end + 13].to_string();
+                                buffer = buffer[tool_end + 13..].to_string();
 
-                            if let Ok((_, calls)) = parse_tool_calls(&tool_content) {
-                                tool_calls_detected = true;
-                                tool_calls.extend(calls);
+                                if let Ok((_, calls)) = parse_tool_calls(&tool_content) {
+                                    tool_calls_detected = true;
+                                    tool_calls.extend(calls);
+                                }
+                            }
+                        } else {
+                            // No tool calls detected - yield content immediately for real-time streaming
+                            if !text.is_empty() {
+                                yield AgentEvent::content(text.clone());
                             }
                         }
                     }
@@ -1991,8 +2038,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // Phase 2: Generate follow-up response (no tools, no thinking)
             tracing::info!("Phase 2: Generating follow-up response (multimodal)");
 
+            // Note: The history includes the user's image (if provided), so the model
+            // can see and analyze it in this follow-up response.
             let followup_stream_result = llm_interface.chat_stream_no_tools_no_thinking_with_history(
-                "请根据工具执行结果生成简洁的回复。", &history_messages
+                "用户可能上传了图片。请结合工具执行结果和图片内容（如有）生成简洁、有用的回复。", &history_messages
             ).await;
 
             let followup_stream = match followup_stream_result {

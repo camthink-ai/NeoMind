@@ -194,11 +194,25 @@ export function UniversalPluginConfigDialog({
       setNewInstanceName("")
       setSelectedModel("")
 
-      // Reset to default capabilities
-      if (pluginType.type === "llm_backend") {
+      // If editing, load existing capabilities
+      if (editingInstance && (editingInstance as any).capabilities) {
+        const existingCaps = (editingInstance as any).capabilities
+        setDetectedCapabilities({
+          supports_multimodal: existingCaps.supports_multimodal ?? false,
+          supports_thinking: existingCaps.supports_thinking ?? false,
+          supports_tools: existingCaps.supports_tools ?? true,
+          max_context: existingCaps.max_context ?? 8192,
+        })
+        // If it's Ollama and we're editing, also fetch models
         if (pluginType.id === "ollama") {
+          fetchOllamaModels()
+        }
+      } else if (pluginType.type === "llm_backend") {
+        // Reset to default capabilities for new instances
+        if (pluginType.id === "ollama") {
+          // Ollama default - will be updated when user selects a model
           setDetectedCapabilities({
-            supports_multimodal: false,
+            supports_multimodal: false,  // Will be detected from selected model
             supports_thinking: true,
             supports_tools: true,
             max_context: 8192,
@@ -222,7 +236,7 @@ export function UniversalPluginConfigDialog({
         }
       }
     }
-  }, [open, pluginType.id, pluginType.type, fetchOllamaModels])
+  }, [open, pluginType.id, pluginType.type, fetchOllamaModels, editingInstance])
 
   // Handle model selection change
   const handleModelChange = (modelName: string) => {
@@ -264,13 +278,16 @@ export function UniversalPluginConfigDialog({
 
     setSaving(true)
     try {
-      // For LLM backends, add capabilities (auto-detected for Ollama)
-      const configWithCaps = pluginType.type === "llm_backend"
-        ? {
-            ...values,
-            capabilities: detectedCapabilities,
-          }
-        : values
+      // For LLM backends, add capabilities (auto-detected for Ollama) and model for Ollama
+      let configWithCaps = values
+      if (pluginType.type === "llm_backend") {
+        configWithCaps = {
+          ...values,
+          capabilities: detectedCapabilities,
+          // For Ollama, include the selected model from the dropdown
+          ...(isOllamaBackend && selectedModel ? { model: selectedModel } : {}),
+        }
+      }
 
       await onCreate(newInstanceName.trim(), configWithCaps)
       toast({
@@ -298,13 +315,16 @@ export function UniversalPluginConfigDialog({
 
     setSaving(true)
     try {
-      // For LLM backends, add capabilities
-      const configWithCaps = pluginType.type === "llm_backend"
-        ? {
-            ...values,
-            capabilities: detectedCapabilities,
-          }
-        : values
+      // For LLM backends, add capabilities and model for Ollama
+      let configWithCaps = values
+      if (pluginType.type === "llm_backend") {
+        configWithCaps = {
+          ...values,
+          capabilities: detectedCapabilities,
+          // For Ollama, include the selected model from the dropdown
+          ...(isOllamaBackend && selectedModel ? { model: selectedModel } : {}),
+        }
+      }
 
       await onUpdate(editingInstance.id, configWithCaps)
       toast({
@@ -392,6 +412,20 @@ export function UniversalPluginConfigDialog({
   const getConfigSchema = () => {
     const schema = { ...pluginType.config_schema }
 
+    // For Ollama backend, exclude the model field from the schema since it's handled by the specialized selector above
+    if (isOllamaBackend && schema.properties?.model) {
+      const { model, ...restProperties } = schema.properties
+      schema.properties = restProperties
+      // Also remove model from required array if present
+      if (schema.required) {
+        schema.required = schema.required.filter((field: string) => field !== 'model')
+      }
+      // Update field_order in ui_hints if present
+      if (schema.ui_hints?.field_order) {
+        schema.ui_hints.field_order = schema.ui_hints.field_order.filter((field: string) => field !== 'model')
+      }
+    }
+
     // If editing, populate default values from existing config
     if (editingInstance && editingInstance.config) {
       if (!schema.properties) schema.properties = {}
@@ -403,11 +437,6 @@ export function UniversalPluginConfigDialog({
           }
         }
       }
-    }
-
-    // Pre-fill model if selected from Ollama models
-    if (selectedModel && schema.properties?.model) {
-      (schema.properties.model as any).default = selectedModel
     }
 
     return schema

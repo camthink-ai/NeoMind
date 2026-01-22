@@ -14,14 +14,13 @@ import type { Message } from '@/types'
  * The backend may split assistant responses into multiple messages:
  * - First message: thinking + tool_calls (without content)
  * - Second message: content only
+ * - Sometimes: multiple content chunks that should be combined
  *
  * This function merges them back into a single message for display.
  * Also filters out internal tool role messages.
  */
 function mergeAssistantMessages(messages: Message[]): Message[] {
   const result: Message[] = []
-  // Removed time window constraint - merge based on message structure and position
-  // This handles cases where timestamps might differ due to processing delays
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]
@@ -42,21 +41,39 @@ function mergeAssistantMessages(messages: Message[]): Message[] {
       }
 
       // Check if next message is also an assistant message
-      if (nextMsg.role === 'assistant' && shouldMergeMessages(msg, nextMsg)) {
-        // Merge the two messages
-        result.push({
-          ...msg,
-          content: msg.content + (nextMsg.content || ''),
-          // Keep tool_calls, thinking from the first message (it usually has them)
-          tool_calls: msg.tool_calls || nextMsg.tool_calls,
-          thinking: msg.thinking || nextMsg.thinking,
-          // Use the earlier timestamp
-          timestamp: msg.timestamp,
-          id: msg.id, // Keep the first message's ID
-        })
-        // Skip the next message since we merged it
-        i++
-        continue
+      if (nextMsg.role === 'assistant') {
+        // Merge logic: if they should be merged based on content structure
+        if (shouldMergeMessages(msg, nextMsg)) {
+          // Merge the two messages
+          result.push({
+            ...msg,
+            content: msg.content + (nextMsg.content || ''),
+            // Keep tool_calls, thinking from the first message (it usually has them)
+            tool_calls: msg.tool_calls || nextMsg.tool_calls,
+            thinking: msg.thinking || nextMsg.thinking,
+            // Use the earlier timestamp
+            timestamp: msg.timestamp,
+            id: msg.id, // Keep the first message's ID
+          })
+          // Skip the next message since we merged it
+          i++
+          continue
+        } else if (msg.content && !msg.tool_calls && !msg.thinking) {
+          // Special case: first message is plain content without tools/thinking
+          // If next message has tools/thinking, this is a split response - merge them
+          if (nextMsg.tool_calls || nextMsg.thinking) {
+            result.push({
+              ...msg,
+              content: msg.content + (nextMsg.content || ''),
+              tool_calls: nextMsg.tool_calls,
+              thinking: nextMsg.thinking,
+              timestamp: msg.timestamp,
+              id: msg.id,
+            })
+            i++
+            continue
+          }
+        }
       }
     }
 

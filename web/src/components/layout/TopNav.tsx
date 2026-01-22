@@ -20,7 +20,6 @@ import {
   Bell,
   Menu,
   X,
-  Bot,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -40,7 +39,7 @@ import {
 import { ThemeToggle } from "./ThemeToggle"
 import { useState } from "react"
 
-type PageType = "dashboard" | "devices" | "automation" | "agents" | "events" | "plugins" | "settings"
+type PageType = "dashboard" | "devices" | "automation" | "events" | "plugins" | "settings"
 
 interface NavItem {
   id: PageType
@@ -52,7 +51,6 @@ const navItems: NavItem[] = [
   { id: "dashboard", labelKey: "nav.dashboard", icon: MessageSquare },
   { id: "devices", labelKey: "nav.devices", icon: Cpu },
   { id: "automation", labelKey: "nav.automation", icon: Workflow },
-  { id: "agents", labelKey: "nav.agents", icon: Bot },
   { id: "events", labelKey: "nav.events", icon: Bell },
   { id: "plugins", labelKey: "nav.plugins", icon: Puzzle },
   { id: "settings", labelKey: "nav.settings", icon: Settings },

@@ -976,6 +976,10 @@ pub struct DraftDevice {
     /// This is the telemetry topic that the device publishes to
     #[serde(default)]
     pub original_topic: Option<String>,
+    /// Adapter ID that handles this device (e.g., "external-broker_xxx")
+    /// For external brokers, this points to the correct MQTT adapter
+    #[serde(default)]
+    pub adapter_id: Option<String>,
     /// Current status
     pub status: DraftDeviceStatus,
     /// Collected data samples
@@ -1121,6 +1125,7 @@ impl DraftDevice {
             user_description: None,
             auto_approve: false,
             is_binary: false,
+            adapter_id: None,
         }
     }
 

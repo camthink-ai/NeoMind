@@ -285,6 +285,21 @@ function generateRuleDSL(
   return lines.join('\n')
 }
 
+// Parse FOR clause from DSL to get duration and unit
+function parseForClauseFromDSL(dsl?: string): { duration: number; unit: 'seconds' | 'minutes' | 'hours' } | null {
+  if (!dsl) return null
+
+  // Match FOR clause: FOR <number> <unit>
+  const forMatch = dsl.match(/^FOR\s+(\d+)\s+(seconds|minutes|hours)$/m)
+  if (forMatch) {
+    const duration = parseInt(forMatch[1], 10)
+    const unit = forMatch[2] as 'seconds' | 'minutes' | 'hours'
+    return { duration, unit }
+  }
+
+  return null
+}
+
 // Convert RuleCondition to DSL string
 function conditionToDSL(cond: RuleCondition): string {
   // Check for logical operators (and/or/not)
@@ -389,6 +404,15 @@ export function SimpleRuleBuilderSplit({
         setActions(rule.actions)
       } else {
         setActions([])
+      }
+      // Parse FOR clause from DSL
+      const forClause = parseForClauseFromDSL(rule.dsl)
+      if (forClause) {
+        setForDuration(forClause.duration)
+        setForUnit(forClause.unit)
+      } else {
+        setForDuration(0)
+        setForUnit('minutes')
       }
     } else if (open) {
       resetForm()

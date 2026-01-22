@@ -346,11 +346,14 @@ fn default_external_broker_enabled() -> bool {
 }
 
 fn default_external_broker_subscribe_topics() -> Vec<String> {
-    vec!["#".to_string()] // Default to subscribe to all topics
+    // Note: Many public brokers (EMQX, HiveMQ, etc.) reject "#" for security.
+    // Use common topic prefixes instead. User can customize as needed.
+    vec!["sensor/#".to_string(), "device/#".to_string(), "tele/#".to_string()]
 }
 
 fn is_default_subscribe_topics(topics: &[String]) -> bool {
-    topics.len() == 1 && topics.first() == Some(&"#".to_string())
+    let default = default_external_broker_subscribe_topics();
+    topics.len() == default.len() && topics.iter().zip(default.iter()).all(|(a, b)| a == b)
 }
 
 impl ExternalBroker {

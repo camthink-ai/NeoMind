@@ -517,7 +517,18 @@ impl SemanticInference {
                 .or(semantic.recommended_unit.clone());
 
             // Strip $. prefix from path for consistency with manual definitions
-            let metric_path = path_info.path.strip_prefix("$.").unwrap_or(&path_info.path);
+            // Handle various edge cases: "$.key", "$. key", "$.key.subkey"
+            let metric_path = if path_info.path.starts_with("$.") {
+                // Remove "$." or "$." (with potential space) prefix
+                let rest = path_info.path[2..].trim_start();
+                if rest.is_empty() {
+                    &path_info.path
+                } else {
+                    rest
+                }
+            } else {
+                &path_info.path
+            };
 
             let metric = DiscoveredMetric {
                 name: semantic.standard_name.clone(),
@@ -544,7 +555,13 @@ impl SemanticInference {
         // Create a single "sensors" array metric instead
         for parent_path in array_parent_paths {
             // Convert JSONPath format to field name (remove $. prefix)
-            let field_name = parent_path.strip_prefix("$.").unwrap_or(&parent_path);
+            // Handle edge cases: "$.key", "$. key", etc.
+            let field_name = if parent_path.starts_with("$.") {
+                let rest = parent_path[2..].trim_start();
+                if rest.is_empty() { &parent_path } else { rest }
+            } else {
+                &parent_path
+            };
 
             // Collect array samples from original data
             let mut array_samples = Vec::new();
@@ -1093,7 +1110,13 @@ impl SemanticInference {
 
     /// Navigate to a path in a JSON value
     fn navigate_to_path(value: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
-        let path = path.strip_prefix("$.").unwrap_or(path);
+        // Strip $. prefix with whitespace handling
+        let path = if path.starts_with("$.") {
+            let rest = path[2..].trim_start();
+            if rest.is_empty() { path } else { rest }
+        } else {
+            path
+        };
         let parts: Vec<&str> = path.split('.').collect();
 
         let mut current = value;

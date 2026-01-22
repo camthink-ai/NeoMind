@@ -91,7 +91,7 @@ pub use vector::{
     Embedding, PersistentVectorStore, SearchResult, SimilarityMetric, VectorDocument, VectorStore,
 };
 
-pub use session::{SessionMessage, SessionMetadata, SessionStore};
+pub use session::{SessionMessage, SessionMessageImage, SessionMetadata, SessionStore};
 
 pub use multimodal::{DocumentMetadata, ImageMetadata, MultimodalStore};
 

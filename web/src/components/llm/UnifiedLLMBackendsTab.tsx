@@ -135,11 +135,16 @@ function toPluginInstance(instance: LlmBackendInstance, activeId: string | null)
       // Note: api_key is not returned by the API for security
       temperature: instance.temperature,
       top_p: instance.top_p,
+      top_k: instance.top_k,
       max_tokens: instance.max_tokens,
+      // Include capabilities so they can be accessed in the dialog
+      capabilities: instance.capabilities,
     },
     status: {
       active: instance.id === activeId,
     },
+    // Store capabilities at top level for easier access
+    capabilities: instance.capabilities,
   }
 }
 
@@ -204,6 +209,7 @@ export function UnifiedLLMBackendsTab({
       api_key: config.api_key as string,
       temperature: config.temperature as number,
       top_p: config.top_p as number,
+      top_k: config.top_k as number || 20,  // Default to 20 for faster responses
       capabilities: config.capabilities as BackendCapabilities | undefined,
     }
     return await onCreateBackend(data)
@@ -218,6 +224,7 @@ export function UnifiedLLMBackendsTab({
       api_key: config.api_key as string,
       temperature: config.temperature as number,
       top_p: config.top_p as number,
+      top_k: config.top_k as number,
       capabilities: config.capabilities as BackendCapabilities | undefined,
     }
     await onUpdateBackend(id, data)

@@ -56,6 +56,10 @@ pub struct CreateBackendRequest {
     #[serde(default = "default_top_p")]
     pub top_p: f32,
 
+    /// Top-K sampling (0 = disabled)
+    #[serde(default = "default_top_k")]
+    pub top_k: Option<usize>,
+
     /// Enable thinking/reasoning mode for models that support it
     #[serde(default = "default_thinking_enabled")]
     pub thinking_enabled: bool,
@@ -66,10 +70,13 @@ pub struct CreateBackendRequest {
 }
 
 fn default_temperature() -> f32 {
-    0.7
+    0.6  // Lowered for faster responses
 }
 fn default_top_p() -> f32 {
-    0.9
+    0.85  // Lowered to reduce thinking time
+}
+fn default_top_k() -> Option<usize> {
+    Some(20)  // Lowered for faster sampling
 }
 fn default_max_tokens() -> usize {
     usize::MAX
@@ -99,6 +106,9 @@ pub struct UpdateBackendRequest {
     /// Top-P sampling
     pub top_p: Option<f32>,
 
+    /// Top-K sampling
+    pub top_k: Option<usize>,
+
     /// Enable thinking/reasoning mode for models that support it
     pub thinking_enabled: Option<bool>,
 
@@ -119,6 +129,7 @@ pub struct BackendInstanceDto {
     pub is_active: bool,
     pub temperature: f32,
     pub top_p: f32,
+    pub top_k: usize,
     pub max_tokens: usize,
     pub thinking_enabled: bool,
     pub capabilities: BackendCapabilities,
@@ -140,6 +151,7 @@ impl From<LlmBackendInstance> for BackendInstanceDto {
             is_active: instance.is_active,
             temperature: instance.temperature,
             top_p: instance.top_p,
+            top_k: instance.top_k,
             max_tokens: instance.max_tokens,
             thinking_enabled: instance.thinking_enabled,
             capabilities: instance.capabilities,
@@ -322,9 +334,12 @@ pub async fn create_backend_handler(
     let id = LlmBackendStore::generate_id(&req.backend_type);
 
     // Use provided capabilities or get defaults for the backend type
-    let capabilities = req
+    let mut capabilities = req
         .capabilities
         .unwrap_or_else(|| get_default_capabilities(&backend_type));
+
+    // Adjust capabilities based on actual model name
+    adjust_capabilities_for_model(&req.model, &mut capabilities);
 
     let instance = LlmBackendInstance {
         id: id.clone(),
@@ -337,6 +352,7 @@ pub async fn create_backend_handler(
         temperature: req.temperature,
         top_p: req.top_p,
         max_tokens: default_max_tokens(),
+        top_k: req.top_k.unwrap_or(20),  // Default to 20 for faster responses
         thinking_enabled: req.thinking_enabled,
         capabilities,
         updated_at: chrono::Utc::now().timestamp(),
@@ -382,7 +398,9 @@ pub async fn update_backend_handler(
         instance.endpoint = Some(endpoint);
     }
     if let Some(model) = req.model {
-        instance.model = model;
+        instance.model = model.clone();
+        // Re-detect capabilities when model changes
+        adjust_capabilities_for_model(&model, &mut instance.capabilities);
     }
     if let Some(api_key) = req.api_key {
         instance.api_key = Some(api_key);
@@ -396,7 +414,9 @@ pub async fn update_backend_handler(
     if let Some(thinking_enabled) = req.thinking_enabled {
         instance.thinking_enabled = thinking_enabled;
     }
-    if let Some(capabilities) = req.capabilities {
+    if let Some(mut capabilities) = req.capabilities {
+        // Adjust capabilities based on model name
+        adjust_capabilities_for_model(&instance.model, &mut capabilities);
         instance.capabilities = capabilities;
     }
     instance.updated_at = chrono::Utc::now().timestamp();
@@ -654,21 +674,26 @@ pub async fn get_backend_stats_handler(
 ///
 /// Returns the list of available models from the specified Ollama server,
 /// along with their detected capabilities (multimodal, thinking, tools, etc.)
+///
+/// Uses /api/show endpoint to get accurate capabilities from Ollama's response.
+/// The capabilities field contains "vision" for multimodal models.
 pub async fn list_ollama_models_handler(
     Query(params): Query<OllamaModelsQuery>,
 ) -> HandlerResult<serde_json::Value> {
     use reqwest::Client;
 
     let endpoint = params.endpoint.unwrap_or_else(|| "http://localhost:11434".to_string());
-    let url = format!("{}/api/tags", endpoint.trim_end_matches('/'));
+    let base_url = endpoint.trim_end_matches('/');
 
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| ErrorResponse::internal(format!("Failed to create HTTP client: {}", e)))?;
 
+    // First, get the list of models from /api/tags
+    let tags_url = format!("{}/api/tags", base_url);
     let response = client
-        .get(&url)
+        .get(&tags_url)
         .send()
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to connect to Ollama: {}", e)))?;
@@ -685,30 +710,163 @@ pub async fn list_ollama_models_handler(
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to parse Ollama response: {}", e)))?;
 
-    // Enrich models with detected capabilities
-    let models: Vec<OllamaModelWithCapabilities> = ollama_response
-        .models
-        .into_iter()
-        .map(|model| {
-            let caps = detect_ollama_model_capabilities(&model.name);
-            OllamaModelWithCapabilities {
-                name: model.name,
-                size: model.size,
-                modified_at: model.modified_at,
-                digest: model.digest,
-                details: model.details,
-                supports_multimodal: caps.supports_multimodal,
-                supports_thinking: caps.supports_thinking,
-                supports_tools: caps.supports_tools,
-                max_context: caps.max_context,
+    // Enrich models with capabilities from /api/show
+    let mut models_with_caps = Vec::new();
+    for model in ollama_response.models {
+        // Get detailed info including capabilities from /api/show
+        let show_url = format!("{}/api/show", base_url);
+        let caps = match get_model_capabilities_from_show(&client, &show_url, &model.name).await {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to get capabilities for {}: {}, using fallback detection", model.name, e);
+                // Fallback to name-based detection if /api/show fails
+                detect_ollama_model_capabilities_from_name(&model.name)
             }
-        })
-        .collect();
+        };
+
+        models_with_caps.push(OllamaModelWithCapabilities {
+            name: model.name,
+            size: model.size,
+            modified_at: model.modified_at,
+            digest: model.digest,
+            details: model.details,
+            supports_multimodal: caps.supports_multimodal,
+            supports_thinking: caps.supports_thinking,
+            supports_tools: caps.supports_tools,
+            max_context: caps.max_context,
+        });
+    }
 
     ok(json!({
-        "models": models,
-        "count": models.len(),
+        "models": models_with_caps,
+        "count": models_with_caps.len(),
     }))
+}
+
+/// Get model capabilities from Ollama /api/show endpoint
+///
+/// The /api/show endpoint returns accurate capabilities including "vision" for multimodal models.
+/// Only thinking capability needs to be inferred from model name since Ollama doesn't provide it.
+async fn get_model_capabilities_from_show(
+    client: &reqwest::Client,
+    show_url: &str,
+    model_name: &str,
+) -> Result<BackendCapabilities, String> {
+    use serde_json::Value;
+
+    let response = client
+        .post(show_url)
+        .json(&serde_json::json!({ "model": model_name }))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP status: {}", response.status()));
+    }
+
+    let show_response: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    // Extract capabilities from the response
+    // Ollama returns capabilities as an array like ["completion", "vision", "tools"]
+    let supports_multimodal = show_response["capabilities"]
+        .as_array()
+        .map(|caps| caps.iter().any(|c| c.as_str() == Some("vision")))
+        .unwrap_or(false);
+
+    // Extract details for context size detection
+    let details = show_response["details"].as_object();
+
+    // Thinking capability is NOT provided by Ollama's API, need to infer from model name
+    let supports_thinking = detect_thinking_from_name(model_name);
+
+    // Tools support - most models support tools except very small ones
+    let name_lower = model_name.to_lowercase();
+    let supports_tools = !name_lower.contains("270m")
+        && !name_lower.contains("1b")
+        && !name_lower.contains("tiny")
+        && !name_lower.contains("micro")
+        && !name_lower.contains("nano");
+
+    // Detect max context from model info or details
+    let max_context = if let Some(model_info) = show_response["model_info"].as_object() {
+        // Try to get context length from model_info
+        model_info
+            .iter()
+            .find_map(|(k, v)| {
+                if k.contains("context") || k.contains("context_length") {
+                    v.as_u64().map(|u| u as usize)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| detect_ollama_model_context(model_name))
+    } else {
+        detect_ollama_model_context(model_name)
+    };
+
+    Ok(BackendCapabilities {
+        supports_streaming: true,
+        supports_multimodal,
+        supports_thinking,
+        supports_tools,
+        max_context,
+    })
+}
+
+/// Detect thinking capability from model name only
+///
+/// Ollama's API doesn't provide thinking capability, so we infer it from model naming patterns.
+fn detect_thinking_from_name(model_name: &str) -> bool {
+    let name_lower = model_name.to_lowercase();
+
+    // Vision models typically don't support extended thinking
+    if name_lower.contains("-vl") || name_lower.ends_with("vl") {
+        return false;
+    }
+
+    name_lower.starts_with("qwen3")
+        || name_lower.contains("qwen3-")
+        || name_lower.contains("gpt-oss")
+        || name_lower.contains("deepseek-r1")
+        || name_lower.contains("deepseek-r")
+        || name_lower.contains("deepseek v3.1")
+        || name_lower.contains("deepseek-v3.1")
+        || name_lower.contains("thinking")
+}
+
+/// Fallback: Detect capabilities from model name when /api/show is not available
+fn detect_ollama_model_capabilities_from_name(model_name: &str) -> BackendCapabilities {
+    let name_lower = model_name.to_lowercase();
+
+    // Vision capability from name patterns (fallback only)
+    let supports_multimodal = name_lower.contains("-vl")
+        || name_lower.ends_with("vl")
+        || name_lower.contains("vision")
+        || name_lower.contains("llava")
+        || name_lower.contains("bakllava")
+        || name_lower.contains("minicpm-v");
+
+    let supports_thinking = detect_thinking_from_name(model_name);
+
+    let supports_tools = !name_lower.contains("270m")
+        && !name_lower.contains("1b")
+        && !name_lower.contains("tiny")
+        && !name_lower.contains("micro")
+        && !name_lower.contains("nano");
+
+    let max_context = detect_ollama_model_context(model_name);
+
+    BackendCapabilities {
+        supports_streaming: true,
+        supports_multimodal,
+        supports_thinking,
+        supports_tools,
+        max_context,
+    }
 }
 
 /// Query parameters for fetching Ollama models
@@ -769,47 +927,61 @@ struct OllamaModelWithCapabilities {
     max_context: usize,
 }
 
-/// Detect Ollama model capabilities from model name
-///
-/// Based on Ollama official documentation: https://docs.ollama.com/capabilities/thinking
-fn detect_ollama_model_capabilities(model_name: &str) -> BackendCapabilities {
+/// Detect maximum context window size for a model (works across all backends)
+fn detect_model_context(model_name: &str) -> usize {
     let name_lower = model_name.to_lowercase();
 
-    // Models that support thinking/reasoning
-    let supports_thinking = name_lower.starts_with("qwen3")
-        || name_lower.contains("qwen3-")
-        || name_lower.contains("gpt-oss")
-        || name_lower.contains("deepseek-r1")
-        || name_lower.contains("deepseek-r")
-        || name_lower.contains("deepseek v3.1")
-        || name_lower.contains("deepseek-v3.1")
-        || name_lower.contains("thinking");
-
-    // Models that support multimodal (vision)
-    let supports_multimodal = name_lower.contains("vl")
-        || name_lower.contains("vision")
-        || name_lower.contains("mm")
-        || name_lower.contains("llava")
-        || name_lower.contains("bakllava")
-        || name_lower.contains("minicpm-v");
-
-    // Models that support function calling
-    let supports_tools = !name_lower.contains("270m")
-        && !name_lower.contains("1b")
-        && !name_lower.contains("tiny")
-        && !name_lower.contains("micro")
-        && !name_lower.contains("nano");
-
-    // Detect maximum context window based on model family
-    let max_context = detect_ollama_model_context(model_name);
-
-    BackendCapabilities {
-        supports_streaming: true,
-        supports_multimodal,
-        supports_thinking,
-        supports_tools,
-        max_context,
+    // OpenAI models
+    if name_lower.contains("gpt-4") {
+        if name_lower.contains("gpt-4-turbo") || name_lower.contains("gpt-4o") {
+            return 128000;
+        }
+        if name_lower.contains("32k") {
+            return 32000;
+        }
+        return 8192;
     }
+
+    if name_lower.contains("gpt-3.5") {
+        if name_lower.contains("16k") {
+            return 16000;
+        }
+        return 4096;
+    }
+
+    // Anthropic models
+    if name_lower.contains("claude-3") {
+        if name_lower.contains("sonnet") {
+            return 200000;
+        }
+        if name_lower.contains("opus") {
+            return 200000;
+        }
+        if name_lower.contains("haiku") {
+            return 200000;
+        }
+    }
+
+    if name_lower.contains("claude") {
+        return 100000;
+    }
+
+    // Google models
+    if name_lower.contains("gemini-1.5") {
+        return 1000000;
+    }
+
+    if name_lower.contains("gemini") {
+        return 1000000;
+    }
+
+    // xAI models
+    if name_lower.contains("grok") {
+        return 128000;
+    }
+
+    // Fallback to Ollama model detection for local models
+    detect_ollama_model_context(model_name)
 }
 
 /// Detect maximum context window size for an Ollama model
@@ -897,4 +1069,49 @@ fn get_default_capabilities(backend_type: &LlmBackendType) -> BackendCapabilitie
             max_context: 128000,
         },
     }
+}
+
+/// Adjust capabilities based on the actual model name.
+/// This refines the default backend-type capabilities with model-specific knowledge.
+fn adjust_capabilities_for_model(model_name: &str, capabilities: &mut BackendCapabilities) {
+    let name_lower = model_name.to_lowercase();
+
+    // === Multimodal (vision) detection ===
+    // Models with "vl", "vision", or "-mm" suffix support vision
+    let explicit_vision = name_lower.contains("-vl")
+        || name_lower.contains(":vl")
+        || name_lower.ends_with("vl")
+        || name_lower.contains("vision")
+        || name_lower.contains("-mm")
+        || name_lower.contains(":mm");
+
+    // Vision models typically don't support extended thinking (they're optimized for speed)
+    if explicit_vision {
+        capabilities.supports_multimodal = true;
+        capabilities.supports_thinking = false;
+    } else {
+        // For non-vision models, check if they might support vision
+        // Most models don't, so default to false unless explicitly marked
+        // Exception: some newer models might have vision but no explicit marker
+        // For now, be conservative and assume no vision unless marked
+        capabilities.supports_multimodal = false;
+
+        // === Thinking detection ===
+        // Models that support extended thinking (deepseek-r1, qwen thinking models)
+        capabilities.supports_thinking = name_lower.starts_with("qwen3")
+            && !name_lower.contains("-vl") && !name_lower.contains(":vl")
+            || name_lower.starts_with("qwen2.5")
+            && !name_lower.contains("-vl") && !name_lower.contains(":vl")
+            || name_lower.contains("deepseek-r1")
+            || name_lower.contains("thinking");
+    }
+
+    // === Tool support ===
+    // Very small models (< 1B params) typically don't support tool calling
+    if name_lower.contains(":0.5") || name_lower.contains(":0.5b") {
+        capabilities.supports_tools = false;
+    }
+
+    // === Context size adjustment ===
+    capabilities.max_context = detect_model_context(model_name);
 }

@@ -44,11 +44,13 @@ interface DeviceDetailProps {
 
 function renderMetricValue(
   value: unknown,
-  onImageClick?: (src: string) => void
+  onImageClick?: (src: string) => void,
+  truncate = true,
+  maxLength = 50
 ): React.ReactNode {
   if (value === null || value === undefined) return <span className="text-muted-foreground/60">-</span>
   if (typeof value === "boolean") return value ? <span className="text-green-600 dark:text-green-400">是</span> : <span className="text-red-600 dark:text-red-400">否</span>
-  if (typeof value === "number") return <span className="font-semibold">{parseFloat(value.toFixed(2))}</span>
+  if (typeof value === "number") return <span className="font-semibold tabular-nums">{parseFloat(value.toFixed(2))}</span>
   if (typeof value === "string" && isBase64Image(value)) {
     return (
       <div
@@ -59,36 +61,64 @@ function renderMetricValue(
       </div>
     )
   }
+  if (typeof value === "string") {
+    if (truncate && value.length > maxLength) {
+      return value.slice(0, maxLength) + "..."
+    }
+    return value
+  }
   if (typeof value === "object" && value !== null) {
     if (Array.isArray(value)) {
       // Show array elements with better formatting
-      if (value.length === 0) return <span className="text-muted-foreground/60">[]</span>
-      // For small arrays, show all elements
-      if (value.length <= 5) {
-        const elements = value.map((v, i) => {
-          const formatted = typeof v === 'string' ? `"${v}"` : String(v)
-          return <span key={i}>{formatted}</span>
-        })
+      if (value.length === 0) return <span className="text-muted-foreground/60 text-xs">[]</span>
+      // For arrays of objects or complex types, show count and preview
+      const hasObjects = value.some(v => typeof v === 'object' && v !== null)
+      if (hasObjects || value.length > 5) {
         return (
-          <span className="text-xs font-mono">
-            [<span className="text-muted-foreground">{elements.map((el, i) => (
-              <span key={i}>{i > 0 && <>, </>}{el}</span>
-            ))}</span>]
+          <span className="text-xs font-mono" title={JSON.stringify(value, null, 2)}>
+            <span className="text-muted-foreground">Array[{value.length}]</span>
+            {value.length > 0 && (
+              <span className="ml-1 text-muted-foreground/60">
+                {typeof value[0] === 'object' ? '{...}' : String(value[0])}
+                {value.length > 1 && ', ...'}
+              </span>
+            )}
           </span>
         )
       }
-      // For large arrays, show count and preview
+      // For small arrays of primitives, show all elements
+      const elements = value.map((v, i) => {
+        if (typeof v === 'string') {
+          return <span key={i} className="text-blue-600 dark:text-blue-400">"{v}"</span>
+        }
+        if (typeof v === 'number') {
+          return <span key={i} className="text-amber-600 dark:text-amber-400">{v}</span>
+        }
+        if (typeof v === 'boolean') {
+          return <span key={i} className={v ? "text-green-600" : "text-red-600"}>{String(v)}</span>
+        }
+        return <span key={i} className="text-muted-foreground">{String(v)}</span>
+      })
       return (
-        <span className="text-xs font-mono" title={JSON.stringify(value)}>
-          <span className="text-muted-foreground">[{value.length}]</span>
-          <span className="ml-1 text-muted-foreground/60">
-            [{typeof value[0] === 'string' ? `"${value[0]}"` : String(value[0])}, ...]
-          </span>
+        <span className="text-xs font-mono">
+          <span className="text-muted-foreground">[</span>
+          {elements.map((el, i) => (
+            <span key={i}>{i > 0 && <span className="text-muted-foreground">, </span>}{el}</span>
+          ))}
+          <span className="text-muted-foreground">]</span>
         </span>
       )
     }
-    const str = JSON.stringify(value)
-    return <span className="text-xs text-muted-foreground/60 font-mono">{str.length > 30 ? str.slice(0, 30) + '...' : str}</span>
+    // For objects, show as formatted JSON with truncation
+    const str = JSON.stringify(value, null, 2)
+    if (truncate && str.length > maxLength) {
+      return (
+        <span className="text-xs font-mono text-muted-foreground/60" title={str}>
+          {str.slice(0, maxLength)}...
+        </span>
+      )
+    }
+    return <span className="text-xs font-mono text-muted-foreground/60">{str}</span>
   }
   return String(value)
 }
@@ -351,16 +381,16 @@ export function DeviceDetail({
                                 {metricDef.display_name || metricDef.name}
                               </p>
                               {isVirtual && (
-                                <Badge variant="outline" className="text-xs px-1.5 py-0">
+                                <Badge variant="outline" className="text-xs px-1.5 py-0 shrink-0">
                                   虚拟
                                 </Badge>
                               )}
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="text-sm break-words leading-relaxed" title={typeof value === 'string' ? value : JSON.stringify(value)}>
                               {renderMetricValue(value, (src) => {
                                 setPreviewImageSrc(src)
                                 setImagePreviewOpen(true)
-                              })}
+                              }, true, 40)}
                             </div>
                           </div>
                           {isVirtual ? (
@@ -431,46 +461,65 @@ export function DeviceDetail({
         setMetricHistoryOpen(open)
         if (!open) onMetricBack()
       }}>
-        <DialogContent className="max-w-2xl rounded-2xl">
+        <DialogContent className="max-w-3xl rounded-2xl">
           <DialogHeader>
             <DialogTitle className="text-xl flex items-center gap-2">
               <Clock className="h-5 w-5" />
               {selectedMetric && getMetricDisplayName(selectedMetric)}
             </DialogTitle>
           </DialogHeader>
-          <ScrollArea className="max-h-[400px]">
+          <ScrollArea className="max-h-[500px]">
             <div className="pr-4">
               {currentMetricData.length > 0 ? (
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent border-border/50">
-                      <TableHead className="text-muted-foreground">时间</TableHead>
+                      <TableHead className="text-muted-foreground w-[180px]">时间</TableHead>
                       <TableHead className="text-muted-foreground">值</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {currentMetricData.map((point, i) => (
-                      <TableRow key={i} className="hover:bg-muted/30 border-border/50">
-                        <TableCell className="text-sm text-muted-foreground">
-                          {formatTimestamp(point.timestamp)}
-                        </TableCell>
-                        <TableCell>
-                          {isMetricImage(point.value) ? (
-                            <div
-                              className="cursor-pointer hover:opacity-80 transition-opacity inline-block"
-                              onClick={() => {
-                                setPreviewImageSrc(String(point.value))
-                                setImagePreviewOpen(true)
-                              }}
-                            >
-                              <img src={String(point.value)} alt="metric" className="h-12 w-12 object-cover rounded-lg" />
-                            </div>
-                          ) : (
-                            renderMetricValue(point.value)
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {currentMetricData.map((point, i) => {
+                      const isComplexValue = typeof point.value === 'object' && point.value !== null
+                      const isLongString = typeof point.value === 'string' && point.value.length > 100
+                      return (
+                        <TableRow key={i} className="hover:bg-muted/30 border-border/50">
+                          <TableCell className="text-sm text-muted-foreground align-top">
+                            {formatTimestamp(point.timestamp)}
+                          </TableCell>
+                          <TableCell>
+                            {isMetricImage(point.value) ? (
+                              <div
+                                className="cursor-pointer hover:opacity-80 transition-opacity inline-block"
+                                onClick={() => {
+                                  setPreviewImageSrc(String(point.value))
+                                  setImagePreviewOpen(true)
+                                }}
+                              >
+                                <img src={String(point.value)} alt="metric" className="h-12 w-12 object-cover rounded-lg" />
+                              </div>
+                            ) : isComplexValue || isLongString ? (
+                              <details className="group">
+                                <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors list-none flex items-center gap-2">
+                                  <span>点击查看完整数据</span>
+                                  <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />
+                                </summary>
+                                <div className="mt-2 p-3 bg-muted/50 rounded-lg max-h-[300px] overflow-auto">
+                                  <pre className="text-xs font-mono whitespace-pre-wrap break-all">
+                                    {typeof point.value === 'string'
+                                      ? point.value
+                                      : JSON.stringify(point.value, null, 2)
+                                    }
+                                  </pre>
+                                </div>
+                              </details>
+                            ) : (
+                              <span className="text-sm">{renderMetricValue(point.value, undefined, false)}</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
                   </TableBody>
                 </Table>
               ) : (

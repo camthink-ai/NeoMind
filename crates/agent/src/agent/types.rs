@@ -284,8 +284,21 @@ pub struct AgentMessage {
     /// Thinking content (for AI reasoning process)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking: Option<String>,
+    /// Images attached to the message (base64 data URLs)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<AgentMessageImage>>,
     /// Timestamp
     pub timestamp: i64,
+}
+
+/// An image attached to a message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentMessageImage {
+    /// Base64 data URL (e.g., "data:image/png;base64,...")
+    pub data: String,
+    /// MIME type (e.g., "image/png")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 impl AgentMessage {
@@ -298,6 +311,21 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
+            timestamp: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    /// Create a user message with images.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<AgentMessageImage>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_call_name: None,
+            thinking: None,
+            images: Some(images),
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -311,6 +339,7 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -327,6 +356,7 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: Some(thinking.into()),
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -340,6 +370,7 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -353,6 +384,7 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: Some(tool_name.into()),
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -366,6 +398,7 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -383,6 +416,7 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: Some(thinking.into()),
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -390,9 +424,18 @@ impl AgentMessage {
     /// Convert to core Message.
     /// IMPORTANT: When tool_calls exist, include them in content for LLM context.
     /// This ensures the model knows what tools were called in previous turns.
+    /// IMPORTANT: Images are preserved for multimodal context in follow-up requests.
     pub fn to_core(&self) -> Message {
         match self.role.as_str() {
-            "user" => Message::user(&self.content),
+            "user" => {
+                // Check if this message has images - create multimodal message
+                if let Some(ref images) = self.images {
+                    if !images.is_empty() {
+                        return self.to_core_multimodal();
+                    }
+                }
+                Message::user(&self.content)
+            }
             "assistant" => {
                 // Tool call information is already stored in the tool_calls field
                 // and rendered by the frontend's ToolCallVisualization component.
@@ -413,6 +456,48 @@ impl AgentMessage {
         }
     }
 
+    /// Convert to core Message with multimodal content (text + images).
+    /// This preserves image context for follow-up LLM requests.
+    fn to_core_multimodal(&self) -> Message {
+        use edge_ai_core::{Content, ContentPart, MessageRole};
+
+        let images = match &self.images {
+            Some(imgs) if !imgs.is_empty() => imgs,
+            _ => return Message::user(&self.content),
+        };
+
+        // Build content parts: text + images
+        let mut parts = vec![ContentPart::text(self.content.clone())];
+
+        for image in images {
+            // Parse data URL (format: "data:image/png;base64,iVBOR...")
+            let (mime_type, base64_data) = if let Some(pos) = image.data.find(',') {
+                let prefix = &image.data[..pos];
+                // Extract mime type from "data:image/png;base64,"
+                let mime = image.mime_type.clone().unwrap_or_else(|| {
+                    if let Some(start) = prefix.strip_prefix("data:") {
+                        start
+                            .split(';')
+                            .next()
+                            .unwrap_or("image/png")
+                            .to_string()
+                    } else {
+                        "image/png".to_string()
+                    }
+                });
+                let data = &image.data[pos + 1..];
+                (mime, data)
+            } else {
+                // Not a data URL, use as-is
+                (image.mime_type.clone().unwrap_or("image/png".to_string()), image.data.as_str())
+            };
+
+            parts.push(ContentPart::image_base64(base64_data, mime_type));
+        }
+
+        Message::new(MessageRole::User, Content::Parts(parts))
+    }
+
     /// Convert from core Message.
     pub fn from_core(msg: &Message) -> Self {
         Self {
@@ -422,6 +507,7 @@ impl AgentMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }

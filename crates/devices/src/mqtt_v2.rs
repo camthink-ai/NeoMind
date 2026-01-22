@@ -640,6 +640,7 @@ impl MqttDeviceManager {
         let time_series_storage = self.time_series_storage.clone();
         let storage = self.mdl_registry.storage.clone();
         let event_bus = self.event_bus.clone();
+        let broker_id = self.broker_id.clone();
 
         tokio::spawn(async move {
             let mut eventloop = eventloop;
@@ -665,6 +666,7 @@ impl MqttDeviceManager {
                                     &time_series_storage,
                                     &storage,
                                     &event_bus,
+                                    &broker_id,
                                 )
                                 .await;
                             }
@@ -759,6 +761,7 @@ impl MqttDeviceManager {
         time_series_storage: &Arc<RwLock<Option<Arc<TimeSeriesStorage>>>>,
         storage: &Arc<RwLock<Option<Arc<MdlStorage>>>>,
         event_bus: &Option<Arc<EventBus>>,
+        broker_id: &str,
     ) {
         match packet {
             rumqttc::Packet::Publish(publish) => {
@@ -826,6 +829,7 @@ impl MqttDeviceManager {
                     &topic,
                     &payload,
                     event_bus,
+                    broker_id,
                 ).await;
             }
             rumqttc::Packet::ConnAck(_) => {
@@ -1095,6 +1099,7 @@ impl MqttDeviceManager {
         topic: &str,
         payload: &[u8],
         event_bus: &Option<Arc<EventBus>>,
+        broker_id: &str,
     ) {
         // Skip non-JSON payloads
         let json_data: Result<serde_json::Value, _> = serde_json::from_slice(payload);
@@ -1136,12 +1141,17 @@ impl MqttDeviceManager {
                 "data": data
             });
 
+            // Include broker_id and adapter_id so auto-onboarding knows which adapter to use
+            let adapter_id = format!("external-{}", broker_id);
+
             let event = edge_ai_core::NeoTalkEvent::Custom {
                 event_type: "unknown_device_data".to_string(),
                 data: serde_json::json!({
                     "device_id": device_id,
                     "source": topic,  // Use actual topic as source (e.g., "device999")
                     "original_topic": topic,
+                    "broker_id": broker_id,
+                    "adapter_id": adapter_id,
                     "sample": sample
                 }),
             };

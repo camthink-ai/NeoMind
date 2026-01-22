@@ -484,6 +484,71 @@ impl ServerState {
         }
 
         tracing::info!("Device adapters managed directly via DeviceService");
+
+        // Load and reconnect external MQTT brokers
+        self.reconnect_external_mqtt_brokers().await;
+    }
+
+    /// Reconnect to all enabled external MQTT brokers on startup
+    async fn reconnect_external_mqtt_brokers(&self) {
+        use crate::handlers::mqtt::brokers::{create_and_connect_broker, ExternalBrokerContext};
+
+        let store = match crate::config::open_settings_store() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!("Failed to open settings store for external broker reconnection: {}", e);
+                return;
+            }
+        };
+
+        let brokers = match store.load_all_external_brokers() {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("Failed to load external brokers: {}", e);
+                return;
+            }
+        };
+
+        if brokers.is_empty() {
+            tracing::info!("No external MQTT brokers configured");
+            return;
+        }
+
+        tracing::info!("Found {} external MQTT broker(s), attempting to reconnect...", brokers.len());
+
+        let Some(event_bus) = self.event_bus.as_ref() else {
+            tracing::warn!("EventBus not initialized, cannot reconnect external brokers");
+            return;
+        };
+
+        let context = ExternalBrokerContext {
+            device_service: self.device_service.clone(),
+            event_bus: event_bus.clone(),
+        };
+
+        for broker in brokers {
+            // Skip disabled brokers
+            if !broker.enabled {
+                tracing::info!("Skipping disabled external broker: {}", broker.id);
+                continue;
+            }
+
+            tracing::info!("Reconnecting to external broker: {} ({})", broker.id, broker.name);
+
+            // Use the broker connection logic
+            match create_and_connect_broker(&broker, &context).await {
+                Ok(connected) => {
+                    if connected {
+                        tracing::info!("Successfully reconnected to external broker: {}", broker.id);
+                    } else {
+                        tracing::warn!("External broker reconnection attempted but failed: {}", broker.id);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to reconnect external broker {}: {}", broker.id, e);
+                }
+            }
+        }
     }
 
     /// Initialize tool registry with real service connections.
@@ -697,6 +762,11 @@ impl ServerState {
                                     .and_then(|v| v.as_str())
                                     .map(|s| s.to_string());
 
+                                // Extract adapter_id if available (for external brokers)
+                                let adapter_id = data.get("adapter_id")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+
                                 // Process the payload data through auto-onboarding
                                 match manager.process_unknown_device_with_topic(
                                     device_id,
@@ -704,6 +774,7 @@ impl ServerState {
                                     payload_data,
                                     is_binary,
                                     original_topic,
+                                    adapter_id,
                                 ).await {
                                     Ok(true) => {
                                         tracing::info!(

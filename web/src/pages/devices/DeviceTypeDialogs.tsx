@@ -42,6 +42,24 @@ import { cn } from "@/lib/utils"
 import { api } from "@/lib/api"
 import type { DeviceType, MetricDefinition, CommandDefinition } from "@/types"
 
+/**
+ * Helper function to safely format data_type for display
+ * Handles both string types and object formats from the API
+ */
+function formatDataType(dataType: string | Record<string, unknown> | undefined): string {
+  if (!dataType) return 'unknown'
+  if (typeof dataType === 'string') return dataType
+  // If data_type is an object (e.g., { array: true }), format it
+  if (typeof dataType === 'object') {
+    const keys = Object.keys(dataType)
+    if (keys.length === 1) {
+      return keys[0]  // e.g., "array"
+    }
+    return JSON.stringify(dataType)
+  }
+  return String(dataType)
+}
+
 // Validation result type
 interface ValidationResult {
   valid: boolean
@@ -1031,7 +1049,7 @@ function ReviewStep({ data, onEdit, onValidate, validating, validationResult }: 
                     <span className="text-muted-foreground mx-2">•</span>
                     <span className="text-sm">{metric.display_name}</span>
                   </div>
-                  <Badge variant="outline" className="text-xs">{metric.data_type}</Badge>
+                  <Badge variant="outline" className="text-xs">{formatDataType(metric.data_type)}</Badge>
                 </div>
               </div>
             ))}
@@ -1162,7 +1180,7 @@ function MetricEditorCompact({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm">{metric.name}</span>
-          <Badge variant="outline" className="text-xs">{metric.data_type}</Badge>
+          <Badge variant="outline" className="text-xs">{formatDataType(metric.data_type)}</Badge>
           {metric.unit && <span className="text-xs text-muted-foreground">{metric.unit}</span>}
         </div>
         <Button variant="ghost" size="icon" onClick={onRemove} className="h-6 w-6">
@@ -1528,7 +1546,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
                           <span className="text-sm">{metric.display_name}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs">{metric.data_type}</Badge>
+                          <Badge variant="outline" className="text-xs">{formatDataType(metric.data_type)}</Badge>
                           {metric.unit && (
                             <span className="text-xs text-muted-foreground">({metric.unit})</span>
                           )}
@@ -1569,7 +1587,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
                             <span className="text-sm">{metric.display_name}</span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-xs text-purple-500">{metric.data_type}</Badge>
+                            <Badge variant="outline" className="text-xs text-purple-500">{formatDataType(metric.data_type)}</Badge>
                             <span className="text-xs text-muted-foreground">via {metric.transform_name}</span>
                           </div>
                         </div>

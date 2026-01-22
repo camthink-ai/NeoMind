@@ -106,6 +106,141 @@ fn default_external_broker_enabled() -> bool {
     true
 }
 
+/// Context for creating and connecting to an external MQTT broker.
+/// This is used both by API handlers and by the startup reconnection logic.
+pub struct ExternalBrokerContext {
+    pub device_service: Arc<edge_ai_devices::service::DeviceService>,
+    pub event_bus: Arc<edge_ai_core::EventBus>,
+}
+
+/// Create and connect to an external MQTT broker.
+///
+/// This function creates the MQTT adapter, sets up the shared device registry,
+/// registers the adapter with the DeviceService, and starts the connection.
+///
+/// Returns Ok(true) if the connection was successful, Ok(false) if the adapter
+/// was created but the connection failed, or Err if there was a critical error.
+pub async fn create_and_connect_broker(
+    broker: &ExternalBroker,
+    context: &ExternalBrokerContext,
+) -> Result<bool, String> {
+    use edge_ai_devices::adapter::AdapterResult;
+    use edge_ai_devices::adapters::mqtt::MqttAdapter;
+
+    // Create MqttAdapter config
+    let mqtt_config = MqttAdapterConfig {
+        name: format!("external-{}", broker.id),
+        mqtt: edge_ai_devices::mqtt::MqttConfig {
+            broker: broker.broker.clone(),
+            port: broker.port,
+            client_id: Some(format!("neotalk-external-{}", broker.id)),
+            username: broker.username.clone(),
+            password: broker.password.clone(),
+            keep_alive: 60,
+            clean_session: true,
+            qos: 1,
+            topic_prefix: "device".to_string(),
+            command_topic: "downlink".to_string(),
+        },
+        subscribe_topics: broker.subscribe_topics.clone(),
+        discovery_topic: None,
+        discovery_prefix: "neotalk".to_string(),
+        auto_discovery: false,
+        storage_dir: Some("data".to_string()),
+    };
+
+    // Create the MQTT adapter
+    let mqtt_config_value = serde_json::to_value(&mqtt_config)
+        .map_err(|e| format!("Failed to serialize MQTT config: {}", e))?;
+
+    let adapter_result: AdapterResult<Arc<dyn DeviceAdapter>> =
+        create_adapter("mqtt", &mqtt_config_value, &context.event_bus);
+
+    let mut connected = false;
+    let mut connection_error: Option<String> = None;
+
+    match adapter_result {
+        Ok(adapter) => {
+            // Set shared device registry so the adapter can access devices registered via DeviceService
+            // This is critical for external brokers to properly route messages to registered devices
+            if let Some(mqtt) = adapter.as_any().downcast_ref::<MqttAdapter>() {
+                mqtt.set_shared_device_registry(context.device_service.get_registry().await).await;
+            }
+
+            // Register adapter with device service
+            let adapter_id = format!("external-{}", broker.id);
+            context
+                .device_service
+                .register_adapter(adapter_id.clone(), adapter.clone())
+                .await;
+
+            // Start the adapter
+            match adapter.start().await {
+                Ok(()) => {
+                    connected = true;
+                    tracing::info!(
+                        category = "mqtt",
+                        broker_id = %broker.id,
+                        "MQTT adapter started successfully"
+                    );
+                }
+                Err(e) => {
+                    connection_error = Some(format!("MQTT connection failed: {}", e));
+                    tracing::warn!(
+                        category = "mqtt",
+                        broker_id = %broker.id,
+                        error = %e,
+                        "Failed to start MQTT adapter"
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            connection_error = Some(format!("Failed to create adapter: {}", e));
+            tracing::warn!(
+                category = "mqtt",
+                broker_id = %broker.id,
+                error = %e,
+                "Failed to create MQTT adapter"
+            );
+        }
+    }
+
+    // Update broker connection status
+    if let Err(e) = update_broker_connection_status_no_store(
+        &broker.id,
+        connected,
+        connection_error,
+    ).await {
+        tracing::warn!("Failed to update broker status: {}", e);
+    }
+
+    Ok(connected)
+}
+
+/// Update broker connection status (without accessing the store directly).
+/// This is used internally by create_and_connect_broker.
+async fn update_broker_connection_status_no_store(
+    id: &str,
+    connected: bool,
+    error: Option<String>,
+) -> Result<(), String> {
+    // Reopen the store to get the latest broker data
+    let store = crate::config::open_settings_store()
+        .map_err(|e| format!("Failed to open settings store: {}", e))?;
+
+    let mut broker = store.load_external_broker(id)
+        .map_err(|e| format!("Failed to load broker: {}", e))?
+        .ok_or_else(|| format!("Broker not found: {}", id))?;
+
+    broker.connected = connected;
+    broker.last_error = error;
+
+    store.save_external_broker(&broker)
+        .map_err(|e| format!("Failed to save broker: {}", e))?;
+    Ok(())
+}
+
 /// List all external brokers.
 ///
 /// GET /api/brokers
@@ -221,74 +356,26 @@ pub async fn create_broker_handler(
 
     tracing::info!(category = "mqtt", name = %broker.name, url = %broker.broker_url(), "Created external broker");
 
-    // If enabled, create MQTT connection through MqttAdapter
+    // If enabled, create MQTT connection through MqttAdapter using shared function
     let mut connected = false;
     let mut connection_error: Option<String> = None;
     if broker.enabled {
-        // Create MqttAdapter config
-        let mqtt_config = MqttAdapterConfig {
-            name: format!("external-{}", id),
-            mqtt: edge_ai_devices::mqtt::MqttConfig {
-                broker: broker.broker.clone(),
-                port: broker.port,
-                client_id: Some(format!("neotalk-external-{}", id)),
-                username: broker.username.clone(),
-                password: broker.password.clone(),
-                keep_alive: 60,
-                clean_session: true,
-                qos: 1,
-                topic_prefix: "device".to_string(),
-                command_topic: "downlink".to_string(),
-            },
-            subscribe_topics: broker.subscribe_topics.clone(),
-            discovery_topic: None,
-            discovery_prefix: "neotalk".to_string(),
-            auto_discovery: false,
-            storage_dir: Some("data".to_string()),
-        };
-
-        // Create the MQTT adapter
         let event_bus = state.event_bus.as_ref()
             .ok_or_else(|| ErrorResponse::internal("EventBus not initialized".to_string()))?;
 
-        let mqtt_config_value = serde_json::to_value(mqtt_config)
-            .map_err(|e| ErrorResponse::internal(format!("Failed to serialize MQTT config: {}", e)))?;
+        let context = ExternalBrokerContext {
+            device_service: state.device_service.clone(),
+            event_bus: event_bus.clone(),
+        };
 
-        let adapter_result: edge_ai_devices::adapter::AdapterResult<Arc<dyn DeviceAdapter>> =
-            create_adapter("mqtt", &mqtt_config_value, event_bus);
-
-        match adapter_result {
-            Ok(adapter) => {
-                // Register adapter with device service
-                let adapter_id = format!("external-{}", id);
-                state
-                    .device_service
-                    .register_adapter(adapter_id.clone(), adapter.clone())
-                    .await;
-
-                // Start the adapter
-                match adapter.start().await {
-                    Ok(()) => {
-                        connected = true;
-                        tracing::info!(category = "mqtt", broker_id = %id, "MQTT adapter started successfully");
-                    }
-                    Err(e) => {
-                        connection_error = Some(format!("MQTT connection failed: {}", e));
-                        tracing::warn!(category = "mqtt", broker_id = %id, error = %e, "Failed to start MQTT adapter");
-                    }
-                }
+        match create_and_connect_broker(&broker, &context).await {
+            Ok(conn_result) => {
+                connected = conn_result;
+                connection_error = if connected { None } else { Some("Connection failed".to_string()) };
             }
             Err(e) => {
-                connection_error = Some(format!("Failed to create adapter: {}", e));
-                tracing::warn!(category = "mqtt", broker_id = %id, error = %e, "Failed to create MQTT adapter");
+                connection_error = Some(e.to_string());
             }
-        }
-
-        // Update broker connection status
-        if let Err(e) =
-            update_broker_connection_status(&store, &id, connected, connection_error.clone()).await
-        {
-            tracing::warn!("Failed to update broker status: {}", e);
         }
 
         // Reload broker to get updated status
@@ -333,6 +420,7 @@ pub async fn create_broker_handler(
 /// PUT /api/brokers/:id
 pub async fn update_broker_handler(
     Path(id): Path<String>,
+    State(state): State<ServerState>,
     Json(req): Json<ExternalBrokerRequest>,
 ) -> HandlerResult<serde_json::Value> {
     let store = config::open_settings_store()
@@ -371,31 +459,31 @@ pub async fn update_broker_handler(
 
     tracing::info!(category = "mqtt", name = %broker.name, url = %broker.broker_url(), "Updated external broker");
 
-    // If enabled, automatically attempt to connect
+    // If enabled, restart the MQTT adapter with new configuration using shared function
     let mut connected = false;
     let mut connection_error: Option<String> = None;
     if broker.enabled {
-        let addr = format!("{}:{}", broker.broker, broker.port);
-        match timeout(Duration::from_secs(5), TcpStream::connect(&addr)).await {
-            Ok(Ok(_)) => {
-                connected = true;
-                tracing::info!(category = "mqtt", broker_id = %id, "Auto-connected to broker after update");
-            }
-            Ok(Err(e)) => {
-                connection_error = Some(format!("Connection failed: {}", e));
-                tracing::warn!(category = "mqtt", broker_id = %id, error = %e, "Auto-connect failed after update");
-            }
-            Err(_) => {
-                connection_error = Some("Connection timeout after 5 seconds".to_string());
-                tracing::warn!(category = "mqtt", broker_id = %id, "Auto-connect timeout after update");
-            }
-        }
+        let adapter_id = format!("external-{}", id);
 
-        // Update broker connection status
-        if let Err(e) =
-            update_broker_connection_status(&store, &id, connected, connection_error.clone()).await
-        {
-            tracing::warn!("Failed to update broker status: {}", e);
+        // First, stop the existing adapter if it's running
+        let _ = state.device_service.stop_adapter(&adapter_id).await;
+
+        let event_bus = state.event_bus.as_ref()
+            .ok_or_else(|| ErrorResponse::internal("EventBus not initialized".to_string()))?;
+
+        let context = ExternalBrokerContext {
+            device_service: state.device_service.clone(),
+            event_bus: event_bus.clone(),
+        };
+
+        match create_and_connect_broker(&broker, &context).await {
+            Ok(conn_result) => {
+                connected = conn_result;
+                connection_error = if connected { None } else { Some("Connection failed".to_string()) };
+            }
+            Err(e) => {
+                connection_error = Some(e.to_string());
+            }
         }
 
         // Reload broker to get updated status
@@ -403,9 +491,9 @@ pub async fn update_broker_handler(
             return ok(json!({
                 "broker": ExternalBrokerDto::from(updated_broker),
                 "message": if connected {
-                    "External broker updated and connected successfully"
+                    "External broker updated and MQTT adapter restarted successfully"
                 } else {
-                    "External broker updated but connection failed"
+                    "External broker updated but MQTT restart failed"
                 },
             }));
         }
@@ -420,10 +508,19 @@ pub async fn update_broker_handler(
 /// Delete an external broker.
 ///
 /// DELETE /api/brokers/:id
-pub async fn delete_broker_handler(Path(id): Path<String>) -> HandlerResult<serde_json::Value> {
+pub async fn delete_broker_handler(
+    Path(id): Path<String>,
+    State(state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
     let store = config::open_settings_store()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
 
+    // First, stop the MQTT adapter if it's running
+    let adapter_id = format!("external-{}", id);
+    let _ = state.device_service.stop_adapter(&adapter_id).await;
+    tracing::info!(category = "mqtt", broker_id = %id, "Stopped MQTT adapter for external broker");
+
+    // Then delete from storage
     let existed = store
         .delete_external_broker(&id)
         .map_err(|e| ErrorResponse::internal(format!("Failed to delete broker: {}", e)))?;

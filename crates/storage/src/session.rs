@@ -48,8 +48,21 @@ pub struct SessionMessage {
     pub tool_call_name: Option<String>,
     /// Thinking/reasoning content.
     pub thinking: Option<String>,
+    /// Images attached to the message (base64 data URLs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<SessionMessageImage>>,
     /// Message timestamp.
     pub timestamp: i64,
+}
+
+/// An image attached to a message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMessageImage {
+    /// Base64 data URL (e.g., "data:image/png;base64,...").
+    pub data: String,
+    /// MIME type (e.g., "image/png").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
 }
 
 impl SessionMessage {
@@ -62,6 +75,21 @@ impl SessionMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
+            timestamp: chrono::Utc::now().timestamp(),
+        }
+    }
+
+    /// Create a new user message with images.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<SessionMessageImage>) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_call_name: None,
+            thinking: None,
+            images: Some(images),
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -75,6 +103,7 @@ impl SessionMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -88,6 +117,7 @@ impl SessionMessage {
             tool_call_id: None,
             tool_call_name: None,
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -101,6 +131,7 @@ impl SessionMessage {
             tool_call_id: Some(tool_call_id.into()),
             tool_call_name: None,
             thinking: None,
+            images: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }

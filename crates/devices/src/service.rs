@@ -761,6 +761,7 @@ impl DeviceService {
         let device_id = config.device_id.clone();
         let device_type = config.device_type.clone();
         let adapter_type = config.adapter_type.clone();
+        let target_adapter_id = config.adapter_id.clone();
 
         // First register the device in the registry
         self.registry.register_device(config).await?;
@@ -768,9 +769,17 @@ impl DeviceService {
         // Then notify the adapter to subscribe to this device's telemetry topic
         // Find the adapter that handles this device type
         let adapters = self.adapters.read().await;
+        let mut adapter_found = false;
         for (adapter_id, adapter) in adapters.iter() {
             // Check if this adapter can handle the device type
-            if adapter.adapter_type() == adapter_type {
+            // If adapter_id is specified in config, also check for exact match
+            let adapter_match = if let Some(ref target_id) = target_adapter_id {
+                adapter.adapter_type() == adapter_type && adapter_id == target_id
+            } else {
+                adapter.adapter_type() == adapter_type
+            };
+
+            if adapter_match {
                 tracing::info!(
                     "Notifying adapter '{}' to subscribe to device '{}'",
                     adapter_id,
@@ -778,8 +787,18 @@ impl DeviceService {
                 );
                 // Subscribe the adapter to this device
                 let _ = adapter.subscribe_device(&device_id).await;
+                adapter_found = true;
                 break;
             }
+        }
+
+        if !adapter_found {
+            tracing::warn!(
+                "No adapter found for device '{}' (type: {}, adapter_id: {:?})",
+                device_id,
+                adapter_type,
+                target_adapter_id
+            );
         }
 
         // Publish event for UI refresh

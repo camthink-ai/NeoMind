@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
-import { Settings, Send, Sparkles, PanelLeft, Plus, Zap, ChevronDown, X, Image as ImageIcon, Loader2 } from "lucide-react"
+import { Settings, Send, Sparkles, PanelLeft, Plus, Zap, ChevronDown, X, Image as ImageIcon, Loader2, Eye, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -20,6 +20,24 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ws } from "@/lib/websocket"
 import type { Message, ServerMessage, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
+
+/** Image gallery component for user messages */
+function MessageImages({ images }: { images: ChatImage[] }) {
+  if (!images || images.length === 0) return null
+
+  return (
+    <div className={images.length === 1 ? "mb-2" : "mb-2 grid grid-cols-2 gap-2"}>
+      {images.map((img, idx) => (
+        <img
+          key={idx}
+          src={img.data}
+          alt={`Image ${idx + 1}`}
+          className="rounded-lg max-w-full max-h-64 object-cover"
+        />
+      ))}
+    </div>
+  )
+}
 
 /**
  * Merge fragmented assistant messages for display.
@@ -157,7 +175,8 @@ export function DashboardPage() {
     createSession,
     switchSession,
     loadSessions,
-    user
+    user,
+    sessions
   } = useStore()
 
   // Local state
@@ -168,6 +187,7 @@ export function DashboardPage() {
   const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [showSessionRequired, setShowSessionRequired] = useState(false)
 
   // Image upload state
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
@@ -288,22 +308,36 @@ export function DashboardPage() {
     return () => { void unsubscribe() }
   }, [addMessage, switchSession])
 
-  // Send message - auto-create session if needed
+  // Send message - auto-create session only if no sessions exist at all
   const handleSend = async () => {
     const trimmedInput = input.trim()
     if ((!trimmedInput && attachedImages.length === 0) || isStreaming) return
 
+    // Check if images are attached but current model doesn't support vision
+    if (attachedImages.length > 0 && !supportsMultimodal) {
+      alert('当前模型不支持图像输入。\n\n请选择一个支持视觉的模型（如 qwen3-vl），或者移除图片后重试。\n\n支持视觉的模型会显示 👁️ 图标。')
+      return
+    }
+
     // Get current sessionId from store (not from closure)
     let currentSessionId = useStore.getState().sessionId
 
-    // If no session exists, create one first
+    // If no session exists, check if we should auto-create
     if (!currentSessionId) {
-      const newSessionId = await createSession()
-      if (!newSessionId) {
-        console.error('Failed to create session')
+      // Only auto-create if there are NO existing sessions (first-time user)
+      if (sessions.length === 0) {
+        const newSessionId = await createSession()
+        if (!newSessionId) {
+          console.error('Failed to create session')
+          return
+        }
+        currentSessionId = newSessionId
+      } else {
+        // There are existing sessions but none selected - require user to manually create/select
+        // Show a hint to the user
+        setShowSessionRequired(true)
         return
       }
-      currentSessionId = newSessionId
     }
 
     const userMessage: Message = {
@@ -497,6 +531,10 @@ export function DashboardPage() {
                           : "bg-muted text-foreground"
                       )}
                     >
+                      {/* Images for user messages */}
+                      {message.role === "user" && message.images && message.images.length > 0 && (
+                        <MessageImages images={message.images} />
+                      )}
                       {message.thinking && <ThinkingBlock thinking={message.thinking} />}
                       {message.tool_calls && message.tool_calls.length > 0 && (
                         <ToolCallVisualization toolCalls={message.tool_calls} isStreaming={false} />
@@ -561,7 +599,52 @@ export function DashboardPage() {
           </div>
         ) : (
           /* Welcome Area */
-          <WelcomeArea onQuickAction={handleQuickAction} />
+          <>
+            {showSessionRequired ? (
+              /* Session required prompt */
+              <div className="flex-1 flex items-center justify-center px-4">
+                <div className="text-center space-y-4 max-w-md">
+                  <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto">
+                    <PanelLeft className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">请先选择或创建会话</h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      您已有会话记录，请从左侧选择现有会话，或创建新会话
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setShowSessionRequired(false)
+                        setSidebarOpen(true)
+                      }}
+                      className="gap-1.5"
+                    >
+                      <PanelLeft className="h-4 w-4" />
+                      选择会话
+                    </Button>
+                    <Button
+                      variant="default"
+                      size="sm"
+                      onClick={async () => {
+                        setShowSessionRequired(false)
+                        await createSession()
+                      }}
+                      className="gap-1.5"
+                    >
+                      <Plus className="h-4 w-4" />
+                      新建会话
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <WelcomeArea onQuickAction={handleQuickAction} />
+            )}
+          </>
         )}
         </div>
 
@@ -588,7 +671,7 @@ export function DashboardPage() {
                       <ChevronDown className="h-3 w-3 shrink-0" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-56">
+                  <DropdownMenuContent align="start" className="w-64">
                     <DropdownMenuLabel className="text-xs text-muted-foreground">
                       选择 LLM 模型
                     </DropdownMenuLabel>
@@ -598,7 +681,7 @@ export function DashboardPage() {
                         key={backend.id}
                         onClick={() => activateBackend(backend.id)}
                         className={cn(
-                          "flex items-center gap-2",
+                          "flex items-center gap-2 py-2",
                           backend.id === activeBackendId && "bg-muted"
                         )}
                       >
@@ -607,7 +690,20 @@ export function DashboardPage() {
                           backend.healthy ? "bg-green-500" : "bg-muted-foreground"
                         )} />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm truncate">{backend.name || backend.model}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm truncate">{backend.name || backend.model}</p>
+                            {/* Capability badges */}
+                            {backend.capabilities?.supports_multimodal && (
+                              <span className="text-[10px] px-1 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 flex items-center" title="支持图像">
+                                <Eye className="h-3 w-3" />
+                              </span>
+                            )}
+                            {backend.capabilities?.supports_thinking && (
+                              <span className="text-[10px] px-1 rounded bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 flex items-center" title="支持思考">
+                                <Brain className="h-3 w-3" />
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-muted-foreground truncate">
                             {backend.backend_type} · {backend.model}
                           </p>

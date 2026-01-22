@@ -115,7 +115,7 @@ export function AgentMemoryDialog({
               )}
 
               {/* Baselines */}
-              {Object.keys(memory.baselines).length > 0 && (
+              {memory.baselines && Object.keys(memory.baselines).length > 0 && (
                 <div>
                   <h4 className="text-sm font-semibold mb-2 flex items-center gap-2">
                     <TrendingUp className="h-4 w-4" />

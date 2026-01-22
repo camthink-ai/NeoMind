@@ -228,6 +228,8 @@ pub struct LlmInterface {
     temperature: f32,
     /// Top-p sampling.
     top_p: f32,
+    /// Top-k sampling (0 = disabled).
+    top_k: usize,
     /// Max tokens.
     max_tokens: usize,
     /// Default system prompt (wrapped for dynamic updates).
@@ -264,6 +266,7 @@ impl LlmInterface {
             model: Arc::new(RwLock::new(Some(config.model))),
             temperature: config.temperature,
             top_p: config.top_p,
+            top_k: config.top_k,
             max_tokens: config.max_tokens,
             system_prompt: Arc::new(RwLock::new("You are a helpful AI assistant.".to_string())),
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
@@ -290,6 +293,7 @@ impl LlmInterface {
             model: Arc::new(RwLock::new(Some(config.model))),
             temperature: config.temperature,
             top_p: config.top_p,
+            top_k: config.top_k,
             max_tokens: config.max_tokens,
             system_prompt: Arc::new(RwLock::new("You are a helpful AI assistant.".to_string())),
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
@@ -357,6 +361,26 @@ impl LlmInterface {
             .as_ref()
             .map(Arc::clone)
             .ok_or(AgentError::LlmNotReady)
+    }
+
+    /// Get effective generation parameters.
+    /// When using instance manager, reads from the active backend instance.
+    /// Otherwise falls back to local ChatConfig values.
+    async fn get_effective_params(&self) -> (f32, f32, usize, usize) {
+        if self.uses_instance_manager() {
+            if let Some(manager) = &self.instance_manager {
+                if let Some(inst) = manager.get_active_instance() {
+                    return (
+                        inst.temperature,
+                        inst.top_p,
+                        inst.top_k,
+                        inst.max_tokens,
+                    );
+                }
+            }
+        }
+        // Fall back to local config
+        (self.temperature, self.top_p, self.top_k, self.max_tokens)
     }
 
     /// Set the LLM runtime (direct mode).
@@ -442,6 +466,27 @@ impl LlmInterface {
         match self.get_runtime().await {
             Ok(runtime) => runtime.max_context_length(),
             Err(_) => 4_096, // Conservative default if LLM not ready
+        }
+    }
+
+    /// Check if the current LLM backend supports multimodal (vision) input.
+    ///
+    /// Returns true if the active backend supports image input, false otherwise.
+    pub async fn supports_multimodal(&self) -> bool {
+        // Try instance manager first if enabled
+        if self.uses_instance_manager() {
+            if let Some(manager) = &self.instance_manager {
+                if let Some(instance) = manager.get_active_instance() {
+                    // Instance has capabilities with supports_multimodal (storage layer)
+                    return instance.capabilities.supports_multimodal;
+                }
+            }
+        }
+
+        // Fall back to querying the runtime directly
+        match self.get_runtime().await {
+            Ok(runtime) => runtime.capabilities().multimodal,
+            Err(_) => false,
         }
     }
 
@@ -908,9 +953,14 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled from active backend instance if using instance manager
-        let thinking_enabled = if self.uses_instance_manager() {
-            // Instance manager mode - use backend setting
+        // Get thinking_enabled - priority: local setting > instance setting
+        // This allows per-request override (e.g., disable thinking for multimodal)
+        let local_thinking = *self.thinking_enabled.read().await;
+        let thinking_enabled = if local_thinking.is_some() {
+            // Local override takes precedence
+            local_thinking
+        } else if self.uses_instance_manager() {
+            // Fall back to instance setting
             if let Some(manager) = &self.instance_manager {
                 manager
                     .get_active_instance()
@@ -919,8 +969,8 @@ impl LlmInterface {
                 None
             }
         } else {
-            // Direct mode - use local setting (defaults to false)
-            *self.thinking_enabled.read().await
+            // Direct mode with no local override
+            None
         };
 
         tracing::debug!(
@@ -929,11 +979,14 @@ impl LlmInterface {
             "LlmInterface chat_stream_internal"
         );
 
+        // Get effective parameters from backend instance or local config
+        let (eff_temp, eff_top_p, eff_top_k, eff_max_tokens) = self.get_effective_params().await;
+
         let params = edge_ai_core::llm::backend::GenerationParams {
-            temperature: Some(self.temperature),
-            top_p: Some(self.top_p),
-            top_k: None,
-            max_tokens: Some(self.max_tokens),
+            temperature: Some(eff_temp),
+            top_p: Some(eff_top_p),
+            top_k: Some(eff_top_k as u32),
+            max_tokens: Some(eff_max_tokens),
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,
@@ -1047,9 +1100,14 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled from active backend instance if using instance manager
-        let thinking_enabled = if self.uses_instance_manager() {
-            // Instance manager mode - use backend setting
+        // Get thinking_enabled - priority: local setting > instance setting
+        // This allows per-request override (e.g., disable thinking for multimodal)
+        let local_thinking = *self.thinking_enabled.read().await;
+        let thinking_enabled = if local_thinking.is_some() {
+            // Local override takes precedence
+            local_thinking
+        } else if self.uses_instance_manager() {
+            // Fall back to instance setting
             if let Some(manager) = &self.instance_manager {
                 manager
                     .get_active_instance()
@@ -1058,15 +1116,18 @@ impl LlmInterface {
                 None
             }
         } else {
-            // Direct mode - use local setting (defaults to false)
-            *self.thinking_enabled.read().await
+            // Direct mode with no local override
+            None
         };
 
+        // Get effective parameters from backend instance or local config
+        let (eff_temp, eff_top_p, eff_top_k, eff_max_tokens) = self.get_effective_params().await;
+
         let params = edge_ai_core::llm::backend::GenerationParams {
-            temperature: Some(self.temperature),
-            top_p: Some(self.top_p),
-            top_k: None,
-            max_tokens: Some(self.max_tokens),
+            temperature: Some(eff_temp),
+            top_p: Some(eff_top_p),
+            top_k: Some(eff_top_k as u32),
+            max_tokens: Some(eff_max_tokens),
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,
@@ -1285,9 +1346,14 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled from active backend instance if using instance manager
-        let thinking_enabled = if self.uses_instance_manager() {
-            // Instance manager mode - use backend setting
+        // Get thinking_enabled - priority: local setting > instance setting
+        // This allows per-request override (e.g., disable thinking for multimodal)
+        let local_thinking = *self.thinking_enabled.read().await;
+        let thinking_enabled = if local_thinking.is_some() {
+            // Local override takes precedence
+            local_thinking
+        } else if self.uses_instance_manager() {
+            // Fall back to instance setting
             if let Some(manager) = &self.instance_manager {
                 manager
                     .get_active_instance()
@@ -1296,8 +1362,8 @@ impl LlmInterface {
                 None
             }
         } else {
-            // Direct mode - use local setting (defaults to false)
-            *self.thinking_enabled.read().await
+            // Direct mode with no local override
+            None
         };
 
         tracing::debug!(
@@ -1306,11 +1372,14 @@ impl LlmInterface {
             "LlmInterface chat_stream_internal_message (multimodal)"
         );
 
+        // Get effective parameters from backend instance or local config
+        let (eff_temp, eff_top_p, eff_top_k, eff_max_tokens) = self.get_effective_params().await;
+
         let params = edge_ai_core::llm::backend::GenerationParams {
-            temperature: Some(self.temperature),
-            top_p: Some(self.top_p),
-            top_k: None,
-            max_tokens: Some(self.max_tokens),
+            temperature: Some(eff_temp),
+            top_p: Some(eff_top_p),
+            top_k: Some(eff_top_k as u32),
+            max_tokens: Some(eff_max_tokens),
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,
@@ -1420,9 +1489,14 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled from active backend instance if using instance manager
-        let thinking_enabled = if self.uses_instance_manager() {
-            // Instance manager mode - use backend setting
+        // Get thinking_enabled - priority: local setting > instance setting
+        // This allows per-request override (e.g., disable thinking for multimodal)
+        let local_thinking = *self.thinking_enabled.read().await;
+        let thinking_enabled = if local_thinking.is_some() {
+            // Local override takes precedence
+            local_thinking
+        } else if self.uses_instance_manager() {
+            // Fall back to instance setting
             if let Some(manager) = &self.instance_manager {
                 manager
                     .get_active_instance()
@@ -1431,8 +1505,8 @@ impl LlmInterface {
                 None
             }
         } else {
-            // Direct mode - use local setting (defaults to false)
-            *self.thinking_enabled.read().await
+            // Direct mode with no local override
+            None
         };
 
         tracing::debug!(
@@ -1441,11 +1515,14 @@ impl LlmInterface {
             "LlmInterface chat_stream_internal"
         );
 
+        // Get effective parameters from backend instance or local config
+        let (eff_temp, eff_top_p, eff_top_k, eff_max_tokens) = self.get_effective_params().await;
+
         let params = edge_ai_core::llm::backend::GenerationParams {
-            temperature: Some(self.temperature),
-            top_p: Some(self.top_p),
-            top_k: None,
-            max_tokens: Some(self.max_tokens),
+            temperature: Some(eff_temp),
+            top_p: Some(eff_top_p),
+            top_k: Some(eff_top_k as u32),
+            max_tokens: Some(eff_max_tokens),
             stop: None,
             frequency_penalty: None,
             presence_penalty: None,
@@ -1527,6 +1604,8 @@ pub struct ChatConfig {
     pub temperature: f32,
     /// Top-p sampling.
     pub top_p: f32,
+    /// Top-k sampling (0 = disabled).
+    pub top_k: usize,
     /// Maximum tokens to generate.
     pub max_tokens: usize,
     /// Maximum concurrent LLM requests (default: 3).
@@ -1539,6 +1618,7 @@ impl Default for ChatConfig {
             model: "qwen3-vl:2b".to_string(),
             temperature: agent_env_vars::temperature(),
             top_p: agent_env_vars::top_p(),
+            top_k: 20,  // Lowered for faster responses
             max_tokens: agent_env_vars::max_tokens(),
             concurrent_limit: agent_env_vars::concurrent_limit(),
         }

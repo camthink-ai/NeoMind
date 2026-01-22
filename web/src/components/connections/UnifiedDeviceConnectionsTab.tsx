@@ -13,6 +13,7 @@ import {
   Check,
   LucideIcon,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -25,6 +26,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { EmptyState, LoadingState } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
@@ -76,8 +85,8 @@ const getAdapterSchema = (adapterType: string): PluginConfigSchema => {
           },
           subscribe_topics: {
             type: 'array',
-            description: 'Topics to subscribe (default: "#" for all topics)',
-            default: ['#'],
+            description: 'Topics to subscribe (one per line). Wildcards: + matches single level, # matches all levels (must be last). Examples: ne301/+, sensor/+/data, device/#',
+            default: ['ne301/#'],
           },
         },
         required: ['broker'],
@@ -190,6 +199,11 @@ export function UnifiedDeviceConnectionsTab() {
   const [editingInstance, setEditingInstance] = useState<PluginInstance | null>(null)
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
 
+  // Delete confirmation dialog state
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [instanceToDelete, setInstanceToDelete] = useState<PluginInstance | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
   const [selectedType, setSelectedType] = useState<UnifiedPluginType | null>(null)
 
   // Load all data (adapter types + connection data) in one go
@@ -293,12 +307,18 @@ export function UnifiedDeviceConnectionsTab() {
     const type = selectedType!
 
     if (type.id === 'mqtt') {
+      // Helper to get optional string value - only include if defined and non-empty
+      const getOptionalString = (value: unknown): string | undefined => {
+        if (value === undefined || value === null || value === '') return undefined
+        return String(value)
+      }
+
       const data: any = {
         name,
         broker: config.broker,
         port: config.port || 1883,
-        username: config.username,
-        password: config.password,
+        username: getOptionalString(config.username),
+        password: getOptionalString(config.password),
         tls: config.tls || false,
         enabled: true,
         subscribe_topics: config.subscribe_topics as string[] | undefined,
@@ -317,13 +337,22 @@ export function UnifiedDeviceConnectionsTab() {
       const broker = externalBrokers.find((b) => b.id === id)
       if (!broker) throw new Error('Broker not found')
 
+      // Helper to get optional string value - only include if defined and non-empty
+      const getOptionalString = (value: unknown): string | undefined => {
+        if (value === undefined || value === null || value === '') return undefined
+        return String(value)
+      }
+
+      // Use existing broker name since it's not editable in the form
+      const name = broker.name || (config.name as string)
+
       await api.updateBroker(id, {
-        name: config.name as string,
+        name,
         broker: config.broker as string,
         port: config.port as number,
         tls: config.tls as boolean,
-        username: config.username as string,
-        password: config.password as string,
+        username: getOptionalString(config.username),
+        password: getOptionalString(config.password),
         enabled: broker.enabled,
         subscribe_topics: config.subscribe_topics as string[] | undefined,
       })
@@ -332,14 +361,48 @@ export function UnifiedDeviceConnectionsTab() {
     }
   }
 
-  // Handle delete
-  const handleDelete = async (id: string) => {
+  // Handle delete - show confirmation dialog
+  const handleDelete = async (_id: string) => {
     const instance = editingInstance
 
-    if (instance?.plugin_type === 'mqtt') {
-      await api.deleteBroker(id)
-    } else {
-      throw new Error('Cannot delete built-in adapter')
+    if (!instance) return
+
+    // Set instance for deletion and show confirmation dialog
+    setInstanceToDelete(instance)
+    setDeleteDialogOpen(true)
+  }
+
+  // Confirm delete action
+  const confirmDelete = async () => {
+    if (!instanceToDelete) return
+
+    setDeleting(true)
+    try {
+      if (instanceToDelete.plugin_type === 'mqtt') {
+        await api.deleteBroker(instanceToDelete.id)
+      } else {
+        throw new Error('Cannot delete built-in adapter')
+      }
+
+      // Success
+      toast({
+        title: t('common:success', { defaultValue: 'Success' }),
+        description: t('plugins:deleteSuccess', { defaultValue: 'Broker deleted successfully' }),
+      })
+
+      // Close dialog and refresh data
+      setDeleteDialogOpen(false)
+      setInstanceToDelete(null)
+      await loadData()
+    } catch (error) {
+      console.error('Failed to delete broker:', error)
+      toast({
+        title: t('common:failed', { defaultValue: 'Failed' }),
+        description: (error as Error).message || t('plugins:deleteFailed', { defaultValue: 'Failed to delete broker' }),
+        variant: 'destructive',
+      })
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -791,6 +854,47 @@ export function UnifiedDeviceConnectionsTab() {
           testResults={testResults}
           setTestResults={setTestResults}
         />
+
+        {/* Delete Confirmation Dialog */}
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-destructive" />
+                {t('plugins:deleteConfirmTitle', { defaultValue: 'Delete Broker?' })}
+              </DialogTitle>
+              <DialogDescription>
+                {t('plugins:deleteConfirmDesc', {
+                  defaultValue: 'Are you sure you want to delete "{{name}}"? This action cannot be undone.',
+                  name: instanceToDelete?.name || ''
+                })}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDeleteDialogOpen(false)}
+                disabled={deleting}
+              >
+                {t('common:cancel', { defaultValue: 'Cancel' })}
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={confirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    {t('common:deleting', { defaultValue: 'Deleting...' })}
+                  </>
+                ) : (
+                  t('plugins:delete', { defaultValue: 'Delete' })
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </>
     )
   }

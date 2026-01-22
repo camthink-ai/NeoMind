@@ -335,6 +335,7 @@ impl MqttAdapter {
         }
 
         for topic in &initial_topics {
+            debug!("Attempting to subscribe to topic '{}' on broker '{}'...", topic, broker_id);
             if let Err(e) = client.subscribe(topic, rumqttc::QoS::AtLeastOnce).await {
                 warn!(
                     "Failed to subscribe to {} on broker {}: {}",
@@ -342,8 +343,16 @@ impl MqttAdapter {
                 );
             } else {
                 subscribed_topics.write().await.insert(topic.clone());
+                info!("Successfully subscribed to topic '{}' on broker '{}'", topic, broker_id);
             }
         }
+
+        info!(
+            "Subscribed to {} topics for broker '{}': {:?}",
+            subscribed_topics.read().await.len(),
+            broker_id,
+            subscribed_topics.read().await
+        );
 
         // Store the client
         let inner = MqttClientInner {
@@ -413,6 +422,8 @@ impl MqttAdapter {
         let broker_id_clone = broker_id.clone();
         let extractor = self.extractor.clone();
         let topic_to_device = self.topic_to_device.clone();
+
+        info!("Starting event loop task for broker '{}', connecting to {}...", broker_id, broker_addr);
 
         tokio::spawn(async move {
             let mut eventloop = eventloop;
@@ -1491,8 +1502,8 @@ impl MqttAdapter {
                     let device_id_opt = {
                         let mapping = topic_to_device.read().await;
                         debug!("Checking topic_to_device mapping for topic '{}': {} entries", topic, mapping.len());
-                        for (k, v) in mapping.iter() {
-                            debug!("  Mapping entry: {} -> {}", k, v);
+                        if !mapping.contains_key(&topic) {
+                            debug!("Topic '{}' not found in mapping, triggering auto-onboarding", topic);
                         }
                         mapping.get(&topic).cloned()
                     };
@@ -1652,11 +1663,17 @@ impl MqttAdapter {
                                 "is_binary": is_binary
                             });
 
+                            // Use the adapter's name as adapter_id for auto-onboarding
+                            // This matches the adapter_id used during registration
+                            let adapter_id = config.name.clone();
+
                             bus.publish(NeoTalkEvent::Custom {
                                 event_type: "unknown_device_data".to_string(),
                                 data: serde_json::json!({
                                     "device_id": auto_device_id,
                                     "source": "mqtt",
+                                    "broker_id": broker_id,
+                                    "adapter_id": adapter_id,
                                     "original_topic": topic,
                                     "sample": sample,
                                     "is_binary": is_binary
@@ -1666,8 +1683,12 @@ impl MqttAdapter {
                     }
                 }
             }
-            rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_)) => {
-                info!("MQTT broker {} connection acknowledged", broker_id);
+            rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(connack)) => {
+                info!("MQTT broker {} connection acknowledged - session present: {}", broker_id, connack.session_present);
+            }
+            rumqttc::Event::Incoming(rumqttc::Packet::SubAck(suback)) => {
+                info!("MQTT broker {} subscription acknowledged - packet id: {}, granted QoS: {:?}",
+                    broker_id, suback.pkid, suback.return_codes);
             }
             _ => {}
         }

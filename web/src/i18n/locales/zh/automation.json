@@ -2,6 +2,7 @@
   "title": "自动化",
   "pageDescription": "管理规则和数据处理",
   "tabs": {
+    "agents": "AI 智能体",
     "rules": "规则",
     "transforms": "Transforms Data"
   },
@@ -421,6 +422,8 @@
   "ruleSaved": "规则保存成功",
   "transformSaved": "数据处理保存成功",
   "itemDeleted": "项目删除成功",
+  "itemUpdated": "项目更新成功",
+  "itemCreated": "项目创建成功",
   "executeSuccess": "执行启动成功",
   "comparisonOperators": {
     "greaterThan": "大于",

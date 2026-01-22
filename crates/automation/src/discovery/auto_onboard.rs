@@ -12,11 +12,72 @@ use edge_ai_core::{EventBus, LlmRuntime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
 /// Constants for auto-onboarding limits
 const MAX_DRAFT_DEVICES: usize = 50;  // Maximum concurrent draft devices
 const MIN_SAMPLES_FOR_ANALYSIS: usize = 1;  // Minimum samples before analysis
+const MAX_MESSAGES_PER_DRAFT: usize = 20;  // Max messages to process per draft (security)
+const MESSAGE_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);  // Rate limit window
+const MAX_MESSAGES_PER_WINDOW: usize = 10;  // Max messages per minute per device
+
+/// Rate limiter for device messages
+#[derive(Debug, Clone)]
+struct MessageRateLimiter {
+    /// Message timestamps within the current window
+    timestamps: Arc<RwLock<Vec<Instant>>>,
+    /// Total messages processed (for lifetime limit)
+    total_count: Arc<RwLock<usize>>,
+}
+
+impl MessageRateLimiter {
+    fn new() -> Self {
+        Self {
+            timestamps: Arc::new(RwLock::new(Vec::new())),
+            total_count: Arc::new(RwLock::new(0)),
+        }
+    }
+
+    /// Check if a message should be allowed based on rate limits
+    /// Returns true if allowed, false if rate limited
+    async fn check_rate_limit(&self) -> bool {
+        let now = Instant::now();
+
+        // Clean up old timestamps outside the window
+        let mut timestamps = self.timestamps.write().await;
+        timestamps.retain(|&ts| now.duration_since(ts) < MESSAGE_RATE_LIMIT_WINDOW);
+
+        // Check rate limit
+        if timestamps.len() >= MAX_MESSAGES_PER_WINDOW {
+            return false;
+        }
+
+        // Add current timestamp
+        timestamps.push(now);
+        drop(timestamps);
+
+        // Check total count
+        let mut total = self.total_count.write().await;
+        if *total >= MAX_MESSAGES_PER_DRAFT {
+            return false;
+        }
+        *total += 1;
+
+        true
+    }
+
+    /// Get the total count of messages processed
+    async fn total_count(&self) -> usize {
+        *self.total_count.read().await
+    }
+
+    /// Reset the limiter (e.g., after device is registered)
+    async fn reset(&self) {
+        self.timestamps.write().await.clear();
+        *self.total_count.write().await = 0;
+    }
+}
 
 /// Type signature for matching similar device types
 ///
@@ -84,6 +145,13 @@ pub struct AutoOnboardManager {
     type_signatures: Arc<RwLock<HashMap<String, String>>>,
     /// Reverse mapping: device_type -> signature_hash
     device_type_signatures: Arc<RwLock<HashMap<String, String>>>,
+    /// Full type signatures for similarity matching
+    /// signature_hash -> TypeSignature
+    full_type_signatures: Arc<RwLock<HashMap<String, TypeSignature>>>,
+    /// Rate limiters per device ID (for DoS protection)
+    rate_limiters: Arc<RwLock<HashMap<String, MessageRateLimiter>>>,
+    /// Blocked devices (spam detected)
+    blocked_devices: Arc<RwLock<HashMap<String, (Instant, String)>>>,
     /// Path extractor for analyzing samples
     path_extractor: DataPathExtractor,
     /// Semantic inference
@@ -124,6 +192,9 @@ impl AutoOnboardManager {
             drafts: Arc::new(RwLock::new(HashMap::new())),
             type_signatures: Arc::new(RwLock::new(HashMap::new())),
             device_type_signatures: Arc::new(RwLock::new(HashMap::new())),
+            full_type_signatures: Arc::new(RwLock::new(HashMap::new())),
+            rate_limiters: Arc::new(RwLock::new(HashMap::new())),
+            blocked_devices: Arc::new(RwLock::new(HashMap::new())),
             path_extractor,
             semantic_inference,
             metric_generator,
@@ -159,7 +230,7 @@ impl AutoOnboardManager {
         data: &serde_json::Value,
         is_binary: bool,
     ) -> Result<bool> {
-        self.process_unknown_device_with_topic(device_id, source, data, is_binary, None).await
+        self.process_unknown_device_with_topic(device_id, source, data, is_binary, None, None).await
     }
 
     /// Process incoming data from an unknown device with original topic
@@ -172,7 +243,58 @@ impl AutoOnboardManager {
         data: &serde_json::Value,
         is_binary: bool,
         original_topic: Option<String>,
+        adapter_id: Option<String>,
     ) -> Result<bool> {
+        // Check if device is blocked (spam detected)
+        {
+            let blocked = self.blocked_devices.read().await;
+            if let Some((blocked_at, reason)) = blocked.get(device_id) {
+                let elapsed = blocked_at.elapsed();
+                // Block for 1 hour, then allow retry
+                if elapsed < Duration::from_secs(3600) {
+                    tracing::warn!(
+                        "Rejected message from blocked device '{}' ({}s remaining): {}",
+                        device_id,
+                        3600 - elapsed.as_secs(),
+                        reason
+                    );
+                    return Ok(false);
+                } else {
+                    // Unblock after timeout
+                    drop(blocked);
+                    let mut blocked = self.blocked_devices.write().await;
+                    blocked.remove(device_id);
+                    tracing::info!("Unblocked device '{}' after timeout", device_id);
+                }
+            }
+        }
+
+        // Get or create rate limiter for this device
+        let rate_limiter = {
+            let mut limiters = self.rate_limiters.write().await;
+            if !limiters.contains_key(device_id) {
+                limiters.insert(device_id.to_string(), MessageRateLimiter::new());
+            }
+            limiters.get(device_id).cloned().unwrap()
+        };
+
+        // Check rate limits
+        if !rate_limiter.check_rate_limit().await {
+            let count = rate_limiter.total_count().await;
+            tracing::warn!(
+                "Rate limit exceeded for device '{}': {} messages processed (max: {})",
+                device_id, count, MAX_MESSAGES_PER_DRAFT
+            );
+
+            // Block the device if it's clearly spamming
+            if count >= MAX_MESSAGES_PER_DRAFT {
+                let mut blocked = self.blocked_devices.write().await;
+                blocked.insert(device_id.to_string(), (Instant::now(), "Rate limit exceeded".to_string()));
+                tracing::warn!("Device '{}' blocked due to excessive messages", device_id);
+            }
+            return Ok(false);
+        }
+
         let config = self.config.read().await;
         if !config.enabled {
             return Ok(false);
@@ -194,7 +316,7 @@ impl AutoOnboardManager {
         drop(drafts);
 
         // Create new draft device
-        self.create_draft_with_topic(device_id, source, data, is_binary, original_topic).await
+        self.create_draft_with_topic(device_id, source, data, is_binary, original_topic, adapter_id).await
     }
 
     /// Create a new draft device
@@ -205,7 +327,7 @@ impl AutoOnboardManager {
         data: &serde_json::Value,
         is_binary: bool,
     ) -> Result<bool> {
-        self.create_draft_with_topic(device_id, source, data, is_binary, None).await
+        self.create_draft_with_topic(device_id, source, data, is_binary, None, None).await
     }
 
     /// Create a new draft device with original topic
@@ -216,6 +338,7 @@ impl AutoOnboardManager {
         data: &serde_json::Value,
         is_binary: bool,
         original_topic: Option<String>,
+        adapter_id: Option<String>,
     ) -> Result<bool> {
         let mut drafts = self.drafts.write().await;
 
@@ -225,6 +348,9 @@ impl AutoOnboardManager {
             self.config.read().await.max_samples,
             original_topic,
         );
+
+        // Store adapter_id for external broker devices
+        draft.adapter_id = adapter_id;
 
         // Mark as binary if applicable
         if is_binary {
@@ -479,21 +605,31 @@ impl AutoOnboardManager {
         // Infer device category from metrics
         let category = self.infer_category(&metrics);
 
-        // Check for existing type with matching signature
+        // First, try exact match
         let existing_type = self.find_matching_type(&metrics, &category).await;
 
-        let (type_id, reusing_type) = if let Some(existing_type_id) = existing_type {
-            tracing::info!(
-                "Found matching type signature for device '{}': reusing type '{}'",
-                device_id,
-                existing_type_id
-            );
-            (existing_type_id.clone(), true)
+        // If no exact match, try similarity match with threshold 0.7 (70%)
+        let similar_type = if existing_type.is_none() {
+            self.find_similar_type(&metrics, &category, 0.7).await
         } else {
-            // Generate new device type ID
-            let new_type_id = format!("auto_{}", device_id.replace('-', "_"));
-            (new_type_id, false)
+            None
         };
+
+        let (type_id, reusing_type) = existing_type
+            .or(similar_type)
+            .map(|t| (t, true))
+            .unwrap_or_else(|| {
+                let new_type_id = format!("auto_{}", device_id.replace('-', "_"));
+                (new_type_id, false)
+            });
+
+        if reusing_type {
+            tracing::info!(
+                "Reusing existing type '{}' for device '{}'",
+                type_id,
+                device_id
+            );
+        }
 
         // Generate MDL definition
         let mdl_definition = self.generate_mdl(&type_id, &type_id, &metrics, &category).await?;
@@ -762,6 +898,11 @@ impl AutoOnboardManager {
             drafts.remove(device_id);
             tracing::info!("Draft device '{}' removed after registration", device_id);
         }
+        drop(drafts);
+
+        // Clean up rate limiter for this device
+        let mut limiters = self.rate_limiters.write().await;
+        limiters.remove(device_id);
 
         Ok(())
     }
@@ -1053,6 +1194,84 @@ impl AutoOnboardManager {
         signatures.get(&signature_hash).cloned()
     }
 
+    /// Find a similar device type using similarity matching
+    ///
+    /// Returns the most similar device type if similarity >= threshold (default 0.7)
+    /// Uses Jaccard similarity on metric signatures
+    pub async fn find_similar_type(&self, metrics: &[DiscoveredMetric], category: &DeviceCategory, threshold: f64) -> Option<String> {
+        let signature = self.compute_type_signature(metrics, category);
+
+        // Get all registered signatures
+        let full_signatures = self.full_type_signatures.read().await;
+        let type_signatures = self.type_signatures.read().await;
+
+        if full_signatures.is_empty() {
+            return None;
+        }
+
+        let mut best_match: Option<(String, f64)> = None;
+
+        for (sig_hash, existing_signature) in full_signatures.iter() {
+            // Skip if category doesn't match
+            if existing_signature.category != signature.category {
+                continue;
+            }
+
+            // Compute similarity
+            let similarity = self.compute_signature_similarity(&signature, existing_signature);
+
+            if similarity >= threshold {
+                match &best_match {
+                    None => {
+                        best_match = Some((sig_hash.clone(), similarity));
+                    }
+                    Some((_, current_best)) if similarity > *current_best => {
+                        best_match = Some((sig_hash.clone(), similarity));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Look up the device_type from the signature hash
+        if let Some((sig_hash, similarity)) = best_match {
+            if let Some(device_type) = type_signatures.get(&sig_hash) {
+                tracing::info!(
+                    "Found similar type '{}' with similarity {:.2}%",
+                    device_type,
+                    similarity * 100.0
+                );
+                return Some(device_type.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Compute similarity between two type signatures using Jaccard index
+    ///
+    /// Jaccard similarity = |A ∩ B| / |A ∪ B|
+    /// Where A and B are sets of metric signatures
+    fn compute_signature_similarity(&self, sig1: &TypeSignature, sig2: &TypeSignature) -> f64 {
+        use std::collections::HashSet;
+
+        let set1: HashSet<_> = sig1.metric_signatures.iter().collect();
+        let set2: HashSet<_> = sig2.metric_signatures.iter().collect();
+
+        if set1.is_empty() && set2.is_empty() {
+            return 1.0;
+        }
+
+        let intersection = set1.intersection(&set2).count();
+        let union = set1.union(&set2).count();
+
+        if union == 0 {
+            return 0.0;
+        }
+
+        intersection as f64 / union as f64
+    }
+
     /// Register a new type signature mapping
     ///
     /// Stores the relationship between a signature hash and device_type_id.
@@ -1070,6 +1289,12 @@ impl AutoOnboardManager {
         {
             let mut reverse = self.device_type_signatures.write().await;
             reverse.insert(device_type.to_string(), signature_hash.clone());
+        }
+
+        // Store full signature for similarity matching
+        {
+            let mut full_signatures = self.full_type_signatures.write().await;
+            full_signatures.insert(signature_hash.clone(), signature);
         }
 
         tracing::debug!(
@@ -1164,6 +1389,9 @@ impl AutoOnboardManager {
             drafts: self.drafts.clone(),
             type_signatures: self.type_signatures.clone(),
             device_type_signatures: self.device_type_signatures.clone(),
+            full_type_signatures: self.full_type_signatures.clone(),
+            rate_limiters: self.rate_limiters.clone(),
+            blocked_devices: self.blocked_devices.clone(),
             path_extractor: DataPathExtractor::new(self.llm.clone()),
             semantic_inference: SemanticInference::new(self.llm.clone()),
             metric_generator: VirtualMetricGenerator::new(self.llm.clone()),

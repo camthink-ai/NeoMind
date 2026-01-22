@@ -16,9 +16,11 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Card } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { EmptyStateInline } from "@/components/shared"
-import { Bot, Edit, Play, Trash2, MoreVertical, Clock, Brain } from "lucide-react"
+import { Bot, Edit, Play, Trash2, MoreVertical, Clock, Brain, Activity, Zap } from "lucide-react"
 import { useTranslation } from "react-i18next"
+import { cn } from "@/lib/utils"
 import type { AiAgent } from "@/types"
 
 interface AgentsListProps {
@@ -52,6 +54,16 @@ export function AgentsList({
     }
   }
 
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'Active': return 'bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20'
+      case 'Paused': return 'bg-gray-500/10 text-gray-700 dark:text-gray-400 border-gray-500/20'
+      case 'Error': return 'bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/20'
+      case 'Executing': return 'bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/20'
+      default: return 'bg-gray-500/10 text-gray-700 dark:text-gray-400 border-gray-500/20'
+    }
+  }
+
   const formatDateTime = (dateStr: string | null) => {
     if (!dateStr) return '-'
     try {
@@ -65,33 +77,52 @@ export function AgentsList({
     <Card>
       <Table>
         <TableHeader>
-          <TableRow>
+          <TableRow className="hover:bg-transparent border-b">
             <TableHead className="w-12">#</TableHead>
-            <TableHead>{t('agents:agentName')}</TableHead>
+            <TableHead>
+              <div className="flex items-center gap-1.5">
+                <Bot className="h-4 w-4 text-muted-foreground" />
+                {t('agents:agentName')}
+              </div>
+            </TableHead>
             <TableHead>{t('agents:status')}</TableHead>
-            <TableHead>{t('agents:executions')}</TableHead>
-            <TableHead>{t('agents:lastExecution')}</TableHead>
+            <TableHead>统计</TableHead>
+            <TableHead>
+              <div className="flex items-center gap-1.5">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                {t('agents:lastExecution')}
+              </div>
+            </TableHead>
             <TableHead className="text-right">{t('common:actions')}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {loading ? (
-            <EmptyStateInline
-              title={t('common:loading')}
-              colSpan={6}
-            />
+            <EmptyStateInline title={t('common:loading')} colSpan={6} />
           ) : agents.length === 0 ? (
-            <EmptyStateInline
-              title={t('agents:noAgents')}
-              colSpan={6}
-            />
+            <EmptyStateInline title={t('agents:noAgents')} colSpan={6} />
           ) : (
             agents.map((agent, index) => (
-              <TableRow key={agent.id} className={agent.status === 'Paused' ? "opacity-60" : ""}>
-                <TableCell className="text-muted-foreground">{index + 1}</TableCell>
-                <TableCell className="font-medium flex items-center gap-2">
-                  <Bot className="h-4 w-4 text-primary" />
-                  {agent.name}
+              <TableRow
+                key={agent.id}
+                className={cn(
+                  "group transition-colors hover:bg-muted/50",
+                  agent.status === 'Paused' && "opacity-60"
+                )}
+              >
+                <TableCell className="text-muted-foreground text-sm font-medium">
+                  {index + 1}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-2">
+                    <div className={cn(
+                      "p-1.5 rounded-md transition-colors",
+                      agent.status === 'Active' ? "bg-purple-500/10 text-purple-600" : "bg-muted text-muted-foreground"
+                    )}>
+                      <Bot className="h-3.5 w-3.5" />
+                    </div>
+                    <span className="font-medium">{agent.name}</span>
+                  </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
@@ -99,26 +130,30 @@ export function AgentsList({
                       checked={agent.status === 'Active'}
                       onCheckedChange={() => onToggleStatus(agent)}
                       disabled={agent.status === 'Executing'}
+                      className="scale-90"
                     />
-                    <span className="text-xs font-medium">{getStatusLabel(agent.status)}</span>
+                    <Badge variant="outline" className={cn("text-xs", getStatusColor(agent.status))}>
+                      {getStatusLabel(agent.status)}
+                    </Badge>
                   </div>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-3 text-sm">
                     <div className="flex items-center gap-1 text-muted-foreground">
-                      <Play className="h-3 w-3" />
-                      <span>{agent.execution_count}</span>
+                      <Activity className="h-3 w-3" />
+                      <span className="font-medium">{agent.execution_count}</span>
                     </div>
                     <div className="flex items-center gap-1 text-green-600">
+                      <Zap className="h-3 w-3" />
                       <span className="font-medium">{agent.success_count}</span>
                     </div>
-                    <div className="flex items-center gap-1 text-red-600">
+                    <div className="flex items-center gap-1 text-red-500">
+                      <Activity className="h-3 w-3" />
                       <span className="font-medium">{agent.error_count}</span>
                     </div>
                     {agent.avg_duration_ms > 0 && (
-                      <div className="flex items-center gap-1 text-muted-foreground">
-                        <Clock className="h-3 w-3" />
-                        <span>{agent.avg_duration_ms}ms</span>
+                      <div className="text-xs text-muted-foreground">
+                        {agent.avg_duration_ms}ms
                       </div>
                     )}
                   </div>
@@ -129,7 +164,7 @@ export function AgentsList({
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon">
+                      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
                         <MoreVertical className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>

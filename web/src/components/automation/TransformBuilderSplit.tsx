@@ -118,7 +118,7 @@ function MetricsPreviewPanel({
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3 border-b bg-muted/20 flex-shrink-0">
+      <div className="px-6 py-4 border-b bg-muted/20 flex-shrink-0">
         <div className="flex items-center gap-2">
           <Database className="h-4 w-4 text-blue-500" />
           <span className="font-semibold text-sm">{t('automation:testData')}</span>
@@ -259,7 +259,7 @@ export function TransformBuilder({
       setName(transform.name)
       setDescription(transform.description || '')
       setEnabled(transform.enabled)
-      setOutputPrefix(transform.output_prefix || 'transform')
+      setOutputPrefix(transform.output_prefix ?? 'transform')
       setJsCode(transform.js_code || '')
 
       // Handle new scope format: 'global' | { device_type: string } | { device: string }
@@ -286,7 +286,7 @@ export function TransformBuilder({
     setEnabled(true)
     setScopeType('global')
     setScopeValue('')
-    setOutputPrefix('')
+    setOutputPrefix('transform')
     setJsCode('')
     setTestInput('')
     setTestOutput('')
@@ -388,7 +388,7 @@ export function TransformBuilder({
         {/* Form Section */}
         <div className="border-b px-6 py-4 bg-muted/20 flex-shrink-0">
           {/* Row 1: Name, Description */}
-          <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="transform-name" className="text-xs font-medium">{t('automation:transformBuilder.name')} <span className="text-destructive">*</span></Label>
               <Input
@@ -412,7 +412,7 @@ export function TransformBuilder({
           </div>
 
           {/* Row 2: Scope Type, Scope Value */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-4 mt-4">
             <div>
               <Label className="text-xs font-medium">{t('automation:scope')}</Label>
               <Select value={scopeType} onValueChange={(v: ScopeType) => setScopeType(v)}>
@@ -473,7 +473,7 @@ export function TransformBuilder({
           {/* Left - Code Editor */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* Templates */}
-            <div className="px-6 py-3 border-b bg-muted/20 flex-shrink-0">
+            <div className="px-6 py-4 border-b bg-muted/20 flex-shrink-0">
               <Label className="text-xs font-medium text-muted-foreground mb-2 block">{t('automation:transformBuilder.availableVars')}</Label>
               <div className="flex flex-wrap gap-2">
                 {CODE_TEMPLATES.map((tpl, i) => (
@@ -493,7 +493,7 @@ export function TransformBuilder({
 
             {/* Code Editor */}
             <div className="flex-1 flex flex-col min-h-0">
-              <div className="px-6 py-3 border-b bg-muted/30 flex items-center justify-between flex-shrink-0">
+              <div className="px-6 py-4 border-b bg-muted/30 flex items-center justify-between flex-shrink-0">
                 <Label className="text-sm font-medium">{t('automation:transformBuilder.transformCode')}</Label>
                 <span className="text-xs text-muted-foreground">
                   {t('automation:transformBuilder.transformCodeDesc')}

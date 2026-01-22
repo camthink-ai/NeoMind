@@ -953,6 +953,7 @@ export interface LlmBackendInstance {
   is_active: boolean
   temperature: number
   top_p: number
+  top_k: number
   max_tokens: number
   thinking_enabled: boolean  // Enable thinking/reasoning mode for models that support it
   capabilities: BackendCapabilities
@@ -968,6 +969,7 @@ export interface CreateLlmBackendRequest {
   api_key?: string
   temperature?: number
   top_p?: number
+  top_k?: number
   thinking_enabled?: boolean  // Enable thinking/reasoning mode for models that support it
   capabilities?: BackendCapabilities  // Model capabilities (from Ollama model detection)
 }
@@ -979,6 +981,7 @@ export interface UpdateLlmBackendRequest {
   api_key?: string
   temperature?: number
   top_p?: number
+  top_k?: number
   thinking_enabled?: boolean  // Enable thinking/reasoning mode for models that support it
   capabilities?: BackendCapabilities  // Model capabilities (from Ollama model detection)
 }
@@ -1509,9 +1512,21 @@ export interface AiAgentDetail extends AiAgent {
   user_prompt: string
   parsed_intent?: ParsedIntent
   memory?: AgentMemory
+  resources: AgentResource[]
+  schedule: AgentSchedule
   stats: AgentStats
   updated_at: string
   error_message?: string
+}
+
+/**
+ * Agent schedule configuration
+ */
+export interface AgentSchedule {
+  schedule_type: 'interval' | 'cron' | 'event'
+  interval_seconds?: number
+  cron_expression?: string
+  timezone?: string
 }
 
 /**
@@ -1530,7 +1545,7 @@ export interface ParsedIntent {
  */
 export interface AgentMemory {
   state_variables: Record<string, unknown>
-  baselines: Record<string, number>  // Historical baselines
+  baselines?: Record<string, number>  // Historical baselines (optional - backend may not provide)
   learned_patterns: string[]
   trend_data: TrendPoint[]
   updated_at: string

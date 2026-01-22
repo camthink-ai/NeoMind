@@ -258,6 +258,16 @@ impl SessionManager {
                         .collect()
                 });
 
+                // Convert images from AgentMessageImage to SessionMessageImage
+                let images = msg.images.as_ref().map(|imgs| {
+                    imgs.iter()
+                        .map(|img| edge_ai_storage::SessionMessageImage {
+                            data: img.data.clone(),
+                            mime_type: img.mime_type.clone(),
+                        })
+                        .collect()
+                });
+
                 edge_ai_storage::SessionMessage {
                     role: msg.role.clone(),
                     content: msg.content.clone(),
@@ -265,6 +275,7 @@ impl SessionManager {
                     tool_call_id: msg.tool_call_id.clone(),
                     tool_call_name: msg.tool_call_name.clone(),
                     thinking: msg.thinking.clone(),
+                    images,
                     timestamp: msg.timestamp,
                 }
             })
@@ -321,6 +332,16 @@ impl SessionManager {
                         .collect()
                 });
 
+                // Convert images from SessionMessageImage to AgentMessageImage
+                let images = sm.images.map(|imgs| {
+                    imgs.into_iter()
+                        .map(|img| super::agent::AgentMessageImage {
+                            data: img.data,
+                            mime_type: img.mime_type,
+                        })
+                        .collect()
+                });
+
                 AgentMessage {
                     role: sm.role,
                     content: sm.content,
@@ -328,6 +349,7 @@ impl SessionManager {
                     tool_call_id: sm.tool_call_id,
                     tool_call_name: sm.tool_call_name,
                     thinking: sm.thinking,
+                    images,
                     timestamp: sm.timestamp,
                 }
             })
@@ -865,6 +887,17 @@ impl SessionManager {
         if let Some(backend) = backend_id {
             let _ = self.configure_agent_by_backend_id(session_id, backend).await;
         }
+
+        // Check if images are provided and model supports vision
+        if !images.is_empty() {
+            let agent = self.get_session(session_id).await?;
+            if !agent.llm_interface().supports_multimodal().await {
+                return Err(super::error::NeoTalkError::Validation(
+                    "当前模型不支持图像输入。请选择支持视觉的模型（如 qwen3-vl）或移除图片后重试。".to_string()
+                ).into());
+            }
+        }
+
         self.process_message_multimodal(session_id, message, images).await
     }
 
@@ -880,6 +913,17 @@ impl SessionManager {
         if let Some(backend) = backend_id {
             let _ = self.configure_agent_by_backend_id(session_id, backend).await;
         }
+
+        // Check if images are provided and model supports vision
+        if !images.is_empty() {
+            let agent = self.get_session(session_id).await?;
+            if !agent.llm_interface().supports_multimodal().await {
+                return Err(super::error::NeoTalkError::Validation(
+                    "当前模型不支持图像输入。请选择支持视觉的模型（如 qwen3-vl）或移除图片后重试。".to_string()
+                ).into());
+            }
+        }
+
         self.process_message_multimodal_stream(session_id, message, images).await
     }
 
@@ -890,6 +934,15 @@ impl SessionManager {
         message: &str,
         images: Vec<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
+        // Check if images are provided and model supports vision
+        if !images.is_empty() {
+            let agent = self.get_session(session_id).await?;
+            if !agent.llm_interface().supports_multimodal().await {
+                return Err(super::error::NeoTalkError::Validation(
+                    "当前模型不支持图像输入。请选择支持视觉的模型（如 qwen3-vl）或移除图片后重试。".to_string()
+                ).into());
+            }
+        }
         let agent = self.get_session(session_id).await?;
         agent.process_multimodal_stream_events(message, images).await
     }

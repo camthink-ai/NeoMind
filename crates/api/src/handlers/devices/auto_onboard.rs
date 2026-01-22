@@ -214,7 +214,7 @@ pub async fn approve_draft_device(
                 json_path: Some("$.value".to_string()),
                 ..Default::default()
             },
-            adapter_id: Some("internal-mqtt".to_string()),
+            adapter_id: draft.adapter_id.clone().or_else(|| Some("internal-mqtt".to_string())),
         };
 
         // Register the device
@@ -295,7 +295,7 @@ pub async fn approve_draft_device(
                 json_path: Some("$.value".to_string()),
                 ..Default::default()
             },
-            adapter_id: Some("internal-mqtt".to_string()),
+            adapter_id: draft.adapter_id.clone().or_else(|| Some("internal-mqtt".to_string())),
         };
 
         // Register the device

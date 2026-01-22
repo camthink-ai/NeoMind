@@ -2,6 +2,7 @@
   "title": "Automation",
   "pageDescription": "Manage rules and data transformations",
   "tabs": {
+    "agents": "AI Agents",
     "rules": "Rules",
     "transforms": "Transforms Data"
   },
@@ -426,6 +427,8 @@
   "ruleSaved": "Rule saved successfully",
   "transformSaved": "Transform saved successfully",
   "itemDeleted": "Item deleted successfully",
+  "itemUpdated": "Item updated successfully",
+  "itemCreated": "Item created successfully",
   "executeSuccess": "Execution started successfully",
   "comparisonOperators": {
     "greaterThan": "Greater than",

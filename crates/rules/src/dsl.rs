@@ -535,13 +535,18 @@ impl RuleDslParser {
     }
 
     /// Parse device.metric from a condition string.
+    /// Supports nested metrics like "device.metadata.height" where the full metric path
+    /// after the device ID should be preserved (e.g., "metadata.height").
     fn parse_device_metric(input: &str) -> Result<(String, String), RuleError> {
-        let parts: Vec<&str> = input.trim().split('.').collect();
-        if parts.len() >= 2 {
-            Ok((parts[0].to_string(), parts[1].to_string()))
+        let input = input.trim();
+        // Find the first dot to separate device_id from metric
+        if let Some(dot_pos) = input.find('.') {
+            let device_id = input[..dot_pos].to_string();
+            let metric = input[dot_pos + 1..].to_string(); // Everything after the first dot
+            Ok((device_id, metric))
         } else {
             // No device specified, use the whole thing as metric
-            Ok((String::new(), parts[0].to_string()))
+            Ok((String::new(), input.to_string()))
         }
     }
 
@@ -1213,5 +1218,74 @@ DO NOTIFY \"High temperature\" END"#;
         let rule = RuleDslParser::parse(dsl).unwrap();
         assert_eq!(rule.name, "Test Rule");
         assert_eq!(rule.actions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_nested_metrics() {
+        // Test that nested metrics like "device.metadata.height" are parsed correctly
+        // The metric name should preserve the full path after the device ID
+        let dsl = r#"
+            RULE "Test Nested Metrics"
+            WHEN 2A3C39.metadata.height > 100
+            DO
+                NOTIFY "Height is large"
+            END
+        "#;
+
+        let rule = RuleDslParser::parse(dsl).unwrap();
+        assert_eq!(rule.name, "Test Nested Metrics");
+        match &rule.condition {
+            RuleCondition::Simple { device_id, metric, operator, threshold } => {
+                assert_eq!(device_id, "2A3C39");
+                assert_eq!(metric, "metadata.height"); // Full nested path should be preserved
+                assert_eq!(*operator, ComparisonOperator::GreaterThan);
+                assert_eq!(*threshold, 100.0);
+            }
+            _ => panic!("Expected Simple condition"),
+        }
+    }
+
+    #[test]
+    fn test_parse_deeply_nested_metrics() {
+        // Test deeply nested metrics like "device.ai_result.ai_result.confidence"
+        let dsl = r#"
+            RULE "Test Deeply Nested Metrics"
+            WHEN device.ai_result.ai_result.confidence > 0.8
+            DO
+                LOG info, "High confidence"
+            END
+        "#;
+
+        let rule = RuleDslParser::parse(dsl).unwrap();
+        match &rule.condition {
+            RuleCondition::Simple { device_id, metric, .. } => {
+                assert_eq!(device_id, "device");
+                assert_eq!(metric, "ai_result.ai_result.confidence"); // Full path preserved
+            }
+            _ => panic!("Expected Simple condition"),
+        }
+    }
+
+    #[test]
+    fn test_parse_range_with_nested_metrics() {
+        // Test BETWEEN range condition with nested metrics
+        let dsl = r#"
+            RULE "Test Range Nested Metrics"
+            WHEN device.metadata.height BETWEEN 50 AND 200
+            DO
+                NOTIFY "Height in range"
+            END
+        "#;
+
+        let rule = RuleDslParser::parse(dsl).unwrap();
+        match &rule.condition {
+            RuleCondition::Range { device_id, metric, min, max } => {
+                assert_eq!(device_id, "device");
+                assert_eq!(metric, "metadata.height"); // Full nested path preserved
+                assert_eq!(*min, 50.0);
+                assert_eq!(*max, 200.0);
+            }
+            _ => panic!("Expected Range condition"),
+        }
     }
 }

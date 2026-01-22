@@ -25,14 +25,17 @@ use edge_ai_core::message::{Content, ContentPart, Message, MessageRole};
 const STREAM_TIMEOUT_SECS: u64 = 300;
 
 /// Maximum thinking characters - set to limit to prevent infinite thinking loops
+/// Increased to 10000 for models like qwen3-vl:2b that need extended thinking for image reasoning
 /// Some models (like qwen3-vl:2b) can get stuck in thinking loops
-const MAX_THINKING_CHARS: usize = 1000;
+const MAX_THINKING_CHARS: usize = 10000;
 
 /// Maximum consecutive identical thinking chunks before assuming loop
-const MAX_THINKING_LOOP: usize = 3;
+/// Increased to 10 for streaming models where natural chunk repetition is normal
+const MAX_THINKING_LOOP: usize = 10;
 
 /// Maximum thinking time before forcing completion (in seconds)
-const MAX_THINKING_TIME_SECS: u64 = 10;
+/// Increased to 60 seconds for image reasoning scenarios that need more processing time
+const MAX_THINKING_TIME_SECS: u64 = 60;
 
 /// Ollama configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -474,12 +477,14 @@ impl LlmRuntime for OllamaRuntime {
         let options = if input.params.temperature.is_some()
             || num_predict.is_some()
             || input.params.top_p.is_some()
+            || input.params.top_k.is_some()
             || stop_sequences.is_some()
         {
             Some(OllamaOptions {
                 temperature: input.params.temperature,
                 num_predict,
                 top_p: input.params.top_p,
+                top_k: input.params.top_k,
                 repeat_penalty: None,
                 stop: stop_sequences,
             })
@@ -487,9 +492,17 @@ impl LlmRuntime for OllamaRuntime {
             None
         };
 
-        // Thinking: Don't pass think parameter at all to avoid qwen3-vl:2b thinking loops
-        // The think parameter doesn't work reliably for qwen3-vl:2b
-        let think: Option<OllamaThink> = None;
+        // Thinking: Explicitly control based on thinking_enabled parameter
+        let model_supports_thinking = caps.supports_thinking;
+        let user_requested_thinking = input.params.thinking_enabled;
+
+        // Determine the think parameter
+        let think: Option<OllamaThink> = match user_requested_thinking {
+            Some(false) => Some(OllamaThink::Bool(false)),  // Explicitly disable
+            Some(true) if model_supports_thinking => Some(OllamaThink::Bool(true)),  // Explicitly enable
+            Some(true) => None,  // Model doesn't support thinking, don't send parameter
+            None => None,  // Use model default
+        };
 
         let format: Option<String> = None;
 
@@ -729,12 +742,14 @@ impl LlmRuntime for OllamaRuntime {
         let options = if input.params.temperature.is_some()
             || num_predict.is_some()
             || input.params.top_p.is_some()
+            || input.params.top_k.is_some()
             || stop_sequences.is_some()
         {
             Some(OllamaOptions {
                 temperature: input.params.temperature,
                 num_predict,
                 top_p: input.params.top_p,
+                top_k: input.params.top_k,
                 repeat_penalty: None,
                 stop: stop_sequences,
             })
@@ -742,15 +757,25 @@ impl LlmRuntime for OllamaRuntime {
             None
         };
 
-        // Thinking: Don't pass think parameter at all to avoid qwen3-vl:2b thinking loops
-        // The think parameter doesn't work reliably for qwen3-vl:2b
-        let think: Option<OllamaThink> = None;
+        // Thinking: Explicitly control based on thinking_enabled parameter
+        // When thinking_enabled is Some(false), disable thinking for faster responses
+        // When thinking_enabled is Some(true) or None, use model default or enable thinking
+        let model_supports_thinking = caps.supports_thinking;
+        let user_requested_thinking = input.params.thinking_enabled;
+
+        // Determine the think parameter:
+        // - Some(false) -> explicitly disable thinking (important for multimodal!)
+        // - Some(true) -> explicitly enable thinking
+        // - None -> use model default (pass nothing)
+        let think: Option<OllamaThink> = match user_requested_thinking {
+            Some(false) => Some(OllamaThink::Bool(false)),  // Explicitly disable
+            Some(true) if model_supports_thinking => Some(OllamaThink::Bool(true)),  // Explicitly enable
+            Some(true) => None,  // Model doesn't support thinking, don't send parameter
+            None => None,  // Use model default
+        };
 
         // Determine if we should send thinking to the client (for display purposes)
-        // Default to true for models that support thinking - user can disable if desired
-        let model_supports_thinking = caps.supports_thinking;
-        let user_requested_thinking = input.params.thinking_enabled.unwrap_or(true); // Default to true - send thinking
-        let should_send_thinking = user_requested_thinking;
+        let should_send_thinking = user_requested_thinking.unwrap_or(model_supports_thinking);
 
         // Convert messages with tool injection for non-native models
         let messages = self.messages_to_ollama_with_tools(
@@ -1027,7 +1052,7 @@ impl LlmRuntime for OllamaRuntime {
                                                 } else {
                                                     // Skip thinking content - model generated it but we don't want it
                                                     tracing::debug!(
-                                                        "Ollama generated thinking (len={}, total_thinking={}) but filtering it out (user_requested={}, model_supports={})",
+                                                        "Ollama generated thinking (len={}, total_thinking={}) but filtering it out (user_requested={:?}, model_supports={})",
                                                         ollama_chunk
                                                             .message
                                                             .thinking
@@ -1271,6 +1296,8 @@ struct OllamaOptions {
     num_predict: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_k: Option<u32>,
     /// Repeat penalty to prevent model from repeating itself (1.0 = disabled, higher = more penalty)
     #[serde(skip_serializing_if = "Option::is_none")]
     repeat_penalty: Option<f32>,

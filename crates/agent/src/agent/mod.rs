@@ -66,8 +66,8 @@ pub use streaming::{
     process_multimodal_stream_events_with_safeguards,
 };
 pub use types::{
-    AgentConfig, AgentEvent, AgentInternalState, AgentMessage, AgentResponse, LlmBackend,
-    SessionState, ToolCall,
+    AgentConfig, AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, AgentResponse,
+    LlmBackend, SessionState, ToolCall,
 };
 pub use conversation_context::{
     ConversationContext, ConversationTopic, EntityReference, EntityType,
@@ -145,6 +145,7 @@ fn compact_tool_results(messages: &[AgentMessage]) -> Vec<AgentMessage> {
                     tool_call_id: None,
                     tool_call_name: None,
                     thinking: None, // Never keep thinking in compacted messages
+                    images: None,
                     timestamp: msg.timestamp,
                 });
             }
@@ -229,6 +230,7 @@ impl Agent {
             model: config.model.clone(),
             temperature: config.temperature,
             top_p: 0.75,
+            top_k: 20,  // Lowered for faster responses
             max_tokens: usize::MAX, // No artificial limit - let model decide
             concurrent_limit: 3,    // Default to 3 concurrent LLM requests
         };
@@ -261,6 +263,11 @@ impl Agent {
     /// Get internal state for streaming (used by streaming module).
     pub fn internal_state(&self) -> Arc<tokio::sync::RwLock<AgentInternalState>> {
         self.internal_state.clone()
+    }
+
+    /// Get the LLM interface (for capability checks).
+    pub fn llm_interface(&self) -> Arc<LlmInterface> {
+        Arc::clone(&self.llm_interface)
     }
 
     /// Create a new agent with empty tool registry.
@@ -854,17 +861,16 @@ impl Agent {
             "Agent::process_multimodal starting"
         );
 
-        // Create multimodal message content
+        // Create multimodal message content AND prepare images for storage
         let mut parts = vec![edge_ai_core::ContentPart::text(user_message)];
+        let mut user_images = Vec::new();
 
-        // Add images as ContentPart
-        for image_data in images {
-            // Check if it's already a data URL
-            if image_data.starts_with("data:image/") {
-                // Extract the base64 part
-                if let Some(base64_part) = image_data.split(',').nth(1) {
-                    // Extract mime type from data URL if available
-                    let mime_type = if image_data.contains("data:image/png") {
+        // Process images for both ContentPart and storage
+        for image_data in &images {
+            // Extract mime type from data URL
+            let (mime_type_str, base64_part) = if image_data.starts_with("data:image/") {
+                if let Some(pos) = image_data.find(',') {
+                    let mime = if image_data.contains("data:image/png") {
                         "image/png"
                     } else if image_data.contains("data:image/jpeg") || image_data.contains("data:image/jpg") {
                         "image/jpeg"
@@ -875,18 +881,25 @@ impl Agent {
                     } else {
                         "image/png"
                     };
-                    parts.push(edge_ai_core::ContentPart::image_base64(
-                        base64_part,
-                        mime_type,
-                    ));
+                    (mime, &image_data[pos + 1..])
+                } else {
+                    ("image/png", image_data.as_str())
                 }
             } else {
-                // Assume it's raw base64 data
-                parts.push(edge_ai_core::ContentPart::image_base64(
-                    &image_data,
-                    "image/png",
-                ));
-            }
+                ("image/png", image_data.as_str())
+            };
+
+            // Add to ContentPart for LLM
+            parts.push(edge_ai_core::ContentPart::image_base64(
+                base64_part,
+                mime_type_str,
+            ));
+
+            // Add to storage as AgentMessageImage
+            user_images.push(crate::agent::types::AgentMessageImage {
+                data: image_data.clone(),
+                mime_type: Some(mime_type_str.to_string()),
+            });
         }
 
         let user_msg = edge_ai_core::Message::new(
@@ -898,8 +911,8 @@ impl Agent {
         let _lock = self.process_lock.lock().await;
         let start = std::time::Instant::now();
 
-        // Add user message to history
-        let agent_user_msg = AgentMessage::user(user_message);
+        // Add user message to history WITH images (for multimodal context in follow-up requests)
+        let agent_user_msg = AgentMessage::user_with_images(user_message, user_images);
         self.internal_state
             .write()
             .await

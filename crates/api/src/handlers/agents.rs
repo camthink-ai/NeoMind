@@ -47,11 +47,30 @@ struct AgentDetailDto {
     parsed_intent: Option<ParsedIntentDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     memory: Option<AgentMemoryDto>,
+    resources: Vec<AgentResourceDto>,
+    schedule: AgentScheduleDto,
     stats: AgentStatsDto,
     created_at: String,
     updated_at: String,
     last_execution_at: Option<String>,
     error_message: Option<String>,
+}
+
+/// Agent resource for API responses.
+#[derive(Debug, serde::Serialize)]
+struct AgentResourceDto {
+    resource_type: String,
+    resource_id: String,
+    name: String,
+}
+
+/// Agent schedule for API responses.
+#[derive(Debug, serde::Serialize)]
+struct AgentScheduleDto {
+    schedule_type: String,
+    interval_seconds: Option<u64>,
+    cron_expression: Option<String>,
+    timezone: Option<String>,
 }
 
 /// Parsed intent for API responses.
@@ -214,6 +233,17 @@ impl From<&AiAgent> for AgentDetailDto {
                 }).collect(),
                 updated_at: format_datetime(agent.memory.updated_at),
             }),
+            resources: agent.resources.iter().map(|r| AgentResourceDto {
+                resource_type: format!("{:?}", r.resource_type),
+                resource_id: r.resource_id.clone(),
+                name: r.name.clone(),
+            }).collect(),
+            schedule: AgentScheduleDto {
+                schedule_type: format!("{:?}", agent.schedule.schedule_type),
+                interval_seconds: agent.schedule.interval_seconds,
+                cron_expression: agent.schedule.cron_expression.clone(),
+                timezone: agent.schedule.timezone.clone(),
+            },
             stats: AgentStatsDto {
                 total_executions: agent.stats.total_executions as u32,
                 successful_executions: agent.stats.successful_executions as u32,
