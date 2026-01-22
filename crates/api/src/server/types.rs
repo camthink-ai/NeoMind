@@ -41,6 +41,9 @@ pub struct DeviceStatusUpdate {
     pub last_seen: Option<i64>,
 }
 
+/// AI Agent manager for user-defined automation agents.
+pub type AgentManager = Arc<edge_ai_agent::ai_agent::AiAgentManager>;
+
 /// Server state shared across all handlers.
 #[derive(Clone)]
 pub struct ServerState {
@@ -93,6 +96,8 @@ pub struct ServerState {
     pub alert_store: Option<Arc<edge_ai_storage::business::AlertStore>>,
     /// AI Agent store for user-defined automation agents.
     pub agent_store: Arc<edge_ai_storage::AgentStore>,
+    /// AI Agent manager for executing user-defined agents (lazy-initialized).
+    pub agent_manager: Arc<tokio::sync::RwLock<Option<AgentManager>>>,
     /// Server start timestamp.
     pub started_at: i64,
 }
@@ -330,6 +335,8 @@ impl ServerState {
                 }
             },
             agent_store,
+            // AI Agent manager - lazy initialized, will be started when server is fully ready
+            agent_manager: Arc::new(tokio::sync::RwLock::new(None)),
             started_at,
         }
     }
@@ -771,6 +778,91 @@ impl ServerState {
         } else {
             tracing::warn!("Transform event service failed to start");
         }
+    }
+
+    /// Get or initialize the AI Agent manager.
+    pub async fn get_or_init_agent_manager(&self) -> Result<AgentManager, crate::models::ErrorResponse> {
+        let mgr_guard = self.agent_manager.read().await;
+        if let Some(mgr) = mgr_guard.as_ref() {
+            return Ok(mgr.clone());
+        }
+        drop(mgr_guard);
+
+        // Initialize the manager
+        let mut mgr_guard = self.agent_manager.write().await;
+        if let Some(mgr) = mgr_guard.as_ref() {
+            return Ok(mgr.clone());
+        }
+
+        // Create the executor config
+        // Note: time_series_storage from devices crate is different from TimeSeriesStore in storage
+        // For now, we create a fresh TimeSeriesStore or use None
+        let time_series_store = None; // Can be initialized later if needed
+
+        let executor_config = edge_ai_agent::ai_agent::AgentExecutorConfig {
+            store: self.agent_store.clone(),
+            time_series_storage: time_series_store,
+            device_service: Some(self.device_service.clone()),
+            event_bus: self.event_bus.clone(),
+            llm_runtime: None, // Will be set later if LLM is available
+        };
+
+        let manager = edge_ai_agent::ai_agent::AiAgentManager::new(executor_config)
+            .await
+            .map_err(|e| crate::models::ErrorResponse::internal(&format!("Failed to create agent manager: {}", e)))?;
+
+        *mgr_guard = Some(manager.clone());
+
+        tracing::info!("AI Agent manager initialized");
+        Ok(manager)
+    }
+
+    /// Start the AI Agent manager scheduler.
+    pub async fn start_agent_manager(&self) -> Result<(), crate::models::ErrorResponse> {
+        let manager = self.get_or_init_agent_manager().await?;
+        manager.start().await
+            .map_err(|e| crate::models::ErrorResponse::internal(&format!("Failed to start agent manager: {}", e)))?;
+        tracing::info!("AI Agent manager scheduler started");
+        Ok(())
+    }
+
+    /// Initialize AI Agent event listener.
+    ///
+    /// Starts a background task that listens for device events and triggers
+    /// event-scheduled agents.
+    pub async fn init_agent_events(&self) {
+        let manager = match self.get_or_init_agent_manager().await {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!("Agent event listener not started: {}", e);
+                return;
+            }
+        };
+
+        let event_bus = match &self.event_bus {
+            Some(bus) => bus.clone(),
+            _ => {
+                tracing::warn!("Agent event listener not started: event_bus not available");
+                return;
+            }
+        };
+
+        let executor = manager.executor().clone();
+
+        tokio::spawn(async move {
+            let mut rx = event_bus.subscribe();
+            tracing::info!("Agent event listener started - monitoring for event-triggered agents");
+
+            while let Some((event, _metadata)) = rx.recv().await {
+                // Check if any agent should be triggered by this event
+                if let edge_ai_core::NeoTalkEvent::DeviceMetric { device_id, metric, value, timestamp: _, quality: _ } = event {
+                    // Trigger agents that have this device/metric in their event filter
+                    if let Err(e) = executor.check_and_trigger_event(device_id, &metric, &value).await {
+                        tracing::debug!("No agent triggered for event: {}", e);
+                    }
+                }
+            }
+        });
     }
 }
 

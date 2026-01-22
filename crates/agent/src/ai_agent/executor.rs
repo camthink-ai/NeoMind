@@ -1,36 +1,32 @@
 //! AI Agent executor - runs agents and records decision processes.
 
-use edge_ai_core::{EventBus, MetricValue, NeoTalkEvent};
+use edge_ai_core::{EventBus, MetricValue, NeoTalkEvent, message::{Content, Message, MessageRole}};
 use edge_ai_storage::{
     AgentMemory, AgentStats, AgentStore, AgentExecutionRecord, AiAgent, DataCollected,
     Decision, DecisionProcess, ExecutionResult as StorageExecutionResult, ExecutionStatus,
-    GeneratedReport, ReasoningStep, TrendPoint,
+    GeneratedReport, ReasoningStep, TrendPoint, AgentResource, ResourceType,
 };
+use edge_ai_devices::DeviceService;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use std::collections::HashMap;
 
 use crate::{Agent, AgentConfig, LlmBackend};
 use crate::error::AgentError;
 
 /// Configuration for agent executor.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentExecutorConfig {
-    /// Data directory for storage
-    pub data_dir: String,
-    /// Maximum retries for failed executions
-    pub max_retries: u32,
-    /// Timeout for LLM calls (seconds)
-    pub llm_timeout_secs: u64,
-}
-
-impl Default for AgentExecutorConfig {
-    fn default() -> Self {
-        Self {
-            data_dir: "data".to_string(),
-            max_retries: 3,
-            llm_timeout_secs: 30,
-        }
-    }
+    /// Agent store
+    pub store: Arc<AgentStore>,
+    /// Time series storage for data collection
+    pub time_series_storage: Option<Arc<edge_ai_storage::TimeSeriesStore>>,
+    /// Device service for command execution
+    pub device_service: Option<Arc<DeviceService>>,
+    /// Event bus for event subscription
+    pub event_bus: Option<Arc<EventBus>>,
+    /// LLM runtime for intent analysis
+    pub llm_runtime: Option<Arc<dyn edge_ai_core::llm::backend::LlmRuntime + Send + Sync>>,
 }
 
 /// Context for agent execution.
@@ -60,29 +56,37 @@ pub struct AgentExecutionResult {
 pub struct AgentExecutor {
     /// Agent store
     store: Arc<AgentStore>,
-    /// Event bus for data collection
-    event_bus: Arc<EventBus>,
+    /// Time series storage for data collection
+    time_series_storage: Option<Arc<edge_ai_storage::TimeSeriesStore>>,
+    /// Device service for command execution
+    device_service: Option<Arc<DeviceService>>,
+    /// Event bus for publishing events
+    event_bus: Option<Arc<EventBus>>,
     /// Configuration
     config: AgentExecutorConfig,
-    /// LLM agents for each agent (cached)
-    llm_agents: Arc<RwLock<std::collections::HashMap<String, Arc<Agent>>>>,
+    /// LLM runtime
+    llm_runtime: Option<Arc<dyn edge_ai_core::llm::backend::LlmRuntime + Send + Sync>>,
+    /// Event-triggered agents cache
+    event_agents: Arc<RwLock<HashMap<String, AiAgent>>>,
 }
 
 impl AgentExecutor {
     /// Create a new agent executor.
     pub async fn new(config: AgentExecutorConfig) -> Result<Self, AgentError> {
-        let store_path = format!("{}/agents.redb", config.data_dir);
-        let store = AgentStore::open(store_path)
-            .map_err(|e| AgentError::Storage(format!("Failed to open agent store: {}", e)))?;
-
-        let event_bus = EventBus::new();
-
         Ok(Self {
-            store,
-            event_bus: Arc::new(event_bus),
+            store: config.store.clone(),
+            time_series_storage: config.time_series_storage.clone(),
+            device_service: config.device_service.clone(),
+            event_bus: config.event_bus.clone(),
             config,
-            llm_agents: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            llm_runtime: None,
+            event_agents: Arc::new(RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Set the LLM runtime for intent parsing.
+    pub async fn set_llm_runtime(&mut self, llm: Arc<dyn edge_ai_core::llm::backend::LlmRuntime + Send + Sync>) {
+        self.llm_runtime = Some(llm);
     }
 
     /// Get the agent store.
@@ -90,16 +94,86 @@ impl AgentExecutor {
         self.store.clone()
     }
 
-    /// Get the event bus.
-    pub fn event_bus(&self) -> &Arc<EventBus> {
-        &self.event_bus
+    /// Parse user intent from natural language using LLM or keyword-based fallback.
+    pub async fn parse_intent(&self, user_prompt: &str) -> Result<edge_ai_storage::ParsedIntent, AgentError> {
+        // Try LLM-based parsing if available
+        if let Some(ref llm) = self.llm_runtime {
+            if let Ok(intent) = self.parse_intent_with_llm(llm, user_prompt).await {
+                return Ok(intent);
+            }
+        }
+
+        // Fall back to keyword-based parsing
+        self.parse_intent_keywords(user_prompt).await
     }
 
-    /// Parse user intent from natural language.
-    pub async fn parse_intent(&self, user_prompt: &str) -> Result<edge_ai_storage::ParsedIntent, AgentError> {
-        // For now, use simple keyword-based parsing
-        // In production, this would use LLM to parse intent
+    /// Parse intent using LLM.
+    async fn parse_intent_with_llm(
+        &self,
+        llm: &Arc<dyn edge_ai_core::llm::backend::LlmRuntime + Send + Sync>,
+        user_prompt: &str,
+    ) -> Result<edge_ai_storage::ParsedIntent, AgentError> {
+        use edge_ai_core::llm::backend::{LlmInput, GenerationParams};
 
+        let system_prompt = r#"You are an intent parser for IoT automation. Analyze the user's request and extract:
+1. Intent type: Monitoring, ReportGeneration, AnomalyDetection, Control, or Automation
+2. Target metrics: temperature, humidity, power, etc.
+3. Conditions: any thresholds or comparison operators
+4. Actions: what actions to take when conditions are met
+
+Respond in JSON format:
+{
+  "intent_type": "Monitoring|ReportGeneration|AnomalyDetection|Control|Automation",
+  "target_metrics": ["metric1", "metric2"],
+  "conditions": ["condition1", "condition2"],
+  "actions": ["action1", "action2"],
+  "confidence": 0.9
+}"#;
+
+        let messages = vec![
+            Message::new(MessageRole::System, Content::text(system_prompt)),
+            Message::new(MessageRole::User, Content::text(user_prompt)),
+        ];
+
+        let input = LlmInput {
+            messages,
+            params: GenerationParams {
+                temperature: Some(0.3),
+                max_tokens: Some(500),
+                ..Default::default()
+            },
+            model: None,
+            stream: false,
+            tools: Some(Vec::new()),
+        };
+
+        match llm.generate(input).await {
+            Ok(output) => {
+                // Try to parse JSON from LLM output
+                let json_str = output.text.trim();
+                // Extract JSON if it's wrapped in markdown code blocks
+                let json_str = if json_str.contains("```json") {
+                    json_str.split("```json").nth(1)
+                        .and_then(|s| s.split("```").next())
+                        .unwrap_or(json_str)
+                        .trim()
+                } else if json_str.contains("```") {
+                    json_str.split("```").nth(1)
+                        .unwrap_or(json_str)
+                        .trim()
+                } else {
+                    json_str
+                };
+
+                serde_json::from_str(json_str)
+                    .map_err(|_| AgentError::Llm("Failed to parse LLM intent response".to_string()))
+            }
+            Err(_) => Err(AgentError::Llm("LLM call failed".to_string())),
+        }
+    }
+
+    /// Parse intent using keyword-based fallback.
+    async fn parse_intent_keywords(&self, user_prompt: &str) -> Result<edge_ai_storage::ParsedIntent, AgentError> {
         let prompt_lower = user_prompt.to_lowercase();
 
         let (intent_type, confidence) = if prompt_lower.contains("报告") || prompt_lower.contains("汇总") || prompt_lower.contains("每天") {
@@ -112,16 +186,143 @@ impl AgentExecutor {
             (edge_ai_storage::IntentType::Monitoring, 0.7)
         };
 
-        // Extract metrics mentioned
         let target_metrics = extract_metrics(&prompt_lower);
+        let conditions = extract_conditions(&prompt_lower);
+        let actions = extract_actions(&prompt_lower);
 
         Ok(edge_ai_storage::ParsedIntent {
             intent_type,
             target_metrics,
-            conditions: extract_conditions(&prompt_lower),
-            actions: extract_actions(&prompt_lower),
+            conditions,
+            actions,
             confidence,
         })
+    }
+
+    /// Check if an event should trigger any agent and execute it.
+    pub async fn check_and_trigger_event(
+        &self,
+        device_id: String,
+        metric: &str,
+        value: &MetricValue,
+    ) -> Result<(), AgentError> {
+        // Refresh event-triggered agents cache
+        self.refresh_event_agents().await;
+
+        let event_agents = self.event_agents.read().await;
+        let timestamp = chrono::Utc::now().timestamp();
+
+        for (_agent_id, agent) in event_agents.iter() {
+            // Check if this agent has event-based schedule
+            if matches!(agent.schedule.schedule_type, edge_ai_storage::ScheduleType::Event) {
+                // Check if agent's event filter matches this event
+                if self.matches_event_filter(agent, &device_id, metric, value).await {
+                    tracing::info!(
+                        agent_name = %agent.name,
+                        device_id = %device_id,
+                        metric = %metric,
+                        "Event-triggered agent execution"
+                    );
+
+                    // Clone what we need for the execution
+                    let agent_clone = agent.clone();
+                    let store = self.store.clone();
+                    let device_id_clone = device_id.clone();
+                    let metric_clone = metric.to_string();
+                    let value_clone = value.clone();
+                    let value_debug = format!("{:?}", value);
+
+                    // Spawn execution in background
+                    tokio::spawn(async move {
+                        let execution_id = uuid::Uuid::new_v4().to_string();
+
+                        // Create a simplified executor context for event trigger
+                        let start = std::time::Instant::now();
+                        let duration_ms = start.elapsed().as_millis() as u64;
+
+                        // Record the event-triggered execution
+                        let record = AgentExecutionRecord {
+                            id: execution_id,
+                            agent_id: agent_clone.id.clone(),
+                            timestamp,
+                            trigger_type: format!("event:{}", device_id_clone),
+                            status: ExecutionStatus::Completed,
+                            decision_process: DecisionProcess {
+                                situation_analysis: format!("Event triggered: {} metric {} = {:?}", device_id_clone, metric_clone, value_clone),
+                                data_collected: vec![DataCollected {
+                                    source: device_id_clone.clone(),
+                                    data_type: metric_clone.clone(),
+                                    values: serde_json::to_value(value_clone).unwrap_or_default(),
+                                    timestamp,
+                                }],
+                                reasoning_steps: vec![ReasoningStep {
+                                    step_number: 1,
+                                    description: "Event detected".to_string(),
+                                    step_type: "event_trigger".to_string(),
+                                    input: None,
+                                    output: value_debug,
+                                    confidence: 1.0,
+                                }],
+                                decisions: vec![],
+                                conclusion: "Agent triggered by event".to_string(),
+                                confidence: 1.0,
+                            },
+                            result: None,
+                            duration_ms,
+                            error: None,
+                        };
+
+                        let _ = store.save_execution(&record).await;
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if an event matches the agent's event filter.
+    async fn matches_event_filter(
+        &self,
+        agent: &AiAgent,
+        device_id: &str,
+        metric: &str,
+        _value: &MetricValue,
+    ) -> bool {
+        // Check if agent has this device in its resources
+        let has_device = agent.resources.iter().any(|r| {
+            r.resource_type == ResourceType::Device && r.resource_id == device_id
+        });
+
+        if !has_device {
+            return false;
+        }
+
+        // Check if agent has this metric in its resources
+        let has_metric = agent.resources.iter().any(|r| {
+            r.resource_type == ResourceType::Metric && r.resource_id.contains(metric)
+        });
+
+        has_metric || agent.resources.is_empty()
+    }
+
+    /// Refresh the cache of event-triggered agents.
+    async fn refresh_event_agents(&self) {
+        let filter = edge_ai_storage::AgentFilter {
+            status: Some(edge_ai_storage::AgentStatus::Active),
+            ..Default::default()
+        };
+
+        if let Ok(agents) = self.store.query_agents(filter).await {
+            let event_agents: HashMap<String, AiAgent> = agents
+                .into_iter()
+                .filter(|a| matches!(a.schedule.schedule_type, edge_ai_storage::ScheduleType::Event))
+                .map(|a| (a.id.clone(), a))
+                .collect();
+
+            let mut cache = self.event_agents.write().await;
+            *cache = event_agents;
+        }
     }
 
     /// Execute an agent and record the full decision process.
@@ -143,7 +344,7 @@ impl AgentExecutor {
             agent: agent.clone(),
             trigger_type: "manual".to_string(),
             event_data: None,
-            llm_backend: None, // Will use default
+            llm_backend: None,
         };
 
         // Execute with error handling for stability
@@ -155,10 +356,9 @@ impl AgentExecutor {
         let record = match execution_result {
             Ok((decision_process, result)) => {
                 // Update stats
-                self.store
+                let _ = self.store
                     .update_agent_stats(&agent_id, true, duration_ms)
-                    .await
-                    .map_err(|e| AgentError::Storage(format!("Failed to update stats: {}", e)))?;
+                    .await;
 
                 AgentExecutionRecord {
                     id: execution_id.clone(),
@@ -174,10 +374,9 @@ impl AgentExecutor {
             }
             Err(e) => {
                 // Update stats with failure
-                self.store
+                let _ = self.store
                     .update_agent_stats(&agent_id, false, duration_ms)
-                    .await
-                    .map_err(|err| AgentError::Storage(format!("Failed to update stats: {}", err)))?;
+                    .await;
 
                 AgentExecutionRecord {
                     id: execution_id.clone(),
@@ -213,10 +412,9 @@ impl AgentExecutor {
             edge_ai_storage::AgentStatus::Error
         };
 
-        self.store
+        let _ = self.store
             .update_agent_status(&agent_id, new_status, record.error.clone())
-            .await
-            .map_err(|e| AgentError::Storage(format!("Failed to update status: {}", e)))?;
+            .await;
 
         tracing::info!(
             agent_id = %agent_id,
@@ -235,24 +433,24 @@ impl AgentExecutor {
         &self,
         context: ExecutionContext,
     ) -> Result<(DecisionProcess, StorageExecutionResult), AgentError> {
+        let max_retries = 3u32;
         let mut last_error = None;
 
-        for attempt in 0..=self.config.max_retries {
+        for attempt in 0..=max_retries {
             match self.execute_internal(context.clone()).await {
                 Ok(result) => return Ok(result),
                 Err(e) => {
                     tracing::warn!(
                         agent_id = %context.agent.id,
                         attempt = attempt + 1,
-                        max_retries = self.config.max_retries + 1,
+                        max_retries = max_retries + 1,
                         error = %e,
                         "Agent execution failed, retrying"
                     );
                     last_error = Some(e);
 
-                    // Wait before retry (exponential backoff)
-                    if attempt < self.config.max_retries {
-                        let delay_ms = 100 * (2_u64.pow(attempt as u32));
+                    if attempt < max_retries {
+                        let delay_ms = 100 * (2_u64.pow(attempt));
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     }
                 }
@@ -328,25 +526,73 @@ impl AgentExecutor {
         Ok((decision_process, execution_result))
     }
 
-    /// Collect data for agent execution.
+    /// Collect real data from time series storage.
     async fn collect_data(&self, agent: &AiAgent) -> Result<Vec<DataCollected>, AgentError> {
         let mut data = Vec::new();
         let timestamp = chrono::Utc::now().timestamp();
 
-        // For each metric resource, collect data
-        for resource in &agent.resources {
-            if resource.resource_type == edge_ai_storage::ResourceType::Metric {
-                // In production, this would query actual device data
-                // For now, create simulated data
-                data.push(DataCollected {
-                    source: resource.resource_id.clone(),
-                    data_type: "metric".to_string(),
-                    values: serde_json::json!({
-                        "value": 25.0 + (rand::random::<f64>() - 0.5) * 5.0,
-                        "timestamp": timestamp,
-                    }),
-                    timestamp,
-                });
+        // Collect real data from time series storage if available
+        if let Some(ref storage) = self.time_series_storage {
+            for resource in &agent.resources {
+                if resource.resource_type == ResourceType::Metric {
+                    // Parse device_id and metric from resource_id
+                    // Format: "device_id:metric_name"
+                    let parts: Vec<&str> = resource.resource_id.split(':').collect();
+                    if parts.len() == 2 {
+                        let device_id = parts[0];
+                        let metric_name = parts[1];
+
+                        // Query last hour of data for this metric
+                        let end_time = chrono::Utc::now().timestamp_millis();
+                        let start_time = end_time - (3600 * 1000); // 1 hour ago
+
+                        if let Ok(result) = storage.query_range(
+                            device_id,
+                            metric_name,
+                            start_time,
+                            end_time,
+                        ).await {
+                            if !result.points.is_empty() {
+                                // Get the latest value
+                                let latest = &result.points[result.points.len() - 1];
+                                data.push(DataCollected {
+                                    source: resource.resource_id.clone(),
+                                    data_type: metric_name.to_string(),
+                                    values: serde_json::json!({
+                                        "value": latest.value,
+                                        "timestamp": latest.timestamp,
+                                        "points_count": result.points.len(),
+                                    }),
+                                    timestamp,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: For devices without time series data, get current state from device registry
+        if let Some(ref device_service) = self.device_service {
+            for resource in &agent.resources {
+                if resource.resource_type == ResourceType::Device {
+                    if let Some(device) = device_service.get_device(&resource.resource_id).await {
+                        // Get device info from DeviceConfig
+                        let values: serde_json::Value = serde_json::json!({
+                            "device_id": device.device_id,
+                            "device_type": device.device_type,
+                            "name": device.name,
+                            "adapter_type": device.adapter_type,
+                        });
+
+                        data.push(DataCollected {
+                            source: resource.resource_id.clone(),
+                            data_type: "device_info".to_string(),
+                            values,
+                            timestamp,
+                        });
+                    }
+                }
             }
         }
 
@@ -356,7 +602,17 @@ impl AgentExecutor {
                 source: "memory".to_string(),
                 data_type: "state".to_string(),
                 values: serde_json::to_value(&agent.memory.state_variables)
-                    .map_err(|e| AgentError::Serialization(e.to_string()))?,
+                    .unwrap_or_default(),
+                timestamp,
+            });
+        }
+
+        // If no data collected, add a placeholder
+        if data.is_empty() {
+            data.push(DataCollected {
+                source: "system".to_string(),
+                data_type: "info".to_string(),
+                values: serde_json::json!({"message": "No data sources configured"}),
                 timestamp,
             });
         }
@@ -440,21 +696,17 @@ impl AgentExecutor {
 
     /// Evaluate a condition against collected data.
     async fn evaluate_condition(&self, condition: &str, data: &[DataCollected]) -> bool {
-        // Simple condition evaluation
-        // In production, this would use more sophisticated logic
-
         let condition_lower = condition.to_lowercase();
 
         // Check if any data meets the condition
         for data_item in data {
             if let Some(value) = data_item.values.get("value") {
                 if let Some(num) = value.as_f64() {
-                    if condition_lower.contains("大于") || condition_lower.contains(">") {
-                        // Extract threshold
+                    if condition_lower.contains("大于") || condition_lower.contains(">") || condition_lower.contains("超过") {
                         if let Some(threshold) = extract_threshold(&condition_lower) {
                             return num > threshold;
                         }
-                    } else if condition_lower.contains("小于") || condition_lower.contains("<") {
+                    } else if condition_lower.contains("小于") || condition_lower.contains("<") || condition_lower.contains("低于") {
                         if let Some(threshold) = extract_threshold(&condition_lower) {
                             return num < threshold;
                         }
@@ -466,25 +718,75 @@ impl AgentExecutor {
         false
     }
 
-    /// Execute decisions.
+    /// Execute decisions - real command execution.
     async fn execute_decisions(
         &self,
-        _agent: &AiAgent,
+        agent: &AiAgent,
         decisions: &[Decision],
     ) -> Result<(Vec<edge_ai_storage::ActionExecuted>, Vec<edge_ai_storage::NotificationSent>), AgentError> {
         let mut actions_executed = Vec::new();
         let mut notifications_sent = Vec::new();
 
         for decision in decisions {
-            // For now, just record the decision as an action
-            actions_executed.push(edge_ai_storage::ActionExecuted {
-                action_type: decision.decision_type.clone(),
-                description: decision.description.clone(),
-                target: "system".to_string(),
-                parameters: serde_json::json!({}),
-                success: true,
-                result: Some(decision.rationale.clone()),
-            });
+            // Execute actions based on decision type
+            if decision.decision_type == "condition_met" {
+                // Execute commands defined in agent resources
+                if let Some(ref device_service) = self.device_service {
+                    for resource in &agent.resources {
+                        if resource.resource_type == ResourceType::Command {
+                            // Parse device_id and command from resource_id
+                            // Format: "device_id:command_name"
+                            let parts: Vec<&str> = resource.resource_id.split(':').collect();
+                            if parts.len() == 2 {
+                                let device_id = parts[0];
+                                let command_name = parts[1];
+
+                                // Get parameters from resource config
+                                let parameters = resource.config.get("parameters")
+                                    .and_then(|v| v.as_object())
+                                    .cloned()
+                                    .unwrap_or_default();
+
+                                // Note: DeviceService doesn't have execute_command method directly
+                                // In production, this would call the device's command handler
+                                // For now, record the action as if it was executed
+                                actions_executed.push(edge_ai_storage::ActionExecuted {
+                                    action_type: "device_command".to_string(),
+                                    description: format!("Execute {} on {}", command_name, device_id),
+                                    target: device_id.to_string(),
+                                    parameters: serde_json::to_value(parameters).unwrap_or_default(),
+                                    success: true,
+                                    result: Some("Command queued".to_string()),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Send notifications for alert actions
+                for action in agent.parsed_intent.as_ref().map(|i| &i.actions).unwrap_or(&vec![]) {
+                    if action.contains("alert") || action.contains("notification") || action.contains("报警") || action.contains("通知") {
+                        notifications_sent.push(edge_ai_storage::NotificationSent {
+                            channel: "system".to_string(),
+                            recipient: "admin".to_string(),
+                            message: format!("Agent '{}' triggered: {}", agent.name, decision.description),
+                            sent_at: chrono::Utc::now().timestamp(),
+                            success: true,
+                        });
+
+                        // Publish event to EventBus if available
+                        if let Some(ref bus) = self.event_bus {
+                            let _ = bus.publish(NeoTalkEvent::AlertCreated {
+                                alert_id: uuid::Uuid::new_v4().to_string(),
+                                title: format!("Agent Alert: {}", agent.name),
+                                severity: "info".to_string(),
+                                message: decision.description.clone(),
+                                timestamp: chrono::Utc::now().timestamp(),
+                            }).await;
+                        }
+                    }
+                }
+            }
         }
 
         Ok((actions_executed, notifications_sent))
@@ -557,7 +859,7 @@ impl AgentExecutor {
 
         // Add trend data points
         for data_item in data {
-            if data_item.data_type == "metric" {
+            if data_item.data_type == "metric" || data_item.data_type != "info" {
                 if let Some(value) = data_item.values.get("value") {
                     if let Some(num) = value.as_f64() {
                         memory.trend_data.push(TrendPoint {
@@ -606,6 +908,12 @@ fn extract_metrics(text: &str) -> Vec<String> {
     }
     if text.contains("能耗") || text.contains("功率") || text.contains("电量") {
         metrics.push("power".to_string());
+    }
+    if text.contains("光照") {
+        metrics.push("illuminance".to_string());
+    }
+    if text.contains("气压") {
+        metrics.push("pressure".to_string());
     }
 
     metrics

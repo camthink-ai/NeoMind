@@ -44,8 +44,6 @@ pub struct ScheduledTask {
 pub struct AgentScheduler {
     /// Scheduled tasks
     tasks: Arc<RwLock<HashMap<String, ScheduledTask>>>,
-    /// Agent executor
-    executor: Arc<AgentExecutor>,
     /// Configuration
     config: SchedulerConfig,
     /// Running state
@@ -59,7 +57,6 @@ impl AgentScheduler {
     pub async fn new(config: SchedulerConfig) -> Result<Self, crate::AgentError> {
         Ok(Self {
             tasks: Arc::new(RwLock::new(HashMap::new())),
-            executor: Arc::new(AgentExecutor::new(crate::ai_agent::executor::AgentExecutorConfig::default()).await?),
             config,
             running: Arc::new(RwLock::new(false)),
             running_executions: Arc::new(RwLock::new(std::collections::HashSet::new())),

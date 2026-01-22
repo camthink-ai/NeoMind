@@ -444,48 +444,30 @@ pub async fn execute_agent(
     Path(id): Path<String>,
     Json(_request): Json<ExecuteAgentRequest>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    // Get or initialize the agent manager
+    let agent_manager = state.get_or_init_agent_manager().await
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to get agent manager: {}", e)))?;
 
-    // Get agent
-    let agent = store.get_agent(&id).await
-        .map_err(|e| ErrorResponse::internal(&format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(&format!("Agent not found: {}", id)))?;
+    // Execute the agent using the manager (this does full execution with data collection, analysis, and actions)
+    let summary = agent_manager.execute_agent_now(&id).await
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to execute agent: {}", e)))?;
 
-    // Check status
-    if agent.status != AgentStatus::Active {
-        return Err(ErrorResponse::bad_request(&format!("Agent is not active: {:?}", agent.status)));
-    }
-
-    // Create execution record
-    let execution_record = AgentExecutionRecord {
-        id: uuid::Uuid::new_v4().to_string(),
-        agent_id: id.clone(),
-        timestamp: chrono::Utc::now().timestamp(),
-        trigger_type: "manual".to_string(),
-        status: ExecutionStatus::Running,
-        decision_process: DecisionProcess {
-            situation_analysis: "Execution triggered".to_string(),
-            data_collected: vec![],
-            reasoning_steps: vec![],
-            decisions: vec![],
-            conclusion: "Pending execution".to_string(),
-            confidence: 0.0,
-        },
-        result: None,
-        duration_ms: 0,
-        error: None,
-    };
-
-    // Save execution record
-    store.save_execution(&execution_record).await
-        .map_err(|e| ErrorResponse::internal(&format!("Failed to save execution: {}", e)))?;
-
-    tracing::info!("Triggered execution for AI Agent: {}", id);
+    tracing::info!(
+        execution_id = %summary.execution_id,
+        agent_id = %id,
+        status = ?summary.status,
+        duration_ms = summary.duration_ms,
+        "Executed AI Agent"
+    );
 
     ok(json!({
-        "execution_id": execution_record.id,
+        "execution_id": summary.execution_id,
         "agent_id": id,
-        "status": "running",
+        "agent_name": summary.agent_name,
+        "status": format!("{:?}", summary.status),
+        "duration_ms": summary.duration_ms,
+        "summary": summary.summary,
+        "has_error": summary.has_error,
     }))
 }
 

@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
@@ -428,12 +427,6 @@ export function SimpleRuleBuilderSplit({
               placeholder="规则描述（可选）"
               className="mt-1 h-9"
             />
-          </div>
-          <div className="flex items-center gap-2 mt-3">
-            <Switch checked={enabled} onCheckedChange={setEnabled} id="rule-enabled" />
-            <Label htmlFor="rule-enabled" className="text-sm cursor-pointer">
-              {enabled ? '启用' : '禁用'}
-            </Label>
           </div>
         </div>
 

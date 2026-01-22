@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import {
   Select,
@@ -494,12 +493,6 @@ export function SimpleRuleBuilder({
               onChange={e => setDescription(e.target.value)}
               placeholder={t('automation:ruleDescPlaceholder', { defaultValue: '规则描述（可选）' })}
             />
-          </div>
-          <div className="flex items-center gap-2 pt-2">
-            <Switch checked={enabled} onCheckedChange={setEnabled} id="rule-enabled" />
-            <Label htmlFor="rule-enabled" className="text-sm cursor-pointer">
-              {enabled ? t('common:enabled', { defaultValue: '启用' }) : t('common:disabled', { defaultValue: '禁用' })}
-            </Label>
           </div>
         </BuilderSection>
 
