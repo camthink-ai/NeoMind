@@ -3,10 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
   Select,
   SelectContent,
@@ -17,8 +15,6 @@ import {
 import {
   Plus,
   X,
-  Eye,
-  Code,
   Zap,
   Bell,
   FileText,
@@ -34,7 +30,6 @@ import type { Rule, RuleTrigger, RuleCondition, RuleAction, DeviceType } from '@
 import {
   FullScreenBuilder,
   BuilderSection,
-  FormGrid,
   TipCard,
 } from './FullScreenBuilder'
 import { cn } from '@/lib/utils'
@@ -49,8 +44,6 @@ interface RuleBuilderProps {
     deviceTypes?: DeviceType[]
   }
 }
-
-type Mode = 'visual' | 'code'
 
 // Comparison operators matching backend DSL
 const COMPARISON_OPERATORS = [
@@ -241,8 +234,7 @@ export function SimpleRuleBuilder({
   // Actions state
   const [actions, setActions] = useState<RuleAction[]>([])
 
-  // Mode and saving state
-  const [mode, setMode] = useState<Mode>('visual')
+  // Saving state
   const [saving, setSaving] = useState(false)
 
   // ============================================================================
@@ -278,7 +270,6 @@ export function SimpleRuleBuilder({
     setForDuration(0)
     setForUnit('minutes')
     setActions([{ type: 'Log', level: 'info', message: t('automation:logMessage', { defaultValue: '规则已触发' }) }])
-    setMode('visual')
   }, [t])
 
   // ============================================================================
@@ -443,79 +434,6 @@ export function SimpleRuleBuilder({
     }
   }
 
-  // Generate DSL preview
-  const generateDSL = useCallback((): string => {
-    if (!condition) return ''
-
-    let dsl = `RULE "${name}"\n`
-
-    // Add description if present
-    if (description) {
-      dsl += `  DESCRIPTION "${description}"\n`
-    }
-
-    // Generate condition DSL
-    const generateConditionDSL = (cond: UICondition, indent = ''): string => {
-      switch (cond.type) {
-        case 'simple':
-          return `${cond.device_id}.${cond.metric} ${cond.operator} ${cond.threshold}`
-        case 'range':
-          return `${cond.device_id}.${cond.metric} BETWEEN ${cond.range_min} AND ${cond.range_max}`
-        case 'and':
-          return `(${cond.conditions?.map(c => generateConditionDSL(c, indent)).join(') AND (')})`
-        case 'or':
-          return `(${cond.conditions?.map(c => generateConditionDSL(c, indent)).join(') OR (')})`
-        case 'not':
-          return `NOT ${generateConditionDSL(cond.conditions?.[0]!, indent)}`
-        default:
-          return ''
-      }
-    }
-
-    dsl += `WHEN ${generateConditionDSL(condition)}\n`
-
-    // Add FOR clause if duration is set
-    if (forDuration > 0) {
-      dsl += `FOR ${forDuration} ${forUnit === 'seconds' ? 'seconds' : forUnit === 'hours' ? 'hours' : 'minutes'}\n`
-    }
-
-    dsl += `DO\n`
-
-    // Generate action DSL
-    actions.forEach(action => {
-      switch (action.type) {
-        case 'Notify':
-          dsl += `    NOTIFY "${action.message}"\n`
-          break
-        case 'Execute':
-          const paramsStr = action.params && Object.keys(action.params).length > 0
-            ? '(' + Object.entries(action.params).map(([k, v]) => `${k}=${v}`).join(', ') + ')'
-            : ''
-          dsl += `    EXECUTE ${action.device_id}.${action.command}${paramsStr}\n`
-          break
-        case 'Log':
-          dsl += `    LOG ${(action.level || 'info')} "${action.message}"\n`
-          break
-        case 'Set':
-          dsl += `    SET ${action.device_id}.${action.property} = ${JSON.stringify(action.value)}\n`
-          break
-        case 'Delay':
-          dsl += `    DELAY ${Math.floor((action.duration || 0) / 1000)} seconds\n`
-          break
-        case 'CreateAlert':
-          dsl += `    ALERT "${action.title}" "${action.message}" ${(action.severity || 'info').toUpperCase()}\n`
-          break
-        case 'HttpRequest':
-          dsl += `    HTTP ${action.method} ${action.url}\n`
-          break
-      }
-    })
-
-    dsl += `END`
-
-    return dsl
-  }, [condition, name, description, forDuration, forUnit, actions])
-
   // ============================================================================
   // Render
   // ============================================================================
@@ -531,11 +449,6 @@ export function SimpleRuleBuilder({
         defaultValue: '定义触发条件和执行动作，当条件满足时自动执行',
       })}
       icon={<Zap className="h-5 w-5 text-purple-500" />}
-      headerActions={
-        <Badge variant={enabled ? 'default' : 'secondary'} className="text-xs">
-          {enabled ? t('common:enabled', { defaultValue: '启用' }) : t('common:disabled', { defaultValue: '禁用' })}
-        </Badge>
-      }
       sidePanel={{
         content: (
           <div className="space-y-4">
@@ -547,17 +460,6 @@ export function SimpleRuleBuilder({
                 defaultValue: '规则基于设备状态或指标触发。当条件满足时，自动执行配置的动作。',
               })}
             </TipCard>
-
-            {mode === 'visual' && (
-              <TipCard
-                title={t('automation:tips.dslTitle', { defaultValue: 'DSL 规则语法' })}
-                variant="info"
-              >
-                <pre className="text-xs bg-muted p-2 rounded overflow-x-auto">
-                  <code>{generateDSL()}</code>
-                </pre>
-              </TipCard>
-            )}
           </div>
         ),
         title: t('automation:tips', { defaultValue: '提示' }),
@@ -575,23 +477,15 @@ export function SimpleRuleBuilder({
           title={t('automation:basicInfo', { defaultValue: '基本信息' })}
           icon={<Info className="h-4 w-4 text-muted-foreground" />}
         >
-          <FormGrid columns={2}>
-            <div className="space-y-2">
-              <Label htmlFor="rule-name">{t('automation:ruleName', { defaultValue: '规则名称' })} *</Label>
-              <Input
-                id="rule-name"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder={t('automation:ruleNamePlaceholder', { defaultValue: '例如：温度过高自动开空调' })}
-              />
-            </div>
-            <div className="flex items-center gap-2 h-[42px]">
-              <Switch checked={enabled} onCheckedChange={setEnabled} id="rule-enabled" />
-              <Label htmlFor="rule-enabled" className="text-sm cursor-pointer">
-                {t('automation:enableRule', { defaultValue: '启用规则' })}
-              </Label>
-            </div>
-          </FormGrid>
+          <div className="space-y-2">
+            <Label htmlFor="rule-name">{t('automation:ruleName', { defaultValue: '规则名称' })} *</Label>
+            <Input
+              id="rule-name"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder={t('automation:ruleNamePlaceholder', { defaultValue: '例如：温度过高自动开空调' })}
+            />
+          </div>
           <div className="space-y-2">
             <Label htmlFor="rule-description">{t('common:description', { defaultValue: '描述' })}</Label>
             <Input
@@ -601,23 +495,16 @@ export function SimpleRuleBuilder({
               placeholder={t('automation:ruleDescPlaceholder', { defaultValue: '规则描述（可选）' })}
             />
           </div>
+          <div className="flex items-center gap-2 pt-2">
+            <Switch checked={enabled} onCheckedChange={setEnabled} id="rule-enabled" />
+            <Label htmlFor="rule-enabled" className="text-sm cursor-pointer">
+              {enabled ? t('common:enabled', { defaultValue: '启用' }) : t('common:disabled', { defaultValue: '禁用' })}
+            </Label>
+          </div>
         </BuilderSection>
 
-        {/* Mode Tabs */}
-        <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="visual" className="gap-2">
-              <Eye className="h-4 w-4" />
-              <span>{t('automation:visualMode', { defaultValue: '可视化' })}</span>
-            </TabsTrigger>
-            <TabsTrigger value="code" className="gap-2">
-              <Code className="h-4 w-4" />
-              <span>{t('automation:codeMode', { defaultValue: 'DSL 代码' })}</span>
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Visual Mode */}
-          <TabsContent value="visual" className="mt-6 space-y-6">
+        {/* Visual Mode (no tabs, always visual) */}
+        <div className="space-y-6">
             {/* Condition Section */}
             <BuilderSection
               title={t('automation:conditions', { defaultValue: '触发条件' })}
@@ -749,23 +636,7 @@ export function SimpleRuleBuilder({
                 </div>
               )}
             </BuilderSection>
-          </TabsContent>
-
-          {/* Code Mode */}
-          <TabsContent value="code" className="mt-6">
-            <BuilderSection
-              title={t('automation:ruleDSL', { defaultValue: 'DSL 规则' })}
-              icon={<Code className="h-4 w-4 text-muted-foreground" />}
-            >
-              <Textarea
-                readOnly
-                value={generateDSL()}
-                rows={20}
-                className="font-mono text-sm"
-              />
-            </BuilderSection>
-          </TabsContent>
-        </Tabs>
+        </div>
       </div>
     </FullScreenBuilder>
   )

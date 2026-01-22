@@ -2,10 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -16,8 +14,6 @@ import {
 import {
   Plus,
   X,
-  Eye,
-  Code,
   Zap,
   Bell,
   FileText,
@@ -49,7 +45,6 @@ interface RuleBuilderProps {
   }
 }
 
-type Mode = 'visual' | 'code'
 type ConditionType = 'simple' | 'range' | 'and' | 'or' | 'not'
 
 // Comparison operators matching backend DSL
@@ -219,7 +214,6 @@ export function SimpleRuleBuilderSplit({
   const [forDuration, setForDuration] = useState<number>(0)
   const [forUnit, setForUnit] = useState<'seconds' | 'minutes' | 'hours'>('minutes')
   const [actions, setActions] = useState<RuleAction[]>([])
-  const [mode, setMode] = useState<Mode>('visual')
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -250,7 +244,6 @@ export function SimpleRuleBuilderSplit({
     setForDuration(0)
     setForUnit('minutes')
     setActions([{ type: 'Log', level: 'info', message: '规则已触发' }])
-    setMode('visual')
   }, [])
 
   const createDefaultCondition = useCallback((): UICondition => {
@@ -394,65 +387,6 @@ export function SimpleRuleBuilderSplit({
     }
   }
 
-  const generateDSL = useCallback((): string => {
-    if (!condition) return ''
-    let dsl = `RULE "${name}"\n`
-    if (description) {
-      dsl += `  DESCRIPTION "${description}"\n`
-    }
-    const generateConditionDSL = (cond: UICondition): string => {
-      switch (cond.type) {
-        case 'simple':
-          return `${cond.device_id}.${cond.metric} ${cond.operator} ${cond.threshold}`
-        case 'range':
-          return `${cond.device_id}.${cond.metric} BETWEEN ${cond.range_min} AND ${cond.range_max}`
-        case 'and':
-          return `(${cond.conditions?.map(c => generateConditionDSL(c)).join(') AND (')})`
-        case 'or':
-          return `(${cond.conditions?.map(c => generateConditionDSL(c)).join(') OR (')})`
-        case 'not':
-          return `NOT ${generateConditionDSL(cond.conditions?.[0]!)}`
-        default:
-          return ''
-      }
-    }
-    dsl += `WHEN ${generateConditionDSL(condition)}\n`
-    if (forDuration > 0) {
-      dsl += `FOR ${forDuration} ${forUnit === 'seconds' ? 'seconds' : forUnit === 'hours' ? 'hours' : 'minutes'}\n`
-    }
-    dsl += `DO\n`
-    actions.forEach(action => {
-      switch (action.type) {
-        case 'Notify':
-          dsl += `    NOTIFY "${action.message}"\n`
-          break
-        case 'Execute':
-          const paramsStr = action.params && Object.keys(action.params).length > 0
-            ? '(' + Object.entries(action.params).map(([k, v]) => `${k}=${v}`).join(', ') + ')'
-            : ''
-          dsl += `    EXECUTE ${action.device_id}.${action.command}${paramsStr}\n`
-          break
-        case 'Log':
-          dsl += `    LOG ${(action.level || 'info')} "${action.message}"\n`
-          break
-        case 'Set':
-          dsl += `    SET ${action.device_id}.${action.property} = ${JSON.stringify(action.value)}\n`
-          break
-        case 'Delay':
-          dsl += `    DELAY ${Math.floor((action.duration || 0) / 1000)} seconds\n`
-          break
-        case 'CreateAlert':
-          dsl += `    ALERT "${action.title}" "${action.message}" ${(action.severity || 'info').toUpperCase()}\n`
-          break
-        case 'HttpRequest':
-          dsl += `    HTTP ${action.method} ${action.url}\n`
-          break
-      }
-    })
-    dsl += `END`
-    return dsl
-  }, [condition, name, description, forDuration, forUnit, actions])
-
   // ============================================================================
   // Render
   // ============================================================================
@@ -460,43 +394,30 @@ export function SimpleRuleBuilderSplit({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl h-[90vh] p-0 flex flex-col">
         <DialogHeader className="px-6 py-4 border-b">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Zap className="h-5 w-5 text-purple-500" />
-              <div>
-                <DialogTitle className="text-lg font-semibold">
-                  {rule ? '编辑规则' : '创建自动化规则'}
-                </DialogTitle>
-                <DialogDescription className="text-sm">
-                  定义触发条件和执行动作，当条件满足时自动执行
-                </DialogDescription>
-              </div>
+          <div className="flex items-center gap-3">
+            <Zap className="h-5 w-5 text-purple-500" />
+            <div>
+              <DialogTitle className="text-lg font-semibold">
+                {rule ? '编辑规则' : '创建自动化规则'}
+              </DialogTitle>
+              <DialogDescription className="text-sm">
+                定义触发条件和执行动作，当条件满足时自动执行
+              </DialogDescription>
             </div>
-            <Badge variant={enabled ? 'default' : 'secondary'} className="text-xs">
-              {enabled ? '启用' : '禁用'}
-            </Badge>
           </div>
         </DialogHeader>
 
         {/* Form Section - Basic Info */}
         <div className="border-b px-6 py-4 bg-muted/20 flex-shrink-0">
-          <div className="grid grid-cols-[1fr_auto] gap-4">
-            <div>
-              <Label htmlFor="rule-name" className="text-xs">规则名称 *</Label>
-              <Input
-                id="rule-name"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                placeholder="例如：温度过高自动开空调"
-                className="mt-1 h-9"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={enabled} onCheckedChange={setEnabled} id="rule-enabled" />
-              <Label htmlFor="rule-enabled" className="text-sm cursor-pointer">
-                启用
-              </Label>
-            </div>
+          <div>
+            <Label htmlFor="rule-name" className="text-xs">规则名称 *</Label>
+            <Input
+              id="rule-name"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="例如：温度过高自动开空调"
+              className="mt-1 h-9"
+            />
           </div>
           <div className="mt-3">
             <Label htmlFor="rule-desc" className="text-xs">描述</Label>
@@ -508,26 +429,16 @@ export function SimpleRuleBuilderSplit({
               className="mt-1 h-9"
             />
           </div>
+          <div className="flex items-center gap-2 mt-3">
+            <Switch checked={enabled} onCheckedChange={setEnabled} id="rule-enabled" />
+            <Label htmlFor="rule-enabled" className="text-sm cursor-pointer">
+              {enabled ? '启用' : '禁用'}
+            </Label>
+          </div>
         </div>
 
-        {/* Main Content */}
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          <Tabs value={mode} onValueChange={(v) => setMode(v as Mode)} className="h-full flex flex-col">
-            <div className="px-6 pt-4 pb-0 flex-shrink-0">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="visual" className="gap-2">
-                  <Eye className="h-4 w-4" />
-                  <span>可视化</span>
-                </TabsTrigger>
-                <TabsTrigger value="code" className="gap-2">
-                  <Code className="h-4 w-4" />
-                  <span>DSL 代码</span>
-                </TabsTrigger>
-              </TabsList>
-            </div>
-
-            {/* Visual Mode */}
-            <TabsContent value="visual" className="flex-1 min-h-0 overflow-auto p-6 pt-4 space-y-4">
+        {/* Main Content - Visual Mode (no tabs) */}
+        <div className="flex-1 min-h-0 overflow-auto p-6 pt-4 space-y-4">
               {/* Condition Section */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
@@ -634,24 +545,6 @@ export function SimpleRuleBuilderSplit({
             </div>
           )}
               </div>
-            </TabsContent>
-
-            {/* Code Mode */}
-            <TabsContent value="code" className="flex-1 min-h-0 overflow-auto p-6 pt-4">
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Code className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="font-medium text-sm">DSL 规则</h3>
-                </div>
-                <Textarea
-                  readOnly
-                  value={generateDSL()}
-                  rows={20}
-                  className="font-mono text-sm"
-                />
-              </div>
-            </TabsContent>
-          </Tabs>
         </div>
 
         {/* Footer */}
