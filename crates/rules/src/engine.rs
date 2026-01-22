@@ -500,10 +500,6 @@ impl RuleEngine {
                 tokio::time::sleep(*duration).await;
                 Ok(format!("DELAY: {:?} completed", duration))
             }
-            RuleAction::TriggerWorkflow { workflow_id, params } => {
-                tracing::info!("TRIGGER WORKFLOW: {} with params {:?}", workflow_id, params);
-                Ok(format!("TRIGGER WORKFLOW: {}", workflow_id))
-            }
             RuleAction::CreateAlert { title, message, severity } => {
                 let sev_str = match severity {
                     AlertSeverity::Info => "INFO",

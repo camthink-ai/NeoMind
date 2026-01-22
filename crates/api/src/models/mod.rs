@@ -17,11 +17,24 @@ pub use pagination::{
 // Chat & Session Models
 // ============================================================================
 
+/// Image data in a chat message (for multimodal LLMs).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChatImage {
+    /// Base64-encoded image data with data URL scheme (e.g., "data:image/png;base64,...")
+    pub data: String,
+    /// MIME type (e.g., "image/png", "image/jpeg")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
 /// Chat request from the web client.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ChatRequest {
-    /// The user's message.
+    /// The user's message text.
     pub message: String,
+    /// Optional images for multimodal models (base64 data URLs).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub images: Option<Vec<ChatImage>>,
     /// Optional session ID.
     #[serde(rename = "sessionId")]
     pub session_id: Option<String>,

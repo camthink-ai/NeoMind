@@ -43,6 +43,8 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/llm-backends", get(llm_backends::list_backends_handler))
         .route("/api/llm-backends/:id", get(llm_backends::get_backend_handler))
         .route("/api/llm-backends/stats", get(llm_backends::get_backend_stats_handler))
+        // Ollama models API (public - fetch available models with capabilities)
+        .route("/api/llm-backends/ollama/models", get(llm_backends::list_ollama_models_handler))
         // Device Adapter Types (public - read-only metadata)
         .route("/api/device-adapters/types", get(plugins::list_adapter_types_handler))
         // Alert Channels Types API (public - read-only metadata)

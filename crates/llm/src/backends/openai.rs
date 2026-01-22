@@ -237,8 +237,11 @@ impl CloudRuntime {
         })
     }
 
-    /// Convert messages to OpenAI-compatible API format.
+    /// Convert messages to API format (provider-specific).
+    /// For Anthropic, uses their image format. For OpenAI/Google, uses OpenAI-style format.
     fn messages_to_api(&self, messages: &[Message]) -> Vec<ApiMessage> {
+        let is_anthropic = matches!(self.config.provider, CloudProvider::Anthropic);
+
         messages
             .iter()
             .map(|msg| {
@@ -251,22 +254,49 @@ impl CloudRuntime {
                                 ContentPart::Text { text } => {
                                     ApiContentPart::Text { text: text.clone() }
                                 }
-                                ContentPart::ImageUrl { url, detail } => ApiContentPart::ImageUrl {
-                                    url: url.clone(),
-                                    detail: image_detail_to_string(
-                                        detail.as_ref().unwrap_or(&ImageDetail::Auto),
-                                    ),
-                                },
+                                ContentPart::ImageUrl { url, detail } => {
+                                    if is_anthropic {
+                                        // Anthropic format: {"type": "image", "source": {...}}
+                                        let (media_type, data) = extract_data_url(url);
+                                        ApiContentPart::AnthropicImage {
+                                            source: AnthropicImageSource {
+                                                typ: "base64".to_string(),
+                                                media_type,
+                                                data,
+                                            },
+                                        }
+                                    } else {
+                                        // OpenAI/Google format
+                                        ApiContentPart::ImageUrl {
+                                            url: url.clone(),
+                                            detail: image_detail_to_string(
+                                                detail.as_ref().unwrap_or(&ImageDetail::Auto),
+                                            ),
+                                        }
+                                    }
+                                }
                                 ContentPart::ImageBase64 {
                                     data,
                                     mime_type,
-                                    detail,
-                                } => ApiContentPart::ImageUrl {
-                                    url: format!("data:{};base64,{}", mime_type, data),
-                                    detail: image_detail_to_string(
-                                        detail.as_ref().unwrap_or(&ImageDetail::Auto),
-                                    ),
-                                },
+                                    detail: _,
+                                } => {
+                                    if is_anthropic {
+                                        // Anthropic format: raw base64 data
+                                        ApiContentPart::AnthropicImage {
+                                            source: AnthropicImageSource {
+                                                typ: "base64".to_string(),
+                                                media_type: mime_type.clone(),
+                                                data: data.clone(),
+                                            },
+                                        }
+                                    } else {
+                                        // OpenAI/Google format: data URL
+                                        ApiContentPart::ImageUrl {
+                                            url: format!("data:{};base64,{}", mime_type, data),
+                                            detail: "auto".to_string(),
+                                        }
+                                    }
+                                }
                             })
                             .collect();
 
@@ -542,7 +572,7 @@ impl LlmRuntime for CloudRuntime {
     fn supports_multimodal(&self) -> bool {
         matches!(
             self.config.provider,
-            CloudProvider::OpenAI | CloudProvider::Google
+            CloudProvider::OpenAI | CloudProvider::Anthropic | CloudProvider::Google
         )
     }
 
@@ -566,6 +596,27 @@ impl LlmRuntime for CloudRuntime {
 }
 
 // Helper functions
+
+/// Extract media type and base64 data from a data URL.
+/// Returns (media_type, base64_data).
+fn extract_data_url(url: &str) -> (String, String) {
+    if url.starts_with("data:") {
+        // Format: data:image/png;base64,iVBORw0KGgo...
+        if let Some(rest) = url.strip_prefix("data:") {
+            if let Some((mime_and_encoding, data)) = rest.split_once(',') {
+                // mime_and_encoding is like "image/png;base64"
+                let media_type = mime_and_encoding
+                    .split(';')
+                    .next()
+                    .unwrap_or("image/png")
+                    .to_string();
+                return (media_type, data.to_string());
+            }
+        }
+    }
+    // Fallback
+    ("image/png".to_string(), url.to_string())
+}
 
 fn image_detail_to_string(detail: &ImageDetail) -> String {
     match detail {
@@ -627,6 +678,22 @@ enum ApiContentPart {
     Text { text: String },
     #[serde(rename = "image_url")]
     ImageUrl { url: String, detail: String },
+    /// Anthropic-style image format: {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}
+    #[serde(rename = "image")]
+    AnthropicImage {
+        #[serde(rename = "source")]
+        source: AnthropicImageSource,
+    },
+}
+
+/// Anthropic image source format
+#[derive(Debug, Serialize)]
+struct AnthropicImageSource {
+    #[serde(rename = "type")]
+    typ: String,  // "base64"
+    #[serde(rename = "media_type")]
+    media_type: String,  // "image/png", "image/jpeg", etc.
+    data: String,  // base64 data without prefix
 }
 
 #[derive(Debug, Deserialize)]

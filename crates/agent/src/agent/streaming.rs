@@ -1690,6 +1690,404 @@ pub async fn process_stream_events_with_safeguards(
     }))
 }
 
+/// Process a multimodal user message (text + images) with streaming response.
+///
+/// This is similar to `process_stream_events` but accepts images as base64 data URLs.
+/// Images are converted to ContentPart::ImageBase64 for the LLM.
+pub async fn process_multimodal_stream_events(
+    llm_interface: Arc<LlmInterface>,
+    internal_state: Arc<tokio::sync::RwLock<AgentInternalState>>,
+    tools: Arc<edge_ai_tools::ToolRegistry>,
+    user_message: &str,
+    images: Vec<String>,  // Base64 data URLs (e.g., "data:image/png;base64,...")
+) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+    process_multimodal_stream_events_with_safeguards(
+        llm_interface,
+        internal_state,
+        tools,
+        user_message,
+        images,
+        StreamSafeguards::default(),
+    )
+    .await
+}
+
+/// Process multimodal message with configurable safeguards.
+pub async fn process_multimodal_stream_events_with_safeguards(
+    llm_interface: Arc<LlmInterface>,
+    internal_state: Arc<tokio::sync::RwLock<AgentInternalState>>,
+    tools: Arc<edge_ai_tools::ToolRegistry>,
+    user_message: &str,
+    images: Vec<String>,
+    safeguards: StreamSafeguards,
+) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+    use edge_ai_core::ContentPart;
+
+    let user_message = user_message.to_string();
+
+    // Build multimodal message content with images
+    let mut parts = vec![ContentPart::text(&user_message)];
+
+    // Add images as ContentPart
+    for image_data in images {
+        if image_data.starts_with("data:image/") {
+            if let Some(base64_part) = image_data.split(',').nth(1) {
+                // Extract mime type from data URL
+                let mime_type = if image_data.contains("data:image/png") {
+                    "image/png"
+                } else if image_data.contains("data:image/jpeg") {
+                    "image/jpeg"
+                } else if image_data.contains("data:image/webp") {
+                    "image/webp"
+                } else if image_data.contains("data:image/gif") {
+                    "image/gif"
+                } else {
+                    "image/png"
+                };
+                parts.push(ContentPart::image_base64(base64_part, mime_type));
+            }
+        }
+    }
+
+    // Get conversation history
+    let state_guard = internal_state.read().await;
+    let history_messages = state_guard.memory.clone();
+    drop(state_guard);
+
+    // Build context window
+    let max_context = llm_interface.max_context_length().await;
+    const DEFAULT_MAX_CONTEXT: usize = 8_000;
+    let effective_max = if max_context >= 32000 {
+        max_context.min(16_384)
+    } else {
+        max_context.min(DEFAULT_MAX_CONTEXT)
+    };
+
+    let history_for_llm: Vec<edge_ai_core::Message> =
+        build_context_window(&history_messages, effective_max)
+            .iter()
+            .map(|msg| msg.to_core())
+            .collect::<Vec<_>>();
+
+    tracing::debug!(
+        "Passing {} messages from history to LLM (multimodal)",
+        history_for_llm.len()
+    );
+
+    // Create multimodal user message
+    let multimodal_user_msg = edge_ai_core::Message::new(
+        edge_ai_core::MessageRole::User,
+        edge_ai_core::Content::Parts(parts),
+    );
+
+    // Disable thinking for multimodal by default for faster responses
+    let stream_result = llm_interface
+        .chat_stream_multimodal_no_thinking_with_history(multimodal_user_msg, &history_for_llm)
+        .await;
+
+    let stream = stream_result.map_err(|e| AgentError::Llm(e.to_string()))?;
+
+    // Store user message in history (text only, as images can't be persisted efficiently)
+    let user_msg = AgentMessage::user(&user_message);
+    internal_state.write().await.push_message(user_msg);
+
+    Ok(Box::pin(async_stream::stream! {
+        let mut stream = stream;
+        let mut buffer = String::new();
+        let mut tool_calls_detected = false;
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut content_before_tools = String::new();
+        let has_images = true;
+
+        let stream_start = Instant::now();
+        let mut last_event_time = Instant::now();
+
+        // Simple progress event
+        yield AgentEvent::progress("正在分析图像...", "analyzing", 0);
+        last_event_time = Instant::now();
+
+        // Stream the response
+        while let Some(result) = StreamExt::next(&mut stream).await {
+            let elapsed = stream_start.elapsed();
+
+            if elapsed > safeguards.max_stream_duration {
+                tracing::warn!("Stream timeout ({:?} elapsed)", elapsed);
+                yield AgentEvent::error(format!("请求超时（已用时{:.1}秒）", elapsed.as_secs_f64()));
+                break;
+            }
+
+            // Heartbeat
+            if last_event_time.elapsed() > safeguards.heartbeat_interval {
+                yield AgentEvent::heartbeat();
+                last_event_time = Instant::now();
+            }
+
+            match result {
+                Ok((text, is_thinking)) => {
+                    if text.is_empty() {
+                        continue;
+                    }
+
+                    if is_thinking {
+                        yield AgentEvent::thinking(text.clone());
+                        last_event_time = Instant::now();
+                        continue;
+                    }
+
+                    buffer.push_str(&text);
+                    last_event_time = Instant::now();
+
+                    // Check for tool calls in buffer
+                    let json_tool_check = detect_json_tool_calls(&buffer);
+                    if let Some((json_start, tool_json, remaining)) = json_tool_check {
+                        let before_tool = &buffer[..json_start];
+                        if !before_tool.is_empty() {
+                            content_before_tools.push_str(before_tool);
+                            yield AgentEvent::content(before_tool.to_string());
+                        }
+
+                        if let Ok((_, calls)) = parse_tool_calls(&tool_json) {
+                            tool_calls_detected = true;
+                            tool_calls.extend(calls);
+                        }
+
+                        buffer = remaining.to_string();
+                    } else if let Some(tool_start) = buffer.find("<tool_calls>") {
+                        let before_tool = &buffer[..tool_start];
+                        if !before_tool.is_empty() {
+                            content_before_tools.push_str(before_tool);
+                            yield AgentEvent::content(before_tool.to_string());
+                        }
+
+                        if let Some(tool_end) = buffer.find("</tool_calls>") {
+                            let tool_content = buffer[tool_start..tool_end + 13].to_string();
+                            buffer = buffer[tool_end + 13..].to_string();
+
+                            if let Ok((_, calls)) = parse_tool_calls(&tool_content) {
+                                tool_calls_detected = true;
+                                tool_calls.extend(calls);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Stream error: {}", e);
+                    yield AgentEvent::error(format!("Stream error: {}", e));
+                    break;
+                }
+            }
+        }
+
+        // Handle tool calls if detected
+        if tool_calls_detected {
+            tracing::info!("Tool calls detected in multimodal response, executing {} tools", tool_calls.len());
+
+            let tool_calls_to_execute = tool_calls.clone();
+            let cache = Arc::new(RwLock::new(ToolResultCache::new(Duration::from_secs(300))));
+
+            // Execute all tool calls in parallel
+            let tool_futures: Vec<_> = tool_calls_to_execute.iter().map(|tool_call| {
+                let tools_clone = tools.clone();
+                let cache_clone = cache.clone();
+                let name = tool_call.name.clone();
+                let name_clone = name.clone();
+
+                async move {
+                    (name.clone(), ToolExecutionResult {
+                        name: name_clone,
+                        result: execute_tool_with_retry(&tools_clone, &cache_clone, &name, tool_call.arguments.clone()).await,
+                    })
+                }
+            }).collect();
+
+            let tool_results_executed = futures::future::join_all(tool_futures).await;
+
+            // Process results
+            let mut tool_calls_with_results: Vec<ToolCall> = Vec::new();
+            let mut tool_call_results: Vec<(String, String)> = Vec::new();
+
+            for (name, execution) in tool_results_executed {
+                yield AgentEvent::tool_call_start(&name, tool_calls.iter().find(|t| t.name == name).map(|t| t.arguments.clone()).unwrap_or_default());
+
+                match execution.result {
+                    Ok(output) => {
+                        let result_value = if output.success {
+                            output.data.clone()
+                        } else {
+                            output.error.clone().map(|e| serde_json::json!({"error": e}))
+                                .unwrap_or_else(|| serde_json::json!("Error"))
+                        };
+                        let result_str = if output.success {
+                            serde_json::to_string(&output.data).unwrap_or_else(|_| "Success".to_string())
+                        } else {
+                            output.error.clone().unwrap_or_else(|| "Error".to_string())
+                        };
+
+                        for tc in &tool_calls {
+                            if tc.name == name {
+                                tool_calls_with_results.push(ToolCall {
+                                    name: tc.name.clone(),
+                                    id: tc.id.clone(),
+                                    arguments: tc.arguments.clone(),
+                                    result: Some(result_value.clone()),
+                                });
+                                break;
+                            }
+                        }
+
+                        yield AgentEvent::tool_call_end(&name, &result_str, output.success);
+                        tool_call_results.push((name.clone(), result_str));
+                    }
+                    Err(e) => {
+                        let error_msg = format!("工具执行失败: {}", e);
+                        let error_value = serde_json::json!({"error": error_msg});
+
+                        for tc in &tool_calls {
+                            if tc.name == name {
+                                tool_calls_with_results.push(ToolCall {
+                                    name: tc.name.clone(),
+                                    id: tc.id.clone(),
+                                    arguments: tc.arguments.clone(),
+                                    result: Some(error_value.clone()),
+                                });
+                                break;
+                            }
+                        }
+
+                        yield AgentEvent::tool_call_end(&name, &error_msg, false);
+                        tool_call_results.push((name.clone(), error_msg));
+                    }
+                }
+            }
+
+            // Save initial message with tool calls
+            let response_to_save = if content_before_tools.is_empty() {
+                String::new()
+            } else {
+                content_before_tools.clone()
+            };
+
+            let initial_msg = AgentMessage::assistant_with_tools(&response_to_save, tool_calls_with_results.clone());
+            internal_state.write().await.push_message(initial_msg);
+
+            // Add tool result messages
+            for (tool_name, result_str) in &tool_call_results {
+                let tool_result_msg = AgentMessage::tool_result(tool_name, result_str);
+                internal_state.write().await.push_message(tool_result_msg);
+            }
+
+            // Get updated history for Phase 2
+            let state_guard = internal_state.read().await;
+            let history_messages: Vec<edge_ai_core::Message> = state_guard.memory.iter()
+                .map(|msg| msg.to_core())
+                .collect::<Vec<_>>();
+            drop(state_guard);
+
+            if history_messages.len() > 6 {
+                let keep_count = 6;
+                tracing::info!("Trimming history from {} to {} messages", history_messages.len(), keep_count);
+            }
+
+            // Phase 2: Generate follow-up response (no tools, no thinking)
+            tracing::info!("Phase 2: Generating follow-up response (multimodal)");
+
+            let followup_stream_result = llm_interface.chat_stream_no_tools_no_thinking_with_history(
+                "请根据工具执行结果生成简洁的回复。", &history_messages
+            ).await;
+
+            let followup_stream = match followup_stream_result {
+                Ok(stream) => stream,
+                Err(e) => {
+                    tracing::error!("Phase 2 LLM call failed: {}", e);
+                    let fallback_text = format_tool_results(&tool_call_results);
+                    for chunk in fallback_text.chars().collect::<Vec<_>>().chunks(20) {
+                        let chunk_str: String = chunk.iter().collect();
+                        if !chunk_str.is_empty() {
+                            yield AgentEvent::content(chunk_str);
+                        }
+                    }
+                    yield AgentEvent::end();
+                    return;
+                }
+            };
+
+            let mut followup_stream = Box::pin(followup_stream);
+            let mut final_response_content = String::new();
+            let followup_start = Instant::now();
+
+            while let Some(result) = StreamExt::next(&mut followup_stream).await {
+                if followup_start.elapsed() > Duration::from_secs(30) {
+                    tracing::warn!("Phase 2 timeout (>30s), forcing completion");
+                    break;
+                }
+
+                match result {
+                    Ok((chunk, is_thinking)) => {
+                        if chunk.is_empty() {
+                            continue;
+                        }
+                        if !is_thinking {
+                            yield AgentEvent::content(chunk.clone());
+                            final_response_content.push_str(&chunk);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Phase 2 stream error: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            if final_response_content.is_empty() {
+                let fallback = if tool_call_results.len() == 1 {
+                    format!("{} 执行完成。", tool_call_results[0].0)
+                } else if tool_call_results.len() > 1 {
+                    format!("已执行 {} 个工具操作。", tool_call_results.len())
+                } else {
+                    "处理完成。".to_string()
+                };
+                yield AgentEvent::content(fallback.clone());
+                final_response_content = fallback;
+            }
+
+            // Update the initial message with follow-up content
+            {
+                let mut state = internal_state.write().await;
+                if let Some(last_msg) = state.memory.last_mut() {
+                    if last_msg.role == "assistant" && last_msg.tool_calls.is_some() {
+                        last_msg.content = final_response_content.clone();
+                    } else {
+                        let final_msg = AgentMessage::assistant(&final_response_content);
+                        state.memory.push(final_msg);
+                    }
+                } else {
+                    let final_msg = AgentMessage::assistant(&final_response_content);
+                    state.memory.push(final_msg);
+                }
+            }
+
+            tracing::info!("Multimodal tool execution and Phase 2 response complete");
+        } else {
+            // No tool calls - save response directly
+            let response_to_save = if buffer.is_empty() {
+                String::new()
+            } else {
+                buffer.clone()
+            };
+
+            let initial_msg = AgentMessage::assistant(&response_to_save);
+            internal_state.write().await.push_message(initial_msg);
+
+            // Yield any remaining content
+            if !buffer.is_empty() {
+                yield AgentEvent::content(buffer.clone());
+            }
+        }
+
+        yield AgentEvent::end();
+    }))
+}
+
 /// Detect if the user's intent requires multi-step tool calling.
 /// Complex intents include conditional logic, chained operations, etc.
 fn is_complex_multi_step_intent(message: &str) -> bool {

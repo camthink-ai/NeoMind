@@ -20,7 +20,7 @@ use edge_ai_llm::{
 };
 use edge_ai_llm::backends::openai::{CloudConfig, CloudProvider, CloudRuntime};
 
-use super::models::DeviceTypeDto;
+use super::models::{DeviceTypeDto, MetricDefinitionDto, CommandDefinitionDto, ParameterDefinitionDto};
 use crate::handlers::{
     ServerState,
     common::{HandlerResult, ok},
@@ -28,7 +28,7 @@ use crate::handlers::{
 use crate::models::ErrorResponse;
 
 /// List device types.
-/// Uses new DeviceService
+/// Uses new DeviceService - now includes metrics and commands
 pub async fn list_device_types_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
@@ -40,14 +40,44 @@ pub async fn list_device_types_handler(
                 edge_ai_devices::registry::DeviceTypeMode::Simple => "simple",
                 edge_ai_devices::registry::DeviceTypeMode::Full => "full",
             };
+
+            // Convert metrics to DTO
+            let metrics: Vec<MetricDefinitionDto> = t.metrics.iter().map(|m| {
+                MetricDefinitionDto {
+                    name: m.name.clone(),
+                    display_name: m.display_name.clone(),
+                    data_type: format!("{:?}", m.data_type),
+                    unit: if m.unit.is_empty() { None } else { Some(m.unit.clone()) },
+                    min: m.min,
+                    max: m.max,
+                }
+            }).collect();
+
+            // Convert commands to DTO
+            let commands: Vec<CommandDefinitionDto> = t.commands.iter().map(|c| {
+                CommandDefinitionDto {
+                    name: c.name.clone(),
+                    display_name: c.display_name.clone(),
+                    parameters: c.parameters.iter().map(|p| {
+                        ParameterDefinitionDto {
+                            name: p.name.clone(),
+                            display_name: p.display_name.clone(),
+                            data_type: format!("{:?}", p.data_type),
+                        }
+                    }).collect(),
+                }
+            }).collect();
+
             DeviceTypeDto {
                 device_type: t.device_type.clone(),
                 name: t.name.clone(),
                 description: t.description.clone(),
                 categories: t.categories.clone(),
                 mode: mode_str.to_string(),
-                metric_count: t.metrics.len(),
-                command_count: t.commands.len(),
+                metrics,
+                commands,
+                metric_count: Some(t.metrics.len()),
+                command_count: Some(t.commands.len()),
             }
         })
         .collect();

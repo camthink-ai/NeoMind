@@ -65,7 +65,10 @@ export function AgentMemoryDialog({
     }
   }
 
-  const formatDate = (timestamp: number) => {
+  const formatDate = (timestamp: string | number) => {
+    if (typeof timestamp === 'string') {
+      return new Date(timestamp).toLocaleString()
+    }
     return new Date(timestamp * 1000).toLocaleString()
   }
 
@@ -139,7 +142,7 @@ export function AgentMemoryDialog({
                     <div className="space-y-2">
                       {memory.learned_patterns.map((pattern, idx) => (
                         <div key={idx} className="text-sm p-2 bg-muted rounded">
-                          {pattern.description || String(pattern)}
+                          {pattern}
                         </div>
                       ))}
                     </div>

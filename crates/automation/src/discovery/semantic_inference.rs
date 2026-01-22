@@ -13,6 +13,7 @@ use edge_ai_core::{LlmRuntime, Message, GenerationParams, llm::backend::LlmInput
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::trace;
 
 /// Configuration for semantic inference
 #[derive(Debug, Clone)]
@@ -428,6 +429,28 @@ impl SemanticInference {
             // Skip array element paths - they will be handled as part of the parent array
             if path_info.is_array_element && array_element_patterns.values().any(|paths| paths.contains(&path_info.path)) {
                 continue;
+            }
+
+            // Skip Object type paths that are intermediate layers (contain other paths)
+            // We only want leaf nodes with primitive values
+            if matches!(path_info.data_type, InferredType::Object) {
+                // Check if this object path contains other non-object paths
+                // If there are paths like "data.values.xxx" and we're at "data.values",
+                // then "data.values" is an intermediate layer and should be skipped
+                let has_child_primitives = structure_result.paths.iter().any(|other_path| {
+                    other_path.path != path_info.path
+                        && other_path.path.starts_with(&format!("{}.", path_info.path))
+                        && !matches!(other_path.data_type, InferredType::Object)
+                        && !other_path.is_array_element
+                });
+
+                if has_child_primitives {
+                    trace!(
+                        "Skipping intermediate object path '{}' - has child primitive paths",
+                    path_info.path
+                );
+                    continue;
+                }
             }
 
             let values = path_values.get(&path_info.path)

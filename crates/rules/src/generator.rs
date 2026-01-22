@@ -501,9 +501,6 @@ impl RuleGenerator {
                     format!("设置 {}.{} = {:?}", device_id, property, value)
                 }
                 RuleAction::Delay { duration } => format!("延迟 {:?}", duration),
-                RuleAction::TriggerWorkflow { workflow_id, .. } => {
-                    format!("触发工作流: {}", workflow_id)
-                }
                 RuleAction::CreateAlert { title, .. } => format!("创建告警: {}", title),
                 RuleAction::HttpRequest { method, url, .. } => {
                     format!("HTTP请求: {:?} {}", method, url)

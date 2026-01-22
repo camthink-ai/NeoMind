@@ -248,6 +248,61 @@ impl LlmBackendInstance {
         }
     }
 
+    /// Ensure capabilities are populated (for backends loaded from old data)
+    /// This fixes the case where old backends in the database don't have capabilities set
+    pub fn ensure_capabilities(&mut self) {
+        // If all capabilities are false (the default), populate with proper defaults
+        if !self.capabilities.supports_streaming
+            && !self.capabilities.supports_multimodal
+            && !self.capabilities.supports_thinking
+            && !self.capabilities.supports_tools
+            && self.capabilities.max_context == default_max_context()
+        {
+            self.capabilities = Self::default_capabilities(&self.backend_type);
+        }
+    }
+
+    /// Get default capabilities for a backend type
+    fn default_capabilities(backend_type: &LlmBackendType) -> BackendCapabilities {
+        match backend_type {
+            LlmBackendType::Ollama => BackendCapabilities {
+                supports_streaming: true,
+                supports_multimodal: true,
+                supports_thinking: true,
+                supports_tools: true,
+                max_context: 8192,
+            },
+            LlmBackendType::OpenAi => BackendCapabilities {
+                supports_streaming: true,
+                supports_multimodal: true,
+                supports_thinking: false,
+                supports_tools: true,
+                max_context: 128000,
+            },
+            LlmBackendType::Anthropic => BackendCapabilities {
+                supports_streaming: true,
+                supports_multimodal: true,
+                supports_thinking: false,
+                supports_tools: true,
+                max_context: 200000,
+            },
+            LlmBackendType::Google => BackendCapabilities {
+                supports_streaming: true,
+                supports_multimodal: true,
+                supports_thinking: false,
+                supports_tools: true,
+                max_context: 1000000,
+            },
+            LlmBackendType::XAi => BackendCapabilities {
+                supports_streaming: true,
+                supports_multimodal: false,
+                supports_thinking: false,
+                supports_tools: false,
+                max_context: 128000,
+            },
+        }
+    }
+
     /// Validate the instance configuration
     pub fn validate(&self) -> Result<(), String> {
         if self.id.is_empty() {
@@ -367,8 +422,9 @@ impl LlmBackendStore {
         let table = read_txn.open_table(LLM_BACKENDS_TABLE)?;
 
         if let Some(data) = table.get(id)? {
-            let instance: LlmBackendInstance = serde_json::from_slice(data.value())
+            let mut instance: LlmBackendInstance = serde_json::from_slice(data.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?;
+            instance.ensure_capabilities(); // Fix missing capabilities for old data
             Ok(Some(instance))
         } else {
             Ok(None)
@@ -384,8 +440,9 @@ impl LlmBackendStore {
         let mut iter = table.iter()?;
         for result in iter {
             let (_, data) = result?;
-            let instance: LlmBackendInstance = serde_json::from_slice(data.value())
+            let mut instance: LlmBackendInstance = serde_json::from_slice(data.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?;
+            instance.ensure_capabilities(); // Fix missing capabilities for old data
             instances.push(instance);
         }
 

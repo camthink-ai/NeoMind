@@ -490,17 +490,6 @@ impl RuleValidator {
             RuleAction::Delay { .. } => {
                 // Delay actions don't require specific resources
             }
-            RuleAction::TriggerWorkflow { workflow_id, .. } => {
-                // Check if workflow exists
-                if !context.workflows.iter().any(|w| w.id == *workflow_id) {
-                    issues.push(ValidationIssue {
-                        code: "WORKFLOW_NOT_FOUND".to_string(),
-                        message: format!("Workflow '{}' not found", workflow_id),
-                        field: Some("actions.trigger_workflow.workflow_id".to_string()),
-                        severity: ValidationSeverity::Error,
-                    });
-                }
-            }
             RuleAction::CreateAlert { .. } => {
                 // Alert creation doesn't require specific resources
             }

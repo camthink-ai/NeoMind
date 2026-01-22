@@ -23,13 +23,14 @@ interface ConditionBuilderProps {
   canRemove?: boolean
 }
 
-const OPERATORS = [
-  { value: '>', label: '>', description: '大于' },
-  { value: '<', label: '<', description: '小于' },
-  { value: '>=', label: '>=', description: '大于等于' },
-  { value: '<=', label: '<=', description: '小于等于' },
-  { value: '==', label: '==', description: '等于' },
-  { value: '!=', label: '!=', description: '不等于' },
+// Comparison operators with i18n support
+const getOperators = (t: (key: string) => string) => [
+  { value: '>', label: '>', description: t('automation:operators.greaterThan') },
+  { value: '<', label: '<', description: t('automation:operators.lessThan') },
+  { value: '>=', label: '>=', description: t('automation:operators.greaterThanOrEqual') },
+  { value: '<=', label: '<=', description: t('automation:operators.lessThanOrEqual') },
+  { value: '==', label: '==', description: t('automation:operators.equal') },
+  { value: '!=', label: '!=', description: t('automation:operators.notEqual') },
 ]
 
 const COMMON_METRICS = [
@@ -59,6 +60,7 @@ export function ConditionBuilder({
 
   const devices = resources?.devices || []
   const metrics = resources?.metrics || COMMON_METRICS
+  const OPERATORS = getOperators(t)
 
   const updateCondition = (updates: Partial<RuleCondition>) => {
     onChange({ ...condition, ...updates })

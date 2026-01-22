@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import {
   Dialog,
@@ -12,11 +12,34 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
-import { TestTube, Check, X, Plus, Trash2 } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { TestTube, Check, X, Plus, Trash2, RefreshCw, Eye, Brain, Wrench } from "lucide-react"
 import { ConfigFormBuilder } from "@/components/plugins/ConfigFormBuilder"
 import { useToast } from "@/hooks/use-toast"
+import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { PluginConfigSchema } from "@/types"
+
+/**
+ * Ollama model with capabilities
+ */
+interface OllamaModel {
+  name: string
+  size?: number
+  modified_at?: string
+  digest?: string
+  details?: {
+    format?: string
+    family?: string
+    families?: string[]
+    parameter_size?: string
+    quantization_level?: string
+  }
+  supports_multimodal: boolean
+  supports_thinking: boolean
+  supports_tools: boolean
+  max_context: number
+}
 
 /**
  * Unified plugin instance data structure
@@ -108,16 +131,114 @@ export function UniversalPluginConfigDialog({
   const [newInstanceName, setNewInstanceName] = useState("")
   const [internalTestResults, setInternalTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
 
+  // Ollama model state
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [selectedModel, setSelectedModel] = useState("")
+  const [ollamaEndpoint, setOllamaEndpoint] = useState("http://localhost:11434")
+
+  // Auto-detected capabilities state
+  const [detectedCapabilities, setDetectedCapabilities] = useState<{
+    supports_multimodal: boolean
+    supports_thinking: boolean
+    supports_tools: boolean
+    max_context: number
+  }>({
+    supports_multimodal: false,
+    supports_thinking: false,
+    supports_tools: true,
+    max_context: 8192,
+  })
+
   const testResults = externalTestResults ?? internalTestResults
   const setTestResults = setExternalTestResults ?? setInternalTestResults
+
+  const isOllamaBackend = pluginType.type === "llm_backend" && pluginType.id === "ollama"
+
+  // Fetch Ollama models
+  const fetchOllamaModels = useCallback(async (endpoint?: string) => {
+    if (!isOllamaBackend) return
+
+    setLoadingModels(true)
+    try {
+      const response = await api.listOllamaModels(endpoint)
+      setOllamaModels(response.models || [])
+
+      // Auto-select the current model if editing
+      if (editingInstance?.config?.model) {
+        const currentModel = String(editingInstance.config.model)
+        setSelectedModel(currentModel)
+        // Find capabilities for current model
+        const modelWithCaps = response.models?.find(m => m.name === currentModel)
+        if (modelWithCaps) {
+          setDetectedCapabilities({
+            supports_multimodal: modelWithCaps.supports_multimodal,
+            supports_thinking: modelWithCaps.supports_thinking,
+            supports_tools: modelWithCaps.supports_tools,
+            max_context: modelWithCaps.max_context,
+          })
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch Ollama models:", error)
+      // Don't show toast for this error - it's optional functionality
+    } finally {
+      setLoadingModels(false)
+    }
+  }, [isOllamaBackend, editingInstance])
 
   // Reset form when dialog opens or plugin type changes
   useEffect(() => {
     if (open) {
       setShowCreateForm(false)
       setNewInstanceName("")
+      setSelectedModel("")
+
+      // Reset to default capabilities
+      if (pluginType.type === "llm_backend") {
+        if (pluginType.id === "ollama") {
+          setDetectedCapabilities({
+            supports_multimodal: false,
+            supports_thinking: true,
+            supports_tools: true,
+            max_context: 8192,
+          })
+          // Fetch models when Ollama dialog opens
+          fetchOllamaModels()
+        } else if (pluginType.id === "openai" || pluginType.id === "google" || pluginType.id === "anthropic") {
+          setDetectedCapabilities({
+            supports_multimodal: true,
+            supports_thinking: false,
+            supports_tools: true,
+            max_context: 128000,
+          })
+        } else {
+          setDetectedCapabilities({
+            supports_multimodal: false,
+            supports_thinking: false,
+            supports_tools: true,
+            max_context: 128000,
+          })
+        }
+      }
     }
-  }, [open, pluginType.id])
+  }, [open, pluginType.id, pluginType.type, fetchOllamaModels])
+
+  // Handle model selection change
+  const handleModelChange = (modelName: string) => {
+    setSelectedModel(modelName)
+
+    // Auto-detect capabilities from selected model
+    const model = ollamaModels.find(m => m.name === modelName)
+    if (model) {
+      setDetectedCapabilities({
+        supports_multimodal: model.supports_multimodal,
+        supports_thinking: model.supports_thinking,
+        supports_tools: model.supports_tools,
+        max_context: model.max_context,
+      })
+    }
+  }
 
   // Get instance status display
   const getInstanceStatus = (instance: PluginInstance) => {
@@ -143,12 +264,21 @@ export function UniversalPluginConfigDialog({
 
     setSaving(true)
     try {
-      await onCreate(newInstanceName.trim(), values)
+      // For LLM backends, add capabilities (auto-detected for Ollama)
+      const configWithCaps = pluginType.type === "llm_backend"
+        ? {
+            ...values,
+            capabilities: detectedCapabilities,
+          }
+        : values
+
+      await onCreate(newInstanceName.trim(), configWithCaps)
       toast({
         title: t("common:success"),
         description: t("plugins:instanceCreated", { defaultValue: "Instance created successfully" }),
       })
       setNewInstanceName("")
+      setSelectedModel("")
       setShowCreateForm(false)
       await onRefresh()
     } catch (error) {
@@ -168,7 +298,15 @@ export function UniversalPluginConfigDialog({
 
     setSaving(true)
     try {
-      await onUpdate(editingInstance.id, values)
+      // For LLM backends, add capabilities
+      const configWithCaps = pluginType.type === "llm_backend"
+        ? {
+            ...values,
+            capabilities: detectedCapabilities,
+          }
+        : values
+
+      await onUpdate(editingInstance.id, configWithCaps)
       toast({
         title: t("common:success"),
         description: t("plugins:instanceUpdated", { defaultValue: "Instance updated successfully" }),
@@ -267,11 +405,54 @@ export function UniversalPluginConfigDialog({
       }
     }
 
+    // Pre-fill model if selected from Ollama models
+    if (selectedModel && schema.properties?.model) {
+      (schema.properties.model as any).default = selectedModel
+    }
+
     return schema
   }
 
   const isEditing = !!editingInstance
   const schema = getConfigSchema()
+
+  // Render capability badges
+  const renderCapabilityBadges = () => (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {detectedCapabilities.supports_multimodal && (
+        <Badge variant="outline" className="text-xs">
+          <Eye className="h-3 w-3 mr-1" />
+          Vision
+        </Badge>
+      )}
+      {detectedCapabilities.supports_thinking && (
+        <Badge variant="outline" className="text-xs">
+          <Brain className="h-3 w-3 mr-1" />
+          Thinking
+        </Badge>
+      )}
+      {detectedCapabilities.supports_tools && (
+        <Badge variant="outline" className="text-xs">
+          <Wrench className="h-3 w-3 mr-1" />
+          Tools
+        </Badge>
+      )}
+      <Badge variant="secondary" className="text-xs">
+        {detectedCapabilities.max_context >= 100000
+          ? `${Math.round(detectedCapabilities.max_context / 1000)}k ctx`
+          : `${detectedCapabilities.max_context} ctx`}
+      </Badge>
+    </div>
+  )
+
+  // Generate icon for model in select dropdown
+  const getModelIcon = (model: OllamaModel) => {
+    const icons = []
+    if (model.supports_multimodal) icons.push(<Eye key="vision" className="h-3 w-3 text-blue-500" />)
+    if (model.supports_thinking) icons.push(<Brain key="thinking" className="h-3 w-3 text-purple-500" />)
+    if (icons.length === 0) return null
+    return <span className="flex items-center gap-0.5">{icons}</span>
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -340,6 +521,45 @@ export function UniversalPluginConfigDialog({
                 </div>
               )}
 
+              {/* Ollama model selector for editing */}
+              {isOllamaBackend && ollamaModels.length > 0 && (
+                <div className="mb-4">
+                  <Label htmlFor="model-select">
+                    {t("plugins:llm.selectModel", { defaultValue: "Select Model" })}
+                  </Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Select value={selectedModel} onValueChange={handleModelChange}>
+                      <SelectTrigger id="model-select" className="flex-1">
+                        <SelectValue placeholder={t("plugins:llm.selectModelPlaceholder", { defaultValue: "Select a model..." })} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ollamaModels.map((model) => (
+                          <SelectItem
+                            key={model.name}
+                            value={model.name}
+                            icon={getModelIcon(model)}
+                          >
+                            {model.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => fetchOllamaModels(ollamaEndpoint)}
+                      disabled={loadingModels}
+                    >
+                      <RefreshCw className={cn("h-4 w-4", loadingModels && "animate-spin")} />
+                    </Button>
+                  </div>
+                  {selectedModel && renderCapabilityBadges()}
+                </div>
+              )}
+
+              {/* Capability display for non-Ollama LLM backends */}
+              {pluginType.type === "llm_backend" && !isOllamaBackend && renderCapabilityBadges()}
+
               <ConfigFormBuilder
                 schema={schema}
                 onSubmit={handleUpdate}
@@ -387,6 +607,7 @@ export function UniversalPluginConfigDialog({
                     {instances.map((instance) => {
                       const testResult = testResults[instance.id]
                       const isActive = getInstanceStatus(instance)
+                      const instanceCaps = (instance.config as any)?.capabilities
 
                       return (
                         <div
@@ -415,6 +636,23 @@ export function UniversalPluginConfigDialog({
                             {instance.config?.model != null && (
                               <div className="text-xs text-muted-foreground mt-1">
                                 Model: {String(instance.config.model)}
+                              </div>
+                            )}
+                            {/* Show instance capabilities */}
+                            {instanceCaps && (
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {instanceCaps.supports_multimodal && (
+                                  <Badge variant="outline" className="text-xs h-5 px-1">
+                                    <Eye className="h-2.5 w-2.5 mr-0.5" />
+                                    Vision
+                                  </Badge>
+                                )}
+                                {instanceCaps.supports_thinking && (
+                                  <Badge variant="outline" className="text-xs h-5 px-1">
+                                    <Brain className="h-2.5 w-2.5 mr-0.5" />
+                                    Thinking
+                                  </Badge>
+                                )}
                               </div>
                             )}
                           </div>
@@ -462,6 +700,68 @@ export function UniversalPluginConfigDialog({
                       disabled={saving}
                     />
                   </div>
+
+                  {/* Ollama model selector */}
+                  {isOllamaBackend && (
+                    <>
+                      <div>
+                        <Label htmlFor="ollama-endpoint">
+                          {t("plugins:llm.endpoint", { defaultValue: "Ollama Endpoint" })}
+                        </Label>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Input
+                            id="ollama-endpoint"
+                            value={ollamaEndpoint}
+                            onChange={(e) => setOllamaEndpoint(e.target.value)}
+                            placeholder="http://localhost:11434"
+                            disabled={saving}
+                          />
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={() => fetchOllamaModels(ollamaEndpoint)}
+                            disabled={loadingModels}
+                          >
+                            <RefreshCw className={cn("h-4 w-4", loadingModels && "animate-spin")} />
+                          </Button>
+                        </div>
+                      </div>
+
+                      {ollamaModels.length > 0 && (
+                        <div>
+                          <Label htmlFor="model-select-create">
+                            {t("plugins:llm.selectModel", { defaultValue: "Select Model" })}
+                          </Label>
+                          <Select value={selectedModel} onValueChange={handleModelChange}>
+                            <SelectTrigger id="model-select-create" className="mt-1">
+                              <SelectValue placeholder={t("plugins:llm.selectModelPlaceholder", { defaultValue: "Select a model..." })} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ollamaModels.map((model) => (
+                                <SelectItem
+                                  key={model.name}
+                                  value={model.name}
+                                  icon={getModelIcon(model)}
+                                >
+                                  {model.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {selectedModel && renderCapabilityBadges()}
+                        </div>
+                      )}
+
+                      {ollamaModels.length === 0 && !loadingModels && (
+                        <p className="text-xs text-muted-foreground">
+                          {t("plugins:llm.noModelsFound", { defaultValue: "No models found. Click refresh to fetch from Ollama." })}
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {/* Capability display for non-Ollama LLM backends */}
+                  {pluginType.type === "llm_backend" && !isOllamaBackend && renderCapabilityBadges()}
 
                   <ConfigFormBuilder
                     schema={schema}

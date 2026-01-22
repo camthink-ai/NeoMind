@@ -8,18 +8,22 @@ import {
 } from "@/components/ui/table"
 import { Card } from "@/components/ui/card"
 import { EmptyStateInline } from "@/components/shared"
-import { Clock, AlertCircle } from "lucide-react"
+import { Clock, AlertCircle, FileText } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { AgentExecution } from "@/types"
 
 interface AgentExecutionsListProps {
   executions: AgentExecution[]
   loading: boolean
+  agentId: string
+  onViewDetail?: (agentId: string, executionId: string) => void
 }
 
 export function AgentExecutionsList({
   executions,
   loading,
+  agentId,
+  onViewDetail,
 }: AgentExecutionsListProps) {
   const { t } = useTranslation(['common', 'agents'])
 
@@ -62,22 +66,23 @@ export function AgentExecutionsList({
             <TableHead>{t('agents:status')}</TableHead>
             <TableHead>{t('agents:duration')}</TableHead>
             <TableHead>{t('agents:error')}</TableHead>
+            {onViewDetail && <TableHead className="w-16"></TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {loading ? (
             <EmptyStateInline
               title={t('common:loading')}
-              colSpan={6}
+              colSpan={onViewDetail ? 7 : 6}
             />
           ) : executions.length === 0 ? (
             <EmptyStateInline
               title={t('agents:noExecutions')}
-              colSpan={6}
+              colSpan={onViewDetail ? 7 : 6}
             />
           ) : (
             executions.map((execution, index) => (
-              <TableRow key={execution.id}>
+              <TableRow key={execution.id} className={onViewDetail ? "cursor-pointer hover:bg-muted/50" : ""}>
                 <TableCell className="text-muted-foreground">{index + 1}</TableCell>
                 <TableCell className="text-sm">
                   <div className="flex items-center gap-2">
@@ -106,6 +111,17 @@ export function AgentExecutionsList({
                     </div>
                   ) : '-'}
                 </TableCell>
+                {onViewDetail && (
+                  <TableCell className="text-right">
+                    <button
+                      onClick={() => onViewDetail(agentId, execution.id)}
+                      className="p-1 hover:bg-muted rounded transition-colors"
+                      title={t('agents:viewDetails') || "View Details"}
+                    >
+                      <FileText className="h-4 w-4 text-muted-foreground" />
+                    </button>
+                  </TableCell>
+                )}
               </TableRow>
             ))
           )}

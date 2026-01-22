@@ -25,6 +25,8 @@
   "editAgentDesc": "修改智能体配置",
   "deleteConfirm": "确定要删除此智能体吗？",
   "execute": "立即执行",
+  "viewMemory": "查看记忆",
+  "viewDetails": "查看详情",
   "agentDeleted": "智能体已删除",
   "agentCreated": "智能体已创建",
   "agentUpdated": "智能体已更新",
@@ -59,5 +61,35 @@
     "completed": "已完成",
     "failed": "失败",
     "cancelled": "已取消"
+  },
+  "execution": {
+    "title": "执行详情",
+    "description": "智能体执行过程和结果的详细视图"
+  },
+  "memory": {
+    "title": "智能体记忆",
+    "description": "智能体的持久化记忆和学习状态",
+    "stateVariables": "状态变量",
+    "baselines": "历史基线",
+    "learnedPatterns": "学习到的模式",
+    "trendData": "趋势数据",
+    "trendDataHint": "从设备指标收集的 {{count}} 个数据点",
+    "updatedAt": "更新时间",
+    "noMemory": "暂无记忆数据",
+    "clear": "清除记忆",
+    "clearMemoryConfirm": "确定要清除此智能体的记忆吗？此操作无法撤销。",
+    "situationAnalysis": "情况分析",
+    "dataCollected": "收集的数据",
+    "reasoningSteps": "推理步骤",
+    "decisions": "做出的决策",
+    "confidence": "置信度",
+    "conclusion": "结论",
+    "generatedReport": "生成的报告",
+    "actionsExecuted": "执行的操作",
+    "input": "输入",
+    "output": "输出",
+    "action": "操作",
+    "sources": "个来源",
+    "points": "个数据点"
   }
 }

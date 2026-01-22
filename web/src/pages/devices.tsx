@@ -57,8 +57,10 @@ export function DevicesPage() {
   const deviceTypeDetails = useStore((state) => state.deviceTypeDetails)
   const deviceDetails = useStore((state) => state.deviceDetails)
   const telemetryData = useStore((state) => state.telemetryData)
+  const telemetrySummary = useStore((state) => state.telemetrySummary)
   const telemetryLoading = useStore((state) => state.telemetryLoading)
   const fetchTelemetryData = useStore((state) => state.fetchTelemetryData)
+  const fetchTelemetrySummary = useStore((state) => state.fetchTelemetrySummary)
   const discoverDevices = useStore((state) => state.discoverDevices)
   const discovering = useStore((state) => state.discovering)
   const discoveredDevices = useStore((state) => state.discoveredDevices)
@@ -274,6 +276,8 @@ export function DevicesPage() {
     setSelectedMetric(null)
     await fetchDeviceDetails(device.id)
     await fetchDeviceTypeDetails(device.device_type)
+    // Fetch telemetry summary (includes virtual metrics with is_virtual flag)
+    await fetchTelemetrySummary(device.id, 24) // 24 hours
     // Fetch all telemetry data (no specific metric = get all metrics)
     const end = Math.floor(Date.now() / 1000)
     const start = end - 86400 // 24 hours
@@ -288,6 +292,8 @@ export function DevicesPage() {
   const handleRefreshDeviceDetail = async () => {
     if (deviceDetailView) {
       await fetchDeviceDetails(deviceDetailView)
+      // Fetch telemetry summary (includes virtual metrics)
+      await fetchTelemetrySummary(deviceDetailView, 24)
       if (selectedMetric) {
         await fetchTelemetryData(deviceDetailView, selectedMetric, undefined, undefined, 1000)
       } else {
@@ -522,6 +528,7 @@ export function DevicesPage() {
           device={deviceDetails}
           deviceType={deviceTypeDetails}
           telemetryData={telemetryData}
+          telemetrySummary={telemetrySummary}
           telemetryLoading={telemetryLoading}
           selectedMetric={selectedMetric}
           onBack={handleCloseDeviceDetail}

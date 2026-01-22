@@ -17,6 +17,8 @@ import type { AiAgent, AiAgentDetail, AgentExecution } from "@/types"
 import { AgentsList } from "./agents-components/AgentsList"
 import { AgentExecutionsList } from "./agents-components/AgentExecutionsList"
 import { AgentCreatorDialog } from "./agents-components/AgentCreatorDialog"
+import { AgentMemoryDialog } from "./agents-components/AgentMemoryDialog"
+import { ExecutionDetailDialog } from "./agents-components/ExecutionDetailDialog"
 
 type AgentTab = 'agents' | 'executions'
 
@@ -28,6 +30,14 @@ export function AgentsPage() {
 
   // Dialog states
   const [showAgentDialog, setShowAgentDialog] = useState(false)
+  const [memoryDialogOpen, setMemoryDialogOpen] = useState(false)
+  const [executionDetailOpen, setExecutionDetailOpen] = useState(false)
+
+  // Dialog data states
+  const [memoryAgentId, setMemoryAgentId] = useState('')
+  const [memoryAgentName, setMemoryAgentName] = useState('')
+  const [detailAgentId, setDetailAgentId] = useState('')
+  const [detailExecutionId, setDetailExecutionId] = useState('')
 
   // Editing states
   const [editingAgent, setEditingAgent] = useState<AiAgentDetail | undefined>(undefined)
@@ -172,6 +182,20 @@ export function AgentsPage() {
     }
   }
 
+  // Open memory dialog for an agent
+  const handleViewMemory = (agentId: string, agentName: string) => {
+    setMemoryAgentId(agentId)
+    setMemoryAgentName(agentName)
+    setMemoryDialogOpen(true)
+  }
+
+  // Open execution detail dialog
+  const handleViewExecutionDetail = (agentId: string, executionId: string) => {
+    setDetailAgentId(agentId)
+    setDetailExecutionId(executionId)
+    setExecutionDetailOpen(true)
+  }
+
   return (
     <PageLayout
       title={tAgent('title')}
@@ -207,6 +231,7 @@ export function AgentsPage() {
             onDelete={handleDelete}
             onToggleStatus={handleToggleStatus}
             onExecute={handleExecute}
+            onViewMemory={handleViewMemory}
           />
         </PageTabsContent>
 
@@ -223,6 +248,8 @@ export function AgentsPage() {
               <AgentExecutionsList
                 executions={executions}
                 loading={loading}
+                agentId={selectedAgent.id}
+                onViewDetail={handleViewExecutionDetail}
               />
             </div>
           )}
@@ -237,6 +264,22 @@ export function AgentsPage() {
         devices={devices}
         deviceTypes={deviceTypes}
         onSave={handleSave}
+      />
+
+      {/* Agent Memory Dialog */}
+      <AgentMemoryDialog
+        open={memoryDialogOpen}
+        onOpenChange={setMemoryDialogOpen}
+        agentId={memoryAgentId}
+        agentName={memoryAgentName}
+      />
+
+      {/* Execution Detail Dialog */}
+      <ExecutionDetailDialog
+        open={executionDetailOpen}
+        onOpenChange={setExecutionDetailOpen}
+        agentId={detailAgentId}
+        executionId={detailExecutionId}
       />
     </PageLayout>
   )

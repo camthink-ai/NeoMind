@@ -347,10 +347,22 @@ pub async fn test_rule_handler(
     let condition_met = if let Some(val) = current_value {
         operator.evaluate(val, threshold)
     } else {
-        return Err(ErrorResponse::internal(format!(
-            "Cannot get value for {}:{}",
-            device_id, metric,
-        )));
+        // Try to get device telemetry as fallback
+        let telemetry_value = state.time_series_storage
+            .latest(&device_id, &metric)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|point| point.value.as_f64());
+
+        if let Some(val) = telemetry_value {
+            operator.evaluate(val, threshold)
+        } else {
+            return Err(ErrorResponse::internal(format!(
+                "Device '{}' has no current value for metric '{}'. Please ensure the device is online and transmitting data.",
+                device_id, metric,
+            )));
+        }
     };
 
     ok(json!({

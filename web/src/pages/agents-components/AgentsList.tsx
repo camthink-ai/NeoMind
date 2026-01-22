@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table"
 import { Card } from "@/components/ui/card"
 import { EmptyStateInline } from "@/components/shared"
-import { Bot, Edit, Play, Trash2, MoreVertical, Clock } from "lucide-react"
+import { Bot, Edit, Play, Trash2, MoreVertical, Clock, Brain } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { AiAgent } from "@/types"
 
@@ -28,6 +28,7 @@ interface AgentsListProps {
   onDelete: (agent: AiAgent) => void
   onToggleStatus: (agent: AiAgent) => void
   onExecute: (agent: AiAgent) => void
+  onViewMemory?: (agentId: string, agentName: string) => void
 }
 
 export function AgentsList({
@@ -37,6 +38,7 @@ export function AgentsList({
   onDelete,
   onToggleStatus,
   onExecute,
+  onViewMemory,
 }: AgentsListProps) {
   const { t } = useTranslation(['common', 'agents'])
 
@@ -143,6 +145,12 @@ export function AgentsList({
                         <Play className="mr-2 h-4 w-4" />
                         {t('agents:execute')}
                       </DropdownMenuItem>
+                      {onViewMemory && (
+                        <DropdownMenuItem onClick={() => onViewMemory(agent.id, agent.name)}>
+                          <Brain className="mr-2 h-4 w-4" />
+                          {t('agents:viewMemory')}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
                         onClick={() => onDelete(agent)}

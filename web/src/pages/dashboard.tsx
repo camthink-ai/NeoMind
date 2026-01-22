@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
-import { Settings, Send, Sparkles, PanelLeft, Plus, Zap, ChevronDown } from "lucide-react"
+import { Settings, Send, Sparkles, PanelLeft, Plus, Zap, ChevronDown, X, Image as ImageIcon, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -18,7 +18,7 @@ import { ToolCallVisualization } from "@/components/chat/ToolCallVisualization"
 import { QuickActions } from "@/components/chat/QuickActions"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ws } from "@/lib/websocket"
-import type { Message, ServerMessage } from "@/types"
+import type { Message, ServerMessage, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
 
 /**
@@ -124,6 +124,23 @@ function formatTime(timestamp: number | undefined): string {
   return date.toLocaleDateString()
 }
 
+// Check if active backend supports multimodal
+function getActiveBackendSupportsMultimodal(llmBackends: any[], activeBackendId: string | null): boolean {
+  if (!activeBackendId) return false
+  const activeBackend = llmBackends.find(b => b.id === activeBackendId)
+  return activeBackend?.capabilities?.supports_multimodal ?? false
+}
+
+// Convert file to base64 data URL
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 export function DashboardPage() {
   const { t } = useTranslation(['common', 'dashboard'])
   const llmBackends = useStore((state) => state.llmBackends)
@@ -151,6 +168,11 @@ export function DashboardPage() {
   const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+
+  // Image upload state
+  const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   
   // Responsive
   const isDesktop = useIsDesktop()
@@ -250,7 +272,6 @@ export function DashboardPage() {
           break
 
         case "Error":
-          console.error("WebSocket error:", data.message)
           setIsStreaming(false)
           break
 
@@ -270,7 +291,7 @@ export function DashboardPage() {
   // Send message - auto-create session if needed
   const handleSend = async () => {
     const trimmedInput = input.trim()
-    if (!trimmedInput || isStreaming) return
+    if ((!trimmedInput && attachedImages.length === 0) || isStreaming) return
 
     // Get current sessionId from store (not from closure)
     let currentSessionId = useStore.getState().sessionId
@@ -288,21 +309,71 @@ export function DashboardPage() {
     const userMessage: Message = {
       id: crypto.randomUUID(),
       role: "user",
-      content: trimmedInput,
+      content: trimmedInput || (attachedImages.length > 0 ? "[Image]" : ""),
       timestamp: Date.now(),
+      images: attachedImages.length > 0 ? [...attachedImages] : undefined,
     }
     addMessage(userMessage)
 
     setInput("")
+    setAttachedImages([])
     setIsStreaming(true)
     streamingMessageIdRef.current = crypto.randomUUID()
 
-    ws.sendMessage(trimmedInput)
+    ws.sendMessage(trimmedInput, attachedImages.length > 0 ? attachedImages : undefined)
 
     setTimeout(() => {
       inputRef.current?.focus()
     }, 100)
   }
+
+  // Handle image file selection
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setIsUploadingImage(true)
+    try {
+      const newImages: ChatImage[] = []
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        if (!file.type.startsWith('image/')) continue
+
+        // Limit file size to 10MB
+        if (file.size > 10 * 1024 * 1024) {
+          alert(`Image ${file.name} is too large. Maximum size is 10MB.`)
+          continue
+        }
+
+        const dataUrl = await fileToBase64(file)
+        newImages.push({
+          data: dataUrl,
+          mimeType: file.type,
+        })
+      }
+
+      if (newImages.length > 0) {
+        setAttachedImages(prev => [...prev, ...newImages])
+      }
+    } catch (error) {
+      console.error('Failed to process images:', error)
+      alert('Failed to process images. Please try again.')
+    } finally {
+      setIsUploadingImage(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  // Remove attached image
+  const removeAttachedImage = (index: number) => {
+    setAttachedImages(prev => prev.filter((_, i) => i !== index))
+  }
+
+  // Check if multimodal is supported
+  const supportsMultimodal = getActiveBackendSupportsMultimodal(llmBackends, activeBackendId)
 
   // Handle quick action
   const handleQuickAction = (prompt: string) => {
@@ -497,7 +568,7 @@ export function DashboardPage() {
         {/* Input Area */}
         <div className="bg-background px-3 sm:px-4 py-3">
           <div className="max-w-3xl mx-auto">
-            {/* Input toolbar with model selector */}
+            {/* Input toolbar with model selector and image preview */}
             <div className="flex items-center gap-2 mb-2">
               {/* Model selector */}
               {llmBackends.length > 0 && (
@@ -549,10 +620,71 @@ export function DashboardPage() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
+
+              {/* Image preview - shown next to model selector */}
+              {attachedImages.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  {attachedImages.map((image, index) => (
+                    <div key={index} className="relative group">
+                      <img
+                        src={image.data}
+                        alt={`Attached ${index + 1}`}
+                        className="h-7 w-7 object-cover rounded-md border border-border"
+                      />
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => removeAttachedImage(index)}
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div className="flex-1" />
             </div>
 
             <div className="flex items-center gap-2">
+              {/* Image upload button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleImageSelect}
+                disabled={isStreaming || !supportsMultimodal}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isStreaming || !supportsMultimodal}
+                className={cn(
+                  "h-11 w-11 rounded-full flex-shrink-0",
+                  "text-muted-foreground hover:text-foreground hover:bg-muted",
+                  "transition-all disabled:opacity-50 disabled:cursor-not-allowed",
+                  !supportsMultimodal && "opacity-50"
+                )}
+                title={supportsMultimodal ? "添加图片" : "当前模型不支持图片"}
+              >
+                {isUploadingImage ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : attachedImages.length > 0 ? (
+                  <div className="relative">
+                    <ImageIcon className="h-5 w-5" />
+                    <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full h-4 w-4 flex items-center justify-center">
+                      {attachedImages.length}
+                    </span>
+                  </div>
+                ) : (
+                  <ImageIcon className="h-5 w-5" />
+                )}
+              </Button>
+
               <textarea
                 ref={inputRef}
                 value={input}
@@ -576,7 +708,7 @@ export function DashboardPage() {
 
               <Button
                 onClick={handleSend}
-                disabled={!input.trim() || isStreaming}
+                disabled={(!input.trim() && attachedImages.length === 0) || isStreaming}
                 className={cn(
                   "h-11 w-11 rounded-full flex-shrink-0",
                   "bg-foreground hover:bg-foreground/90 text-background",

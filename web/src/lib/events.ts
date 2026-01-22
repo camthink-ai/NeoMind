@@ -191,8 +191,6 @@ export class EventsWebSocket {
     const token = tokenManager.getToken()
     if (token) {
       params.set('token', token)
-    } else {
-      console.warn('[WebSocket] No token available, connection may fail')
     }
 
     // Build WebSocket URL
@@ -205,12 +203,10 @@ export class EventsWebSocket {
     }
 
     const wsUrl = `${protocol}//${wsHost}/api/events/ws?${params.toString()}`
-    console.log('[WebSocket] Connecting to:', wsUrl.replace(/token=[^&]+/, 'token=...'))
 
     try {
       this.ws = new WebSocket(wsUrl)
     } catch (e) {
-      console.error('[WebSocket] Failed to create WebSocket:', e)
       this.notifyError(new Error(`WebSocket creation failed: ${e}`))
       this.scheduleReconnect()
       return
@@ -221,14 +217,12 @@ export class EventsWebSocket {
       this.notifyConnection(true)
     }
 
-    this.ws.onclose = (event) => {
-      console.log('[WebSocket] Connection closed:', event.code, event.reason)
+    this.ws.onclose = () => {
       this.notifyConnection(false)
       this.scheduleReconnect()
     }
 
-    this.ws.onerror = (event) => {
-      console.error('[WebSocket] Error:', event)
+    this.ws.onerror = () => {
       this.notifyError(new Error('WebSocket connection error'))
     }
 
@@ -237,10 +231,8 @@ export class EventsWebSocket {
         const data = JSON.parse(event.data)
         // Handle error messages from server (e.g., auth failures)
         if (data.type === 'Error') {
-          console.error('[WebSocket] Server error:', data.message)
           // If it's an auth error, clear the token and stop reconnecting
           if (data.message?.includes('token') || data.message?.includes('Authentication') || data.message?.includes('Unauthorized')) {
-            console.warn('[WebSocket] Authentication failed, clearing token')
             tokenManager.clearToken()
             this.disconnect()
             return

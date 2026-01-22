@@ -72,6 +72,34 @@ export function RuleTester({
 
   const checkCondition = (condition: RuleCondition, simulatedValue: number): boolean => {
     const threshold = condition.threshold ?? 0
+
+    // Handle string threshold comparison
+    if (typeof threshold === 'string') {
+      const strValue = String(simulatedValue)
+      switch (condition.operator) {
+        case '==':
+          return strValue === threshold
+        case '!=':
+          return strValue !== threshold
+        case 'contains':
+          return strValue.includes(threshold)
+        case 'starts_with':
+          return strValue.startsWith(threshold)
+        case 'ends_with':
+          return strValue.endsWith(threshold)
+        case 'regex':
+          try {
+            return new RegExp(threshold).test(strValue)
+          } catch {
+            return false
+          }
+        default:
+          // Numeric operators don't work with strings
+          return false
+      }
+    }
+
+    // Handle numeric threshold comparison
     switch (condition.operator) {
       case '>':
         return simulatedValue > threshold
@@ -186,7 +214,7 @@ export function RuleTester({
                       />
                     </div>
                     <div className="flex items-center gap-2 text-sm">
-                      <span className={simValue && simValue.value > (condition.threshold ?? 0) ? 'text-green-600 font-medium' : ''}>
+                      <span className={simValue && typeof condition.threshold === 'number' && simValue.value > condition.threshold ? 'text-green-600 font-medium' : ''}>
                         {simValue?.value ?? 0}
                       </span>
                       <span className="text-muted-foreground">{condition.operator || '>'}</span>

@@ -434,7 +434,7 @@ export function AutomationCreatorDialog({
             <div className="space-y-4">
               <div className="flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
-                <h3 className="font-medium">基本信息</h3>
+                <h3 className="font-medium">{t('automation:creator.basicInfo')}</h3>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -497,9 +497,9 @@ export function AutomationCreatorDialog({
               </div>
 
               <div className="p-4 bg-muted rounded-md">
-                <p className="text-sm font-medium mb-2">提示</p>
+                <p className="text-sm font-medium mb-2">{t('automation:creator.tip')}</p>
                 <p className="text-xs text-muted-foreground">
-                  选择自动化类型后，系统将打开详细配置页面进行规则或转换的完整设置。
+                  {t('automation:creator.tipDesc')}
                 </p>
               </div>
 
@@ -516,7 +516,7 @@ export function AutomationCreatorDialog({
                 ) : (
                   <>
                     <Zap className="h-4 w-4 mr-2" />
-                    继续配置
+                    {t('automation:creator.continueConfig')}
                   </>
                 )}
               </Button>

@@ -20,6 +20,7 @@ import type {
   CreateLlmBackendRequest,
   UpdateLlmBackendRequest,
   PluginConfigSchema,
+  BackendCapabilities,
 } from '@/types'
 
 type View = 'list' | 'detail'
@@ -203,6 +204,7 @@ export function UnifiedLLMBackendsTab({
       api_key: config.api_key as string,
       temperature: config.temperature as number,
       top_p: config.top_p as number,
+      capabilities: config.capabilities as BackendCapabilities | undefined,
     }
     return await onCreateBackend(data)
   }
@@ -216,6 +218,7 @@ export function UnifiedLLMBackendsTab({
       api_key: config.api_key as string,
       temperature: config.temperature as number,
       top_p: config.top_p as number,
+      capabilities: config.capabilities as BackendCapabilities | undefined,
     }
     await onUpdateBackend(id, data)
   }

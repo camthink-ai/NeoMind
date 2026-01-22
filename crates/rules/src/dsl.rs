@@ -164,11 +164,6 @@ pub enum RuleAction {
     Delay {
         duration: Duration,
     },
-    /// Trigger a workflow.
-    TriggerWorkflow {
-        workflow_id: String,
-        params: HashMap<String, serde_json::Value>,
-    },
     /// Create an alert.
     CreateAlert {
         title: String,
@@ -719,27 +714,6 @@ impl RuleDslParser {
             let rest = line[5..].trim(); // Skip "DELAY"
             if let Some(duration) = Self::parse_duration(rest) {
                 return Ok(Some(RuleAction::Delay { duration }));
-            }
-        }
-
-        // TRIGGER WORKFLOW workflow_id [params...]
-        if line.starts_with("TRIGGER WORKFLOW") || line.starts_with("TRIGGER workflow") {
-            let rest = &line[16..].trim(); // Skip "TRIGGER WORKFLOW"
-            let parts: Vec<&str> = rest.split_whitespace().collect();
-            if !parts.is_empty() {
-                let workflow_id = parts[0].to_string();
-                let mut params = HashMap::new();
-
-                // Parse additional parameters
-                for part in &parts[1..] {
-                    if let Some(eq_pos) = part.find('=') {
-                        let key = &part[..eq_pos];
-                        let value = &part[eq_pos + 1..];
-                        params.insert(key.to_string(), serde_json::Value::String(value.to_string()));
-                    }
-                }
-
-                return Ok(Some(RuleAction::TriggerWorkflow { workflow_id, params }));
             }
         }
 

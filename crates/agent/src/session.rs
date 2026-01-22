@@ -823,6 +823,77 @@ impl SessionManager {
         self.process_message_events(session_id, message).await
     }
 
+    /// Process a multimodal message with images in a session.
+    pub async fn process_message_multimodal(
+        &self,
+        session_id: &str,
+        message: &str,
+        images: Vec<String>, // Base64 data URLs
+    ) -> Result<super::agent::AgentResponse> {
+        tracing::debug!(
+            session_id = %session_id,
+            image_count = images.len(),
+            "SessionManager::process_message_multimodal"
+        );
+        let agent = self.get_session(session_id).await?;
+        let response = agent.process_multimodal(message, images).await?;
+
+        // Update message history
+        let messages = agent.history().await;
+        self.session_messages
+            .write()
+            .await
+            .insert(session_id.to_string(), messages.clone());
+
+        // Persist history to database
+        if let Err(e) = self.save_history(session_id, &messages) {
+            tracing::error!(session_id = %session_id, error = %e, message = "Failed to save history");
+        }
+
+        Ok(response)
+    }
+
+    /// Process a multimodal message with optional LLM backend override.
+    pub async fn process_message_multimodal_with_backend(
+        &self,
+        session_id: &str,
+        message: &str,
+        images: Vec<String>,
+        backend_id: Option<&str>,
+    ) -> Result<super::agent::AgentResponse> {
+        // If a specific backend is requested, configure the agent with it
+        if let Some(backend) = backend_id {
+            let _ = self.configure_agent_by_backend_id(session_id, backend).await;
+        }
+        self.process_message_multimodal(session_id, message, images).await
+    }
+
+    /// Process a multimodal message (text + images) with streaming response and optional backend override.
+    pub async fn process_message_multimodal_with_backend_stream(
+        &self,
+        session_id: &str,
+        message: &str,
+        images: Vec<String>,
+        backend_id: Option<&str>,
+    ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
+        // If a specific backend is requested, configure the agent with it
+        if let Some(backend) = backend_id {
+            let _ = self.configure_agent_by_backend_id(session_id, backend).await;
+        }
+        self.process_message_multimodal_stream(session_id, message, images).await
+    }
+
+    /// Process a multimodal message (text + images) with streaming response.
+    pub async fn process_message_multimodal_stream(
+        &self,
+        session_id: &str,
+        message: &str,
+        images: Vec<String>,
+    ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
+        let agent = self.get_session(session_id).await?;
+        agent.process_multimodal_stream_events(message, images).await
+    }
+
     /// Get conversation history for a session.
     /// If session doesn't exist, returns empty history (soft fail for dirty data).
     pub async fn get_history(&self, session_id: &str) -> Result<Vec<AgentMessage>> {

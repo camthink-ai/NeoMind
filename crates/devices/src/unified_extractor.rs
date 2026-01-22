@@ -401,34 +401,51 @@ impl UnifiedExtractor {
 
                 // Check if value is a nested object
                 if let Value::Object(nested_obj) = value {
-                    // Check if the nested object is empty or only contains primitive values
-                    let has_only_primitives = nested_obj.iter().all(|(_, v)| {
-                        matches!(v, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_))
+                    // First check: if this object only contains other objects (no primitives/arrays),
+                    // skip it and recurse directly - don't create a metric for this intermediate layer
+                    let has_only_objects = nested_obj.iter().all(|(_, v)| {
+                        matches!(v, Value::Object(_))
                     });
 
-                    if has_only_primitives && !nested_obj.is_empty() {
-                        // This looks like a metrics object - expand it
+                    if has_only_objects && !nested_obj.is_empty() {
+                        // This is a pure intermediate object layer - skip and dive deeper
                         trace!(
-                            "Expanding nested object '{}' for device '{}' (auto-extract)",
+                            "Skipping intermediate object layer '{}' for device '{}' (auto-extract) - recursing into children",
                             current_path,
                             device_id
                         );
                         self.auto_extract_recursive(value, device_id, metrics, &current_path, depth + 1);
-                    } else if nested_obj.is_empty() {
+                    } else if !nested_obj.is_empty() {
+                        // Check if the nested object only contains primitive values (numbers, strings, booleans, null)
+                        let has_only_primitives = nested_obj.iter().all(|(_, v)| {
+                            matches!(v, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_))
+                        });
+
+                        if has_only_primitives {
+                            // This looks like a metrics object - expand it without storing the parent
+                            trace!(
+                                "Expanding nested object '{}' for device '{}' (auto-extract) - only has primitives",
+                                current_path,
+                                device_id
+                            );
+                            self.auto_extract_recursive(value, device_id, metrics, &current_path, depth + 1);
+                        } else {
+                            // Mixed object (contains both objects and primitives) - expand to get primitives,
+                            // but don't store this intermediate layer either
+                            trace!(
+                                "Expanding mixed object '{}' for device '{}' (auto-extract) - has both objects and primitives",
+                                current_path,
+                                device_id
+                            );
+                            self.auto_extract_recursive(value, device_id, metrics, &current_path, depth + 1);
+                        }
+                    } else {
                         // Empty object - skip
                         trace!(
                             "Skipping empty object '{}' for device '{}' (auto-extract)",
                             current_path,
                             device_id
                         );
-                    } else {
-                        // Complex nested object - store as JSON string
-                        let metric_value = self.value_to_metric_value(value);
-                        metrics.push(ExtractedMetric {
-                            name: current_path.clone(),
-                            value: metric_value,
-                            source_path: format!("$.{}", current_path),
-                        });
                     }
                 } else if let Value::Array(arr) = value {
                     // Handle arrays based on config

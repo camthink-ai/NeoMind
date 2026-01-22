@@ -820,6 +820,16 @@ impl LlmInterface {
         self.chat_internal(user_message, Some(history)).await
     }
 
+    /// Send a multimodal message (with images) with conversation history.
+    /// This is used when the user sends images along with their text.
+    pub async fn chat_multimodal_with_history(
+        &self,
+        user_message: Message,  // Can contain text + images
+        history: &[Message],
+    ) -> Result<ChatResponse, AgentError> {
+        self.chat_internal_message(user_message, Some(history)).await
+    }
+
     /// Internal chat implementation.
     async fn chat_internal(
         &self,
@@ -993,6 +1003,138 @@ impl LlmInterface {
         })
     }
 
+    /// Internal chat implementation that accepts a Message directly (for multimodal).
+    async fn chat_internal_message(
+        &self,
+        user_message: Message,  // Can contain text + images
+        history: Option<&[Message]>,
+    ) -> Result<ChatResponse, AgentError> {
+        // Acquire permit for concurrency limiting
+        let _permit = self.limiter.acquire().await;
+
+        let start = Instant::now();
+
+        let model_arc = Arc::clone(&self.model);
+
+        // Check if we have tools registered
+        let has_tools = !self.tool_definitions.read().await.is_empty();
+
+        let system_prompt = if has_tools {
+            // Extract text from user message for system prompt
+            let user_text = user_message.content.as_text();
+            self.build_system_prompt_with_tools(Some(&user_text))
+                .await
+        } else {
+            self.system_prompt.read().await.clone()
+        };
+
+        // Build input outside the lock
+        let model_guard = model_arc.read().await;
+        let model_from_config = model_guard.as_ref().cloned();
+        drop(model_guard);
+
+        // If no model is configured, try to get it from the LLM runtime
+        let model = if let Some(m) = model_from_config {
+            m
+        } else {
+            // Try to get model name from the runtime
+            let llm_guard = self.llm.read().await;
+            if let Some(ref llm) = *llm_guard {
+                llm.model_name().to_string()
+            } else {
+                // Ultimate fallback
+                "qwen3-vl:2b".to_string()
+            }
+        };
+
+        // Get thinking_enabled from active backend instance if using instance manager
+        let thinking_enabled = if self.uses_instance_manager() {
+            // Instance manager mode - use backend setting
+            if let Some(manager) = &self.instance_manager {
+                manager
+                    .get_active_instance()
+                    .map(|inst| inst.thinking_enabled)
+            } else {
+                None
+            }
+        } else {
+            // Direct mode - use local setting (defaults to false)
+            *self.thinking_enabled.read().await
+        };
+
+        let params = edge_ai_core::llm::backend::GenerationParams {
+            temperature: Some(self.temperature),
+            top_p: Some(self.top_p),
+            top_k: None,
+            max_tokens: Some(self.max_tokens),
+            stop: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            thinking_enabled,
+        };
+
+        let system_msg = Message::system(&system_prompt);
+
+        // Build messages with history if provided
+        let messages = if let Some(hist) = history {
+            let mut msgs = vec![system_msg];
+            // Add historical messages (excluding system prompts from history)
+            for msg in hist {
+                if msg.role != edge_ai_core::MessageRole::System {
+                    msgs.push(msg.clone());
+                }
+            }
+            msgs.push(user_message);
+            msgs
+        } else {
+            vec![system_msg, user_message]
+        };
+
+        // Get tool definitions
+        let tools_input = if has_tools {
+            let tools = self.tool_definitions.read().await;
+            let result = if tools.is_empty() {
+                None
+            } else {
+                Some(tools.clone())
+            };
+            drop(tools);
+            result
+        } else {
+            None
+        };
+
+        let input = LlmInput {
+            messages,
+            params,
+            model: Some(model),
+            stream: false,
+            tools: tools_input,
+        };
+
+        // Get runtime using instance manager if enabled
+        let llm = self.get_runtime().await?;
+
+        let output = llm
+            .generate(input)
+            .await
+            .map_err(|e| AgentError::Generation(e.to_string()))?;
+
+        let duration = start.elapsed();
+        let tokens_used = output
+            .usage
+            .map(|u| u.completion_tokens as usize)
+            .unwrap_or_else(|| output.text.split_whitespace().count());
+
+        Ok(ChatResponse {
+            text: output.text,
+            tokens_used,
+            duration,
+            finish_reason: format!("{:?}", output.finish_reason),
+            thinking: output.thinking,
+        })
+    }
+
     /// Send a chat message with streaming response.
     pub async fn chat_stream(
         &self,
@@ -1071,6 +1213,166 @@ impl LlmInterface {
             .await;
         *self.thinking_enabled.write().await = old_value;
         result
+    }
+
+    /// Send a multimodal chat message (with images) with streaming response.
+    /// This method accepts a Message directly, which can contain text and images.
+    pub async fn chat_stream_multimodal_with_history(
+        &self,
+        user_message: Message,  // Can contain text + images via Content::Parts
+        history: &[Message],
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), AgentError>> + Send>>, AgentError>
+    {
+        self.chat_stream_internal_message(user_message, Some(history), true, false)
+            .await
+    }
+
+    /// Send a multimodal chat message (with images) with streaming response, without thinking.
+    /// For simple multimodal queries where we want fast responses.
+    pub async fn chat_stream_multimodal_no_thinking_with_history(
+        &self,
+        user_message: Message,  // Can contain text + images via Content::Parts
+        history: &[Message],
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), AgentError>> + Send>>, AgentError>
+    {
+        // Temporarily disable thinking for this call
+        *self.thinking_enabled.write().await = Some(false);
+        self.chat_stream_internal_message(user_message, Some(history), true, false)
+            .await
+    }
+
+    /// Internal streaming chat implementation that accepts a Message directly (for multimodal).
+    async fn chat_stream_internal_message(
+        &self,
+        user_message: Message,
+        history: Option<&[Message]>,
+        include_tools: bool,
+        _restore_thinking: bool,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<(String, bool), AgentError>> + Send>>, AgentError>
+    {
+        let model_arc = Arc::clone(&self.model);
+
+        // Build system prompt (with or without tools based on phase)
+        let system_prompt = if include_tools {
+            self.build_system_prompt_with_tools(None)
+                .await
+        } else {
+            // Phase 2 system prompt - NO tool calling, just generate response based on tool results
+            // Tool execution is already complete, this phase is for summarizing results
+            "你是NeoTalk物联网助手。工具已经执行完成，结果在对话历史中。
+请直接根据工具执行结果回答用户问题，不要再调用任何工具。
+-- 简洁直接地回答
+-- 如果工具返回了数据，简要总结要点
+-- 如果工具执行失败，解释原因并提供建议".to_string()
+        };
+
+        // Build input outside the lock
+        let model_guard = model_arc.read().await;
+        let model_from_config = model_guard.as_ref().cloned();
+        drop(model_guard);
+
+        // If no model is configured, try to get it from the LLM runtime
+        let model = if let Some(m) = model_from_config {
+            m
+        } else {
+            // Try to get model name from the runtime
+            let llm_guard = self.llm.read().await;
+            if let Some(ref llm) = *llm_guard {
+                llm.model_name().to_string()
+            } else {
+                // Ultimate fallback
+                "qwen3-vl:2b".to_string()
+            }
+        };
+
+        // Get thinking_enabled from active backend instance if using instance manager
+        let thinking_enabled = if self.uses_instance_manager() {
+            // Instance manager mode - use backend setting
+            if let Some(manager) = &self.instance_manager {
+                manager
+                    .get_active_instance()
+                    .map(|inst| inst.thinking_enabled)
+            } else {
+                None
+            }
+        } else {
+            // Direct mode - use local setting (defaults to false)
+            *self.thinking_enabled.read().await
+        };
+
+        tracing::debug!(
+            thinking_enabled = ?thinking_enabled,
+            uses_instance_manager = self.uses_instance_manager(),
+            "LlmInterface chat_stream_internal_message (multimodal)"
+        );
+
+        let params = edge_ai_core::llm::backend::GenerationParams {
+            temperature: Some(self.temperature),
+            top_p: Some(self.top_p),
+            top_k: None,
+            max_tokens: Some(self.max_tokens),
+            stop: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            thinking_enabled,
+        };
+
+        let system_msg = Message::system(&system_prompt);
+
+        // Build messages with history if provided
+        let messages = if let Some(hist) = history {
+            let mut msgs = vec![system_msg];
+            // Add historical messages (excluding system prompts from history)
+            for msg in hist {
+                if msg.role != edge_ai_core::MessageRole::System {
+                    msgs.push(msg.clone());
+                }
+            }
+            msgs.push(user_message);
+            msgs
+        } else {
+            vec![system_msg, user_message]
+        };
+
+        // Get tool definitions
+        let tools = self.tool_definitions.read().await;
+        let tools_input = if tools.is_empty() {
+            None
+        } else {
+            Some(tools.clone())
+        };
+        drop(tools);
+
+        let input = LlmInput {
+            messages,
+            params,
+            model: Some(model),
+            stream: true,
+            tools: tools_input,
+        };
+
+        // Get runtime using instance manager if enabled
+        let llm = self.get_runtime().await?;
+
+        let stream = llm
+            .generate_stream(input)
+            .await
+            .map_err(|e| AgentError::Generation(e.to_string()))?;
+
+        // Acquire permit for concurrency limiting and wrap stream
+        let permit = self.limiter.acquire().await;
+        let wrapped_stream = PermitStream::new(stream, permit);
+
+        // Convert stream
+        Ok(Box::pin(async_stream::stream! {
+            let mut stream = wrapped_stream;
+            while let Some(result) = futures::StreamExt::next(&mut stream).await {
+                match result {
+                    Ok(chunk) => yield Ok(chunk),
+                    Err(e) => yield Err(AgentError::Generation(e.to_string())),
+                }
+            }
+        }))
     }
 
     /// Internal streaming chat implementation.

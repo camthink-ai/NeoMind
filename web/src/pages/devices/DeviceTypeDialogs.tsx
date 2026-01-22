@@ -39,6 +39,7 @@ import {
   MoreVertical,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { api } from "@/lib/api"
 import type { DeviceType, MetricDefinition, CommandDefinition } from "@/types"
 
 // Validation result type
@@ -258,12 +259,15 @@ export function AddDeviceTypeDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl h-[90vh] max-h-[90vh] flex flex-col p-0 overflow-hidden">
-        {/* Header with Steps */}
-        <DialogHeader className="px-6 pt-4 pb-4 border-b space-y-3">
+        {/* Header */}
+        <DialogHeader className="px-6 pt-4 pb-4 border-b">
           <DialogTitle className="text-xl">
             {isEditMode ? 'Edit Device Type' : t('devices:types.add.title')}
           </DialogTitle>
+        </DialogHeader>
 
+        {/* Step Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {/* Step Indicator */}
           <div className="flex items-center justify-center gap-2">
             {steps.map((step, index) => {
@@ -303,10 +307,6 @@ export function AddDeviceTypeDialog({
               )
             })}
           </div>
-        </DialogHeader>
-
-        {/* Step Content */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {currentStep === 'basic' && (
             <BasicInfoStep
               data={formData}
@@ -1264,6 +1264,150 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
 
   const isRawMode = deviceType.mode === 'simple'
 
+  // Fetch transforms that apply to this device type
+  const [virtualMetrics, setVirtualMetrics] = React.useState<Array<{
+    name: string
+    display_name: string
+    data_type: string
+    unit?: string
+    transform_id: string
+    transform_name: string
+  }>>([])
+  const [loadingVirtual, setLoadingVirtual] = React.useState(false)
+
+  React.useEffect(() => {
+    if (open && deviceType?.device_type) {
+      setLoadingVirtual(true)
+      api.listTransforms()
+        .then(data => {
+          const transforms: any[] = data.transforms || []
+
+          // Filter transforms that apply to this device type
+          const matching = transforms
+            .filter((t: any) => {
+              if (!t.enabled) return false
+
+              // Handle scope - might be string or already parsed object
+              let scope = t.scope
+              if (typeof scope === 'string') {
+                try {
+                  scope = JSON.parse(scope)
+                } catch {
+                  // If parse fails, it might be just "global"
+                }
+              }
+
+              // Check if scope matches this device type
+              if (typeof scope === 'object' && scope !== null && 'device_type' in scope) {
+                return scope.device_type === deviceType.device_type
+              }
+              return false
+            })
+            .map((t: any) => {
+              // Parse js_code to extract output metrics
+              const prefix = t.output_prefix || 'transform'
+              const outputs = parseTransformOutputs(t.js_code, prefix)
+              return outputs.map((out: any) => ({
+                ...out,
+                transform_id: t.id,
+                transform_name: t.name,
+              }))
+            })
+            .flat()
+
+          setVirtualMetrics(matching)
+        })
+        .catch(() => setVirtualMetrics([]))
+        .finally(() => setLoadingVirtual(false))
+    }
+  }, [open, deviceType?.device_type])
+
+  // Parse transform JS code to extract output metrics
+  const parseTransformOutputs = (jsCode: string, prefix: string) => {
+    const outputs: Array<{ name: string; display_name: string; data_type: string; unit?: string }> = []
+
+    // Try to infer data type from the value/expression
+    const inferType = (_propName: string, value: string): string => {
+      const lowerVal = value.toLowerCase()
+
+      // Boolean checks
+      if (lowerVal === 'true' || lowerVal === 'false' || lowerVal.includes('!') || lowerVal.includes('===') || lowerVal.includes('&&') || lowerVal.includes('||')) {
+        return 'boolean'
+      }
+
+      // Number checks - arithmetic operations or numeric literals
+      if (/^[\d\s+\-*/().]+$/.test(value) || lowerVal.includes('parsefloat') || lowerVal.includes('parseint') || lowerVal.includes('math.') || lowerVal.includes('number(')) {
+        return 'float'
+      }
+
+      // String checks
+      if (value.startsWith('"') || value.startsWith("'") || value.includes('toString()') || value.includes('string(')) {
+        return 'string'
+      }
+
+      // Array checks
+      if (value.includes('[') || value.includes('Array(') || value.includes('push(')) {
+        return 'array'
+      }
+
+      // Object checks
+      if (value.includes('{') || value.includes('Object.create')) {
+        return 'object'
+      }
+
+      // Check if accessing a metric from input - might inherit its type
+      if (lowerVal.includes('input.') || lowerVal.includes('values.')) {
+        // Default to float for telemetry data
+        return 'float'
+      }
+
+      return 'unknown'
+    }
+
+    try {
+      // Look for return statement patterns
+      const returnMatch = jsCode.match(/return\s+({[\s\S]*?});?\s*(?:\/\/.*)?$/m)
+      if (returnMatch) {
+        const returnObj = returnMatch[1]
+        // Extract property names and their values from return object
+        const propMatches = returnObj.matchAll(/(\w+)\s*:\s*([^,}]+)/g)
+        for (const match of propMatches) {
+          const propName = match[1]
+          const propValue = match[2]?.trim()
+          if (propName !== 'input' && propName !== '_raw') {
+            const inferredType = inferType(propName, propValue)
+            outputs.push({
+              name: `${prefix}.${propName}`,
+              display_name: propName,
+              data_type: inferredType,
+            })
+          }
+        }
+      }
+
+      // If no return object found, look for single value return
+      if (outputs.length === 0) {
+        const singleMatch = jsCode.match(/return\s+([^;{}]+);/)
+        if (singleMatch) {
+          const value = singleMatch[1]?.trim()
+          outputs.push({
+            name: `${prefix}.value`,
+            display_name: 'Value',
+            data_type: inferType('value', value),
+          })
+        }
+      }
+    } catch {
+      // Fallback to generic output
+    }
+
+    return outputs.length > 0 ? outputs : [{
+      name: `${prefix}.*`,
+      display_name: 'Virtual Metric',
+      data_type: 'float',
+    }]
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl h-[85vh] max-h-[85vh] flex flex-col">
@@ -1290,7 +1434,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
         <div className="flex-1 overflow-y-auto">
           <div className="p-6 space-y-6">
             {/* Summary Cards */}
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-4 gap-4">
               <Card className="p-4">
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
@@ -1298,7 +1442,18 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
                   </div>
                   <div>
                     <div className="text-2xl font-bold">{deviceType.metrics?.length || 0}</div>
-                    <div className="text-xs text-muted-foreground">Metrics</div>
+                    <div className="text-xs text-muted-foreground">Native Metrics</div>
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                    <Sparkles className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold">{virtualMetrics.length || 0}</div>
+                    <div className="text-xs text-muted-foreground">Virtual Metrics</div>
                   </div>
                 </div>
               </Card>
@@ -1315,8 +1470,8 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
               </Card>
               <Card className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                    <Settings className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-900/30">
+                    <Settings className="h-5 w-5 text-orange-600 dark:text-orange-400" />
                   </div>
                   <div>
                     <div className="text-lg font-bold">{isRawMode ? 'Raw' : 'Full'}</div>
@@ -1348,7 +1503,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
               <div className="flex items-center justify-between mb-4">
                 <h4 className="font-medium flex items-center gap-2">
                   <ArrowDown className="h-4 w-4 text-green-500" />
-                  Metrics ({deviceType.metrics?.length || 0})
+                  Native Metrics ({deviceType.metrics?.length || 0})
                 </h4>
                 {isRawMode && (
                   <Badge variant="secondary" className="text-xs">
@@ -1384,6 +1539,46 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
                 </div>
               )}
             </Card>
+
+            {/* Virtual Metrics (from Transforms) */}
+            {virtualMetrics.length > 0 && (
+              <Card className="p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h4 className="font-medium flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-purple-500" />
+                    Virtual Metrics ({virtualMetrics.length})
+                  </h4>
+                  <Badge variant="secondary" className="text-xs">
+                    From Transforms
+                  </Badge>
+                </div>
+
+                {loadingVirtual ? (
+                  <div className="text-center py-4 text-muted-foreground text-sm">
+                    Loading virtual metrics...
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {virtualMetrics.map((metric, i) => (
+                      <div key={i} className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="h-3 w-3 text-purple-500" />
+                            <code className="text-sm text-purple-700 dark:text-purple-300">{metric.name}</code>
+                            <span className="text-muted-foreground">•</span>
+                            <span className="text-sm">{metric.display_name}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs text-purple-500">{metric.data_type}</Badge>
+                            <span className="text-xs text-muted-foreground">via {metric.transform_name}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Card>
+            )}
 
             {/* Commands */}
             <Card className="p-4">

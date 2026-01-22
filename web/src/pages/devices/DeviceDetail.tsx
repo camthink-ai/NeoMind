@@ -24,7 +24,7 @@ import {
 import { ChevronLeft, RefreshCw, Send, Clock, Zap, Settings, Info, ChevronRight, X, Image as ImageIcon, Database } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 import { formatTimestamp } from "@/lib/utils/format"
-import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse } from "@/types"
+import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse, TelemetrySummaryResponse } from "@/types"
 import { isBase64Image } from "./utils"
 import { cn } from "@/lib/utils"
 
@@ -32,6 +32,7 @@ interface DeviceDetailProps {
   device: Device | null
   deviceType: DeviceType | null
   telemetryData: TelemetryDataResponse | null
+  telemetrySummary: TelemetrySummaryResponse | null
   telemetryLoading: boolean
   selectedMetric: string | null
   onBack: () => void
@@ -96,6 +97,7 @@ export function DeviceDetail({
   device,
   deviceType,
   telemetryData,
+  telemetrySummary,
   telemetryLoading,
   selectedMetric,
   onBack,
@@ -115,46 +117,22 @@ export function DeviceDetail({
   const commands = deviceType?.commands || []
   const templateMetrics = deviceType?.metrics || []
 
-  // Identify virtual metrics vs auto-extracted metrics
-  // True virtual metrics = Transform-generated with dot notation (transform.count, virtual.avg)
-  // Auto-extracted metrics = from UnifiedExtractor (e.g., values.battery, values._value)
-  const templateMetricNames = new Set(templateMetrics.map(m => m.name))
+  // Get virtual metrics from telemetry summary using is_virtual flag
+  // This is the authoritative source for virtual metrics (from backend)
+  const allVirtualMetrics = telemetrySummary
+    ? Object.keys(telemetrySummary.summary).filter(
+        key => telemetrySummary.summary[key]?.is_virtual
+      )
+    : []
 
-  // Transform-generated metric namespaces (with dot notation)
-  const transformNamespaces = ['transform.', 'virtual.', 'computed.', 'derived.', 'aggregated.']
-  const isTransformMetric = (m: string) =>
-    transformNamespaces.some(prefix => m.startsWith(prefix))
-
-  // Auto-extracted metrics typically start with common auto-extract prefixes
-  const isAutoExtracted = (m: string) =>
-    // Skip if it's a transform metric
-    isTransformMetric(m) ? false : (
-      m.startsWith('values.') ||
-      m.startsWith('data.') ||
-      m.startsWith('params.') ||
-      m.includes('.')
-    )
-
-  // Metrics in storage but not in template
-  const extraMetrics = (telemetryData?.metrics || []).filter(m =>
-    m !== '_raw' && !templateMetricNames.has(m)
-  )
-
-  // Only include Transform-generated virtual metrics (exclude auto-extracted)
-  const virtualMetrics = extraMetrics.filter(m =>
-    isTransformMetric(m) && !isAutoExtracted(m)
-  )
-  // Note: auto-extracted metrics (with dot notation like values.battery) are excluded from display
-  // as they're just decomposed raw data, not true virtual metrics
-
-  // Combine: template metrics + true virtual metrics
+  // Combine: template metrics + virtual metrics
   const metricDefinitions = [
     ...templateMetrics,
-    ...virtualMetrics.map(name => ({
+    ...allVirtualMetrics.map(name => ({
       name,
-      display_name: name,
+      display_name: telemetrySummary?.summary[name]?.display_name || name,
       data_type: 'float' as const,
-      unit: '-',
+      unit: telemetrySummary?.summary[name]?.unit || '-',
     }))
   ]
 
@@ -325,29 +303,35 @@ export function DeviceDetail({
                   <Settings className="h-5 w-5 text-muted-foreground" />
                   <h2 className="font-semibold">实时指标</h2>
                   <span className="text-xs text-muted-foreground">({metricDefinitions.length})</span>
-                  {virtualMetrics.length > 0 && (
+                  {allVirtualMetrics.length > 0 && (
                     <Badge variant="secondary" className="text-xs ml-2">
-                      {virtualMetrics.length} 虚拟指标
+                      {allVirtualMetrics.length} 虚拟指标
                     </Badge>
                   )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {metricDefinitions.map((metricDef) => {
-                    // Try to get value from device.current_values first (for template metrics)
-                    // Then fall back to telemetry data (for virtual metrics)
+                    // Priority order for getting metric value:
+                    // 1. From device.current_values (real-time device state)
+                    // 2. From telemetrySummary.summary (contains all metrics with current values)
+                    // 3. From telemetryData.data (time series data for selected metric)
                     let value = device?.current_values?.[metricDef.name]
 
-                    // For virtual metrics, get the latest value from telemetry data
+                    // Try telemetry summary next (contains all metrics)
+                    if (value === undefined && telemetrySummary?.summary[metricDef.name]) {
+                      value = telemetrySummary.summary[metricDef.name].current
+                    }
+
+                    // Fallback to telemetry data (for detailed time series)
                     if (value === undefined && telemetryData?.data[metricDef.name]) {
                       const points = telemetryData.data[metricDef.name]
                       if (points && points.length > 0) {
-                        // Get the most recent point
                         const latestPoint = points[points.length - 1]
                         value = latestPoint.value
                       }
                     }
 
-                    const isVirtual = virtualMetrics.includes(metricDef.name)
+                    const isVirtual = allVirtualMetrics.includes(metricDef.name)
                     const hasImage = isMetricImage(value)
                     return (
                       <button

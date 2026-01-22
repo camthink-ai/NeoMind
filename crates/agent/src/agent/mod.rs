@@ -62,7 +62,8 @@ pub use semantic_mapper::{
 };
 pub use streaming::{
     StreamSafeguards, events_to_string_stream, process_stream_events,
-    process_stream_events_with_safeguards,
+    process_stream_events_with_safeguards, process_multimodal_stream_events,
+    process_multimodal_stream_events_with_safeguards,
 };
 pub use types::{
     AgentConfig, AgentEvent, AgentInternalState, AgentMessage, AgentResponse, LlmBackend,
@@ -834,6 +835,181 @@ impl Agent {
                     tools_used,
                     processing_time_ms: processing_time,
                 })
+            }
+        }
+    }
+
+    /// Process a user message with images (multimodal input).
+    ///
+    /// This method is used when the user sends images along with their text message.
+    /// The images should be base64-encoded data URLs (e.g., "data:image/png;base64,...").
+    pub async fn process_multimodal(
+        &self,
+        user_message: &str,
+        images: Vec<String>, // Base64 data URLs
+    ) -> Result<AgentResponse> {
+        tracing::debug!(
+            message = %user_message,
+            image_count = images.len(),
+            "Agent::process_multimodal starting"
+        );
+
+        // Create multimodal message content
+        let mut parts = vec![edge_ai_core::ContentPart::text(user_message)];
+
+        // Add images as ContentPart
+        for image_data in images {
+            // Check if it's already a data URL
+            if image_data.starts_with("data:image/") {
+                // Extract the base64 part
+                if let Some(base64_part) = image_data.split(',').nth(1) {
+                    // Extract mime type from data URL if available
+                    let mime_type = if image_data.contains("data:image/png") {
+                        "image/png"
+                    } else if image_data.contains("data:image/jpeg") || image_data.contains("data:image/jpg") {
+                        "image/jpeg"
+                    } else if image_data.contains("data:image/webp") {
+                        "image/webp"
+                    } else if image_data.contains("data:image/gif") {
+                        "image/gif"
+                    } else {
+                        "image/png"
+                    };
+                    parts.push(edge_ai_core::ContentPart::image_base64(
+                        base64_part,
+                        mime_type,
+                    ));
+                }
+            } else {
+                // Assume it's raw base64 data
+                parts.push(edge_ai_core::ContentPart::image_base64(
+                    &image_data,
+                    "image/png",
+                ));
+            }
+        }
+
+        let user_msg = edge_ai_core::Message::new(
+            edge_ai_core::MessageRole::User,
+            edge_ai_core::Content::Parts(parts),
+        );
+
+        // === Skip fast path for multimodal messages (always use LLM) ===
+        let _lock = self.process_lock.lock().await;
+        let start = std::time::Instant::now();
+
+        // Add user message to history
+        let agent_user_msg = AgentMessage::user(user_message);
+        self.internal_state
+            .write()
+            .await
+            .push_message(agent_user_msg);
+
+        // Check if LLM is configured (required for multimodal)
+        if !self.llm_interface.is_ready().await {
+            return Err(NeoTalkError::Llm(
+                "Multimodal input requires LLM support".to_string(),
+            ));
+        }
+
+        // === Get conversation history ===
+        let history: Vec<AgentMessage> = self.internal_state.read().await.memory.clone();
+
+        // Exclude the last message (which is the user message we just added) from history
+        let history_without_last: Vec<AgentMessage> = if history.len() > 1 {
+            history.iter().take(history.len() - 1).cloned().collect()
+        } else {
+            Vec::new()
+        };
+
+        // Convert AgentMessage history to Message history
+        let core_history: Vec<edge_ai_core::Message> =
+            history_without_last.iter().map(|msg| msg.to_core()).collect();
+
+        // === Process with LLM using multimodal message ===
+        match self.llm_interface.chat_multimodal_with_history(user_msg, &core_history).await {
+            Ok(llm_response) => {
+                let response_msg = AgentMessage::assistant(&llm_response.text);
+
+                self.internal_state
+                    .write()
+                    .await
+                    .push_message(response_msg.clone());
+
+                self.internal_state
+                    .write()
+                    .await
+                    .session.increment_messages();
+
+                let processing_time = start.elapsed().as_millis() as u64;
+
+                Ok(AgentResponse {
+                    message: response_msg,
+                    tool_calls: vec![],
+                    memory_context_used: false,
+                    tools_used: vec![],
+                    processing_time_ms: processing_time,
+                })
+            }
+            Err(e) => {
+                Err(NeoTalkError::Llm(format!("LLM processing failed: {}", e)))
+            }
+        }
+    }
+
+    /// Process a multimodal user message (text + images) with streaming response (returns AgentEvent stream).
+    pub async fn process_multimodal_stream_events(
+        &self,
+        user_message: &str,
+        images: Vec<String>, // Base64 data URLs
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+        tracing::debug!(
+            message = %user_message,
+            image_count = images.len(),
+            "Agent::process_multimodal_stream_events starting"
+        );
+
+        let _lock = self.process_lock.lock().await;
+
+        // Check if LLM is configured (required for multimodal)
+        if !self.llm_interface.is_ready().await {
+            // Fall back to simple response without LLM
+            let (message, _, _) = process_fallback(&self.tools, &self.fallback_rules, user_message).await;
+            self.internal_state
+                .write()
+                .await
+                .push_message(message.clone());
+
+            return Ok(Box::pin(async_stream::stream! {
+                yield AgentEvent::content(message.content);
+                yield AgentEvent::end();
+            }));
+        }
+
+        match process_multimodal_stream_events(
+            self.llm_interface.clone(),
+            self.internal_state.clone(),
+            self.tools.clone(),
+            user_message,
+            images,
+        )
+        .await
+        {
+            Ok(stream) => Ok(stream),
+            Err(e) => {
+                // On error, fall back to simple response
+                tracing::error!(error = %e, "LLM multimodal stream error, using fallback");
+                let (message, _, _) =
+                    process_fallback(&self.tools, &self.fallback_rules, user_message).await;
+                self.internal_state
+                    .write()
+                    .await
+                    .push_message(message.clone());
+
+                Ok(Box::pin(async_stream::stream! {
+                    yield AgentEvent::content(message.content);
+                    yield AgentEvent::end();
+                }))
             }
         }
     }

@@ -653,10 +653,10 @@ pub struct TransformAutomation {
     #[serde(flatten)]
     pub metadata: AutomationMetadata,
     /// Transform scope - which devices this applies to
+    /// - Global: applies to all devices
+    /// - DeviceType(type): applies to all devices of the specified type
+    /// - Device(id): applies to a specific device instance
     pub scope: TransformScope,
-    /// Source device type filter (optional, for DeviceType scope)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_type_filter: Option<String>,
 
     // ========== New AI-Native Fields ==========
     /// User's natural language intent (what they want to transform)
@@ -707,7 +707,6 @@ impl TransformAutomation {
         Self {
             metadata: AutomationMetadata::new(id, name),
             scope,
-            device_type_filter: None,
             intent: None,
             js_code: None,
             output_prefix: default_output_prefix(),
@@ -727,7 +726,6 @@ impl TransformAutomation {
         Self {
             metadata: AutomationMetadata::new(id, name),
             scope,
-            device_type_filter: None,
             intent: Some(intent.into()),
             js_code: Some(js_code.into()),
             output_prefix: default_output_prefix(),
@@ -742,9 +740,10 @@ impl TransformAutomation {
         self
     }
 
-    /// Set device type filter
+    /// Set device type filter - changes scope to DeviceType
+    /// This is a convenience method that replaces the current scope with DeviceType
     pub fn with_device_type(mut self, device_type: impl Into<String>) -> Self {
-        self.device_type_filter = Some(device_type.into());
+        self.scope = TransformScope::DeviceType(device_type.into());
         self
     }
 
@@ -818,11 +817,8 @@ impl TransformAutomation {
         match &self.scope {
             TransformScope::Global => true,
             TransformScope::DeviceType(dt) => {
-                if let Some(ref filter) = self.device_type_filter {
-                    device_type.map(|t| t == filter).unwrap_or(false)
-                } else {
-                    device_type.map(|t| t == dt).unwrap_or(false)
-                }
+                // Direct comparison: scope.DeviceType(type) applies to devices of that type
+                device_type.map(|t| t == dt).unwrap_or(false)
             }
             TransformScope::Device(d) => d == device_id,
         }

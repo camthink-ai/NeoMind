@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
-import { Separator } from "@/components/ui/separator"
 import {
   Clock,
   CheckCircle2,
@@ -25,7 +24,7 @@ import {
   ChevronRight,
 } from "lucide-react"
 import { api } from "@/lib/api"
-import type { AgentExecutionDetail, DecisionProcess, DataCollected, ReasoningStep, Decision, GeneratedReport } from "@/types"
+import type { AgentExecutionDetail, DataCollected, ReasoningStep, Decision } from "@/types"
 
 interface ExecutionDetailDialogProps {
   open: boolean
@@ -62,7 +61,10 @@ export function ExecutionDetailDialog({
     }
   }
 
-  const formatDate = (timestamp: number) => {
+  const formatDate = (timestamp: string | number) => {
+    if (typeof timestamp === 'string') {
+      return new Date(timestamp).toLocaleString()
+    }
     return new Date(timestamp * 1000).toLocaleString()
   }
 
@@ -76,15 +78,6 @@ export function ExecutionDetailDialog({
         return <Clock className="h-4 w-4 text-blue-500" />
       default:
         return <AlertCircle className="h-4 w-4 text-gray-500" />
-    }
-  }
-
-  const getStatusBadgeClass = (status: string) => {
-    switch (status) {
-      case 'Completed': return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-      case 'Failed': return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-      case 'Running': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-      default: return 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400'
     }
   }
 
@@ -177,7 +170,7 @@ export function ExecutionDetailDialog({
                     >
                       <div className="space-y-3">
                         {execution.decision_process.reasoning_steps.map((step, idx) => (
-                          <ReasoningStepItem key={idx} step={step} />
+                          <ReasoningStepItem key={idx} step={step} t={t} />
                         ))}
                       </div>
                     </DecisionProcessSection>
@@ -191,7 +184,7 @@ export function ExecutionDetailDialog({
                     >
                       <div className="space-y-2">
                         {execution.decision_process.decisions.map((decision, idx) => (
-                          <DecisionItem key={idx} decision={decision} />
+                          <DecisionItem key={idx} decision={decision} t={t} />
                         ))}
                       </div>
                     </DecisionProcessSection>
@@ -308,7 +301,7 @@ function DataCollectedItem({ data }: { data: DataCollected }) {
   )
 }
 
-function ReasoningStepItem({ step }: { step: ReasoningStep }) {
+function ReasoningStepItem({ step, t }: { step: ReasoningStep; t: (key: string) => string }) {
   return (
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
@@ -340,12 +333,12 @@ function ReasoningStepItem({ step }: { step: ReasoningStep }) {
   )
 }
 
-function DecisionItem({ decision }: { decision: Decision }) {
+function DecisionItem({ decision, t }: { decision: Decision; t: (key: string) => string }) {
   return (
     <Card className="p-3">
       <div className="text-sm font-medium mb-1">{decision.description}</div>
       <div className="text-xs text-muted-foreground mb-2">{decision.rationale}</div>
-      <Separator className="my-2" />
+      <div className="border-t my-2" />
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{t('agents:memory.action')}</span>
         <Badge variant="secondary">{decision.action}</Badge>
@@ -353,6 +346,3 @@ function DecisionItem({ decision }: { decision: Decision }) {
     </Card>
   )
 }
-
-// Type definitions for execution details
-export type { AgentExecutionDetail, DecisionProcess, DataCollected, ReasoningStep, Decision, GeneratedReport }

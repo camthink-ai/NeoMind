@@ -101,6 +101,10 @@ pub struct UpdateBackendRequest {
 
     /// Enable thinking/reasoning mode for models that support it
     pub thinking_enabled: Option<bool>,
+
+    /// Model capabilities (optional, from Ollama model detection)
+    #[serde(default)]
+    pub capabilities: Option<BackendCapabilities>,
 }
 
 /// Backend instance DTO for API responses
@@ -392,6 +396,9 @@ pub async fn update_backend_handler(
     if let Some(thinking_enabled) = req.thinking_enabled {
         instance.thinking_enabled = thinking_enabled;
     }
+    if let Some(capabilities) = req.capabilities {
+        instance.capabilities = capabilities;
+    }
     instance.updated_at = chrono::Utc::now().timestamp();
 
     // Validate
@@ -639,6 +646,216 @@ pub async fn get_backend_stats_handler(
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
 
     ok(stats)
+}
+
+/// Fetch available models from an Ollama server
+///
+/// GET /api/llm-backends/ollama/models?endpoint=http://localhost:11434
+///
+/// Returns the list of available models from the specified Ollama server,
+/// along with their detected capabilities (multimodal, thinking, tools, etc.)
+pub async fn list_ollama_models_handler(
+    Query(params): Query<OllamaModelsQuery>,
+) -> HandlerResult<serde_json::Value> {
+    use reqwest::Client;
+
+    let endpoint = params.endpoint.unwrap_or_else(|| "http://localhost:11434".to_string());
+    let url = format!("{}/api/tags", endpoint.trim_end_matches('/'));
+
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| ErrorResponse::internal(format!("Failed to create HTTP client: {}", e)))?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to connect to Ollama: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(ErrorResponse::internal(format!(
+            "Ollama returned status: {}",
+            response.status()
+        )));
+    }
+
+    let ollama_response: OllamaTagsResponse = response
+        .json()
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to parse Ollama response: {}", e)))?;
+
+    // Enrich models with detected capabilities
+    let models: Vec<OllamaModelWithCapabilities> = ollama_response
+        .models
+        .into_iter()
+        .map(|model| {
+            let caps = detect_ollama_model_capabilities(&model.name);
+            OllamaModelWithCapabilities {
+                name: model.name,
+                size: model.size,
+                modified_at: model.modified_at,
+                digest: model.digest,
+                details: model.details,
+                supports_multimodal: caps.supports_multimodal,
+                supports_thinking: caps.supports_thinking,
+                supports_tools: caps.supports_tools,
+                max_context: caps.max_context,
+            }
+        })
+        .collect();
+
+    ok(json!({
+        "models": models,
+        "count": models.len(),
+    }))
+}
+
+/// Query parameters for fetching Ollama models
+#[derive(Debug, Deserialize)]
+pub struct OllamaModelsQuery {
+    /// Ollama server endpoint (default: http://localhost:11434)
+    pub endpoint: Option<String>,
+}
+
+/// Ollama /api/tags response structure
+#[derive(Debug, Deserialize)]
+struct OllamaTagsResponse {
+    models: Vec<OllamaModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OllamaModel {
+    name: String,
+    #[serde(default)]
+    size: Option<u64>,
+    #[serde(default)]
+    modified_at: Option<String>,
+    #[serde(default)]
+    digest: Option<String>,
+    #[serde(default)]
+    details: Option<OllamaModelDetails>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct OllamaModelDetails {
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    family: Option<String>,
+    #[serde(default)]
+    families: Option<Vec<String>>,
+    #[serde(default)]
+    parameter_size: Option<String>,
+    #[serde(default)]
+    quantization_level: Option<String>,
+}
+
+/// Ollama model with detected capabilities
+#[derive(Debug, Serialize)]
+struct OllamaModelWithCapabilities {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modified_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<OllamaModelDetails>,
+    supports_multimodal: bool,
+    supports_thinking: bool,
+    supports_tools: bool,
+    max_context: usize,
+}
+
+/// Detect Ollama model capabilities from model name
+///
+/// Based on Ollama official documentation: https://docs.ollama.com/capabilities/thinking
+fn detect_ollama_model_capabilities(model_name: &str) -> BackendCapabilities {
+    let name_lower = model_name.to_lowercase();
+
+    // Models that support thinking/reasoning
+    let supports_thinking = name_lower.starts_with("qwen3")
+        || name_lower.contains("qwen3-")
+        || name_lower.contains("gpt-oss")
+        || name_lower.contains("deepseek-r1")
+        || name_lower.contains("deepseek-r")
+        || name_lower.contains("deepseek v3.1")
+        || name_lower.contains("deepseek-v3.1")
+        || name_lower.contains("thinking");
+
+    // Models that support multimodal (vision)
+    let supports_multimodal = name_lower.contains("vl")
+        || name_lower.contains("vision")
+        || name_lower.contains("mm")
+        || name_lower.contains("llava")
+        || name_lower.contains("bakllava")
+        || name_lower.contains("minicpm-v");
+
+    // Models that support function calling
+    let supports_tools = !name_lower.contains("270m")
+        && !name_lower.contains("1b")
+        && !name_lower.contains("tiny")
+        && !name_lower.contains("micro")
+        && !name_lower.contains("nano");
+
+    // Detect maximum context window based on model family
+    let max_context = detect_ollama_model_context(model_name);
+
+    BackendCapabilities {
+        supports_streaming: true,
+        supports_multimodal,
+        supports_thinking,
+        supports_tools,
+        max_context,
+    }
+}
+
+/// Detect maximum context window size for an Ollama model
+fn detect_ollama_model_context(model_name: &str) -> usize {
+    let name_lower = model_name.to_lowercase();
+
+    // Qwen family (qwen, qwen2, qwen2.5, qwen3, qwen3-vl)
+    if name_lower.starts_with("qwen") {
+        // Qwen3 and Qwen3-VL support 32k context
+        // Qwen2.5 supports 128k for some variants
+        if name_lower.contains("qwen2") && name_lower.contains("128") {
+            return 128000;
+        } else if name_lower.contains("qwen2") {
+            return 32000;
+        } else {
+            return 32000;
+        }
+    }
+
+    // Llama 3.x family
+    if name_lower.contains("llama3") || name_lower.contains("llama-3") {
+        return 8000;
+    }
+
+    // DeepSeek R1
+    if name_lower.contains("deepseek-r1") || name_lower.contains("deepseek-r ") {
+        return 64000;
+    }
+
+    // Mistral family
+    if name_lower.contains("mistral") {
+        return 32000;
+    }
+
+    // Gemma family
+    if name_lower.contains("gemma") {
+        return 8000;
+    }
+
+    // Phi family
+    if name_lower.contains("phi-3") {
+        return 32000;
+    }
+
+    // Default fallback
+    8192
 }
 
 /// Get default capabilities for a backend type

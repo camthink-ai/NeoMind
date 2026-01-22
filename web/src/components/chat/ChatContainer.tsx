@@ -139,7 +139,6 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
           break
 
         case "Error":
-          console.error("WebSocket error:", data.message)
           setIsStreaming(false)
           break
 

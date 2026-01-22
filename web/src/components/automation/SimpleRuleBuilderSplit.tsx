@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,6 +23,7 @@ import {
   AlertTriangle,
   Timer,
   Globe,
+  ChevronRight,
 } from 'lucide-react'
 import {
   Select,
@@ -46,15 +48,40 @@ interface RuleBuilderProps {
 
 type ConditionType = 'simple' | 'range' | 'and' | 'or' | 'not'
 
-// Comparison operators matching backend DSL
-const COMPARISON_OPERATORS = [
-  { value: '>', label: '大于', symbol: '>' },
-  { value: '<', label: '小于', symbol: '<' },
-  { value: '>=', label: '大于等于', symbol: '≥' },
-  { value: '<=', label: '小于等于', symbol: '≤' },
-  { value: '==', label: '等于', symbol: '=' },
-  { value: '!=', label: '不等于', symbol: '≠' },
+// Numeric comparison operators
+const NUMERIC_OPERATORS = [
+  { value: '>', label: 'Greater than', symbol: '>' },
+  { value: '<', label: 'Less than', symbol: '<' },
+  { value: '>=', label: 'Greater or equal', symbol: '≥' },
+  { value: '<=', label: 'Less or equal', symbol: '≤' },
 ]
+
+// String comparison operators
+const STRING_OPERATORS = [
+  { value: '==', label: 'Equals', symbol: '=' },
+  { value: '!=', label: 'Not equals', symbol: '≠' },
+  { value: 'contains', label: 'Contains', symbol: '∋' },
+  { value: 'starts_with', label: 'Starts with', symbol: 'a*' },
+  { value: 'ends_with', label: 'Ends with', symbol: '*z' },
+  { value: 'regex', label: 'Regex', symbol: '.*' },
+]
+
+// Boolean comparison operators
+const BOOLEAN_OPERATORS = [
+  { value: '==', label: 'Equals', symbol: '=' },
+  { value: '!=', label: 'Not equals', symbol: '≠' },
+]
+
+const getComparisonOperators = (_t: (key: string) => string, dataType?: string) => {
+  if (dataType === 'string') {
+    return [...NUMERIC_OPERATORS, ...STRING_OPERATORS]
+  }
+  if (dataType === 'boolean') {
+    return BOOLEAN_OPERATORS
+  }
+  // Numeric types (integer, float) or unknown
+  return [...NUMERIC_OPERATORS, { value: '==', label: 'Equals', symbol: '=' }, { value: '!=', label: 'Not equals', symbol: '≠' }]
+}
 
 // UI condition type
 interface UICondition {
@@ -64,6 +91,7 @@ interface UICondition {
   metric?: string
   operator?: string
   threshold?: number
+  threshold_value?: string  // For string/boolean values
   range_min?: number
   range_max?: number
   conditions?: UICondition[]
@@ -86,10 +114,21 @@ function getDeviceMetrics(
   deviceId: string,
   devices: Array<{ id: string; name: string; device_type?: string }>,
   deviceTypes?: DeviceType[]
-): Array<{ name: string; display_name?: string }> {
+): Array<{ name: string; display_name?: string; data_type?: string }> {
   const deviceTypeName = getDeviceType(deviceId, devices, deviceTypes)
   const deviceType = deviceTypes?.find(t => t.device_type === deviceTypeName)
   return deviceType?.metrics || []
+}
+
+function getMetricDataType(
+  metricName: string,
+  deviceId: string,
+  devices: Array<{ id: string; name: string; device_type?: string }>,
+  deviceTypes?: DeviceType[]
+): string {
+  const metrics = getDeviceMetrics(deviceId, devices, deviceTypes)
+  const metric = metrics.find(m => m.name === metricName)
+  return metric?.data_type || 'float'
 }
 
 function getDeviceCommands(
@@ -105,11 +144,25 @@ function getDeviceCommands(
 function uiConditionToRuleCondition(cond: UICondition): RuleCondition {
   switch (cond.type) {
     case 'simple':
+      // Determine threshold value - try to parse as number first
+      let thresholdValue: number | string
+      if (cond.threshold_value !== undefined) {
+        // Try to parse as number for non-string operators
+        const parsed = Number(cond.threshold_value)
+        if (!isNaN(parsed) && cond.operator !== 'contains' && cond.operator !== 'starts_with' && cond.operator !== 'ends_with' && cond.operator !== 'regex') {
+          thresholdValue = parsed
+        } else {
+          thresholdValue = cond.threshold_value
+        }
+      } else {
+        thresholdValue = cond.threshold ?? 0
+      }
+
       return {
         device_id: cond.device_id || '',
         metric: cond.metric || 'value',
         operator: cond.operator || '>',
-        threshold: cond.threshold || 0,
+        threshold: thresholdValue,
       }
     case 'range':
       return {
@@ -181,9 +234,13 @@ function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
       device_id: ruleCond.device_id,
       metric: ruleCond.metric,
       range_min: (ruleCond as any).range_min,
-      range_max: ruleCond.threshold,
+      range_max: typeof ruleCond.threshold === 'number' ? ruleCond.threshold : 0,
     }
   }
+
+  // Handle threshold value - can be number or string
+  const thresholdValue = ruleCond.threshold
+  const isStringThreshold = typeof thresholdValue === 'string'
 
   return {
     id: crypto.randomUUID(),
@@ -191,7 +248,107 @@ function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
     device_id: ruleCond.device_id,
     metric: ruleCond.metric,
     operator: ruleCond.operator,
-    threshold: ruleCond.threshold,
+    threshold: isStringThreshold ? undefined : thresholdValue as number,
+    threshold_value: isStringThreshold ? thresholdValue : undefined,
+  }
+}
+
+// Generate DSL from rule condition and actions
+function generateRuleDSL(
+  name: string,
+  condition: RuleCondition,
+  actions: RuleAction[],
+  forDuration?: number,
+  forUnit?: 'seconds' | 'minutes' | 'hours'
+): string {
+  const lines: string[] = []
+
+  // Header
+  lines.push(`RULE "${name}"`)
+
+  // WHEN clause - generate condition DSL
+  lines.push(`WHEN ${conditionToDSL(condition)}`)
+
+  // FOR clause (duration)
+  if (forDuration && forDuration > 0) {
+    const unit = forUnit === 'seconds' ? 'seconds' : forUnit === 'hours' ? 'hours' : 'minutes'
+    lines.push(`FOR ${forDuration} ${unit}`)
+  }
+
+  // DO clause - generate actions DSL
+  lines.push('DO')
+  for (const action of actions) {
+    lines.push(`    ${actionToDSL(action)}`)
+  }
+  lines.push('END')
+
+  return lines.join('\n')
+}
+
+// Convert RuleCondition to DSL string
+function conditionToDSL(cond: RuleCondition): string {
+  // Check for logical operators (and/or/not)
+  const op = (cond as any).operator
+  if (op === 'and' || op === 'or') {
+    const subConds = ((cond as any).conditions || []) as RuleCondition[]
+    if (subConds.length === 0) return 'true'
+    const parts = subConds.map(c => conditionToDSL(c))
+    return `(${parts.join(`) ${op.toUpperCase()} (`)})`
+  }
+  if (op === 'not') {
+    const subConds = ((cond as any).conditions || []) as RuleCondition[]
+    if (subConds.length === 0) return 'false'
+    return `NOT (${conditionToDSL(subConds[0])})`
+  }
+
+  // Range condition
+  if ('range_min' in cond && (cond as any).range_min !== undefined) {
+    const deviceId = cond.device_id || 'device'
+    const metric = cond.metric || 'value'
+    const min = (cond as any).range_min
+    const max = typeof cond.threshold === 'number' ? cond.threshold : 100
+    return `${deviceId}.${metric} BETWEEN ${min} AND ${max}`
+  }
+
+  // Simple condition
+  const deviceId = cond.device_id || 'device'
+  const metric = cond.metric || 'value'
+  const operator = cond.operator || '>'
+  let threshold = cond.threshold ?? 0
+
+  // Handle string thresholds - quote them
+  if (typeof threshold === 'string') {
+    threshold = `"${threshold}"`
+  }
+
+  return `${deviceId}.${metric} ${operator} ${threshold}`
+}
+
+// Convert RuleAction to DSL string
+function actionToDSL(action: RuleAction): string {
+  switch (action.type) {
+    case 'Notify':
+      return `NOTIFY "${action.message}"`
+    case 'Execute':
+      const params = action.params && Object.keys(action.params).length > 0
+        ? Object.entries(action.params).map(([k, v]) => `${k}=${v}`).join(', ')
+        : ''
+      return params
+        ? `EXECUTE ${action.device_id}.${action.command}(${params})`
+        : `EXECUTE ${action.device_id}.${action.command}`
+    case 'Log':
+      return `LOG ${action.level || 'info'}, "${action.message}"`
+    case 'Set':
+      const value = typeof action.value === 'string' ? `"${action.value}"` : String(action.value)
+      return `SET ${action.device_id}.${action.property} = ${value}`
+    case 'Delay':
+      return `DELAY ${action.duration}ms`
+    case 'CreateAlert':
+      return `ALERT "${action.title}" "${action.message}" ${action.severity || 'info'}`
+    case 'HttpRequest':
+      return `HTTP ${action.method} ${action.url}`
+    default:
+      return '// Unknown action'
   }
 }
 
@@ -206,6 +363,7 @@ export function SimpleRuleBuilderSplit({
   onSave,
   resources = { devices: [], deviceTypes: [] },
 }: RuleBuilderProps) {
+  const { t } = useTranslation(['automation', 'common'])
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [enabled, setEnabled] = useState(true)
@@ -214,12 +372,14 @@ export function SimpleRuleBuilderSplit({
   const [forUnit, setForUnit] = useState<'seconds' | 'minutes' | 'hours'>('minutes')
   const [actions, setActions] = useState<RuleAction[]>([])
   const [saving, setSaving] = useState(false)
+  const [validationErrors, setValidationErrors] = useState<string[]>([])
 
   useEffect(() => {
     if (open && rule) {
       setName(rule.name || '')
       setDescription(rule.description || '')
       setEnabled(rule.enabled ?? true)
+      setValidationErrors([])
       if (rule.condition) {
         setCondition(ruleConditionToUiCondition(rule.condition))
       } else {
@@ -242,8 +402,9 @@ export function SimpleRuleBuilderSplit({
     setCondition(null)
     setForDuration(0)
     setForUnit('minutes')
-    setActions([{ type: 'Log', level: 'info', message: '规则已触发' }])
-  }, [])
+    setActions([{ type: 'Log', level: 'info', message: t('automation:ruleTriggered') }])
+    setValidationErrors([])
+  }, [t])
 
   const createDefaultCondition = useCallback((): UICondition => {
     const firstDevice = resources.devices[0]
@@ -360,27 +521,163 @@ export function SimpleRuleBuilderSplit({
     setActions(prev => prev.filter((_, i) => i !== index))
   }, [])
 
-  const isValid = Boolean(name.trim() && condition)
+  // Validation
+  const validateCondition = (cond: UICondition, path: string[] = []): string[] => {
+    const errors: string[] = []
+    const currentPath = path.join(' > ')
 
-  const getValidationMessage = () => {
-    if (!name.trim()) return '请输入规则名称'
-    if (!condition) return '请添加触发条件'
-    return ''
+    if (cond.type === 'simple' || cond.type === 'range') {
+      if (!cond.device_id) {
+        errors.push(currentPath ? `${currentPath}: ${t('automation:ruleBuilder.selectDevice')}` : t('automation:ruleBuilder.selectDevice'))
+      }
+      if (!cond.metric) {
+        errors.push(currentPath ? `${currentPath}: ${t('automation:ruleBuilder.selectMetric')}` : t('automation:ruleBuilder.selectMetric'))
+      }
+      if (cond.type === 'simple') {
+        // Check for threshold value - can be numeric or string
+        const hasValue = cond.threshold !== undefined && cond.threshold !== null
+          || cond.threshold_value !== undefined && cond.threshold_value !== ''
+        if (!hasValue) {
+          errors.push(currentPath ? `${currentPath}: ${t('automation:ruleBuilder.enterThreshold')}` : t('automation:ruleBuilder.enterThreshold'))
+        }
+      }
+      if (cond.type === 'range') {
+        if (cond.range_min === undefined || cond.range_min === null) {
+          errors.push(currentPath ? `${currentPath}: ${t('automation:ruleBuilder.enterMinValue')}` : t('automation:ruleBuilder.enterMinValue'))
+        }
+        if (cond.range_max === undefined || cond.range_max === null) {
+          errors.push(currentPath ? `${currentPath}: ${t('automation:ruleBuilder.enterMaxValue')}` : t('automation:ruleBuilder.enterMaxValue'))
+        }
+        if (cond.range_min !== undefined && cond.range_max !== undefined && cond.range_min >= cond.range_max) {
+          errors.push(currentPath ? `${currentPath}: ${t('automation:ruleBuilder.minMustBeLessThanMax')}` : t('automation:ruleBuilder.minMustBeLessThanMax'))
+        }
+      }
+    } else if (cond.type === 'and' || cond.type === 'or' || cond.type === 'not') {
+      if (!cond.conditions || cond.conditions.length === 0) {
+        errors.push(currentPath ? `${currentPath}: ${t('automation:ruleBuilder.addSubConditions')}` : t('automation:ruleBuilder.addSubConditions'))
+      } else {
+        cond.conditions.forEach((subCond, i) => {
+          errors.push(...validateCondition(subCond, [...path, `${cond.type.toUpperCase()}[${i + 1}]`]))
+        })
+      }
+    }
+
+    return errors
+  }
+
+  const validateActions = (): string[] => {
+    const errors: string[] = []
+
+    if (actions.length === 0) {
+      errors.push(t('automation:ruleBuilder.atLeastOneAction'))
+      return errors
+    }
+
+    actions.forEach((action, i) => {
+      const prefix = t('automation:ruleBuilder.actionPrefix', { defaultValue: `Action ${i + 1}` })
+
+      switch (action.type) {
+        case 'Execute':
+          if (!action.device_id) {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.selectDeviceForAction')}`)
+          }
+          if (!action.command) {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterCommandName')}`)
+          }
+          break
+        case 'Notify':
+          if (!action.message || action.message.trim() === '') {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterNotificationMessage')}`)
+          }
+          break
+        case 'Log':
+          if (!action.message || action.message.trim() === '') {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterLogMessage')}`)
+          }
+          break
+        case 'Set':
+          if (!action.device_id) {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.selectDeviceForSet')}`)
+          }
+          if (!action.property) {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterPropertyName')}`)
+          }
+          break
+        case 'Delay':
+          if (!action.duration || action.duration <= 0) {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterDelayDuration')}`)
+          }
+          break
+        case 'CreateAlert':
+          if (!action.title || action.title.trim() === '') {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterAlertTitle')}`)
+          }
+          if (!action.message || action.message.trim() === '') {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterAlertMessage')}`)
+          }
+          break
+        case 'HttpRequest':
+          if (!action.url || action.url.trim() === '') {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.enterRequestUrl')}`)
+          }
+          if (!action.method) {
+            errors.push(`${prefix}: ${t('automation:ruleBuilder.selectRequestMethod')}`)
+          }
+          break
+      }
+    })
+
+    return errors
   }
 
   const handleSave = async () => {
-    if (!isValid || !condition) return
+    // Clear previous errors
+    const errors: string[] = []
+
+    // Validate name
+    if (!name.trim()) {
+      errors.push(t('automation:ruleBuilder.enterRuleName'))
+    }
+
+    // Validate condition
+    if (!condition) {
+      errors.push(t('automation:ruleBuilder.addTriggerCondition'))
+    } else {
+      errors.push(...validateCondition(condition))
+    }
+
+    // Validate actions
+    errors.push(...validateActions())
+
+    // Set all errors
+    setValidationErrors(errors)
+
+    if (errors.length > 0) {
+      return
+    }
+
     setSaving(true)
     try {
-      const finalCondition = uiConditionToRuleCondition(condition)
-      await onSave({
+      // Condition is guaranteed to be non-null here due to validation above
+      const finalCondition = uiConditionToRuleCondition(condition!)
+
+      // Generate DSL from condition and actions
+      const dsl = generateRuleDSL(name, finalCondition, actions, forDuration, forUnit)
+
+      const ruleData: Partial<Rule> = {
         name,
         description,
         enabled,
         trigger: { type: 'device_state' } as RuleTrigger,
         condition: finalCondition,
         actions: actions.length > 0 ? actions : undefined,
-      })
+        dsl,
+      }
+      // Only include id when editing existing rule
+      if (rule?.id) {
+        ruleData.id = rule.id
+      }
+      await onSave(ruleData)
     } finally {
       setSaving(false)
     }
@@ -391,16 +688,16 @@ export function SimpleRuleBuilderSplit({
   // ============================================================================
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl h-[90vh] p-0 flex flex-col">
+      <DialogContent className="max-w-6xl h-[92vh] p-0 flex flex-col">
         <DialogHeader className="px-6 py-4 border-b">
           <div className="flex items-center gap-3">
             <Zap className="h-5 w-5 text-purple-500" />
             <div>
               <DialogTitle className="text-lg font-semibold">
-                {rule ? '编辑规则' : '创建自动化规则'}
+                {rule ? t('automation:editRule') : t('automation:createRule')}
               </DialogTitle>
               <DialogDescription className="text-sm">
-                定义触发条件和执行动作，当条件满足时自动执行
+                {t('automation:ruleBuilder.description')}
               </DialogDescription>
             </div>
           </div>
@@ -408,150 +705,188 @@ export function SimpleRuleBuilderSplit({
 
         {/* Form Section - Basic Info */}
         <div className="border-b px-6 py-4 bg-muted/20 flex-shrink-0">
-          <div>
-            <Label htmlFor="rule-name" className="text-xs">规则名称 *</Label>
-            <Input
-              id="rule-name"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="例如：温度过高自动开空调"
-              className="mt-1 h-9"
-            />
-          </div>
-          <div className="mt-3">
-            <Label htmlFor="rule-desc" className="text-xs">描述</Label>
-            <Input
-              id="rule-desc"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="规则描述（可选）"
-              className="mt-1 h-9"
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="rule-name" className="text-xs font-medium">{t('automation:ruleBuilder.ruleName')} *</Label>
+              <Input
+                id="rule-name"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder={t('automation:ruleBuilder.ruleNamePlaceholder')}
+                className="mt-1.5 h-9"
+              />
+            </div>
+            <div>
+              <Label htmlFor="rule-desc" className="text-xs font-medium">{t('automation:ruleDescription')}</Label>
+              <Input
+                id="rule-desc"
+                value={description}
+                onChange={e => setDescription(e.target.value)}
+                placeholder={t('automation:ruleBuilder.descriptionPlaceholder')}
+                className="mt-1.5 h-9"
+              />
+            </div>
           </div>
         </div>
 
-        {/* Main Content - Visual Mode (no tabs) */}
-        <div className="flex-1 min-h-0 overflow-auto p-6 pt-4 space-y-4">
-              {/* Condition Section */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Lightbulb className="h-4 w-4 text-yellow-500" />
-                  <h3 className="font-medium text-sm">触发条件</h3>
-                </div>
-          {!condition ? (
-            <div className="text-center py-8 border rounded-lg border-dashed">
-              <p className="text-sm text-muted-foreground mb-4">请选择条件类型</p>
-              <div className="flex flex-wrap gap-2 justify-center">
-                <Button onClick={() => addCondition('simple')} variant="outline" size="sm">简单条件</Button>
-                <Button onClick={() => addCondition('range')} variant="outline" size="sm">范围条件</Button>
-                <Button onClick={() => addCondition('and')} variant="outline" size="sm">AND 组合</Button>
-                <Button onClick={() => addCondition('or')} variant="outline" size="sm">OR 组合</Button>
-                <Button onClick={() => addCondition('not')} variant="outline" size="sm">NOT 条件</Button>
-              </div>
+        {/* Validation Errors */}
+        {validationErrors.length > 0 && (
+          <div className="px-6 py-3 bg-destructive/10 border-b border-destructive/20">
+            <div className="flex items-center gap-2 text-destructive font-medium text-sm mb-2">
+              <AlertTriangle className="h-4 w-4" />
+              <span>{t('automation:ruleBuilder.fixErrors')}</span>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <ConditionEditor
-                condition={condition}
-                devices={resources.devices}
-                deviceTypes={resources.deviceTypes}
-                onUpdate={updateCondition}
-                onNestedUpdate={updateNestedCondition}
-                onReset={() => setCondition(null)}
-              />
-              {/* FOR clause */}
-              <div className="flex items-center gap-3 p-3 bg-blue-500/10 rounded-md border border-blue-500/20">
-                <Clock className="h-4 w-4 text-blue-500" />
-                <Label className="text-sm">持续时间</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={forDuration}
-                  onChange={e => setForDuration(parseInt(e.target.value) || 0)}
-                  className="w-20 h-8"
-                />
-                <Select value={forUnit} onValueChange={(v: any) => setForUnit(v)}>
-                  <SelectTrigger className="w-24 h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="seconds">秒</SelectItem>
-                    <SelectItem value="minutes">分钟</SelectItem>
-                    <SelectItem value="hours">小时</SelectItem>
-                  </SelectContent>
-                </Select>
-                {forDuration > 0 && (
-                  <span className="text-xs text-muted-foreground">条件需持续满足此时间才触发</span>
-                )}
-              </div>
-            </div>
-          )}
-              </div>
-
-              {/* Actions Section */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Zap className="h-4 w-4 text-green-500" />
-                  <h3 className="font-medium text-sm">执行动作</h3>
-                </div>
-                <div className="flex flex-wrap gap-2">
-            <Button onClick={() => addAction('Execute')} variant="outline" size="sm">
-              <Zap className="h-3 w-3 mr-1" />执行命令
-            </Button>
-            <Button onClick={() => addAction('Notify')} variant="outline" size="sm">
-              <Bell className="h-3 w-3 mr-1" />发送通知
-            </Button>
-            <Button onClick={() => addAction('Log')} variant="outline" size="sm">
-              <FileText className="h-3 w-3 mr-1" />记录日志
-            </Button>
-            <Button onClick={() => addAction('Set')} variant="outline" size="sm">
-              <Globe className="h-3 w-3 mr-1" />设置属性
-            </Button>
-            <Button onClick={() => addAction('Delay')} variant="outline" size="sm">
-              <Timer className="h-3 w-3 mr-1" />延迟
-            </Button>
-            <Button onClick={() => addAction('CreateAlert')} variant="outline" size="sm">
-              <AlertTriangle className="h-3 w-3 mr-1" />创建告警
-            </Button>
-            <Button onClick={() => addAction('HttpRequest')} variant="outline" size="sm">
-              HTTP
-            </Button>
+            <ul className="text-sm text-destructive space-y-1 list-disc list-inside">
+              {validationErrors.map((error, i) => (
+                <li key={i}>{error}</li>
+              ))}
+            </ul>
           </div>
-          {actions.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground border rounded-lg border-dashed">
-              <Zap className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm">暂无动作，点击上方按钮添加</p>
+        )}
+
+        {/* Main Content - Split Layout: Conditions (Left) | Actions (Right) */}
+        <div className="flex-1 min-h-0 flex overflow-hidden">
+          {/* Left Panel - Trigger Conditions */}
+          <div className="w-1/2 border-r overflow-y-auto p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-1.5 bg-amber-500/20 rounded-md">
+                <Lightbulb className="h-4 w-4 text-amber-500" />
+              </div>
+              <h3 className="font-semibold text-sm">{t('automation:ruleBuilder.triggerConditions')}</h3>
             </div>
-          ) : (
-            <div className="space-y-2">
-              {actions.map((action, i) => (
-                <ActionEditor
-                  key={i}
-                  action={action}
-                  index={i}
+
+            {!condition ? (
+              <div className="border-2 border-dashed border-muted-foreground/25 rounded-xl p-8 text-center">
+                <Lightbulb className="h-10 w-10 mx-auto mb-4 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground mb-5">{t('automation:ruleBuilder.selectConditionType')}</p>
+                <div className="grid grid-cols-2 gap-2 max-w-xs mx-auto">
+                  <Button onClick={() => addCondition('simple')} variant="outline" size="sm" className="h-auto py-2.5 px-3">
+                    <span className="text-xs font-medium">{t('automation:ruleBuilder.simpleCondition')}</span>
+                  </Button>
+                  <Button onClick={() => addCondition('range')} variant="outline" size="sm" className="h-auto py-2.5 px-3">
+                    <span className="text-xs font-medium">{t('automation:ruleBuilder.rangeCondition')}</span>
+                  </Button>
+                  <Button onClick={() => addCondition('and')} variant="outline" size="sm" className="h-auto py-2.5 px-3">
+                    <span className="text-xs font-medium">{t('automation:ruleBuilder.andCombination')}</span>
+                  </Button>
+                  <Button onClick={() => addCondition('or')} variant="outline" size="sm" className="h-auto py-2.5 px-3">
+                    <span className="text-xs font-medium">{t('automation:ruleBuilder.orCombination')}</span>
+                  </Button>
+                  <Button onClick={() => addCondition('not')} variant="outline" size="sm" className="h-auto py-2.5 px-3 col-span-2">
+                    <span className="text-xs font-medium">{t('automation:ruleBuilder.notCondition')}</span>
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <ConditionEditor
+                  condition={condition}
                   devices={resources.devices}
                   deviceTypes={resources.deviceTypes}
-                  onUpdate={(data) => updateAction(i, data)}
-                  onRemove={() => removeAction(i)}
+                  onUpdate={updateCondition}
+                  onNestedUpdate={updateNestedCondition}
+                  onReset={() => setCondition(null)}
                 />
-              ))}
-            </div>
-          )}
+
+                {/* FOR clause */}
+                <div className="flex items-center gap-3 p-3 bg-blue-500/10 rounded-lg border border-blue-500/20">
+                  <Clock className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                  <Label className="text-sm font-medium">{t('automation:ruleBuilder.duration')}</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={forDuration}
+                    onChange={e => setForDuration(parseInt(e.target.value) || 0)}
+                    className="w-20 h-8"
+                  />
+                  <Select value={forUnit} onValueChange={(v: any) => setForUnit(v)}>
+                    <SelectTrigger className="w-24 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="seconds">{t('automation:ruleBuilder.seconds')}</SelectItem>
+                      <SelectItem value="minutes">{t('automation:ruleBuilder.minutes')}</SelectItem>
+                      <SelectItem value="hours">{t('automation:ruleBuilder.hours')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {forDuration > 0 && (
+                    <span className="text-xs text-muted-foreground">{t('automation:ruleBuilder.durationHint')}</span>
+                  )}
+                </div>
               </div>
+            )}
+          </div>
+
+          {/* Center Arrow */}
+          <div className="w-10 flex-shrink-0 flex items-center justify-center bg-muted/30">
+            <ChevronRight className="h-6 w-6 text-muted-foreground" />
+          </div>
+
+          {/* Right Panel - Execute Actions */}
+          <div className="w-1/2 overflow-y-auto p-5">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="p-1.5 bg-green-500/20 rounded-md">
+                <Zap className="h-4 w-4 text-green-500" />
+              </div>
+              <h3 className="font-semibold text-sm">{t('automation:ruleBuilder.executeActions')}</h3>
+            </div>
+
+            <div className="flex flex-wrap gap-2 mb-4">
+              <Button onClick={() => addAction('Execute')} variant="outline" size="sm" className="h-8">
+                <Zap className="h-3.5 w-3.5 mr-1.5" />{t('automation:ruleBuilder.executeCommand')}
+              </Button>
+              <Button onClick={() => addAction('Notify')} variant="outline" size="sm" className="h-8">
+                <Bell className="h-3.5 w-3.5 mr-1.5" />{t('automation:ruleBuilder.sendNotification')}
+              </Button>
+              <Button onClick={() => addAction('Log')} variant="outline" size="sm" className="h-8">
+                <FileText className="h-3.5 w-3.5 mr-1.5" />{t('automation:ruleBuilder.logRecord')}
+              </Button>
+              <Button onClick={() => addAction('Set')} variant="outline" size="sm" className="h-8">
+                <Globe className="h-3.5 w-3.5 mr-1.5" />{t('automation:ruleBuilder.writeValue')}
+              </Button>
+              <Button onClick={() => addAction('Delay')} variant="outline" size="sm" className="h-8">
+                <Timer className="h-3.5 w-3.5 mr-1.5" />{t('automation:ruleBuilder.delay')}
+              </Button>
+              <Button onClick={() => addAction('CreateAlert')} variant="outline" size="sm" className="h-8">
+                <AlertTriangle className="h-3.5 w-3.5 mr-1.5" />{t('automation:ruleBuilder.createAlert')}
+              </Button>
+              <Button onClick={() => addAction('HttpRequest')} variant="outline" size="sm" className="h-8">
+                <Globe className="h-3.5 w-3.5 mr-1.5" />{t('automation:ruleBuilder.httpRequest')}
+              </Button>
+            </div>
+
+            {actions.length === 0 ? (
+              <div className="border-2 border-dashed border-muted-foreground/25 rounded-xl p-8 text-center">
+                <Zap className="h-10 w-10 mx-auto mb-4 text-muted-foreground/50" />
+                <p className="text-sm text-muted-foreground">{t('automation:ruleBuilder.noActions')}</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {actions.map((action, i) => (
+                  <ActionEditor
+                    key={i}
+                    action={action}
+                    index={i}
+                    devices={resources.devices}
+                    deviceTypes={resources.deviceTypes}
+                    onUpdate={(data) => updateAction(i, data)}
+                    onRemove={() => removeAction(i)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between px-6 py-3 border-t bg-muted/20 flex-shrink-0">
-          {getValidationMessage() && (
-            <span className="text-sm text-destructive">{getValidationMessage()}</span>
-          )}
           <div className="flex gap-2 ml-auto">
             <Button variant="outline" onClick={() => onOpenChange(false)}>
-              取消
+              {t('automation:ruleBuilder.cancel')}
             </Button>
-            <Button onClick={handleSave} disabled={!isValid || saving}>
-              <Save className="h-4 w-4 mr-1" />
-              {saving ? '保存中...' : '保存'}
+            <Button onClick={handleSave} disabled={saving} className="min-w-[100px]">
+              <Save className="h-4 w-4 mr-1.5" />
+              {saving ? t('automation:ruleBuilder.saving') : t('automation:ruleBuilder.save')}
             </Button>
           </div>
         </div>
@@ -583,131 +918,211 @@ function ConditionEditor({
   onReset,
   path = [],
 }: ConditionEditorProps) {
+  const { t } = useTranslation(['automation'])
   const deviceOptions = devices.map(d => ({ value: d.id, label: d.name }))
 
   const renderSimpleCondition = (cond: UICondition, currentPath: number[]) => {
     const metrics = getDeviceMetrics(cond.device_id || '', devices, deviceTypes)
-    return (
-      <div className="flex items-center gap-2 p-3 bg-muted/40 rounded-md">
-        {path.length > 0 && currentPath.length === 0 && (
-          <Badge variant="outline" className="text-xs">{condition.type.toUpperCase()}</Badge>
-        )}
-        <Select
-          value={cond.device_id}
-          onValueChange={(v) => {
-            const newMetrics = getDeviceMetrics(v, devices, deviceTypes)
-            currentPath.length === 0
-              ? onUpdate({ device_id: v, metric: newMetrics[0]?.name || 'value' })
-              : onNestedUpdate(currentPath, { device_id: v, metric: newMetrics[0]?.name || 'value' })
-          }}
-        >
-          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <span className="text-xs text-muted-foreground">.</span>
-        <Select
-          value={cond.metric}
-          onValueChange={(v) => {
-            currentPath.length === 0 ? onUpdate({ metric: v }) : onNestedUpdate(currentPath, { metric: v })
-          }}
-        >
-          <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {metrics.map(m => <SelectItem key={m.name} value={m.name}>{m.display_name || m.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <Select
-          value={cond.operator}
-          onValueChange={(v) => {
-            currentPath.length === 0 ? onUpdate({ operator: v }) : onNestedUpdate(currentPath, { operator: v })
-          }}
-        >
-          <SelectTrigger className="w-16"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {COMPARISON_OPERATORS.map(o => <SelectItem key={o.value} value={o.value}>{o.symbol}</SelectItem>)}
-          </SelectContent>
-        </Select>
+    const hasDevice = Boolean(cond.device_id)
+    const hasMetrics = metrics.length > 0
+
+    // Get the data type of the selected metric
+    const metricDataType = cond.metric && hasDevice && cond.device_id
+      ? getMetricDataType(cond.metric, cond.device_id, devices, deviceTypes)
+      : 'float'
+    const isStringType = metricDataType === 'string'
+    const isBooleanType = metricDataType === 'boolean'
+    const isNumericType = ['integer', 'float'].includes(metricDataType)
+
+    // Render value input based on data type
+    const renderValueInput = () => {
+      if (isBooleanType) {
+        return (
+          <Select
+            value={cond.threshold_value ?? String(cond.threshold ?? '')}
+            onValueChange={(v) => {
+              const boolVal = v === 'true'
+              currentPath.length === 0
+                ? onUpdate({ threshold: boolVal ? 1 : 0, threshold_value: v })
+                : onNestedUpdate(currentPath, { threshold: boolVal ? 1 : 0, threshold_value: v })
+            }}
+          >
+            <SelectTrigger className="w-20 h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="true">true</SelectItem>
+              <SelectItem value="false">false</SelectItem>
+            </SelectContent>
+          </Select>
+        )
+      }
+
+      if (isStringType || !isNumericType) {
+        return (
+          <Input
+            type="text"
+            value={cond.threshold_value ?? String(cond.threshold ?? '')}
+            onChange={(e) => {
+              currentPath.length === 0
+                ? onUpdate({ threshold_value: e.target.value })
+                : onNestedUpdate(currentPath, { threshold_value: e.target.value })
+            }}
+            className="w-28 h-9"
+            disabled={!hasDevice}
+            placeholder="值..."
+          />
+        )
+      }
+
+      // Numeric input
+      return (
         <Input
           type="number"
-          value={cond.threshold}
+          value={cond.threshold ?? ''}
           onChange={(e) => {
             currentPath.length === 0
               ? onUpdate({ threshold: parseFloat(e.target.value) || 0 })
               : onNestedUpdate(currentPath, { threshold: parseFloat(e.target.value) || 0 })
           }}
-          className="w-20 h-9"
+          className="w-24 h-9"
+          disabled={!hasDevice}
         />
-        {currentPath.length === 0 && (
-          <Button variant="ghost" size="icon" className="h-8 w-8 ml-auto" onClick={onReset}>
-            <X className="h-4 w-4" />
-          </Button>
-        )}
+      )
+    }
+
+    return (
+      <div className="p-2.5 bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg border border-purple-500/20">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={cond.device_id}
+            onValueChange={(v) => {
+              const newMetrics = getDeviceMetrics(v, devices, deviceTypes)
+              currentPath.length === 0
+                ? onUpdate({ device_id: v, metric: newMetrics[0]?.name || 'value' })
+                : onNestedUpdate(currentPath, { device_id: v, metric: newMetrics[0]?.name || 'value' })
+            }}
+          >
+            <SelectTrigger className="w-36 h-8 text-sm flex-shrink-0"><SelectValue placeholder={t('automation:ruleBuilder.selectDevice')} /></SelectTrigger>
+            <SelectContent>
+              {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {hasDevice && hasMetrics ? (
+            <Select
+              value={cond.metric}
+              onValueChange={(v) => {
+                currentPath.length === 0 ? onUpdate({ metric: v }) : onNestedUpdate(currentPath, { metric: v })
+              }}
+            >
+              <SelectTrigger className="w-32 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {metrics.map(m => (
+                  <SelectItem key={m.name} value={m.name}>
+                    {m.display_name || m.name}
+                    <span className="ml-1.5 text-xs text-muted-foreground/60">({m.data_type || 'unknown'})</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : hasDevice && !hasMetrics ? (
+            <span className="text-xs text-muted-foreground italic">{t('automation:ruleBuilder.deviceNoMetrics')}</span>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">{t('automation:ruleBuilder.selectDeviceFirst')}</span>
+          )}
+          <Select
+            value={cond.operator}
+            onValueChange={(v) => {
+              currentPath.length === 0 ? onUpdate({ operator: v }) : onNestedUpdate(currentPath, { operator: v })
+            }}
+            disabled={!hasDevice}
+          >
+            <SelectTrigger className="w-20 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {getComparisonOperators(t, metricDataType).map(o => <SelectItem key={o.value} value={o.value}>{o.symbol}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {renderValueInput()}
+          {currentPath.length === 0 && (
+            <Button variant="ghost" size="icon" className="h-7 w-7 ml-auto flex-shrink-0" onClick={onReset}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
       </div>
     )
   }
 
   const renderRangeCondition = (cond: UICondition, currentPath: number[]) => {
     const metrics = getDeviceMetrics(cond.device_id || '', devices, deviceTypes)
+    const hasDevice = Boolean(cond.device_id)
+    const hasMetrics = metrics.length > 0
+
     return (
-      <div className="flex items-center gap-2 p-3 bg-muted/40 rounded-md">
-        <Badge variant="outline" className="text-xs bg-blue-500/10 text-blue-500">BETWEEN</Badge>
-        <Select
-          value={cond.device_id}
-          onValueChange={(v) => {
-            const newMetrics = getDeviceMetrics(v, devices, deviceTypes)
-            currentPath.length === 0
-              ? onUpdate({ device_id: v, metric: newMetrics[0]?.name || 'value' })
-              : onNestedUpdate(currentPath, { device_id: v, metric: newMetrics[0]?.name || 'value' })
-          }}
-        >
-          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <span className="text-xs text-muted-foreground">.</span>
-        <Select
-          value={cond.metric}
-          onValueChange={(v) => {
-            currentPath.length === 0 ? onUpdate({ metric: v }) : onNestedUpdate(currentPath, { metric: v })
-          }}
-        >
-          <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            {metrics.map(m => <SelectItem key={m.name} value={m.name}>{m.display_name || m.name}</SelectItem>)}
-          </SelectContent>
-        </Select>
-        <span className="text-xs text-muted-foreground">BETWEEN</span>
-        <Input
-          type="number"
-          value={cond.range_min}
-          onChange={(e) => {
-            currentPath.length === 0
-              ? onUpdate({ range_min: parseFloat(e.target.value) || 0 })
-              : onNestedUpdate(currentPath, { range_min: parseFloat(e.target.value) || 0 })
-          }}
-          className="w-16 h-9"
-          placeholder="Min"
-        />
-        <span className="text-xs text-muted-foreground">AND</span>
-        <Input
-          type="number"
-          value={cond.range_max}
-          onChange={(e) => {
-            currentPath.length === 0
-              ? onUpdate({ range_max: parseFloat(e.target.value) || 0 })
-              : onNestedUpdate(currentPath, { range_max: parseFloat(e.target.value) || 0 })
-          }}
-          className="w-16 h-9"
-          placeholder="Max"
-        />
-        {currentPath.length === 0 && (
-          <Button variant="ghost" size="icon" className="h-8 w-8 ml-auto" onClick={onReset}>
-            <X className="h-4 w-4" />
-          </Button>
-        )}
+      <div className="p-2.5 bg-gradient-to-r from-blue-500/10 to-transparent rounded-lg border border-blue-500/20">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className="text-xs bg-blue-500/20 text-blue-500 border-blue-500/30 flex-shrink-0">BETWEEN</Badge>
+          <Select
+            value={cond.device_id}
+            onValueChange={(v) => {
+              const newMetrics = getDeviceMetrics(v, devices, deviceTypes)
+              currentPath.length === 0
+                ? onUpdate({ device_id: v, metric: newMetrics[0]?.name || 'value' })
+                : onNestedUpdate(currentPath, { device_id: v, metric: newMetrics[0]?.name || 'value' })
+            }}
+          >
+            <SelectTrigger className="w-36 h-8 text-sm flex-shrink-0"><SelectValue placeholder={t('automation:ruleBuilder.selectDevice')} /></SelectTrigger>
+            <SelectContent>
+              {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          {hasDevice && hasMetrics ? (
+            <Select
+              value={cond.metric}
+              onValueChange={(v) => {
+                currentPath.length === 0 ? onUpdate({ metric: v }) : onNestedUpdate(currentPath, { metric: v })
+              }}
+            >
+              <SelectTrigger className="w-32 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {metrics.map(m => <SelectItem key={m.name} value={m.name}>{m.display_name || m.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          ) : hasDevice && !hasMetrics ? (
+            <span className="text-xs text-muted-foreground italic">{t('automation:ruleBuilder.deviceNoMetrics')}</span>
+          ) : (
+            <span className="text-xs text-muted-foreground italic">{t('automation:ruleBuilder.selectDeviceFirst')}</span>
+          )}
+          <span className="text-xs font-medium text-muted-foreground px-1">BETWEEN</span>
+          <Input
+            type="number"
+            value={cond.range_min}
+            onChange={(e) => {
+              currentPath.length === 0
+                ? onUpdate({ range_min: parseFloat(e.target.value) || 0 })
+                : onNestedUpdate(currentPath, { range_min: parseFloat(e.target.value) || 0 })
+            }}
+            className="w-20 h-8 flex-shrink-0"
+            placeholder="Min"
+            disabled={!hasDevice}
+          />
+          <span className="text-xs text-muted-foreground">AND</span>
+          <Input
+            type="number"
+            value={cond.range_max}
+            onChange={(e) => {
+              currentPath.length === 0
+                ? onUpdate({ range_max: parseFloat(e.target.value) || 0 })
+                : onNestedUpdate(currentPath, { range_max: parseFloat(e.target.value) || 0 })
+            }}
+            className="w-20 h-8 flex-shrink-0"
+            placeholder="Max"
+            disabled={!hasDevice}
+          />
+          {currentPath.length === 0 && (
+            <Button variant="ghost" size="icon" className="h-7 w-7 ml-auto flex-shrink-0" onClick={onReset}>
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
       </div>
     )
   }
@@ -715,54 +1130,58 @@ function ConditionEditor({
   const renderLogicalCondition = (cond: UICondition, currentPath: number[]) => {
     const label = cond.type.toUpperCase()
     const badgeClass = cond.type === 'and'
-      ? 'bg-green-500/10 text-green-500 border-green-500/30'
+      ? 'bg-green-500/20 text-green-500 border-green-500/30'
       : cond.type === 'or'
-      ? 'bg-amber-500/10 text-amber-500 border-amber-500/30'
-      : 'bg-red-500/10 text-red-500 border-red-500/30'
+      ? 'bg-amber-500/20 text-amber-500 border-amber-500/30'
+      : 'bg-red-500/20 text-red-500 border-red-500/30'
+
+    const connectorBadgeClass = cond.type === 'and'
+      ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+      : cond.type === 'or'
+      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+      : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
 
     const connectorText = cond.type === 'and' ? 'AND' : cond.type === 'or' ? 'OR' : 'NOT'
 
     return (
-      <div className="space-y-2">
+      <div className="space-y-3">
         {/* Header with operator badge and controls */}
-        <div className="flex items-center gap-2 p-2 bg-muted/30 rounded-t-md border border-muted">
-          <Badge variant="outline" className={cn('text-xs px-2 py-0.5', badgeClass)}>
+        <div className="flex items-center gap-2 p-2.5 bg-muted/40 rounded-t-lg border border-border">
+          <Badge variant="outline" className={cn('text-xs px-2.5 py-1', badgeClass)}>
             {label}
           </Badge>
-          <span className="text-xs text-muted-foreground">
-            {cond.type === 'and' ? '所有条件都要满足' : cond.type === 'or' ? '任一条件满足' : '条件不满足时'}
+          <span className="text-xs text-muted-foreground flex-1">
+            {cond.type === 'and' ? t('automation:ruleBuilder.allConditionsMustMeet') : cond.type === 'or' ? t('automation:ruleBuilder.anyConditionMustMeet') : t('automation:ruleBuilder.conditionNotMet')}
           </span>
           {currentPath.length === 0 && (
-            <Button variant="ghost" size="icon" className="h-6 w-6 ml-auto" onClick={onReset}>
+            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onReset}>
               <X className="h-3 w-3" />
             </Button>
           )}
         </div>
 
-        {/* Conditions container with proper styling */}
-        <div className="p-3 bg-background border-x border-b border-muted rounded-b-md space-y-3">
+        {/* Conditions container */}
+        <div className="p-3 bg-background border border-t-0 border-border rounded-b-lg space-y-3">
           {cond.conditions?.map((subCond, i) => (
             <div key={subCond.id} className="relative group">
-              {/* Connector line before each condition (except first) */}
+              {/* Connector badge before each condition (except first) */}
               {i > 0 && (
                 <div className="flex items-center justify-start -mb-2 mt-1">
                   <span className={cn(
-                    "text-xs font-medium px-2 py-0.5 rounded-full",
-                    cond.type === 'and' ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" :
-                    cond.type === 'or' ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" :
-                    "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
+                    "text-xs font-semibold px-2.5 py-1 rounded-full",
+                    connectorBadgeClass
                   )}>
                     {connectorText}
                   </span>
                 </div>
               )}
 
-              {/* Condition editor with wrapper for delete button */}
+              {/* Condition editor with wrapper */}
               <div className="relative pr-8">
                 <div className={cn(
-                  "rounded-md",
+                  "rounded-lg",
                   subCond.type === 'and' || subCond.type === 'or' || subCond.type === 'not'
-                    ? "bg-muted/50 border border-muted"
+                    ? "bg-muted/30"
                     : ""
                 )}>
                   {currentPath.length === 0 ? (
@@ -818,11 +1237,11 @@ function ConditionEditor({
           ))}
 
           {/* Add condition button */}
-          <div className="pt-2 border-t border-muted/50">
+          <div className="pt-2 border-t border-border/50">
             <Button
               variant="outline"
               size="sm"
-              className="w-full border-dashed"
+              className="w-full border-dashed h-9"
               onClick={() => {
                 const newCond: UICondition = {
                   id: crypto.randomUUID(),
@@ -838,7 +1257,7 @@ function ConditionEditor({
                   : onNestedUpdate(currentPath, { conditions: newConditions })
               }}
             >
-              <Plus className="h-3 w-3 mr-1" />添加条件
+              <Plus className="h-3.5 w-3.5 mr-1" />{t('automation:ruleBuilder.addCondition')}
             </Button>
           </div>
         </div>
@@ -874,6 +1293,7 @@ interface ActionEditorProps {
 }
 
 function ActionEditor({ action, devices, deviceTypes, onUpdate, onRemove }: ActionEditorProps) {
+  const { t } = useTranslation(['automation'])
   const deviceOptions = devices.map(d => ({ value: d.id, label: d.name }))
 
   const getActionIcon = () => {
@@ -889,167 +1309,186 @@ function ActionEditor({ action, devices, deviceTypes, onUpdate, onRemove }: Acti
     }
   }
 
+  const getActionBadgeClass = (): string => {
+    switch (action.type) {
+      case 'Execute': return 'bg-yellow-500/20 text-yellow-500 border-yellow-500/30'
+      case 'Notify': return 'bg-blue-500/20 text-blue-500 border-blue-500/30'
+      case 'Log': return 'bg-gray-500/20 text-gray-500 border-gray-500/30'
+      case 'Set': return 'bg-purple-500/20 text-purple-500 border-purple-500/30'
+      case 'Delay': return 'bg-orange-500/20 text-orange-500 border-orange-500/30'
+      case 'CreateAlert': return 'bg-red-500/20 text-red-500 border-red-500/30'
+      case 'HttpRequest': return 'bg-green-500/20 text-green-500 border-green-500/30'
+      default: return 'bg-muted'
+    }
+  }
+
   const getActionLabel = (): string => {
     const actionType: string = (action as any).type
     switch (action.type) {
-      case 'Execute': return '执行'
-      case 'Notify': return '通知'
-      case 'Log': return '日志'
-      case 'Set': return '设置'
-      case 'Delay': return '延迟'
-      case 'CreateAlert': return '告警'
+      case 'Execute': return t('automation:ruleBuilder.actionType.execute')
+      case 'Notify': return t('automation:ruleBuilder.actionType.notify')
+      case 'Log': return t('automation:ruleBuilder.actionType.log')
+      case 'Set': return t('automation:ruleBuilder.actionType.set')
+      case 'Delay': return t('automation:ruleBuilder.actionType.delay')
+      case 'CreateAlert': return t('automation:ruleBuilder.actionType.createAlert')
       case 'HttpRequest': return 'HTTP'
     }
     return actionType
   }
 
   return (
-    <div className="flex items-start gap-2 p-3 bg-muted/40 rounded-md">
-      {getActionIcon()}
-      <span className="text-xs px-2 py-1 bg-background rounded">{getActionLabel()}</span>
+    <div className="group flex items-center gap-2.5 p-2.5 bg-gradient-to-r from-green-500/10 to-transparent rounded-lg border border-green-500/20 hover:border-green-500/40 transition-colors">
+      <div className="p-1.5 bg-background rounded shadow-sm flex-shrink-0">
+        {getActionIcon()}
+      </div>
+      <Badge variant="outline" className={cn('text-xs px-2 py-0.5 flex-shrink-0', getActionBadgeClass())}>
+        {getActionLabel()}
+      </Badge>
 
-      {action.type === 'Execute' && (
-        <>
-          <Select
-            value={action.device_id}
-            onValueChange={(v) => {
-              const commands = getDeviceCommands(v, devices, deviceTypes)
-              onUpdate({ device_id: v, command: commands[0]?.name || 'turn_on' })
-            }}
-          >
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Select
-            value={action.command}
-            onValueChange={(v) => onUpdate({ command: v })}
-          >
-            <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {getDeviceCommands(action.device_id, devices, deviceTypes).map(c => (
-                <SelectItem key={c.name} value={c.name}>{c.display_name || c.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </>
-      )}
+      <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+        {action.type === 'Execute' && (
+          <>
+            <Select
+              value={action.device_id}
+              onValueChange={(v) => {
+                const commands = getDeviceCommands(v, devices, deviceTypes)
+                onUpdate({ device_id: v, command: commands[0]?.name || 'turn_on' })
+              }}
+            >
+              <SelectTrigger className="w-32 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select
+              value={action.command}
+              onValueChange={(v) => onUpdate({ command: v })}
+            >
+              <SelectTrigger className="w-28 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {getDeviceCommands(action.device_id, devices, deviceTypes).map(c => (
+                  <SelectItem key={c.name} value={c.name}>{c.display_name || c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        )}
 
-      {action.type === 'Notify' && (
-        <Input
-          value={action.message}
-          onChange={(e) => onUpdate({ message: e.target.value })}
-          placeholder="通知内容"
-          className="flex-1"
-        />
-      )}
-
-      {action.type === 'Log' && (
-        <>
-          <Select value={action.level} onValueChange={(v: any) => onUpdate({ level: v })}>
-            <SelectTrigger className="w-16"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="debug">DEBUG</SelectItem>
-              <SelectItem value="info">INFO</SelectItem>
-              <SelectItem value="warn">WARN</SelectItem>
-              <SelectItem value="error">ERROR</SelectItem>
-            </SelectContent>
-          </Select>
+        {action.type === 'Notify' && (
           <Input
             value={action.message}
             onChange={(e) => onUpdate({ message: e.target.value })}
-            placeholder="日志内容"
-            className="flex-1"
+            placeholder={t('automation:ruleBuilder.notificationMessagePlaceholder')}
+            className="flex-1 min-w-[120px] h-8 text-sm"
           />
-        </>
-      )}
+        )}
 
-      {action.type === 'Set' && (
-        <>
-          <Select value={action.device_id} onValueChange={(v) => onUpdate({ device_id: v })}>
-            <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Input
-            value={action.property}
-            onChange={(e) => onUpdate({ property: e.target.value })}
-            placeholder="属性名"
-            className="w-20"
-          />
-          <span className="text-xs text-muted-foreground">=</span>
-          <Input
-            value={String(action.value ?? '')}
-            onChange={(e) => onUpdate({ value: e.target.value })}
-            placeholder="值"
-            className="w-20"
-          />
-        </>
-      )}
+        {action.type === 'Log' && (
+          <>
+            <Select value={action.level} onValueChange={(v: any) => onUpdate({ level: v })}>
+              <SelectTrigger className="w-16 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="debug">{t('automation:logLevels.debug')}</SelectItem>
+                <SelectItem value="info">{t('automation:logLevels.info')}</SelectItem>
+                <SelectItem value="warn">{t('automation:logLevels.warn')}</SelectItem>
+                <SelectItem value="error">{t('automation:logLevels.error')}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              value={action.message}
+              onChange={(e) => onUpdate({ message: e.target.value })}
+              placeholder={t('automation:ruleBuilder.logContentPlaceholder')}
+              className="flex-1 min-w-[120px] h-8 text-sm"
+            />
+          </>
+        )}
 
-      {action.type === 'Delay' && (
-        <>
-          <Input
-            type="number"
-            value={(action.duration || 0) / 1000}
-            onChange={(e) => onUpdate({ duration: (parseInt(e.target.value) || 0) * 1000 })}
-            className="w-20"
-          />
-          <span className="text-xs text-muted-foreground">秒</span>
-        </>
-      )}
+        {action.type === 'Set' && (
+          <>
+            <Select value={action.device_id} onValueChange={(v) => onUpdate({ device_id: v })}>
+              <SelectTrigger className="w-32 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Input
+              value={action.property}
+              onChange={(e) => onUpdate({ property: e.target.value })}
+              placeholder={t('automation:ruleBuilder.propertyNamePlaceholder')}
+              className="w-24 h-8 text-sm flex-shrink-0"
+            />
+            <span className="text-muted-foreground text-sm flex-shrink-0">=</span>
+            <Input
+              value={String(action.value ?? '')}
+              onChange={(e) => onUpdate({ value: e.target.value })}
+              placeholder={t('automation:ruleBuilder.valuePlaceholder')}
+              className="w-24 h-8 text-sm flex-shrink-0"
+            />
+          </>
+        )}
 
-      {action.type === 'CreateAlert' && (
-        <>
-          <Input
-            value={action.title}
-            onChange={(e) => onUpdate({ title: e.target.value })}
-            placeholder="告警标题"
-            className="w-32"
-          />
-          <Input
-            value={action.message}
-            onChange={(e) => onUpdate({ message: e.target.value })}
-            placeholder="告警消息"
-            className="flex-1"
-          />
-          <Select value={action.severity} onValueChange={(v: any) => onUpdate({ severity: v })}>
-            <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="info">Info</SelectItem>
-              <SelectItem value="warning">Warning</SelectItem>
-              <SelectItem value="error">Error</SelectItem>
-              <SelectItem value="critical">Critical</SelectItem>
-            </SelectContent>
-          </Select>
-        </>
-      )}
+        {action.type === 'Delay' && (
+          <>
+            <Input
+              type="number"
+              value={(action.duration || 0) / 1000}
+              onChange={(e) => onUpdate({ duration: (parseInt(e.target.value) || 0) * 1000 })}
+              className="w-16 h-8 text-sm flex-shrink-0"
+            />
+            <span className="text-xs text-muted-foreground flex-shrink-0">{t('automation:ruleBuilder.seconds')}</span>
+          </>
+        )}
 
-      {action.type === 'HttpRequest' && (
-        <>
-          <Select value={action.method} onValueChange={(v: any) => onUpdate({ method: v })}>
-            <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="GET">GET</SelectItem>
-              <SelectItem value="POST">POST</SelectItem>
-              <SelectItem value="PUT">PUT</SelectItem>
-              <SelectItem value="DELETE">DELETE</SelectItem>
-              <SelectItem value="PATCH">PATCH</SelectItem>
-            </SelectContent>
-          </Select>
-          <Input
-            value={action.url}
-            onChange={(e) => onUpdate({ url: e.target.value })}
-            placeholder="https://example.com/api"
-            className="flex-1"
-          />
-        </>
-      )}
+        {action.type === 'CreateAlert' && (
+          <>
+            <Input
+              value={action.title}
+              onChange={(e) => onUpdate({ title: e.target.value })}
+              placeholder={t('automation:ruleBuilder.alertTitlePlaceholder')}
+              className="w-28 h-8 text-sm flex-shrink-0"
+            />
+            <Input
+              value={action.message}
+              onChange={(e) => onUpdate({ message: e.target.value })}
+              placeholder={t('automation:ruleBuilder.alertMessagePlaceholder')}
+              className="flex-1 min-w-[80px] h-8 text-sm"
+            />
+            <Select value={action.severity} onValueChange={(v: any) => onUpdate({ severity: v })}>
+              <SelectTrigger className="w-20 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="info">Info</SelectItem>
+                <SelectItem value="warning">Warning</SelectItem>
+                <SelectItem value="error">Error</SelectItem>
+                <SelectItem value="critical">Critical</SelectItem>
+              </SelectContent>
+            </Select>
+          </>
+        )}
 
-      <Button variant="ghost" size="icon" className="h-8 w-8 ml-auto" onClick={onRemove}>
-        <X className="h-4 w-4" />
+        {action.type === 'HttpRequest' && (
+          <>
+            <Select value={action.method} onValueChange={(v: any) => onUpdate({ method: v })}>
+              <SelectTrigger className="w-20 h-8 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="GET">GET</SelectItem>
+                <SelectItem value="POST">POST</SelectItem>
+                <SelectItem value="PUT">PUT</SelectItem>
+                <SelectItem value="DELETE">DELETE</SelectItem>
+                <SelectItem value="PATCH">PATCH</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input
+              value={action.url}
+              onChange={(e) => onUpdate({ url: e.target.value })}
+              placeholder="https://example.com/api"
+              className="flex-1 min-w-[100px] h-8 text-sm"
+            />
+          </>
+        )}
+      </div>
+
+      <Button variant="ghost" size="icon" className="h-7 w-7 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={onRemove}>
+        <X className="h-3.5 w-3.5" />
       </Button>
     </div>
   )

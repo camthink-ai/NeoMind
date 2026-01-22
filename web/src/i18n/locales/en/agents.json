@@ -25,6 +25,8 @@
   "editAgentDesc": "Modify agent configuration",
   "deleteConfirm": "Are you sure you want to delete this agent?",
   "execute": "Execute Now",
+  "viewMemory": "View Memory",
+  "viewDetails": "View Details",
   "agentDeleted": "Agent deleted successfully",
   "agentCreated": "Agent created successfully",
   "agentUpdated": "Agent updated successfully",
@@ -59,5 +61,35 @@
     "completed": "Completed",
     "failed": "Failed",
     "cancelled": "Cancelled"
+  },
+  "execution": {
+    "title": "Execution Details",
+    "description": "Detailed view of agent execution process and results"
+  },
+  "memory": {
+    "title": "Agent Memory",
+    "description": "Persistent memory and learning state of the agent",
+    "stateVariables": "State Variables",
+    "baselines": "Historical Baselines",
+    "learnedPatterns": "Learned Patterns",
+    "trendData": "Trend Data",
+    "trendDataHint": "{{count}} data points collected from device metrics",
+    "updatedAt": "Updated",
+    "noMemory": "No memory data available",
+    "clear": "Clear Memory",
+    "clearMemoryConfirm": "Are you sure you want to clear this agent's memory? This action cannot be undone.",
+    "situationAnalysis": "Situation Analysis",
+    "dataCollected": "Data Collected",
+    "reasoningSteps": "Reasoning Steps",
+    "decisions": "Decisions Made",
+    "confidence": "Confidence",
+    "conclusion": "Conclusion",
+    "generatedReport": "Generated Report",
+    "actionsExecuted": "Actions Executed",
+    "input": "Input",
+    "output": "Output",
+    "action": "Action",
+    "sources": "sources",
+    "points": "points"
   }
 }

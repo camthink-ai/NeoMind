@@ -31,7 +31,7 @@ export const createAuthSlice: StateCreator<
   // Initial state
   apiKey: null,
   isAuthenticated: false,
-  user: null,
+  user: tokenManager.getUser(),  // Restore from cache
   token: tokenManager.getToken(),
   loginError: null,
 
@@ -39,13 +39,18 @@ export const createAuthSlice: StateCreator<
   checkAuthStatus: () => {
     // Check for JWT token
     const token = tokenManager.getToken()
+    const cachedUser = tokenManager.getUser()
     if (token) {
-      set({ token, isAuthenticated: true })
+      set({ token, isAuthenticated: true, user: cachedUser })
       // Try to fetch current user info
-      get().getCurrentUser().catch(() => {
-        // Token might be invalid, clear it
-        tokenManager.clearToken()
-        set({ token: null, user: null, isAuthenticated: false })
+      get().getCurrentUser().catch((error) => {
+        // Only clear token and user on 401/403 (auth errors)
+        if (error?.status === 401 || error?.status === 403) {
+          tokenManager.clearToken()
+          tokenManager.clearUser()
+          set({ token: null, user: null, isAuthenticated: false })
+        }
+        // On 500 or other errors, keep cached user info
       })
     } else {
       set({ isAuthenticated: false, user: null })
@@ -63,6 +68,8 @@ export const createAuthSlice: StateCreator<
   // User authentication actions
   login: async (username: string, password: string, rememberMe = false) => {
     const response = await api.login(username, password, rememberMe)
+    // Cache user info
+    tokenManager.setUser(response.user, rememberMe)
     set({
       user: response.user,
       token: response.token,
@@ -72,6 +79,8 @@ export const createAuthSlice: StateCreator<
 
   register: async (username: string, password: string) => {
     const response = await api.register(username, password)
+    // Cache user info (session only for register)
+    tokenManager.setUser(response.user, false)
     set({
       user: response.user,
       token: response.token,
@@ -86,6 +95,7 @@ export const createAuthSlice: StateCreator<
       // Ignore errors during logout
     } finally {
       tokenManager.clearToken()
+      tokenManager.clearUser()
       set({
         user: null,
         token: null,
@@ -97,6 +107,9 @@ export const createAuthSlice: StateCreator<
   getCurrentUser: async () => {
     try {
       const user = await api.getCurrentUser()
+      // Update cache with latest user info
+      const remember = !!localStorage.getItem('neotalk_token')
+      tokenManager.setUser(user, remember)
       set({ user })
       return user
     } catch {

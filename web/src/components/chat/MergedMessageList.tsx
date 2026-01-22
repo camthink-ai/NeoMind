@@ -6,13 +6,31 @@
  * It merges them for display without modifying the original data.
  */
 
-import { type Message } from "@/types"
+import { type Message, type ChatImage } from "@/types"
 import { ThinkingBlock } from "./ThinkingBlock"
 import { ToolCallVisualization } from "./ToolCallVisualization"
 import { QuickActions } from "./QuickActions"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Sparkles } from "lucide-react"
 import { useStore } from "@/store"
+
+/** Image gallery component for user messages */
+function MessageImages({ images }: { images: ChatImage[] }) {
+  if (!images || images.length === 0) return null
+
+  return (
+    <div className={images.length === 1 ? "mb-2" : "mb-2 grid grid-cols-2 gap-2"}>
+      {images.map((img, idx) => (
+        <img
+          key={idx}
+          src={img.data}
+          alt={`Image ${idx + 1}`}
+          className="rounded-lg max-w-full max-h-64 object-cover"
+        />
+      ))}
+    </div>
+  )
+}
 
 interface MergedMessageListProps {
   messages: Message[]
@@ -173,6 +191,11 @@ export function MergedMessageList({
                   : "bg-[var(--msg-ai-bg)] text-[var(--msg-ai-text)]"
               }`}
             >
+              {/* Images for user messages */}
+              {message.role === "user" && message.images && message.images.length > 0 && (
+                <MessageImages images={message.images} />
+              )}
+
               {/* Thinking block */}
               {message.thinking && (
                 <ThinkingBlock thinking={message.thinking} />

@@ -1679,7 +1679,6 @@ mod tests {
         assert_eq!(TransformScope::Global.priority(), 0);
         assert_eq!(TransformScope::DeviceType("sensor".to_string()).priority(), 1);
         assert_eq!(TransformScope::Device("sensor1".to_string()).priority(), 2);
-        assert_eq!(TransformScope::User("user1".to_string()).priority(), 3);
     }
 
     #[test]

@@ -368,10 +368,6 @@ impl DeviceActionExecutor {
                 tokio::time::sleep(*duration).await;
                 info!("Delayed for {:?}", duration);
             }
-            RuleAction::TriggerWorkflow { workflow_id, params } => {
-                actions_executed.push(format!("trigger_workflow:{}", workflow_id));
-                info!("Triggered workflow '{}' with params {:?}", workflow_id, params);
-            }
             RuleAction::CreateAlert { title, message, severity } => {
                 let sev_str = format!("{:?}", severity);
                 actions_executed.push(format!("alert:{}:{}", sev_str, title));

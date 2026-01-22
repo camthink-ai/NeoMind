@@ -563,21 +563,55 @@ impl RuleEngineEventService {
     }
 }
 
+/// Configuration for the Transform event service.
+#[derive(Debug, Clone)]
+pub struct TransformEventServiceConfig {
+    /// Delay in milliseconds to wait for more metrics from the same device batch.
+    /// This allows multiple metrics from the same device data batch to be collected
+    /// before processing transforms.
+    /// Default: 50ms
+    pub batch_delay_ms: u64,
+
+    /// Maximum time to keep device data in buffer before forcing processing.
+    /// This prevents stale data from accumulating if no new metrics arrive.
+    /// Default: 5000ms (5 seconds)
+    pub max_buffer_age_ms: u64,
+}
+
+impl Default for TransformEventServiceConfig {
+    fn default() -> Self {
+        Self {
+            batch_delay_ms: 50,     // 50ms default delay
+            max_buffer_age_ms: 5000, // 5 seconds max age
+        }
+    }
+}
+
 /// Transform event service.
 ///
 /// Subscribes to device metric events and processes transforms to generate virtual metrics.
 /// This enables automatic transform processing when device data is received from any adapter.
+///
+/// # Processing Model
+///
+/// The service uses a batching approach to collect all metrics from a device before
+/// processing transforms:
+/// 1. Metrics are collected in a per-device buffer
+/// 2. After `batch_delay_ms` of no new metrics, the buffer is processed
+/// 3. Transforms are applied and virtual metrics are generated
+/// 4. Virtual metrics are marked to prevent re-processing (loop prevention)
 pub struct TransformEventService {
     event_bus: Arc<EventBus>,
     transform_engine: Arc<edge_ai_automation::transform::TransformEngine>,
     automation_store: Arc<edge_ai_automation::store::SharedAutomationStore>,
     time_series_storage: Arc<edge_ai_devices::TimeSeriesStorage>,
     device_registry: Arc<edge_ai_devices::registry::DeviceRegistry>,
+    config: TransformEventServiceConfig,
     running: Arc<AtomicBool>,
 }
 
 impl TransformEventService {
-    /// Create a new transform event service.
+    /// Create a new transform event service with default configuration.
     pub fn new(
         event_bus: Arc<EventBus>,
         transform_engine: Arc<edge_ai_automation::transform::TransformEngine>,
@@ -591,6 +625,27 @@ impl TransformEventService {
             automation_store,
             time_series_storage,
             device_registry,
+            config: TransformEventServiceConfig::default(),
+            running: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Create a new transform event service with custom configuration.
+    pub fn with_config(
+        event_bus: Arc<EventBus>,
+        transform_engine: Arc<edge_ai_automation::transform::TransformEngine>,
+        automation_store: Arc<edge_ai_automation::store::SharedAutomationStore>,
+        time_series_storage: Arc<edge_ai_devices::TimeSeriesStorage>,
+        device_registry: Arc<edge_ai_devices::registry::DeviceRegistry>,
+        config: TransformEventServiceConfig,
+    ) -> Self {
+        Self {
+            event_bus,
+            transform_engine,
+            automation_store,
+            time_series_storage,
+            device_registry,
+            config,
             running: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -618,6 +673,8 @@ impl TransformEventService {
         let device_registry = self.device_registry.clone();
 
         running.store(true, Ordering::Relaxed);
+
+        let batch_delay = self.config.batch_delay_ms;
 
         tokio::spawn(async move {
             use edge_ai_core::{MetricValue, NeoTalkEvent};
@@ -665,14 +722,18 @@ impl TransformEventService {
                             }
 
                             // Also check metric name patterns as a fallback for old-style virtual metrics
-                            let is_virtual_pattern = metric.starts_with("transform_")
-                                || metric.starts_with("virtual_")
-                                || metric.starts_with("computed_")
-                                || metric.starts_with("derived_")
+                            // NOTE: Transform-generated metrics use DOT notation (transform.xxx, virtual.xxx)
+                            // not underscore notation (transform_xxx, virtual_xxx)
+                            let is_virtual_pattern = metric.starts_with("transform.")
+                                || metric.starts_with("virtual.")
+                                || metric.starts_with("computed.")
+                                || metric.starts_with("derived.")
+                                || metric.starts_with("aggregated.")
                                 || metric == "transform"
                                 || metric == "virtual"
                                 || metric == "computed"
-                                || metric == "derived";
+                                || metric == "derived"
+                                || metric == "aggregated";
 
                             if is_virtual_pattern {
                                 tracing::debug!("Skipping metric '{}' with virtual pattern", metric);
@@ -735,7 +796,7 @@ impl TransformEventService {
                             // Spawn a delayed task to process transforms for this device
                             let timer = tokio::spawn(async move {
                                 // Wait a bit to collect more metrics from the same batch
-                                sleep(Duration::from_millis(50)).await;
+                                sleep(Duration::from_millis(batch_delay)).await;
 
                                 if !running_clone.load(Ordering::Relaxed) {
                                     return;

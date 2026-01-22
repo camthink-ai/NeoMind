@@ -249,6 +249,7 @@ export interface Message {
   timestamp: number
   thinking?: string
   tool_calls?: ToolCall[]
+  images?: ChatImage[]  // Images sent with user messages (multimodal)
   // Indicates if this message is still being streamed (partial)
   isPartial?: boolean
 }
@@ -313,9 +314,16 @@ export type ServerMessage =
   // Device status update
   | { type: 'device_update'; updateType: string; deviceId: string; status?: string; lastSeen?: number }
 
+// Image data for multimodal messages
+export interface ChatImage {
+  data: string  // Base64 data URL (e.g., "data:image/png;base64,...")
+  mimeType?: string  // e.g., "image/png", "image/jpeg"
+}
+
 // Client WebSocket message types
 export interface ClientChatMessage {
   message: string
+  images?: ChatImage[]  // Optional images for multimodal models
   sessionId?: string
   backendId?: string  // Optional LLM backend ID to use for this message
 }
@@ -420,6 +428,7 @@ export interface TelemetryMetricSummary {
   display_name: string
   unit: string
   data_type: 'integer' | 'float' | 'string' | 'boolean' | 'binary' | 'array'
+  is_virtual?: boolean  // True for Transform-generated virtual metrics
   current: number | string | boolean | null | unknown[]
   current_timestamp: number | null
   avg: number | null
@@ -591,7 +600,7 @@ export interface RuleCondition {
   device_id?: string
   metric?: string
   operator?: string
-  threshold?: number
+  threshold?: number | string  // Supports numeric and string values for matching
 
   // Range condition properties
   range_min?: number
@@ -971,6 +980,7 @@ export interface UpdateLlmBackendRequest {
   temperature?: number
   top_p?: number
   thinking_enabled?: boolean  // Enable thinking/reasoning mode for models that support it
+  capabilities?: BackendCapabilities  // Model capabilities (from Ollama model detection)
 }
 
 export interface LlmBackendListResponse {
@@ -1520,6 +1530,7 @@ export interface ParsedIntent {
  */
 export interface AgentMemory {
   state_variables: Record<string, unknown>
+  baselines: Record<string, number>  // Historical baselines
   learned_patterns: string[]
   trend_data: TrendPoint[]
   updated_at: string
@@ -1647,6 +1658,126 @@ export interface AgentExecutionsResponse {
   agent_id: string
   executions: AgentExecution[]
   count: number
+}
+
+/**
+ * Agent execution detail with full decision process
+ * Extends AgentExecution with decision_process and result
+ */
+export interface AgentExecutionDetail extends AgentExecution {
+  decision_process?: DecisionProcess
+  result?: ExecutionResult
+}
+
+/**
+ * AI decision process with full reasoning trace
+ */
+export interface DecisionProcess {
+  situation_analysis: string
+  data_collected: DataCollected[]
+  reasoning_steps: ReasoningStep[]
+  decisions: Decision[]
+  conclusion: string
+  confidence: number
+}
+
+/**
+ * Data collected for decision making
+ */
+export interface DataCollected {
+  source: string
+  data_type: string
+  values: Record<string, unknown> | unknown[]
+  timestamp: number
+}
+
+/**
+ * A single reasoning step in the decision process
+ */
+export interface ReasoningStep {
+  step_number: number
+  description: string
+  step_type: string
+  input?: string
+  output: string
+  confidence: number
+}
+
+/**
+ * A decision made during execution
+ */
+export interface Decision {
+  decision_type: string
+  description: string
+  action: string
+  rationale: string
+  expected_outcome: string
+}
+
+/**
+ * Execution result with actions taken
+ */
+export interface ExecutionResult {
+  actions_executed: ActionExecuted[]
+  report?: GeneratedReport
+  notifications_sent: NotificationSent[]
+  summary: string
+  success_rate: number
+}
+
+/**
+ * An action that was executed
+ */
+export interface ActionExecuted {
+  action_type: string
+  description: string
+  target: string
+  parameters: Record<string, unknown>
+  success: boolean
+  result?: string
+}
+
+/**
+ * A generated report
+ */
+export interface GeneratedReport {
+  report_type: string
+  content: string
+  data_summary: DataSummary[]
+  generated_at: number
+}
+
+/**
+ * Summary of data included in report
+ */
+export interface DataSummary {
+  source: string
+  metric: string
+  count: number
+  statistics: Record<string, unknown>
+}
+
+/**
+ * A notification that was sent
+ */
+export interface NotificationSent {
+  channel: string
+  recipient: string
+  message: string
+  sent_at: number
+  success: boolean
+}
+
+/**
+ * A learned pattern from historical data
+ */
+export interface LearnedPattern {
+  id: string
+  pattern_type: string
+  description: string
+  confidence: number
+  learned_at: number
+  data: Record<string, unknown>
 }
 
 

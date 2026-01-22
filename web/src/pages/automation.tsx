@@ -282,7 +282,7 @@ export function AutomationPage() {
   return (
     <PageLayout
       title={tAuto('title')}
-      subtitle={tAuto('description')}
+      subtitle={tAuto('pageDescription')}
     >
       {/* Tabs with Actions */}
       <PageTabs

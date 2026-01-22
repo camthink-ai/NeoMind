@@ -1,5 +1,5 @@
 // WebSocket Manager for Chat
-import type { ServerMessage, ClientChatMessage } from '@/types'
+import type { ServerMessage, ClientChatMessage, ChatImage } from '@/types'
 
 type MessageHandler = (message: ServerMessage) => void
 type ConnectionHandler = (connected: boolean) => void
@@ -164,9 +164,10 @@ export class ChatWebSocket {
     }
   }
 
-  sendMessage(content: string) {
+  sendMessage(content: string, images?: ChatImage[]) {
     this.sendRequest({
       message: content,
+      images: images,
       sessionId: this.sessionId || undefined,
       backendId: this.activeBackendId || undefined,
     })

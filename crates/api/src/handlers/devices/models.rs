@@ -44,8 +44,49 @@ pub struct DeviceTypeDto {
     pub description: String,
     pub categories: Vec<String>,
     pub mode: String,
-    pub metric_count: usize,
-    pub command_count: usize,
+    /// Metrics available for this device type
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub metrics: Vec<MetricDefinitionDto>,
+    /// Commands available for this device type
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<CommandDefinitionDto>,
+    /// Metric count (for backward compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metric_count: Option<usize>,
+    /// Command count (for backward compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_count: Option<usize>,
+}
+
+/// Metric definition for API responses
+#[derive(Debug, Serialize)]
+pub struct MetricDefinitionDto {
+    pub name: String,
+    pub display_name: String,
+    pub data_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+/// Command definition for API responses
+#[derive(Debug, Serialize)]
+pub struct CommandDefinitionDto {
+    pub name: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<ParameterDefinitionDto>,
+}
+
+/// Parameter definition for API responses
+#[derive(Debug, Serialize)]
+pub struct ParameterDefinitionDto {
+    pub name: String,
+    pub display_name: String,
+    pub data_type: String,
 }
 
 /// Query parameters for time range queries.

@@ -627,37 +627,101 @@ async fn handle_ws_socket(
                                     // Try event streaming first (rich response with tool calls)
                                     // Spawn a task to process the stream asynchronously, keeping the main loop responsive
                                     let backend_id = chat_req.backend_id.as_deref();
-                                    match state.session_manager.process_message_events_with_backend(&session_id, &chat_req.message, backend_id).await {
-                                        Ok(stream) => {
-                                            // Clone the channel sender and session ID for the spawned task
-                                            let task_tx = stream_tx.clone();
-                                            let task_session_id = session_id.clone();
-                                            let task_state = state.clone();
 
-                                            // Spawn a task to process the LLM stream and send events through the channel
-                                            tokio::spawn(async move {
-                                                process_stream_to_channel(stream, task_session_id, task_tx, task_state).await;
-                                            });
+                                    // Check if request contains images (multimodal input)
+                                    let has_images = chat_req.images.as_ref().map_or(false, |i| !i.is_empty());
+
+                                    if has_images {
+                                        // Process multimodal message with images - now with streaming support!
+                                        let images: Vec<String> = chat_req.images
+                                            .as_ref()
+                                            .unwrap_or(&vec![])
+                                            .iter()
+                                            .map(|img| img.data.clone())
+                                            .collect();
+
+                                        let backend_id_str = backend_id.map(|s| s.to_string());
+                                        let task_session_id = session_id.clone();
+                                        let task_state = state.clone();
+
+                                        // Use streaming for multimodal messages
+                                        match task_state.session_manager.process_message_multimodal_with_backend_stream(
+                                            &task_session_id,
+                                            &chat_req.message,
+                                            images.clone(),
+                                            backend_id_str.as_deref(),
+                                        ).await {
+                                            Ok(stream) => {
+                                                // Clone the channel sender and session ID for the spawned task
+                                                let task_tx = stream_tx.clone();
+                                                let task_session_id = session_id.clone();
+                                                let task_state = state.clone();
+
+                                                // Spawn a task to process the LLM stream and send events through the channel
+                                                tokio::spawn(async move {
+                                                    process_stream_to_channel(stream, task_session_id, task_tx, task_state).await;
+                                                });
+                                            }
+                                            Err(_e) => {
+                                                // Fallback to non-streaming on error
+                                                let response = match task_state.session_manager.process_message_multimodal_with_backend(
+                                                    &task_session_id,
+                                                    &chat_req.message,
+                                                    images,
+                                                    backend_id_str.as_deref(),
+                                                ).await {
+                                                    Ok(resp) => json!({
+                                                        "type": "response",
+                                                        "content": resp.message.content,
+                                                        "sessionId": task_session_id,
+                                                        "toolsUsed": resp.tools_used,
+                                                        "processingTimeMs": resp.processing_time_ms,
+                                                    }).to_string(),
+                                                    Err(inner_e) => json!({
+                                                        "type": "Error",
+                                                        "message": inner_e.to_string(),
+                                                    }).to_string(),
+                                                };
+
+                                                if socket.send(AxumMessage::Text(response)).await.is_err() {
+                                                    break;
+                                                }
+                                            }
                                         }
-                                        Err(_e) => {
-                                            // Fallback to non-streaming on error
-                                            let backend_id = chat_req.backend_id.as_deref();
-                                            let response = match state.session_manager.process_message_with_backend(&session_id, &chat_req.message, backend_id).await {
-                                                Ok(resp) => json!({
-                                                    "type": "response",
-                                                    "content": resp.message.content,
-                                                    "sessionId": session_id,
-                                                    "toolsUsed": resp.tools_used,
-                                                    "processingTimeMs": resp.processing_time_ms,
-                                                }).to_string(),
-                                                Err(inner_e) => json!({
-                                                    "type": "Error",
-                                                    "message": inner_e.to_string(),
-                                                }).to_string(),
-                                            };
+                                    } else {
+                                        // Regular text-only message - use streaming
+                                        match state.session_manager.process_message_events_with_backend(&session_id, &chat_req.message, backend_id).await {
+                                            Ok(stream) => {
+                                                // Clone the channel sender and session ID for the spawned task
+                                                let task_tx = stream_tx.clone();
+                                                let task_session_id = session_id.clone();
+                                                let task_state = state.clone();
 
-                                            if socket.send(AxumMessage::Text(response)).await.is_err() {
-                                                break;
+                                                // Spawn a task to process the LLM stream and send events through the channel
+                                                tokio::spawn(async move {
+                                                    process_stream_to_channel(stream, task_session_id, task_tx, task_state).await;
+                                                });
+                                            }
+                                            Err(_e) => {
+                                                // Fallback to non-streaming on error
+                                                let backend_id = chat_req.backend_id.as_deref();
+                                                let response = match state.session_manager.process_message_with_backend(&session_id, &chat_req.message, backend_id).await {
+                                                    Ok(resp) => json!({
+                                                        "type": "response",
+                                                        "content": resp.message.content,
+                                                        "sessionId": session_id,
+                                                        "toolsUsed": resp.tools_used,
+                                                        "processingTimeMs": resp.processing_time_ms,
+                                                    }).to_string(),
+                                                    Err(inner_e) => json!({
+                                                        "type": "Error",
+                                                        "message": inner_e.to_string(),
+                                                    }).to_string(),
+                                                };
+
+                                                if socket.send(AxumMessage::Text(response)).await.is_err() {
+                                                    break;
+                                                }
                                             }
                                         }
                                     }

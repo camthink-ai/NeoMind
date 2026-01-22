@@ -62,6 +62,7 @@ import type {
   AgentMemory,
   AgentStats,
   AgentExecution,
+  AgentExecutionDetail,
   CreateAgentRequest,
   UpdateAgentRequest,
   ExecuteAgentRequest,
@@ -101,6 +102,8 @@ function triggerUnauthorizedCallbacks() {
 
 const TOKEN_KEY = 'neotalk_token'
 const TOKEN_KEY_SESSION = 'neotalk_token_session'
+const USER_KEY = 'neotalk_user'
+const USER_KEY_SESSION = 'neotalk_user_session'
 
 export const tokenManager = {
   getToken: (): string | null => {
@@ -121,6 +124,31 @@ export const tokenManager = {
   },
   hasToken: (): boolean => {
     return !!(localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY_SESSION))
+  },
+  getUser: (): UserInfo | null => {
+    const userStr = localStorage.getItem(USER_KEY) || sessionStorage.getItem(USER_KEY_SESSION)
+    if (userStr) {
+      try {
+        return JSON.parse(userStr)
+      } catch {
+        return null
+      }
+    }
+    return null
+  },
+  setUser: (user: UserInfo, remember: boolean = false): void => {
+    const userStr = JSON.stringify(user)
+    if (remember) {
+      localStorage.setItem(USER_KEY, userStr)
+      sessionStorage.removeItem(USER_KEY_SESSION)
+    } else {
+      sessionStorage.setItem(USER_KEY_SESSION, userStr)
+      localStorage.removeItem(USER_KEY)
+    }
+  },
+  clearUser: (): void => {
+    localStorage.removeItem(USER_KEY)
+    sessionStorage.removeItem(USER_KEY_SESSION)
   },
 }
 
@@ -682,6 +710,31 @@ export const api = {
     fetchAPI<{ backend_type: string; schema: Record<string, unknown> }>(`/llm-backends/types/${backendType}/schema`),
   getLlmBackendStats: () =>
     fetchAPI<{ total_backends: number; active_backends: number; by_type: Record<string, number> }>('/llm-backends/stats'),
+  /**
+   * Fetch available models from an Ollama server
+   * GET /api/llm-backends/ollama/models?endpoint=http://localhost:11434
+   */
+  listOllamaModels: (endpoint?: string) =>
+    fetchAPI<{
+      models: Array<{
+        name: string
+        size?: number
+        modified_at?: string
+        digest?: string
+        details?: {
+          format?: string
+          family?: string
+          families?: string[]
+          parameter_size?: string
+          quantization_level?: string
+        }
+        supports_multimodal: boolean
+        supports_thinking: boolean
+        supports_tools: boolean
+        max_context: number
+      }>
+      count: number
+    }>(`/llm-backends/ollama/models${endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ''}`),
 
   // ========== MQTT / Brokers API ==========
   // Used by UnifiedDeviceConnectionsTab to display connection status
@@ -1483,6 +1536,13 @@ export const api = {
    */
   getAgentExecution: (id: string, executionId: string) =>
     fetchAPI<AgentExecution>(`/agents/${id}/executions/${executionId}`),
+
+  /**
+   * Get execution with full details (alias for getAgentExecution)
+   * Returns AgentExecutionDetail with decision_process and result
+   */
+  getExecution: (id: string, executionId: string) =>
+    fetchAPI<AgentExecutionDetail>(`/agents/${id}/executions/${executionId}`),
 
   /**
    * Get agent memory

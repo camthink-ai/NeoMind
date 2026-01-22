@@ -21,6 +21,7 @@
 
 import { ReactNode, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -60,6 +61,8 @@ export interface FullScreenBuilderProps {
 
   // Main content
   children: ReactNode
+  /** Whether to use full width for main content (default: false - centered with max-width) */
+  fullWidth?: boolean
 
   // Side panel (optional)
   sidePanel?: {
@@ -87,6 +90,7 @@ export function FullScreenBuilder({
   headerActions,
   badge,
   children,
+  fullWidth = false,
   sidePanel,
   isValid,
   isDirty,
@@ -100,7 +104,7 @@ export function FullScreenBuilder({
 
   const content = (
     <div className="fixed inset-0 z-[100] bg-background">
-      <div className="flex h-full w-full max-w-[1920px] mx-auto flex-col">
+      <div className="flex h-full w-full flex-col">
         {/* Header */}
         <BuilderHeader
           title={title}
@@ -115,7 +119,7 @@ export function FullScreenBuilder({
         <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Main Content */}
           <ScrollArea className={cn('flex-1', sidePanel && 'border-r')}>
-            <div className="p-6 max-w-5xl mx-auto">
+            <div className={cn('p-6', fullWidth ? 'w-full' : 'max-w-5xl mx-auto')}>
               {children}
             </div>
           </ScrollArea>
@@ -201,12 +205,14 @@ function BuilderFooter({
   isValid,
   isDirty,
   isSaving,
-  saveLabel = 'common:save',
+  saveLabel,
   onCancel,
   onSave,
   validationMessage,
   leftActions,
 }: BuilderFooterProps) {
+  const { t } = useTranslation(['automation', 'common'])
+
   return (
     <div className="flex items-center justify-between px-6 py-4 border-t bg-background">
       <div className="flex items-center gap-4 flex-1">
@@ -216,7 +222,7 @@ function BuilderFooter({
         <div className="flex items-center gap-2 text-sm">
           {isDirty && (
             <span className="text-muted-foreground">
-              • {typeof saveLabel === 'string' ? saveLabel : '保存'}{' '}
+              • {typeof saveLabel === 'string' ? saveLabel : t('common:save')}{' '}
             </span>
           )}
           {validationMessage && (
@@ -230,16 +236,16 @@ function BuilderFooter({
       {/* Action Buttons */}
       <div className="flex items-center gap-2">
         <Button variant="outline" onClick={onCancel} disabled={isSaving}>
-          Cancel
+          {t('common:cancel')}
         </Button>
         <Button onClick={onSave} disabled={!isValid || isSaving}>
           {isSaving ? (
             <>
               <span className="animate-spin mr-2">⏳</span>
-              Saving...
+              {t('common:saving')}
             </>
           ) : (
-            saveLabel
+            saveLabel || t('common:save')
           )}
         </Button>
       </div>
