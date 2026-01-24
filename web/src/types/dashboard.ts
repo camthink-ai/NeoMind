@@ -88,10 +88,6 @@ export type GenericComponentType =
   | 'data-table'
   | 'status-list'
   | 'log-feed'
-  // Layout & Content
-  | 'tabs'
-  | 'heading'
-  | 'alert-banner'
 
 /**
  * Business Component Types
@@ -243,11 +239,6 @@ export const COMPONENT_SIZE_CONSTRAINTS: Partial<Record<ImplementedComponentType
   'status-list': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 6, maxH: 10 },
   'log-feed': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 8, maxH: 12 },
 
-  // Layout & Content
-  'tabs': { minW: 2, minH: 2, defaultW: 6, defaultH: 4, maxW: 12, maxH: 8 },
-  'heading': { minW: 1, minH: 1, defaultW: 4, defaultH: 1, maxW: 12, maxH: 2 },
-  'alert-banner': { minW: 2, minH: 1, defaultW: 4, defaultH: 1, maxW: 12, maxH: 2 },
-
   // Business Components
   'agent-status-card': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 6, maxH: 6, preserveAspect: true },
   'decision-list': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 6, maxH: 10 },
@@ -289,7 +280,6 @@ export function isGenericComponent(component: DashboardComponent): component is 
     'line-chart', 'area-chart', 'bar-chart', 'pie-chart', 'donut-chart', 'gauge-chart',
     'toggle-switch', 'button-group', 'dropdown', 'input-field',
     'data-table', 'status-list', 'log-feed',
-    'tabs', 'heading', 'alert-banner',
   ]
   return genericTypes.includes(component.type as GenericComponentType)
 }

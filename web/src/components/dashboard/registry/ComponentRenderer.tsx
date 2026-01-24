@@ -41,11 +41,6 @@ const DataTable = lazy(() => import('../generic/DataTable').then(m => ({ default
 const StatusList = lazy(() => import('../generic/StatusList').then(m => ({ default: m.StatusList })))
 const LogFeed = lazy(() => import('../generic/LogFeed').then(m => ({ default: m.LogFeed })))
 
-// Layout & Content
-const Tabs = lazy(() => import('../generic/Tabs').then(m => ({ default: m.Tabs })))
-const Heading = lazy(() => import('../generic/Heading').then(m => ({ default: m.Heading })))
-const AlertBanner = lazy(() => import('../generic/AlertBanner').then(m => ({ default: m.AlertBanner })))
-
 // Business Components
 const AgentStatusCard = lazy(() => import('../business/AgentStatusCard').then(m => ({ default: m.AgentStatusCard })))
 const DecisionList = lazy(() => import('../business/DecisionList').then(m => ({ default: m.DecisionList })))
@@ -82,11 +77,6 @@ const componentMap: Record<GenericComponentType, React.ComponentType<any>> = {
   'data-table': DataTable,
   'status-list': StatusList,
   'log-feed': LogFeed,
-
-  // Layout & Content
-  'tabs': Tabs,
-  'heading': Heading,
-  'alert-banner': AlertBanner,
 } as const
 
 // Business component map

@@ -39,11 +39,6 @@ export { DataTable } from './generic/DataTable'
 export { LogFeed } from './generic/LogFeed'
 export { StatusList } from './generic/StatusList'
 
-// Generic components - Layout & Content
-export { Tabs } from './generic/Tabs'
-export { Heading } from './generic/Heading'
-export { AlertBanner } from './generic/AlertBanner'
-
 // Business components
 export { AgentStatusCard } from './business/AgentStatusCard'
 export { DecisionList } from './business/DecisionList'

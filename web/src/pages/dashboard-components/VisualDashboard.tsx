@@ -20,7 +20,6 @@ import {
   MoreVertical,
   // Indicator icons
   Hash,
-  BadgeCheck,
   Circle,
   TrendingUp,
   Timer as TimerIcon,
@@ -52,7 +51,6 @@ import {
   Globe,
   QrCode,
   Type,
-  Heading as HeadingIcon,
   Code,
   Link,
   // Layout icons
@@ -136,10 +134,6 @@ import {
   DataTable,
   LogFeed,
   StatusList,
-  // Layout & Content
-  Tabs,
-  Heading,
-  AlertBanner,
   // Business
   AgentStatusCard,
   DecisionList,
@@ -277,17 +271,6 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
       { id: 'button-group', name: 'Button Group', description: 'Action buttons', icon: Layers },
       { id: 'dropdown', name: 'Dropdown', description: 'Select dropdown', icon: List },
       { id: 'input-field', name: 'Input Field', description: 'Text input', icon: Type },
-    ],
-  },
-  // Layout & Content
-  {
-    category: 'layout',
-    categoryLabel: 'Layout & Content',
-    categoryIcon: Layers,
-    items: [
-      { id: 'tabs', name: 'Tabs', description: 'Tabbed content', icon: Layers },
-      { id: 'heading', name: 'Heading', description: 'Title/heading', icon: HeadingIcon },
-      { id: 'alert-banner', name: 'Alert Banner', description: 'Alert message', icon: BadgeCheck },
     ],
   },
   // Business Components
@@ -597,41 +580,6 @@ function renderDashboardComponent(component: DashboardComponent) {
           maxEntries={config.maxEntries || 50}
           autoScroll={config.autoScroll ?? true}
           showTimestamp={config.showTimestamp ?? true}
-        />
-      )
-
-    // Layout & Content
-    case 'tabs':
-      return (
-        <Tabs
-          {...spreadableProps}
-          tabs={config.tabs || [
-            { id: 'tab1', label: 'Tab 1', content: 'Content 1' },
-            { id: 'tab2', label: 'Tab 2', content: 'Content 2' }
-          ]}
-          defaultTab={config.defaultTab}
-          variant={config.variant || 'default'}
-        />
-      )
-
-    case 'heading':
-      return (
-        <Heading
-          {...spreadableProps}
-          level={config.level || 'h2'}
-          text={config.text || commonProps.title || 'Heading'}
-          align={config.align || 'left'}
-        />
-      )
-
-    case 'alert-banner':
-      return (
-        <AlertBanner
-          {...spreadableProps}
-          severity={config.severity || 'info'}
-          title={config.title}
-          message={config.message || commonProps.title}
-          dismissible={config.dismissible ?? false}
         />
       )
 
@@ -1052,27 +1000,6 @@ export function VisualDashboard() {
           data: [
             { id: '1', message: 'System started', level: 'info', timestamp: new Date().toISOString() }
           ]
-        }
-        break
-      // Layout & Content
-      case 'tabs':
-        defaultConfig = {
-          tabs: [
-            { id: 'tab1', label: 'Tab 1', content: 'Content 1' },
-            { id: 'tab2', label: 'Tab 2', content: 'Content 2' }
-          ]
-        }
-        break
-      case 'heading':
-        defaultConfig = {
-          level: 'h2',
-          text: 'Dashboard Heading'
-        }
-        break
-      case 'alert-banner':
-        defaultConfig = {
-          severity: 'info',
-          message: 'This is an informational alert'
         }
         break
       // Business Components
@@ -1622,80 +1549,6 @@ export function VisualDashboard() {
                       className="rounded"
                     />
                     <label htmlFor="showTimestamp" className="text-sm">Show Timestamp</label>
-                  </div>
-                </div>
-              ),
-            },
-          ],
-        }
-
-      // ========== Layout & Content ==========
-      case 'tabs':
-        return {
-          styleSections: [
-            {
-              type: 'custom' as const,
-              render: () => (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Variant</label>
-                    <select
-                      value={config.variant || 'default'}
-                      onChange={(e) => updateConfig('variant')(e.target.value)}
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                    >
-                      <option value="default">Default</option>
-                      <option value="line">Line</option>
-                      <option value="pills">Pills</option>
-                    </select>
-                  </div>
-                </div>
-              ),
-            },
-          ],
-        }
-
-      case 'heading':
-        return createContentConfig({
-          content: config.text,
-          onContentChange: updateConfig('text'),
-          variant: config.level,
-          onVariantChange: updateConfig('level'),
-          align: config.align,
-          onAlignChange: updateConfig('align'),
-          color: config.color,
-          onColorChange: updateConfig('color'),
-        })
-
-      case 'alert-banner':
-        return {
-          styleSections: [
-            {
-              type: 'custom' as const,
-              render: () => (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Severity</label>
-                    <select
-                      value={config.severity || 'info'}
-                      onChange={(e) => updateConfig('severity')(e.target.value)}
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                    >
-                      <option value="info">Info</option>
-                      <option value="success">Success</option>
-                      <option value="warning">Warning</option>
-                      <option value="error">Error</option>
-                    </select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id="dismissible"
-                      checked={config.dismissible ?? false}
-                      onChange={(e) => updateConfig('dismissible')(e.target.checked)}
-                      className="rounded"
-                    />
-                    <label htmlFor="dismissible" className="text-sm">Dismissible</label>
                   </div>
                 </div>
               ),
