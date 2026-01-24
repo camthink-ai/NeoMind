@@ -108,8 +108,8 @@ export interface MetricDefinition {
 export interface CommandDefinition {
   name: string
   display_name: string
-  payload_template: string  // Template string, supports ${param} variables
-  parameters: ParameterDefinition[]
+  payload_template?: string  // Template string, supports ${param} variables
+  parameters?: ParameterDefinition[]
   // Sample command payloads (for Simple mode / LLM reference)
   samples?: Record<string, unknown>[]
   // LLM hints for command usage
@@ -435,6 +435,39 @@ export interface TelemetryMetricSummary {
   min: number | null
   max: number | null
   count: number
+}
+
+// Unified device current state response
+// Used by GET /api/devices/:id/current - returns device info + all metrics in one call
+export interface DeviceCurrentStateResponse {
+  device: {
+    id: string
+    device_id: string
+    name: string
+    device_type: string
+    adapter_type: string
+    status: string
+    last_seen: string
+    online: boolean
+    plugin_id?: string
+    plugin_name?: string
+    adapter_id?: string
+  }
+  metrics: Record<string, DeviceMetricValue>
+  commands: Array<{
+    name: string
+    display_name: string
+    parameters?: ParameterDefinition[]
+  }>
+}
+
+export interface DeviceMetricValue {
+  name: string
+  display_name: string
+  unit: string
+  data_type: 'integer' | 'float' | 'string' | 'boolean' | 'binary' | 'array'
+  value: number | string | boolean | null | unknown[]
+  is_virtual: boolean
 }
 
 export interface CommandHistoryResponse {
@@ -1496,6 +1529,7 @@ export type AgentResourceType = 'Device' | 'Metric' | 'Command'
 export interface AiAgent {
   id: string
   name: string
+  role: AgentRole
   status: AgentStatus
   created_at: string
   last_execution_at: string | null
@@ -1517,6 +1551,11 @@ export interface AiAgentDetail extends AiAgent {
   stats: AgentStats
   updated_at: string
   error_message?: string
+  // Conversation history fields
+  role: AgentRole
+  conversation_history: ConversationTurn[]
+  conversation_summary: string | null
+  context_window_size: number
 }
 
 /**
@@ -1590,6 +1629,42 @@ export interface AgentExecution {
 export type ExecutionStatus = 'Running' | 'Completed' | 'Failed' | 'Cancelled'
 
 /**
+ * Agent role defining its core responsibility
+ */
+export type AgentRole = 'Monitor' | 'Executor' | 'Analyst'
+
+/**
+ * Input for a single conversation turn (execution)
+ */
+export interface TurnInput {
+  data_collected: DataCollected[]
+  event_data: Record<string, unknown> | null
+}
+
+/**
+ * Output from a single conversation turn (execution)
+ */
+export interface TurnOutput {
+  situation_analysis: string
+  reasoning_steps: ReasoningStep[]
+  decisions: Decision[]
+  conclusion: string
+}
+
+/**
+ * A single conversation turn - one complete execution with context
+ */
+export interface ConversationTurn {
+  execution_id: string
+  timestamp: number
+  trigger_type: string
+  input: TurnInput
+  output: TurnOutput
+  duration_ms: number
+  success: boolean
+}
+
+/**
  * Agent resource for devices, metrics, and commands
  */
 export interface AgentResource {
@@ -1604,6 +1679,7 @@ export interface AgentResource {
  */
 export interface CreateAgentRequest {
   name: string
+  role: AgentRole
   user_prompt: string
   device_ids: string[]
   metrics: MetricSelectionRequest[]
@@ -1793,6 +1869,101 @@ export interface LearnedPattern {
   confidence: number
   learned_at: number
   data: Record<string, unknown>
+}
+
+// ============================================================================
+// Dashboard Types
+// ============================================================================
+
+/**
+ * Dashboard response from API
+ */
+export interface DashboardResponse {
+  id: string
+  name: string
+  layout: {
+    columns: number
+    rows: number | 'auto'
+    breakpoints: {
+      lg: number
+      md: number
+      sm: number
+      xs: number
+    }
+  }
+  components: DashboardComponentResponse[]
+  created_at: number
+  updated_at: number
+  is_default?: boolean
+}
+
+/**
+ * Dashboard component response from API
+ */
+export interface DashboardComponentResponse {
+  id: string
+  type: string
+  position: {
+    x: number
+    y: number
+    w: number
+    h: number
+  }
+  title?: string
+  config?: Record<string, unknown>
+  data_source?: {
+    type: string
+    endpoint?: string
+    transform?: string
+    refresh?: number
+    params?: Record<string, unknown>
+    static_value?: unknown
+  }
+  display?: Record<string, unknown>
+  actions?: Array<{
+    type: string
+    method?: string
+    endpoint?: string
+    path?: string
+    dialog?: string
+    confirm?: boolean
+  }>
+}
+
+/**
+ * Request to create a dashboard
+ */
+export interface CreateDashboardRequest {
+  name: string
+  layout: DashboardResponse['layout']
+  components: Omit<DashboardComponentResponse, 'id'>[]
+}
+
+/**
+ * Request to update a dashboard
+ */
+export interface UpdateDashboardRequest {
+  name?: string
+  layout?: DashboardResponse['layout']
+  components?: DashboardComponentResponse[]
+}
+
+/**
+ * Dashboard template response
+ */
+export interface DashboardTemplateResponse {
+  id: string
+  name: string
+  description: string
+  category: string
+  icon?: string
+  layout: DashboardResponse['layout']
+  components: Omit<DashboardComponentResponse, 'id'>[]
+  required_resources?: {
+    devices?: number
+    agents?: number
+    rules?: number
+  }
 }
 
 

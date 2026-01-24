@@ -8,7 +8,7 @@
   },
   "agentName": "智能体名称",
   "userPrompt": "用户指令",
-  "status": "状态",
+  "statusColumn": "状态",
   "executions": "执行次数",
   "lastExecution": "最后执行",
   "timestamp": "时间戳",
@@ -50,6 +50,18 @@
   "noDevices": "暂无可用设备，请先添加设备",
   "metrics": "监控指标",
   "commands": "可用命令",
+  "role": "角色",
+  "roles": {
+    "monitor": "监控专员",
+    "executor": "执行专员",
+    "analyst": "分析专员"
+  },
+  "stats": "统计",
+  "time": {
+    "justNow": "刚刚",
+    "minutesAgo": "分钟前",
+    "hoursAgo": "小时前"
+  },
   "status": {
     "active": "运行中",
     "paused": "已暂停",

@@ -153,6 +153,9 @@
       "sendCommand": "发送命令"
     }
   },
+  "actions": {
+    "viewDetails": "查看详情"
+  },
   "add": {
     "title": "添加设备",
     "typeRequired": "设备类型 <span class=\"text-destructive\">*</span>",
@@ -225,6 +228,10 @@
       "nameRequired": "请先输入设备名称",
       "typeId": "类型 ID: {{id}}",
       "button": "添加"
+    },
+    "actions": {
+      "view": "查看",
+      "export": "导出"
     },
     "smartGeneration": "智能生成",
     "advancedMode": "高级模式",
@@ -520,12 +527,21 @@
     "headers": {
       "deviceId": "设备 ID",
       "source": "来源",
+      "deviceType": "设备类型",
       "status": "状态",
       "samples": "样本",
       "confidence": "置信度",
       "category": "类别",
+      "discoveredAt": "发现时间",
       "actions": "操作"
     },
+    "analyzing": "分析中...",
+    "time": {
+      "justNow": "刚刚",
+      "minutesAgo": "分钟前",
+      "hoursAgo": "小时前"
+    },
+    "deviceType": "设备类型",
     "approveTitle": "批准待注册设备",
     "approveDesc": "审核并批准此待注册设备以注册它",
     "selectExistingType": "选择现有设备类型",

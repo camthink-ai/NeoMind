@@ -17,6 +17,7 @@ import {
   Lightbulb,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Link } from "react-router-dom"
 
 interface WelcomeAreaProps {
   className?: string
@@ -39,10 +40,10 @@ interface AISuggestion {
 
 // Quick action buttons
 const quickActions = [
-  { id: "devices", label: "查看设备", icon: Cpu, page: "devices" as const },
-  { id: "automation", label: "自动化规则", icon: Workflow, page: "automation" as const },
-  { id: "alerts", label: "告警中心", icon: Bell, page: "alerts" as const },
-  { id: "settings", label: "系统设置", icon: Settings, page: "settings" as const },
+  { id: "devices", label: "查看设备", icon: Cpu, path: "/devices" },
+  { id: "automation", label: "自动化规则", icon: Workflow, path: "/automation" },
+  { id: "events", label: "事件中心", icon: Bell, path: "/events" },
+  { id: "settings", label: "系统设置", icon: Settings, path: "/settings" },
 ]
 
 // Prompt suggestions
@@ -54,7 +55,6 @@ const promptSuggestions = [
 ]
 
 export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
-  const setCurrentPage = useStore((state) => state.setCurrentPage)
   const user = useStore((state) => state.user)
 
   const [stats, setStats] = useState<SystemStats | null>(null)
@@ -157,8 +157,8 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
         {/* Status cards */}
         {stats && (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 animate-fade-in-up" style={{ animationDelay: "100ms" }}>
-            <button
-              onClick={() => setCurrentPage("devices")}
+            <Link
+              to="/devices"
               className="p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors text-left group"
             >
               <div className="flex items-center justify-between mb-2">
@@ -170,10 +170,10 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
                 <span className="text-sm font-normal text-muted-foreground">/{stats.devicesTotal}</span>
               </div>
               <div className="text-xs text-muted-foreground">设备在线</div>
-            </button>
+            </Link>
 
-            <button
-              onClick={() => setCurrentPage("automation")}
+            <Link
+              to="/automation"
               className="p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors text-left group"
             >
               <div className="flex items-center justify-between mb-2">
@@ -182,10 +182,10 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
               </div>
               <div className="text-2xl font-semibold text-foreground">{stats.activeRules}</div>
               <div className="text-xs text-muted-foreground">活跃规则</div>
-            </button>
+            </Link>
 
-            <button
-              onClick={() => setCurrentPage("alerts")}
+            <Link
+              to="/events"
               className="p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors text-left group"
             >
               <div className="flex items-center justify-between mb-2">
@@ -194,7 +194,7 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
               </div>
               <div className="text-2xl font-semibold text-foreground">{stats.pendingAlerts}</div>
               <div className="text-xs text-muted-foreground">待处理告警</div>
-            </button>
+            </Link>
           </div>
         )}
 
@@ -264,11 +264,13 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
               <Button
                 key={action.id}
                 variant="ghost"
-                onClick={() => setCurrentPage(action.page)}
+                asChild
                 className="flex-col h-auto py-3 px-4 rounded-xl hover:bg-muted"
               >
-                <Icon className="h-5 w-5 mb-1 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground">{action.label}</span>
+                <Link to={action.path}>
+                  <Icon className="h-5 w-5 mb-1 text-muted-foreground" />
+                  <span className="text-xs text-muted-foreground">{action.label}</span>
+                </Link>
               </Button>
             )
           })}

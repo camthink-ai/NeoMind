@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { api } from '@/lib/api'
 import type { DecisionDto } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -34,8 +35,37 @@ const fetchDecisions = async (filter: DecisionFilter): Promise<DecisionDto[]> =>
 
 export function DecisionsPage() {
   const { t } = useTranslation(['common', 'decisions'])
-  const [filter, setFilter] = useState<DecisionFilter>('all')
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Get filter from URL path
+  const getFilterFromPath = (): DecisionFilter => {
+    const pathSegments = location.pathname.split('/')
+    const lastSegment = pathSegments[pathSegments.length - 1]
+    if (lastSegment === 'proposed' || lastSegment === 'executed' || lastSegment === 'rejected') {
+      return lastSegment as DecisionFilter
+    }
+    return 'all'
+  }
+
+  const [filter, setFilter] = useState<DecisionFilter>(getFilterFromPath)
   const [selectedDecision, setSelectedDecision] = useState<DecisionDto | null>(null)
+
+  // Update filter when URL changes
+  useEffect(() => {
+    const filterFromPath = getFilterFromPath()
+    setFilter(filterFromPath)
+  }, [location.pathname])
+
+  // Update URL when filter changes
+  const handleFilterChange = (newFilter: DecisionFilter) => {
+    setFilter(newFilter)
+    if (newFilter === 'all') {
+      navigate('/decisions')
+    } else {
+      navigate(`/decisions/${newFilter}`)
+    }
+  }
   const [processingId, setProcessingId] = useState<string | null>(null)
   const [automationDialogOpen, setAutomationDialogOpen] = useState(false)
   const [automationFromDecision, setAutomationFromDecision] = useState<{ description: string; suggestedType?: 'rule' | 'transform' } | null>(null)
@@ -179,7 +209,7 @@ export function DecisionsPage() {
       <PageTabs
         tabs={tabs}
         activeTab={filter}
-        onTabChange={(v) => setFilter(v as DecisionFilter)}
+        onTabChange={(v) => handleFilterChange(v as DecisionFilter)}
         actions={[
           { label: t('common:refresh'), icon: <RefreshCw className="h-4 w-4" />, onClick: refetch, variant: 'outline' },
         ]}

@@ -10,6 +10,7 @@ import { type Message, type ChatImage } from "@/types"
 import { ThinkingBlock } from "./ThinkingBlock"
 import { ToolCallVisualization } from "./ToolCallVisualization"
 import { QuickActions } from "./QuickActions"
+import { MarkdownMessage } from "./MarkdownMessage"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Sparkles } from "lucide-react"
 import { useStore } from "@/store"
@@ -60,11 +61,45 @@ function formatTime(timestamp: number): string {
 }
 
 /**
+ * Check if two assistant messages should be merged.
+ *
+ * They should be merged if:
+ * - First has thinking OR tools
+ * - Second has content OR first is missing content (split response)
+ * - They are consecutive assistant messages
+ *
+ * Backend pattern: [thinking+tools] + [content] or [thinking] + [tools+content]
+ */
+function shouldMergeMessages(first: Message, second: Message): boolean {
+  const firstHasThinking = !!first.thinking && first.thinking.length > 0
+  const firstHasTools = !!first.tool_calls && first.tool_calls.length > 0
+  const firstHasContent = !!first.content && first.content.length > 0
+
+  const secondHasThinking = !!second.thinking && second.thinking.length > 0
+  const secondHasTools = !!second.tool_calls && second.tool_calls.length > 0
+  const secondHasContent = !!second.content && second.content.length > 0
+
+  // Always merge consecutive assistant messages where first has thinking or tools
+  // This handles the backend pattern of splitting responses
+  if (firstHasThinking || firstHasTools) {
+    // Merge if second has content, OR if first is missing content (split response)
+    return !firstHasContent || secondHasContent
+  }
+
+  // Also merge if second has thinking or tools and first only has content
+  if ((secondHasThinking || secondHasTools) && firstHasContent) {
+    return true
+  }
+
+  return false
+}
+
+/**
  * Merge fragmented assistant messages for display.
  *
  * Rules:
  * 1. User messages are kept as-is
- * 2. Consecutive assistant messages are merged:
+ * 2. Consecutive assistant messages are merged if they should be:
  *    - Take thinking from the first one
  *    - Take tool_calls from the first one (or any that has them)
  *    - Concatenate all content
@@ -97,6 +132,11 @@ function mergeMessagesForDisplay(messages: Message[]): Message[] {
     let j = i + 1
     while (j < messages.length && messages[j].role === "assistant") {
       const nextMsg = messages[j]
+
+      // Only merge if they should be merged based on the same logic as sessionSlice
+      if (!shouldMergeMessages(mergedAssistant, nextMsg)) {
+        break
+      }
 
       // Collect content
       if (nextMsg.content) {
@@ -211,9 +251,7 @@ export function MergedMessageList({
 
               {/* Content */}
               {message.content && (
-                <div className="prose prose-sm max-w-none dark:prose-invert">
-                  {message.content}
-                </div>
+                <MarkdownMessage content={message.content} />
               )}
             </div>
 
@@ -264,9 +302,7 @@ export function MergedMessageList({
 
               {/* Content */}
               {streamingContent && (
-                <div className="prose prose-sm max-w-none dark:prose-invert">
-                  {streamingContent}
-                </div>
+                <MarkdownMessage content={streamingContent} />
               )}
 
               {/* Loading indicator */}

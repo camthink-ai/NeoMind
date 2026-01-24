@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { useToast } from "@/hooks/use-toast"
 import { useEvents } from "@/hooks/useEvents"
+import { useNavigate, useLocation, useParams } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
 import { Upload, Download, Settings } from "lucide-react"
@@ -38,6 +39,7 @@ type DeviceTabValue = "devices" | "types" | "drafts"
 export function DevicesPage() {
   const { t } = useTranslation(['common', 'devices'])
   const { toast } = useToast()
+  const { deviceId: urlDeviceId } = useParams<{ deviceId?: string }>()
   const devices = useStore((state) => state.devices)
   const devicesLoading = useStore((state) => state.devicesLoading)
   const fetchDevices = useStore((state) => state.fetchDevices)
@@ -58,9 +60,11 @@ export function DevicesPage() {
   const deviceDetails = useStore((state) => state.deviceDetails)
   const telemetryData = useStore((state) => state.telemetryData)
   const telemetrySummary = useStore((state) => state.telemetrySummary)
+  const deviceCurrentState = useStore((state) => state.deviceCurrentState)
   const telemetryLoading = useStore((state) => state.telemetryLoading)
   const fetchTelemetryData = useStore((state) => state.fetchTelemetryData)
   const fetchTelemetrySummary = useStore((state) => state.fetchTelemetrySummary)
+  const fetchDeviceCurrentState = useStore((state) => state.fetchDeviceCurrentState)
   const discoverDevices = useStore((state) => state.discoverDevices)
   const discovering = useStore((state) => state.discovering)
   const discoveredDevices = useStore((state) => state.discoveredDevices)
@@ -127,8 +131,45 @@ export function DevicesPage() {
     setShowOnboardConfigDialog(true)
   }
 
-  // Active tab state
-  const [activeTab, setActiveTab] = useState<DeviceTabValue>("devices")
+  // Router integration
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Get tab from URL path
+  const getTabFromPath = (): DeviceTabValue => {
+    const pathSegments = location.pathname.split('/')
+    const lastSegment = pathSegments[pathSegments.length - 1]
+
+    // If there's a deviceId parameter (detail view), always return 'devices' tab
+    if (urlDeviceId) {
+      return 'devices'
+    }
+
+    // Otherwise check for known tab values
+    if (lastSegment === 'types' || lastSegment === 'drafts') {
+      return lastSegment as DeviceTabValue
+    }
+    return 'devices'
+  }
+
+  // Active tab state - sync with URL
+  const [activeTab, setActiveTab] = useState<DeviceTabValue>(getTabFromPath)
+
+  // Update tab when URL changes
+  useEffect(() => {
+    const tabFromPath = getTabFromPath()
+    setActiveTab(tabFromPath)
+  }, [location.pathname])
+
+  // Update URL when tab changes
+  const handleTabChange = (tab: DeviceTabValue) => {
+    setActiveTab(tab)
+    if (tab === 'devices') {
+      navigate('/devices')
+    } else {
+      navigate(`/devices/${tab}`)
+    }
+  }
 
   // Reset device type pagination when data changes
   useEffect(() => {
@@ -176,6 +217,51 @@ export function DevicesPage() {
       fetchDeviceTypes()
     }
   }, [fetchDeviceTypes])
+
+  // Load device from URL parameter
+  useEffect(() => {
+    // Use functional state update to get latest value
+    setDeviceDetailView((currentDetailView) => {
+      // If URL has deviceId and it's different from current, load the device
+      if (urlDeviceId && urlDeviceId !== currentDetailView) {
+        // Find the device in the list
+        let device = devices.find(d => d.id === urlDeviceId)
+
+        // If not found in list, try to fetch directly from API
+        const loadDevice = async () => {
+          if (!device && !devicesLoading) {
+            try {
+              device = await api.getDevice(urlDeviceId)
+            } catch (error) {
+              console.error('Failed to load device from URL:', error)
+              return urlDeviceId // Still set the view even if API fails (will show error)
+            }
+          }
+
+          if (device) {
+            setSelectedMetric(null)
+            await fetchDeviceDetails(urlDeviceId)
+            await fetchDeviceTypeDetails(device.device_type)
+            // Use unified endpoint: device + metrics in one call
+            await fetchDeviceCurrentState(urlDeviceId)
+          }
+        }
+
+        loadDevice()
+        return urlDeviceId
+      }
+
+      // If URL doesn't have deviceId but state does, clear it
+      if (!urlDeviceId && currentDetailView) {
+        setSelectedMetric(null)
+        return null
+      }
+
+      return currentDetailView
+    })
+    // Only depend on urlDeviceId - other values accessed inside are stable or OK to be stale
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlDeviceId])
 
   // Debounced refresh to prevent excessive API calls
   const refreshDevicesRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -272,19 +358,19 @@ export function DevicesPage() {
   }
 
   const handleOpenDeviceDetails = async (device: Device) => {
+    // Navigate to device detail URL
+    navigate(`/devices/${device.id}`)
     setDeviceDetailView(device.id)
     setSelectedMetric(null)
     await fetchDeviceDetails(device.id)
     await fetchDeviceTypeDetails(device.device_type)
-    // Fetch telemetry summary (includes virtual metrics with is_virtual flag)
-    await fetchTelemetrySummary(device.id, 24) // 24 hours
-    // Fetch all telemetry data (no specific metric = get all metrics)
-    const end = Math.floor(Date.now() / 1000)
-    const start = end - 86400 // 24 hours
-    await fetchTelemetryData(device.id, undefined, start, end, 100)
+    // Use unified endpoint: device + metrics in one call
+    await fetchDeviceCurrentState(device.id)
   }
 
   const handleCloseDeviceDetail = () => {
+    // Navigate back to devices list
+    navigate('/devices')
     setDeviceDetailView(null)
     setSelectedMetric(null)
   }
@@ -292,15 +378,10 @@ export function DevicesPage() {
   const handleRefreshDeviceDetail = async () => {
     if (deviceDetailView) {
       await fetchDeviceDetails(deviceDetailView)
-      // Fetch telemetry summary (includes virtual metrics)
-      await fetchTelemetrySummary(deviceDetailView, 24)
+      // Use unified endpoint for refresh
+      await fetchDeviceCurrentState(deviceDetailView)
       if (selectedMetric) {
         await fetchTelemetryData(deviceDetailView, selectedMetric, undefined, undefined, 1000)
-      } else {
-        // Fetch all metrics if no specific metric selected
-        const end = Math.floor(Date.now() / 1000)
-        const start = end - 86400
-        await fetchTelemetryData(deviceDetailView, undefined, start, end, 100)
       }
     }
   }
@@ -519,24 +600,34 @@ export function DevicesPage() {
 
   return (
     <PageLayout
-      title={t('devices:title')}
-      subtitle={t('devices:subtitle')}
+      title={deviceDetailView ? undefined : t('devices:title')}
+      subtitle={deviceDetailView ? undefined : t('devices:subtitle')}
     >
-      {deviceDetailView && deviceDetails ? (
+      {deviceDetailView ? (
         // Device Detail View
-        <DeviceDetail
-          device={deviceDetails}
-          deviceType={deviceTypeDetails}
-          telemetryData={telemetryData}
-          telemetrySummary={telemetrySummary}
-          telemetryLoading={telemetryLoading}
-          selectedMetric={selectedMetric}
-          onBack={handleCloseDeviceDetail}
-          onRefresh={handleRefreshDeviceDetail}
-          onMetricClick={handleMetricClick}
-          onMetricBack={() => setSelectedMetric(null)}
-          onSendCommand={handleSendCommand}
-        />
+        deviceDetails ? (
+          <DeviceDetail
+            device={deviceDetails}
+            deviceType={deviceTypeDetails}
+            deviceCurrentState={deviceCurrentState}
+            telemetryData={telemetryData}
+            telemetryLoading={telemetryLoading}
+            selectedMetric={selectedMetric}
+            onBack={handleCloseDeviceDetail}
+            onRefresh={handleRefreshDeviceDetail}
+            onMetricClick={handleMetricClick}
+            onMetricBack={() => setSelectedMetric(null)}
+            onSendCommand={handleSendCommand}
+          />
+        ) : (
+          // Loading state for device detail
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent" />
+              <p className="mt-4 text-muted-foreground">Loading device details...</p>
+            </div>
+          </div>
+        )
       ) : (
         // Tabbed View
         <PageTabs
@@ -546,7 +637,7 @@ export function DevicesPage() {
             { value: 'drafts', label: t('devices:pending.tab') },
           ]}
           activeTab={activeTab}
-          onTabChange={(v) => setActiveTab(v as DeviceTabValue)}
+          onTabChange={(v) => handleTabChange(v as DeviceTabValue)}
           actions={
             activeTab === 'devices'
               ? [

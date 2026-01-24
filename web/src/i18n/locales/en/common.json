@@ -1,4 +1,11 @@
 {
+  "alerts": {
+    "title": "Alerts",
+    "unread": "unread",
+    "noAlerts": "No alerts",
+    "acknowledge": "Acknowledge",
+    "moreAlerts": "+{{count}} more alerts"
+  },
   "connection": {
     "connected": "Connected",
     "disconnected": "Disconnected",
@@ -8,10 +15,13 @@
   },
   "nav": {
     "dashboard": "Chat",
+    "visual-dashboard": "Visual Dashboard",
     "devices": "Devices",
     "automation": "Automation",
+    "agents": "AI Agents",
     "events": "Events",
     "alerts": "Alerts",
+    "decisions": "Decisions",
     "plugins": "Plugins",
     "settings": "Settings"
   },

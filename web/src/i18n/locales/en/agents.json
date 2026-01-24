@@ -8,7 +8,7 @@
   },
   "agentName": "Agent Name",
   "userPrompt": "User Prompt",
-  "status": "Status",
+  "statusColumn": "Status",
   "executions": "Executions",
   "lastExecution": "Last Execution",
   "timestamp": "Timestamp",
@@ -50,6 +50,18 @@
   "noDevices": "No devices available. Add devices first.",
   "metrics": "Metrics to Monitor",
   "commands": "Available Commands",
+  "role": "Role",
+  "roles": {
+    "monitor": "Monitor",
+    "executor": "Executor",
+    "analyst": "Analyst"
+  },
+  "stats": "Stats",
+  "time": {
+    "justNow": "Just now",
+    "minutesAgo": "min ago",
+    "hoursAgo": "hours ago"
+  },
   "status": {
     "active": "Active",
     "paused": "Paused",

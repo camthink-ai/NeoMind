@@ -1,7 +1,5 @@
-import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import {
   Table,
   TableBody,
@@ -10,10 +8,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { EmptyStateInline, Pagination, BulkActionBar } from "@/components/shared"
+import { EmptyStateInline, Pagination } from "@/components/shared"
 import { Card } from "@/components/ui/card"
-import { Eye, Pencil, Trash2, Download } from "lucide-react"
-import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Eye, Pencil, Trash2, Download, MoreVertical, Cpu, Database, Activity } from "lucide-react"
 import type { DeviceType } from "@/types"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -48,75 +53,9 @@ export function DeviceTypeList({
 }: DeviceTypeListProps) {
   const { t } = useTranslation(['common', 'devices'])
   const { toast } = useToast()
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [bulkProcessing, setBulkProcessing] = useState(false)
-
-  const toggleSelection = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
-      } else {
-        next.add(id)
-      }
-      return next
-    })
-  }
-
-  const toggleAll = () => {
-    const pageIds = new Set(paginatedDeviceTypes.map((t) => t.device_type))
-    if (paginatedDeviceTypes.every((t) => selectedIds.has(t.device_type))) {
-      setSelectedIds((prev) => {
-        const next = new Set(prev)
-        pageIds.forEach((id) => next.delete(id))
-        return next
-      })
-    } else {
-      setSelectedIds((prev) => new Set([...prev, ...pageIds]))
-    }
-  }
-
-  const handleBulkDelete = async () => {
-    if (selectedIds.size === 0) return
-    if (!confirm(t('devices:types.confirmDeleteSelected', { count: selectedIds.size }))) return
-
-    setBulkProcessing(true)
-    try {
-      const response = await api.bulkDeleteDeviceTypes(Array.from(selectedIds))
-      const deleted = response.deleted ?? response.succeeded ?? 0
-      const failed = response.failed ?? 0
-
-      if (failed > 0) {
-        // Show detailed error message for partial or complete failures
-        const errorDetails = response.results
-          ?.filter((r: { success: boolean }) => !r.success)
-          .map((r: { error?: string }) => r.error)
-          .filter(Boolean) as string[] || []
-
-        toast({
-          title: t('common:failed'),
-          description: errorDetails.length > 0
-            ? `${failed} ${t('devices:types.deleteFailed')}: ${errorDetails[0]}`
-            : `${failed} ${t('devices:types.deleteFailed')}`,
-          variant: "destructive"
-        })
-      }
-
-      if (deleted > 0) {
-        toast({ title: t('common:success'), description: t('devices:types.deletedCount', { count: deleted }) })
-        setSelectedIds(new Set())
-        onRefresh()
-      }
-    } catch (error) {
-      toast({ title: t('common:failed'), description: t('devices:types.bulkDeleteFailed'), variant: "destructive" })
-    } finally {
-      setBulkProcessing(false)
-    }
-  }
 
   // Export single device type as JSON file
-  // Note: Need to fetch full details first since list API only returns counts
-  const handleExportSingle = async (deviceType: DeviceType) => {
+  const handleExport = async (deviceType: DeviceType) => {
     try {
       // Fetch full device type details with metrics and commands
       const fullType = await api.getDeviceType(deviceType.device_type)
@@ -136,134 +75,124 @@ export function DeviceTypeList({
     }
   }
 
-  // Export selected device types
-  const handleExportSelected = async () => {
-    if (selectedIds.size === 0) {
-      toast({ title: t('common:failed'), description: 'No device types selected', variant: 'destructive' })
-      return
-    }
-    try {
-      // Fetch full details for each selected device type
-      const selectedTypes = deviceTypes.filter(t => selectedIds.has(t.device_type))
-      const fullTypes = await Promise.all(
-        selectedTypes.map(t => api.getDeviceType(t.device_type))
-      )
-      const data = JSON.stringify(fullTypes, null, 2)
-      const blob = new Blob([data], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `device-types-${selectedIds.size}.json`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      URL.revokeObjectURL(url)
-      toast({ title: t('common:success'), description: `Exported ${selectedIds.size} device types` })
-    } catch (error) {
-      toast({ title: t('common:failed'), description: 'Failed to export device types', variant: 'destructive' })
-    }
-  }
-
-  const allOnPageSelected = paginatedDeviceTypes.length > 0 && paginatedDeviceTypes.every((t) => selectedIds.has(t.device_type))
-
   return (
     <>
       {/* Dialogs - addTypeDialog is controlled by parent PageTabs actions */}
       {addTypeDialog}
 
-      {/* Bulk Actions Bar */}
-      <BulkActionBar
-        selectedCount={selectedIds.size}
-        actions={[
-          {
-            label: 'Export Selected',
-            icon: <Download className="h-4 w-4" />,
-            onClick: handleExportSelected,
-            disabled: bulkProcessing,
-            variant: "outline",
-          },
-          {
-            label: t('common:delete'),
-            icon: <Trash2 className="h-4 w-4" />,
-            onClick: handleBulkDelete,
-            disabled: bulkProcessing,
-            variant: "outline",
-          },
-        ]}
-        onCancel={() => setSelectedIds(new Set())}
-      />
-
-      <Card>
+      <Card className="overflow-hidden">
         <Table>
           <TableHeader>
-            <TableRow>
-              <TableHead align="center" className="w-[50px]">
-                <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} />
+            <TableRow className="hover:bg-transparent border-b bg-muted/30">
+              <TableHead className="w-10 text-center">#</TableHead>
+              <TableHead>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Database className="h-4 w-4" />
+                  {t('devices:types.headers.name')}
+                </div>
               </TableHead>
-              <TableHead>{t('devices:types.headers.id')}</TableHead>
-              <TableHead>{t('devices:types.headers.name')}</TableHead>
-              <TableHead>{t('devices:types.headers.description')}</TableHead>
-              <TableHead align="center">{t('devices:types.headers.metrics')}</TableHead>
-              <TableHead align="center">{t('devices:types.headers.commands')}</TableHead>
-              <TableHead align="center">{t('automation:transforms', { defaultValue: 'Transforms Data' })}</TableHead>
-              <TableHead align="right">{t('devices:types.headers.actions')}</TableHead>
+              <TableHead>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Activity className="h-4 w-4" />
+                  {t('devices:types.headers.metrics')}
+                </div>
+              </TableHead>
+              <TableHead>
+                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Cpu className="h-4 w-4" />
+                  {t('devices:types.headers.commands')}
+                </div>
+              </TableHead>
+              <TableHead align="center">
+                <div className="flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t('automation:transforms', { defaultValue: 'Transforms' })}
+                </div>
+              </TableHead>
+              <TableHead className="w-12"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
-              <EmptyStateInline title={t('common:loading')} colSpan={8} />
+              <EmptyStateInline title={t('common:loading')} colSpan={6} />
             ) : deviceTypes.length === 0 ? (
-              <EmptyStateInline title={t('devices:types.noTypes')} colSpan={8} />
+              <EmptyStateInline title={t('devices:types.noTypes')} colSpan={6} />
             ) : (
-                paginatedDeviceTypes.map((type) => (
-                  <TableRow key={type.device_type} className={cn(selectedIds.has(type.device_type) && "bg-muted/50")}>
-                    <TableCell align="center">
-                      <Checkbox
-                        checked={selectedIds.has(type.device_type)}
-                        onCheckedChange={() => toggleSelection(type.device_type)}
-                      />
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {type.device_type}
-                    </TableCell>
-                    <TableCell>{type.name}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {type.description || "-"}
-                    </TableCell>
-                    <TableCell align="center">
-                      {type.metrics?.length ?? type.metric_count ?? 0}
-                    </TableCell>
-                    <TableCell align="center">
-                      {type.commands?.length ?? type.command_count ?? 0}
-                    </TableCell>
-                    <TableCell align="center">
-                      <TransformsBadge deviceTypeId={type.device_type} onRefresh={onRefresh} />
-                    </TableCell>
-                    <TableCell align="right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onViewDetails(type)}>
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleExportSingle(type)} title="Export">
-                          <Download className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onEdit(type)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onDelete(type.device_type)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+              paginatedDeviceTypes.map((type, index) => (
+                <TableRow key={type.device_type} className="group transition-colors hover:bg-muted/50">
+                  <TableCell className="text-center">
+                    <span className="text-xs text-muted-foreground font-medium">{index + 1}</span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-blue-500/10 text-blue-600">
+                        <Database className="h-4 w-4" />
                       </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+                      <div>
+                        <div className="font-medium text-sm">{type.name}</div>
+                        <div className="flex items-center gap-2">
+                          <code className="text-xs text-muted-foreground font-mono">{type.device_type}</code>
+                          {type.description && (
+                            <span className="text-xs text-muted-foreground line-clamp-1 max-w-[200px]">
+                              {type.description}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/30 dark:text-blue-400 dark:border-blue-800">
+                      {type.metrics?.length ?? type.metric_count ?? 0}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/30 dark:text-purple-400 dark:border-purple-800">
+                      {type.commands?.length ?? type.command_count ?? 0}
+                    </Badge>
+                  </TableCell>
+                  <TableCell align="center">
+                    <TransformsBadge deviceTypeId={type.device_type} onRefresh={onRefresh} />
+                  </TableCell>
+                  <TableCell>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-40">
+                        <DropdownMenuItem onClick={() => onViewDetails(type)}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          {t('devices:types.actions.view')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleExport(type)}>
+                          <Download className="mr-2 h-4 w-4" />
+                          {t('devices:types.actions.export')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => onEdit(type)}>
+                          <Pencil className="mr-2 h-4 w-4" />
+                          {t('common:edit')}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          onClick={() => onDelete(type.device_type)}
+                          className="text-destructive"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {t('common:delete')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              ))
             )}
           </TableBody>
         </Table>
       </Card>
 
       {deviceTypes.length > deviceTypesPerPage && (
-        <div className="pt-4">
+        <div className="sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 pt-4 pb-2 border-t mt-4">
           <Pagination
             total={deviceTypes.length}
             pageSize={deviceTypesPerPage}
@@ -272,7 +201,6 @@ export function DeviceTypeList({
           />
         </div>
       )}
-
     </>
   )
 }

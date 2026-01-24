@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Activity,
@@ -9,8 +9,6 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronRight,
-  ChevronLeft,
-  ChevronRight as ChevronRightIcon,
 } from 'lucide-react'
 import { PageLayout } from '@/components/layout/PageLayout'
 import { api } from '@/lib/api'
@@ -25,14 +23,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { EmptyStateInline } from '@/components/shared'
+import { EmptyStateInline, Pagination } from '@/components/shared'
 import { formatTimestamp } from '@/lib/utils/format'
 import type { Event as SystemEvent } from '@/types'
 import { cn } from '@/lib/utils'
 
 type EventFilter = 'all' | 'device' | 'rule' | 'alert' | 'llm'
 
-const PAGE_SIZE = 50
+const ITEMS_PER_PAGE = 10
 
 interface EventsResponse {
   events: SystemEvent[]
@@ -44,7 +42,7 @@ interface EventsResponse {
 
 const fetchEvents = async (category: string = 'all', offset: number = 0): Promise<EventsResponse> => {
   const params: { category?: string; limit: number; offset: number } = {
-    limit: PAGE_SIZE,
+    limit: ITEMS_PER_PAGE,
     offset,
   }
   if (category !== 'all') {
@@ -138,12 +136,12 @@ export function EventsPage() {
   const loadEvents = useCallback(async (category: EventFilter, pageNum: number) => {
     setLoading(true)
     try {
-      const offset = pageNum * PAGE_SIZE
+      const offset = pageNum * ITEMS_PER_PAGE
       const response = await fetchEvents(category, offset)
       setEventsData(response)
     } catch (error) {
       console.error('Failed to load events:', error)
-      setEventsData({ events: [], total: 0, offset: 0, limit: PAGE_SIZE, has_more: false })
+      setEventsData({ events: [], total: 0, offset: 0, limit: ITEMS_PER_PAGE, has_more: false })
     } finally {
       setLoading(false)
     }
@@ -166,25 +164,13 @@ export function EventsPage() {
     loadEvents(filter, 0)
   }
 
-  // Handle page navigation
-  const handlePrevPage = () => {
-    if (page > 0) {
-      const newPage = page - 1
-      setPage(newPage)
-      loadEvents(activeFilter, newPage)
-    }
-  }
-
-  const handleNextPage = () => {
-    if (eventsData?.has_more) {
-      const newPage = page + 1
-      setPage(newPage)
-      loadEvents(activeFilter, newPage)
-    }
+  // Handle page change
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage)
+    loadEvents(activeFilter, newPage)
   }
 
   const displayEvents = eventsData?.events || []
-  const hasMore = eventsData?.has_more || false
   const totalCount = eventsData?.total || 0
 
   // Toggle data cell expansion
@@ -203,12 +189,6 @@ export function EventsPage() {
   // No client-side filtering - done server-side
   const filteredEvents = displayEvents
 
-  // Get count for each filter (using server total)
-  const filterCounts = useMemo(() => {
-    // For now, just use current page count since we don't have separate counts per category
-    return { all: totalCount, [activeFilter]: displayEvents.length }
-  }, [totalCount, displayEvents.length, activeFilter])
-
   return (
     <PageLayout
       title={t('events:title')}
@@ -218,7 +198,6 @@ export function EventsPage() {
       <div className="flex items-center gap-2 flex-wrap mb-6">
         {EVENT_FILTERS_CONFIG.map((filter) => {
           const Icon = filter.icon
-          const count = filterCounts[filter.value] || 0
           const isActive = activeFilter === filter.value
           const label = t(`events:${filter.labelKey}`)
 
@@ -235,44 +214,11 @@ export function EventsPage() {
             >
               <Icon className="h-4 w-4" />
               <span>{label}</span>
-              <Badge
-                variant={isActive ? 'secondary' : 'outline'}
-                className="h-5 px-1.5 text-xs"
-              >
-                {count}
-              </Badge>
             </Button>
           )
         })}
 
         <div className="flex-1" />
-
-        {/* Pagination Controls */}
-        <div className="flex items-center gap-2 mr-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handlePrevPage}
-            disabled={page === 0 || loading}
-            className="gap-1"
-          >
-            <ChevronLeft className="h-4 w-4" />
-            {t('common:previous')}
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            {page + 1}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleNextPage}
-            disabled={!hasMore || loading}
-            className="gap-1"
-          >
-            {t('common:next')}
-            <ChevronRightIcon className="h-4 w-4" />
-          </Button>
-        </div>
 
         <Button
           variant="outline"
@@ -387,6 +333,17 @@ export function EventsPage() {
           </TableBody>
         </Table>
       </Card>
+
+      {totalCount > ITEMS_PER_PAGE && (
+        <div className="sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 pt-4 pb-2 border-t mt-4">
+          <Pagination
+            total={totalCount}
+            pageSize={ITEMS_PER_PAGE}
+            currentPage={page}
+            onPageChange={handlePageChange}
+          />
+        </div>
+      )}
     </PageLayout>
   )
 }

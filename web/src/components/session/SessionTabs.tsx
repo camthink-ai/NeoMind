@@ -4,6 +4,7 @@
  */
 
 import { useState, useRef, useEffect } from "react"
+import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
 import type { ChatSession } from "@/types"
 import { cn } from "@/lib/utils"
@@ -23,6 +24,7 @@ interface SessionTabsProps {
 }
 
 export function SessionTabs({ className, onSessionChange }: SessionTabsProps) {
+  const navigate = useNavigate()
   const {
     sessions,
     sessionId: currentSessionId,
@@ -72,7 +74,10 @@ export function SessionTabs({ className, onSessionChange }: SessionTabsProps) {
     if (isCreating) return
     setIsCreating(true)
     try {
-      await createSession()
+      const newSessionId = await createSession()
+      if (newSessionId) {
+        navigate(`/chat/${newSessionId}`)
+      }
     } finally {
       setIsCreating(false)
     }
@@ -82,6 +87,7 @@ export function SessionTabs({ className, onSessionChange }: SessionTabsProps) {
   const handleSwitchSession = async (sessionId: string) => {
     if (sessionId === currentSessionId) return
     await switchSession(sessionId)
+    navigate(`/chat/${sessionId}`)
     onSessionChange?.(sessionId)
   }
 

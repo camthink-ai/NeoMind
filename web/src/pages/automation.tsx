@@ -1,17 +1,19 @@
 /**
  * NeoTalk Automation Page
  *
- * Unified automation interface with AI agents, rules and data transforms.
+ * Automation interface with rules and data transforms.
+ * AI Agents are now managed separately in /agents page.
  * Uses PageLayout + PageTabs structure consistent with other pages.
  */
 
 import { useState, useCallback, useEffect } from "react"
 import { useTranslation } from "react-i18next"
+import { useNavigate, useLocation } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
-import type { TransformAutomation, Rule, AiAgent, AiAgentDetail } from "@/types"
+import type { TransformAutomation, Rule } from "@/types"
 
 // Import split-pane builder components
 import { SimpleRuleBuilderSplit } from "@/components/automation/SimpleRuleBuilderSplit"
@@ -21,40 +23,57 @@ import { TransformBuilder as TransformBuilderSplit } from "@/components/automati
 import { RulesList } from "./automation-components/RulesList"
 import { TransformsList } from "./automation-components/TransformsList"
 
-// Import agents components
-import { AgentsList } from "./agents-components/AgentsList"
-import { AgentCreatorDialog } from "./agents-components/AgentCreatorDialog"
-import { AgentMemoryDialog } from "./agents-components/AgentMemoryDialog"
-
-type AutomationTab = 'agents' | 'rules' | 'transforms'
+type AutomationTab = 'rules' | 'transforms'
 
 export function AutomationPage() {
   const { t: tCommon } = useTranslation('common')
   const { t: tAuto } = useTranslation('automation')
   const { toast } = useToast()
-  const [activeTab, setActiveTab] = useState<AutomationTab>('agents')
+
+  // Router integration
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Get tab from URL path
+  const getTabFromPath = (): AutomationTab => {
+    const pathSegments = location.pathname.split('/')
+    const lastSegment = pathSegments[pathSegments.length - 1]
+    if (lastSegment === 'transforms') {
+      return 'transforms'
+    }
+    return 'rules'
+  }
+
+  // Active tab state - sync with URL
+  const [activeTab, setActiveTab] = useState<AutomationTab>(getTabFromPath)
+
+  // Update tab when URL changes
+  useEffect(() => {
+    const tabFromPath = getTabFromPath()
+    setActiveTab(tabFromPath)
+  }, [location.pathname])
+
+  // Update URL when tab changes
+  const handleTabChange = (tab: AutomationTab) => {
+    setActiveTab(tab)
+    if (tab === 'rules') {
+      navigate('/automation')
+    } else {
+      navigate(`/automation/${tab}`)
+    }
+  }
 
   // Builder states
   const [showRuleDialog, setShowRuleDialog] = useState(false)
   const [showTransformDialog, setShowTransformDialog] = useState(false)
 
-  // Agents dialog states
-  const [showAgentDialog, setShowAgentDialog] = useState(false)
-  const [memoryDialogOpen, setMemoryDialogOpen] = useState(false)
-
   // Editing states
   const [editingRule, setEditingRule] = useState<Rule | undefined>(undefined)
   const [editingTransform, setEditingTransform] = useState<TransformAutomation | undefined>(undefined)
-  const [editingAgent, setEditingAgent] = useState<AiAgentDetail | undefined>(undefined)
-
-  // Agents dialog data states
-  const [memoryAgentId, setMemoryAgentId] = useState('')
-  const [memoryAgentName, setMemoryAgentName] = useState('')
 
   // Data state
   const [rules, setRules] = useState<Rule[]>([])
   const [transforms, setTransforms] = useState<TransformAutomation[]>([])
-  const [agents, setAgents] = useState<AiAgent[]>([])
   const [loading, setLoading] = useState(false)
 
   // Resources for dialogs
@@ -78,15 +97,18 @@ export function AutomationPage() {
       }
 
       // Load tab-specific data
-      if (activeTab === 'agents') {
-        const data = await api.listAgents()
-        setAgents(data.agents || [])
-      } else if (activeTab === 'rules') {
+      if (activeTab === 'rules') {
         const data = await api.listRules()
-        setRules(data.rules || [])
+        // Sort by created_at descending (newest first)
+        setRules((data.rules || []).sort((a, b) => {
+          const aTime = typeof a.created_at === 'string' ? new Date(a.created_at).getTime() : a.created_at
+          const bTime = typeof b.created_at === 'string' ? new Date(b.created_at).getTime() : b.created_at
+          return bTime - aTime
+        }))
       } else if (activeTab === 'transforms') {
         const data = await api.listTransforms()
-        setTransforms(data.transforms || [])
+        // Sort by created_at descending (newest first)
+        setTransforms((data.transforms || []).sort((a, b) => b.created_at - a.created_at))
       }
     } catch (error) {
       console.error(`Failed to load ${activeTab}:`, error)
@@ -102,10 +124,7 @@ export function AutomationPage() {
 
   // Handlers
   const handleCreate = () => {
-    if (activeTab === 'agents') {
-      setEditingAgent(undefined)
-      setShowAgentDialog(true)
-    } else if (activeTab === 'rules') {
+    if (activeTab === 'rules') {
       setEditingRule(undefined)
       setShowRuleDialog(true)
     } else if (activeTab === 'transforms') {
@@ -114,104 +133,20 @@ export function AutomationPage() {
     }
   }
 
-  // Agent handlers
-  const handleEditAgent = async (agent: AiAgent) => {
-    try {
-      const detail = await api.getAgent(agent.id)
-      setEditingAgent(detail)
-      setShowAgentDialog(true)
-    } catch (error) {
-      console.error('Failed to load agent details:', error)
-      toast({
-        title: tCommon('failed'),
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const handleDeleteAgent = async (agent: AiAgent) => {
-    if (!confirm(tAuto('deleteConfirm'))) return
-    try {
-      await api.deleteAgent(agent.id)
-      await loadItems()
-      toast({
-        title: tCommon('success'),
-        description: tAuto('itemDeleted'),
-      })
-    } catch (error) {
-      console.error('Failed to delete agent:', error)
-      toast({
-        title: tCommon('failed'),
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const handleToggleAgent = async (agent: AiAgent) => {
-    try {
-      const newStatus = agent.status === 'Active' ? 'paused' : 'active'
-      await api.setAgentStatus(agent.id, newStatus)
-      await loadItems()
-    } catch (error) {
-      console.error('Failed to toggle agent status:', error)
-      toast({
-        title: tCommon('failed'),
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const handleExecuteAgent = async (agent: AiAgent) => {
-    try {
-      await api.executeAgent(agent.id)
-      toast({
-        title: tCommon('success'),
-        description: tAuto('executeSuccess'),
-      })
-      setTimeout(() => loadItems(), 500)
-    } catch (error) {
-      console.error('Failed to execute agent:', error)
-      toast({
-        title: tCommon('failed'),
-        description: (error as Error).message,
-        variant: 'destructive',
-      })
-    }
-  }
-
-  const handleSaveAgent = async (data: any) => {
-    try {
-      if (editingAgent) {
-        await api.updateAgent(editingAgent.id, data)
-      } else {
-        await api.createAgent(data)
-      }
-      setShowAgentDialog(false)
-      setEditingAgent(undefined)
-      await loadItems()
-      toast({
-        title: tCommon('success'),
-        description: editingAgent ? tAuto('itemUpdated') : tAuto('itemCreated'),
-      })
-    } catch (error) {
-      console.error('Failed to save agent:', error)
-      throw error
-    }
-  }
-
-  const handleViewMemory = (agentId: string, agentName: string) => {
-    setMemoryAgentId(agentId)
-    setMemoryAgentName(agentName)
-    setMemoryDialogOpen(true)
-  }
-
   // Rule handlers
-  const handleEditRule = (rule: Rule) => {
-    setEditingRule(rule)
-    setShowRuleDialog(true)
+  const handleEditRule = async (rule: Rule) => {
+    try {
+      const detail = await api.getRule(rule.id)
+      setEditingRule(detail.rule)
+      setShowRuleDialog(true)
+    } catch (error) {
+      console.error('Failed to load rule details:', error)
+      toast({
+        title: tCommon('failed'),
+        description: (error as Error).message,
+        variant: 'destructive',
+      })
+    }
   }
 
   const handleDeleteRule = async (rule: Rule) => {
@@ -398,12 +333,11 @@ export function AutomationPage() {
       {/* Tabs with Actions */}
       <PageTabs
         tabs={[
-          { value: 'agents', label: tAuto('tabs.agents') },
           { value: 'rules', label: tAuto('tabs.rules') },
           { value: 'transforms', label: tAuto('tabs.transforms') },
         ]}
         activeTab={activeTab}
-        onTabChange={(v) => setActiveTab(v as AutomationTab)}
+        onTabChange={(v) => handleTabChange(v as AutomationTab)}
         actions={[
           {
             label: tCommon('create'),
@@ -417,19 +351,6 @@ export function AutomationPage() {
           },
         ]}
       >
-        {/* Agents Tab */}
-        <PageTabsContent value="agents" activeTab={activeTab}>
-          <AgentsList
-            agents={agents}
-            loading={loading}
-            onEdit={handleEditAgent}
-            onDelete={handleDeleteAgent}
-            onToggleStatus={handleToggleAgent}
-            onExecute={handleExecuteAgent}
-            onViewMemory={handleViewMemory}
-          />
-        </PageTabsContent>
-
         {/* Rules Tab */}
         <PageTabsContent value="rules" activeTab={activeTab}>
           <RulesList
@@ -470,24 +391,6 @@ export function AutomationPage() {
         transform={editingTransform}
         devices={devices}
         onSave={handleSaveTransform}
-      />
-
-      {/* Agent Creator/Editor Dialog */}
-      <AgentCreatorDialog
-        open={showAgentDialog}
-        onOpenChange={setShowAgentDialog}
-        agent={editingAgent}
-        devices={devices}
-        deviceTypes={deviceTypes}
-        onSave={handleSaveAgent}
-      />
-
-      {/* Agent Memory Dialog */}
-      <AgentMemoryDialog
-        open={memoryDialogOpen}
-        onOpenChange={setMemoryDialogOpen}
-        agentId={memoryAgentId}
-        agentName={memoryAgentName}
       />
     </PageLayout>
   )

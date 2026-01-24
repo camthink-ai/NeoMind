@@ -13,6 +13,11 @@
   "statusDisabled": "已禁用",
   "statusRunning": "运行中",
   "statusError": "错误",
+  "time": {
+    "justNow": "刚刚",
+    "minutesAgo": "分钟前",
+    "hoursAgo": "小时前"
+  },
   "new": "新建",
   "execute": "执行",
   "duplicate": "复制",

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
+import { useNavigate, useLocation } from "react-router-dom"
 import { useStore } from "@/store"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
@@ -16,6 +17,20 @@ type PluginTabValue = "llm" | "connections" | "alert-channels" | "extensions"
 export function PluginsPage() {
   const { t } = useTranslation(["common", "plugins", "devices"])
   const { toast } = useToast()
+
+  // Router integration
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Get tab from URL path
+  const getTabFromPath = (): PluginTabValue => {
+    const pathSegments = location.pathname.split('/')
+    const lastSegment = pathSegments[pathSegments.length - 1]
+    if (lastSegment === 'connections' || lastSegment === 'alert-channels' || lastSegment === 'extensions') {
+      return lastSegment as PluginTabValue
+    }
+    return 'llm'
+  }
 
   const {
     extensions,
@@ -37,7 +52,26 @@ export function PluginsPage() {
     testBackend,
   } = useStore()
 
-  const [activeTab, setActiveTab] = useState<PluginTabValue>("llm")
+  // Active tab state - sync with URL
+  const [activeTab, setActiveTab] = useState<PluginTabValue>(getTabFromPath)
+
+  // Update tab when URL changes
+  useEffect(() => {
+    const tabFromPath = getTabFromPath()
+    setActiveTab(tabFromPath)
+  }, [location.pathname])
+
+  // Update URL when tab changes
+  const handleTabChange = (tab: string) => {
+    const validTab = tab as PluginTabValue
+    setActiveTab(validTab)
+    if (validTab === 'llm') {
+      navigate('/plugins')
+    } else {
+      navigate(`/plugins/${validTab}`)
+    }
+  }
+
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
 
   // Fetch extensions on mount and when extensions tab is activated
@@ -131,7 +165,7 @@ export function PluginsPage() {
       <PageTabs
         tabs={tabs}
         activeTab={activeTab}
-        onTabChange={(v) => setActiveTab(v as PluginTabValue)}
+        onTabChange={handleTabChange}
         actions={
           activeTab === 'extensions'
             ? [

@@ -71,7 +71,10 @@ export function AgentsPage() {
       // Load tab-specific data
       if (activeTab === 'agents') {
         const data = await api.listAgents()
-        setAgents(data.agents || [])
+        // Sort by created_at descending (newest first)
+        setAgents((data.agents || []).sort((a, b) =>
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        ))
       } else if (activeTab === 'executions' && selectedAgent) {
         const data = await api.getAgentExecutions(selectedAgent.id)
         setExecutions(data.executions || [])

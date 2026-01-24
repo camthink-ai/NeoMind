@@ -44,10 +44,11 @@ function mergeAssistantMessages(messages: Message[]): Message[] {
       if (nextMsg.role === 'assistant') {
         // Merge logic: if they should be merged based on content structure
         if (shouldMergeMessages(msg, nextMsg)) {
-          // Merge the two messages
+          // Merge the two messages - combine all content
+          const mergedContent = (msg.content || '') + (nextMsg.content || '')
           result.push({
             ...msg,
-            content: msg.content + (nextMsg.content || ''),
+            content: mergedContent || '', // Ensure content is at least empty string
             // Keep tool_calls, thinking from the first message (it usually has them)
             tool_calls: msg.tool_calls || nextMsg.tool_calls,
             thinking: msg.thinking || nextMsg.thinking,
@@ -87,23 +88,34 @@ function mergeAssistantMessages(messages: Message[]): Message[] {
  * Check if two assistant messages should be merged.
  *
  * They should be merged if:
- * - First has thinking/tool_calls (with or without content)
- * - Second has content but no thinking/tool_calls
- * - They are consecutive assistant messages (indicating same response)
+ * - First has thinking OR tools
+ * - Second has content OR first is missing content (split response)
+ * - They are consecutive assistant messages
+ *
+ * Backend pattern: [thinking+tools] + [content] or [thinking] + [tools+content]
  */
 function shouldMergeMessages(first: Message, second: Message): boolean {
   const firstHasThinking = !!first.thinking && first.thinking.length > 0
   const firstHasTools = !!first.tool_calls && first.tool_calls.length > 0
+  const firstHasContent = !!first.content && first.content.length > 0
+
   const secondHasThinking = !!second.thinking && second.thinking.length > 0
   const secondHasTools = !!second.tool_calls && second.tool_calls.length > 0
-
   const secondHasContent = !!second.content && second.content.length > 0
 
-  // Merge if:
-  // 1. First has thinking OR tools
-  // 2. Second has content AND no thinking AND no tools (so it's the final response)
-  // This handles the case where backend saves: [thinking+tools] + [content] separately
-  return (firstHasThinking || firstHasTools) && secondHasContent && !secondHasThinking && !secondHasTools
+  // Always merge consecutive assistant messages where first has thinking or tools
+  // This handles the backend pattern of splitting responses
+  if (firstHasThinking || firstHasTools) {
+    // Merge if second has content, OR if first is missing content (split response)
+    return !firstHasContent || secondHasContent
+  }
+
+  // Also merge if second has thinking or tools and first only has content
+  if ((secondHasThinking || secondHasTools) && firstHasContent) {
+    return true
+  }
+
+  return false
 }
 
 import type { SessionState } from '../types'
@@ -220,13 +232,25 @@ export const createSessionSlice: StateCreator<
       const messages = historyResult.messages || []
       console.log(`[session merge] Before merge: ${messages.length} messages`, messages.map((m, i) => ({
         index: i,
+        id: m.id,
+        role: m.role,
+        hasThinking: !!m.thinking,
+        thinkingLen: m.thinking?.length || 0,
+        hasTools: !!m.tool_calls?.length,
+        toolsCount: m.tool_calls?.length || 0,
+        contentLen: m.content?.length || 0,
+        contentPreview: m.content?.substring(0, 50) || "(empty)",
+      })))
+      const mergedMessages = mergeAssistantMessages(messages)
+      console.log(`[session merge] After merge: ${mergedMessages.length} messages`, mergedMessages.map((m, i) => ({
+        index: i,
+        id: m.id,
         role: m.role,
         hasThinking: !!m.thinking,
         hasTools: !!m.tool_calls?.length,
         contentLen: m.content?.length || 0,
+        contentPreview: m.content?.substring(0, 50) || "(empty)",
       })))
-      const mergedMessages = mergeAssistantMessages(messages)
-      console.log(`[session merge] After merge: ${mergedMessages.length} messages`)
 
       console.log(`Switched to session ${sessionId}, loaded ${mergedMessages.length} messages`)
 

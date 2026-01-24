@@ -153,6 +153,9 @@
       "sendCommand": "Send Command"
     }
   },
+  "actions": {
+    "viewDetails": "View Details"
+  },
   "add": {
     "title": "Add Device",
     "typeRequired": "Device Type <span class=\"text-destructive\">*</span>",
@@ -225,6 +228,10 @@
       "nameRequired": "Please enter device name first",
       "typeId": "Type ID: {{id}}",
       "button": "Add"
+    },
+    "actions": {
+      "view": "View",
+      "export": "Export"
     },
     "smartGeneration": "Smart Generation",
     "advancedMode": "Advanced Mode",
@@ -519,12 +526,21 @@
     "headers": {
       "deviceId": "Device ID",
       "source": "Source",
+      "deviceType": "Device Type",
       "status": "Status",
       "samples": "Samples",
       "confidence": "Confidence",
       "category": "Category",
+      "discoveredAt": "Discovered",
       "actions": "Actions"
     },
+    "analyzing": "Analyzing...",
+    "time": {
+      "justNow": "Just now",
+      "minutesAgo": "m ago",
+      "hoursAgo": "h ago"
+    },
+    "deviceType": "Device Type",
     "approveTitle": "Approve Pending Device",
     "approveDesc": "Review and approve this pending device to register it",
     "selectExistingType": "Select Existing Device Type",

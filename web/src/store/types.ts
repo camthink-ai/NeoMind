@@ -12,6 +12,7 @@ import type {
   DiscoveredDevice,
   TelemetryDataResponse,
   TelemetrySummaryResponse,
+  DeviceCurrentStateResponse,
   CommandHistoryResponse,
   DecisionDto,
   ChatSession,
@@ -74,6 +75,7 @@ export interface DeviceState {
 export interface TelemetryState {
   telemetryData: TelemetryDataResponse | null
   telemetrySummary: TelemetrySummaryResponse | null
+  deviceCurrentState: DeviceCurrentStateResponse | null  // Unified device + metrics data
   commandHistory: CommandHistoryResponse | null
   telemetryLoading: boolean
 }
@@ -112,6 +114,7 @@ export interface SettingsState {
 
 export type PageName =
   | 'dashboard'
+  | 'visual-dashboard'
   | 'devices'
   | 'alerts'
   | 'automation'
@@ -123,7 +126,6 @@ export type PageName =
   | 'agents'
 
 export interface UIState {
-  currentPage: PageName
   sidebarOpen: boolean
   wsConnected: boolean
 }
@@ -156,6 +158,7 @@ export interface RootState
 
 export const pageTitles: Record<PageName, string> = {
   dashboard: '对话',
+  'visual-dashboard': '可视化仪表板',
   devices: '设备',
   alerts: '告警',
   automation: '自动化',

@@ -4,6 +4,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react"
+import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
 import { ws } from "@/lib/websocket"
 import type { Message, ServerMessage } from "@/types"
@@ -36,6 +37,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({ className = "" }: ChatContainerProps) {
+  const navigate = useNavigate()
   // Store state
   const {
     sessionId,
@@ -159,9 +161,13 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
   // Initialize session if none exists
   useEffect(() => {
     if (!sessionId) {
-      createSession()
+      createSession().then((newSessionId) => {
+        if (newSessionId) {
+          navigate(`/chat/${newSessionId}`)
+        }
+      })
     }
-  }, [sessionId, createSession])
+  }, [sessionId, createSession, navigate])
 
   // Send message
   const handleSend = async () => {
@@ -176,8 +182,8 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
       // Create new session first - this will clear messages and update sessionId
       const newSessionId = await createSession()
       if (newSessionId) {
-        // Session switched, messages cleared
-        // The WebSocket now points to the new session
+        // Navigate to the new session URL
+        navigate(`/chat/${newSessionId}`)
       }
     }
 
@@ -464,10 +470,14 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
         open={sessionDrawerOpen}
         onClose={() => setSessionDrawerOpen(false)}
         onNewSession={async () => {
-          await createSession()
+          const newSessionId = await createSession()
+          if (newSessionId) {
+            navigate(`/chat/${newSessionId}`)
+          }
         }}
         onSelectSession={async (sessionId) => {
           await switchSession(sessionId)
+          navigate(`/chat/${sessionId}`)
         }}
         currentSessionId={sessionId}
       />

@@ -211,7 +211,7 @@ const MARKETPLACE_PLUGINS: MarketplacePlugin[] = [
       type: 'dynamic',
       setupGuide: 'https://github.com/neotalk/neotalk/tree/main/examples/example-plugin',
     },
-    tags: ['example', 'demo', 'tutorial'],
+    tags: ['example', 'tutorial'],
   },
 ]
 

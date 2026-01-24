@@ -6,6 +6,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
+import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
 import type { ChatSession } from "@/types"
 import { cn } from "@/lib/utils"
@@ -53,16 +54,17 @@ function useFormatTimeAgo() {
   }
 }
 
-export function SessionSidebar({ 
-  open, 
-  onClose, 
-  collapsed = false, 
+export function SessionSidebar({
+  open,
+  onClose,
+  collapsed = false,
   onToggleCollapse,
-  isDesktop = false 
+  isDesktop = false
 }: SessionSidebarProps) {
   const { t } = useTranslation('common')
   const formatTimeAgo = useFormatTimeAgo()
-  
+  const navigate = useNavigate()
+
   const {
     sessions,
     sessionId: currentSessionId,
@@ -107,7 +109,13 @@ export function SessionSidebar({
     if (isCreating) return
     setIsCreating(true)
     try {
-      await createSession()
+      const newSessionId = await createSession()
+      // Navigate to the new session URL
+      if (newSessionId) {
+        navigate(`/chat/${newSessionId}`)
+      } else {
+        navigate('/chat')
+      }
       if (!isDesktop) onClose()
     } finally {
       setIsCreating(false)
@@ -121,6 +129,8 @@ export function SessionSidebar({
       return
     }
     await switchSession(sessionId)
+    // Navigate to the session URL
+    navigate(`/chat/${sessionId}`)
     if (!isDesktop) onClose()
   }
 

@@ -19,6 +19,7 @@ import { createSettingsSlice } from './slices/settingsSlice'
 import { createDecisionSlice } from './slices/decisionSlice'
 import { createExtensionSlice } from './slices/extensionSlice'
 import { createLlmBackendSlice } from './slices/llmBackendSlice'
+import { createDashboardSlice } from './slices/dashboardSlice'
 
 // Import types
 import type { AuthSlice } from './slices/authSlice'
@@ -30,6 +31,7 @@ import type { SettingsSlice } from './slices/settingsSlice'
 import type { DecisionSlice } from './slices/decisionSlice'
 import type { ExtensionSlice } from './slices/extensionSlice'
 import type { LlmBackendSlice } from './slices/llmBackendSlice'
+import type { DashboardState } from './slices/dashboardSlice'
 
 // ============================================================================
 // Combined Store Type
@@ -44,6 +46,7 @@ export type NeoTalkStore = AuthSlice
   & DecisionSlice
   & ExtensionSlice
   & LlmBackendSlice
+  & DashboardState
 
 // ============================================================================
 // Create Store
@@ -63,6 +66,7 @@ export const useStore = create<NeoTalkStore>()(
         ...createDecisionSlice(set, get, api),
         ...createExtensionSlice(set, get, api),
         ...createLlmBackendSlice(set, get, api),
+        ...createDashboardSlice(set, get, api),
       }),
       {
         name: 'neotalk-store',
@@ -70,10 +74,18 @@ export const useStore = create<NeoTalkStore>()(
           messages: state.messages,
           sessionId: state.sessionId,
         }),
+        onRehydrateStorage: () => (state) => {
+          console.log('[Store] Rehydrating store, devices:', state?.devices?.length)
+        },
       }
     )
   )
 )
+
+// DEBUG: Expose store globally for debugging
+if (typeof window !== 'undefined') {
+  (window as any).neotalkStore = useStore
+}
 
 // ============================================================================
 // Re-export page titles

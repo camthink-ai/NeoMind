@@ -24,15 +24,15 @@ import {
 import { ChevronLeft, RefreshCw, Send, Clock, Zap, Settings, Info, ChevronRight, X, Image as ImageIcon, Database } from "lucide-react"
 import { toast } from "@/components/ui/use-toast"
 import { formatTimestamp } from "@/lib/utils/format"
-import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse, TelemetrySummaryResponse } from "@/types"
+import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse, DeviceCurrentStateResponse } from "@/types"
 import { isBase64Image } from "./utils"
 import { cn } from "@/lib/utils"
 
 interface DeviceDetailProps {
   device: Device | null
   deviceType: DeviceType | null
+  deviceCurrentState: DeviceCurrentStateResponse | null
   telemetryData: TelemetryDataResponse | null
-  telemetrySummary: TelemetrySummaryResponse | null
   telemetryLoading: boolean
   selectedMetric: string | null
   onBack: () => void
@@ -126,8 +126,8 @@ function renderMetricValue(
 export function DeviceDetail({
   device,
   deviceType,
+  deviceCurrentState,
   telemetryData,
-  telemetrySummary,
   telemetryLoading,
   selectedMetric,
   onBack,
@@ -144,26 +144,26 @@ export function DeviceDetail({
   const [selectedCommandDef, setSelectedCommandDef] = useState<CommandDefinition | null>(null)
   const [dialogParams, setDialogParams] = useState<Record<string, unknown>>({})
 
-  const commands = deviceType?.commands || []
+  // Use commands from unified response or fallback to deviceType
+  const commands = deviceCurrentState?.commands || deviceType?.commands || []
   const templateMetrics = deviceType?.metrics || []
 
-  // Get virtual metrics from telemetry summary using is_virtual flag
-  // This is the authoritative source for virtual metrics (from backend)
-  const allVirtualMetrics = telemetrySummary
-    ? Object.keys(telemetrySummary.summary).filter(
-        key => telemetrySummary.summary[key]?.is_virtual
-      )
-    : []
+  // Build all metrics from unified response (contains both template and virtual metrics)
+  const metricsMap = deviceCurrentState?.metrics || {}
 
-  // Combine: template metrics + virtual metrics
+  // Get metric definitions: template metrics + virtual metrics from unified response
   const metricDefinitions = [
+    // Template metrics (for reference - values come from deviceCurrentState.metrics)
     ...templateMetrics,
-    ...allVirtualMetrics.map(name => ({
-      name,
-      display_name: telemetrySummary?.summary[name]?.display_name || name,
-      data_type: 'float' as const,
-      unit: telemetrySummary?.summary[name]?.unit || '-',
-    }))
+    // Virtual metrics (from deviceCurrentState - those with is_virtual=true)
+    ...Object.entries(metricsMap)
+      .filter(([, v]) => v.is_virtual)
+      .map(([name, v]) => ({
+        name,
+        display_name: v.display_name || name,
+        data_type: v.data_type as 'float' | 'integer' | 'string' | 'boolean' | 'binary' | 'array',
+        unit: v.unit,
+      }))
   ]
 
   const handleCommandClick = (cmd: CommandDefinition) => {
@@ -195,6 +195,11 @@ export function DeviceDetail({
   }
 
   const getMetricDisplayName = (metricName: string): string => {
+    // First check unified response
+    if (metricsMap[metricName]?.display_name) {
+      return metricsMap[metricName].display_name
+    }
+    // Fallback to template
     const metricDef = deviceType?.metrics?.find(m => m.name === metricName)
     if (metricDef) return metricDef.display_name || metricName
     if (metricName.includes('.')) {
@@ -333,35 +338,27 @@ export function DeviceDetail({
                   <Settings className="h-5 w-5 text-muted-foreground" />
                   <h2 className="font-semibold">实时指标</h2>
                   <span className="text-xs text-muted-foreground">({metricDefinitions.length})</span>
-                  {allVirtualMetrics.length > 0 && (
+                  {Object.values(metricsMap).filter(m => m.is_virtual).length > 0 && (
                     <Badge variant="secondary" className="text-xs ml-2">
-                      {allVirtualMetrics.length} 虚拟指标
+                      {Object.values(metricsMap).filter(m => m.is_virtual).length} 虚拟指标
                     </Badge>
                   )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {metricDefinitions.map((metricDef) => {
-                    // Priority order for getting metric value:
-                    // 1. From device.current_values (real-time device state)
-                    // 2. From telemetrySummary.summary (contains all metrics with current values)
-                    // 3. From telemetryData.data (time series data for selected metric)
-                    let value = device?.current_values?.[metricDef.name]
+                    // Get value from unified response (deviceCurrentState.metrics)
+                    // This is the single source of truth for all metric values
+                    let value = metricsMap[metricDef.name]?.value
 
-                    // Try telemetry summary next (contains all metrics)
-                    if (value === undefined && telemetrySummary?.summary[metricDef.name]) {
-                      value = telemetrySummary.summary[metricDef.name].current
-                    }
-
-                    // Fallback to telemetry data (for detailed time series)
-                    if (value === undefined && telemetryData?.data[metricDef.name]) {
-                      const points = telemetryData.data[metricDef.name]
-                      if (points && points.length > 0) {
-                        const latestPoint = points[points.length - 1]
-                        value = latestPoint.value
+                    // Fallback to device.current_values for real-time updates
+                    if (value === undefined) {
+                      const currentValue = device?.current_values?.[metricDef.name]
+                      if (currentValue !== undefined) {
+                        value = currentValue as string | number | boolean | unknown[] | null
                       }
                     }
 
-                    const isVirtual = allVirtualMetrics.includes(metricDef.name)
+                    const isVirtual = metricsMap[metricDef.name]?.is_virtual || false
                     const hasImage = isMetricImage(value)
                     return (
                       <button
@@ -432,7 +429,7 @@ export function DeviceDetail({
                           <Send className="h-5 w-5 text-primary" />
                         </div>
                       </div>
-                      {cmd.parameters?.length > 0 && (
+                      {cmd.parameters && cmd.parameters.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
                           {cmd.parameters.slice(0, 3).map((p) => (
                             <Badge key={p.name} variant="outline" className="text-xs">

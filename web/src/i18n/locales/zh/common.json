@@ -1,4 +1,11 @@
 {
+  "alerts": {
+    "title": "告警",
+    "unread": "未读",
+    "noAlerts": "暂无告警",
+    "acknowledge": "确认",
+    "moreAlerts": "还有{{count}}条"
+  },
   "connection": {
     "connected": "已连接",
     "disconnected": "未连接",
@@ -8,10 +15,13 @@
   },
   "nav": {
     "dashboard": "对话",
+    "visual-dashboard": "可视化仪表板",
     "devices": "设备",
     "automation": "自动化",
+    "agents": "智能体",
     "events": "事件",
     "alerts": "告警",
+    "decisions": "决策",
     "plugins": "插件",
     "settings": "设置"
   },

@@ -12,6 +12,7 @@ import type {
   ExternalBroker,
   TelemetryDataResponse,
   TelemetrySummaryResponse,
+  DeviceCurrentStateResponse,
   CommandHistoryResponse,
   CommandDto,
   CommandListResponse,
@@ -68,6 +69,11 @@ import type {
   ExecuteAgentRequest,
   AgentListResponse,
   AgentExecutionsResponse,
+  // Dashboard Types
+  DashboardResponse,
+  CreateDashboardRequest,
+  UpdateDashboardRequest,
+  DashboardTemplateResponse,
 } from '@/types'
 import { notifyFromError, notifySuccess } from './notify'
 
@@ -348,6 +354,7 @@ export const api = {
   // Devices
   getDevices: () => fetchAPI<{ devices: Device[]; count: number }>('/devices'),
   getDevice: (id: string) => fetchAPI<Device>(`/devices/${id}`),
+  getDeviceCurrent: (id: string) => fetchAPI<DeviceCurrentStateResponse>(`/devices/${id}/current`),
   addDevice: (req: AddDeviceRequest) =>
     fetchAPI<{ device_id: string; added: boolean }>('/devices', {
       method: 'POST',
@@ -1566,4 +1573,74 @@ export const api = {
    */
   getAgentStats: (id: string) =>
     fetchAPI<AgentStats>(`/agents/${id}/stats`),
+
+  // ==========================================================================
+  // Dashboard APIs
+  // ==========================================================================
+
+  /**
+   * List all dashboards
+   * GET /api/dashboards
+   */
+  getDashboards: () =>
+    fetchAPI<{ dashboards: DashboardResponse[]; count: number }>('/dashboards'),
+
+  /**
+   * Get a dashboard by ID
+   * GET /api/dashboards/:id
+   */
+  getDashboard: (id: string) =>
+    fetchAPI<DashboardResponse>(`/dashboards/${id}`),
+
+  /**
+   * Create a new dashboard
+   * POST /api/dashboards
+   */
+  createDashboard: (dashboard: CreateDashboardRequest) =>
+    fetchAPI<{ id: string; name: string }>('/dashboards', {
+      method: 'POST',
+      body: JSON.stringify(dashboard),
+    }),
+
+  /**
+   * Update a dashboard
+   * PUT /api/dashboards/:id
+   */
+  updateDashboard: (id: string, dashboard: UpdateDashboardRequest) =>
+    fetchAPI<{ id: string }>(`/dashboards/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(dashboard),
+    }),
+
+  /**
+   * Delete a dashboard
+   * DELETE /api/dashboards/:id
+   */
+  deleteDashboard: (id: string) =>
+    fetchAPI<{ ok: boolean }>(`/dashboards/${id}`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Set default dashboard
+   * POST /api/dashboards/:id/default
+   */
+  setDefaultDashboard: (id: string) =>
+    fetchAPI<{ id: string }>(`/dashboards/${id}/default`, {
+      method: 'POST',
+    }),
+
+  /**
+   * List dashboard templates
+   * GET /api/dashboards/templates
+   */
+  getDashboardTemplates: () =>
+    fetchAPI<DashboardTemplateResponse[]>('/dashboards/templates'),
+
+  /**
+   * Get a template by ID
+   * GET /api/dashboards/templates/:id
+   */
+  getDashboardTemplate: (id: string) =>
+    fetchAPI<DashboardTemplateResponse>(`/dashboards/templates/${id}`),
 }

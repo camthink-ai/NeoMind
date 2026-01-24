@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
+import { useParams, useNavigate } from "react-router-dom"
 import { Settings, Send, Sparkles, PanelLeft, Plus, Zap, ChevronDown, X, Image as ImageIcon, Loader2, Eye, Brain } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -161,6 +162,8 @@ function fileToBase64(file: File): Promise<string> {
 
 export function DashboardPage() {
   const { t } = useTranslation(['common', 'dashboard'])
+  const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
+  const navigate = useNavigate()
   const llmBackends = useStore((state) => state.llmBackends)
   const activeBackendId = useStore((state) => state.activeBackendId)
   const activateBackend = useStore((state) => state.activateBackend)
@@ -175,8 +178,7 @@ export function DashboardPage() {
     createSession,
     switchSession,
     loadSessions,
-    user,
-    sessions
+    user
   } = useStore()
 
   // Local state
@@ -213,6 +215,16 @@ export function DashboardPage() {
       loadSessions()
     }
   }, [loadBackends, loadSessions])
+
+  // Load session from URL parameter
+  useEffect(() => {
+    if (urlSessionId && urlSessionId !== sessionId) {
+      // Only switch if it's a different session
+      switchSession(urlSessionId).catch((err) => {
+        console.error('Failed to load session from URL:', err)
+      })
+    }
+  }, [urlSessionId, sessionId, switchSession])
 
   // Sync WebSocket sessionId when store sessionId changes
   useEffect(() => {
@@ -322,22 +334,16 @@ export function DashboardPage() {
     // Get current sessionId from store (not from closure)
     let currentSessionId = useStore.getState().sessionId
 
-    // If no session exists, check if we should auto-create
+    // If no session exists, auto-create a new one
     if (!currentSessionId) {
-      // Only auto-create if there are NO existing sessions (first-time user)
-      if (sessions.length === 0) {
-        const newSessionId = await createSession()
-        if (!newSessionId) {
-          console.error('Failed to create session')
-          return
-        }
-        currentSessionId = newSessionId
-      } else {
-        // There are existing sessions but none selected - require user to manually create/select
-        // Show a hint to the user
-        setShowSessionRequired(true)
+      const newSessionId = await createSession()
+      if (!newSessionId) {
+        console.error('Failed to create session')
         return
       }
+      currentSessionId = newSessionId
+      // Navigate to the new session URL
+      navigate(`/chat/${newSessionId}`)
     }
 
     const userMessage: Message = {
@@ -495,7 +501,10 @@ export function DashboardPage() {
               variant="ghost"
               size="sm"
               onClick={async () => {
-                await createSession()
+                const newSessionId = await createSession()
+                if (newSessionId) {
+                  navigate(`/chat/${newSessionId}`)
+                }
               }}
               className="h-8 gap-1.5 rounded-lg text-muted-foreground hover:text-foreground"
             >
@@ -631,7 +640,10 @@ export function DashboardPage() {
                       size="sm"
                       onClick={async () => {
                         setShowSessionRequired(false)
-                        await createSession()
+                        const newSessionId = await createSession()
+                        if (newSessionId) {
+                          navigate(`/chat/${newSessionId}`)
+                        }
                       }}
                       className="gap-1.5"
                     >

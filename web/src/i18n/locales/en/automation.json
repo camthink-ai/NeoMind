@@ -13,6 +13,11 @@
   "statusDisabled": "Disabled",
   "statusRunning": "Running",
   "statusError": "Error",
+  "time": {
+    "justNow": "Just now",
+    "minutesAgo": "min ago",
+    "hoursAgo": "hours ago"
+  },
   "new": "New",
   "execute": "Execute",
   "edit": "Edit",

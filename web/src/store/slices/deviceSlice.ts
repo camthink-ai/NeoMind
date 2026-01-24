@@ -49,10 +49,16 @@ export interface DeviceSlice extends DeviceState, TelemetryState {
 
   fetchTelemetryData: (deviceId: string, metric?: string, start?: number, end?: number, limit?: number) => Promise<void>
   fetchTelemetrySummary: (deviceId: string, hours?: number) => Promise<void>
+  fetchDeviceCurrentState: (deviceId: string) => Promise<void>  // New: unified device + metrics
   fetchCommandHistory: (deviceId: string, limit?: number) => Promise<void>
 
   // Device Adapter Actions
   fetchDeviceAdapters: () => Promise<void>
+
+  // Device status update from events
+  updateDeviceStatus: (deviceId: string, status: 'online' | 'offline') => void
+  // Update device metric from real-time events
+  updateDeviceMetric: (deviceId: string, property: string, value: unknown) => void
 }
 
 export const createDeviceSlice: StateCreator<
@@ -83,6 +89,7 @@ export const createDeviceSlice: StateCreator<
   // Telemetry state
   telemetryData: null,
   telemetrySummary: null,
+  deviceCurrentState: null,
   commandHistory: null,
   telemetryLoading: false,
 
@@ -98,7 +105,22 @@ export const createDeviceSlice: StateCreator<
     set({ devicesLoading: true })
     try {
       const data = await api.getDevices()
-      set({ devices: data.devices || [] })
+      console.log('[fetchDevices] API response:', data)
+
+      // Sort by last_seen descending (newest first), online devices first
+      const sortedDevices = (data.devices || []).sort((a, b) => {
+        // Online devices first
+        if (a.status === 'online' && b.status !== 'online') return -1
+        if (a.status !== 'online' && b.status === 'online') return 1
+        // Then by last_seen descending
+        return new Date(b.last_seen).getTime() - new Date(a.last_seen).getTime()
+      })
+      console.log('[fetchDevices] Sorted devices, setting to store:', sortedDevices)
+      set({ devices: sortedDevices })
+
+      // Verify the set worked
+      const verify = get().devices
+      console.log('[fetchDevices] Verification - devices after set:', verify.length, verify)
     } catch (error) {
       if ((error as Error).message === 'UNAUTHORIZED') {
         // Will be handled by auth slice
@@ -114,7 +136,13 @@ export const createDeviceSlice: StateCreator<
     set({ deviceTypesLoading: true })
     try {
       const data = await api.getDeviceTypes()
-      set({ deviceTypes: data.device_types || [] })
+      // Sort by created_at descending (newest first)
+      const sortedTypes = (data.device_types || []).sort((a: any, b: any) => {
+        const aTime = a.created_at ? new Date(a.created_at).getTime() : 0
+        const bTime = b.created_at ? new Date(b.created_at).getTime() : 0
+        return bTime - aTime
+      })
+      set({ deviceTypes: sortedTypes })
     } catch (error) {
       if ((error as Error).message === 'UNAUTHORIZED') {
         // Will be handled by auth slice
@@ -269,6 +297,61 @@ export const createDeviceSlice: StateCreator<
     }
   },
 
+  fetchDeviceCurrentState: async (deviceId) => {
+    set({ telemetryLoading: true })
+    try {
+      const data = await api.getDeviceCurrent(deviceId)
+      console.log('[fetchDeviceCurrentState] Got device current state:', data)
+      set({ deviceCurrentState: data })
+
+      // Helper function to build nested object from flat key paths
+      // Only includes metrics with non-null values
+      const buildNestedValues = (metrics: Record<string, any>) => {
+        const result: Record<string, unknown> = {}
+        for (const [key, metricData] of Object.entries(metrics)) {
+          // Skip null values - only store actual data
+          if (metricData.value === null || metricData.value === undefined) {
+            continue
+          }
+          const parts = key.split('.')
+          let current = result
+          for (let i = 0; i < parts.length - 1; i++) {
+            const part = parts[i]
+            if (!(part in current)) {
+              current[part] = {}
+            }
+            current = current[part] as Record<string, unknown>
+          }
+          current[parts[parts.length - 1]] = metricData.value
+        }
+        console.log('[fetchDeviceCurrentState] Built nested values:', {
+          totalMetrics: Object.keys(metrics).length,
+          nonNullMetrics: Object.keys(result).length,
+          result,
+        })
+        return result
+      }
+
+      // Also update device in the devices list with current values
+      // This keeps the devices list in sync with the latest data
+      set((state) => ({
+        devices: state.devices.map((d) =>
+          d.id === deviceId || d.device_id === deviceId
+            ? {
+                ...d,
+                current_values: buildNestedValues(data.metrics),
+              }
+            : d
+        ),
+      }))
+    } catch (error) {
+      console.error('Failed to fetch device current state:', error)
+      set({ deviceCurrentState: null })
+    } finally {
+      set({ telemetryLoading: false })
+    }
+  },
+
   fetchCommandHistory: async (deviceId, limit) => {
     set({ telemetryLoading: true })
     try {
@@ -297,5 +380,84 @@ export const createDeviceSlice: StateCreator<
     } finally {
       set({ deviceAdaptersLoading: false })
     }
+  },
+
+  // Update device status from real-time events
+  updateDeviceStatus: (deviceId: string, status: 'online' | 'offline') => {
+    set((state) => ({
+      devices: state.devices.map((device) =>
+        device.id === deviceId ? { ...device, status } : device
+      ),
+    }))
+    // Also update selectedDevice if it matches
+    set((state) => ({
+      selectedDevice: state.selectedDevice?.id === deviceId
+        ? { ...state.selectedDevice, status }
+        : state.selectedDevice,
+    }))
+  },
+
+  // Update device metric from real-time events
+  // Supports nested property paths like "values.battery" or "temperature"
+  updateDeviceMetric: (deviceId: string, property: string, value: unknown) => {
+    console.log('[updateDeviceMetric] Called:', { deviceId, property, value })
+
+    // Helper function to set nested property
+    const setNestedProperty = (obj: Record<string, unknown>, path: string, value: unknown) => {
+      const parts = path.split('.')
+      let current: Record<string, unknown> = obj
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i]
+        if (!(part in current) || typeof current[part] !== 'object' || current[part] === null) {
+          current[part] = {}
+        }
+        current = current[part] as Record<string, unknown>
+      }
+      current[parts[parts.length - 1]] = value
+      return obj
+    }
+
+    // Single atomic update for both devices array and selectedDevice
+    set((state) => {
+      // Update device in devices array
+      const updatedDevices = state.devices.map((device) => {
+        if (device.id === deviceId || device.device_id === deviceId) {
+          const currentValues = device.current_values || {}
+          const updatedValues = setNestedProperty({ ...currentValues }, property, value)
+
+          return {
+            ...device,
+            current_values: updatedValues,
+            last_seen: new Date().toISOString(),
+          }
+        }
+        return device
+      })
+
+      // Also update selectedDevice if it matches
+      let updatedSelectedDevice = state.selectedDevice
+      if (state.selectedDevice?.id === deviceId || state.selectedDevice?.device_id === deviceId) {
+        const currentValues = state.selectedDevice.current_values || {}
+        const updatedValues = setNestedProperty({ ...currentValues }, property, value)
+
+        updatedSelectedDevice = {
+          ...state.selectedDevice,
+          current_values: updatedValues,
+          last_seen: new Date().toISOString(),
+        }
+      }
+
+      console.log('[updateDeviceMetric] Updated device in store:', {
+        deviceId,
+        property,
+        value,
+        updatedDevice: updatedDevices.find(d => d.id === deviceId || d.device_id === deviceId)?.current_values,
+      })
+
+      return {
+        devices: updatedDevices,
+        selectedDevice: updatedSelectedDevice,
+      }
+    })
   },
 })

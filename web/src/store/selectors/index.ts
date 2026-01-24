@@ -130,26 +130,3 @@ export const selectConnectionStatus = (state: NeoTalkStore) => ({
   ai: state.wsConnected ? 'online' : 'offline',
   authenticated: state.isAuthenticated,
 })
-
-// ============================================================================
-// UI Selectors
-// ============================================================================
-
-/**
- * Get current page title
- */
-export const selectCurrentPageTitle = (state: NeoTalkStore) => {
-  const titles: Record<typeof state.currentPage, string> = {
-    dashboard: '对话',
-    devices: '设备',
-    alerts: '告警',
-    automation: '自动化',
-    commands: '命令',
-    decisions: 'AI决策',
-    plugins: '插件',
-    settings: '设置',
-    events: '事件中心',
-    agents: 'AI 智能体',
-  }
-  return titles[state.currentPage]
-}

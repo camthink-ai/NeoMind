@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
+import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
 import { Plus, MessageSquare, Trash2, Edit2, X, Eraser } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -34,6 +35,7 @@ function formatTimeAgo(timestamp: number, t: (key: string, params?: any) => stri
 
 export function SessionSidebar({ onNewChat, onClose, mode = 'full', onNewChatFromIcon }: SessionSidebarProps) {
   const { t } = useTranslation(['common', 'dashboard'])
+  const navigate = useNavigate()
   const {
     sessions,
     sessionId,
@@ -63,7 +65,10 @@ export function SessionSidebar({ onNewChat, onClose, mode = 'full', onNewChatFro
 
   const handleNewChat = async () => {
     setLoading(true)
-    await createSession()
+    const newSessionId = await createSession()
+    if (newSessionId) {
+      navigate(`/chat/${newSessionId}`)
+    }
     setLoading(false)
     onNewChat?.()
   }
@@ -72,6 +77,7 @@ export function SessionSidebar({ onNewChat, onClose, mode = 'full', onNewChatFro
     if (id === sessionId) return
     setLoading(true)
     await switchSession(id)
+    navigate(`/chat/${id}`)
     setLoading(false)
   }
 

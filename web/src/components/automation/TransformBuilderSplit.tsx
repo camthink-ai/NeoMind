@@ -387,36 +387,40 @@ export function TransformBuilder({
 
         {/* Form Section */}
         <div className="border-b px-6 py-4 bg-muted/20 flex-shrink-0">
-          {/* Row 1: Name, Description */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="transform-name" className="text-xs font-medium">{t('automation:transformBuilder.name')} <span className="text-destructive">*</span></Label>
+          <div className="grid grid-cols-[1fr_1fr] gap-x-4 gap-y-3">
+            {/* Row 1: Name */}
+            <div className="flex flex-col">
+              <Label htmlFor="transform-name" className="text-xs font-medium flex-shrink-0">
+                {t('automation:transformBuilder.name')} <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="transform-name"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 placeholder={t('automation:transformBuilder.namePlaceholder')}
-                className="mt-1.5 h-9"
+                className="mt-1 h-9"
               />
             </div>
-            <div>
-              <Label htmlFor="transform-desc" className="text-xs font-medium">{t('automation:description')}</Label>
+
+            {/* Row 1: Description */}
+            <div className="flex flex-col">
+              <Label htmlFor="transform-desc" className="text-xs font-medium flex-shrink-0">
+                {t('automation:description')}
+              </Label>
               <Input
                 id="transform-desc"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 placeholder={t('automation:transformDescriptionPlaceholder')}
-                className="mt-1.5 h-9"
+                className="mt-1 h-9"
               />
             </div>
-          </div>
 
-          {/* Row 2: Scope Type, Scope Value */}
-          <div className="grid grid-cols-2 gap-4 mt-4">
-            <div>
-              <Label className="text-xs font-medium">{t('automation:scope')}</Label>
+            {/* Row 2: Scope Type */}
+            <div className="flex flex-col">
+              <Label className="text-xs font-medium flex-shrink-0">{t('automation:scope')}</Label>
               <Select value={scopeType} onValueChange={(v: ScopeType) => setScopeType(v)}>
-                <SelectTrigger className="mt-1.5 h-9">
+                <SelectTrigger className="mt-1 h-9">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -427,50 +431,64 @@ export function TransformBuilder({
               </Select>
             </div>
 
-            {scopeType === 'device_type' && (
-              <div>
-                <Label className="text-xs font-medium">{t('automation:deviceType')}</Label>
-                <Select value={scopeValue} onValueChange={setScopeValue}>
-                  <SelectTrigger className="mt-1.5 h-9">
-                    <SelectValue placeholder={t('automation:selectPlaceholder')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {deviceTypes.map(dt => (
-                      <SelectItem key={dt} value={dt || ''}>{dt}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {scopeType === 'device' && (
-              <div>
-                <Label className="text-xs font-medium">{t('common:device')}</Label>
-                <Select value={scopeValue} onValueChange={setScopeValue}>
-                  <SelectTrigger className="mt-1.5 h-9">
-                    <SelectValue placeholder={t('automation:selectPlaceholder')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {devices.map(d => (
-                      <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {scopeType === 'global' && (
-              <div>
-                <Label className="text-xs font-medium">{t('automation:transformBuilder.scopeLabel')}</Label>
-                <div className="mt-1.5 h-9 flex items-center text-sm text-muted-foreground px-3 bg-background border rounded-md">
-                  {t('automation:transformBuilder.scopes.global')}
-                </div>
-              </div>
-            )}
+            {/* Row 2: Scope Value (conditional) */}
+            <div className="flex flex-col">
+              {scopeType === 'device_type' && (
+                <>
+                  <Label className="text-xs font-medium flex-shrink-0">{t('automation:deviceType')}</Label>
+                  <Select value={scopeValue} onValueChange={setScopeValue}>
+                    <SelectTrigger className="mt-1 h-9">
+                      <SelectValue placeholder={t('automation:selectPlaceholder')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {deviceTypes.map(dt => (
+                        <SelectItem key={dt} value={dt || ''}>{dt}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
+              {scopeType === 'device' && (
+                <>
+                  <Label className="text-xs font-medium flex-shrink-0">{t('common:device')}</Label>
+                  <Select value={scopeValue} onValueChange={setScopeValue}>
+                    <SelectTrigger className="mt-1 h-9">
+                      <SelectValue placeholder={t('automation:selectPlaceholder')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {devices.map(d => (
+                        <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
+              {scopeType === 'global' && (
+                <>
+                  <Label className="text-xs font-medium flex-shrink-0">{t('automation:transformBuilder.scopeLabel')}</Label>
+                  <div className="mt-1 h-9 flex items-center text-sm text-muted-foreground px-3 bg-background border rounded-md">
+                    {t('automation:transformBuilder.scopes.global')}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Main Content - Code Editor + Input Preview */}
+        {/* Main Content - Three Column Layout */}
         <div className="flex-1 min-h-0 flex">
-          {/* Left - Code Editor */}
+          {/* Left Panel - Metrics Preview + Available Variables */}
+          <div className="w-72 border-r flex flex-col bg-muted/10">
+            <div className="flex-1 overflow-auto">
+              <MetricsPreviewPanel
+                scopeType={scopeType}
+                scopeValue={getScopeDisplayName()}
+                deviceTypeMetrics={deviceTypeMetrics || undefined}
+              />
+            </div>
+          </div>
+
+          {/* Center - Code Editor */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* Templates */}
             <div className="px-6 py-4 border-b bg-muted/20 flex-shrink-0">
@@ -503,122 +521,109 @@ export function TransformBuilder({
                 value={jsCode}
                 onChange={e => setJsCode(e.target.value)}
                 placeholder={t('automation:transformBuilder.transformCodeDesc')}
-                className="flex-1 resize-none font-mono text-sm rounded-none border-r focus-visible:ring-0 p-4"
+                className="flex-1 resize-none font-mono text-sm rounded-none focus-visible:ring-0 p-4"
                 spellCheck={false}
               />
             </div>
           </div>
 
-          {/* Right - Input Data Preview */}
-          <div className="w-80 border-l flex flex-col bg-muted/10">
-            <div className="flex-1 overflow-auto">
-              <MetricsPreviewPanel
-                scopeType={scopeType}
-                scopeValue={getScopeDisplayName()}
-                deviceTypeMetrics={deviceTypeMetrics || undefined}
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom Row: Test (Left) + Output (Right) */}
-        <div className="h-52 border-t flex">
-          {/* Test Section */}
-          <div className="w-1/2 border-r p-4 flex flex-col">
-            <Label className="text-xs font-medium mb-2 flex items-center gap-2">
-              <Play className="h-3 w-3" />
-              {t('automation:test')}
-            </Label>
-            <div className="flex-1 flex flex-col min-h-0">
-              <Textarea
-                value={testInput}
-                onChange={e => setTestInput(e.target.value)}
-                placeholder='{"temp": 25, "humidity": 60}'
-                className="flex-1 font-mono text-xs resize-none mb-2 bg-muted/30"
-              />
-              <div className="flex gap-2 flex-shrink-0">
-                <Button
-                  size="sm"
-                  onClick={handleTestCode}
-                  disabled={!jsCode || testRunning}
-                  className="h-8"
-                >
-                  {testRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3 mr-1" />}
-                  {t('automation:transformBuilder.run')}
-                </Button>
-                {(scopeType === 'device_type' || scopeType === 'device') && deviceTypeMetrics && deviceTypeMetrics.length > 0 && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      const mockData: Record<string, unknown> = {}
-                      for (const metric of deviceTypeMetrics) {
-                        switch (metric.data_type) {
-                          case 'integer':
-                            mockData[metric.name] = Math.floor(Math.random() * 100)
-                            break
-                          case 'float':
-                            mockData[metric.name] = parseFloat((Math.random() * 100).toFixed(2))
-                            break
-                          case 'string':
-                            mockData[metric.name] = `sample_${metric.name}`
-                            break
-                          case 'boolean':
-                            mockData[metric.name] = Math.random() > 0.5
-                            break
-                          case 'array':
-                            mockData[metric.name] = [
-                              Math.floor(Math.random() * 100),
-                              parseFloat((Math.random() * 100).toFixed(2)),
-                              `sample_${metric.name}`
-                            ]
-                            break
-                          default:
-                            mockData[metric.name] = null
-                        }
-                      }
-                      setTestInput(JSON.stringify(mockData, null, 2))
-                    }}
-                    className="h-8"
-                  >
-                    <FlaskConical className="h-3 w-3 mr-1" />
-                    {t('automation:transformBuilder.mockData')}
-                  </Button>
-                )}
-                {(testOutput || testError) && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => { setTestOutput(''); setTestError('') }}
-                    className="h-8"
-                  >
-                    {t('automation:transformBuilder.clear')}
-                  </Button>
-                )}
+          {/* Right Panel - Test Data (JSON) + Output */}
+          <div className="w-56 border-l flex flex-col bg-background">
+            {/* Header */}
+            <div className="px-6 py-4 border-b bg-muted/20 flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <Play className="h-4 w-4 text-blue-500" />
+                <span className="font-semibold text-sm">{t('automation:test')}</span>
               </div>
             </div>
-          </div>
-
-          {/* Test Output */}
-          <div className="w-1/2 p-4 flex flex-col">
-            <Label className="text-xs font-medium mb-2 flex items-center gap-2">
-              <Database className="h-3 w-3" />
-              {t('automation:transformBuilder.outputData')}
-            </Label>
-            <div className="flex-1 min-h-0 overflow-auto rounded-md bg-muted/30 p-2">
-              {testError && (
-                <div className="p-2 bg-destructive/10 border border-destructive/20 rounded text-xs text-destructive font-mono">
-                  {testError}
+            <div className="p-4 space-y-4 overflow-auto">
+              {/* Input Data Section */}
+              <div>
+                <Label className="text-xs text-muted-foreground mb-2 block">{t('automation:transformBuilder.inputData')}</Label>
+                <Textarea
+                  value={testInput}
+                  onChange={e => setTestInput(e.target.value)}
+                  placeholder='{"temp": 25}'
+                  className="font-mono text-xs resize-none bg-muted/30 h-32"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  <Button
+                    size="sm"
+                    onClick={handleTestCode}
+                    disabled={!jsCode || testRunning}
+                    className="h-7 text-xs"
+                  >
+                    {testRunning ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3 mr-1" />}
+                    {t('automation:transformBuilder.run')}
+                  </Button>
+                  {(scopeType === 'device_type' || scopeType === 'device') && deviceTypeMetrics && deviceTypeMetrics.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const mockData: Record<string, unknown> = {}
+                        for (const metric of deviceTypeMetrics) {
+                          switch (metric.data_type) {
+                            case 'integer':
+                              mockData[metric.name] = Math.floor(Math.random() * 100)
+                              break
+                            case 'float':
+                              mockData[metric.name] = parseFloat((Math.random() * 100).toFixed(2))
+                              break
+                            case 'string':
+                              mockData[metric.name] = `sample_${metric.name}`
+                              break
+                            case 'boolean':
+                              mockData[metric.name] = Math.random() > 0.5
+                              break
+                            case 'array':
+                              mockData[metric.name] = [
+                                Math.floor(Math.random() * 100),
+                                parseFloat((Math.random() * 100).toFixed(2)),
+                                `sample_${metric.name}`
+                              ]
+                              break
+                            default:
+                              mockData[metric.name] = null
+                          }
+                        }
+                        setTestInput(JSON.stringify(mockData, null, 2))
+                      }}
+                      className="h-7 text-xs"
+                    >
+                      <FlaskConical className="h-3 w-3 mr-1" />
+                      Mock
+                    </Button>
+                  )}
+                  {(testOutput || testError) && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { setTestOutput(''); setTestError('') }}
+                      className="h-7 text-xs"
+                    >
+                      Clear
+                    </Button>
+                  )}
                 </div>
-              )}
-              {testOutput && !testError && (
-                <pre className="text-xs font-mono text-muted-foreground">
-                  {testOutput}
-                </pre>
-              )}
-              {!testOutput && !testError && (
-                <div className="text-xs text-muted-foreground text-center py-8">
-                  {t('automation:transformBuilder.clickRunToSeeOutput')}
+              </div>
+
+              {/* Output Section */}
+              {(testOutput || testError) && (
+                <div>
+                  <Label className="text-xs text-muted-foreground mb-2 block">{t('automation:transformBuilder.outputData')}</Label>
+                  <div className="rounded-md bg-muted/30 p-2 max-h-40 overflow-auto">
+                    {testError && (
+                      <div className="p-1.5 bg-destructive/10 border border-destructive/20 rounded text-xs text-destructive font-mono">
+                        {testError}
+                      </div>
+                    )}
+                    {testOutput && !testError && (
+                      <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
+                        {testOutput}
+                      </pre>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

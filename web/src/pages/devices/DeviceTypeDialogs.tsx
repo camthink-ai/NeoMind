@@ -1080,7 +1080,7 @@ function ReviewStep({ data, onEdit, onValidate, validating, validationResult }: 
                   <span>{cmd.display_name}</span>
                 </div>
                 <Badge variant="secondary" className="text-xs">
-                  {cmd.parameters.length} params
+                  {cmd.parameters?.length || 0} params
                 </Badge>
               </div>
             ))}
@@ -1228,7 +1228,7 @@ function CommandEditorCompact({
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm">{command.name}</span>
           <Badge variant="secondary" className="text-xs">
-            {command.parameters.length} params
+            {command.parameters?.length || 0} params
           </Badge>
         </div>
         <div className="flex items-center gap-1">
@@ -1622,7 +1622,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
                           <span className="text-sm">{cmd.display_name}</span>
                         </div>
                         <Badge variant="secondary" className="text-xs">
-                          {cmd.parameters.length} params
+                          {cmd.parameters?.length || 0} params
                         </Badge>
                       </div>
                     </div>
