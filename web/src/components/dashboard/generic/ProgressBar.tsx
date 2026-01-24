@@ -165,29 +165,18 @@ export function ProgressBar({
     )
   }
 
-  // Default variant - clean vertical layout for better aesthetics
+  // Default variant - horizontal layout optimized for single row
   const content = (
-    <div className="flex flex-col gap-2 w-full min-h-0">
-      {/* Top row: label and percentage */}
-      <div className="flex items-center justify-between gap-2">
-        {label ? (
-          <span className={cn('text-muted-foreground font-medium truncate', sizeConfig.labelText)} title={label}>
-            {label}
-          </span>
-        ) : (
-          <span className="flex-1" />
-        )}
-        {loading ? (
-          <Skeleton className={cn('h-4 w-10 shrink-0 rounded')} />
-        ) : (
-          <span className={cn('font-bold tabular-nums', sizeConfig.valueText, getTextColor(percentage, color, warningThreshold, dangerThreshold))}>
-            {Math.round(percentage)}%
-          </span>
-        )}
-      </div>
+    <div className="flex items-center gap-2 w-full min-h-0">
+      {/* Label - left side */}
+      {label && (
+        <span className={cn('text-muted-foreground text-xs font-medium shrink-0 truncate max-w-[50px]', sizeConfig.labelText)} title={label}>
+          {label}
+        </span>
+      )}
 
-      {/* Progress bar */}
-      <div className={cn('w-full rounded-full bg-muted/30 overflow-hidden', barHeight)}>
+      {/* Progress bar - takes remaining space */}
+      <div className={cn('flex-1 min-w-0 rounded-full bg-muted/30 overflow-hidden', barHeight)}>
         {loading ? (
           <Skeleton className={cn('h-full w-full rounded-full', barHeight)} />
         ) : (
@@ -197,6 +186,18 @@ export function ProgressBar({
           />
         )}
       </div>
+
+      {/* Percentage - right side with color matching progress */}
+      {loading ? (
+        <Skeleton className={cn('h-3.5 w-7 shrink-0 rounded text-[10px]')} />
+      ) : (
+        <span className={cn(
+          'font-bold tabular-nums shrink-0 text-[10px]',
+          getTextColor(percentage, color, warningThreshold, dangerThreshold)
+        )}>
+          {Math.round(percentage)}%
+        </span>
+      )}
     </div>
   )
 
