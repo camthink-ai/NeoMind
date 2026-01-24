@@ -1672,9 +1672,10 @@ pub async fn process_stream_events_with_safeguards(
                 tracing::info!("Tool execution and Phase 2 response complete");
             } else {
                 // No tool calls - save response directly
+                // Use buffer if content_before_tools is empty (buffer contains all content chunks when no tools)
                 let response_to_save = if content_before_tools.is_empty() {
-                    // No content and no tools - use empty string
-                    String::new()
+                    // When no tool calls were detected, buffer contains all the content
+                    buffer.clone()
                 } else {
                     content_before_tools.clone()
                 };
@@ -2617,9 +2618,10 @@ mod tests {
         let english_tokens = estimate_tokens(english);
         let chinese_tokens = estimate_tokens(chinese);
 
-        // Rough estimation: ~4 chars per token
+        // Rough estimation: ~4 chars per token for English, ~1.8 tokens per Chinese char
         assert!(english_tokens > 0 && english_tokens < 20);
-        assert!(chinese_tokens > 0 && chinese_tokens < 20);
+        // Chinese: ~12 chars × 1.8 × 1.1 buffer ≈ 24 tokens
+        assert!(chinese_tokens > 10 && chinese_tokens < 30);
 
         println!("✓ Token estimation test passed");
         println!(

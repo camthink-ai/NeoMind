@@ -5,6 +5,8 @@ use edge_ai_storage::{
     AgentMemory, AgentStats, AgentStore, AgentExecutionRecord, AiAgent, DataCollected,
     Decision, DecisionProcess, ExecutionResult as StorageExecutionResult, ExecutionStatus,
     GeneratedReport, ReasoningStep, TrendPoint, AgentResource, ResourceType,
+    // New conversation types
+    ConversationTurn, TurnInput, TurnOutput, AgentRole,
 };
 use edge_ai_devices::DeviceService;
 use std::sync::Arc;
@@ -13,6 +15,8 @@ use std::collections::HashMap;
 
 use crate::{Agent, AgentConfig, LlmBackend};
 use crate::error::AgentError;
+use crate::prompts::get_role_system_prompt;
+use crate::translation::Language;
 
 /// Configuration for agent executor.
 #[derive(Clone)]
@@ -353,6 +357,11 @@ Respond in JSON format:
         let duration_ms = start_time.elapsed().as_millis() as u64;
 
         // Build execution record
+        let (decision_process_for_turn, success) = match &execution_result {
+            Ok((dp, _)) => (Some(dp.clone()), true),
+            Err(_) => (None, false),
+        };
+
         let record = match execution_result {
             Ok((decision_process, result)) => {
                 // Update stats
@@ -405,6 +414,34 @@ Respond in JSON format:
             .await
             .map_err(|e| AgentError::Storage(format!("Failed to save execution: {}", e)))?;
 
+        // Save conversation turn for context continuity
+        if let Some(decision_process) = decision_process_for_turn {
+            let turn = self.create_conversation_turn(
+                execution_id.clone(),
+                "manual".to_string(),
+                decision_process.data_collected.clone(),
+                None, // event_data
+                &decision_process,
+                duration_ms,
+                success,
+            );
+
+            if let Err(e) = self.store.append_conversation_turn(&agent_id, &turn).await {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    execution_id = %execution_id,
+                    error = %e,
+                    "Failed to save conversation turn"
+                );
+            } else {
+                tracing::debug!(
+                    agent_id = %agent_id,
+                    execution_id = %execution_id,
+                    "Conversation turn saved successfully"
+                );
+            }
+        }
+
         // Reset agent status based on result
         let new_status = if record.status == ExecutionStatus::Completed {
             edge_ai_storage::AgentStatus::Active
@@ -426,6 +463,60 @@ Respond in JSON format:
         );
 
         Ok(record)
+    }
+
+    /// Execute multiple agents in parallel for improved performance.
+    ///
+    /// This is especially useful for multi-agent scenarios where agents
+    /// have independent tasks and can run concurrently.
+    ///
+    /// # Example
+    /// ```text
+    /// let agents = vec![monitor_agent, executor_agent, analyst_agent];
+    /// let results = executor.execute_agents_parallel(agents).await?;
+    /// // Results are returned in the same order as input agents
+    /// ```
+    pub async fn execute_agents_parallel(
+        &self,
+        agents: Vec<AiAgent>,
+    ) -> Result<Vec<AgentExecutionRecord>, AgentError> {
+        use futures::future::join_all;
+
+        let executor_ref = self;
+        let futures: Vec<_> = agents
+            .into_iter()
+            .map(|agent| executor_ref.execute_agent(agent))
+            .collect();
+
+        let results = join_all(futures).await;
+
+        // Collect results, converting any errors into a combined error
+        let mut records = Vec::new();
+        let mut errors = Vec::new();
+
+        for result in results {
+            match result {
+                Ok(record) => records.push(record),
+                Err(e) => errors.push(e),
+            }
+        }
+
+        if !errors.is_empty() {
+            tracing::warn!(
+                count = errors.len(),
+                "Some agents failed during parallel execution"
+            );
+        }
+
+        if records.is_empty() && !errors.is_empty() {
+            return Err(AgentError::Storage(format!(
+                "All {} agents failed. First error: {}",
+                errors.len(),
+                errors[0]
+            )));
+        }
+
+        Ok(records)
     }
 
     /// Execute with retry for stability.
@@ -893,6 +984,136 @@ Respond in JSON format:
         memory.updated_at = chrono::Utc::now().timestamp();
 
         Ok(memory)
+    }
+
+    /// Build LLM messages with conversation history for context-aware execution.
+    pub fn build_conversation_messages(
+        &self,
+        agent: &AiAgent,
+        current_data: &[DataCollected],
+        event_data: Option<serde_json::Value>,
+    ) -> Vec<Message> {
+        let mut messages = Vec::new();
+
+        // 1. Role-specific system prompt with conversation context
+        let role_str = format!("{:?}", agent.role);
+        let system_prompt = get_role_system_prompt(
+            &role_str,
+            &agent.user_prompt,
+            Language::Chinese,
+        );
+        messages.push(Message::system(system_prompt));
+
+        // 2. Add conversation summary if available
+        if let Some(ref summary) = agent.conversation_summary {
+            messages.push(Message::system(format!(
+                "## 历史对话摘要\n\n{}",
+                summary
+            )));
+        }
+
+        // 3. Add recent conversation turns as context
+        let context_window = agent.context_window_size;
+        let recent_turns: Vec<_> = agent.conversation_history
+            .iter()
+            .rev()
+            .take(context_window)
+            .collect();
+
+        if !recent_turns.is_empty() {
+            messages.push(Message::system(format!(
+                "## 之前的执行历史 (最近 {} 次)\n\n请参考以下历史记录，避免重复告警，追踪趋势变化。",
+                recent_turns.len()
+            )));
+
+            // Add each turn as context (in reverse order since we collected reversed)
+            for (i, turn) in recent_turns.iter().rev().enumerate() {
+                let timestamp_str = chrono::DateTime::from_timestamp(turn.timestamp, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+
+                let turn_context = format!(
+                    "### 历史执行 #{} ({})\n触发方式: {}\n分析: {}\n结论: {}",
+                    i + 1,
+                    timestamp_str,
+                    turn.trigger_type,
+                    turn.output.situation_analysis,
+                    turn.output.conclusion
+                );
+
+                messages.push(Message::system(turn_context));
+
+                // Add decisions if any
+                if !turn.output.decisions.is_empty() {
+                    let decisions_summary: Vec<String> = turn.output.decisions
+                        .iter()
+                        .map(|d| format!("- {}", d.description))
+                        .collect();
+                    messages.push(Message::system(format!(
+                        "历史决策:\n{}",
+                        decisions_summary.join("\n")
+                    )));
+                }
+            }
+
+            messages.push(Message::system(
+                "## 当前执行\n\n请参考上述历史，分析当前情况。特别注意：\n\
+                - 与之前数据相比的变化趋势\n\
+                - 之前报告的问题是否持续\n\
+                - 避免重复相同的分析或决策".to_string()
+            ));
+        }
+
+        // 4. Current execution data
+        let data_text = if current_data.is_empty() {
+            "无数据".to_string()
+        } else {
+            current_data
+                .iter()
+                .map(|d| format!("- {}: {}", d.source, d.data_type))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let current_input = format!(
+            "## 当前数据\n\n数据来源:\n{}\n\n触发方式: {}\n\n请分析当前情况并做出决策。",
+            data_text,
+            if event_data.is_some() { "事件触发" } else { "定时/手动" }
+        );
+
+        messages.push(Message::user(current_input));
+
+        messages
+    }
+
+    /// Create a conversation turn from execution results.
+    pub fn create_conversation_turn(
+        &self,
+        execution_id: String,
+        trigger_type: String,
+        input_data: Vec<DataCollected>,
+        event_data: Option<serde_json::Value>,
+        decision_process: &DecisionProcess,
+        duration_ms: u64,
+        success: bool,
+    ) -> ConversationTurn {
+        ConversationTurn {
+            execution_id,
+            timestamp: chrono::Utc::now().timestamp(),
+            trigger_type,
+            input: TurnInput {
+                data_collected: input_data,
+                event_data,
+            },
+            output: TurnOutput {
+                situation_analysis: decision_process.situation_analysis.clone(),
+                reasoning_steps: decision_process.reasoning_steps.clone(),
+                decisions: decision_process.decisions.clone(),
+                conclusion: decision_process.conclusion.clone(),
+            },
+            duration_ms,
+            success,
+        }
     }
 }
 

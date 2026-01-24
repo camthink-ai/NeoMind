@@ -185,6 +185,7 @@ impl IntentCategory {
                 "帮助",
                 "help",
                 "怎么用",
+                "怎么使用",
                 "how to",
                 "如何使用",
                 "how to use",
@@ -274,12 +275,20 @@ impl IntentClassifier {
                     }
                 }
 
-                // Score based on matched keywords
+                // Score based on matched keywords, weighted by keyword length
                 let score = if matched_keywords.is_empty() {
                     0.0
                 } else {
-                    // More matches = higher confidence, capped at 1.0
-                    (matched_keywords.len() as f32 * 0.3).min(1.0)
+                    // Each match contributes based on keyword character count, capped at 1.0
+                    // Longer keywords get more weight (use character count, not bytes)
+                    let weighted_score: f32 = matched_keywords.iter()
+                        .map(|kw| {
+                            let char_count = kw.chars().count() as f32;
+                            // 0.15 per character, with min 0.2 and max 0.5 per keyword
+                            (char_count * 0.15).clamp(0.2, 0.5)
+                        })
+                        .sum();
+                    weighted_score.min(1.0)
                 };
 
                 (category.clone(), score, matched_keywords)
@@ -510,6 +519,11 @@ mod tests {
         assert_eq!(result.category, IntentCategory::General);
 
         let result = classifier.classify("怎么使用这个系统");
+        // "怎么使用这个系统" matches "怎么使用" in Help keywords
+        assert_eq!(result.category, IntentCategory::Help);
+
+        // Test general query that doesn't match any specific category
+        let result = classifier.classify("今天天气怎么样");
         assert_eq!(result.category, IntentCategory::General);
     }
 

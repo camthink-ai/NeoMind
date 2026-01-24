@@ -700,8 +700,8 @@ impl TransformEventService {
                             device_id,
                             metric,
                             value,
-                            timestamp: _,
-                            quality: _,
+                            timestamp,
+                            quality,
                         } = event
                         {
                             // Create a unique key for this metric
@@ -741,6 +741,34 @@ impl TransformEventService {
                             }
 
                             tracing::trace!("Processing metric '{}' for device {}", metric, device_id);
+
+                            // IMPORTANT: Write raw metrics to time series storage for dashboard/query
+                            // This stores the actual device data so it can be retrieved later
+                            let ts_value = match &value {
+                                edge_ai_core::MetricValue::Float(v) => edge_ai_devices::MetricValue::Float(*v),
+                                edge_ai_core::MetricValue::Integer(v) => edge_ai_devices::MetricValue::Integer(*v),
+                                edge_ai_core::MetricValue::String(v) => edge_ai_devices::MetricValue::String(v.clone()),
+                                edge_ai_core::MetricValue::Boolean(v) => edge_ai_devices::MetricValue::Boolean(*v),
+                                edge_ai_core::MetricValue::Json(j) => {
+                                    // Convert JSON to string for storage
+                                    edge_ai_devices::MetricValue::String(j.to_string())
+                                },
+                            };
+                            let data_point = edge_ai_devices::telemetry::DataPoint {
+                                timestamp,
+                                value: ts_value,
+                                quality: quality.clone(),
+                            };
+                            if let Err(e) = time_series_storage.write(&device_id, &metric, data_point).await {
+                                tracing::warn!(
+                                    "Failed to write raw metric {}/{} to time series storage: {}",
+                                    device_id,
+                                    metric,
+                                    e
+                                );
+                            } else {
+                                tracing::debug!("Wrote raw metric {}/{} to time series storage", device_id, metric);
+                            }
 
                             // Add metric to device's data buffer
                             let device_data = device_metrics.entry(device_id.clone()).or_insert_with(|| {

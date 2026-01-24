@@ -7,9 +7,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use edge_ai_core::EventBus;
+
 use super::alert::{Alert, AlertId, AlertSeverity, AlertStatus};
 use super::plugin::{ChannelPluginRegistry, DynAlertChannel};
 use super::error::{Error, Result};
+
+/// Type alias for optional EventBus
+type OptionEventBus = Arc<RwLock<Option<Arc<EventBus>>>>;
 
 /// Alert manager for handling alerts.
 pub struct AlertManager {
@@ -25,6 +30,8 @@ pub struct AlertManager {
     max_history_size: usize,
     /// Alert rules for automatic alert generation
     rules: Arc<RwLock<Vec<AlertRule>>>,
+    /// Optional event bus for publishing alert events
+    event_bus: OptionEventBus,
 }
 
 impl AlertManager {
@@ -37,6 +44,7 @@ impl AlertManager {
             history: Arc::new(RwLock::new(Vec::new())),
             max_history_size: 10000,
             rules: Arc::new(RwLock::new(Vec::new())),
+            event_bus: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -49,6 +57,7 @@ impl AlertManager {
             history: Arc::new(RwLock::new(Vec::new())),
             max_history_size: 10000,
             rules: Arc::new(RwLock::new(Vec::new())),
+            event_bus: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -58,10 +67,21 @@ impl AlertManager {
         self
     }
 
+    /// Set the event bus for publishing alert events.
+    pub async fn set_event_bus(&self, event_bus: Arc<EventBus>) {
+        *self.event_bus.write().await = Some(event_bus);
+    }
+
+    /// Get a reference to the event bus (if set).
+    pub async fn get_event_bus(&self) -> Option<Arc<EventBus>> {
+        self.event_bus.read().await.clone()
+    }
+
     /// Create and send a new alert.
     pub async fn create_alert(&self, alert: Alert) -> Result<Alert> {
         let id = alert.id.clone();
         let is_active = alert.is_active();
+        let severity = alert.severity;
 
         // Store the alert
         self.alerts.write().await.insert(id.clone(), alert.clone());
@@ -79,6 +99,20 @@ impl AlertManager {
         // Send through channels
         let channels = self.channels.read().await;
         channels.send_all(&alert).await;
+
+        // Publish AlertCreated event to EventBus if configured
+        if let Some(event_bus) = self.event_bus.read().await.as_ref() {
+            use edge_ai_core::NeoTalkEvent;
+            let severity_str = format!("{:?}", severity);
+            let _ = event_bus.publish(NeoTalkEvent::AlertCreated {
+                alert_id: id.to_string(),
+                title: alert.title.clone(),
+                severity: severity_str,
+                message: alert.message.clone(),
+                timestamp: alert.timestamp.timestamp(),
+            });
+            tracing::debug!("Published AlertCreated event for alert {}", id);
+        }
 
         Ok(alert)
     }

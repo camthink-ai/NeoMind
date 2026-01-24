@@ -1718,6 +1718,94 @@ impl Drop for Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use edge_ai_tools::{Tool, Result, ToolOutput, ToolError};
+    use serde_json::json;
+
+    /// Simple mock list_devices tool for testing
+    struct MockListDevicesTool;
+    #[async_trait::async_trait]
+    impl Tool for MockListDevicesTool {
+        fn name(&self) -> &str { "list_devices" }
+        fn description(&self) -> &str { "List all devices (mock for testing)" }
+        fn parameters(&self) -> serde_json::Value { json!({}) }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput> {
+            let data = json!({"devices": [{"id": "mock_device_1", "name": "Mock Device"}]});
+            Ok(ToolOutput::success(data))
+        }
+    }
+
+    /// Simple mock list_rules tool for testing
+    struct MockListRulesTool;
+    #[async_trait::async_trait]
+    impl Tool for MockListRulesTool {
+        fn name(&self) -> &str { "list_rules" }
+        fn description(&self) -> &str { "List all rules (mock for testing)" }
+        fn parameters(&self) -> serde_json::Value { json!({}) }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput> {
+            let data = json!({"rules": [{"id": "mock_rule_1", "name": "Mock Rule"}]});
+            Ok(ToolOutput::success(data))
+        }
+    }
+
+    /// Simple mock query_data tool for testing
+    struct MockQueryDataTool;
+    #[async_trait::async_trait]
+    impl Tool for MockQueryDataTool {
+        fn name(&self) -> &str { "query_data" }
+        fn description(&self) -> &str { "Query metric data (mock for testing)" }
+        fn parameters(&self) -> serde_json::Value { json!({"type": "object"}) }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput> {
+            let data = json!({"data": [{"metric": "temperature", "value": 25.5}]});
+            Ok(ToolOutput::success(data))
+        }
+    }
+
+    /// Simple mock greet tool for testing
+    struct MockGreetTool;
+    #[async_trait::async_trait]
+    impl Tool for MockGreetTool {
+        fn name(&self) -> &str { "greet" }
+        fn description(&self) -> &str { "Greet the user (mock for testing)" }
+        fn parameters(&self) -> serde_json::Value { json!({}) }
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput> {
+            let data = json!({"message": "Hello there!"});
+            Ok(ToolOutput::success(data))
+        }
+    }
+
+    /// Create a test agent with mock tools registered
+    fn create_test_agent_with_mocks(session_id: String) -> Agent {
+        use edge_ai_tools::ToolRegistryBuilder;
+
+        let mut registry = ToolRegistryBuilder::new().build();
+
+        // Register mock tools
+        registry.register(std::sync::Arc::new(MockListDevicesTool));
+        registry.register(std::sync::Arc::new(MockListRulesTool));
+        registry.register(std::sync::Arc::new(MockQueryDataTool));
+        registry.register(std::sync::Arc::new(MockGreetTool));
+
+        // Add default agent tools
+        use crate::tools::{ThinkTool, ToolSearchTool};
+        use crate::tools::{AskUserTool, ConfirmActionTool, ClarifyIntentTool};
+
+        let tool_search = ToolSearchTool::from_definitions(&[]);
+        registry.register(std::sync::Arc::new(tool_search));
+
+        let think_tool = ThinkTool::new();
+        registry.register(std::sync::Arc::new(think_tool));
+
+        let ask_user_tool = AskUserTool::new();
+        registry.register(std::sync::Arc::new(ask_user_tool));
+
+        let confirm_tool = ConfirmActionTool::new();
+        registry.register(std::sync::Arc::new(confirm_tool));
+
+        let clarify_tool = ClarifyIntentTool::new();
+        registry.register(std::sync::Arc::new(clarify_tool));
+
+        Agent::with_tools(AgentConfig::default(), session_id, std::sync::Arc::new(registry))
+    }
 
     #[tokio::test]
     async fn test_agent_creation() {
@@ -1742,7 +1830,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_available_tools() {
-        let agent = Agent::with_session("test_session".to_string());
+        let agent = create_test_agent_with_mocks("test_session".to_string());
         let tools = agent.available_tools();
 
         assert!(!tools.is_empty());
@@ -1752,7 +1840,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_fallback() {
-        let agent = Agent::with_session("test_session".to_string());
+        let agent = create_test_agent_with_mocks("test_session".to_string());
         let response = agent.process("列出所有设备").await.unwrap();
 
         assert!(response.message.content.contains("设备"));
@@ -1761,7 +1849,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_list_rules() {
-        let agent = Agent::with_session("test_session".to_string());
+        let agent = create_test_agent_with_mocks("test_session".to_string());
         let response = agent.process("列出规则").await.unwrap();
 
         assert!(response.message.content.contains("规则"));
@@ -1770,7 +1858,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_query_data() {
-        let agent = Agent::with_session("test_session".to_string());
+        let agent = create_test_agent_with_mocks("test_session".to_string());
         let response = agent.process("查询温度数据").await.unwrap();
 
         assert!(response.message.content.contains("数据"));
@@ -1800,17 +1888,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_fallback_rules() {
-        // Test custom rules that don't require tool execution
+        // Test custom rules with mock greet tool
+        // Note: Use a keyword that doesn't match fast-path greetings
         let custom_rules = vec![
-            FallbackRule::new(vec!["hello", "hi", "greeting"], "greet")
-                .with_response_template("Hello there!"),
+            FallbackRule::new(vec!["greet", "greeting"], "greet")
+                .with_response_template("Greeting from fallback!"),
         ];
-        let agent =
-            Agent::with_session("test_session".to_string()).with_fallback_rules(custom_rules);
+        let agent = create_test_agent_with_mocks("test_session".to_string())
+            .with_fallback_rules(custom_rules);
 
-        let response = agent.process("hello there").await.unwrap();
-        // Since greet tool doesn't exist, we expect error handling
-        // The key is that custom rules are used
-        assert!(response.tools_used.contains(&"greet".to_string()));
+        // Use "greet me" which won't match fast-path patterns
+        let response = agent.process("greet me").await.unwrap();
+        // The greet tool should be used
+        assert!(response.tools_used.contains(&"greet".to_string()),
+            "Expected 'greet' in tools_used, got: {:?}", response.tools_used);
     }
 }

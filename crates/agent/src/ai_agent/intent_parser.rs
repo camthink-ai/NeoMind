@@ -130,9 +130,11 @@ impl IntentParser {
             if let Some(pos) = prompt.find(keyword) {
                 let after = &prompt[pos..];
                 // Try to extract a number
+                // Note: keyword.chars().count() gives us the character count, not byte length
+                let keyword_char_count = keyword.chars().count();
                 let number_match: Vec<char> = after
                     .chars()
-                    .skip(keyword.len())
+                    .skip(keyword_char_count)
                     .take_while(|c| c.is_ascii_digit() || *c == '.')
                     .collect();
 
@@ -283,6 +285,7 @@ mod tests {
         let parser = IntentParser::new();
         let conditions = parser.extract_conditions("温度大于30度");
 
-        assert!(conditions.contains(&">30".to_string()));
+        println!("Extracted conditions: {:?}", conditions);
+        assert!(conditions.contains(&">30".to_string()), "Expected '>30' in conditions: {:?}", conditions);
     }
 }

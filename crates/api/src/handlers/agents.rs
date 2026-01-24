@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use edge_ai_storage::{
     AiAgent, AgentMemory, AgentSchedule, AgentStats, AgentStatus, AgentExecutionRecord,
-    AgentFilter, DecisionProcess, ExecutionStatus, ExecutionResult, IntentType,
+    AgentFilter, AgentRole, DecisionProcess, ExecutionStatus, ExecutionResult, IntentType,
     ParsedIntent, ScheduleType,
 };
 
@@ -27,6 +27,7 @@ use crate::models::ErrorResponse;
 struct AgentDto {
     id: String,
     name: String,
+    role: String,
     status: String,
     created_at: String,
     last_execution_at: Option<String>,
@@ -41,6 +42,7 @@ struct AgentDto {
 struct AgentDetailDto {
     id: String,
     name: String,
+    role: String,
     user_prompt: String,
     status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,6 +130,8 @@ struct AgentExecutionDto {
 #[derive(Debug, serde::Deserialize)]
 pub struct CreateAgentRequest {
     pub name: String,
+    #[serde(default = "default_agent_role")]
+    pub role: String,
     pub user_prompt: String,
     pub device_ids: Vec<String>,
     #[serde(default)]
@@ -135,6 +139,10 @@ pub struct CreateAgentRequest {
     #[serde(default)]
     pub commands: Vec<CommandSelectionRequest>,
     pub schedule: AgentScheduleRequest,
+}
+
+fn default_agent_role() -> String {
+    "Monitor".to_string()
 }
 
 /// Metric selection in create request.
@@ -197,6 +205,7 @@ impl From<AiAgent> for AgentDto {
         Self {
             id: agent.id,
             name: agent.name,
+            role: format!("{:?}", agent.role),
             status: format!("{:?}", agent.status),
             created_at: format_datetime(agent.created_at),
             last_execution_at: agent.last_execution_at.map(format_datetime),
@@ -213,6 +222,7 @@ impl From<&AiAgent> for AgentDetailDto {
         Self {
             id: agent.id.clone(),
             name: agent.name.clone(),
+            role: format!("{:?}", agent.role),
             user_prompt: agent.user_prompt.clone(),
             status: format!("{:?}", agent.status),
             parsed_intent: agent.parsed_intent.as_ref().map(|i| ParsedIntentDto {
@@ -374,6 +384,13 @@ pub async fn create_agent(
     }
 
     // Create the agent
+    let agent_role = match request.role.as_str() {
+        "Monitor" => AgentRole::Monitor,
+        "Executor" => AgentRole::Executor,
+        "Analyst" => AgentRole::Analyst,
+        _ => AgentRole::Monitor, // Default fallback
+    };
+
     let agent = AiAgent {
         id: uuid::Uuid::new_v4().to_string(),
         name: request.name.clone(),
@@ -388,6 +405,11 @@ pub async fn create_agent(
         stats: AgentStats::default(),
         memory: AgentMemory::default(),
         error_message: None,
+        // New conversation fields
+        role: agent_role,
+        conversation_history: Default::default(),
+        conversation_summary: Default::default(),
+        context_window_size: Default::default(),
     };
 
     // Save to storage

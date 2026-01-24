@@ -6,6 +6,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use chrono;
 
 use edge_ai_rules::{CompiledRule, RuleId, RuleStatus, RuleCondition, RuleAction, ComparisonOperator, MetricDataType as RulesMetricDataType};
 use edge_ai_devices::MetricDataType as DeviceMetricDataType;
@@ -55,8 +56,13 @@ enum RuleActionDto {
 struct RuleDto {
     id: String,
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
     enabled: bool,
     trigger_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_triggered: Option<String>,
+    dsl: String,
 }
 
 /// Request body for updating a rule.
@@ -165,11 +171,19 @@ pub async fn list_rules_handler(
     let rules = state.rule_engine.list_rules().await;
     let dtos: Vec<RuleDto> = rules
         .into_iter()
-        .map(|r| RuleDto {
-            id: r.id.to_string(),
-            name: r.name,
-            enabled: matches!(r.status, RuleStatus::Active),
-            trigger_count: r.state.trigger_count,
+        .map(|r| {
+            // Format last_triggered as ISO string if available
+            let last_triggered = r.state.last_triggered.as_ref().map(|dt| dt.to_rfc3339());
+
+            RuleDto {
+                id: r.id.to_string(),
+                name: r.name,
+                description: r.description.clone(),
+                enabled: matches!(r.status, RuleStatus::Active),
+                trigger_count: r.state.trigger_count,
+                last_triggered,
+                dsl: r.dsl.clone(),
+            }
         })
         .collect();
 
@@ -243,9 +257,19 @@ pub async fn update_rule_handler(
     // Re-add the rule (this updates it)
     state
         .rule_engine
-        .add_rule(rule)
+        .add_rule(rule.clone())
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to update rule: {}", e)))?;
+
+    // Also update in persistent store
+    if let Some(ref store) = state.rule_store {
+        if let Err(e) = store.save(&rule) {
+            tracing::warn!("Failed to update rule in store: {}", e);
+            // Don't fail the request if persistence fails
+        } else {
+            tracing::debug!("Updated rule {} in persistent store", rule_id);
+        }
+    }
 
     ok(json!({
         "rule_id": id,
@@ -271,6 +295,16 @@ pub async fn delete_rule_handler(
 
     if !removed {
         return Err(ErrorResponse::not_found("Rule"));
+    }
+
+    // Also remove from persistent store
+    if let Some(ref store) = state.rule_store {
+        if let Err(e) = store.delete(&rule_id) {
+            tracing::warn!("Failed to delete rule from store: {}", e);
+            // Don't fail the request if persistence fails
+        } else {
+            tracing::debug!("Deleted rule {} from persistent store", rule_id);
+        }
     }
 
     ok(json!({
@@ -302,6 +336,18 @@ pub async fn set_rule_status_handler(
             .pause_rule(&rule_id)
             .await
             .map_err(|e| ErrorResponse::internal(format!("Failed to disable rule: {}", e)))?;
+    }
+
+    // Also update in persistent store
+    if let Some(ref store) = state.rule_store {
+        if let Some(rule) = state.rule_engine.get_rule(&rule_id).await {
+            if let Err(e) = store.save(&rule) {
+                tracing::warn!("Failed to update rule status in store: {}", e);
+                // Don't fail the request if persistence fails
+            } else {
+                tracing::debug!("Updated rule {} status in persistent store", rule_id);
+            }
+        }
     }
 
     ok(json!({
@@ -393,6 +439,18 @@ pub async fn create_rule_handler(
         .add_rule_from_dsl(dsl)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to create rule: {}", e)))?;
+
+    // Persist rule to store if available
+    if let Some(ref store) = state.rule_store {
+        if let Some(rule) = state.rule_engine.get_rule(&rule_id).await {
+            if let Err(e) = store.save(&rule) {
+                tracing::warn!("Failed to save rule to store: {}", e);
+                // Don't fail the request if persistence fails
+            } else {
+                tracing::debug!("Saved rule {} to persistent store", rule_id);
+            }
+        }
+    }
 
     ok(json!({
         "rule_id": rule_id.to_string(),

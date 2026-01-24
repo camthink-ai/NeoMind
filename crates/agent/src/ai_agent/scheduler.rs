@@ -255,7 +255,7 @@ impl AgentScheduler {
     }
 
     /// Calculate the next execution time for a schedule.
-    fn calculate_next_execution(&self, schedule: &AgentSchedule) -> i64 {
+    pub(crate) fn calculate_next_execution(&self, schedule: &AgentSchedule) -> i64 {
         let now = chrono::Utc::now().timestamp();
 
         match schedule.schedule_type {
@@ -286,9 +286,9 @@ impl AgentScheduler {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_calculate_next_execution() {
-        let scheduler = SchedulerConfig::default();
+    #[tokio::test]
+    async fn test_calculate_next_execution() {
+        let scheduler = AgentScheduler::new(SchedulerConfig::default()).await.unwrap();
 
         let interval_schedule = AgentSchedule {
             schedule_type: ScheduleType::Interval,

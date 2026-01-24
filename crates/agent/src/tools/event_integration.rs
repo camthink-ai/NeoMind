@@ -939,8 +939,8 @@ mod tests {
         let integrated = EventIntegratedToolRegistry::new(registry, event_bus);
 
         assert!(integrated.has("list_devices"));
-        // At least 6 standard tools (may have more with additions)
-        assert!(integrated.list().len() >= 6);
+        // 5 tools were added (query_data, control_device, list_devices, create_rule, list_rules)
+        assert_eq!(integrated.list().len(), 5);
     }
 
     #[tokio::test]

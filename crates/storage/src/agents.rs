@@ -28,12 +28,16 @@ pub struct AgentStore {
 ///
 /// Represents a user-created autonomous agent that monitors devices,
 /// analyzes data, and takes actions based on natural language requirements.
+/// The agent maintains a persistent conversation history across executions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiAgent {
     /// Unique agent ID
     pub id: String,
     /// Agent name
     pub name: String,
+    /// Agent role (Monitor, Executor, Analyst)
+    #[serde(default)]
+    pub role: AgentRole,
     /// User's natural language description of requirements
     pub user_prompt: String,
     /// AI-generated understanding of the requirements
@@ -54,8 +58,22 @@ pub struct AiAgent {
     pub stats: AgentStats,
     /// Persistent memory across executions
     pub memory: AgentMemory,
+    /// Conversation history - recent executions for context
+    #[serde(default)]
+    pub conversation_history: Vec<ConversationTurn>,
+    /// Compressed summary of old conversation turns
+    #[serde(default)]
+    pub conversation_summary: Option<String>,
+    /// How many recent turns to include in LLM context
+    #[serde(default = "default_context_window")]
+    pub context_window_size: usize,
     /// Error message (if status is error)
     pub error_message: Option<String>,
+}
+
+/// Default value for context window size.
+fn default_context_window() -> usize {
+    10
 }
 
 /// Parsed intent from user's natural language description.
@@ -74,7 +92,7 @@ pub struct ParsedIntent {
 }
 
 /// Type of intent extracted from user prompt.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum IntentType {
     /// Monitor and alert on conditions
@@ -87,6 +105,24 @@ pub enum IntentType {
     Control,
     /// Complex multi-step automation
     Automation,
+}
+
+/// Agent role defining its core responsibility.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    /// Data monitoring and alerting
+    Monitor,
+    /// Device control and automation
+    Executor,
+    /// Data analysis and reporting
+    Analyst,
+}
+
+impl Default for AgentRole {
+    fn default() -> Self {
+        AgentRole::Monitor
+    }
 }
 
 /// A resource selected by the agent.
@@ -239,6 +275,51 @@ pub struct TrendPoint {
     pub value: f64,
     /// Additional context
     pub context: Option<serde_json::Value>,
+}
+
+/// Input for a single conversation turn (execution).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnInput {
+    /// Data collected during this execution
+    pub data_collected: Vec<DataCollected>,
+    /// Event data if this was event-triggered
+    pub event_data: Option<serde_json::Value>,
+}
+
+/// Output from a single conversation turn (execution).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TurnOutput {
+    /// Situation analysis
+    pub situation_analysis: String,
+    /// Reasoning steps taken
+    pub reasoning_steps: Vec<ReasoningStep>,
+    /// Decisions made
+    pub decisions: Vec<Decision>,
+    /// Final conclusion
+    pub conclusion: String,
+}
+
+/// A single conversation turn - one complete execution with context.
+///
+/// This represents one "turn" in the long-running conversation with an agent.
+/// Each execution adds a new turn, and recent turns are included in the LLM context
+/// to maintain conversational memory across executions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConversationTurn {
+    /// Execution ID (links to AgentExecutionRecord)
+    pub execution_id: String,
+    /// Timestamp when this turn occurred
+    pub timestamp: i64,
+    /// What triggered this execution (event, schedule, manual)
+    pub trigger_type: String,
+    /// Input to the agent
+    pub input: TurnInput,
+    /// Output from the agent
+    pub output: TurnOutput,
+    /// How long this turn took (milliseconds)
+    pub duration_ms: u64,
+    /// Whether this turn completed successfully
+    pub success: bool,
 }
 
 /// Agent execution record with full decision process.
@@ -846,6 +927,107 @@ impl AgentStore {
 
         true
     }
+
+    // ========== Conversation History Methods ==========
+
+    /// Append a new conversation turn to an agent's history.
+    pub async fn append_conversation_turn(
+        &self,
+        agent_id: &str,
+        turn: &ConversationTurn,
+    ) -> Result<(), Error> {
+        let mut agent = self.get_agent(agent_id).await?
+            .ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        agent.conversation_history.push(turn.clone());
+        agent.updated_at = chrono::Utc::now().timestamp();
+
+        // Save the updated agent
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(AGENTS_TABLE)?;
+            let value = serde_json::to_vec(&agent)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            table.insert(agent_id, value.as_slice())?;
+        }
+        write_txn.commit()?;
+
+        Ok(())
+    }
+
+    /// Get recent conversation turns for an agent.
+    pub async fn get_conversation_history(
+        &self,
+        agent_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<ConversationTurn>, Error> {
+        let agent = self.get_agent(agent_id).await?;
+        let agent = agent.ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        let history = &agent.conversation_history;
+        if let Some(limit) = limit {
+            if history.len() > limit {
+                Ok(history[history.len() - limit..].to_vec())
+            } else {
+                Ok(history.clone())
+            }
+        } else {
+            Ok(history.clone())
+        }
+    }
+
+    /// Compress conversation history by keeping recent turns and summarizing old ones.
+    pub async fn compress_conversation(
+        &self,
+        agent_id: &str,
+        keep_recent: usize,
+        summary: String,
+    ) -> Result<(), Error> {
+        let mut agent = self.get_agent(agent_id).await?
+            .ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        if agent.conversation_history.len() > keep_recent {
+            // Remove old turns, keeping only the most recent ones
+            agent.conversation_history = agent.conversation_history
+                .split_off(agent.conversation_history.len() - keep_recent);
+            agent.conversation_summary = Some(summary);
+            agent.updated_at = chrono::Utc::now().timestamp();
+
+            // Save the updated agent
+            let write_txn = self.db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(AGENTS_TABLE)?;
+                let value = serde_json::to_vec(&agent)
+                    .map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(agent_id, value.as_slice())?;
+            }
+            write_txn.commit()?;
+        }
+
+        Ok(())
+    }
+
+    /// Clear all conversation history for an agent.
+    pub async fn clear_conversation_history(&self, agent_id: &str) -> Result<(), Error> {
+        let mut agent = self.get_agent(agent_id).await?
+            .ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
+
+        agent.conversation_history.clear();
+        agent.conversation_summary = None;
+        agent.updated_at = chrono::Utc::now().timestamp();
+
+        // Save the updated agent
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(AGENTS_TABLE)?;
+            let value = serde_json::to_vec(&agent)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            table.insert(agent_id, value.as_slice())?;
+        }
+        write_txn.commit()?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -863,6 +1045,7 @@ mod tests {
         let agent = AiAgent {
             id: "agent-1".to_string(),
             name: "Temperature Monitor".to_string(),
+            role: AgentRole::Monitor,
             user_prompt: "Monitor warehouse temperatures and alert if above 30°C".to_string(),
             parsed_intent: None,
             resources: vec![],
@@ -879,6 +1062,9 @@ mod tests {
             last_execution_at: None,
             stats: AgentStats::default(),
             memory: AgentMemory::default(),
+            conversation_history: vec![],
+            conversation_summary: None,
+            context_window_size: 10,
             error_message: None,
         };
 
@@ -886,6 +1072,7 @@ mod tests {
         let retrieved = store.get_agent("agent-1").await.unwrap().unwrap();
         assert_eq!(retrieved.id, "agent-1");
         assert_eq!(retrieved.name, "Temperature Monitor");
+        assert_eq!(retrieved.role, AgentRole::Monitor);
     }
 
     #[tokio::test]
@@ -895,6 +1082,7 @@ mod tests {
         let agent = AiAgent {
             id: "agent-1".to_string(),
             name: "Test Agent".to_string(),
+            role: AgentRole::Monitor,
             user_prompt: "Test".to_string(),
             parsed_intent: None,
             resources: vec![],
@@ -911,6 +1099,9 @@ mod tests {
             last_execution_at: None,
             stats: AgentStats::default(),
             memory: AgentMemory::default(),
+            conversation_history: vec![],
+            conversation_summary: None,
+            context_window_size: 10,
             error_message: None,
         };
 
@@ -960,6 +1151,7 @@ mod tests {
         let mut agent = AiAgent {
             id: "agent-1".to_string(),
             name: "Learning Agent".to_string(),
+            role: AgentRole::Analyst,
             user_prompt: "Learn patterns".to_string(),
             parsed_intent: None,
             resources: vec![],
@@ -976,6 +1168,9 @@ mod tests {
             last_execution_at: None,
             stats: AgentStats::default(),
             memory: AgentMemory::default(),
+            conversation_history: vec![],
+            conversation_summary: None,
+            context_window_size: 10,
             error_message: None,
         };
 
@@ -1012,6 +1207,7 @@ mod tests {
         let agent = AiAgent {
             id: "agent-1".to_string(),
             name: "Stats Agent".to_string(),
+            role: AgentRole::Monitor,
             user_prompt: "Test stats".to_string(),
             parsed_intent: None,
             resources: vec![],
@@ -1028,6 +1224,9 @@ mod tests {
             last_execution_at: None,
             stats: AgentStats::default(),
             memory: AgentMemory::default(),
+            conversation_history: vec![],
+            conversation_summary: None,
+            context_window_size: 10,
             error_message: None,
         };
 

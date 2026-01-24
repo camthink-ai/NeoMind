@@ -15,7 +15,12 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use super::dependencies::DependencyManager;
-use super::dsl::{ParsedRule, RuleAction, RuleCondition, RuleError, ComparisonOperator};
+use super::dsl::{ParsedRule, RuleAction, RuleCondition, RuleError, ComparisonOperator, AlertSeverity};
+
+/// Optional alert manager for creating alerts from rule actions.
+/// Wrapped in Option to allow RuleEngine to function without it.
+/// Double-wrapped in Arc because AlertManager doesn't implement Clone.
+type OptionAlertManager = Arc<tokio::sync::RwLock<Option<Arc<edge_ai_alerts::AlertManager>>>>;
 
 /// Unique identifier for a rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -78,6 +83,11 @@ pub struct CompiledRule {
     pub id: RuleId,
     /// Rule name.
     pub name: String,
+    /// Rule description (optional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Original DSL text.
+    pub dsl: String,
     /// Condition to evaluate.
     pub condition: RuleCondition,
     /// Duration condition must be true before triggering.
@@ -95,9 +105,16 @@ pub struct CompiledRule {
 impl CompiledRule {
     /// Create a new compiled rule from a parsed rule.
     pub fn from_parsed(parsed: ParsedRule) -> Self {
+        Self::from_parsed_with_dsl(parsed, String::new())
+    }
+
+    /// Create a new compiled rule from a parsed rule with the original DSL text.
+    pub fn from_parsed_with_dsl(parsed: ParsedRule, dsl: String) -> Self {
         Self {
             id: RuleId::new(),
             name: parsed.name.clone(),
+            description: parsed.description,
+            dsl,
             condition: parsed.condition,
             for_duration: parsed.for_duration,
             actions: parsed.actions,
@@ -215,6 +232,8 @@ pub struct RuleEngine {
     max_history_size: usize,
     /// Dependency manager for execution ordering.
     dependency_manager: Arc<StdRwLock<DependencyManager>>,
+    /// Optional alert manager for creating alerts from rule actions.
+    alert_manager: OptionAlertManager,
 }
 
 impl RuleEngine {
@@ -226,7 +245,20 @@ impl RuleEngine {
             history: Arc::new(RwLock::new(Vec::new())),
             max_history_size: 1000,
             dependency_manager: Arc::new(StdRwLock::new(DependencyManager::new())),
+            alert_manager: Arc::new(tokio::sync::RwLock::new(None)),
         }
+    }
+
+    /// Set the alert manager for creating alerts from rule actions.
+    /// This must be called after construction as it requires async access.
+    pub async fn set_alert_manager(&self, alert_manager: Arc<edge_ai_alerts::AlertManager>) {
+        *self.alert_manager.write().await = Some(alert_manager);
+    }
+
+    /// Get a reference to the alert manager (if set).
+    pub async fn get_alert_manager(&self) -> Option<Arc<edge_ai_alerts::AlertManager>> {
+        let guard = self.alert_manager.read().await;
+        guard.as_ref().map(|arc| Arc::clone(arc))
     }
 
     /// Set the maximum history size.
@@ -245,7 +277,7 @@ impl RuleEngine {
     /// Add a rule from DSL.
     pub async fn add_rule_from_dsl(&self, dsl: &str) -> Result<RuleId, RuleError> {
         let parsed = super::dsl::RuleDslParser::parse(dsl)?;
-        let compiled = CompiledRule::from_parsed(parsed);
+        let compiled = CompiledRule::from_parsed_with_dsl(parsed, dsl.to_string());
         let id = compiled.id.clone();
         self.add_rule(compiled).await?;
         Ok(id)
@@ -501,14 +533,51 @@ impl RuleEngine {
                 Ok(format!("DELAY: {:?} completed", duration))
             }
             RuleAction::CreateAlert { title, message, severity } => {
-                let sev_str = match severity {
-                    AlertSeverity::Info => "INFO",
-                    AlertSeverity::Warning => "WARNING",
-                    AlertSeverity::Error => "ERROR",
-                    AlertSeverity::Critical => "CRITICAL",
+                use edge_ai_alerts::{Alert, AlertSeverity as AlertSev};
+                
+                let sev = match severity {
+                    AlertSeverity::Info => AlertSev::Info,
+                    AlertSeverity::Warning => AlertSev::Warning,
+                    AlertSeverity::Error => AlertSev::Warning, // Map Error to Warning
+                    AlertSeverity::Critical => AlertSev::Critical,
                 };
-                tracing::info!("ALERT [{}]: {} - {}", sev_str, title, message);
-                Ok(format!("ALERT [{}]: {}", sev_str, title))
+                
+                // Try to create alert through AlertManager if available
+                let alert_manager = self.alert_manager.read().await;
+                if let Some(manager) = alert_manager.as_ref() {
+                    let alert = Alert::new(
+                        sev,
+                        title.clone(),
+                        message.clone(),
+                        "rule".to_string(),
+                    );
+                    
+                    match manager.create_alert(alert).await {
+                        Ok(created) => {
+                            tracing::info!(
+                                "Alert created from rule: {} [{}] - {}",
+                                title,
+                                sev,
+                                message
+                            );
+                            Ok(format!("ALERT [{}]: {} (id: {})", sev, title, created.id))
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to create alert from rule: {}", e);
+                            Err(format!("Failed to create alert: {}", e))
+                        }
+                    }
+                } else {
+                    // Fallback to logging if no AlertManager is set
+                    let sev_str = match severity {
+                        AlertSeverity::Info => "INFO",
+                        AlertSeverity::Warning => "WARNING",
+                        AlertSeverity::Error => "ERROR",
+                        AlertSeverity::Critical => "CRITICAL",
+                    };
+                    tracing::warn!("ALERT [{}]: {} - {} (no AlertManager configured)", sev_str, title, message);
+                    Ok(format!("ALERT [{}]: {} (logged only)", sev_str, title))
+                }
             }
             RuleAction::HttpRequest { method, url, .. } => {
                 let method_str = match method {

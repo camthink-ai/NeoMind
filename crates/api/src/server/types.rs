@@ -11,7 +11,7 @@ use edge_ai_commands::{CommandManager, CommandQueue, CommandStateStore};
 use edge_ai_core::{EventBus, extension::ExtensionRegistry};
 use edge_ai_devices::adapter::AdapterResult;
 use edge_ai_devices::{DeviceRegistry, DeviceService, TimeSeriesStorage};
-use edge_ai_rules::{InMemoryValueProvider, RuleEngine};
+use edge_ai_rules::{InMemoryValueProvider, RuleEngine, store::RuleStore};
 use edge_ai_storage::business::EventLogStore;
 use edge_ai_storage::decisions::DecisionStore;
 
@@ -53,6 +53,8 @@ pub struct ServerState {
     pub time_series_storage: Arc<TimeSeriesStorage>,
     /// Rule engine.
     pub rule_engine: Arc<RuleEngine>,
+    /// Rule store for persistent rule storage.
+    pub rule_store: Option<Arc<RuleStore>>,
     /// Alert manager.
     pub alert_manager: Arc<AlertManager>,
     /// Automation store for unified automations.
@@ -285,11 +287,54 @@ impl ServerState {
             }
         };
 
+        // Create alert manager first (needed by rule engine)
+        let alert_manager = Arc::new(AlertManager::new());
+        let rule_engine = Arc::new(RuleEngine::new(value_provider));
+        // Wire rule engine to alert manager for CreateAlert actions
+        rule_engine.set_alert_manager(alert_manager.clone()).await;
+        // Wire event bus to alert manager for AlertCreated events
+        alert_manager.set_event_bus(event_bus.clone()).await;
+
+        // Create rule store for persistent rule storage
+        let rule_store = match RuleStore::open("data/rules.redb") {
+            Ok(store) => {
+                tracing::info!("Rule store initialized at data/rules.redb");
+                Some(store)
+            }
+            Err(e) => {
+                tracing::warn!(category = "storage", error = %e, "Failed to open rule store, rules will not be persisted");
+                None
+            }
+        };
+
+        // Load rules from store into rule engine
+        if let Some(ref store) = rule_store {
+            match store.list_all() {
+                Ok(rules) => {
+                    let rule_count = rules.len();
+                    tracing::info!("Loading {} rules from persistent store", rule_count);
+                    for rule in rules {
+                        // Re-add rule to engine
+                        if let Err(e) = rule_engine.add_rule(rule.clone()).await {
+                            tracing::warn!("Failed to load rule {}: {}", rule.id, e);
+                        } else {
+                            tracing::debug!("Loaded rule: {} ({})", rule.name, rule.id);
+                        }
+                    }
+                    tracing::info!("Successfully loaded {} rules from persistent store", rule_count);
+                }
+                Err(e) => {
+                    tracing::warn!(category = "storage", error = %e, "Failed to load rules from store");
+                }
+            }
+        }
+
         Self {
             session_manager: Arc::new(session_manager),
             time_series_storage,
-            rule_engine: Arc::new(RuleEngine::new(value_provider)),
-            alert_manager: Arc::new(AlertManager::new()),
+            rule_engine,
+            rule_store,
+            alert_manager,
             automation_store,
             intent_analyzer,
             transform_engine,

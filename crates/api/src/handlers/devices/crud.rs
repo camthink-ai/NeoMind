@@ -236,6 +236,163 @@ pub async fn get_device_handler(
     }))
 }
 
+/// Get device current state with all metrics.
+///
+/// GET /api/devices/:id/current
+///
+/// Returns device info + all metrics with current values in one call.
+/// This is the recommended endpoint for UI components that need device state.
+pub async fn get_device_current_handler(
+    State(state): State<ServerState>,
+    Path(device_id): Path<String>,
+) -> HandlerResult<serde_json::Value> {
+    // Get device config and template
+    let (config, template) = state
+        .device_service
+        .get_device_with_template(&device_id)
+        .await
+        .map_err(|_| ErrorResponse::not_found("Device"))?;
+
+    // Get device status
+    let device_status = state.device_service.get_device_status(&device_id).await;
+    let online = device_status.is_connected();
+    let status = if online {
+        MdlConnectionStatus::Connected
+    } else {
+        MdlConnectionStatus::Disconnected
+    };
+    let status = convert_status(status);
+
+    let last_seen = chrono::DateTime::from_timestamp(device_status.last_seen, 0)
+        .unwrap_or_else(chrono::Utc::now);
+    let instance = config_to_device_instance(&config, status, last_seen);
+
+    // Get plugin info
+    let (plugin_id, plugin_name) = get_plugin_info(&config.adapter_id);
+
+    // Build metrics response with current values
+    let mut metrics_data = serde_json::Map::new();
+    let now = chrono::Utc::now().timestamp();
+
+    // Transform-generated metric namespaces (with dot notation)
+    let transform_namespaces = ["transform.", "virtual.", "computed.", "derived.", "aggregated."];
+
+    // Get all available metrics from storage first
+    let all_storage_metrics: Vec<String> = state
+        .time_series_storage
+        .list_metrics(&device_id)
+        .await
+        .unwrap_or_default();
+
+    // Collect all metric names we need to process:
+    // 1. Template metrics
+    // 2. Auto-extracted metrics (like values.battery) from storage
+    // 3. Virtual metrics (transform-generated)
+    let mut metrics_to_process: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Add template metrics
+    for metric in &template.metrics {
+        metrics_to_process.insert(metric.name.clone());
+    }
+
+    // Add all storage metrics (this includes auto-extracted metrics like values.battery)
+    for metric_name in &all_storage_metrics {
+        if metric_name != "_raw" {
+            metrics_to_process.insert(metric_name.clone());
+        }
+    }
+
+    // Process all metrics
+    for metric_name in metrics_to_process {
+        // Check if this is a template metric
+        let is_template = template.metrics.iter().any(|m| m.name == metric_name);
+        // Check if this is a virtual metric (transform-generated)
+        let is_virtual = transform_namespaces.iter().any(|p| metric_name.starts_with(p));
+
+        let (display_name, unit, data_type_str, is_virtual_flag) = if is_template {
+            let metric = template.metrics.iter().find(|m| m.name == metric_name).unwrap();
+            let data_type_str = match metric.data_type {
+                edge_ai_devices::mdl::MetricDataType::Integer => "integer",
+                edge_ai_devices::mdl::MetricDataType::Float => "float",
+                edge_ai_devices::mdl::MetricDataType::String => "string",
+                edge_ai_devices::mdl::MetricDataType::Boolean => "boolean",
+                edge_ai_devices::mdl::MetricDataType::Binary => "binary",
+                edge_ai_devices::mdl::MetricDataType::Enum { .. } => "enum",
+                edge_ai_devices::mdl::MetricDataType::Array { .. } => "array",
+            };
+            (metric.display_name.clone(), metric.unit.clone(), data_type_str.to_string(), false)
+        } else if is_virtual {
+            (metric_name.clone(), "-".to_string(), "float".to_string(), true)
+        } else {
+            // Auto-extracted metric (e.g., values.battery)
+            (metric_name.clone(), "-".to_string(), "string".to_string(), false)
+        };
+
+        // Get latest value - try time_series_storage directly for auto-extracted metrics
+        let value = if is_template {
+            // Use device_service.query_telemetry for template metrics
+            match state
+                .device_service
+                .query_telemetry(&device_id, &metric_name, Some(now - 3600), Some(now))
+                .await
+            {
+                Ok(points) => points.last().map(|(_, v)| super::metrics::value_to_json(v)),
+                Err(e) => {
+                    tracing::warn!("Failed to query telemetry for {}/{}: {:?}", device_id, metric_name, e);
+                    None
+                }
+            }
+        } else {
+            // Use time_series_storage.latest for storage metrics
+            match state.time_series_storage.latest(&device_id, &metric_name).await {
+                Ok(Some(point)) => Some(super::metrics::value_to_json(&point.value)),
+                Ok(None) => {
+                    tracing::debug!("No data found in storage for {}/{}", device_id, metric_name);
+                    None
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to query latest for {}/{}: {:?}", device_id, metric_name, e);
+                    None
+                }
+            }
+        };
+
+        metrics_data.insert(
+            metric_name.clone(),
+            json!({
+                "name": metric_name,
+                "display_name": display_name,
+                "unit": unit,
+                "data_type": data_type_str,
+                "value": value,
+                "is_virtual": is_virtual_flag,
+            }),
+        );
+    }
+
+    ok(json!({
+        "device": {
+            "id": config.device_id,
+            "device_id": config.device_id,
+            "name": config.name,
+            "device_type": config.device_type,
+            "adapter_type": config.adapter_type,
+            "status": format_status_to_str(&instance.status),
+            "last_seen": instance.last_seen.to_rfc3339(),
+            "online": online,
+            "plugin_id": plugin_id,
+            "plugin_name": plugin_name,
+            "adapter_id": config.adapter_id,
+        },
+        "metrics": metrics_data,
+        "commands": template.commands.iter().map(|c| json!({
+            "name": c.name,
+            "display_name": c.display_name,
+            "parameters": c.parameters,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 /// Delete a device.
 /// Uses new DeviceService
 pub async fn delete_device_handler(

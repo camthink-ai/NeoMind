@@ -20,7 +20,7 @@ pub async fn create_router() -> Router {
 pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
         alert_channels, alerts, agents, automations, auth as auth_handlers, auth_users, basic, bulk, commands, config,
-        decisions, devices, events, extensions, llm_backends, memory, mqtt, plugins, rules,
+        dashboards, decisions, devices, events, extensions, llm_backends, memory, mqtt, plugins, rules,
         search, sessions, settings, stats, test_data, tools,
     };
 
@@ -146,6 +146,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/devices/:id", get(devices::get_device_handler))
         .route("/api/devices/:id", put(devices::update_device_handler))
         .route("/api/devices/:id", delete(devices::delete_device_handler))
+        .route(
+            "/api/devices/:id/current",
+            get(devices::get_device_current_handler),
+        )
         .route(
             "/api/devices/:id/state",
             get(devices::get_device_state_handler),
@@ -532,6 +536,24 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/search/suggestions",
             get(search::search_suggestions_handler),
+        )
+        // Dashboards API
+        .route("/api/dashboards", get(dashboards::list_dashboards_handler))
+        .route("/api/dashboards", post(dashboards::create_dashboard_handler))
+        .route("/api/dashboards/:id", get(dashboards::get_dashboard_handler))
+        .route("/api/dashboards/:id", put(dashboards::update_dashboard_handler))
+        .route("/api/dashboards/:id", delete(dashboards::delete_dashboard_handler))
+        .route(
+            "/api/dashboards/:id/default",
+            post(dashboards::set_default_dashboard_handler),
+        )
+        .route(
+            "/api/dashboards/templates",
+            get(dashboards::list_templates_handler),
+        )
+        .route(
+            "/api/dashboards/templates/:id",
+            get(dashboards::get_template_handler),
         )
         // Auth management API (also protected)
         .route("/api/auth/keys", get(auth_handlers::list_keys_handler))

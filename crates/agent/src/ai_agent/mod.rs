@@ -140,6 +140,11 @@ impl AiAgentManager {
             stats: Default::default(),
             memory: Default::default(),
             error_message: None,
+            // New conversation fields
+            role: Default::default(),
+            conversation_history: Default::default(),
+            conversation_summary: Default::default(),
+            context_window_size: Default::default(),
         };
 
         // Save agent to storage

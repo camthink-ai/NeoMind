@@ -110,6 +110,8 @@ pub use agents::{
     DecisionProcess, ExecutionFilter, ExecutionResult, ExecutionStatus, GeneratedReport,
     LearnedPattern, NotificationSent, ParsedIntent, ReasoningStep, ResourceType, ScheduleType,
     TrendPoint, IntentType,
+    // Conversation types
+    ConversationTurn, TurnInput, TurnOutput, AgentRole,
 };
 
 pub use decisions::{

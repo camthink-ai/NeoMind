@@ -1684,6 +1684,7 @@ mod tests {
             model: "test-model".to_string(),
             temperature: 0.5,
             top_p: 0.9,
+            top_k: 0,
             max_tokens: 2048,
             concurrent_limit: 2,
         };
