@@ -16,6 +16,7 @@ import {
 import { useStore } from "@/store"
 import type { ChatSession } from "@/types"
 import { cn } from "@/lib/utils"
+import { confirm } from "@/hooks/use-confirm"
 
 interface SessionDrawerProps {
   open: boolean
@@ -184,8 +185,14 @@ export function SessionDrawer({
     e.stopPropagation()
     if (isDeleting) return
 
-    // Simple confirm - can be replaced with a dialog
-    if (!confirm("确定要删除这个会话吗？")) return
+    const confirmed = await confirm({
+      title: "删除会话",
+      description: "确定要删除这个会话吗？",
+      confirmText: "删除",
+      cancelText: "取消",
+      variant: "destructive"
+    })
+    if (!confirmed) return
 
     setIsDeleting(sessionId)
     try {

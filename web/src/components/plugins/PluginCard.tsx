@@ -31,6 +31,7 @@ import {
   Circle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { confirm } from '@/hooks/use-confirm'
 
 export interface PluginCardProps {
   id: string
@@ -128,7 +129,16 @@ export function PluginCard({
 
   const handleDelete = async () => {
     if (!onDelete) return
-    if (!confirm(t('plugins:deleteConfirm', { name }))) return
+
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('plugins:deleteConfirm', { name }),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
     setDeleting(true)
     try {
       await onDelete(id)

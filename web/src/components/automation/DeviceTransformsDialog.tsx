@@ -22,6 +22,7 @@ import {
 import { Database, Play, Edit, Trash2, Loader2, Sparkles } from 'lucide-react'
 import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
+import { confirm } from '@/hooks/use-confirm'
 import { TransformBuilder as TransformBuilderSplit } from './TransformBuilderSplit'
 import { TransformTestDialog } from './TransformTestDialog'
 import type { TransformAutomation, TransformScope } from '@/types'
@@ -110,7 +111,15 @@ export function DeviceTransformsDialog({
   }
 
   const handleDeleteTransform = async (id: string) => {
-    if (!confirm(t('automation:confirmDeleteTransform', { defaultValue: 'Are you sure?' }))) return
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('automation:confirmDeleteTransform', { defaultValue: 'Are you sure?' }),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
     try {
       await api.deleteAutomation(id)
       await fetchTransforms()

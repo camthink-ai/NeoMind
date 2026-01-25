@@ -221,7 +221,7 @@ export function AutomationCreatorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] p-0 gap-0 flex flex-col">
+      <DialogContent className="max-w-4xl max-h-[90vh] p-0 gap-0 flex flex-col [&>[data-radix-dialog-close]]:right-12 [&>[data-radix-dialog-close]]:top-7">
         <DialogHeader className="px-6 pt-6 pb-4 border-t-0 border-x-0 border-b shrink-0 pr-12">
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5" />

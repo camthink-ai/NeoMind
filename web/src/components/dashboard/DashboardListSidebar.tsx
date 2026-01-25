@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import type { Dashboard } from '@/types/dashboard'
+import { confirm } from '@/hooks/use-confirm'
 
 export interface DashboardListSidebarProps {
   dashboards: Dashboard[]
@@ -74,8 +75,15 @@ export function DashboardListSidebar({
     }
   }
 
-  const handleDelete = (id: string) => {
-    if (confirm('Are you sure you want to delete this dashboard?')) {
+  const handleDelete = async (id: string) => {
+    const confirmed = await confirm({
+      title: 'Delete Dashboard',
+      description: 'Are you sure you want to delete this dashboard?',
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'destructive'
+    })
+    if (confirmed) {
       onDelete(id)
     }
   }

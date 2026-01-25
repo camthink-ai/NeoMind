@@ -103,5 +103,177 @@
     "action": "Action",
     "sources": "sources",
     "points": "points"
+  },
+  "creator": {
+    "title": "Create Agent",
+    "editTitle": "Edit Agent",
+    "steps": {
+      "basic": "Basic Info",
+      "schedule": "Schedule",
+      "resources": "Resources"
+    },
+    "basicInfo": {
+      "selectRole": "Select Agent Role",
+      "roles": {
+        "monitor": {
+          "label": "Monitor",
+          "description": "Continuously monitor device status, detect anomalies, and send alerts"
+        },
+        "executor": {
+          "label": "Executor",
+          "description": "Automatically control devices based on conditions and execute preset commands"
+        },
+        "analyst": {
+          "label": "Analyst",
+          "description": "Analyze data trends, generate reports, and provide decision recommendations"
+        }
+      },
+      "name": "Name",
+      "namePlaceholder": "e.g., Warehouse Temperature Monitor, Equipment Anomaly Analysis",
+      "requirement": "Requirements",
+      "requirementHint": "Describe the goals you want the agent to accomplish in natural language",
+      "requirementPlaceholder": "e.g.:\n• Send alert when temperature exceeds 30°C\n• Generate device status report at 9 AM daily\n• Detect abnormal energy consumption and analyze causes",
+      "autoParseHint": "The system will automatically parse your description and configure the execution logic"
+    },
+    "schedule": {
+      "selectStrategy": "Select Execution Strategy",
+      "strategies": {
+        "interval": "Interval",
+        "daily": "Daily",
+        "weekly": "Weekly",
+        "monthly": "Monthly",
+        "event": "Event",
+        "once": "Once"
+      },
+      "config": "Execution Configuration",
+      "onceDescription": "The agent will execute once immediately after saving, and will not trigger again automatically.",
+      "interval": {
+        "every": "Every",
+        "minutes": "minutes",
+        "hours": "hours",
+        "executeOnce": "execute once",
+        "preview": "Every {{value}} {{unit}}"
+      },
+      "daily": {
+        "everyDay": "Every day at",
+        "at": ":00",
+        "execute": "execute",
+        "preview": "Daily at {{hour}}:{{minute}}"
+      },
+      "weekly": {
+        "every": "Every",
+        "at": ":00",
+        "execute": "execute",
+        "preview": "Every {{day}} at {{hour}}:{{minute}}"
+      },
+      "monthly": {
+        "everyMonth": "Monthly on day",
+        "day": "",
+        "at": ":00",
+        "execute": "execute",
+        "preview": "Monthly on day {{day}} at {{hour}}:{{minute}}"
+      },
+      "event": {
+        "triggerEvent": "Trigger Event",
+        "events": {
+          "device.online": "Device Online",
+          "device.offline": "Device Offline",
+          "metric.threshold": "Metric Threshold",
+          "metric.anomaly": "Anomaly Detection",
+          "manual": "Manual Trigger"
+        },
+        "preview": "Triggered when '{{event}}' event occurs",
+        "deviceOnline": {
+          "title": "Device Online Trigger",
+          "description": "Execute agent analysis immediately when device comes back online",
+          "relatedDevice": "Related Device"
+        },
+        "deviceOffline": {
+          "title": "Device Offline Trigger",
+          "description": "Execute agent analysis immediately when device disconnects",
+          "relatedDevice": "Related Device"
+        },
+        "metricThreshold": {
+          "title": "Threshold Trigger",
+          "condition": "Trigger Condition",
+          "conditionPlaceholder": "temperature > 30",
+          "conditionHint": "Supports conditional expressions, e.g.: temperature > 30",
+          "monitorDevice": "Monitor Device"
+        },
+        "metricAnomaly": {
+          "title": "Anomaly Detection Trigger",
+          "description": "AI automatically detects data anomalies, supports custom thresholds",
+          "threshold": "Anomaly Threshold (optional)",
+          "thresholdPlaceholder": "Leave empty for auto-detection",
+          "monitorDevice": "Monitor Device"
+        },
+        "manual": {
+          "title": "Manual Trigger",
+          "description": "Only runs when manually clicking execute button, suitable for on-demand analysis"
+        },
+        "allDevices": "All Devices"
+      },
+      "once": {
+        "preview": "Execute once immediately"
+      },
+      "timezone": "Timezone"
+    },
+    "resources": {
+      "searchPlaceholder": "Search device name or type...",
+      "selectedCount": "{{count}} selected",
+      "noDevicesFound": "No devices found",
+      "metrics": "Metrics",
+      "commands": "Commands",
+      "metricCount": "{{count}} metrics",
+      "commandCount": "{{count}} commands",
+      "topologyPreview": "Topology Preview",
+      "selectResourceHint": "Please select at least one device resource",
+      "noMetrics": "No metrics",
+      "noOutputs": "No outputs",
+      "moreMetrics": "+{{count}} metrics",
+      "moreCommands": "+{{count}} commands",
+      "dataInput": "Data Input",
+      "dataOutput": "Data Output",
+      "selectAfterShow": "Select device resources to show topology"
+    },
+    "validation": {
+      "nameRequired": "Please enter agent name",
+      "requirementRequired": "Please describe your requirements",
+      "resourceRequired": "Please select at least one device resource"
+    },
+    "actions": {
+      "cancel": "Cancel",
+      "previous": "Previous",
+      "next": "Next",
+      "save": "Save",
+      "create": "Create",
+      "saving": "Saving...",
+      "success": "Success",
+      "created": "Agent created successfully",
+      "updated": "Agent updated successfully",
+      "failed": "Failed"
+    },
+    "weekdays": {
+      "0": "Sun",
+      "1": "Mon",
+      "2": "Tue",
+      "3": "Wed",
+      "4": "Thu",
+      "5": "Fri",
+      "6": "Sat"
+    },
+    "timezones": {
+      "Asia/Shanghai": "China (UTC+8)",
+      "Asia/Tokyo": "Japan (UTC+9)",
+      "Asia/Seoul": "Korea (UTC+9)",
+      "Asia/Singapore": "Singapore (UTC+8)",
+      "Australia/Sydney": "Sydney (UTC+10/+11)",
+      "Europe/London": "London (UTC+0/+1)",
+      "Europe/Paris": "Paris (UTC+1/+2)",
+      "Europe/Berlin": "Berlin (UTC+1/+2)",
+      "America/New_York": "New York (UTC-5/-4)",
+      "America/Los_Angeles": "Los Angeles (UTC-8/-7)",
+      "UTC": "UTC (UTC+0)"
+    }
   }
 }

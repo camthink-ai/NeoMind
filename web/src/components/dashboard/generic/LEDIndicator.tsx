@@ -7,6 +7,7 @@
 
 import { useMemo } from 'react'
 import { cn } from '@/lib/utils'
+import { toLatestValue } from '@/design-system/utils/format'
 import { useDataSource } from '@/hooks/useDataSource'
 import { Skeleton } from '@/components/ui/skeleton'
 import { dashboardComponentSize, dashboardCardBase } from '@/design-system/tokens/size'
@@ -201,12 +202,15 @@ export function LEDIndicator({
     if (error) return 'error'
     if (loading) return 'unknown'
 
-    if (data !== undefined && valueMap && valueMap.length > 0) {
-      return matchValueToState(data, valueMap, defaultState)
+    // Extract the latest value from telemetry data
+    const latestValue = toLatestValue(data, null)
+
+    if (latestValue !== undefined && valueMap && valueMap.length > 0) {
+      return matchValueToState(latestValue, valueMap, defaultState)
     }
 
-    if (data !== undefined) {
-      const dataStr = String(data).trim().toLowerCase()
+    if (latestValue !== undefined) {
+      const dataStr = String(latestValue).trim().toLowerCase()
       if (['on', 'true', '1', 'yes', 'enabled', 'active', 'online'].includes(dataStr)) {
         return 'on'
       }
@@ -225,15 +229,17 @@ export function LEDIndicator({
   }, [data, valueMap, defaultState, propState, loading, error])
 
   const customLabel = useMemo(() => {
-    if (data !== undefined && valueMap) {
-      return getCustomLabel(data, valueMap, ledState)
+    const latestValue = toLatestValue(data, undefined)
+    if (latestValue !== undefined && valueMap) {
+      return getCustomLabel(latestValue, valueMap, ledState)
     }
     return undefined
   }, [data, valueMap, ledState])
 
   const customColor = useMemo(() => {
-    if (data !== undefined && valueMap) {
-      return getCustomColor(data, valueMap, ledState)
+    const latestValue = toLatestValue(data, undefined)
+    if (latestValue !== undefined && valueMap) {
+      return getCustomColor(latestValue, valueMap, ledState)
     }
     return undefined
   }, [data, valueMap, ledState])

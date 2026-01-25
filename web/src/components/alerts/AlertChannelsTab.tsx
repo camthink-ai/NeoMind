@@ -32,6 +32,7 @@ import { Plus, Trash2, TestTube, Check, X, Terminal, Database, Webhook, Mail, Lo
 import { EmptyState, EmptyStateInline, ActionBar, LoadingState } from "@/components/shared"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { confirm } from "@/hooks/use-confirm"
 import { ConfigFormBuilder } from "@/components/plugins/ConfigFormBuilder"
 import type { AlertChannel, ChannelTypeInfo, ChannelStats, PluginConfigSchema } from "@/types"
 
@@ -157,7 +158,14 @@ export function AlertChannelsTab() {
   }
 
   const handleDeleteChannel = async (name: string) => {
-    if (!confirm(`Delete channel "${name}"?`)) return
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: `Delete channel "${name}"?`,
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
 
     setLoading(true)
     try {

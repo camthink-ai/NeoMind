@@ -13,6 +13,7 @@ import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { confirm } from "@/hooks/use-confirm"
 import type { TransformAutomation, Rule } from "@/types"
 
 // Import split-pane builder components
@@ -150,7 +151,15 @@ export function AutomationPage() {
   }
 
   const handleDeleteRule = async (rule: Rule) => {
-    if (!confirm(tAuto('deleteConfirm'))) return
+    const confirmed = await confirm({
+      title: tCommon('delete'),
+      description: tAuto('deleteConfirm'),
+      confirmText: tCommon('delete'),
+      cancelText: tCommon('cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
     try {
       await api.deleteRule(rule.id)
       await loadItems()
@@ -210,7 +219,15 @@ export function AutomationPage() {
   }
 
   const handleDeleteTransform = async (transform: TransformAutomation) => {
-    if (!confirm(tAuto('deleteConfirm'))) return
+    const confirmed = await confirm({
+      title: tCommon('delete'),
+      description: tAuto('deleteConfirm'),
+      confirmText: tCommon('delete'),
+      cancelText: tCommon('cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
     try {
       await api.deleteAutomation(transform.id)
       await loadItems()

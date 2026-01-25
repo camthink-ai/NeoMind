@@ -19,9 +19,10 @@ import type {
 
 export interface ComponentConfigSchema {
   title?: string
-  // Separated sections for tab-based UI
+  // Separated sections for three-column layout UI
   dataSourceSections?: ConfigSection[]
   styleSections?: ConfigSection[]
+  displaySections?: ConfigSection[]  // NEW: Display-specific configuration (labels, legends, axes, etc.)
   // Legacy support - all sections combined
   sections?: ConfigSection[]
 }
@@ -47,7 +48,7 @@ export interface DataSourceSection {
     dataSource?: DataSourceOrList
     onChange: (dataSource: DataSourceOrList | DataSource | undefined) => void
     // Optional: filter which source types to show
-    allowedTypes?: Array<'device' | 'metric' | 'command'>
+    allowedTypes?: Array<'device-metric' | 'device-command' | 'device-info' | 'agent' | 'system' | 'device' | 'metric' | 'command'>
     // Optional: enable multiple data source selection
     multiple?: boolean
     // Optional: max number of data sources (only used when multiple is true)
@@ -887,13 +888,68 @@ export function createChartConfig(config: {
   onShowPercentageChange?: (show: boolean) => void
   showLabels?: boolean
   onShowLabelsChange?: (show: boolean) => void
+  // Telemetry options for historical data
+  limit?: number
+  onLimitChange?: (limit: number) => void
+  timeRange?: number
+  onTimeRangeChange?: (timeRange: number) => void
+  // Multiple data source support
+  multiple?: boolean
+  maxSources?: number
 }): ComponentConfigSchema {
   const sections: ConfigSection[] = []
 
   sections.push({
     type: 'data-source',
-    props: { dataSource: config.dataSource, onChange: config.onDataSourceChange },
+    props: {
+      dataSource: config.dataSource,
+      onChange: config.onDataSourceChange,
+      multiple: config.multiple ?? true,
+      maxSources: config.maxSources ?? 10
+    },
   })
+
+  // Telemetry data options (limit and timeRange)
+  if (config.onLimitChange || config.onTimeRangeChange) {
+    sections.push({
+      type: 'custom',
+      render: () => (
+        <div className="space-y-3 pt-4 border-t">
+          <div className="grid grid-cols-2 gap-3">
+            {config.onLimitChange && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Data Points</label>
+                <input
+                  type="number"
+                  value={config.limit ?? 50}
+                  onChange={(e) => config.onLimitChange?.(Number(e.target.value))}
+                  min={1}
+                  max={200}
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                />
+                <p className="text-xs text-muted-foreground">Max points to fetch</p>
+              </div>
+            )}
+            {config.onTimeRangeChange && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Time Range (hours)</label>
+                <input
+                  type="number"
+                  value={config.timeRange ?? 1}
+                  onChange={(e) => config.onTimeRangeChange?.(Number(e.target.value))}
+                  min={1}
+                  max={168}
+                  step={1}
+                  className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                />
+                <p className="text-xs text-muted-foreground">Historical period</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ),
+    })
+  }
 
   // Label input
   if (config.onLabelChange) {

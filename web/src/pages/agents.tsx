@@ -11,12 +11,13 @@ import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { confirm } from "@/hooks/use-confirm"
 import type { AiAgent, AiAgentDetail, AgentExecution } from "@/types"
 
 // Import components
 import { AgentsList } from "./agents-components/AgentsList"
 import { AgentExecutionsList } from "./agents-components/AgentExecutionsList"
-import { AgentCreatorDialog } from "./agents-components/AgentCreatorDialog"
+import { AgentCreatorDialogSplit as AgentCreatorDialog } from "./agents-components/AgentCreatorDialogSplit"
 import { AgentMemoryDialog } from "./agents-components/AgentMemoryDialog"
 import { ExecutionDetailDialog } from "./agents-components/ExecutionDetailDialog"
 
@@ -113,7 +114,15 @@ export function AgentsPage() {
   }
 
   const handleDelete = async (agent: AiAgent) => {
-    if (!confirm(tAgent('deleteConfirm'))) return
+    const confirmed = await confirm({
+      title: tCommon('delete'),
+      description: tAgent('deleteConfirm'),
+      confirmText: tCommon('delete'),
+      cancelText: tCommon('cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
     try {
       await api.deleteAgent(agent.id)
       await loadItems()

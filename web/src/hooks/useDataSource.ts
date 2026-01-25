@@ -116,10 +116,17 @@ async function fetchHistoricalTelemetry(
 
     const response = await api.getDeviceTelemetry(deviceId, metricId, Math.floor(start / 1000), Math.floor(now / 1000), limit)
 
+    console.log('[fetchHistoricalTelemetry] API response:', response)
+    console.log('[fetchHistoricalTelemetry] metricId:', metricId)
+    console.log('[fetchHistoricalTelemetry] response.data:', response?.data)
+
     // TelemetryDataResponse has structure: { data: Record<string, TelemetryPoint[]> }
     // The actual time series data is in response.data[metricId]
     if (response?.data && typeof response.data === 'object') {
       const metricData = response.data[metricId]
+
+      console.log('[fetchHistoricalTelemetry] metricData:', metricData)
+      console.log('[fetchHistoricalTelemetry] metricData type:', Array.isArray(metricData) ? 'array' : typeof metricData)
 
       if (Array.isArray(metricData) && metricData.length > 0) {
         // Extract values from telemetry points
@@ -286,15 +293,28 @@ function extractValueFromData(data: unknown, property: string): unknown {
 // Main Hook
 // ============================================================================
 
+/**
+ * Helper function to create stable JSON key for memoization
+ * Handles objects with potentially different property order
+ */
+function createStableKey(obj: any): string {
+  if (obj === null || obj === undefined) return ''
+  if (typeof obj !== 'object') return String(obj)
+  if (Array.isArray(obj)) return '[' + obj.map(createStableKey).join(',') + ']'
+  const sortedKeys = Object.keys(obj).sort()
+  return '{' + sortedKeys.map(k => `"${k}":${createStableKey(obj[k])}`).join(',') + '}'
+}
+
 export function useDataSource<T = unknown>(
   dataSource: DataSourceOrList | undefined,
   options?: {
     enabled?: boolean
     transform?: (data: unknown) => T
     fallback?: T
+    preserveMultiple?: boolean  // If true, keep multiple data sources separate instead of merging
   }
 ): UseDataSourceResult<T> {
-  const { enabled = true, transform, fallback } = options ?? {}
+  const { enabled = true, transform, fallback, preserveMultiple = false } = options ?? {}
   const [data, setData] = useState<T | null>(fallback ?? null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -302,9 +322,9 @@ export function useDataSource<T = unknown>(
   const [sending, setSending] = useState(false)
 
   // CRITICAL: Memoize dataSources to prevent infinite re-renders
-  // Using JSON.stringify of dataSource as the key ensures stability
+  // Using stable key generation ensures consistency
   const dataSourceKey = useMemo(() => {
-    return JSON.stringify(dataSource)
+    return createStableKey(dataSource)
   }, [dataSource])
 
   const dataSources = useMemo(() => {
@@ -314,8 +334,8 @@ export function useDataSource<T = unknown>(
   const initialFetchDoneRef = useRef<Set<string>>(new Set())
   const lastValidDataRef = useRef<Record<string, unknown>>({})
 
-  const optionsRef = useRef({ enabled, transform, fallback })
-  optionsRef.current = { enabled, transform, fallback }
+  const optionsRef = useRef({ enabled, transform, fallback, preserveMultiple })
+  optionsRef.current = { enabled, transform, fallback, preserveMultiple }
 
   const dataSourcesRef = useRef(dataSources)
   dataSourcesRef.current = dataSources
@@ -384,7 +404,11 @@ export function useDataSource<T = unknown>(
     }
 
     try {
-      const results = currentDataSources.map((ds) => {
+      // Filter out telemetry sources - they are handled separately by the fetch effect
+      const nonTelemetrySources = currentDataSources.filter((ds) => ds.type !== 'telemetry')
+
+      // Only process non-telemetry sources here
+      const results = nonTelemetrySources.map((ds) => {
         let result: unknown
 
         switch (ds.type) {
@@ -485,6 +509,44 @@ export function useDataSource<T = unknown>(
             break
           }
 
+          case 'device-info': {
+            const deviceId = ds.deviceId
+            const infoProperty = ds.infoProperty || 'name'
+            const device = currentDevices.find((d: any) => d.id === deviceId || d.device_id === deviceId)
+
+            if (!device) {
+              result = fallbackVal ?? '-'
+            } else {
+              switch (infoProperty) {
+                case 'name':
+                  result = device.name || '-'
+                  break
+                case 'status':
+                  result = device.status || 'unknown'
+                  break
+                case 'online':
+                  result = device.online ?? false
+                  break
+                case 'last_seen':
+                  result = device.last_seen || '-'
+                  break
+                case 'device_type':
+                  result = device.device_type || '-'
+                  break
+                case 'plugin_name':
+                  result = device.plugin_name || device.adapter_id || '-'
+                  break
+                case 'adapter_id':
+                  result = device.adapter_id || '-'
+                  break
+                default:
+                  result = fallbackVal ?? '-'
+              }
+            }
+            result = safeExtractValue(result, fallbackVal ?? '-')
+            break
+          }
+
           case 'api':
           case 'websocket':
             result = fallbackVal ?? 0
@@ -507,13 +569,6 @@ export function useDataSource<T = unknown>(
             break
           }
 
-          case 'telemetry': {
-            // Telemetry data is fetched asynchronously and stored in state
-            // Initial result is empty array, will be populated by fetch effect
-            result = []
-            break
-          }
-
           default:
             result = fallbackVal ?? null
         }
@@ -523,10 +578,15 @@ export function useDataSource<T = unknown>(
 
       // Combine results
       let finalData: unknown
-      if (currentDataSources.length > 1) {
+      if (nonTelemetrySources.length > 0 && currentDataSources.length > 1) {
+        // Multiple sources, some might be telemetry
         finalData = results
-      } else {
+      } else if (nonTelemetrySources.length === 1) {
+        // Single non-telemetry source
         finalData = results[0]
+      } else {
+        // All sources are telemetry - keep the initial fallback data
+        return // Don't overwrite initial state with empty data
       }
 
       const transformedData = transformFn ? transformFn(finalData) : (finalData as T)
@@ -750,6 +810,44 @@ export function useDataSource<T = unknown>(
             break
           }
 
+          case 'device-info': {
+            const deviceId = ds.deviceId
+            const infoProperty = ds.infoProperty || 'name'
+            const device = currentDevices.find((d: any) => d.id === deviceId || d.device_id === deviceId)
+
+            if (!device) {
+              result = optionsRef.current.fallback ?? '-'
+            } else {
+              switch (infoProperty) {
+                case 'name':
+                  result = device.name || '-'
+                  break
+                case 'status':
+                  result = device.status || 'unknown'
+                  break
+                case 'online':
+                  result = device.online ?? false
+                  break
+                case 'last_seen':
+                  result = device.last_seen || '-'
+                  break
+                case 'device_type':
+                  result = device.device_type || '-'
+                  break
+                case 'plugin_name':
+                  result = device.plugin_name || device.adapter_id || '-'
+                  break
+                case 'adapter_id':
+                  result = device.adapter_id || '-'
+                  break
+                default:
+                  result = optionsRef.current.fallback ?? '-'
+              }
+            }
+            result = safeExtractValue(result, optionsRef.current.fallback ?? '-')
+            break
+          }
+
           default:
             return
         }
@@ -775,7 +873,7 @@ export function useDataSource<T = unknown>(
   const telemetryKey = useMemo(() => {
     return dataSources
       .filter((ds) => ds.type === 'telemetry')
-      .map((ds) => JSON.stringify({ deviceId: ds.deviceId, metricId: ds.metricId, timeRange: ds.timeRange, limit: ds.limit, aggregate: ds.aggregate }))
+      .map((ds) => createStableKey({ deviceId: ds.deviceId, metricId: ds.metricId, timeRange: ds.timeRange, limit: ds.limit, aggregate: ds.aggregate }))
       .join('|')
   }, [dataSources])
 
@@ -785,8 +883,17 @@ export function useDataSource<T = unknown>(
 
   const hasTelemetrySource = telemetryDataSources.length > 0
 
+  console.log('[useDataSource] dataSources:', dataSources)
+  console.log('[useDataSource] telemetryDataSources:', telemetryDataSources)
+  console.log('[useDataSource] hasTelemetrySource:', hasTelemetrySource)
+  console.log('[useDataSource] enabled:', enabled)
+
   useEffect(() => {
-    if (!hasTelemetrySource || !enabled) return
+    console.log('[useDataSource] Telemetry effect running, hasTelemetrySource:', hasTelemetrySource, 'enabled:', enabled)
+    if (!hasTelemetrySource || !enabled) {
+      console.log('[useDataSource] Telemetry effect returning early')
+      return
+    }
 
     // Track if initial fetch has completed to avoid showing loading on refreshes
     let initialFetchCompleted = false
@@ -829,18 +936,37 @@ export function useDataSource<T = unknown>(
         // Combine results
         let finalData: unknown
         if (results.length > 1) {
-          // Check if any result has raw data
-          const hasRawData = results.some((r: any) => r.raw)
-          if (hasRawData) {
-            // Combine raw data from all sources
-            const allRawData = results.flatMap((r: any) => r.raw ?? [])
-            finalData = allRawData
+          // If preserveMultiple is true, keep each source's data separate
+          if (optionsRef.current.preserveMultiple) {
+            // Return array of data arrays, one per source
+            const hasRawData = results.some((r: any) => r.raw)
+            if (hasRawData) {
+              finalData = results.map((r: any) => r.raw ?? [])
+            } else {
+              finalData = results.map((r: any) => r.data ?? [])
+            }
           } else {
-            finalData = results.map((r: any) => r.data ?? []).flat()
+            // Original behavior: merge all data
+            const hasRawData = results.some((r: any) => r.raw)
+            if (hasRawData) {
+              // Combine raw data from all sources
+              const allRawData = results.flatMap((r: any) => r.raw ?? [])
+              finalData = allRawData
+            } else {
+              finalData = results.map((r: any) => r.data ?? []).flat()
+            }
           }
         } else {
           const singleResult = results[0] as any
           finalData = singleResult.raw ?? singleResult.data ?? []
+        }
+
+        // Debug: Log the final data before setting
+        console.log('[useDataSource] Telemetry results:', results)
+        console.log('[useDataSource] Final data to set:', finalData)
+        console.log('[useDataSource] Final data type:', Array.isArray(finalData) ? 'array length=' + finalData.length : typeof finalData)
+        if (Array.isArray(finalData) && finalData.length > 0) {
+          console.log('[useDataSource] First item:', finalData[0])
         }
 
         const { transform: transformFn } = optionsRef.current
@@ -856,6 +982,7 @@ export function useDataSource<T = unknown>(
         setData(fallbackData as T)
         initialFetchCompleted = true
       } finally {
+        // Always set loading to false, even if there's an error
         setLoading(false)
       }
     }

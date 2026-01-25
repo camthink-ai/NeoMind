@@ -129,6 +129,10 @@ export function toDisplayValue(
   // String - return as-is
   if (type === 'string') {
     const str = data as string
+    // Empty string should use fallback
+    if (str.trim() === '') {
+      return fallback
+    }
     // Check if it's a numeric string
     if (/^-?\d+\.?\d*$/.test(str.trim())) {
       return str
@@ -297,6 +301,7 @@ export function getStatusBgClass(status: string): string {
 
 /**
  * Safely extract number array from unknown data
+ * Handles: number[], string[], and { value: number, timestamp?: number }[]
  */
 export function toNumberArray(data: unknown, fallback: number[] = []): number[] {
   if (Array.isArray(data)) {
@@ -306,10 +311,57 @@ export function toNumberArray(data: unknown, fallback: number[] = []): number[] 
         result.push(item)
       } else if (typeof item === 'string' && !isNaN(parseFloat(item))) {
         result.push(parseFloat(item))
+      } else if (typeof item === 'object' && item !== null && 'value' in item) {
+        // Handle telemetry points: { value: number, timestamp: number }
+        const val = (item as Record<string, unknown>).value
+        if (typeof val === 'number' && !isNaN(val)) {
+          result.push(val)
+        } else if (typeof val === 'string' && !isNaN(parseFloat(val))) {
+          result.push(parseFloat(val))
+        }
       }
     }
     return result.length > 0 ? result : fallback
   }
+  return fallback
+}
+
+/**
+ * Extract the latest value from telemetry data
+ * Handles: { value: number, timestamp: number }[] -> returns the last value
+ * Used by ValueCard, LEDIndicator, and other single-value components
+ */
+export function toLatestValue(data: unknown, fallback: number | string | null = null): number | string | null {
+  // If already a primitive value, return as-is
+  if (typeof data === 'number') return data
+  if (typeof data === 'string') return data
+  if (data === null || data === undefined) return fallback
+
+  // If array, extract the last value
+  if (Array.isArray(data) && data.length > 0) {
+    const lastItem = data[data.length - 1]
+
+    // If last item is a number, return it
+    if (typeof lastItem === 'number') return lastItem
+
+    // If last item is a string, return it
+    if (typeof lastItem === 'string') return lastItem
+
+    // If last item is an object with value property, extract it
+    if (typeof lastItem === 'object' && lastItem !== null && 'value' in lastItem) {
+      const val = (lastItem as Record<string, unknown>).value
+      if (typeof val === 'number') return val
+      if (typeof val === 'string') return val
+    }
+  }
+
+  // If single object with value property
+  if (typeof data === 'object' && data !== null && !Array.isArray(data) && 'value' in data) {
+    const val = (data as Record<string, unknown>).value
+    if (typeof val === 'number') return val
+    if (typeof val === 'string') return val
+  }
+
   return fallback
 }
 

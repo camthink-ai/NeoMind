@@ -1,12 +1,12 @@
 /**
  * DataSourceSelector Component
  *
- * Dialog for selecting data sources with device metrics/commands.
- * New design: Devices are containers that expand to show their metrics/commands.
+ * Dialog for selecting data sources with device metrics/commands/basic info.
+ * New design: Devices are containers that expand to show their data types.
  */
 
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Search, Server, Database, Check, Zap, ChevronRight, BarChart3, Bot } from 'lucide-react'
+import { Search, Server, Database, Check, Zap, ChevronRight, BarChart3, Bot, Info, Layers } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -20,6 +20,7 @@ import { useStore } from '@/store'
 import type { DataSource, DataSourceOrList } from '@/types/dashboard'
 import { normalizeDataSource } from '@/types/dashboard'
 import type { MetricDefinition, CommandDefinition } from '@/types'
+import { cn } from '@/lib/utils'
 
 export interface DataSourceSelectorProps {
   open: boolean
@@ -27,37 +28,48 @@ export interface DataSourceSelectorProps {
   onSelect: (dataSource: DataSourceOrList | DataSource | undefined) => void
   currentDataSource?: DataSourceOrList
   // Optional: filter which source types to show
-  // New format: 'device-metric' | 'device-command' | 'agent' | 'system'
-  // Old format (for backward compatibility): 'device' | 'metric' | 'command'
-  allowedTypes?: Array<'device-metric' | 'device-command' | 'agent' | 'system' | 'device' | 'metric' | 'command'>
+  allowedTypes?: Array<'device-metric' | 'device-command' | 'device-info' | 'agent' | 'system' | 'device' | 'metric' | 'command'>
   // Optional: enable multiple data source selection
   multiple?: boolean
   // Optional: max number of data sources (only used when multiple is true)
   maxSources?: number
 }
 
-type CategoryType = 'device-metric' | 'device-command' | 'agent' | 'system'
+type CategoryType = 'device-metric' | 'device-command' | 'device-info' | 'agent' | 'system'
 type SelectedItem = string // Format: "device-metric:deviceId:property" or "device-command:deviceId:command" etc.
+
+// Device info property definitions
+const DEVICE_INFO_PROPERTIES = [
+  { id: 'name', name: '设备名称', description: '设备的显示名称' },
+  { id: 'status', name: '状态', description: '当前状态文本' },
+  { id: 'online', name: '在线状态', description: '是否在线' },
+  { id: 'last_seen', name: '最后上线', description: '最后通信时间' },
+  { id: 'device_type', name: '设备类型', description: '设备类型标识' },
+  { id: 'plugin_name', name: '适配器', description: '连接的插件名称' },
+  { id: 'adapter_id', name: '适配器ID', description: '适配器唯一标识' },
+]
 
 // Category configuration
 const CATEGORIES = [
-  { id: 'device-metric' as const, name: '设备指标', icon: Server, description: '设备的实时数据点' },
-  { id: 'device-command' as const, name: '设备指令', icon: Zap, description: '控制设备的操作' },
-  { id: 'agent' as const, name: 'Agent 数据', icon: Bot, description: 'AI Agent 状态和指标' },
-  { id: 'system' as const, name: '系统统计', icon: BarChart3, description: '设备和告警统计' },
+  { id: 'device-metric' as const, name: '指标', icon: Server, description: '设备的实时数据点' },
+  { id: 'device-command' as const, name: '指令', icon: Zap, description: '控制设备的操作' },
+  { id: 'device-info' as const, name: '基本信息', icon: Info, description: '设备的属性和状态' },
+  { id: 'agent' as const, name: 'Agent', icon: Bot, description: 'AI Agent 数据' },
+  { id: 'system' as const, name: '系统', icon: BarChart3, description: '系统统计数据' },
 ]
 
 // Convert old allowedTypes format to new format
 function normalizeAllowedTypes(
-  allowedTypes?: Array<'device-metric' | 'device-command' | 'agent' | 'system' | 'device' | 'metric' | 'command'>
+  allowedTypes?: Array<'device-metric' | 'device-command' | 'device-info' | 'agent' | 'system' | 'device' | 'metric' | 'command'>
 ): CategoryType[] {
-  if (!allowedTypes) return ['device-metric', 'device-command', 'agent', 'system']
+  if (!allowedTypes) return ['device-metric', 'device-command', 'device-info', 'agent', 'system']
 
   const result: CategoryType[] = []
 
   // New format types
   if (allowedTypes.includes('device-metric')) result.push('device-metric')
   if (allowedTypes.includes('device-command')) result.push('device-command')
+  if (allowedTypes.includes('device-info')) result.push('device-info')
   if (allowedTypes.includes('agent')) result.push('agent')
   if (allowedTypes.includes('system')) result.push('system')
 
@@ -69,7 +81,7 @@ function normalizeAllowedTypes(
     if (!result.includes('device-command')) result.push('device-command')
   }
 
-  return result.length > 0 ? result : ['device-metric', 'device-command', 'agent', 'system']
+  return result.length > 0 ? result : ['device-metric', 'device-command', 'device-info', 'agent', 'system']
 }
 
 // System metrics (non-device specific)
@@ -125,6 +137,13 @@ export function DataSourceSelector({
     return CATEGORIES.filter(cat => allowed.includes(cat.id))
   }, [allowedTypes])
 
+  // Set initial category based on allowed types
+  useEffect(() => {
+    if (availableCategories.length > 0 && !availableCategories.find(c => c.id === selectedCategory)) {
+      setSelectedCategory(availableCategories[0].id)
+    }
+  }, [availableCategories, selectedCategory])
+
   // Normalize current data source to array
   const currentDataSources = normalizeDataSource(currentDataSource)
 
@@ -138,6 +157,8 @@ export function DataSourceSelector({
           newSelectedItems.add(`device-metric:${ds.deviceId}:${ds.property}`)
         } else if (ds.type === 'command' && ds.deviceId && ds.command) {
           newSelectedItems.add(`device-command:${ds.deviceId}:${ds.command}`)
+        } else if (ds.type === 'device-info' && ds.deviceId && ds.infoProperty) {
+          newSelectedItems.add(`device-info:${ds.deviceId}:${ds.infoProperty}`)
         } else if (ds.type === 'api' && ds.endpoint) {
           // System metrics
           if (ds.endpoint.includes('devices')) {
@@ -173,7 +194,6 @@ export function DataSourceSelector({
         map.set(device.id, deviceType.metrics)
       } else {
         // Fallback metrics for devices without type definition
-        // Include common IoT sensor metrics
         const fallbackMetrics: MetricDefinition[] = [
           { name: 'temperature', display_name: '温度', data_type: 'float', unit: '°C' },
           { name: 'humidity', display_name: '湿度', data_type: 'float', unit: '%' },
@@ -209,14 +229,11 @@ export function DataSourceSelector({
         map.set(device.id, deviceType.commands)
       } else {
         // Fallback commands for devices without type definition
-        // Include common IoT commands
         const fallbackCommands: CommandDefinition[] = [
           { name: 'setValue', display_name: '设置值', payload_template: '${value}', parameters: [] },
           { name: 'toggle', display_name: '切换', payload_template: '', parameters: [] },
           { name: 'on', display_name: '开启', payload_template: '{"state":"on"}', parameters: [] },
           { name: 'off', display_name: '关闭', payload_template: '{"state":"off"}', parameters: [] },
-          { name: 'open', display_name: '打开', payload_template: '{"state":"open"}', parameters: [] },
-          { name: 'close', display_name: '关闭', payload_template: '{"state":"close"}', parameters: [] },
         ]
         map.set(device.id, fallbackCommands)
       }
@@ -277,6 +294,14 @@ export function DataSourceSelector({
           property: 'state',
           valueMapping: { on: true, off: false },
         }
+      } else if (category === 'device-info') {
+        const [deviceId, infoProperty] = rest
+        return {
+          type: 'device-info',
+          deviceId,
+          infoProperty: infoProperty as any,
+          refresh: 10,
+        }
       } else if (category === 'system') {
         const metricId = rest[0]
         const metric = SYSTEM_METRICS.find(m => m.id === metricId)
@@ -324,9 +349,14 @@ export function DataSourceSelector({
     return text.toLowerCase().includes(query)
   }
 
+  // Get count for each category
+  const getCategoryCount = (category: CategoryType) => {
+    return Array.from(selectedItems).filter(id => id.startsWith(`${category}:`)).length
+  }
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[520px] p-0 gap-0 max-h-[85vh] overflow-hidden flex flex-col">
+      <DialogContent className="sm:max-w-[600px] md:max-w-[700px] lg:max-w-[800px] p-0 gap-0 max-h-[90vh] overflow-hidden flex flex-col [&>[data-radix-dialog-close]]:right-6 [&>[data-radix-dialog-close]]:top-5">
         {/* Header */}
         <DialogHeader className="px-6 py-4 border-b shrink-0">
           <div className="flex items-center justify-between">
@@ -339,12 +369,17 @@ export function DataSourceSelector({
                   选择数据源
                 </DialogTitle>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  选择设备指标、指令或其他数据源
+                  {multiple ? (
+                    <>已选择 {totalSelected} / {maxSources} 项</>
+                  ) : (
+                    '选择设备指标、指令或基本信息'
+                  )}
                 </p>
               </div>
             </div>
             {multiple && totalSelected > 0 && (
-              <div className="text-xs font-medium px-2.5 py-1 rounded-full bg-primary/10 text-primary">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-sm font-medium">
+                <Layers className="h-3.5 w-3.5" />
                 {totalSelected}
               </div>
             )}
@@ -369,13 +404,23 @@ export function DataSourceSelector({
           {/* Category Tabs */}
           <Tabs value={selectedCategory} onValueChange={(v) => setSelectedCategory(v as CategoryType)} className="flex-1 flex flex-col">
             <div className="px-6 pt-3">
-              <TabsList className="grid w-full grid-cols-4 h-9 bg-muted/50">
+              <TabsList className="grid w-full grid-cols-5 h-9 bg-muted/50">
                 {availableCategories.map(cat => {
                   const Icon = cat.icon
+                  const count = getCategoryCount(cat.id)
                   return (
-                    <TabsTrigger key={cat.id} value={cat.id} className="gap-1.5 data-[state=active]:bg-background text-xs">
+                    <TabsTrigger
+                      key={cat.id}
+                      value={cat.id}
+                      className="gap-1.5 data-[state=active]:bg-background text-xs relative"
+                    >
                       <Icon className="h-3.5 w-3.5" />
                       {cat.name}
+                      {count > 0 && (
+                        <span className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center">
+                          {count}
+                        </span>
+                      )}
                     </TabsTrigger>
                   )
                 })}
@@ -403,11 +448,19 @@ export function DataSourceSelector({
                           className="w-full flex items-center justify-between p-3 bg-muted/30 hover:bg-muted/50 transition-colors"
                         >
                           <div className="flex items-center gap-3">
-                            <Server className={`h-4 w-4 ${device.online ? 'text-green-500' : 'text-muted-foreground'}`} />
+                            <div className={cn(
+                              "w-2 h-2 rounded-full",
+                              device.online ? 'bg-green-500' : 'bg-muted-foreground'
+                            )} />
                             <span className="text-sm font-medium">{device.name}</span>
-                            <span className="text-xs text-muted-foreground">({metrics.length} 个指标)</span>
+                            <span className="text-xs text-muted-foreground">
+                              {metrics.length} 个指标
+                            </span>
                           </div>
-                          <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                          <ChevronRight className={cn(
+                            "h-4 w-4 text-muted-foreground transition-transform",
+                            isExpanded && 'rotate-90'
+                          )} />
                         </button>
 
                         {/* Expanded metrics */}
@@ -425,26 +478,26 @@ export function DataSourceSelector({
                                   key={metric.name}
                                   onClick={() => !disabled && handleItemClick(itemId)}
                                   disabled={disabled}
-                                  className={`
-                                    w-full flex items-center justify-between px-3 py-2.5
-                                    hover:bg-accent/50 transition-colors text-left
-                                    ${selected ? 'bg-primary/5' : ''}
-                                    ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-                                  `}
+                                  className={cn(
+                                    "w-full flex items-center justify-between px-3 py-2.5",
+                                    "hover:bg-accent/50 transition-colors text-left",
+                                    selected && 'bg-primary/5',
+                                    disabled && 'opacity-50 cursor-not-allowed'
+                                  )}
                                 >
                                   <div className="flex items-center gap-2 flex-1">
                                     {multiple && (
-                                      <div className={`
-                                        w-4 h-4 rounded border flex items-center justify-center flex-shrink-0
-                                        ${selected ? 'bg-primary border-primary' : 'border-border'}
-                                      `}>
+                                      <div className={cn(
+                                        "w-4 h-4 rounded border flex items-center justify-center flex-shrink-0",
+                                        selected ? 'bg-primary border-primary' : 'border-border'
+                                      )}>
                                         {selected && <Check className="h-3 w-3 text-white" />}
                                       </div>
                                     )}
                                     <div className="flex-1">
                                       <p className="text-sm font-medium">{metric.display_name}</p>
                                       <p className="text-xs text-muted-foreground">
-                                        {metric.name} {metric.unit && `• ${metric.unit}`}
+                                        {metric.name} {metric.unit && `· ${metric.unit}`}
                                       </p>
                                     </div>
                                   </div>
@@ -488,11 +541,19 @@ export function DataSourceSelector({
                           className="w-full flex items-center justify-between p-3 bg-muted/30 hover:bg-muted/50 transition-colors"
                         >
                           <div className="flex items-center gap-3">
-                            <Zap className={`h-4 w-4 ${device.online ? 'text-green-500' : 'text-muted-foreground'}`} />
+                            <div className={cn(
+                              "w-2 h-2 rounded-full",
+                              device.online ? 'bg-green-500' : 'bg-muted-foreground'
+                            )} />
                             <span className="text-sm font-medium">{device.name}</span>
-                            <span className="text-xs text-muted-foreground">({commands.length} 个指令)</span>
+                            <span className="text-xs text-muted-foreground">
+                              {commands.length} 个指令
+                            </span>
                           </div>
-                          <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                          <ChevronRight className={cn(
+                            "h-4 w-4 text-muted-foreground transition-transform",
+                            isExpanded && 'rotate-90'
+                          )} />
                         </button>
 
                         {isExpanded && (
@@ -509,19 +570,19 @@ export function DataSourceSelector({
                                   key={command.name}
                                   onClick={() => !disabled && handleItemClick(itemId)}
                                   disabled={disabled}
-                                  className={`
-                                    w-full flex items-center justify-between px-3 py-2.5
-                                    hover:bg-accent/50 transition-colors text-left
-                                    ${selected ? 'bg-primary/5' : ''}
-                                    ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-                                  `}
+                                  className={cn(
+                                    "w-full flex items-center justify-between px-3 py-2.5",
+                                    "hover:bg-accent/50 transition-colors text-left",
+                                    selected && 'bg-primary/5',
+                                    disabled && 'opacity-50 cursor-not-allowed'
+                                  )}
                                 >
                                   <div className="flex items-center gap-2 flex-1">
                                     {multiple && (
-                                      <div className={`
-                                        w-4 h-4 rounded border flex items-center justify-center flex-shrink-0
-                                        ${selected ? 'bg-primary border-primary' : 'border-border'}
-                                      `}>
+                                      <div className={cn(
+                                        "w-4 h-4 rounded border flex items-center justify-center flex-shrink-0",
+                                        selected ? 'bg-primary border-primary' : 'border-border'
+                                      )}>
                                         {selected && <Check className="h-3 w-3 text-white" />}
                                       </div>
                                     )}
@@ -550,6 +611,110 @@ export function DataSourceSelector({
               )}
             </TabsContent>
 
+            {/* Device Info Content */}
+            <TabsContent value="device-info" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
+              {devices.length > 0 ? (
+                <div className="space-y-3">
+                  {devices.map(device => {
+                    const isExpanded = expandedDevices.has(device.id)
+                    const hasMatchingInfo = DEVICE_INFO_PROPERTIES.some(p =>
+                      filterMatches(p.name) || filterMatches(p.description) || filterMatches(device.name)
+                    )
+
+                    if (!hasMatchingInfo && searchQuery) return null
+
+                    return (
+                      <div key={device.id} className="border rounded-lg overflow-hidden">
+                        <button
+                          onClick={() => toggleDeviceExpansion(device.id)}
+                          className="w-full flex items-center justify-between p-3 bg-muted/30 hover:bg-muted/50 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={cn(
+                              "w-2 h-2 rounded-full",
+                              device.online ? 'bg-green-500' : 'bg-muted-foreground'
+                            )} />
+                            <span className="text-sm font-medium">{device.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              基本信息
+                            </span>
+                          </div>
+                          <ChevronRight className={cn(
+                            "h-4 w-4 text-muted-foreground transition-transform",
+                            isExpanded && 'rotate-90'
+                          )} />
+                        </button>
+
+                        {isExpanded && (
+                          <div className="border-t divide-y max-h-60 overflow-y-auto">
+                            {DEVICE_INFO_PROPERTIES.map(infoProp => {
+                              const itemId = `device-info:${device.id}:${infoProp.id}`
+                              const selected = isSelected(itemId)
+                              const disabled = multiple && !selected && !canSelectMore
+
+                              if (!filterMatches(infoProp.name) && !filterMatches(infoProp.description)) return null
+
+                              // Show current value preview for some properties
+                              const getPreviewValue = () => {
+                                switch (infoProp.id) {
+                                  case 'name': return device.name
+                                  case 'status': return device.status
+                                  case 'online': return device.online ? '在线' : '离线'
+                                  case 'device_type': return device.device_type
+                                  case 'plugin_name': return device.plugin_name || '-'
+                                  case 'adapter_id': return device.adapter_id || '-'
+                                  default: return '-'
+                                }
+                              }
+
+                              return (
+                                <button
+                                  key={infoProp.id}
+                                  onClick={() => !disabled && handleItemClick(itemId)}
+                                  disabled={disabled}
+                                  className={cn(
+                                    "w-full flex items-center justify-between px-3 py-2.5",
+                                    "hover:bg-accent/50 transition-colors text-left",
+                                    selected && 'bg-primary/5',
+                                    disabled && 'opacity-50 cursor-not-allowed'
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2 flex-1">
+                                    {multiple && (
+                                      <div className={cn(
+                                        "w-4 h-4 rounded border flex items-center justify-center flex-shrink-0",
+                                        selected ? 'bg-primary border-primary' : 'border-border'
+                                      )}>
+                                        {selected && <Check className="h-3 w-3 text-white" />}
+                                      </div>
+                                    )}
+                                    <div className="flex-1">
+                                      <p className="text-sm font-medium">{infoProp.name}</p>
+                                      <p className="text-xs text-muted-foreground">
+                                        {infoProp.description} · 当前: {getPreviewValue()}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {!multiple && selected && (
+                                    <Check className="h-4 w-4 text-primary flex-shrink-0" />
+                                  )}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-10 text-muted-foreground">
+                  <Info className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                  <p className="text-sm">暂无设备</p>
+                </div>
+              )}
+            </TabsContent>
+
             {/* Agent Data Content */}
             <TabsContent value="agent" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
               <div className="space-y-2">
@@ -565,23 +730,23 @@ export function DataSourceSelector({
                       key={metric.id}
                       onClick={() => !disabled && handleItemClick(itemId)}
                       disabled={disabled}
-                      className={`
-                        w-full flex items-center justify-between p-3 rounded-lg border transition-all
-                        ${selected ? 'bg-primary/10 border-primary/30' : 'bg-card border-border hover:bg-accent/50 hover:border-primary/30'}
-                        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-                      `}
+                      className={cn(
+                        "w-full flex items-center justify-between p-3 rounded-lg border transition-all",
+                        selected ? 'bg-primary/10 border-primary/30' : 'bg-card border-border hover:bg-accent/50 hover:border-primary/30',
+                        disabled && 'opacity-50 cursor-not-allowed'
+                      )}
                     >
                       <div className="flex items-center gap-3">
                         {multiple && (
-                          <div className={`
-                            w-5 h-5 rounded border flex items-center justify-center transition-colors
-                            ${selected ? 'bg-primary border-primary' : 'border-border'}
-                          `}>
+                          <div className={cn(
+                            "w-5 h-5 rounded border flex items-center justify-center transition-colors",
+                            selected ? 'bg-primary border-primary' : 'border-border'
+                          )}>
                             {selected && <Check className="h-3.5 w-3.5 text-white" />}
                           </div>
                         )}
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-purple-500/10">
-                          <Bot className={`h-4 w-4 ${selected ? 'text-primary' : 'text-purple-500'}`} />
+                          <Bot className={cn("h-4 w-4", selected ? 'text-primary' : 'text-purple-500')} />
                         </div>
                         <div className="text-left">
                           <p className="text-sm font-medium">{metric.name}</p>
@@ -612,23 +777,23 @@ export function DataSourceSelector({
                       key={metric.id}
                       onClick={() => !disabled && handleItemClick(itemId)}
                       disabled={disabled}
-                      className={`
-                        w-full flex items-center justify-between p-3 rounded-lg border transition-all
-                        ${selected ? 'bg-primary/10 border-primary/30' : 'bg-card border-border hover:bg-accent/50 hover:border-primary/30'}
-                        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
-                      `}
+                      className={cn(
+                        "w-full flex items-center justify-between p-3 rounded-lg border transition-all",
+                        selected ? 'bg-primary/10 border-primary/30' : 'bg-card border-border hover:bg-accent/50 hover:border-primary/30',
+                        disabled && 'opacity-50 cursor-not-allowed'
+                      )}
                     >
                       <div className="flex items-center gap-3">
                         {multiple && (
-                          <div className={`
-                            w-5 h-5 rounded border flex items-center justify-center transition-colors
-                            ${selected ? 'bg-primary border-primary' : 'border-border'}
-                          `}>
+                          <div className={cn(
+                            "w-5 h-5 rounded border flex items-center justify-center transition-colors",
+                            selected ? 'bg-primary border-primary' : 'border-border'
+                          )}>
                             {selected && <Check className="h-3.5 w-3.5 text-white" />}
                           </div>
                         )}
                         <div className="w-8 h-8 rounded-lg flex items-center justify-center bg-blue-500/10">
-                          <BarChart3 className={`h-4 w-4 ${selected ? 'text-primary' : 'text-blue-500'}`} />
+                          <BarChart3 className={cn("h-4 w-4", selected ? 'text-primary' : 'text-blue-500')} />
                         </div>
                         <div className="text-left">
                           <p className="text-sm font-medium">{metric.name}</p>
@@ -656,7 +821,7 @@ export function DataSourceSelector({
             disabled={selectedItems.size === 0}
             className="h-9"
           >
-            确认{totalSelected > 0 && ` (${totalSelected})`}
+            确认 {totalSelected > 0 && `(${totalSelected})`}
           </Button>
         </div>
       </DialogContent>

@@ -26,6 +26,7 @@ import { EmptyStateInline, Pagination, AlertBadge, BulkActionBar } from "@/compo
 import { formatTimestamp } from "@/lib/utils/format"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { confirm } from "@/hooks/use-confirm"
 import type { Alert } from "@/types"
 
 export function AlertsTab() {
@@ -124,7 +125,15 @@ export function AlertsTab() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return
-    if (!confirm(t('alerts:deleteConfirm', { count: selectedIds.size }))) return
+
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('alerts:deleteConfirm', { count: selectedIds.size }),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
 
     setBulkProcessing(true)
     try {

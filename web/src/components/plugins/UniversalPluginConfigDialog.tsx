@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TestTube, Check, X, Plus, Trash2, RefreshCw, Eye, Brain, Wrench } from "lucide-react"
 import { ConfigFormBuilder } from "@/components/plugins/ConfigFormBuilder"
 import { useToast } from "@/hooks/use-toast"
+import { confirm } from "@/hooks/use-confirm"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { PluginConfigSchema } from "@/types"
@@ -347,7 +348,15 @@ export function UniversalPluginConfigDialog({
   // Handle delete instance
   const handleDelete = async (instance: PluginInstance) => {
     if (!onDelete) return
-    if (!confirm(t("plugins:confirmDeleteInstance", { defaultValue: "Delete this instance?" }))) return
+
+    const confirmed = await confirm({
+      title: t("common:delete"),
+      description: t("plugins:confirmDeleteInstance", { defaultValue: "Delete this instance?" }),
+      confirmText: t("common:delete"),
+      cancelText: t("common:cancel"),
+      variant: "destructive"
+    })
+    if (!confirmed) return
 
     setSaving(true)
     try {

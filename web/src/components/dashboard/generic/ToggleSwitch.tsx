@@ -1,8 +1,8 @@
 /**
  * Toggle Switch Component
  *
- * Clickable power button following LED Indicator layout.
- * Horizontal: LED/icon on left, label on right. Click anywhere to toggle.
+ * Command-only toggle for sending device commands.
+ * Displays current state and sends toggle command on click.
  */
 
 import { Power, Lightbulb, Fan, Lock } from 'lucide-react'
@@ -14,11 +14,16 @@ import { indicatorFontWeight } from '@/design-system/tokens/indicator'
 import type { DataSource } from '@/types/dashboard'
 
 export interface ToggleSwitchProps {
+  // Command data source (required)
   dataSource?: DataSource
-  checked?: boolean
-  onCheckedChange?: (checked: boolean) => void
+
+  // Display
   label?: string
   size?: 'sm' | 'md' | 'lg'
+
+  // Initial state for display before command response
+  initialState?: boolean
+
   disabled?: boolean
   className?: string
 }
@@ -35,27 +40,25 @@ function getIconForLabel(label?: string): React.ComponentType<{ className?: stri
 
 export function ToggleSwitch({
   dataSource,
-  checked: propChecked = false,
-  onCheckedChange,
   label,
   size = 'md',
+  initialState = false,
   disabled = false,
   className,
 }: ToggleSwitchProps) {
   const { data, loading, sendCommand, sending } = useDataSource<boolean>(dataSource, {
-    fallback: propChecked,
+    fallback: initialState,
   })
-  const checked = data ?? propChecked
-  const isCommandSource = dataSource?.type === 'command'
+
+  // Display current state (from command response) or initial state
+  const checked = data ?? initialState
+  const hasCommand = dataSource?.type === 'command'
 
   const handleClick = async () => {
-    if (disabled || loading || sending) return
+    if (disabled || loading || sending || !hasCommand || !sendCommand) return
 
-    const newChecked = !checked
-    if (isCommandSource && sendCommand) {
-      await sendCommand(newChecked)
-    }
-    onCheckedChange?.(newChecked)
+    // Send toggle command with new state
+    await sendCommand(!checked)
   }
 
   const config = dashboardComponentSize[size]
@@ -74,15 +77,15 @@ export function ToggleSwitch({
   return (
     <button
       onClick={handleClick}
-      disabled={disabled || loading || sending}
+      disabled={disabled || loading || sending || !hasCommand}
       className={cn(
         dashboardCardBase,
         'flex-row items-center',
         config.contentGap,
         config.padding,
         'transition-all duration-200',
-        'hover:bg-accent/50',
-        (disabled || sending) && 'opacity-50 cursor-not-allowed',
+        !disabled && !sending && hasCommand && 'hover:bg-accent/50',
+        (disabled || sending || !hasCommand) && 'opacity-50 cursor-not-allowed',
         className
       )}
     >
@@ -118,6 +121,11 @@ export function ToggleSwitch({
       {/* Sending indicator */}
       {sending && (
         <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+      )}
+
+      {/* Warning: no command configured */}
+      {!hasCommand && (
+        <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-orange-500" title="未配置命令数据源" />
       )}
     </button>
   )

@@ -11,6 +11,7 @@ import { PageTabs, PageTabsContent, LoadingState, EmptyState } from '@/component
 import { useApiData } from '@/hooks/useApiData'
 import { formatTimestamp } from '@/lib/utils/format'
 import { useToast } from '@/hooks/use-toast'
+import { confirm } from '@/hooks/use-confirm'
 import {
   RefreshCw, CheckCircle, X, Trash2, Play, Brain,
   AlertCircle, Eye, Wand2
@@ -116,7 +117,15 @@ export function DecisionsPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm(t('decisions:deleteConfirm'))) return
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('decisions:deleteConfirm'),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
     setProcessingId(id)
     try {
       await api.deleteDecision(id)

@@ -50,14 +50,19 @@ function getSandboxPolicy(props: {
 
   const policies: string[] = []
 
-  if (!props.allowScripts) policies.push('scripts')
-  if (!props.allowSameOrigin) policies.push('same-origin')
-  if (!props.allowForms) policies.push('forms')
-  if (!props.allowPopups) policies.push('popups')
+  // When sandbox is enabled, we specify what to ALLOW (using allow-* tokens)
+  // If a permission is not explicitly allowed, it's restricted
+  if (props.allowScripts) policies.push('allow-scripts')
+  if (props.allowSameOrigin) policies.push('allow-same-origin')
+  if (props.allowForms) policies.push('allow-forms')
+  if (props.allowPopups) policies.push('allow-popups')
 
-  // Default allowed: allow-popups, allow-forms, allow-same-origin, allow-scripts
-  // When sandbox is true, we specify what to disable
-  return policies.length > 0 ? policies.join(' ') : 'allow-popups allow-forms allow-same-origin allow-scripts'
+  // Always allow presentation and top-navigation by default for better UX
+  policies.push('allow-presentation')
+
+  // Return empty string to apply all restrictions
+  // Or specific allow-* tokens to lift those restrictions
+  return policies.join(' ')
 }
 
 export function WebDisplay({

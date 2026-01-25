@@ -8,6 +8,7 @@
 import { ArrowUpRight, ArrowDownRight, Minus, Activity, TrendingUp, TrendingDown } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn, formatValue, getIconForEntity } from '@/lib/utils'
+import { toLatestValue } from '@/design-system/utils/format'
 import { useDataSource } from '@/hooks/useDataSource'
 import { chartColors, indicatorFontWeight, indicatorColors } from '@/design-system'
 import { dashboardComponentSize, dashboardCardBase } from '@/design-system/tokens/size'
@@ -169,7 +170,8 @@ export function ValueCard({
     fallback: null,
   })
 
-  const displayValue = error ? null : data
+  // Extract the latest value from telemetry data
+  const displayValue = error ? null : toLatestValue(data, null)
   const trendDirection = trendValue !== undefined
     ? trendValue > 0 ? 'up' : trendValue < 0 ? 'down' : 'neutral'
     : null

@@ -616,7 +616,7 @@ export function AgentCreatorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl max-h-[95vh] flex flex-col p-0">
+      <DialogContent className="max-w-5xl max-h-[95vh] flex flex-col p-0 [&>[data-radix-dialog-close]]:right-6 [&>[data-radix-dialog-close]]:top-5">
         <DialogHeader className="px-6 py-4 border-b">
           <DialogTitle className="text-lg">
             {isEditing ? "编辑智能体" : "创建智能体"}

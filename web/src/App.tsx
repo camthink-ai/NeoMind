@@ -14,6 +14,7 @@ import { DecisionsPage } from "@/pages/decisions"
 import { PluginsPage } from "@/pages/plugins"
 import { EventsPage } from "@/pages/events"
 import { Toaster } from "@/components/ui/toaster"
+import { Confirmer } from "@/components/ui/confirmer"
 import { tokenManager } from "@/lib/api"
 
 // Suppress Radix UI Portal cleanup errors during page transitions
@@ -180,13 +181,15 @@ function App() {
                   </Routes>
                 </main>
                 <Toaster />
+                <Confirmer />
               </div>
             </ProtectedRoute>
           }
         />
       </Routes>
-      {/* Show toaster on login page too */}
+      {/* Show toaster and confirmer on login page too */}
       <Toaster />
+      <Confirmer />
     </>
   )
 }

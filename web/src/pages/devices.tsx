@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { useToast } from "@/hooks/use-toast"
 import { useEvents } from "@/hooks/useEvents"
+import { confirm } from "@/hooks/use-confirm"
 import { useNavigate, useLocation, useParams } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { PageTabs, PageTabsContent } from "@/components/shared"
@@ -351,10 +352,17 @@ export function DevicesPage() {
   }
 
   const handleDeleteDevice = async (id: string) => {
-    if (confirm(t('devices:deleteConfirm'))) {
-      await deleteDevice(id)
-      toast({ title: t('common:success'), description: t('devices:deviceDeleted') })
-    }
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('devices:deleteConfirm'),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
+    await deleteDevice(id)
+    toast({ title: t('common:success'), description: t('devices:deviceDeleted') })
   }
 
   const handleOpenDeviceDetails = async (device: Device) => {
@@ -490,10 +498,17 @@ export function DevicesPage() {
   }
 
   const handleDeleteDeviceType = async (id: string) => {
-    if (confirm(t('devices:deleteTypeConfirm'))) {
-      await deleteDeviceType(id)
-      toast({ title: t('common:success'), description: t('devices:deviceTypeDeleted') })
-    }
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('devices:deleteTypeConfirm'),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
+    await deleteDeviceType(id)
+    toast({ title: t('common:success'), description: t('devices:deviceTypeDeleted') })
   }
 
   const handleAddDeviceType = async (definition: DeviceType) => {

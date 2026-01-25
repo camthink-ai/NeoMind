@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { ActionBar, EmptyState } from '@/components/shared'
+import { confirm } from '@/hooks/use-confirm'
 import { TransformBuilder as TransformBuilderSplit } from './TransformBuilderSplit'
 import { TransformTestDialog } from './TransformTestDialog'
 import type { TransformAutomation } from '@/types'
@@ -75,7 +76,15 @@ export function TransformsTabContent({ onRefresh }: TransformsTabContentProps) {
   }
 
   const handleDeleteTransform = async (id: string) => {
-    if (!confirm(t('automation:confirmDeleteTransform', { defaultValue: 'Are you sure you want to delete this transform?' }))) return
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('automation:confirmDeleteTransform', { defaultValue: 'Are you sure you want to delete this transform?' }),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
+
     try {
       await api.deleteAutomation(id)
       await fetchTransforms()

@@ -2,6 +2,7 @@
  * Bar Chart Component
  *
  * Unified with dashboard design system.
+ * Supports historical telemetry data binding.
  */
 
 import { useMemo } from 'react'
@@ -24,7 +25,8 @@ import { useDataSource } from '@/hooks/useDataSource'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
 import { indicatorFontWeight } from '@/design-system/tokens/indicator'
 import { chartColors as designChartColors } from '@/design-system/tokens/color'
-import type { DataSource } from '@/types/dashboard'
+import type { DataSource, DataSourceOrList } from '@/types/dashboard'
+import { normalizeDataSource } from '@/types/dashboard'
 
 // Use design system chart colors
 const chartColors = designChartColors
@@ -66,23 +68,96 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }
  * Convert device/metric source to telemetry for bar charts.
  * Bar charts can display time-series data as discrete bars.
  */
-function toTelemetrySource(dataSource?: DataSource): DataSource | undefined {
-  if (!dataSource) return undefined
+function toTelemetrySource(
+  dataSource?: DataSource,
+  limit: number = 24,
+  timeRange: number = 1
+): DataSource | undefined {
+  if (!dataSource) {
+    return undefined
+  }
 
-  // Already telemetry or other types - use as-is
-  if (dataSource.type !== 'device' && dataSource.type !== 'metric') {
-    return dataSource
+  // If already telemetry type, update with raw settings
+  if (dataSource.type === 'telemetry') {
+    return {
+      ...dataSource,
+      limit: dataSource.limit ?? limit,
+      timeRange: dataSource.timeRange ?? timeRange,
+      aggregate: 'raw',
+      params: {
+        ...dataSource.params,
+        includeRawPoints: true,
+      },
+      transform: 'raw',
+    }
   }
 
   // Convert to telemetry for historical data
-  return {
-    type: 'telemetry',
-    deviceId: dataSource.deviceId,
-    metricId: dataSource.metricId,
-    timeRange: 1,         // Last 1 hour
-    aggregate: 'avg',     // Aggregate data points
-    limit: 24,            // 24 bars for readable display
+  if (dataSource.type === 'device' || dataSource.type === 'metric') {
+    return {
+      type: 'telemetry' as const,
+      deviceId: dataSource.deviceId,
+      metricId: dataSource.metricId ?? dataSource.property ?? 'value',
+      timeRange: timeRange,
+      limit: limit,
+      aggregate: 'raw' as const,
+      params: {
+        includeRawPoints: true,
+      },
+      transform: 'raw' as const,
+    }
   }
+
+  return dataSource
+}
+
+/**
+ * Transform raw telemetry points to chart data
+ */
+function transformTelemetryToBarData(data: unknown) {
+  if (!data || !Array.isArray(data)) return []
+
+  const result: { name: string; value: number; color?: string }[] = []
+
+  for (const item of data) {
+    if (typeof item === 'number') {
+      result.push({ name: `${result.length + 1}`, value: item })
+    } else if (typeof item === 'object' && item !== null) {
+      const obj = item as Record<string, unknown>
+
+      // Extract value
+      let value: number | undefined = undefined
+      if (typeof obj.value === 'number') value = obj.value
+      else if (typeof obj.v === 'number') value = obj.v
+      else if (typeof obj.val === 'number') value = obj.val
+      else if (typeof obj.avg === 'number') value = obj.avg
+      else if (typeof obj.min === 'number') value = obj.min
+      else if (typeof obj.max === 'number') value = obj.max
+
+      if (value === undefined) continue
+
+      // Extract timestamp/name for label
+      const timestamp = obj.timestamp ?? obj.time ?? obj.t
+      const name = obj.name ?? obj.label
+
+      let label = `${result.length + 1}`
+      if (typeof name === 'string') {
+        label = name
+      } else if (typeof timestamp === 'number') {
+        const date = new Date(timestamp * 1000)
+        label = date.toLocaleTimeString('zh-CN', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      } else if (typeof timestamp === 'string') {
+        label = timestamp
+      }
+
+      result.push({ name: label, value })
+    }
+  }
+
+  return result
 }
 
 export interface BarData {
@@ -93,7 +168,7 @@ export interface BarData {
 
 export interface BarChartProps {
   // Data source configuration
-  dataSource?: DataSource
+  dataSource?: DataSourceOrList  // Support both single and multiple data sources
 
   // Data
   data?: BarData[]
@@ -108,6 +183,10 @@ export interface BarChartProps {
   // Layout
   layout?: 'vertical' | 'horizontal'
   stacked?: boolean
+
+  // Telemetry options
+  limit?: number
+  timeRange?: number
 
   // Styling
   color?: string
@@ -126,36 +205,111 @@ export function BarChart({
   layout = 'vertical',
   color,
   size = 'md',
+  limit = 24,
+  timeRange = 1,
   className,
 }: BarChartProps) {
   const config = dashboardComponentSize[size]
-  // Use telemetry source for time-series data
-  const telemetrySource = toTelemetrySource(dataSource)
-  const { data, loading } = useDataSource<BarData[] | number[]>(telemetrySource, {
-    fallback: propData ?? [],
-  })
 
-  // Normalize data to BarData[] format
-  const chartData: BarData[] = useMemo(() => {
-    // If propData is provided and valid, use it
-    if (propData && Array.isArray(propData) && propData.length > 0) {
-      return propData
+  // Normalize data sources for historical data
+  const telemetrySources = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+    return sources.map(ds => toTelemetrySource(ds, limit, timeRange)).filter((ds): ds is DataSource => ds !== undefined)
+  }, [dataSource, limit, timeRange])
+
+  const { data, loading } = useDataSource<BarData[] | number[] | number[][]>(
+    telemetrySources.length > 0 ? (telemetrySources.length === 1 ? telemetrySources[0] : telemetrySources) : undefined,
+    {
+      fallback: undefined,
+      preserveMultiple: true,
+    }
+  )
+
+  // Get device names for series labels
+  const getDeviceName = (deviceId?: string): string => {
+    if (!deviceId) return 'Value'
+    return deviceId.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  const getPropertyDisplayName = (property?: string): string => {
+    if (!property) return 'Value'
+    const propertyNames: Record<string, string> = {
+      temperature: '温度',
+      humidity: '湿度',
+      temp: '温度',
+      value: '数值',
+    }
+    return propertyNames[property] || property.replace(/[-_]/g, ' ')
+  }
+
+  // Check if data is multi-source (array of arrays)
+  const isMultiSource = (data: unknown): boolean => {
+    return Array.isArray(data) && data.length > 0 && Array.isArray(data[0])
+  }
+
+  // For multi-series bar chart, transform data to recharts format
+  const chartData = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+
+    // Multi-source data - create grouped bar chart
+    // preserveMultiple returns array of arrays where length equals sources length
+    if (sources.length > 1 && Array.isArray(data) && data.length === sources.length) {
+      const numberArrays = data as number[][]
+      const maxLength = Math.max(...numberArrays.map(arr => Array.isArray(arr) ? arr.length : 0))
+
+      return Array.from({ length: maxLength }, (_, idx) => {
+        const point: any = { name: `${idx + 1}` }
+        sources.forEach((ds, i) => {
+          const sourceArray = numberArrays[i]
+          const arrValue = Array.isArray(sourceArray) ? sourceArray[idx] : 0
+          const seriesKey = `series${i}`
+          point[seriesKey] = arrValue ?? 0
+          // Also store the display name for this series key
+          if (i === 0) {
+            point.seriesNames = sources.map((ds, si) => {
+              return ds.deviceId
+                ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.property)}`
+                : `Series ${si + 1}`
+            })
+          }
+        })
+        return point
+      })
     }
 
-    // If data from source is already in BarData[] format
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object' && data[0] !== null && 'value' in data[0]) {
-      return data as BarData[]
+    // Single source - handle as before
+    if (dataSource && Array.isArray(data) && data.length > 0) {
+      const first = data[0]
+      if (typeof first === 'object' && first !== null && 'value' in first) {
+        return data as BarData[]
+      }
+
+      // Transform telemetry points
+      const transformed = transformTelemetryToBarData(data)
+      if (transformed.length > 0) {
+        return transformed
+      }
     }
 
-    // If data is a number array, convert to BarData[]
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'number') {
+    // Handle number array from data source
+    if (dataSource && Array.isArray(data) && data.length > 0 && typeof data[0] === 'number') {
       return (data as number[]).map((value, index) => ({
         name: `${index + 1}`,
         value,
       }))
     }
 
-    // Return default sample data instead of empty array
+    // If no dataSource, use propData (static data)
+    if (!dataSource && propData && Array.isArray(propData) && propData.length > 0) {
+      return propData
+    }
+
+    // Return empty array when loading with dataSource
+    if (dataSource && loading) {
+      return []
+    }
+
+    // Return default sample data for preview only
     return [
       { name: 'Jan', value: 12 },
       { name: 'Feb', value: 18 },
@@ -164,9 +318,25 @@ export function BarChart({
       { name: 'May', value: 19 },
       { name: 'Jun', value: 25 },
     ]
-  }, [data, propData])
+  }, [data, propData, dataSource, loading])
 
-  if (loading) {
+  // Get series info for multi-source rendering
+  const seriesInfo = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+    if (sources.length > 1 && Array.isArray(data) && data.length === sources.length) {
+      return sources.map((ds, i) => ({
+        dataKey: `series${i}`,
+        name: ds.deviceId
+          ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.property)}`
+          : `Series ${i + 1}`,
+        color: fallbackColors[i % fallbackColors.length],
+      }))
+    }
+    return null
+  }, [dataSource, data])
+
+  // Show loading skeleton when fetching data
+  if (dataSource && loading) {
     return (
       <div className={cn(dashboardCardBase, config.padding, className)}>
         {title && (
@@ -194,42 +364,54 @@ export function BarChart({
         <ResponsiveContainer width="100%" height="100%">
           <RechartsBarChart
             data={chartData}
-            layout={layout === 'horizontal' ? 'vertical' : 'horizontal'}
-            margin={{ top: 5, right: 5, bottom: 5, left: 0 }}
+            margin={{ top: 5, right: 5, bottom: 0, left: 0 }}
             accessibilityLayer
           >
-            {showGrid && <CartesianGrid strokeDasharray="3 3" className="stroke-muted" vertical={false} />}
+            {showGrid && <CartesianGrid vertical={false} strokeDasharray="4 4" className="stroke-muted" />}
             <XAxis
-              dataKey={layout === 'vertical' ? 'name' : undefined}
-              type={layout === 'vertical' ? 'category' : 'number'}
+              dataKey="name"
               axisLine={false}
               tickLine={false}
               tickMargin={10}
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
+              interval="preserveStartEnd"
             />
             <YAxis
-              dataKey={layout === 'horizontal' ? 'name' : undefined}
-              type={layout === 'horizontal' ? 'category' : 'number'}
               axisLine={false}
               tickLine={false}
               tickMargin={10}
-              width={layout === 'horizontal' ? 60 : 40}
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+              width={32}
+              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
             />
             {showTooltip && <Tooltip content={<ChartTooltip />} />}
             {showLegend && <Legend />}
-            <Bar
-              dataKey="value"
-              fill={color || fallbackColors[0]}
-              radius={4}
-            >
-              {chartData.map((entry, index) => (
-                <Cell
-                  key={`cell-${index}`}
-                  fill={entry.color || color || fallbackColors[index % fallbackColors.length]}
+
+            {/* Multi-series bars */}
+            {seriesInfo ? (
+              seriesInfo.map((info) => (
+                <Bar
+                  key={info.dataKey}
+                  dataKey={info.dataKey}
+                  name={info.name}
+                  fill={info.color}
+                  radius={4}
                 />
-              ))}
-            </Bar>
+              ))
+            ) : (
+              /* Single series bar */
+              <Bar
+                dataKey="value"
+                fill={color || fallbackColors[0]}
+                radius={4}
+              >
+                {chartData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={entry.color || color || fallbackColors[index % fallbackColors.length]}
+                  />
+                ))}
+              </Bar>
+            )}
           </RechartsBarChart>
         </ResponsiveContainer>
       </div>

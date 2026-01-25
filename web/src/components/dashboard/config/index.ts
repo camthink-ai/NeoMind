@@ -27,6 +27,8 @@ export {
 export { ConfigRenderer } from './ConfigRenderer'
 export { ComponentConfigDialog } from './ComponentConfigDialog'
 export type { ComponentConfigDialogProps } from './ComponentConfigDialog'
+export { DataSourceSelectorContent } from './DataSourceSelectorContent'
+export type { DataSourceSelectorContentProps } from './DataSourceSelectorContent'
 export { DataSourceSelector } from './DataSourceSelector'
 export type { DataSourceSelectorProps } from './DataSourceSelector'
 export {

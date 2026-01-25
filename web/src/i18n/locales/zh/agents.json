@@ -103,5 +103,177 @@
     "action": "操作",
     "sources": "个来源",
     "points": "个数据点"
+  },
+  "creator": {
+    "title": "创建智能体",
+    "editTitle": "编辑智能体",
+    "steps": {
+      "basic": "基本信息",
+      "schedule": "执行策略",
+      "resources": "资源选择"
+    },
+    "basicInfo": {
+      "selectRole": "选择智能体角色",
+      "roles": {
+        "monitor": {
+          "label": "监控专员",
+          "description": "持续监控设备状态，检测异常情况并发送告警"
+        },
+        "executor": {
+          "label": "执行专员",
+          "description": "根据条件自动控制设备，执行预设的操作指令"
+        },
+        "analyst": {
+          "label": "分析专员",
+          "description": "分析数据趋势，生成报告并提供决策建议"
+        }
+      },
+      "name": "名称",
+      "namePlaceholder": "例如：仓库温度监控、设备异常分析",
+      "requirement": "需求描述",
+      "requirementHint": "用自然语言描述你希望智能体完成的目标",
+      "requirementPlaceholder": "例如：\n• 当温度超过30度时发送告警\n• 每天早上9点生成设备状态报告\n• 检测异常能耗并分析原因",
+      "autoParseHint": "系统会自动解析你的描述并配置相应的执行逻辑"
+    },
+    "schedule": {
+      "selectStrategy": "选择执行策略",
+      "strategies": {
+        "interval": "间隔",
+        "daily": "每天",
+        "weekly": "每周",
+        "monthly": "每月",
+        "event": "事件",
+        "once": "单次"
+      },
+      "config": "执行配置",
+      "onceDescription": "智能体将在保存后立即执行一次，执行后不会自动再次触发。",
+      "interval": {
+        "every": "每",
+        "minutes": "分钟",
+        "hours": "小时",
+        "executeOnce": "执行一次",
+        "preview": "每 {{value}} {{unit}}执行一次"
+      },
+      "daily": {
+        "everyDay": "每天",
+        "at": "点",
+        "execute": "执行",
+        "preview": "每天 {{hour}}:{{minute}} 执行"
+      },
+      "weekly": {
+        "every": "每",
+        "at": "点",
+        "execute": "执行",
+        "preview": "每{{day}} {{hour}}:{{minute}} 执行"
+      },
+      "monthly": {
+        "everyMonth": "每月",
+        "day": "日",
+        "at": "点",
+        "execute": "执行",
+        "preview": "每月{{day}}日 {{hour}}:{{minute}} 执行"
+      },
+      "event": {
+        "triggerEvent": "触发事件",
+        "events": {
+          "device.online": "设备上线",
+          "device.offline": "设备离线",
+          "metric.threshold": "指标阈值",
+          "metric.anomaly": "异常检测",
+          "manual": "手动触发"
+        },
+        "preview": "当「{{event}}」事件发生时触发",
+        "deviceOnline": {
+          "title": "设备上线触发",
+          "description": "当设备重新连接上线时，立即执行智能体分析",
+          "relatedDevice": "关联设备"
+        },
+        "deviceOffline": {
+          "title": "设备离线触发",
+          "description": "当设备断开连接时，立即执行智能体分析",
+          "relatedDevice": "关联设备"
+        },
+        "metricThreshold": {
+          "title": "阈值触发",
+          "condition": "触发条件",
+          "conditionPlaceholder": "temperature > 30",
+          "conditionHint": "支持条件表达式，如: temperature > 30",
+          "monitorDevice": "监控设备"
+        },
+        "metricAnomaly": {
+          "title": "异常检测触发",
+          "description": "AI 自动检测数据异常，支持自定义阈值",
+          "threshold": "异常阈值（可选）",
+          "thresholdPlaceholder": "留空使用自动检测",
+          "monitorDevice": "监控设备"
+        },
+        "manual": {
+          "title": "手动触发",
+          "description": "仅在手动点击执行按钮时运行，适合按需分析"
+        },
+        "allDevices": "全部设备"
+      },
+      "once": {
+        "preview": "立即执行一次"
+      },
+      "timezone": "时区"
+    },
+    "resources": {
+      "searchPlaceholder": "搜索设备名称或类型...",
+      "selectedCount": "已选 {{count}} 项",
+      "noDevicesFound": "没有找到设备",
+      "metrics": "监控指标",
+      "commands": "执行指令",
+      "metricCount": "{{count}}指标",
+      "commandCount": "{{count}}指令",
+      "topologyPreview": "拓扑预览",
+      "selectResourceHint": "请至少选择一个设备资源",
+      "noMetrics": "无指标",
+      "noOutputs": "无输出",
+      "moreMetrics": "+{{count}} 个指标",
+      "moreCommands": "+{{count}} 个指令",
+      "dataInput": "数据输入",
+      "dataOutput": "结果输出",
+      "selectAfterShow": "选择设备资源后显示拓扑"
+    },
+    "validation": {
+      "nameRequired": "请输入智能体名称",
+      "requirementRequired": "请描述你的需求",
+      "resourceRequired": "请至少选择一个设备资源"
+    },
+    "actions": {
+      "cancel": "取消",
+      "previous": "上一步",
+      "next": "下一步",
+      "save": "保存",
+      "create": "创建",
+      "saving": "保存中...",
+      "success": "成功",
+      "created": "智能体已创建",
+      "updated": "智能体已更新",
+      "failed": "失败"
+    },
+    "weekdays": {
+      "0": "周日",
+      "1": "周一",
+      "2": "周二",
+      "3": "周三",
+      "4": "周四",
+      "5": "周五",
+      "6": "周六"
+    },
+    "timezones": {
+      "Asia/Shanghai": "中国 (UTC+8)",
+      "Asia/Tokyo": "日本 (UTC+9)",
+      "Asia/Seoul": "韩国 (UTC+9)",
+      "Asia/Singapore": "新加坡 (UTC+8)",
+      "Australia/Sydney": "悉尼 (UTC+10/+11)",
+      "Europe/London": "伦敦 (UTC+0/+1)",
+      "Europe/Paris": "巴黎 (UTC+1/+2)",
+      "Europe/Berlin": "柏林 (UTC+1/+2)",
+      "America/New_York": "纽约 (UTC-5/-4)",
+      "America/Los_Angeles": "洛杉矶 (UTC-8/-7)",
+      "UTC": "UTC (UTC+0)"
+    }
   }
 }

@@ -38,6 +38,7 @@ export interface ComponentMeta {
 
   // Configuration
   hasDataSource: boolean      // Does this component use data binding?
+  maxDataSources?: number     // Max number of data sources (1 = single, undefined = 1, >1 = multiple)
   hasDisplayConfig: boolean   // Can this component be styled?
   hasActions: boolean         // Does this component support actions?
 

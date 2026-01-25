@@ -9,7 +9,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { Slider } from '@/components/ui/slider'
 import { cn } from '@/lib/utils'
 import { useDataSource } from '@/hooks/useDataSource'
-import { dashboardCardBase } from '@/design-system/tokens/size'
+import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
 import { ImageOff, AlertTriangle, RefreshCw } from 'lucide-react'
 import type { DataSource } from '@/types/dashboard'
 
@@ -331,12 +331,15 @@ export function ImageHistory({
   images: propImages,
   title,
   size = 'md',
-  fit = 'contain',
+  fit = 'fill',
   rounded = true,
   limit = 50,
   timeRange = 1,
   className,
 }: ImageHistoryProps) {
+  // Get size configuration
+  const sizeConfig = dashboardComponentSize[size]
+
   // Normalize data source for image history (convert device to telemetry)
   const normalizedDataSource = useMemo(() => normalizeDataSourceForImages(dataSource, limit, timeRange), [dataSource, limit, timeRange])
 
@@ -422,8 +425,11 @@ export function ImageHistory({
   // Loading state
   if (loading) {
     return (
-      <div className={cn(dashboardCardBase, 'relative overflow-hidden flex flex-col min-h-0', className)}>
-        <div className="flex-1 flex items-center justify-center bg-muted/10">
+      <div className={cn(dashboardCardBase, className)}>
+        <div className={cn(
+          'w-full flex items-center justify-center bg-muted/10',
+          size === 'sm' ? 'h-[120px]' : size === 'md' ? 'h-[180px]' : 'h-[240px]'
+        )}>
           <RefreshCw className="h-6 w-6 text-muted-foreground animate-spin" />
         </div>
       </div>
@@ -435,24 +441,38 @@ export function ImageHistory({
     return (
       <div className={cn(
         dashboardCardBase,
-        'relative overflow-hidden flex flex-col items-center justify-center bg-muted/30 min-h-0',
+        'relative overflow-hidden flex flex-col items-center justify-center bg-muted/30',
         className
       )}>
-        <ImageOff className="h-12 w-12 text-muted-foreground/60 mb-2" />
-        <p className="text-muted-foreground text-sm font-medium">No Images</p>
+        <ImageOff className={cn(
+          'text-muted-foreground/60 mb-2',
+          size === 'sm' ? 'h-8 w-8' : size === 'md' ? 'h-12 w-12' : 'h-16 w-16'
+        )} />
+        <p className={cn(
+          'text-muted-foreground font-medium',
+          size === 'sm' ? 'text-xs' : 'text-sm'
+        )}>No Images</p>
       </div>
     )
   }
 
   return (
-    <div className={cn(dashboardCardBase, 'relative', className)}>
-      {/* Image fills entire container with absolute positioning */}
+    <div className={cn(
+      dashboardCardBase,
+      'relative flex flex-col overflow-hidden',
+      className
+    )}>
+      <div className={cn(
+        'w-full flex-1 relative',
+        size === 'sm' ? 'h-[120px]' : size === 'md' ? 'h-[180px]' : 'h-[240px]'
+      )}>
+      {/* Image fills entire container */}
       <img
         key={`img-${currentIndex}`}
         src={currentImageSrc}
         alt={currentImage?.alt || `Image ${currentIndex + 1}`}
         className={cn(
-          'absolute inset-0 w-full h-full',
+          'w-full h-full',
           fit === 'contain' && 'object-contain',
           fit === 'cover' && 'object-cover',
           fit === 'fill' && 'object-fill',
@@ -517,6 +537,7 @@ export function ImageHistory({
           </div>
         </div>
       )}
+      </div>
     </div>
   )
 }

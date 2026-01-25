@@ -2,9 +2,10 @@
  * Line Chart Component
  *
  * Unified with dashboard design system.
+ * Supports historical telemetry data binding.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import {
   LineChart as RechartsLineChart,
   AreaChart as RechartsAreaChart,
@@ -23,7 +24,8 @@ import { useDataSource } from '@/hooks/useDataSource'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
 import { indicatorFontWeight } from '@/design-system/tokens/indicator'
 import { chartColors as designChartColors } from '@/design-system/tokens/color'
-import type { DataSource } from '@/types/dashboard'
+import type { DataSource, DataSourceOrList } from '@/types/dashboard'
+import { normalizeDataSource } from '@/types/dashboard'
 
 // Use design system chart colors
 const chartColors = designChartColors
@@ -37,19 +39,123 @@ const fallbackColors = [
   '#ec4899', // Pink
 ]
 
-function toTelemetrySource(dataSource?: DataSource): DataSource | undefined {
+/**
+ * Convert device/metric source to telemetry for historical data
+ * Supports configurable time range and data point limit
+ */
+function toTelemetrySource(
+  dataSource?: DataSource,
+  limit: number = 50,
+  timeRange: number = 1
+): DataSource | undefined {
   if (!dataSource) return undefined
-  if (dataSource.type !== 'device' && dataSource.type !== 'metric') {
-    return dataSource
+
+  // If already telemetry type, update with raw settings
+  if (dataSource.type === 'telemetry') {
+    return {
+      ...dataSource,
+      limit: dataSource.limit ?? limit,
+      timeRange: dataSource.timeRange ?? timeRange,
+      aggregate: 'raw',
+      params: {
+        ...dataSource.params,
+        includeRawPoints: true,
+      },
+      transform: 'raw',
+    }
   }
-  return {
-    type: 'telemetry',
-    deviceId: dataSource.deviceId,
-    metricId: dataSource.metricId,
-    timeRange: 1,
-    aggregate: 'avg',
-    limit: 50,
+
+  // Convert device/metric to telemetry for historical data
+  if (dataSource.type === 'device' || dataSource.type === 'metric') {
+    return {
+      type: 'telemetry',
+      deviceId: dataSource.deviceId,
+      metricId: dataSource.metricId ?? dataSource.property ?? 'value',
+      timeRange: timeRange,
+      limit: limit,
+      aggregate: 'raw',
+      params: {
+        includeRawPoints: true,
+      },
+      transform: 'raw',
+    }
   }
+
+  return dataSource
+}
+
+/**
+ * Transform raw telemetry points to chart data
+ * Handles formats: [{ timestamp, value }, { t, v }, { time, val }] or number arrays
+ */
+function transformTelemetryToChartData(data: unknown): { labels: string[]; values: number[] } {
+  // Empty data
+  if (!data) return { labels: [], values: [] }
+
+  // Array of telemetry points
+  if (Array.isArray(data)) {
+    const values: number[] = []
+    const labels: string[] = []
+
+    for (const item of data) {
+      if (typeof item === 'number') {
+        values.push(item)
+        labels.push(`${values.length}`)
+      } else if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>
+
+        // Extract value
+        let value: number | undefined = undefined
+        if (typeof obj.value === 'number') value = obj.value
+        else if (typeof obj.v === 'number') value = obj.v
+        else if (typeof obj.val === 'number') value = obj.val
+        else if (typeof obj.avg === 'number') value = obj.avg
+        else if (typeof obj.min === 'number') value = obj.min
+        else if (typeof obj.max === 'number') value = obj.max
+
+        if (value === undefined) continue
+
+        // Extract timestamp for label
+        const timestamp = obj.timestamp ?? obj.time ?? obj.t ?? obj.ts
+        let label = `${values.length + 1}`
+
+        if (typeof timestamp === 'number') {
+          // Format timestamp as time
+          const date = new Date(timestamp * 1000)
+          label = date.toLocaleTimeString('zh-CN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          })
+        } else if (typeof timestamp === 'string') {
+          label = timestamp
+        }
+
+        values.push(value)
+        labels.push(label)
+      }
+    }
+
+    return { labels, values }
+  }
+
+  return { labels: [], values: [] }
+}
+
+/**
+ * Format timestamp to readable time
+ */
+function formatTimestamp(timestamp: string | number | undefined): string {
+  if (!timestamp) return ''
+
+  const date = new Date(typeof timestamp === 'number' ? timestamp * 1000 : timestamp)
+  if (isNaN(date.getTime())) return String(timestamp)
+
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
 }
 
 export interface SeriesData {
@@ -59,7 +165,7 @@ export interface SeriesData {
 }
 
 export interface LineChartProps {
-  dataSource?: DataSource
+  dataSource?: DataSourceOrList  // Support both single and multiple data sources
   series?: SeriesData[]
   labels?: string[]
   title?: string
@@ -71,14 +177,20 @@ export interface LineChartProps {
   fillArea?: boolean
   color?: string
   size?: 'sm' | 'md' | 'lg'
+
+  // Telemetry options
+  limit?: number
+  timeRange?: number
+
   className?: string
 }
 
-function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
   if (!active || !payload?.length) return null
 
   return (
     <div className="rounded-lg border bg-background p-2 shadow-md">
+      {label && <div className="mb-1 text-xs text-muted-foreground">{label}</div>}
       <div className="grid gap-1.5 text-xs">
         {payload.map((entry: any, index: number) => (
           <div key={index} className="flex items-center gap-2">
@@ -98,7 +210,7 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }
 export function LineChart({
   dataSource,
   series: propSeries,
-  labels,
+  labels: propLabels,
   title,
   height = 'auto',
   showGrid = false,
@@ -108,59 +220,186 @@ export function LineChart({
   fillArea = false,
   color,
   size = 'md',
+  limit = 50,
+  timeRange = 1,
   className,
 }: LineChartProps) {
   const config = dashboardComponentSize[size]
-  const telemetrySource = toTelemetrySource(dataSource)
-  const { data, loading } = useDataSource<SeriesData[] | number | number[]>(telemetrySource, {
-    fallback: propSeries ?? [],
-  })
 
-  const normalizedSeries = useMemo(() => {
-    if (propSeries && Array.isArray(propSeries) && propSeries.length > 0 && propSeries[0]?.data) {
-      return propSeries
+  // Normalize data sources for historical data
+  // Convert single DataSource or DataSource[] to array of telemetry sources
+  const telemetrySources = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+    return sources.map(ds => toTelemetrySource(ds, limit, timeRange)).filter((ds): ds is DataSource => ds !== undefined)
+  }, [dataSource, limit, timeRange])
+
+  const { data, loading } = useDataSource<any>(
+    telemetrySources.length > 0 ? (telemetrySources.length === 1 ? telemetrySources[0] : telemetrySources) : undefined,
+    {
+      fallback: propSeries ?? [],
+      preserveMultiple: true,  // Keep multiple data sources separate
     }
-    if (Array.isArray(data) && data.length > 0) {
+  )
+
+  // Get device names for series labels
+  const getDeviceName = (deviceId?: string): string => {
+    if (!deviceId) return 'Value'
+    return deviceId.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  // Get property name for series labels
+  const getPropertyDisplayName = (property?: string): string => {
+    if (!property) return 'Value'
+    const propertyNames: Record<string, string> = {
+      temperature: '温度',
+      humidity: '湿度',
+      temp: '温度',
+      value: '数值',
+    }
+    return propertyNames[property] || property.replace(/[-_]/g, ' ')
+  }
+
+  // Transform data to series format
+  const normalizedSeries: SeriesData[] = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+
+    // Multi-source case - data should be array of arrays from useDataSource with preserveMultiple
+    if (sources.length > 1 && Array.isArray(data) && data.length === sources.length) {
+      return sources.map((ds, idx) => {
+        const sourceData = data[idx]
+        // Transform telemetry points for this source
+        let values: number[] = []
+        if (Array.isArray(sourceData)) {
+          if (typeof sourceData[0] === 'number') {
+            values = sourceData as number[]
+          } else {
+            // Transform telemetry points - sourceData is raw telemetry points with timestamps
+            const { values: v } = transformTelemetryToChartData(sourceData)
+            values = v
+          }
+        }
+
+        const seriesName = ds.deviceId
+          ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.metricId || ds.property)}`
+          : `Series ${idx + 1}`
+        return {
+          name: seriesName,
+          data: values,
+          color: undefined,
+        } as SeriesData
+      })
+    }
+
+    // Handle telemetry raw data FIRST (when dataSource is provided)
+    if (dataSource && Array.isArray(data) && data.length > 0) {
+      // Check if it's already SeriesData format
       const first = data[0]
       if (typeof first === 'object' && first !== null && 'data' in first && Array.isArray(first.data)) {
         return data as SeriesData[]
       }
-    }
-    if (typeof data === 'number') {
-      return [{ name: 'Value', data: [data] }]
-    }
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'number') {
-      return [{ name: 'Value', data: data as number[] }]
-    }
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object') {
-      const values = (data as any[]).map(item => item.value ?? item.y ?? item)
-      if (values.some(v => typeof v === 'number')) {
-        return [{ name: 'Value', data: values.filter(v => typeof v === 'number') as number[] }]
+
+      // Single source - transform telemetry points
+      const { labels, values } = transformTelemetryToChartData(data)
+      if (values.length > 0) {
+        const singleSource = sources[0]
+        const seriesName = singleSource?.deviceId
+          ? `${getDeviceName(singleSource.deviceId)} · ${getPropertyDisplayName(singleSource.metricId || singleSource.property)}`
+          : 'Value'
+        return [{ name: seriesName, data: values, color: undefined } as SeriesData]
       }
     }
+
+    // Handle single number from data source
+    if (dataSource && typeof data === 'number') {
+      return [{ name: 'Value', data: [data], color: undefined } as SeriesData]
+    }
+
+    // Handle number array from data source
+    if (dataSource && Array.isArray(data) && data.length > 0 && typeof data[0] === 'number') {
+      return [{ name: 'Value', data: data as number[], color: undefined } as SeriesData]
+    }
+
+    // If no dataSource, use propSeries (static data)
+    if (!dataSource && propSeries && Array.isArray(propSeries) && propSeries.length > 0 && propSeries[0]?.data) {
+      return propSeries
+    }
+
+    // Default fallback
     return [{
       name: 'Sample',
-      data: [10, 15, 12, 18, 14, 20, 16, 22, 19, 25]
-    }]
-  }, [data, propSeries])
+      data: [10, 15, 12, 18, 14, 20, 16, 22, 19, 25],
+      color: undefined,
+    } as SeriesData]
+  }, [data, propSeries, dataSource])
+
+  // Extract raw labels from telemetry data before any transformation
+  // This must be computed before normalizedSeries to access raw timestamps
+  const rawChartLabels = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+
+    // Multi-source case - extract labels from first series raw telemetry data
+    if (sources.length > 1 && Array.isArray(data) && data.length > 0) {
+      const firstSeriesData = data[0]
+      if (Array.isArray(firstSeriesData) && firstSeriesData.length > 0) {
+        const first = firstSeriesData[0]
+        // Check if it's raw telemetry points (has timestamp field)
+        if (typeof first === 'object' && first !== null && ('timestamp' in first || 't' in first || 'time' in first)) {
+          return (firstSeriesData as any[]).map(item => {
+            const ts = item.timestamp ?? item.t ?? item.time
+            if (typeof ts === 'number') {
+              const date = new Date(ts * 1000)
+              return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            }
+            return String(ts ?? '')
+          })
+        }
+      }
+    }
+
+    // Single source case - extract labels from telemetry data
+    if (dataSource && Array.isArray(data) && data.length > 0) {
+      const first = data[0]
+      // Check if it's raw telemetry points
+      if (typeof first === 'object' && first !== null && ('timestamp' in first || 't' in first || 'time' in first)) {
+        const { labels: telemetryLabels } = transformTelemetryToChartData(data)
+        if (telemetryLabels.length > 0) {
+          return telemetryLabels
+        }
+      }
+    }
+
+    return null // Signal that we couldn't extract raw labels
+  }, [data, dataSource])
+
+  // Generate labels from telemetry or use provided labels
+  const chartLabels = useMemo(() => {
+    // If we extracted raw labels from telemetry, use them
+    if (rawChartLabels && rawChartLabels.length > 0) {
+      return rawChartLabels
+    }
+
+    // If no dataSource, use propLabels (static labels)
+    if (!dataSource && propLabels && propLabels.length > 0) {
+      return propLabels
+    }
+
+    // Default indexed labels based on the longest series
+    const maxDataLength = Math.max(...normalizedSeries.map(s => s.data.length), 0)
+    return Array.from({ length: maxDataLength }, (_, i) => `${i}`)
+  }, [rawChartLabels, propLabels, normalizedSeries, dataSource])
 
   const series = normalizedSeries
 
-  const chartData = labels
-    ? labels.map((label, idx) => {
-        const point: any = { name: label }
-        series.forEach((s, i) => {
-          point[`series${i}`] = s.data[idx] ?? null
-        })
-        return point
+  // Build chart data for recharts
+  const chartData = useMemo(() => {
+    return chartLabels.map((label, idx) => {
+      const point: any = { name: label }
+      series.forEach((s, i) => {
+        point[`series${i}`] = s.data[idx] ?? null
       })
-    : series[0]?.data.map((_, i) => {
-        const point: any = { name: i }
-        series.forEach((s, idx) => {
-          point[`series${idx}`] = s.data[i] ?? null
-        })
-        return point
-      })
+      return point
+    })
+  }, [chartLabels, series])
 
   // Loading state
   if (loading) {
@@ -208,7 +447,7 @@ export function LineChart({
               axisLine={false}
               tickLine={false}
               tickMargin={10}
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
               interval="preserveStartEnd"
             />
             <YAxis
@@ -216,7 +455,7 @@ export function LineChart({
               tickLine={false}
               tickMargin={10}
               width={32}
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
             />
             {showTooltip && <Tooltip content={<ChartTooltip />} />}
             {showLegend && <Legend />}
@@ -260,7 +499,7 @@ export function LineChart({
 const DEFAULT_AREA_DATA: SeriesData[] = [{ name: 'Revenue', data: [12, 19, 15, 25, 22, 30, 28, 35, 32, 40, 38, 45] }]
 
 export interface AreaChartProps {
-  dataSource?: DataSource
+  dataSource?: DataSourceOrList  // Support both single and multiple data sources
   series?: SeriesData[]
   labels?: string[]
   title?: string
@@ -271,6 +510,8 @@ export interface AreaChartProps {
   smooth?: boolean
   color?: string
   size?: 'sm' | 'md' | 'lg'
+  limit?: number
+  timeRange?: number
   className?: string
 }
 
@@ -285,60 +526,170 @@ export function AreaChart({
   smooth = true,
   color,
   size = 'md',
+  limit = 50,
+  timeRange = 1,
   className,
 }: AreaChartProps) {
   const config = dashboardComponentSize[size]
   const effectiveSeries = propSeries || DEFAULT_AREA_DATA
-  const telemetrySource = toTelemetrySource(dataSource)
-  const shouldFetch = !!dataSource
+
+  // Normalize data sources for historical data
+  const telemetrySources = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+    return sources.map(ds => toTelemetrySource(ds, limit, timeRange)).filter((ds): ds is DataSource => ds !== undefined)
+  }, [dataSource, limit, timeRange])
+
+  const shouldFetch = telemetrySources.length > 0
   const { data: sourceData, loading } = useDataSource<SeriesData[] | number | number[]>(
-    shouldFetch ? telemetrySource : undefined,
-    shouldFetch ? { fallback: effectiveSeries } : undefined
+    shouldFetch ? (telemetrySources.length === 1 ? telemetrySources[0] : telemetrySources) : undefined,
+    shouldFetch ? { fallback: effectiveSeries, preserveMultiple: true } : undefined
   )
   const rawData = shouldFetch ? sourceData : effectiveSeries
 
-  const normalizedSeries = useMemo(() => {
-    if (propSeries && Array.isArray(propSeries) && propSeries.length > 0 && propSeries[0]?.data) {
-      return propSeries
+  // Get device names for series labels
+  const getDeviceName = (deviceId?: string): string => {
+    if (!deviceId) return 'Value'
+    return deviceId.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+  }
+
+  const getPropertyDisplayName = (property?: string): string => {
+    if (!property) return 'Value'
+    const propertyNames: Record<string, string> = {
+      temperature: '温度',
+      humidity: '湿度',
+      temp: '温度',
+      value: '数值',
     }
-    if (Array.isArray(rawData) && rawData.length > 0) {
+    return propertyNames[property] || property.replace(/[-_]/g, ' ')
+  }
+
+  const normalizedSeries: SeriesData[] = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+
+    // Multi-source case - data should be array of arrays from useDataSource with preserveMultiple
+    if (sources.length > 1 && Array.isArray(rawData) && rawData.length === sources.length) {
+      return sources.map((ds, idx) => {
+        const sourceData = rawData[idx]
+        // Transform telemetry points for this source
+        let values: number[] = []
+        if (Array.isArray(sourceData)) {
+          if (typeof sourceData[0] === 'number') {
+            values = sourceData as number[]
+          } else {
+            // Transform telemetry points
+            const { values: v } = transformTelemetryToChartData(sourceData)
+            values = v
+          }
+        }
+
+        const seriesName = ds.deviceId
+          ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.property)}`
+          : `Series ${idx + 1}`
+        return {
+          name: seriesName,
+          data: values,
+          color: undefined,
+        } as SeriesData
+      })
+    }
+
+    // Handle telemetry data FIRST (when dataSource is provided)
+    if (dataSource && Array.isArray(rawData) && rawData.length > 0) {
       const first = rawData[0]
       if (typeof first === 'object' && first !== null && 'data' in first && Array.isArray(first.data)) {
         return rawData as SeriesData[]
       }
-    }
-    if (typeof rawData === 'number') {
-      return [{ name: 'Value', data: [rawData] }]
-    }
-    if (Array.isArray(rawData) && rawData.length > 0 && typeof rawData[0] === 'number') {
-      return [{ name: 'Value', data: rawData as number[] }]
-    }
-    if (Array.isArray(rawData) && rawData.length > 0 && typeof rawData[0] === 'object') {
-      const values = (rawData as any[]).map(item => item.value ?? item.y ?? item)
-      if (values.some(v => typeof v === 'number')) {
-        return [{ name: 'Value', data: values.filter(v => typeof v === 'number') as number[] }]
+
+      // Transform telemetry points
+      const { values } = transformTelemetryToChartData(rawData)
+      if (values.length > 0) {
+        const seriesName = sources[0]?.deviceId
+          ? `${getDeviceName(sources[0].deviceId)} · ${getPropertyDisplayName(sources[0].property)}`
+          : 'Value'
+        return [{ name: seriesName, data: values, color: undefined } as SeriesData]
       }
     }
+
+    if (dataSource && typeof rawData === 'number') {
+      return [{ name: 'Value', data: [rawData], color: undefined } as SeriesData]
+    }
+
+    if (dataSource && Array.isArray(rawData) && rawData.length > 0 && typeof rawData[0] === 'number') {
+      return [{ name: 'Value', data: rawData as number[], color: undefined } as SeriesData]
+    }
+
+    // If no dataSource, use propSeries (static data)
+    if (!dataSource && propSeries && Array.isArray(propSeries) && propSeries.length > 0 && propSeries[0]?.data) {
+      return propSeries
+    }
+
     return DEFAULT_AREA_DATA
-  }, [rawData, propSeries])
+  }, [rawData, propSeries, dataSource])
 
   const series = normalizedSeries
 
-  const chartData = labels
-    ? labels.map((label, idx) => {
-        const point: any = { name: label }
-        series.forEach((s, i) => {
-          point[`series${i}`] = s.data[idx] ?? null
-        })
-        return point
-      })
-    : series[0]?.data.map((_, i) => {
-        const point: any = { name: i }
-        series.forEach((s, idx) => {
-          point[`series${idx}`] = s.data[i] ?? null
-        })
-        return point
-      })
+  // Extract raw labels from telemetry data before any transformation
+  const rawChartLabels = useMemo(() => {
+    const sources = normalizeDataSource(dataSource)
+
+    // Multi-source case - extract labels from first series raw telemetry data
+    if (sources.length > 1 && Array.isArray(rawData) && rawData.length > 0) {
+      const firstSeriesData = rawData[0]
+      if (Array.isArray(firstSeriesData) && firstSeriesData.length > 0) {
+        const first = firstSeriesData[0]
+        // Check if it's raw telemetry points (has timestamp field)
+        if (typeof first === 'object' && first !== null && ('timestamp' in first || 't' in first || 'time' in first)) {
+          return (firstSeriesData as any[]).map(item => {
+            const ts = item.timestamp ?? item.t ?? item.time
+            if (typeof ts === 'number') {
+              const date = new Date(ts * 1000)
+              return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            }
+            return String(ts ?? '')
+          })
+        }
+      }
+    }
+
+    // Single source case - extract labels from telemetry data
+    if (dataSource && Array.isArray(rawData) && rawData.length > 0) {
+      const first = rawData[0]
+      // Check if it's raw telemetry points
+      if (typeof first === 'object' && first !== null && ('timestamp' in first || 't' in first || 'time' in first)) {
+        const { labels: telemetryLabels } = transformTelemetryToChartData(rawData)
+        if (telemetryLabels.length > 0) {
+          return telemetryLabels
+        }
+      }
+    }
+
+    return null // Signal that we couldn't extract raw labels
+  }, [rawData, dataSource])
+
+  // Generate labels
+  const chartLabels = useMemo(() => {
+    // If we extracted raw labels from telemetry, use them
+    if (rawChartLabels && rawChartLabels.length > 0) {
+      return rawChartLabels
+    }
+
+    // If no dataSource, use propLabels (static labels)
+    if (!dataSource && labels && labels.length > 0) {
+      return labels
+    }
+
+    // Default indexed labels based on the longest series
+    const maxDataLength = Math.max(...series.map(s => s.data.length), 0)
+    return Array.from({ length: maxDataLength }, (_, i) => `${i}`)
+  }, [rawChartLabels, labels, series, dataSource])
+
+  const chartData = chartLabels.map((label, idx) => {
+    const point: any = { name: label }
+    series.forEach((s, i) => {
+      point[`series${i}`] = s.data[idx] ?? null
+    })
+    return point
+  })
 
   // Loading state
   if (loading) {
@@ -375,7 +726,7 @@ export function AreaChart({
               axisLine={false}
               tickLine={false}
               tickMargin={10}
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
               interval="preserveStartEnd"
             />
             <YAxis
@@ -383,7 +734,7 @@ export function AreaChart({
               tickLine={false}
               tickMargin={10}
               width={32}
-              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12 }}
+              tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 10 }}
             />
             {showTooltip && <Tooltip content={<ChartTooltip />} />}
             {showLegend && <Legend />}
@@ -399,7 +750,7 @@ export function AreaChart({
                   stroke={seriesColor}
                   strokeWidth={2}
                   fill={seriesColor}
-                  fillOpacity={0.7}
+                  fillOpacity={0.3}
                 />
               )
             })}

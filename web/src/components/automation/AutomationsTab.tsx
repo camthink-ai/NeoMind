@@ -17,6 +17,7 @@ import { LoadingState, EmptyState } from '@/components/shared'
 import { AutomationCreatorDialog, AutomationConverterDialog } from '@/components/automation'
 import { formatTimestamp } from '@/lib/utils/format'
 import { useToast } from '@/hooks/use-toast'
+import { confirm } from '@/hooks/use-confirm'
 import {
   RefreshCw,
   Plus,
@@ -134,7 +135,14 @@ export function AutomationsTab({ searchQuery: externalSearchQuery, onSearchChang
   }
 
   const handleDelete = async (automation: Automation) => {
-    if (!confirm(t('automation:deleteConfirm'))) return
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: t('automation:deleteConfirm'),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
 
     try {
       await api.deleteAutomation(automation.id)

@@ -179,6 +179,7 @@ export const componentRegistry: ComponentRegistry = {
     icon: LineChartIcon,
     sizeConstraints: getSizeConstraints('line-chart'),
     hasDataSource: true,
+    maxDataSources: 5,  // Can show up to 5 lines
     hasDisplayConfig: true,
     hasActions: false,
     acceptsProp: (prop) => [
@@ -202,6 +203,7 @@ export const componentRegistry: ComponentRegistry = {
     icon: LineChartIcon,
     sizeConstraints: getSizeConstraints('area-chart'),
     hasDataSource: true,
+    maxDataSources: 5,  // Can show up to 5 areas
     hasDisplayConfig: true,
     hasActions: false,
     acceptsProp: (prop) => [
@@ -225,6 +227,7 @@ export const componentRegistry: ComponentRegistry = {
     icon: BarChart3,
     sizeConstraints: getSizeConstraints('bar-chart'),
     hasDataSource: true,
+    maxDataSources: 3,  // Can show up to 3 bar groups
     hasDisplayConfig: true,
     hasActions: false,
     acceptsProp: (prop) => [

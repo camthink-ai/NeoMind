@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label"
 import { Plus, Trash2, TestTube, Check, X, Terminal, Database, Webhook, Mail, Settings } from "lucide-react"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { confirm } from "@/hooks/use-confirm"
 import { ConfigFormBuilder } from "@/components/plugins/ConfigFormBuilder"
 import type { AlertChannel, ChannelTypeInfo, ChannelStats, PluginConfigSchema } from "@/types"
 
@@ -167,7 +168,14 @@ export function AlertChannelsPluginTab() {
   }
 
   const handleDeleteChannel = async (name: string) => {
-    if (!confirm(`Delete channel "${name}"?`)) return
+    const confirmed = await confirm({
+      title: t('common:delete'),
+      description: `Delete channel "${name}"?`,
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
 
     setLoading(true)
     try {

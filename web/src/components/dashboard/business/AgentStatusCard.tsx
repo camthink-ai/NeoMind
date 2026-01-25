@@ -143,7 +143,7 @@ export function AgentStatusCard({
   const avgDuration = agentData.avgDuration ?? propAvgDuration
   const lastRun = agentData.lastRun ?? propLastRun
 
-  const config = statusConfig[status]
+  const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.idle
   const StatusIcon = config.icon
   const sizeConfig = getAgentSizeClasses(size)
 

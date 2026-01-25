@@ -142,6 +142,7 @@ import {
 import { DashboardListSidebar } from '@/components/dashboard/DashboardListSidebar'
 import type { DashboardComponent, DataSourceOrList, DataSource } from '@/types/dashboard'
 import { COMPONENT_SIZE_CONSTRAINTS } from '@/types/dashboard'
+import { confirm } from '@/hooks/use-confirm'
 
 // ============================================================================
 // Helper Functions
@@ -402,8 +403,16 @@ function renderDashboardComponent(component: DashboardComponent) {
           dataSource={config.dataSource}
           label={commonProps.title || 'Value'}
           unit={config.unit}
+          prefix={config.prefix}
+          icon={config.icon}
+          iconType={config.iconType || 'entity'}
+          description={config.description}
+          variant={config.variant || 'default'}
+          color={config.color}
           showTrend={config.showTrend}
           trendValue={config.trendValue}
+          trendPeriod={config.trendPeriod}
+          showSparkline={config.showSparkline}
           sparklineData={config.sparkline}
         />
       )
@@ -415,10 +424,12 @@ function renderDashboardComponent(component: DashboardComponent) {
           dataSource={config.dataSource}
           state={config.state || 'off'}
           label={config.label || commonProps.title}
-          size={config.ledSize || 'md'}
+          size={config.size || 'md'}
           color={config.color}
           valueMap={config.valueMap}
           defaultState={config.defaultState}
+          showGlow={config.showGlow ?? true}
+          showCard={config.showCard ?? true}
         />
       )
 
@@ -430,8 +441,18 @@ function renderDashboardComponent(component: DashboardComponent) {
           data={config.data}
           showCard={commonProps.showCard}
           showThreshold={config.showThreshold ?? false}
-          threshold={config.threshold ?? 20}
+          threshold={config.threshold}
+          thresholdColor={config.thresholdColor}
           label={config.label || commonProps.title}
+          color={config.color}
+          colorMode={config.colorMode || 'auto'}
+          fill={config.fill ?? true}
+          fillColor={config.fillColor}
+          showPoints={config.showPoints ?? false}
+          strokeWidth={config.strokeWidth}
+          curved={config.curved ?? true}
+          showValue={config.showValue}
+          maxValue={config.maxValue}
         />
       )
 
@@ -444,6 +465,11 @@ function renderDashboardComponent(component: DashboardComponent) {
           max={config.max ?? 100}
           label={config.label || commonProps.title}
           color={config.color}
+          size={config.size || commonProps.size}
+          variant={config.variant || 'default'}
+          warningThreshold={config.warningThreshold}
+          dangerThreshold={config.dangerThreshold}
+          showCard={config.showCard ?? true}
         />
       )
 
@@ -461,6 +487,15 @@ function renderDashboardComponent(component: DashboardComponent) {
           labels={config.labels || ['1h', '2h', '3h', '4h', '5h', '6h', '7h', '8h', '9h', '10h']}
           height={getChartHeight(component)}
           title={commonProps.title}
+          limit={config.limit}
+          timeRange={config.timeRange}
+          showGrid={config.showGrid ?? true}
+          showLegend={config.showLegend ?? false}
+          showTooltip={config.showTooltip ?? true}
+          smooth={config.smooth ?? true}
+          fillArea={config.fillArea ?? false}
+          color={config.color}
+          size={config.size}
         />
       )
 
@@ -477,6 +512,14 @@ function renderDashboardComponent(component: DashboardComponent) {
           labels={config.labels || ['1h', '2h', '3h', '4h', '5h', '6h', '7h', '8h', '9h', '10h']}
           height={getChartHeight(component)}
           title={commonProps.title}
+          limit={config.limit}
+          timeRange={config.timeRange}
+          showGrid={config.showGrid ?? true}
+          showLegend={config.showLegend ?? false}
+          showTooltip={config.showTooltip ?? true}
+          smooth={config.smooth ?? true}
+          color={config.color}
+          size={config.size}
         />
       )
 
@@ -488,6 +531,13 @@ function renderDashboardComponent(component: DashboardComponent) {
           data={config.data}
           title={commonProps.title}
           height={getChartHeight(component)}
+          limit={config.limit}
+          timeRange={config.timeRange}
+          showGrid={config.showGrid ?? true}
+          showLegend={config.showLegend ?? false}
+          showTooltip={config.showTooltip ?? true}
+          layout={config.layout || 'vertical'}
+          stacked={config.stacked ?? false}
         />
       )
 
@@ -499,6 +549,14 @@ function renderDashboardComponent(component: DashboardComponent) {
           data={config.data}
           title={commonProps.title}
           height={getChartHeight(component)}
+          limit={config.limit}
+          timeRange={config.timeRange}
+          showLegend={config.showLegend ?? false}
+          showTooltip={config.showTooltip ?? true}
+          showLabels={config.showLabels ?? false}
+          variant={config.variant || 'pie'}
+          innerRadius={config.innerRadius}
+          outerRadius={config.outerRadius}
         />
       )
 
@@ -510,8 +568,7 @@ function renderDashboardComponent(component: DashboardComponent) {
           size={config.size || commonProps.size === 'xs' ? 'sm' : commonProps.size}
           dataSource={config.dataSource}
           label={config.label || commonProps.title}
-          checked={config.checked ?? false}
-          onCheckedChange={config.onCheckedChange}
+          initialState={config.initialState ?? false}
         />
       )
 
@@ -578,7 +635,7 @@ function renderDashboardComponent(component: DashboardComponent) {
           {...spreadableProps}
           dataSource={config.dataSource}
           images={config.images}
-          fit={config.fit || 'contain'}
+          fit={config.fit || 'fill'}
           rounded={config.rounded ?? true}
           limit={config.limit ?? 50}
           timeRange={config.timeRange ?? 1}
@@ -832,8 +889,15 @@ export function VisualDashboard() {
     updateDashboard(id, { name })
   }, [updateDashboard])
 
-  const handleDashboardDelete = useCallback((id: string) => {
-    if (confirm('Delete this dashboard?')) {
+  const handleDashboardDelete = useCallback(async (id: string) => {
+    const confirmed = await confirm({
+      title: 'Delete Dashboard',
+      description: 'Delete this dashboard?',
+      confirmText: 'Delete',
+      cancelText: 'Cancel',
+      variant: 'destructive'
+    })
+    if (confirmed) {
       deleteDashboard(id)
     }
   }, [deleteDashboard])
@@ -979,7 +1043,7 @@ export function VisualDashboard() {
       // Controls
       case 'toggle-switch':
         defaultConfig = {
-          checked: true
+          initialState: false
         }
         break
       // Tables & Lists
@@ -1025,7 +1089,7 @@ export function VisualDashboard() {
               { src: 'https://via.placeholder.com/400x200/ec4899/ffffff?text=Image+4', timestamp: Date.now() },
             ],
           },
-          fit: 'contain',
+          fit: 'fill',
           rounded: true,
           limit: 50,
           timeRange: 1,
@@ -1272,52 +1336,470 @@ export function VisualDashboard() {
       case 'value-card':
       case 'counter':
       case 'metric-card':
-        return createDataDisplayConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          unit: config.unit,
-          onUnitChange: updateConfig('unit'),
-          prefix: config.prefix,
-          onPrefixChange: updateConfig('prefix'),
-          suffix: config.suffix,
-          onSuffixChange: updateConfig('suffix'),
-          decimals: config.decimals,
-          onDecimalsChange: updateConfig('decimals'),
-          size: config.size,
-          onSizeChange: updateConfig('size'),
-          color: config.color,
-          onColorChange: updateConfig('color'),
-          showTrend: config.showTrend,
-          onShowTrendChange: updateConfig('showTrend'),
-          showChange: config.showChange,
-          onShowChangeChange: updateConfig('showChange'),
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Variant</label>
+                    <select
+                      value={config.variant || 'default'}
+                      onChange={(e) => updateConfig('variant')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="default">Default (horizontal)</option>
+                      <option value="vertical">Vertical</option>
+                      <option value="compact">Compact</option>
+                      <option value="minimal">Minimal</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Icon</label>
+                    <select
+                      value={config.icon || ''}
+                      onChange={(e) => updateConfig('icon')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="">No Icon</option>
+                      <option value="activity">Activity</option>
+                      <option value="cpu">CPU</option>
+                      <option value="memory">Memory</option>
+                      <option value="temperature">Temperature</option>
+                      <option value="humidity">Humidity</option>
+                      <option value="speed">Speed</option>
+                      <option value="power">Power</option>
+                      <option value="battery">Battery</option>
+                      <option value="wifi">WiFi</option>
+                      <option value="database">Database</option>
+                    </select>
+                  </div>
+
+                  {config.icon && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Icon Type</label>
+                      <select
+                        value={config.iconType || 'entity'}
+                        onChange={(e) => updateConfig('iconType')(e.target.value)}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      >
+                        <option value="entity">Entity Icon</option>
+                        <option value="emoji">Emoji</option>
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Color</label>
+                    <input
+                      type="color"
+                      value={config.color || '#3b82f6'}
+                      onChange={(e) => updateConfig('color')(e.target.value)}
+                      className="w-full h-10 rounded-md border border-input bg-background"
+                    />
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          displaySections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Prefix</label>
+                      <input
+                        type="text"
+                        value={config.prefix || ''}
+                        onChange={(e) => updateConfig('prefix')(e.target.value)}
+                        placeholder="e.g., $, °"
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Unit</label>
+                      <input
+                        type="text"
+                        value={config.unit || ''}
+                        onChange={(e) => updateConfig('unit')(e.target.value)}
+                        placeholder="e.g., %, °C"
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Description</label>
+                    <input
+                      type="text"
+                      value={config.description || ''}
+                      onChange={(e) => updateConfig('description')(e.target.value)}
+                      placeholder="e.g., Current CPU usage"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showTrend ?? false}
+                        onChange={(e) => updateConfig('showTrend')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Trend</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showSparkline ?? false}
+                        onChange={(e) => updateConfig('showSparkline')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Sparkline</span>
+                    </label>
+                  </div>
+
+                  {config.showTrend && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Trend Value (%)</label>
+                      <input
+                        type="number"
+                        value={config.trendValue ?? 0}
+                        onChange={(e) => updateConfig('trendValue')(Number(e.target.value))}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      />
+                    </div>
+                  )}
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+          ],
+        }
 
       case 'sparkline':
-        return createChartConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          label: config.label,
-          onLabelChange: updateConfig('label'),
-          showPoints: config.showPoints,
-          onShowPointsChange: updateConfig('showPoints'),
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Color Mode</label>
+                    <select
+                      value={config.colorMode || 'auto'}
+                      onChange={(e) => updateConfig('colorMode')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="auto">Auto (trend-based)</option>
+                      <option value="primary">Primary</option>
+                      <option value="fixed">Fixed Color</option>
+                      <option value="value">Value-based</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Color (for fixed mode)</label>
+                    <input
+                      type="color"
+                      value={config.color || '#3b82f6'}
+                      onChange={(e) => updateConfig('color')(e.target.value)}
+                      className="w-full h-10 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Max Value (for value-based coloring)</label>
+                    <input
+                      type="number"
+                      value={config.maxValue || 100}
+                      onChange={(e) => updateConfig('maxValue')(Number(e.target.value))}
+                      min={1}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Stroke Width</label>
+                    <input
+                      type="number"
+                      value={config.strokeWidth ?? 2}
+                      onChange={(e) => updateConfig('strokeWidth')(Number(e.target.value))}
+                      min={1}
+                      max={5}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.fill ?? true}
+                        onChange={(e) => updateConfig('fill')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Fill Area</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.curved ?? true}
+                        onChange={(e) => updateConfig('curved')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Curved Lines</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showPoints ?? false}
+                        onChange={(e) => updateConfig('showPoints')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Points</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          displaySections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Label</label>
+                    <input
+                      type="text"
+                      value={config.label || ''}
+                      onChange={(e) => updateConfig('label')(e.target.value)}
+                      placeholder="e.g., Temperature Trend"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.showValue ?? false}
+                      onChange={(e) => updateConfig('showValue')(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span className="text-sm">Show Current Value</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.showThreshold ?? false}
+                      onChange={(e) => updateConfig('showThreshold')(e.target.checked)}
+                      className="rounded"
+                    />
+                    <span className="text-sm">Show Threshold Line</span>
+                  </label>
+
+                  {config.showThreshold && (
+                    <>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Threshold Value</label>
+                        <input
+                          type="number"
+                          value={config.threshold ?? 20}
+                          onChange={(e) => updateConfig('threshold')(Number(e.target.value))}
+                          className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">Threshold Color</label>
+                        <input
+                          type="color"
+                          value={config.thresholdColor || '#ef4444'}
+                          onChange={(e) => updateConfig('thresholdColor')(e.target.value)}
+                          className="w-full h-10 rounded-md border border-input bg-background"
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+          ],
+        }
 
       case 'progress-bar':
-        return createProgressConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          label: config.label,
-          onLabelChange: updateConfig('label'),
-          value: config.value,
-          onValueChange: updateConfig('value'),
-          min: config.min,
-          onMinChange: updateConfig('min'),
-          max: config.max,
-          onMaxChange: updateConfig('max'),
-          color: config.color,
-          onColorChange: updateConfig('color'),
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Variant</label>
+                    <select
+                      value={config.variant || 'default'}
+                      onChange={(e) => updateConfig('variant')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="default">Default (Linear)</option>
+                      <option value="compact">Compact</option>
+                      <option value="circular">Circular</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Color</label>
+                    <input
+                      type="color"
+                      value={config.color || '#3b82f6'}
+                      onChange={(e) => updateConfig('color')(e.target.value)}
+                      className="w-full h-10 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Size</label>
+                    <select
+                      value={config.size || 'md'}
+                      onChange={(e) => updateConfig('size')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="sm">Small</option>
+                      <option value="md">Medium</option>
+                      <option value="lg">Large</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showCard ?? true}
+                        onChange={(e) => updateConfig('showCard')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Card</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          displaySections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Label</label>
+                    <input
+                      type="text"
+                      value={config.label || ''}
+                      onChange={(e) => updateConfig('label')(e.target.value)}
+                      placeholder="e.g., CPU Usage"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Warning Threshold (%)</label>
+                      <input
+                        type="number"
+                        value={config.warningThreshold ?? 70}
+                        onChange={(e) => updateConfig('warningThreshold')(Number(e.target.value))}
+                        min={0}
+                        max={100}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Danger Threshold (%)</label>
+                      <input
+                        type="number"
+                        value={config.dangerThreshold ?? 90}
+                        onChange={(e) => updateConfig('dangerThreshold')(Number(e.target.value))}
+                        min={0}
+                        max={100}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    进度条颜色会根据阈值自动变化：正常 → 警告 → 危险
+                  </p>
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Value (静态)</label>
+                    <input
+                      type="number"
+                      value={config.value ?? 0}
+                      onChange={(e) => updateConfig('value')(Number(e.target.value))}
+                      min={0}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      disabled={!!config.dataSource}
+                    />
+                    <p className="text-xs text-muted-foreground">绑定数据源后自动禁用</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Maximum Value</label>
+                    <input
+                      type="number"
+                      value={config.max ?? 100}
+                      onChange={(e) => updateConfig('max')(Number(e.target.value))}
+                      min={1}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
 
       case 'led-indicator':
         return {
@@ -1326,6 +1808,17 @@ export function VisualDashboard() {
               type: 'custom' as const,
               render: () => (
                 <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Label</label>
+                    <input
+                      type="text"
+                      value={config.label || ''}
+                      onChange={(e) => updateConfig('label')(e.target.value)}
+                      placeholder="e.g., Device Status"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
                   <div className="space-y-2">
                     <label className="text-sm font-medium">State (no data source)</label>
                     <select
@@ -1361,6 +1854,28 @@ export function VisualDashboard() {
                       onChange={(e) => updateConfig('color')(e.target.value)}
                       className="w-full h-10 rounded-md border border-input bg-background"
                     />
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showGlow ?? true}
+                        onChange={(e) => updateConfig('showGlow')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Glow Effect</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showCard ?? true}
+                        onChange={(e) => updateConfig('showCard')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Card</span>
+                    </label>
                   </div>
                 </div>
               ),
@@ -1438,40 +1953,578 @@ export function VisualDashboard() {
 
       // ========== Charts ==========
       case 'line-chart':
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Line Color</label>
+                    <input
+                      type="color"
+                      value={config.color || '#3b82f6'}
+                      onChange={(e) => updateConfig('color')(e.target.value)}
+                      className="w-full h-10 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Size</label>
+                    <select
+                      value={config.size || 'md'}
+                      onChange={(e) => updateConfig('size')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="sm">Small</option>
+                      <option value="md">Medium</option>
+                      <option value="lg">Large</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.smooth ?? true}
+                        onChange={(e) => updateConfig('smooth')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Smooth Lines</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.fillArea ?? false}
+                        onChange={(e) => updateConfig('fillArea')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Fill Area</span>
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showGrid ?? true}
+                        onChange={(e) => updateConfig('showGrid')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Grid</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showLegend ?? false}
+                        onChange={(e) => updateConfig('showLegend')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Legend</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showTooltip ?? true}
+                        onChange={(e) => updateConfig('showTooltip')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Tooltip</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          displaySections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Data Points</label>
+                      <input
+                        type="number"
+                        value={config.limit ?? 50}
+                        onChange={(e) => updateConfig('limit')(Number(e.target.value))}
+                        min={1}
+                        max={200}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Max points to fetch</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Time Range (hours)</label>
+                      <input
+                        type="number"
+                        value={config.timeRange ?? 1}
+                        onChange={(e) => updateConfig('timeRange')(Number(e.target.value))}
+                        min={1}
+                        max={168}
+                        step={1}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Historical period</p>
+                    </div>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+                allowedTypes: ['device-metric'],
+                multiple: true,
+                maxSources: 5,
+              },
+            },
+          ],
+        }
+
       case 'area-chart':
-        return createChartConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          showPoints: config.showPoints,
-          onShowPointsChange: updateConfig('showPoints'),
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Area Color</label>
+                    <input
+                      type="color"
+                      value={config.color || '#3b82f6'}
+                      onChange={(e) => updateConfig('color')(e.target.value)}
+                      className="w-full h-10 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Size</label>
+                    <select
+                      value={config.size || 'md'}
+                      onChange={(e) => updateConfig('size')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="sm">Small</option>
+                      <option value="md">Medium</option>
+                      <option value="lg">Large</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.smooth ?? true}
+                        onChange={(e) => updateConfig('smooth')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Smooth Lines</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showGrid ?? true}
+                        onChange={(e) => updateConfig('showGrid')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Grid</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showLegend ?? false}
+                        onChange={(e) => updateConfig('showLegend')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Legend</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showTooltip ?? true}
+                        onChange={(e) => updateConfig('showTooltip')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Tooltip</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          displaySections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Data Points</label>
+                      <input
+                        type="number"
+                        value={config.limit ?? 50}
+                        onChange={(e) => updateConfig('limit')(Number(e.target.value))}
+                        min={1}
+                        max={200}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Max points to fetch</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Time Range (hours)</label>
+                      <input
+                        type="number"
+                        value={config.timeRange ?? 1}
+                        onChange={(e) => updateConfig('timeRange')(Number(e.target.value))}
+                        min={1}
+                        max={168}
+                        step={1}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Historical period</p>
+                    </div>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+                allowedTypes: ['device-metric'],
+                multiple: true,
+                maxSources: 5,
+              },
+            },
+          ],
+        }
 
       case 'bar-chart':
-        return createChartConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          showLabels: config.showLabels,
-          onShowLabelsChange: updateConfig('showLabels'),
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Layout</label>
+                    <select
+                      value={config.layout || 'vertical'}
+                      onChange={(e) => updateConfig('layout')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="vertical">Vertical</option>
+                      <option value="horizontal">Horizontal</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.stacked ?? false}
+                        onChange={(e) => updateConfig('stacked')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Stacked</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showGrid ?? true}
+                        onChange={(e) => updateConfig('showGrid')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Grid</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showLegend ?? false}
+                        onChange={(e) => updateConfig('showLegend')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Legend</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showTooltip ?? true}
+                        onChange={(e) => updateConfig('showTooltip')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Tooltip</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          displaySections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Data Points</label>
+                      <input
+                        type="number"
+                        value={config.limit ?? 24}
+                        onChange={(e) => updateConfig('limit')(Number(e.target.value))}
+                        min={1}
+                        max={200}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Max points to fetch</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Time Range (hours)</label>
+                      <input
+                        type="number"
+                        value={config.timeRange ?? 1}
+                        onChange={(e) => updateConfig('timeRange')(Number(e.target.value))}
+                        min={1}
+                        max={168}
+                        step={1}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Historical period</p>
+                    </div>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+                multiple: true,
+                maxSources: 3,
+              },
+            },
+          ],
+        }
 
       case 'pie-chart':
-        return createChartConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          showLabels: config.showLabels,
-          onShowLabelsChange: updateConfig('showLabels'),
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Variant</label>
+                    <select
+                      value={config.variant || 'pie'}
+                      onChange={(e) => updateConfig('variant')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="pie">Pie Chart</option>
+                      <option value="donut">Donut Chart</option>
+                    </select>
+                  </div>
+
+                  {config.variant === 'donut' && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Inner Radius</label>
+                      <input
+                        type="text"
+                        value={config.innerRadius || '60%'}
+                        onChange={(e) => updateConfig('innerRadius')(e.target.value)}
+                        placeholder="60% or 60"
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                      />
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Outer Radius</label>
+                    <input
+                      type="text"
+                      value={config.outerRadius || '80%'}
+                      onChange={(e) => updateConfig('outerRadius')(e.target.value)}
+                      placeholder="80% or 80"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showLegend ?? false}
+                        onChange={(e) => updateConfig('showLegend')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Legend</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showTooltip ?? true}
+                        onChange={(e) => updateConfig('showTooltip')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Tooltip</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={config.showLabels ?? false}
+                        onChange={(e) => updateConfig('showLabels')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Labels</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          displaySections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Data Points</label>
+                      <input
+                        type="number"
+                        value={config.limit ?? 10}
+                        onChange={(e) => updateConfig('limit')(Number(e.target.value))}
+                        min={1}
+                        max={100}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Max categories to show</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Time Range (hours)</label>
+                      <input
+                        type="number"
+                        value={config.timeRange ?? 1}
+                        onChange={(e) => updateConfig('timeRange')(Number(e.target.value))}
+                        min={1}
+                        max={168}
+                        step={1}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                      <p className="text-xs text-muted-foreground">Historical period</p>
+                    </div>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+          ],
+        }
 
       // ========== Controls ==========
       case 'toggle-switch':
-        return createControlConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          value: config.checked,
-          onValueChange: updateConfig('checked'),
-          size: config.size,
-          onSizeChange: updateConfig('size'),
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Label</label>
+                    <input
+                      type="text"
+                      value={config.label || ''}
+                      onChange={(e) => updateConfig('label')(e.target.value)}
+                      placeholder="e.g., Main Light"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Initial State</label>
+                    <select
+                      value={config.initialState ? 'on' : 'off'}
+                      onChange={(e) => updateConfig('initialState')(e.target.value === 'on')}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="off">Off (关闭)</option>
+                      <option value="on">On (开启)</option>
+                    </select>
+                    <p className="text-xs text-muted-foreground">显示状态，在收到命令响应前使用</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Size</label>
+                    <select
+                      value={config.size || 'md'}
+                      onChange={(e) => updateConfig('size')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="sm">Small</option>
+                      <option value="md">Medium</option>
+                      <option value="lg">Large</option>
+                    </select>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+                allowedTypes: ['command'],
+                requireCommand: true,
+              },
+            },
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <p className="text-sm text-amber-700 dark:text-amber-300">
+                      <strong>仅支持命令模式</strong><br />
+                      此组件只能绑定到设备的命令接口，点击时发送开关命令。
+                    </p>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
 
       // ========== Tables & Lists ==========
       case 'data-table':
@@ -1967,6 +3020,8 @@ export function VisualDashboard() {
         onTitleChange={handleTitleChange}
         configSchema={configSchema}
         componentType={selectedComponent?.type || ''}
+        previewDataSource={componentConfig.dataSource}
+        previewConfig={componentConfig}
       />
     </div>
   )

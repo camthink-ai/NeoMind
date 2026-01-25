@@ -276,7 +276,7 @@ export function AddDeviceTypeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl h-[90vh] max-h-[90vh] flex flex-col p-0 overflow-hidden">
+      <DialogContent className="max-w-4xl h-[90vh] max-h-[90vh] flex flex-col p-0 overflow-hidden [&>[data-radix-dialog-close]]:right-6 [&>[data-radix-dialog-close]]:top-5">
         {/* Header */}
         <DialogHeader className="px-6 pt-4 pb-4 border-b">
           <DialogTitle className="text-xl">

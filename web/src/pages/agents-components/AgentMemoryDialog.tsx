@@ -15,6 +15,7 @@ import { Card } from "@/components/ui/card"
 import { Brain, TrendingUp, Trash2, RefreshCw } from "lucide-react"
 import { api } from "@/lib/api"
 import type { AgentMemory } from "@/types"
+import { confirm } from "@/hooks/use-confirm"
 
 interface AgentMemoryDialogProps {
   open: boolean
@@ -52,7 +53,14 @@ export function AgentMemoryDialog({
   }
 
   const handleClearMemory = async () => {
-    if (!confirm(t('agents:clearMemoryConfirm'))) return
+    const confirmed = await confirm({
+      title: t('agents:memory.clear'),
+      description: t('agents:clearMemoryConfirm'),
+      confirmText: t('common:confirm'),
+      cancelText: t('common:cancel'),
+      variant: "destructive"
+    })
+    if (!confirmed) return
 
     setLoading(true)
     try {

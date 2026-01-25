@@ -10,7 +10,7 @@
 // Data Source Types
 // ============================================================================
 
-export type DataSourceType = 'api' | 'websocket' | 'static' | 'computed' | 'device' | 'metric' | 'command' | 'telemetry'
+export type DataSourceType = 'api' | 'websocket' | 'static' | 'computed' | 'device' | 'metric' | 'command' | 'telemetry' | 'device-info'
 
 export interface ValueMapping {
   on?: unknown
@@ -42,6 +42,8 @@ export interface DataSource {
   timeRange?: number // Hours of history to fetch (default: 1)
   limit?: number // Max number of data points (default: 50)
   aggregate?: 'raw' | 'avg' | 'min' | 'max' | 'sum' // Aggregation method (default: raw)
+  // Device-info-specific fields (for basic device properties)
+  infoProperty?: 'name' | 'status' | 'online' | 'last_seen' | 'device_type' | 'plugin_name' | 'adapter_id'
 }
 
 // Union type for single or multiple data sources
