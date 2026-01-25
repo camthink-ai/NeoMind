@@ -11,7 +11,16 @@ import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useDataSource, useNumberArrayDataSource } from '@/hooks/useDataSource'
 import { dashboardComponentSize, dashboardCardBase, dashboardCardContent } from '@/design-system/tokens/size'
-import { indicatorFontWeight, indicatorColors, getGradientStops } from '@/design-system/tokens/indicator'
+import {
+  indicatorFontWeight,
+  indicatorColors,
+  getGradientStops,
+  getValueStateColor,
+  getValueGradient,
+  type IndicatorState,
+  type IndicatorGradientType,
+} from '@/design-system/tokens/indicator'
+import { statusColors } from '@/design-system/tokens/color'
 import type { DataSourceOrList } from '@/types/dashboard'
 
 export interface SparklineProps {
@@ -31,6 +40,7 @@ export interface SparklineProps {
 
   // Styling
   color?: string
+  colorMode?: 'auto' | 'primary' | 'fixed' | 'value'  // value: like ProgressBar (based on latest value/max ratio)
   fill?: boolean
   fillColor?: string
   showPoints?: boolean
@@ -42,12 +52,29 @@ export interface SparklineProps {
   threshold?: number
   thresholdColor?: string
 
+  // Value range for value-based coloring
+  maxValue?: number  // For colorMode='value', determines color based on latestValue/maxValue ratio
+
   // Value display
   showValue?: boolean
   label?: string
   size?: 'sm' | 'md' | 'lg'
 
   className?: string
+}
+
+// Get trend-based color
+function getTrendColor(trend: number): string {
+  if (trend > 0) return indicatorColors.success.base
+  if (trend < 0) return indicatorColors.error.base
+  return indicatorColors.neutral.base
+}
+
+// Get trend-based text color class
+function getTrendTextColor(trend: number): string {
+  if (trend > 0) return indicatorColors.success.text
+  if (trend < 0) return indicatorColors.error.text
+  return indicatorColors.neutral.text
 }
 
 /**
@@ -76,6 +103,7 @@ function ResponsiveSparkline({
   showThreshold,
   threshold,
   thresholdColor,
+  gradientType,  // Add gradient type for proper coloring
   className,
 }: {
   data: number[]
@@ -90,12 +118,13 @@ function ResponsiveSparkline({
   showThreshold?: boolean
   threshold?: number
   thresholdColor?: string
+  gradientType?: IndicatorGradientType
   className?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(initialWidth)
 
-  // Track container size for responsiveness
+  // Track container size for responsiveness (width only for responsiveness)
   useEffect(() => {
     const updateSize = () => {
       if (containerRef.current) {
@@ -163,21 +192,29 @@ function ResponsiveSparkline({
   // Unique gradient ID for this instance
   const gradientId = `sparkline-gradient-${color.replace(/[^a-zA-Z0-9]/g, '')}`
 
+  // Get gradient stops based on gradient type
+  const gradientStops = getGradientStops(gradientType || 'primary', color)
+
   return (
     <div ref={containerRef} className={cn('w-full h-full flex items-center justify-center overflow-visible', className)}>
       <svg
-        width="100%"
-        height="100%"
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="xMidYMid slice"
+        width={containerWidth}
+        height={height}
+        viewBox={`0 0 ${containerWidth} ${height}`}
+        preserveAspectRatio="none"
         style={{ overflow: 'visible' }}
       >
         <defs>
-          {/* Enhanced gradient for fill area */}
+          {/* Enhanced gradient for fill area - using unified gradient system */}
           <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-            <stop offset="50%" stopColor={color} stopOpacity="0.1" />
-            <stop offset="100%" stopColor={color} stopOpacity="0" />
+            {gradientStops.map((stop, i) => (
+              <stop
+                key={i}
+                offset={stop.offset}
+                stopColor={stop.color}
+                stopOpacity={stop.opacity + 0.3}
+              />
+            ))}
           </linearGradient>
 
           {/* Glow filter for the line */}
@@ -270,7 +307,8 @@ export function Sparkline({
   height = 40,
   responsive = false,
   showCard = false,
-  color = 'hsl(var(--primary))',
+  color,
+  colorMode = 'auto',  // Default to trend-based coloring
   fill = true,
   fillColor,
   showPoints = false,
@@ -278,7 +316,8 @@ export function Sparkline({
   curved = true,
   showThreshold = false,
   threshold,
-  thresholdColor = 'hsl(var(--destructive))',
+  thresholdColor,
+  maxValue,
   showValue = false,
   label,
   size = 'md',
@@ -299,6 +338,34 @@ export function Sparkline({
   const prevValue = chartData.length > 1 ? chartData[chartData.length - 2] : latestValue
   const trend = chartData.length > 1 ? latestValue - prevValue : 0
   const trendPercent = prevValue !== 0 ? ((trend / prevValue) * 100).toFixed(1) : '0'
+
+  // For value-based coloring, determine the max value for ratio calculation
+  const dataMax = chartData.length > 0 ? Math.max(...chartData) : 0
+  const effectiveMax = maxValue ?? dataMax ?? 100
+
+  // Determine line color based on colorMode
+  const lineColor = colorMode === 'auto'
+    ? (color || getTrendColor(trend))
+    : colorMode === 'value'
+      ? (color || getValueStateColor(latestValue, effectiveMax))
+      : colorMode === 'primary'
+        ? indicatorColors.primary.base
+        : color || indicatorColors.primary.base
+
+  // Determine text color for trend display
+  const trendTextColor = colorMode === 'auto'
+    ? getTrendTextColor(trend)
+    : indicatorColors.primary.text
+
+  // Determine gradient state for all modes
+  let gradientState: IndicatorGradientType = 'neutral'
+  if (colorMode === 'value') {
+    gradientState = getValueGradient(latestValue, effectiveMax)
+  } else if (colorMode === 'primary') {
+    gradientState = 'primary'
+  } else if (colorMode === 'auto') {
+    gradientState = trend > 0 ? 'success' : trend < 0 ? 'error' : 'neutral'
+  }
 
   if (loading) {
     return (
@@ -356,12 +423,12 @@ export function Sparkline({
         )}
 
         {/* Chart */}
-        <div className={cn('flex-1 min-h-0 flex flex-col', 'overflow-visible')}>
+        <div className={cn('flex-1 min-h-0', 'overflow-visible')}>
           <ResponsiveSparkline
             data={chartData}
             width={width}
             height={height}
-            color={color}
+            color={lineColor}
             fill={fill}
             fillColor={fillColor}
             showPoints={showPoints}
@@ -369,7 +436,8 @@ export function Sparkline({
             curved={curved}
             showThreshold={showThreshold}
             threshold={threshold}
-            thresholdColor={thresholdColor}
+            thresholdColor={thresholdColor || indicatorColors.neutral.base}
+            gradientType={gradientState}
           />
         </div>
       </div>
@@ -383,7 +451,7 @@ export function Sparkline({
           data={chartData}
           width={width}
           height={height}
-          color={color}
+          color={lineColor}
           fill={fill}
           fillColor={fillColor}
           showPoints={showPoints}
@@ -391,7 +459,8 @@ export function Sparkline({
           curved={curved}
           showThreshold={showThreshold}
           threshold={threshold}
-          thresholdColor={thresholdColor}
+          thresholdColor={thresholdColor || indicatorColors.neutral.base}
+          gradientType={gradientState}
           className="flex items-center justify-center"
         />
       </div>
@@ -437,22 +506,30 @@ export function Sparkline({
   }
 
   const fillPath = `${pathD} L ${width} ${height} L 0 ${height} Z`
-  const gradientId = `sparkline-static-${color.replace(/[^a-zA-Z0-9]/g, '')}`
+
+  // Use unified gradient system (gradientState calculated above)
+  const gradientStops = getGradientStops(gradientState, lineColor)
+  const gradientId = `sparkline-static-${lineColor.replace(/[^a-zA-Z0-9]/g, '')}`
 
   return (
     <div className={cn('overflow-visible', className)}>
       <svg
-        width="100%"
-        height="100%"
+        width={width}
+        height={height}
         viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="xMidYMid slice"
+        preserveAspectRatio="none"
         style={{ overflow: 'visible', display: 'block' }}
       >
       <defs>
         <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="50%" stopColor={color} stopOpacity="0.1" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
+          {gradientStops.map((stop, i) => (
+            <stop
+              key={i}
+              offset={stop.offset}
+              stopColor={stop.color}
+              stopOpacity={stop.opacity + 0.3}
+            />
+          ))}
         </linearGradient>
         <filter id={`glow-${gradientId}`} x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="1.5" result="coloredBlur" />
@@ -471,7 +548,7 @@ export function Sparkline({
       <path
         d={pathD}
         fill="none"
-        stroke={color}
+        stroke={lineColor}
         strokeWidth={strokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -483,7 +560,7 @@ export function Sparkline({
           y1={height - ((threshold - min) / range) * height}
           x2={width}
           y2={height - ((threshold - min) / range) * height}
-          stroke={thresholdColor}
+          stroke={thresholdColor || indicatorColors.neutral.base}
           strokeWidth={1.5}
           strokeDasharray="4 4"
           className="opacity-60"
@@ -494,14 +571,14 @@ export function Sparkline({
           cx={points[points.length - 1].x}
           cy={points[points.length - 1].y}
           r={5}
-          fill={color}
+          fill={lineColor}
           fillOpacity="0.2"
         />
         <circle
           cx={points[points.length - 1].x}
           cy={points[points.length - 1].y}
           r={3}
-          fill={color}
+          fill={lineColor}
         />
       </g>
     </svg>

@@ -86,25 +86,27 @@ async function fetchDeviceTelemetry(deviceId: string): Promise<{ success: boolea
  * Cache for historical telemetry data
  * Key: deviceId|metric|timeRange|limit|aggregate
  */
-const telemetryCache = new Map<string, { data: number[]; timestamp: number }>()
+const telemetryCache = new Map<string, { data: number[]; raw?: any[]; timestamp: number }>()
 const TELEMETRY_CACHE_TTL = 5000 // 5 seconds cache
 
 /**
  * Fetch historical telemetry data for a device metric
+ * @param includeRawPoints - if true, return full TelemetryPoint[] instead of just values
  */
 async function fetchHistoricalTelemetry(
   deviceId: string,
   metricId: string,
   timeRange: number = 1, // hours
   limit: number = 50,
-  aggregate: 'raw' | 'avg' | 'min' | 'max' | 'sum' = 'raw'
-): Promise<{ data: number[]; success: boolean }> {
+  aggregate: 'raw' | 'avg' | 'min' | 'max' | 'sum' = 'raw',
+  includeRawPoints: boolean = false
+): Promise<{ data: number[]; raw?: any[]; success: boolean }> {
   const cacheKey = `${deviceId}|${metricId}|${timeRange}|${limit}|${aggregate}`
   const cached = telemetryCache.get(cacheKey)
 
   // Return cached data if fresh
   if (cached && Date.now() - cached.timestamp < TELEMETRY_CACHE_TTL) {
-    return { data: cached.data, success: true }
+    return { data: cached.data, raw: cached.raw, success: true }
   }
 
   try {
@@ -133,10 +135,14 @@ async function fetchHistoricalTelemetry(
           })
           .filter((v: number) => typeof v === 'number' && !isNaN(v))
 
-        // Cache the result
-        telemetryCache.set(cacheKey, { data: values, timestamp: Date.now() })
+        // Cache the result with raw points if requested
+        telemetryCache.set(cacheKey, {
+          data: values,
+          raw: includeRawPoints ? metricData : undefined,
+          timestamp: Date.now()
+        })
 
-        return { data: values, success: true }
+        return { data: values, raw: includeRawPoints ? metricData : undefined, success: true }
       }
     }
 
@@ -797,27 +803,44 @@ export function useDataSource<T = unknown>(
           telemetryDataSources.map(async (ds) => {
             if (!ds.deviceId || !ds.metricId) {
               console.warn('[useDataSource] Missing deviceId or metricId:', ds)
-              return []
+              return { data: [], raw: undefined }
             }
+
+            // Check if raw points are needed (for image history, etc.)
+            const includeRawPoints = ds.params?.includeRawPoints === true || ds.transform === 'raw'
 
             const response = await fetchHistoricalTelemetry(
               ds.deviceId,
               ds.metricId,
               ds.timeRange ?? 1,
               ds.limit ?? 50,
-              ds.aggregate ?? 'raw'
+              ds.aggregate ?? 'raw',
+              includeRawPoints
             )
 
-            return response.success ? response.data : []
+            // Return raw data if requested, otherwise return values
+            if (includeRawPoints && response.raw) {
+              return { data: response.data, raw: response.raw, success: response.success }
+            }
+            return { data: response.success ? response.data : [], success: response.success }
           })
         )
 
         // Combine results
         let finalData: unknown
         if (results.length > 1) {
-          finalData = results.flat()
+          // Check if any result has raw data
+          const hasRawData = results.some((r: any) => r.raw)
+          if (hasRawData) {
+            // Combine raw data from all sources
+            const allRawData = results.flatMap((r: any) => r.raw ?? [])
+            finalData = allRawData
+          } else {
+            finalData = results.map((r: any) => r.data ?? []).flat()
+          }
         } else {
-          finalData = results[0]
+          const singleResult = results[0] as any
+          finalData = singleResult.raw ?? singleResult.data ?? []
         }
 
         const { transform: transformFn } = optionsRef.current

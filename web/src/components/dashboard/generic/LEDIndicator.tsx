@@ -1,13 +1,11 @@
 /**
- * LED Indicator Component (Enhanced)
+ * LED Indicator Component
  *
- * Features:
- * - Unified color system with OKLCH colors
- * - Enhanced multi-layer glow effects
- * - Smooth animations (pulse, blink)
- * - Multiple variants (dot, pill, badge, card)
+ * State indicator with LED-like visual feedback.
+ * Layout matches ValueCard: left LED container + right content.
  */
 
+import { useMemo } from 'react'
 import { cn } from '@/lib/utils'
 import { useDataSource } from '@/hooks/useDataSource'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -17,328 +15,302 @@ import {
   indicatorColors,
   getLedGlow,
   getLedAnimation,
-  getLinearGradient,
   type IndicatorState,
 } from '@/design-system/tokens/indicator'
 import type { DataSource } from '@/types/dashboard'
 
-export type LEDState = 'on' | 'off' | 'blinking' | 'error' | 'warning'
+export type LEDState = 'on' | 'off' | 'error' | 'warning' | 'unknown'
+
+export interface ValueStateMapping {
+  values?: string
+  pattern?: string
+  state: LEDState
+  label?: string
+  color?: string
+}
 
 export interface LEDIndicatorProps {
   dataSource?: DataSource
   state?: LEDState
   label?: string
   size?: 'sm' | 'md' | 'lg'
+  valueMap?: ValueStateMapping[]
+  defaultState?: LEDState
   color?: string
-  errorColor?: string
-  warningColor?: string
   showCard?: boolean
-  variant?: 'dot' | 'pill' | 'badge' | 'card'
   showGlow?: boolean
   className?: string
 }
 
-// Map LED state to indicator state
-function mapLedState(ledState: LEDState): IndicatorState {
-  switch (ledState) {
-    case 'on':
-    case 'blinking':
-      return 'success'
-    case 'off':
-      return 'neutral'
-    case 'error':
-      return 'error'
-    case 'warning':
-      return 'warning'
-    default:
-      return 'neutral'
-  }
+// State configuration
+const stateConfig = {
+  on: {
+    indicatorState: 'success' as IndicatorState,
+    label: '开启',
+    color: indicatorColors.success,
+  },
+  off: {
+    indicatorState: 'neutral' as IndicatorState,
+    label: '关闭',
+    color: indicatorColors.neutral,
+  },
+  error: {
+    indicatorState: 'error' as IndicatorState,
+    label: '错误',
+    color: indicatorColors.error,
+  },
+  warning: {
+    indicatorState: 'warning' as IndicatorState,
+    label: '警告',
+    color: indicatorColors.warning,
+  },
+  unknown: {
+    indicatorState: 'neutral' as IndicatorState,
+    label: '未知',
+    color: indicatorColors.neutral,
+  },
 }
 
-// Size configuration
-const getIconSize = (size: 'sm' | 'md' | 'lg') => {
-  const config = dashboardComponentSize[size]
-  return {
-    dot: size === 'sm' ? 'h-2 w-2' : size === 'md' ? 'h-2.5 w-2.5' : 'h-3 w-3',
-    dotWithGlow: size === 'sm' ? 'h-3 w-3' : size === 'md' ? 'h-3.5 w-3.5' : 'h-4 w-4',
-    ...config,
-  }
+// LED container sizes
+const getLedContainerSize = (size: 'xs' | 'sm' | 'md' | 'lg') => {
+  if (size === 'xs') return 'w-6 h-6'
+  return size === 'sm' ? 'w-8 h-8' : size === 'md' ? 'w-10 h-10' : 'w-12 h-12'
 }
 
-const stateLabels = {
-  on: '开启',
-  off: '关闭',
-  blinking: '运行中',
-  error: '错误',
-  warning: '警告',
+// LED dot sizes
+const getLedDotSize = (size: 'xs' | 'sm' | 'md' | 'lg') => {
+  if (size === 'xs') return 'h-2 w-2'
+  return size === 'sm' ? 'h-3 w-3' : size === 'md' ? 'h-4 w-4' : 'h-5 w-5'
+}
+
+// Match value to state
+function matchValueToState(
+  value: unknown,
+  valueMap: ValueStateMapping[],
+  defaultState: LEDState
+): LEDState {
+  if (value === null || value === undefined) {
+    return defaultState
+  }
+
+  const normalizedValue = String(value).trim().toLowerCase()
+
+  for (const mapping of valueMap) {
+    if (mapping.values) {
+      const values = mapping.values.toLowerCase().split(',').map(v => v.trim())
+      if (values.some(v => v === normalizedValue)) {
+        return mapping.state
+      }
+    }
+
+    if (mapping.pattern) {
+      try {
+        const regex = new RegExp(mapping.pattern, 'i')
+        if (regex.test(normalizedValue)) {
+          return mapping.state
+        }
+      } catch {
+        // Skip invalid regex
+      }
+    }
+  }
+
+  return defaultState
+}
+
+function getCustomLabel(
+  value: unknown,
+  valueMap: ValueStateMapping[],
+  matchedState: LEDState
+): string | undefined {
+  if (!valueMap) return undefined
+
+  const normalizedValue = String(value).trim().toLowerCase()
+
+  for (const mapping of valueMap) {
+    if (mapping.state === matchedState && mapping.label) {
+      if (mapping.values) {
+        const values = mapping.values.toLowerCase().split(',').map(v => v.trim())
+        if (values.some(v => v === normalizedValue)) {
+          return mapping.label
+        }
+      }
+      if (mapping.pattern) {
+        try {
+          if (new RegExp(mapping.pattern, 'i').test(normalizedValue)) {
+            return mapping.label
+          }
+        } catch {
+          // Skip
+        }
+      }
+    }
+  }
+
+  return undefined
+}
+
+function getCustomColor(
+  value: unknown,
+  valueMap: ValueStateMapping[],
+  matchedState: LEDState
+): string | undefined {
+  if (!valueMap) return undefined
+
+  const normalizedValue = String(value).trim().toLowerCase()
+
+  for (const mapping of valueMap) {
+    if (mapping.state === matchedState && mapping.color) {
+      if (mapping.values) {
+        const values = mapping.values.toLowerCase().split(',').map(v => v.trim())
+        if (values.some(v => v === normalizedValue)) {
+          return mapping.color
+        }
+      }
+      if (mapping.pattern) {
+        try {
+          if (new RegExp(mapping.pattern, 'i').test(normalizedValue)) {
+            return mapping.color
+          }
+        } catch {
+          // Skip
+        }
+      }
+    }
+  }
+
+  return undefined
 }
 
 export function LEDIndicator({
   dataSource,
-  state = 'on',
+  state: propState = 'off',
   label,
   size = 'md',
+  valueMap,
+  defaultState = 'unknown',
   color,
-  errorColor,
-  warningColor,
   showCard = true,
-  variant = 'badge',
   showGlow = true,
   className,
 }: LEDIndicatorProps) {
-  const { data, loading, error } = useDataSource<LEDState>(dataSource, { fallback: state })
-  const ledState = error ? 'off' : data ?? state
-  const config = getIconSize(size)
+  const { data, loading, error } = useDataSource<unknown>(dataSource)
 
-  const indicatorState = mapLedState(ledState)
-  const isBlinking = ledState === 'blinking'
-  const isOn = ledState === 'on' || ledState === 'blinking'
+  // Determine the final state
+  const ledState = useMemo(() => {
+    if (error) return 'error'
+    if (loading) return 'unknown'
 
-  // Get unified color configuration
-  const getColorConfig = () => {
-    if (ledState === 'off') return indicatorColors.neutral
-    if (color && ledState === 'on') {
-      return { ...indicatorColors.success, base: color }
+    if (data !== undefined && valueMap && valueMap.length > 0) {
+      return matchValueToState(data, valueMap, defaultState)
     }
-    if (errorColor && ledState === 'error') {
-      return { ...indicatorColors.error, base: errorColor }
+
+    if (data !== undefined) {
+      const dataStr = String(data).trim().toLowerCase()
+      if (['on', 'true', '1', 'yes', 'enabled', 'active', 'online'].includes(dataStr)) {
+        return 'on'
+      }
+      if (['off', 'false', '0', 'no', 'disabled', 'inactive', 'offline'].includes(dataStr)) {
+        return 'off'
+      }
+      if (['error', 'failed', 'failure', 'critical'].includes(dataStr)) {
+        return 'error'
+      }
+      if (['warning', 'warn'].includes(dataStr)) {
+        return 'warning'
+      }
     }
-    if (warningColor && ledState === 'warning') {
-      return { ...indicatorColors.warning, base: warningColor }
+
+    return propState
+  }, [data, valueMap, defaultState, propState, loading, error])
+
+  const customLabel = useMemo(() => {
+    if (data !== undefined && valueMap) {
+      return getCustomLabel(data, valueMap, ledState)
     }
-    return indicatorColors[indicatorState]
-  }
+    return undefined
+  }, [data, valueMap, ledState])
 
-  const colorConfig = getColorConfig()
-  const ledColor = colorConfig.base
+  const customColor = useMemo(() => {
+    if (data !== undefined && valueMap) {
+      return getCustomColor(data, valueMap, ledState)
+    }
+    return undefined
+  }, [data, valueMap, ledState])
 
-  // Get enhanced glow effect
-  const glowEffect = isOn && showGlow ? getLedGlow(indicatorState, color) : 'none'
+  const config = dashboardComponentSize[size]
+  const stateCfg = stateConfig[ledState] || stateConfig.unknown
+  const indicatorState = stateCfg.indicatorState
+  const isActive = ledState === 'on' || ledState === 'error' || ledState === 'warning'
 
-  // Get animation
-  const animation = getLedAnimation(indicatorState, isBlinking)
+  const finalColor = customColor || color || stateCfg.color.base
+  const colorConfig = stateCfg.color
+  const animation = getLedAnimation(indicatorState, false)
 
-  // Generate unique ID for gradient
-  const gradientId = `led-gradient-${Math.random().toString(36).substring(2, 9)}`
+  // Enhanced glow effect
+  const glowStyle = showGlow && isActive
+    ? `0 0 8px ${finalColor}60, 0 0 16px ${finalColor}40, 0 0 24px ${finalColor}20`
+    : 'none'
 
-  // ============================================================================
-  // Dot variant - inline LED dot
-  // ============================================================================
+  const displayLabel = label || customLabel || stateCfg.label
 
-  if (variant === 'dot') {
+  // Loading state
+  if (loading) {
     return (
-      <div className={cn('inline-flex items-center gap-2 overflow-hidden', className)}>
-        <div
-          className={cn(
-            'rounded-full transition-all duration-300 shrink-0',
-            animation.className,
-            config.dot
-          )}
-          style={{
-            backgroundColor: ledColor,
-            boxShadow: glowEffect,
-          }}
-        />
-        {label && <span className={cn(indicatorFontWeight.label, colorConfig.text, config.labelText)}>{label}</span>}
+      <div className={cn(dashboardCardBase, 'flex-row items-center', config.contentGap, config.padding, className)}>
+        <Skeleton className={cn(config.iconContainer, 'rounded-full')} />
+        <Skeleton className={cn('h-4 w-20 rounded')} />
       </div>
     )
   }
 
-  // ============================================================================
-  // Pill variant - horizontal pill with LED
-  // ============================================================================
+  const content = (
+    <>
+      {/* LED Section - left side like ValueCard icon */}
+      <div className={cn(
+        'flex items-center justify-center shrink-0 rounded-full',
+        config.iconContainer,
+        isActive ? colorConfig.bg : 'bg-muted/30',
+        animation.className
+      )}
+      style={{
+        boxShadow: glowStyle !== 'none' ? glowStyle : undefined,
+      }}>
+        {/* LED dot */}
+        <div
+          className={cn(
+            'rounded-full transition-all duration-300',
+            size === 'sm' ? 'h-2.5 w-2.5' : size === 'md' ? 'h-3 w-3' : 'h-4 w-4',
+            isActive && 'ring-2 ring-white/20'
+          )}
+          style={{
+            backgroundColor: finalColor,
+            boxShadow: isActive ? `inset 0 1px 2px rgba(255,255,255,0.3), inset 0 -1px 2px rgba(0,0,0,0.2)` : undefined,
+          }}
+        />
+      </div>
 
-  if (variant === 'pill') {
-    return (
-      <div
-        className={cn(
-          'inline-flex items-center gap-2 rounded-full border transition-all duration-300 overflow-hidden',
-          'px-3 py-1.5',
-          colorConfig.border,
-          ledState === 'off' && colorConfig.bg,
-          animation.className
+      {/* Label section - right side */}
+      <div className="flex flex-col min-w-0 flex-1">
+        <span className={cn(indicatorFontWeight.title, 'text-foreground truncate', config.titleText)}>
+          {displayLabel}
+        </span>
+        {customLabel && (
+          <span className={cn(indicatorFontWeight.label, 'text-muted-foreground', config.labelText)}>
+            {stateCfg.label}
+          </span>
         )}
-        style={{
-          background: isOn ? getLinearGradient(indicatorState, 'to right', color) : undefined,
-        }}
-      >
-        <div
-          className={cn('rounded-full shrink-0', config.dot)}
-          style={{
-            backgroundColor: ledColor,
-            boxShadow: glowEffect,
-          }}
-        />
-        {label && <span className={cn(indicatorFontWeight.title, colorConfig.text || 'text-foreground')}>{label}</span>}
       </div>
-    )
-  }
+    </>
+  )
 
-  // ============================================================================
-  // Badge variant - fills container with gradient background
-  // ============================================================================
-
-  if (variant === 'badge') {
-    if (loading) {
-      return (
-        <div className={cn(dashboardCardBase, 'items-center', config.padding, className)}>
-          <div className="flex items-center gap-3 w-full h-full min-w-0">
-            <Skeleton className={cn('rounded-full shrink-0', config.iconContainer)} />
-            <div className="flex flex-col min-w-0 flex-1 gap-2">
-              <Skeleton className={cn('h-4 w-20 rounded')} />
-              <Skeleton className={cn('h-3 w-12 rounded')} />
-            </div>
-          </div>
-        </div>
-      )
-    }
-
-    const content = (
-      <div className="flex items-center gap-3 w-full h-full min-w-0">
-        {/* LED indicator with gradient container */}
-        <div
-          className={cn(
-            'flex items-center justify-center rounded-full shrink-0 transition-all duration-300',
-            config.iconContainer,
-            ledState === 'off' && colorConfig.bg,
-            animation.className
-          )}
-          style={{
-            background: isOn ? getLinearGradient(indicatorState, 'to right', color) : undefined,
-          }}
-        >
-          {/* Inner LED dot with enhanced glow */}
-          <div
-            className={cn('rounded-full transition-all duration-300', config.dotWithGlow)}
-            style={{
-              backgroundColor: ledColor,
-              boxShadow: glowEffect,
-            }}
-          />
-        </div>
-        <div className="flex flex-col min-w-0 flex-1 overflow-hidden">
-          {label && <span className={cn(indicatorFontWeight.title, 'text-foreground truncate', config.titleText)}>{label}</span>}
-          <span className={cn(indicatorFontWeight.label, colorConfig.text || 'text-muted-foreground', config.labelText)}>
-            {stateLabels[ledState]}
-          </span>
-        </div>
-      </div>
-    )
-
-    if (showCard) {
-      return (
-        <div className={cn(dashboardCardBase, 'items-center', config.padding, className)}>
-          {content}
-        </div>
-      )
-    }
-
-    return <div className={cn('flex items-center w-full h-full overflow-hidden', config.padding, className)}>{content}</div>
-  }
-
-  // ============================================================================
-  // Card variant - centered card with large LED and ripple effect
-  // ============================================================================
-
-  if (variant === 'card') {
-    if (loading) {
-      return (
-        <div className={cn(dashboardCardBase, 'flex flex-col items-center justify-center gap-3', config.padding, className)}>
-          <Skeleton className={cn('rounded-full', size === 'sm' ? 'w-16 h-16' : size === 'md' ? 'w-20 h-20' : 'w-24 h-24')} />
-          <div className="flex flex-col items-center gap-2">
-            <Skeleton className={cn('h-5 w-16 rounded')} />
-            <Skeleton className={cn('h-4 w-12 rounded')} />
-          </div>
-        </div>
-      )
-    }
-
-    const cardSize = size === 'sm' ? { container: 'w-16 h-16', dot: 'h-6 w-6' }
-                    : size === 'md' ? { container: 'w-20 h-20', dot: 'h-8 w-8' }
-                    : { container: 'w-24 h-24', dot: 'h-10 w-10' }
-
+  if (showCard) {
     return (
-      <div className={cn(dashboardCardBase, 'flex flex-col items-center justify-center gap-3', config.padding, className)}>
-        {/* Large LED indicator with multiple visual layers */}
-        <div className="relative">
-          {/* Outer glow ring */}
-          {isOn && showGlow && (
-            <div
-              className={cn(
-                'absolute inset-0 rounded-full transition-all duration-500',
-                animation.className
-              )}
-              style={{
-                background: getLinearGradient(indicatorState, 'to right', color),
-                opacity: 0.3,
-                filter: 'blur(8px)',
-              }}
-            />
-          )}
-
-          {/* Main LED container */}
-          <div
-            className={cn(
-              'flex items-center justify-center rounded-full transition-all duration-300 relative',
-              cardSize.container,
-              ledState === 'off' && colorConfig.bg
-            )}
-            style={{
-              background: isOn ? getLinearGradient(indicatorState, 'to right', color) : undefined,
-              border: isOn ? `1px solid ${ledColor}40` : undefined,
-            }}
-          >
-            {/* Inner LED dot with enhanced glow */}
-            <div
-              className={cn(
-                'rounded-full transition-all duration-300 relative z-10',
-                cardSize.dot,
-                animation.className
-              )}
-              style={{
-                backgroundColor: ledColor,
-                boxShadow: glowEffect,
-              }}
-            />
-          </div>
-
-          {/* Ripple effect rings for active state */}
-          {isOn && showGlow && (
-            <>
-              <div
-                className={cn(
-                  'absolute inset-0 rounded-full -z-10',
-                  animation.className
-                )}
-                style={{
-                  border: `1px solid ${ledColor}30`,
-                  animation: 'ripple 2s ease-out infinite',
-                }}
-              />
-              <div
-                className={cn(
-                  'absolute inset-0 rounded-full -z-10',
-                  animation.className
-                )}
-                style={{
-                  border: `1px solid ${ledColor}20`,
-                  animation: 'ripple 2s ease-out infinite 0.5s',
-                }}
-              />
-            </>
-          )}
-        </div>
-
-        {/* Label and state */}
-        <div className="flex flex-col items-center text-center">
-          {label && <span className={cn(indicatorFontWeight.title, 'text-foreground', config.titleText)}>{label}</span>}
-          <span className={cn(indicatorFontWeight.label, colorConfig.text || 'text-muted-foreground', config.labelText)}>
-            {stateLabels[ledState]}
-          </span>
-        </div>
+      <div className={cn(dashboardCardBase, 'flex-row items-center', config.contentGap, config.padding, className)}>
+        {content}
       </div>
     )
   }
 
-  return null
+  return <div className={cn('flex items-center', config.contentGap, 'w-full', config.padding, className)}>{content}</div>
 }

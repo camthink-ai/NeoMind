@@ -77,17 +77,21 @@ export type GenericComponentType =
   | 'area-chart'
   | 'bar-chart'
   | 'pie-chart'
-  | 'donut-chart'
-  | 'gauge-chart'
   // Controls
   | 'toggle-switch'
   | 'button-group'
+  | 'slider'
   | 'dropdown'
   | 'input-field'
   // Lists & Tables
   | 'data-table'
   | 'status-list'
   | 'log-feed'
+  // Display & Content
+  | 'image-display'
+  | 'image-history'
+  | 'web-display'
+  | 'markdown-display'
 
 /**
  * Business Component Types
@@ -225,8 +229,6 @@ export const COMPONENT_SIZE_CONSTRAINTS: Partial<Record<ImplementedComponentType
   'area-chart': { minW: 3, minH: 2, defaultW: 6, defaultH: 4, maxW: 12, maxH: 8 },
   'bar-chart': { minW: 3, minH: 2, defaultW: 6, defaultH: 4, maxW: 12, maxH: 8 },
   'pie-chart': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 8, maxH: 8, preserveAspect: true },
-  'donut-chart': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 8, maxH: 8, preserveAspect: true },
-  'gauge-chart': { minW: 2, minH: 1, defaultW: 4, defaultH: 3, maxW: 8, maxH: 6 },
 
   // Controls - very compact
   'toggle-switch': { minW: 1, minH: 1, defaultW: 2, defaultH: 1, maxW: 4, maxH: 2 },
@@ -238,6 +240,12 @@ export const COMPONENT_SIZE_CONSTRAINTS: Partial<Record<ImplementedComponentType
   'data-table': { minW: 3, minH: 2, defaultW: 6, defaultH: 5, maxW: 12, maxH: 12 },
   'status-list': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 6, maxH: 10 },
   'log-feed': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 8, maxH: 12 },
+
+  // Display & Content
+  'image-display': { minW: 2, minH: 2, defaultW: 4, defaultH: 3, maxW: 12, maxH: 12 },
+  'image-history': { minW: 3, minH: 3, defaultW: 6, defaultH: 4, maxW: 12, maxH: 12 },
+  'web-display': { minW: 3, minH: 3, defaultW: 6, defaultH: 4, maxW: 12, maxH: 12 },
+  'markdown-display': { minW: 2, minH: 2, defaultW: 4, defaultH: 3, maxW: 12, maxH: 12 },
 
   // Business Components
   'agent-status-card': { minW: 2, minH: 2, defaultW: 4, defaultH: 4, maxW: 6, maxH: 6, preserveAspect: true },
@@ -277,9 +285,10 @@ export type DashboardComponent = GenericComponent | BusinessComponent
 export function isGenericComponent(component: DashboardComponent): component is GenericComponent {
   const genericTypes: GenericComponentType[] = [
     'value-card', 'led-indicator', 'sparkline', 'progress-bar',
-    'line-chart', 'area-chart', 'bar-chart', 'pie-chart', 'donut-chart', 'gauge-chart',
+    'line-chart', 'area-chart', 'bar-chart', 'pie-chart',
     'toggle-switch', 'button-group', 'dropdown', 'input-field',
     'data-table', 'status-list', 'log-feed',
+    'image-display', 'image-history', 'web-display', 'markdown-display',
   ]
   return genericTypes.includes(component.type as GenericComponentType)
 }

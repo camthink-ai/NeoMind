@@ -149,7 +149,6 @@ export const entityIcons = {
   lineChart: LineChartIcon,
   barChart: BarChart3,
   pieChart: PieChartIcon,
-  donutChart: Donut,
   radarChart: Radar,
 } as const
 

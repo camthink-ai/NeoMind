@@ -15,6 +15,7 @@ export type ComponentCategory =
   | 'charts'        // Visual data representations
   | 'controls'      // Interactive inputs
   | 'lists'         // Tables, lists, feeds
+  | 'display'       // Content display (images, web, markdown)
   | 'layout'        // Structural components
   | 'business'      // NeoTalk-specific components
 

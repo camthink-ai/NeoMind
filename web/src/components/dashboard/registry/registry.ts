@@ -34,12 +34,18 @@ import {
   // Controls
   ToggleLeft,
   Layers as LayersIcon,
+  Sliders as SliderIcon,
   List,
   Type,
   // Lists & Tables
   Table,
   ListTodo,
   Scroll,
+  // Display & Content
+  Image,
+  Play,
+  Globe,
+  FileText,
   // Layout & Content
   Layers as LayoutIcon,
   Heading as HeadingIcon,
@@ -254,50 +260,6 @@ export const componentRegistry: ComponentRegistry = {
     },
   },
 
-  'donut-chart': {
-    type: 'donut-chart',
-    name: 'Donut Chart',
-    description: 'Hollow pie chart (donut variant)',
-    category: 'charts',
-    icon: Donut,
-    sizeConstraints: getSizeConstraints('donut-chart'),
-    hasDataSource: true,
-    hasDisplayConfig: true,
-    hasActions: false,
-    acceptsProp: (prop) => [
-      'data', 'colors', 'showLabels', 'showLegend', 'showTooltip', 'innerRadius', 'className'
-    ].includes(prop),
-    defaultProps: {
-      showLabels: false,
-      showLegend: false,
-      showTooltip: true,
-      innerRadius: '60%',
-    },
-  },
-
-  'gauge-chart': {
-    type: 'gauge-chart',
-    name: 'Gauge Chart',
-    description: 'Semi-circle gauge for values in a range',
-    category: 'charts',
-    icon: Gauge,
-    sizeConstraints: getSizeConstraints('gauge-chart'),
-    hasDataSource: true,
-    hasDisplayConfig: true,
-    hasActions: false,
-    acceptsProp: (prop) => [
-      'value', 'min', 'max', 'label', 'unit', 'zones',
-      'showValue', 'variant', 'className'
-    ].includes(prop),
-    defaultProps: {
-      min: 0,
-      max: 100,
-      showValue: true,
-      variant: 'gauge',
-    },
-    variants: ['gauge', 'semi', 'arc'],
-  },
-
   // ============================================================================
   // Controls
   // ============================================================================
@@ -346,6 +308,32 @@ export const componentRegistry: ComponentRegistry = {
       orientation: 'horizontal',
     },
     variants: ['default', 'segmented', 'icon-only'],
+  },
+
+  'slider': {
+    type: 'slider',
+    name: 'Slider',
+    description: 'Numeric value slider',
+    category: 'controls',
+    icon: SliderIcon,
+    sizeConstraints: getSizeConstraints('slider'),
+    hasDataSource: true,
+    hasDisplayConfig: false,
+    hasActions: true,
+    acceptsProp: (prop) => [
+      'min', 'max', 'step', 'value', 'unit', 'label', 'size',
+      'orientation', 'showValue', 'className'
+    ].includes(prop),
+    defaultProps: {
+      min: 0,
+      max: 100,
+      step: 1,
+      value: 50,
+      size: 'md',
+      orientation: 'horizontal',
+      showValue: true,
+    },
+    variants: ['default', 'icon'],
   },
 
   'dropdown': {
@@ -452,6 +440,97 @@ export const componentRegistry: ComponentRegistry = {
   },
 
   // ============================================================================
+  // Display & Content
+  // ============================================================================
+
+  'image-display': {
+    type: 'image-display',
+    name: 'Image Display',
+    description: 'Display images from URLs or data sources',
+    category: 'display',
+    icon: Image,
+    sizeConstraints: getSizeConstraints('image-display'),
+    hasDataSource: true,
+    hasDisplayConfig: true,
+    hasActions: false,
+    acceptsProp: (prop) => [
+      'src', 'alt', 'caption', 'fit', 'objectPosition', 'rounded',
+      'showShadow', 'zoomable', 'downloadable', 'size', 'className'
+    ].includes(prop),
+    defaultProps: {
+      fit: 'contain',
+      rounded: true,
+      zoomable: true,
+    },
+    variants: ['contain', 'cover', 'fill'],
+  },
+
+  'image-history': {
+    type: 'image-history',
+    name: 'Image History',
+    description: 'Display historical images with floating slider navigation',
+    category: 'display',
+    icon: Play,
+    sizeConstraints: getSizeConstraints('image-display'),
+    hasDataSource: true,
+    hasDisplayConfig: true,
+    hasActions: false,
+    acceptsProp: (prop) => [
+      'images', 'title', 'fit', 'rounded', 'showTimestamp', 'showLabel',
+      'showIndex', 'size', 'className'
+    ].includes(prop),
+    defaultProps: {
+      fit: 'cover',
+      rounded: false,
+      showIndex: true,
+      showTimestamp: true,
+      showLabel: false,
+    },
+  },
+
+  'web-display': {
+    type: 'web-display',
+    name: 'Web Display',
+    description: 'Display web content via iframe',
+    category: 'display',
+    icon: Globe,
+    sizeConstraints: getSizeConstraints('web-display'),
+    hasDataSource: true,
+    hasDisplayConfig: true,
+    hasActions: false,
+    acceptsProp: (prop) => [
+      'src', 'title', 'sandbox', 'allowFullscreen', 'allowScripts',
+      'allowSameOrigin', 'allowForms', 'allowPopups', 'showHeader',
+      'showUrlBar', 'transparent', 'borderless', 'size', 'className'
+    ].includes(prop),
+    defaultProps: {
+      sandbox: true,
+      allowFullscreen: true,
+      showHeader: true,
+    },
+  },
+
+  'markdown-display': {
+    type: 'markdown-display',
+    name: 'Markdown Display',
+    description: 'Render markdown content with formatting',
+    category: 'display',
+    icon: FileText,
+    sizeConstraints: getSizeConstraints('markdown-display'),
+    hasDataSource: true,
+    hasDisplayConfig: true,
+    hasActions: false,
+    acceptsProp: (prop) => [
+      'content', 'variant', 'showCodeSyntax', 'allowHtml',
+      'lineBreaks', 'maxLines', 'size', 'className'
+    ].includes(prop),
+    defaultProps: {
+      variant: 'default',
+      lineBreaks: true,
+    },
+    variants: ['default', 'compact', 'minimal'],
+  },
+
   // ============================================================================
   // Business Components
   // ============================================================================
@@ -625,7 +704,7 @@ export function groupComponentsByCategory(options: RegistryFilterOptions = {}): 
 
   // Return in a consistent order
   const categoryOrder: ComponentCategory[] = [
-    'indicators', 'charts', 'controls', 'lists', 'layout', 'business'
+    'indicators', 'charts', 'controls', 'lists', 'display', 'layout', 'business'
   ]
 
   return categoryOrder
@@ -642,6 +721,7 @@ export function getCategoryInfo(category: ComponentCategory): { name: string; ic
     charts: { name: 'Charts', icon: LineChartIcon },
     controls: { name: 'Controls', icon: ToggleLeft },
     lists: { name: 'Lists & Tables', icon: Table },
+    display: { name: 'Display & Content', icon: Image },
     layout: { name: 'Layout & Content', icon: LayoutIcon },
     business: { name: 'Business', icon: Bot },
   }

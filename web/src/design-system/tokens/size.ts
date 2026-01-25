@@ -18,35 +18,6 @@ export const spacing = {
 
 export type SpacingToken = keyof typeof spacing
 
-// Component size presets - controls relative scale, NOT dimensions
-// All components are 100% width/height of their container
-export const componentSize = {
-  sm: {
-    // Scale factor for child elements (0.85x base size)
-    scale: '0.85',
-    // Responsive padding as percentage of container
-    padding: 'p-[3%]',
-    // Text scale multiplier
-    textScale: 'text-[0.85em]',
-    // Gap scale
-    gap: 'gap-[3%]',
-  },
-  md: {
-    scale: '1',
-    padding: 'p-[4%]',
-    textScale: 'text-[1em]',
-    gap: 'gap-[4%]',
-  },
-  lg: {
-    scale: '1.15',
-    padding: 'p-[5%]',
-    textScale: 'text-[1.15em]',
-    gap: 'gap-[5%]',
-  },
-} as const
-
-export type ComponentSize = keyof typeof componentSize
-
 // Chart-specific sizes
 export const chartSize = {
   sm: { strokeWidth: 10, valueText: 'text-[0.9em]', labelText: 'text-[0.75em]' },
@@ -85,8 +56,6 @@ export const defaultComponentSizes = {
   'area-chart': { w: 6, h: 4, minW: 2, minH: 2 },
   'bar-chart': { w: 6, h: 4, minW: 2, minH: 2 },
   'pie-chart': { w: 4, h: 4, minW: 2, minH: 2 },
-  'donut-chart': { w: 4, h: 4, minW: 2, minH: 2 },
-  'gauge-chart': { w: 4, h: 3, minW: 2, minH: 2 },
 
   // Controls
   'toggle-switch': { w: 2, h: 1, minW: 1, minH: 1 },
@@ -129,6 +98,23 @@ export const responsiveCols = {
  * All components use consistent padding, gaps, and text scaling
  */
 export const dashboardComponentSize = {
+  xs: {
+    // Padding (rem units) - smallest for 1x1 grid
+    padding: 'p-2',
+    headerPadding: 'pb-1.5',
+    // Text sizes
+    titleText: 'text-xs',
+    labelText: 'text-[10px]',
+    valueText: 'text-xs',
+    // Icons
+    iconSize: 'w-3 h-3',
+    iconContainer: 'w-6 h-6',
+    // Gaps
+    contentGap: 'gap-1.5',
+    itemGap: 'gap-1',
+    // Border radius
+    radius: 'rounded-md',
+  },
   sm: {
     // Padding (rem units)
     padding: 'p-3',

@@ -7,7 +7,7 @@
 
 import { Button } from '@/components/ui/button'
 import { ConfigSection } from './ConfigSection'
-import { Database } from 'lucide-react'
+import { Database, Zap, Settings } from 'lucide-react'
 import type { DataSource, DataSourceOrList } from '@/types/dashboard'
 import { normalizeDataSource as normalizeDs } from '@/types/dashboard'
 
@@ -17,6 +17,8 @@ export interface DataSourceConfigSectionProps {
   collapsible?: boolean
   multiple?: boolean
   maxSources?: number
+  // Allowed data source types
+  allowedTypes?: Array<'device' | 'metric' | 'command'>
 }
 
 export function DataSourceConfigSection({
@@ -27,6 +29,7 @@ export function DataSourceConfigSection({
   multiple: _multiple = false,
   // Reserved for future multi-select functionality
   maxSources: _maxSources,
+  allowedTypes = ['device', 'metric', 'command'],
 }: DataSourceConfigSectionProps) {
   const dataSources = normalizeDs(dataSource)
   const isBound = dataSources.length > 0
@@ -35,7 +38,7 @@ export function DataSourceConfigSection({
     if (dataSources.length === 0) return 'Data Source'
     if (dataSources.length === 1) {
       const ds = dataSources[0]
-      if (ds.type === 'device') return `Device: ${ds.deviceId}`
+      if (ds.type === 'device') return `Device: ${ds.deviceId}${ds.property ? `.${ds.property}` : ''}`
       if (ds.type === 'metric') return `Metric: ${ds.metricId}`
       if (ds.type === 'command') return `Command: ${ds.deviceId} → ${ds.command}`
       return 'Data Source'
@@ -58,6 +61,16 @@ export function DataSourceConfigSection({
     const newDataSource = {
       type: 'metric',
       metricId: 'temperature-avg',
+    } as unknown as DataSource
+    onChange(newDataSource)
+  }
+
+  const handleBindCommand = () => {
+    // TODO: Open command selector dialog (select device + command)
+    const newDataSource = {
+      type: 'command',
+      deviceId: 'device-1',
+      command: 'toggle',
     } as unknown as DataSource
     onChange(newDataSource)
   }
@@ -95,25 +108,40 @@ export function DataSourceConfigSection({
           <p className="text-xs text-muted-foreground">
             Bind this component to a data source for real-time updates
           </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleBindDevice}
-              className="flex-1"
-            >
-              <Database className="h-4 w-4 mr-2" />
-              Device
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleBindMetric}
-              className="flex-1"
-            >
-              <Database className="h-4 w-4 mr-2" />
-              Metric
-            </Button>
+          <div className="grid grid-cols-3 gap-2">
+            {allowedTypes.includes('device') && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBindDevice}
+                className="flex-col gap-1 h-auto py-3"
+              >
+                <Database className="h-4 w-4" />
+                <span className="text-xs">Device</span>
+              </Button>
+            )}
+            {allowedTypes.includes('metric') && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBindMetric}
+                className="flex-col gap-1 h-auto py-3"
+              >
+                <Zap className="h-4 w-4" />
+                <span className="text-xs">Metric</span>
+              </Button>
+            )}
+            {allowedTypes.includes('command') && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBindCommand}
+                className="flex-col gap-1 h-auto py-3"
+              >
+                <Settings className="h-4 w-4" />
+                <span className="text-xs">Command</span>
+              </Button>
+            )}
           </div>
         </div>
       )}

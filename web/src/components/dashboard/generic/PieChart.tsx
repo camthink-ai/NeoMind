@@ -1,8 +1,7 @@
 /**
  * Pie Chart Component
  *
- * shadcn/ui inspired pie/donut chart.
- * Clean design with donut variant and subtle colors.
+ * Unified with dashboard design system.
  */
 
 import {
@@ -13,11 +12,50 @@ import {
   Tooltip,
   Legend,
 } from 'recharts'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useDataSource } from '@/hooks/useDataSource'
+import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
+import { indicatorFontWeight } from '@/design-system/tokens/indicator'
+import { chartColors as designChartColors } from '@/design-system/tokens/color'
 import type { DataSource } from '@/types/dashboard'
+
+// Use design system chart colors
+const chartColors = designChartColors
+
+// Fallback colors as hex values for SVG
+const fallbackColors = [
+  '#8b5cf6', // Purple
+  '#22c55e', // Green
+  '#f59e0b', // Yellow
+  '#f97316', // Orange
+  '#ec4899', // Pink
+  '#06b6d4', // Cyan
+]
+
+/**
+ * shadcn/ui style tooltip component
+ */
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
+  if (!active || !payload?.length) return null
+
+  return (
+    <div className="rounded-lg border bg-background p-2 shadow-md">
+      <div className="grid gap-1.5 text-xs">
+        {payload.map((entry: any, index: number) => (
+          <div key={index} className="flex items-center gap-2">
+            <div
+              className="h-2 w-2 shrink-0 rounded-[2px]"
+              style={{ backgroundColor: entry.color }}
+            />
+            <span className="text-muted-foreground font-medium">{entry.name}:</span>
+            <span className="tabular-nums font-semibold">{entry.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export interface PieData {
   name: string
@@ -46,18 +84,9 @@ export interface PieChartProps {
 
   // Styling
   colors?: string[]
+  size?: 'sm' | 'md' | 'lg'
   className?: string
 }
-
-// shadcn/ui chart colors - using CSS variables
-const defaultColors = [
-  'var(--color-chart-1)',
-  'var(--color-chart-2)',
-  'var(--color-chart-3)',
-  'var(--color-chart-4)',
-  'var(--color-chart-5)',
-  'var(--color-chart-6)',
-]
 
 export function PieChart({
   dataSource,
@@ -71,56 +100,53 @@ export function PieChart({
   innerRadius = '60%',
   outerRadius = '80%',
   colors,
+  size = 'md',
   className,
 }: PieChartProps) {
+  const config = dashboardComponentSize[size]
   // Get data from source
   const { data, loading } = useDataSource<PieData[]>(dataSource, {
-    fallback: propData ?? [],
+    fallback: propData ?? [
+      { name: 'Category A', value: 30 },
+      { name: 'Category B', value: 45 },
+      { name: 'Category C', value: 25 },
+    ],
   })
 
-  const chartData = data ?? propData ?? []
+  const chartData = data ?? propData ?? [
+    { name: 'Category A', value: 30 },
+    { name: 'Category B', value: 45 },
+    { name: 'Category C', value: 25 },
+  ]
 
   if (loading) {
     return (
-      <Card className={cn('border shadow-sm', className)}>
-        {title && <CardHeader><CardTitle className="text-sm font-medium">{title}</CardTitle></CardHeader>}
-        <CardContent>
-          <Skeleton className="w-full h-full" />
-        </CardContent>
-      </Card>
+      <div className={cn(dashboardCardBase, config.padding, className)}>
+        {title && (
+          <div className={cn('mb-3', indicatorFontWeight.title, config.titleText)}>{title}</div>
+        )}
+        <Skeleton className={cn('w-full', size === 'sm' ? 'h-[120px]' : size === 'md' ? 'h-[180px]' : 'h-[240px]')} />
+      </div>
     )
   }
 
   if (chartData.length === 0) {
     return (
-      <Card className={cn('border shadow-sm', className)}>
-        {title && <CardHeader><CardTitle className="text-sm font-medium">{title}</CardTitle></CardHeader>}
-        <CardContent>
-          <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-            No data available
-          </div>
-        </CardContent>
-      </Card>
+      <div className={cn(dashboardCardBase, 'flex items-center justify-center', config.padding, className)}>
+        <span className={cn('text-sm text-muted-foreground')}>No data available</span>
+      </div>
     )
   }
 
-  const chartColors = colors || defaultColors
+  const chartColors = colors || fallbackColors
 
   return (
-    <Card className={cn('border shadow-sm overflow-hidden flex flex-col h-full', className)}>
-      {title && <CardHeader className="pb-2 flex-shrink-0"><CardTitle className="text-sm font-medium">{title}</CardTitle></CardHeader>}
-      <CardContent className={cn(!title && 'pt-6', 'flex-1 min-h-0 p-4')}>
-        <style>{`
-          :root {
-            --color-chart-1: oklch(0.646 0.222 264.38);
-            --color-chart-2: oklch(0.646 0.222 142.5);
-            --color-chart-3: oklch(0.646 0.222 48.85);
-            --color-chart-4: oklch(0.646 0.222 24.85);
-            --color-chart-5: oklch(0.646 0.222 304.38);
-            --color-chart-6: oklch(0.646 0.222 188.38);
-          }
-        `}</style>
-        <ResponsiveContainer width="100%" height={height === 'auto' ? '100%' : height}>
+    <div className={cn(dashboardCardBase, config.padding, className)}>
+      {title && (
+        <div className={cn('mb-3', indicatorFontWeight.title, config.titleText)}>{title}</div>
+      )}
+      <div className={cn('w-full', size === 'sm' ? 'h-[120px]' : size === 'md' ? 'h-[180px]' : 'h-[240px]')}>
+        <ResponsiveContainer width="100%" height="100%">
           <RechartsPieChart margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
             <Pie
               data={chartData}
@@ -130,50 +156,21 @@ export function PieChart({
               label={showLabels ? (entry) => `${entry.name}` : false}
               innerRadius={variant === 'donut' ? innerRadius : 0}
               outerRadius={outerRadius}
-              paddingAngle={chartData.length > 1 ? 0 : 0}
               dataKey="value"
-              className="outline-none"
             >
               {chartData.map((entry, index) => (
                 <Cell
                   key={`cell-${index}`}
                   fill={entry.color || chartColors[index % chartColors.length]}
-                  stroke="hsl(var(--background))"
-                  strokeWidth={2}
-                  className="transition-opacity hover:opacity-80"
+                  stroke="none"
                 />
               ))}
             </Pie>
-            {showTooltip && (
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (!active || !payload?.length) return null
-                  return (
-                    <div className="rounded-lg border bg-background p-2 shadow-sm">
-                      {payload.map((entry: any, index: number) => (
-                        <div key={index} className="flex items-center gap-2 text-xs">
-                          <div
-                            className="h-2 w-2 rounded-full"
-                            style={{ backgroundColor: entry.color }}
-                          />
-                          <span className="text-muted-foreground">{entry.name}:</span>
-                          <span className="font-medium tabular-nums">{entry.value}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )
-                }}
-              />
-            )}
+            {showTooltip && <Tooltip content={<ChartTooltip />} />}
             {showLegend && <Legend />}
           </RechartsPieChart>
         </ResponsiveContainer>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
-}
-
-// DonutChart is an alias for PieChart with variant='donut'
-export function DonutChart(props: Omit<PieChartProps, 'variant'>) {
-  return <PieChart {...props} variant="donut" />
 }

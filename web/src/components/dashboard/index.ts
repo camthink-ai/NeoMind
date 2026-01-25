@@ -25,19 +25,23 @@ export { ProgressBar } from './generic/ProgressBar'
 // Generic components - Charts
 export { LineChart, AreaChart } from './generic/LineChart'
 export { BarChart } from './generic/BarChart'
-export { PieChart, DonutChart } from './generic/PieChart'
-export { GaugeChart } from './generic/GaugeChart'
+export { PieChart } from './generic/PieChart'
 
 // Generic components - Controls
 export { ToggleSwitch } from './generic/ToggleSwitch'
 export { ButtonGroup } from './generic/ButtonGroup'
-export { Dropdown } from './generic/Dropdown'
-export { InputField } from './generic/InputField'
+export { Slider } from './generic/Slider'
 
 // Generic components - Tables & Lists
 export { DataTable } from './generic/DataTable'
 export { LogFeed } from './generic/LogFeed'
 export { StatusList } from './generic/StatusList'
+
+// Generic components - Display & Content
+export { ImageDisplay } from './generic/ImageDisplay'
+export { ImageHistory, type ImageHistoryProps, type ImageHistoryItem } from './generic/ImageHistory'
+export { WebDisplay } from './generic/WebDisplay'
+export { MarkdownDisplay } from './generic/MarkdownDisplay'
 
 // Business components
 export { AgentStatusCard } from './business/AgentStatusCard'

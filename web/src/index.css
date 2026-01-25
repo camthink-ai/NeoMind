@@ -41,6 +41,14 @@
     --radius-2xl: 1.5rem;
     --radius-full: 9999px;
 
+    /* Chart colors - unified palette for all chart components */
+    --chart-1: 264 70% 65%;    /* Purple */
+    --chart-2: 142 70% 65%;    /* Green */
+    --chart-3: 48 85% 60%;     /* Yellow/Orange */
+    --chart-4: 24 90% 55%;     /* Orange/Red */
+    --chart-5: 304 70% 65%;    /* Pink */
+    --chart-6: 188 75% 60%;    /* Cyan */
+
     /* Animation durations */
     --duration-fast: 150ms;
     --duration-normal: 200ms;

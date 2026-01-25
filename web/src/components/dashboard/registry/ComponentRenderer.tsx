@@ -27,12 +27,11 @@ const LineChart = lazy(() => import('../generic/LineChart').then(m => ({ default
 const AreaChart = lazy(() => import('../generic/LineChart').then(m => ({ default: m.AreaChart })))
 const BarChart = lazy(() => import('../generic/BarChart').then(m => ({ default: m.BarChart })))
 const PieChart = lazy(() => import('../generic/PieChart').then(m => ({ default: m.PieChart })))
-const DonutChart = lazy(() => import('../generic/PieChart').then(m => ({ default: m.DonutChart })))
-const GaugeChart = lazy(() => import('../generic/GaugeChart').then(m => ({ default: m.GaugeChart })))
 
 // Controls
 const ToggleSwitch = lazy(() => import('../generic/ToggleSwitch').then(m => ({ default: m.ToggleSwitch })))
 const ButtonGroup = lazy(() => import('../generic/ButtonGroup').then(m => ({ default: m.ButtonGroup })))
+const Slider = lazy(() => import('../generic/Slider').then(m => ({ default: m.Slider })))
 const Dropdown = lazy(() => import('../generic/Dropdown').then(m => ({ default: m.Dropdown })))
 const InputField = lazy(() => import('../generic/InputField').then(m => ({ default: m.InputField })))
 
@@ -40,6 +39,12 @@ const InputField = lazy(() => import('../generic/InputField').then(m => ({ defau
 const DataTable = lazy(() => import('../generic/DataTable').then(m => ({ default: m.DataTable })))
 const StatusList = lazy(() => import('../generic/StatusList').then(m => ({ default: m.StatusList })))
 const LogFeed = lazy(() => import('../generic/LogFeed').then(m => ({ default: m.LogFeed })))
+
+// Display & Content
+const ImageDisplay = lazy(() => import('../generic/ImageDisplay').then(m => ({ default: m.ImageDisplay })))
+const ImageHistory = lazy(() => import('../generic/ImageHistory').then(m => ({ default: m.ImageHistory })))
+const WebDisplay = lazy(() => import('../generic/WebDisplay').then(m => ({ default: m.WebDisplay })))
+const MarkdownDisplay = lazy(() => import('../generic/MarkdownDisplay').then(m => ({ default: m.MarkdownDisplay })))
 
 // Business Components
 const AgentStatusCard = lazy(() => import('../business/AgentStatusCard').then(m => ({ default: m.AgentStatusCard })))
@@ -64,12 +69,11 @@ const componentMap: Record<GenericComponentType, React.ComponentType<any>> = {
   'area-chart': AreaChart,
   'bar-chart': BarChart,
   'pie-chart': PieChart,
-  'donut-chart': DonutChart,
-  'gauge-chart': GaugeChart,
 
   // Controls
   'toggle-switch': ToggleSwitch,
   'button-group': ButtonGroup,
+  'slider': Slider,
   'dropdown': Dropdown,
   'input-field': InputField,
 
@@ -77,6 +81,12 @@ const componentMap: Record<GenericComponentType, React.ComponentType<any>> = {
   'data-table': DataTable,
   'status-list': StatusList,
   'log-feed': LogFeed,
+
+  // Display & Content
+  'image-display': ImageDisplay,
+  'image-history': ImageHistory,
+  'web-display': WebDisplay,
+  'markdown-display': MarkdownDisplay,
 } as const
 
 // Business component map

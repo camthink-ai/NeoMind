@@ -7,6 +7,7 @@
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useStore } from '@/store'
+import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
   Plus,
@@ -24,14 +25,11 @@ import {
   TrendingUp,
   Timer as TimerIcon,
   Hourglass,
-  Gauge as GaugeIcon,
   // Chart icons
   LineChart as LineChartIcon,
   BarChart3,
-  Gauge,
   PieChart as PieChartIcon,
   ScatterChart as ScatterChartIcon,
-  Donut as DonutIcon,
   Radar as RadarIcon,
   Filter,
   CandlestickChart,
@@ -110,7 +108,7 @@ import {
 } from '@/components/dashboard/config'
 import type { ComponentConfigSchema } from '@/components/dashboard/config/ComponentConfigBuilder'
 
-// Dashboard components - Only essential 27 components
+// Dashboard components
 import {
   DashboardGrid,
   // Indicators
@@ -123,17 +121,17 @@ import {
   AreaChart,
   BarChart,
   PieChart,
-  DonutChart,
-  GaugeChart,
   // Controls
   ToggleSwitch,
-  ButtonGroup,
-  Dropdown,
-  InputField,
   // Tables & Lists
   DataTable,
   LogFeed,
   StatusList,
+  // Display & Content
+  ImageDisplay,
+  ImageHistory,
+  WebDisplay,
+  MarkdownDisplay,
   // Business
   AgentStatusCard,
   DecisionList,
@@ -246,8 +244,6 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
       { id: 'area-chart', name: 'Area Chart', description: 'Area under line', icon: LineChartIcon },
       { id: 'bar-chart', name: 'Bar Chart', description: 'Categorical data', icon: BarChart3 },
       { id: 'pie-chart', name: 'Pie Chart', description: 'Part to whole', icon: PieChartIcon },
-      { id: 'donut-chart', name: 'Donut Chart', description: 'Hollow pie chart', icon: DonutIcon },
-      { id: 'gauge-chart', name: 'Gauge Chart', description: 'Value in range', icon: Gauge },
     ],
   },
   // Lists & Tables
@@ -261,16 +257,25 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
       { id: 'log-feed', name: 'Log Feed', description: 'Scrolling log', icon: Scroll },
     ],
   },
+  // Display & Content
+  {
+    category: 'display',
+    categoryLabel: 'Display & Content',
+    categoryIcon: ImageIcon,
+    items: [
+      { id: 'image-display', name: 'Image Display', description: 'Display images', icon: ImageIcon },
+      { id: 'image-history', name: 'Image History', description: 'Image timeline player', icon: Play },
+      { id: 'web-display', name: 'Web Display', description: 'Embed web content', icon: Globe },
+      { id: 'markdown-display', name: 'Markdown Display', description: 'Render markdown', icon: FileText },
+    ],
+  },
   // Controls
   {
     category: 'controls',
     categoryLabel: 'Controls',
     categoryIcon: SlidersHorizontal,
     items: [
-      { id: 'toggle-switch', name: 'Toggle Switch', description: 'On/off toggle', icon: ToggleLeft },
-      { id: 'button-group', name: 'Button Group', description: 'Action buttons', icon: Layers },
-      { id: 'dropdown', name: 'Dropdown', description: 'Select dropdown', icon: List },
-      { id: 'input-field', name: 'Input Field', description: 'Text input', icon: Type },
+      { id: 'toggle-switch', name: 'Toggle Switch', description: 'On/off control', icon: ToggleLeft },
     ],
   },
   // Business Components
@@ -295,12 +300,35 @@ const COMPONENT_LIBRARY: ComponentCategory[] = [
 // Helper to extract common display props from component config
 function getCommonDisplayProps(component: DashboardComponent) {
   const config = (component as any).config || {}
+
+  // Auto-calculate size based on component dimensions
+  const w = component.position.w
+  const h = component.position.h
+  const area = w * h
+
+  // Determine size based on component area
+  let calculatedSize: 'xs' | 'sm' | 'md' | 'lg' = 'md'
+  if (area <= 1) {
+    calculatedSize = 'xs'  // 1x1 grid
+  } else if (area <= 2) {
+    calculatedSize = 'sm'  // 1x2 or 2x1 grid
+  } else if (area <= 4) {
+    calculatedSize = 'md'  // 2x2 grid
+  } else {
+    calculatedSize = 'lg'  // larger than 2x2
+  }
+
+  // Use config size if explicitly set, otherwise use calculated size
+  const size = config.size || calculatedSize
+
   return {
-    size: (config.size as 'sm' | 'md' | 'lg') || 'md',
+    size,
     showCard: config.showCard ?? true,
     className: config.className,
     title: component.title,
     color: config.color,
+    // Pass dimensions for responsive adjustments
+    dimensions: { w, h, area },
   }
 }
 
@@ -308,8 +336,7 @@ function getCommonDisplayProps(component: DashboardComponent) {
 const getSpreadableProps = (componentType: string, commonProps: ReturnType<typeof getCommonDisplayProps>) => {
   // Components that don't support standard size ('sm' | 'md' | 'lg')
   const noStandardSize = [
-    'gauge-chart', 'led-indicator',
-    'toggle-switch', 'button-group', 'dropdown', 'input-field',
+    'led-indicator', 'toggle-switch',
     'heading', 'alert-banner',
     'agent-status-card', 'device-control', 'rule-status-grid', 'transform-list',
   ]
@@ -317,7 +344,7 @@ const getSpreadableProps = (componentType: string, commonProps: ReturnType<typeo
   // Components that don't support showCard
   const noShowCard = [
     'value-card', 'led-indicator', 'sparkline', 'progress-bar',
-    'toggle-switch', 'button-group', 'dropdown', 'input-field',
+    'toggle-switch',
     'heading', 'alert-banner',
     'agent-status-card', 'device-control', 'rule-status-grid', 'transform-list',
     'tabs',
@@ -326,7 +353,7 @@ const getSpreadableProps = (componentType: string, commonProps: ReturnType<typeo
   // Components that don't support title in the spread position
   const noTitle = [
     'sparkline', 'led-indicator', 'progress-bar',
-    'toggle-switch', 'button-group', 'dropdown', 'input-field',
+    'toggle-switch',
     'heading', 'alert-banner',
     'tabs',
     'agent-status-card', 'device-control', 'rule-status-grid', 'transform-list',
@@ -334,6 +361,7 @@ const getSpreadableProps = (componentType: string, commonProps: ReturnType<typeo
 
   const result: Record<string, unknown> = {}
 
+  // Include size for components that support it
   if (!noStandardSize.includes(componentType)) {
     result.size = commonProps.size
   }
@@ -349,6 +377,14 @@ const getSpreadableProps = (componentType: string, commonProps: ReturnType<typeo
   }
 
   return result
+}
+
+// Calculate chart height based on grid dimensions (each grid row ~120px)
+function getChartHeight(component: DashboardComponent): number | 'auto' {
+  const h = component.position.h
+  // Calculate height: grid rows * 120px - padding (approx 60px for card padding)
+  const calculatedHeight = Math.max(h * 120 - 60, 120)
+  return calculatedHeight
 }
 
 function renderDashboardComponent(component: DashboardComponent) {
@@ -381,6 +417,8 @@ function renderDashboardComponent(component: DashboardComponent) {
           label={config.label || commonProps.title}
           size={config.ledSize || 'md'}
           color={config.color}
+          valueMap={config.valueMap}
+          defaultState={config.defaultState}
         />
       )
 
@@ -421,7 +459,7 @@ function renderDashboardComponent(component: DashboardComponent) {
             color: '#3b82f6'
           }]}
           labels={config.labels || ['1h', '2h', '3h', '4h', '5h', '6h', '7h', '8h', '9h', '10h']}
-          height="auto"
+          height={getChartHeight(component)}
           title={commonProps.title}
         />
       )
@@ -437,7 +475,7 @@ function renderDashboardComponent(component: DashboardComponent) {
             color: '#3b82f6'
           }]}
           labels={config.labels || ['1h', '2h', '3h', '4h', '5h', '6h', '7h', '8h', '9h', '10h']}
-          height="auto"
+          height={getChartHeight(component)}
           title={commonProps.title}
         />
       )
@@ -449,7 +487,7 @@ function renderDashboardComponent(component: DashboardComponent) {
           dataSource={config.dataSource}
           data={config.data}
           title={commonProps.title}
-          height="auto"
+          height={getChartHeight(component)}
         />
       )
 
@@ -460,35 +498,7 @@ function renderDashboardComponent(component: DashboardComponent) {
           dataSource={config.dataSource}
           data={config.data}
           title={commonProps.title}
-          height="auto"
-        />
-      )
-
-    case 'donut-chart':
-      return (
-        <DonutChart
-          {...spreadableProps}
-          dataSource={config.dataSource}
-          data={config.data || [
-            { name: 'A', value: 30 },
-            { name: 'B', value: 50 },
-            { name: 'C', value: 20 }
-          ]}
-          title={commonProps.title}
-          height="auto"
-        />
-      )
-
-    case 'gauge-chart':
-      return (
-        <GaugeChart
-          {...spreadableProps}
-          dataSource={config.dataSource}
-          value={config.value}
-          min={config.min ?? 0}
-          max={config.max ?? 100}
-          label={commonProps.title || 'Gauge'}
-          unit={config.unit}
+          height={getChartHeight(component)}
         />
       )
 
@@ -497,49 +507,11 @@ function renderDashboardComponent(component: DashboardComponent) {
       return (
         <ToggleSwitch
           {...spreadableProps}
+          size={config.size || commonProps.size === 'xs' ? 'sm' : commonProps.size}
           dataSource={config.dataSource}
           label={config.label || commonProps.title}
           checked={config.checked ?? false}
           onCheckedChange={config.onCheckedChange}
-        />
-      )
-
-    case 'button-group':
-      return (
-        <ButtonGroup
-          {...spreadableProps}
-          options={config.options || [
-            { label: 'Button 1', value: 'btn1' },
-            { label: 'Button 2', value: 'btn2' }
-          ]}
-          value={config.value}
-          onValueChange={config.onValueChange}
-          orientation={config.orientation || 'horizontal'}
-        />
-      )
-
-    case 'dropdown':
-      return (
-        <Dropdown
-          {...spreadableProps}
-          options={config.options || [
-            { label: 'Option 1', value: 'opt1' },
-            { label: 'Option 2', value: 'opt2' }
-          ]}
-          value={config.value}
-          onValueChange={config.onValueChange}
-          placeholder={config.placeholder || 'Select...'}
-        />
-      )
-
-    case 'input-field':
-      return (
-        <InputField
-          {...spreadableProps}
-          value={config.value || ''}
-          onValueChange={config.onValueChange}
-          placeholder={config.placeholder}
-          type={config.type || 'text'}
         />
       )
 
@@ -580,6 +552,60 @@ function renderDashboardComponent(component: DashboardComponent) {
           maxEntries={config.maxEntries || 50}
           autoScroll={config.autoScroll ?? true}
           showTimestamp={config.showTimestamp ?? true}
+        />
+      )
+
+    // Display & Content
+    case 'image-display':
+      return (
+        <ImageDisplay
+          {...spreadableProps}
+          dataSource={config.dataSource}
+          src={config.src}
+          alt={config.alt || commonProps.title || 'Image'}
+          caption={config.caption}
+          fit={config.fit || 'contain'}
+          rounded={config.rounded ?? true}
+          showShadow={config.showShadow}
+          zoomable={config.zoomable ?? true}
+          downloadable={config.downloadable}
+        />
+      )
+
+    case 'image-history':
+      return (
+        <ImageHistory
+          {...spreadableProps}
+          dataSource={config.dataSource}
+          images={config.images}
+          fit={config.fit || 'contain'}
+          rounded={config.rounded ?? true}
+          limit={config.limit ?? 50}
+          timeRange={config.timeRange ?? 1}
+        />
+      )
+
+    case 'web-display':
+      return (
+        <WebDisplay
+          {...spreadableProps}
+          dataSource={config.dataSource}
+          src={config.src}
+          title={config.title || commonProps.title}
+          sandbox={config.sandbox ?? true}
+          allowFullscreen={config.allowFullscreen ?? true}
+          showHeader={config.showHeader ?? true}
+          showUrlBar={config.showUrlBar}
+        />
+      )
+
+    case 'markdown-display':
+      return (
+        <MarkdownDisplay
+          {...spreadableProps}
+          dataSource={config.dataSource}
+          content={config.content}
+          variant={config.variant || 'default'}
         />
       )
 
@@ -728,9 +754,9 @@ function ComponentWrapper({
             <Copy className="h-3.5 w-3.5" />
           </Button>
           <Button
-            variant="destructive"
+            variant="secondary"
             size="icon"
-            className="h-7 w-7 bg-background/90 backdrop-blur"
+            className="h-7 w-7 bg-background/90 backdrop-blur hover:bg-destructive hover:text-destructive-foreground transition-colors"
             onClick={() => onRemove(component.id)}
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -862,6 +888,10 @@ export function VisualDashboard() {
     return `stable-${components.length}`
   }, [currentDashboard?.components])
 
+  // Use a counter to force refresh when config changes in dialog
+  // Must be declared before gridComponents which depends on it
+  const [configVersion, setConfigVersion] = useState(0)
+
   // Initialize dashboards on mount
   useEffect(() => {
     if (hasInitialized.current) return
@@ -914,7 +944,7 @@ export function VisualDashboard() {
       case 'line-chart':
       case 'area-chart':
         defaultConfig = {
-          series: [{ name: 'Value', data: [10, 25, 15, 30, 28, 35, 20] }],
+          series: [{ name: 'Value', data: [10, 25, 15, 30, 28, 35, 20], color: '#3b82f6' }],
           labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         }
         break
@@ -924,16 +954,8 @@ export function VisualDashboard() {
         }
         break
       case 'pie-chart':
-      case 'donut-chart':
         defaultConfig = {
           data: [{ name: 'A', value: 30 }, { name: 'B', value: 50 }, { name: 'C', value: 20 }]
-        }
-        break
-      case 'gauge-chart':
-        defaultConfig = {
-          value: 65,
-          min: 0,
-          max: 100
         }
         break
       // Indicators
@@ -960,26 +982,6 @@ export function VisualDashboard() {
           checked: true
         }
         break
-      case 'button-group':
-        defaultConfig = {
-          options: [{ label: 'Start', value: 'start' }, { label: 'Stop', value: 'stop' }],
-          value: 'start'
-        }
-        break
-      case 'dropdown':
-        defaultConfig = {
-          options: [{ label: 'Option 1', value: 'opt1' }, { label: 'Option 2', value: 'opt2' }],
-          value: 'opt1',
-          placeholder: 'Select...'
-        }
-        break
-      case 'input-field':
-        defaultConfig = {
-          value: '',
-          type: 'text',
-          placeholder: 'Enter value...'
-        }
-        break
       // Tables & Lists
       case 'data-table':
         defaultConfig = {
@@ -1000,6 +1002,47 @@ export function VisualDashboard() {
           data: [
             { id: '1', message: 'System started', level: 'info', timestamp: new Date().toISOString() }
           ]
+        }
+        break
+      // Display & Content
+      case 'image-display':
+        defaultConfig = {
+          src: 'https://via.placeholder.com/400x200',
+          alt: 'Sample Image',
+          fit: 'contain',
+          rounded: true,
+          zoomable: true,
+        }
+        break
+      case 'image-history':
+        defaultConfig = {
+          dataSource: {
+            type: 'static',
+            staticValue: [
+              { src: 'https://via.placeholder.com/400x200/8b5cf6/ffffff?text=Image+1', timestamp: Date.now() - 6000 },
+              { src: 'https://via.placeholder.com/400x200/22c55e/ffffff?text=Image+2', timestamp: Date.now() - 4000 },
+              { src: 'https://via.placeholder.com/400x200/f59e0b/ffffff?text=Image+3', timestamp: Date.now() - 2000 },
+              { src: 'https://via.placeholder.com/400x200/ec4899/ffffff?text=Image+4', timestamp: Date.now() },
+            ],
+          },
+          fit: 'contain',
+          rounded: true,
+          limit: 50,
+          timeRange: 1,
+        }
+        break
+      case 'web-display':
+        defaultConfig = {
+          src: 'https://example.com',
+          title: 'Website',
+          sandbox: true,
+          showHeader: true,
+        }
+        break
+      case 'markdown-display':
+        defaultConfig = {
+          content: '# Title\n\nThis is **markdown** content.\n\n- Item 1\n- Item 2\n\n`code example`',
+          variant: 'default',
         }
         break
       // Business Components
@@ -1151,30 +1194,34 @@ export function VisualDashboard() {
         </ComponentWrapper>
       ),
     })) ?? []
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [componentsStableKey, editMode])
+  }, [componentsStableKey, editMode, configVersion])
 
   // Track initial config load to avoid unnecessary updates
   const initialConfigRef = useRef<any>(null)
   const isInitialLoad = useRef(false)
+  const lastSyncedConfigRef = useRef<string>('')
 
   // Live preview: update component in real-time as config changes
   useEffect(() => {
     if (configOpen && selectedComponent) {
-      // Skip initial load - don't update with same config
+      // Skip initial load - don't update store with same config
       if (!isInitialLoad.current) {
         initialConfigRef.current = componentConfig
         isInitialLoad.current = true
+        lastSyncedConfigRef.current = JSON.stringify(componentConfig)
         setConfigSchema(generateConfigSchema(selectedComponent.type, componentConfig))
         return
       }
 
-      // Only update if config actually changed
+      // Check if config actually changed since last sync
       const currentJSON = JSON.stringify(componentConfig)
-      const initialJSON = JSON.stringify(initialConfigRef.current)
-      if (currentJSON !== initialJSON) {
+      if (currentJSON !== lastSyncedConfigRef.current) {
         // Update the component with current config for live preview
         updateComponent(selectedComponent.id, { config: componentConfig })
+        // Update last synced config
+        lastSyncedConfigRef.current = currentJSON
+        // Increment version to force re-render
+        setConfigVersion(v => v + 1)
         // Regenerate schema with new config values
         setConfigSchema(generateConfigSchema(selectedComponent.type, componentConfig))
       }
@@ -1182,8 +1229,9 @@ export function VisualDashboard() {
       // Reset when dialog closes
       isInitialLoad.current = false
       initialConfigRef.current = null
+      lastSyncedConfigRef.current = ''
     }
-  }, [componentConfig, configOpen, selectedComponent])
+  }, [componentConfig, configOpen, selectedComponent?.id, updateComponent, setConfigSchema])
 
   // Handle saving component config (just close dialog, already live-previewed)
   const handleSaveConfig = () => {
@@ -1272,24 +1320,121 @@ export function VisualDashboard() {
         })
 
       case 'led-indicator':
-        return createIndicatorConfig({
-          dataSource: config.dataSource,
-          onDataSourceChange: updateDataSource,
-          state: config.state,
-          onStateChange: updateConfig('state'),
-          size: config.size,
-          onSizeChange: updateConfig('size'),
-          colors: {
-            on: config.color,
-            error: config.errorColor,
-            warning: config.warningColor,
-          },
-          onColorChange: (key, color) => {
-            if (key === 'on') updateConfig('color')(color)
-            else if (key === 'error') updateConfig('errorColor')(color)
-            else if (key === 'warning') updateConfig('warningColor')(color)
-          },
-        })
+        return {
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">State (no data source)</label>
+                    <select
+                      value={config.state || 'on'}
+                      onChange={(e) => updateConfig('state')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                      <option value="error">Error</option>
+                      <option value="warning">Warning</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Size</label>
+                    <select
+                      value={config.size || 'md'}
+                      onChange={(e) => updateConfig('size')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="sm">Small</option>
+                      <option value="md">Medium</option>
+                      <option value="lg">Large</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Color</label>
+                    <input
+                      type="color"
+                      value={config.color || '#22c55e'}
+                      onChange={(e) => updateConfig('color')(e.target.value)}
+                      className="w-full h-10 rounded-md border border-input bg-background"
+                    />
+                  </div>
+                </div>
+              ),
+            },
+          ],
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Value Mapping</label>
+                    <p className="text-xs text-muted-foreground">
+                      One mapping per line: <code>values {'->'} state</code>
+                    </p>
+                    <textarea
+                      value={(config.valueMap || [])
+                        .map((m: any) => {
+                          const values = m.values || m.pattern || ''
+                          const label = m.label ? ` (${m.label})` : ''
+                          const color = m.color ? ` [${m.color}]` : ''
+                          return `${values} -> ${m.state}${label}${color}`
+                        })
+                        .join('\n')}
+                      onChange={(e) => {
+                        const lines = e.target.value.split('\n').filter(Boolean)
+                        const newValueMap = lines.map(line => {
+                          const match = line.match(/^(.+?)\s*->\s*(\w+)(?:\s*\[([#\w]+)\])?(?:\s*\((.+?)\))?$/)
+                          if (match) {
+                            const [, valuesOrPattern, state, color, label] = match
+                            const trimmed = valuesOrPattern.trim()
+                            const isPattern = /[.*+?^${}()|[\]\\]/.test(trimmed) && !trimmed.includes(',')
+                            return {
+                              state,
+                              ...(isPattern ? { pattern: trimmed } : { values: trimmed }),
+                              ...(color && { color }),
+                              ...(label && { label }),
+                            }
+                          }
+                          return { state: 'unknown', values: line }
+                        })
+                        updateConfig('valueMap')(newValueMap)
+                      }}
+                      placeholder="online, active -> on\noffline -> off\nerror, failed -> error [ef4444]\n/warn|warning/i -> warning"
+                      className="w-full h-32 px-3 py-2 rounded-md border border-input bg-background text-sm font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Default State</label>
+                    <select
+                      value={config.defaultState || 'unknown'}
+                      onChange={(e) => updateConfig('defaultState')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="on">On</option>
+                      <option value="off">Off</option>
+                      <option value="error">Error</option>
+                      <option value="warning">Warning</option>
+                      <option value="unknown">Unknown</option>
+                    </select>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
 
       // ========== Charts ==========
       case 'line-chart':
@@ -1310,73 +1455,12 @@ export function VisualDashboard() {
         })
 
       case 'pie-chart':
-      case 'donut-chart':
         return createChartConfig({
           dataSource: config.dataSource,
           onDataSourceChange: updateDataSource,
           showLabels: config.showLabels,
           onShowLabelsChange: updateConfig('showLabels'),
         })
-
-      case 'gauge-chart':
-        return {
-          styleSections: [
-            {
-              type: 'custom' as const,
-              render: () => (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Value</label>
-                      <input
-                        type="number"
-                        value={config.value ?? 0}
-                        onChange={(e) => updateConfig('value')(parseFloat(e.target.value) || 0)}
-                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Min</label>
-                      <input
-                        type="number"
-                        value={config.min ?? 0}
-                        onChange={(e) => updateConfig('min')(parseFloat(e.target.value) || 0)}
-                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Max</label>
-                      <input
-                        type="number"
-                        value={config.max ?? 100}
-                        onChange={(e) => updateConfig('max')(parseFloat(e.target.value) || 100)}
-                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">Unit</label>
-                      <input
-                        type="text"
-                        value={config.unit || ''}
-                        onChange={(e) => updateConfig('unit')(e.target.value)}
-                        className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ),
-            },
-          ],
-          dataSourceSections: [
-            {
-              type: 'data-source' as const,
-              props: {
-                dataSource: config.dataSource,
-                onChange: updateDataSource,
-              },
-            },
-          ],
-        }
 
       // ========== Controls ==========
       case 'toggle-switch':
@@ -1388,107 +1472,6 @@ export function VisualDashboard() {
           size: config.size,
           onSizeChange: updateConfig('size'),
         })
-
-      case 'button-group':
-        return {
-          styleSections: [
-            {
-              type: 'custom' as const,
-              render: () => (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Orientation</label>
-                    <select
-                      value={config.orientation || 'horizontal'}
-                      onChange={(e) => updateConfig('orientation')(e.target.value)}
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                    >
-                      <option value="horizontal">Horizontal</option>
-                      <option value="vertical">Vertical</option>
-                    </select>
-                  </div>
-                </div>
-              ),
-            },
-          ],
-          dataSourceSections: [
-            {
-              type: 'data-source' as const,
-              props: {
-                dataSource: config.dataSource,
-                onChange: updateDataSource,
-                allowedTypes: ['command'],
-              },
-            },
-          ],
-        }
-
-      case 'dropdown':
-        return {
-          styleSections: [
-            {
-              type: 'custom' as const,
-              render: () => (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Placeholder</label>
-                    <input
-                      type="text"
-                      value={config.placeholder || ''}
-                      onChange={(e) => updateConfig('placeholder')(e.target.value)}
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                    />
-                  </div>
-                </div>
-              ),
-            },
-          ],
-          dataSourceSections: [
-            {
-              type: 'data-source' as const,
-              props: {
-                dataSource: config.dataSource,
-                onChange: updateDataSource,
-              },
-            },
-          ],
-        }
-
-      case 'input-field':
-        return {
-          styleSections: [
-            {
-              type: 'custom' as const,
-              render: () => (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Input Type</label>
-                    <select
-                      value={config.type || 'text'}
-                      onChange={(e) => updateConfig('type')(e.target.value)}
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                    >
-                      <option value="text">Text</option>
-                      <option value="email">Email</option>
-                      <option value="password">Password</option>
-                      <option value="tel">Phone</option>
-                      <option value="url">URL</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Placeholder</label>
-                    <input
-                      type="text"
-                      value={config.placeholder || ''}
-                      onChange={(e) => updateConfig('placeholder')(e.target.value)}
-                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                    />
-                  </div>
-                </div>
-              ),
-            },
-          ],
-        }
 
       // ========== Tables & Lists ==========
       case 'data-table':
@@ -1549,6 +1532,253 @@ export function VisualDashboard() {
                       className="rounded"
                     />
                     <label htmlFor="showTimestamp" className="text-sm">Show Timestamp</label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
+
+      // ========== Display & Content ==========
+      case 'image-display':
+        return {
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+          ],
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Image Source</label>
+                    <input
+                      type="text"
+                      value={config.src || ''}
+                      onChange={(e) => updateConfig('src')(e.target.value)}
+                      placeholder="https://example.com/image.jpg or data:image/png;base64,..."
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Supports URLs or Base64 (data:image/png;base64,...)
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Fit Mode</label>
+                    <select
+                      value={config.fit || 'contain'}
+                      onChange={(e) => updateConfig('fit')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    >
+                      <option value="contain">Contain</option>
+                      <option value="cover">Cover</option>
+                      <option value="fill">Fill</option>
+                      <option value="none">None</option>
+                      <option value="scale-down">Scale Down</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.rounded ?? true}
+                        onChange={(e) => updateConfig('rounded')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-xs">Rounded</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.zoomable ?? true}
+                        onChange={(e) => updateConfig('zoomable')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-xs">Zoomable</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.showShadow ?? false}
+                        onChange={(e) => updateConfig('showShadow')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-xs">Shadow</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
+
+      case 'image-history':
+        return {
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+          ],
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Fit Mode</label>
+                    <select
+                      value={config.fit || 'contain'}
+                      onChange={(e) => updateConfig('fit')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                    >
+                      <option value="contain">Contain</option>
+                      <option value="cover">Cover</option>
+                      <option value="fill">Fill</option>
+                      <option value="none">None</option>
+                      <option value="scale-down">Scale Down</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Max Images</label>
+                      <input
+                        type="number"
+                        value={config.limit ?? 50}
+                        onChange={(e) => updateConfig('limit')(Number(e.target.value))}
+                        min={1}
+                        max={200}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Time Range (hours)</label>
+                      <input
+                        type="number"
+                        value={config.timeRange ?? 1}
+                        onChange={(e) => updateConfig('timeRange')(Number(e.target.value))}
+                        min={1}
+                        max={168}
+                        step={1}
+                        className="w-full h-10 px-3 rounded-md border border-input bg-background text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.rounded ?? true}
+                        onChange={(e) => updateConfig('rounded')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-xs">Rounded</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
+
+      case 'web-display':
+        return {
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+          ],
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Website URL</label>
+                    <input
+                      type="text"
+                      value={config.src || ''}
+                      onChange={(e) => updateConfig('src')(e.target.value)}
+                      placeholder="https://example.com"
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    />
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.sandbox ?? true}
+                        onChange={(e) => updateConfig('sandbox')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Sandboxed</span>
+                    </label>
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={config.showHeader ?? true}
+                        onChange={(e) => updateConfig('showHeader')(e.target.checked)}
+                        className="rounded"
+                      />
+                      <span className="text-sm">Show Header</span>
+                    </label>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
+
+      case 'markdown-display':
+        return {
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+              },
+            },
+          ],
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Markdown Content</label>
+                    <textarea
+                      value={config.content || ''}
+                      onChange={(e) => updateConfig('content')(e.target.value)}
+                      placeholder="# Title\n\n**Bold** and *italic* text"
+                      rows={6}
+                      className="w-full px-3 py-2 rounded-md border border-input bg-background text-sm"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Variant</label>
+                    <select
+                      value={config.variant || 'default'}
+                      onChange={(e) => updateConfig('variant')(e.target.value)}
+                      className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                    >
+                      <option value="default">Default</option>
+                      <option value="compact">Compact</option>
+                      <option value="minimal">Minimal</option>
+                    </select>
                   </div>
                 </div>
               ),

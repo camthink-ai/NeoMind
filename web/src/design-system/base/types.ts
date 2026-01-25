@@ -5,7 +5,7 @@
  */
 
 import type { DataSource } from '@/types/dashboard'
-import type { ComponentSize } from '../tokens/size'
+import type { DashboardComponentSize } from '../tokens/size'
 
 // ============================================================================
 // Base Component Props
@@ -20,7 +20,7 @@ export interface BaseComponentProps {
   description?: string
 
   // Size
-  size?: ComponentSize
+  size?: DashboardComponentSize
 
   // Data binding
   dataSource?: DataSource

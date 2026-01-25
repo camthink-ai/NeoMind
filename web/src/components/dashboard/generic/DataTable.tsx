@@ -1,12 +1,12 @@
 /**
  * Data Table Component
  *
+ * Unified with dashboard design system.
  * Sortable, filterable data table with data binding support.
  * Displays tabular data with pagination.
  */
 
 import { useState } from 'react'
-import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -28,6 +28,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { useDataSource } from '@/hooks/useDataSource'
+import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
+import { indicatorFontWeight } from '@/design-system/tokens/indicator'
 import type { DataSource } from '@/types/dashboard'
 
 export interface Column {
@@ -60,6 +62,7 @@ export interface DataTableProps {
   compact?: boolean
   emptyMessage?: string
   showCard?: boolean
+  size?: 'sm' | 'md' | 'lg'
   className?: string
 }
 
@@ -99,8 +102,10 @@ export function DataTable({
   compact = false,
   emptyMessage = 'No data available',
   showCard = false,
+  size = 'md',
   className,
 }: DataTableProps) {
+  const config = dashboardComponentSize[size]
   const { data, loading } = useDataSource<Row[]>(dataSource, { fallback: propData })
   const tableData = data ?? propData
 
@@ -195,7 +200,7 @@ export function DataTable({
       {/* Header */}
       {(title || filterable) && (
         <div className="flex items-center justify-between">
-          {title && <h3 className="font-semibold">{title}</h3>}
+          {title && <h3 className={cn(indicatorFontWeight.title, config.titleText)}>{title}</h3>}
           {filterable && (
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -338,11 +343,11 @@ export function DataTable({
 
   if (showCard) {
     return (
-      <Card className={cn('overflow-hidden flex flex-col h-full', className)}>
-        <CardContent className="flex-1 p-4 overflow-auto">
+      <div className={cn(dashboardCardBase, 'overflow-hidden flex flex-col h-full', config.padding, className)}>
+        <div className="flex-1 min-h-0 overflow-auto">
           {content}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     )
   }
 
