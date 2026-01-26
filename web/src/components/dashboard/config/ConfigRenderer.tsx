@@ -5,6 +5,7 @@
  * Uses Field components and default input/label styles.
  */
 
+import { memo } from 'react'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -41,13 +42,14 @@ export function ConfigRenderer({ sections }: ConfigRendererProps) {
   return (
     <div className="space-y-3">
       {sections.map((section, index) => (
-        <ConfigSectionItem key={index} section={section} />
+        <ConfigSectionItem key={`${section.type}-${index}`} section={section} />
       ))}
     </div>
   )
 }
 
-function ConfigSectionItem({ section }: { section: ConfigSectionType }) {
+// Memoize ConfigSectionItem to prevent unnecessary re-renders that cause cursor jumping
+const ConfigSectionItem = memo(function ConfigSectionItem({ section }: { section: ConfigSectionType }) {
   switch (section.type) {
     case 'data-source':
       return null // Handled separately by UnifiedDataSourceConfig
@@ -357,4 +359,4 @@ function ConfigSectionItem({ section }: { section: ConfigSectionType }) {
     default:
       return null
   }
-}
+})
