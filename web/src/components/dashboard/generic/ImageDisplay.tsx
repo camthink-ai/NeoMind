@@ -616,14 +616,6 @@ export function ImageDisplay({
   return (
     <>
       <div className={cn(dashboardCardBase, 'relative overflow-hidden flex flex-col', className)}>
-        {/* Title header */}
-        {title && showTitle && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b shrink-0">
-            <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="font-medium text-sm truncate flex-1">{title}</span>
-          </div>
-        )}
-
         {/* Image container */}
         <div className="relative w-full h-full flex items-center justify-center bg-muted/10 flex-1 min-h-0">
           <img
@@ -646,6 +638,14 @@ export function ImageDisplay({
             onLoad={handleImageLoad}
             onError={handleImageError}
           />
+
+          {/* Floating title overlay - same style as ImageHistory */}
+          {title && showTitle && (
+            <div className="absolute top-2 left-2 flex items-center gap-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
+              <ImageIcon className="h-3.5 w-3.5 text-white/90 shrink-0" />
+              <span className="font-medium text-xs truncate max-w-[150px] text-white drop-shadow-md">{title}</span>
+            </div>
+          )}
 
           {/* Action buttons overlay */}
           {(zoomable || downloadable || openInNewTab) && (

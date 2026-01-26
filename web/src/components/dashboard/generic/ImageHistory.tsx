@@ -465,14 +465,6 @@ export function ImageHistory({
       'relative flex flex-col overflow-hidden',
       className
     )}>
-      {/* Title header */}
-      {title && showTitle && (
-        <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b shrink-0">
-          <Images className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="font-medium text-sm truncate flex-1">{title}</span>
-        </div>
-      )}
-
       <div className={cn(
         'w-full flex-1 relative',
         size === 'sm' ? 'h-[120px]' : size === 'md' ? 'h-[180px]' : 'h-[240px]'
@@ -494,12 +486,22 @@ export function ImageHistory({
         onError={handleImageError}
       />
 
-      {/* Top-left index overlay */}
-      {canNavigate && (
-        <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded z-10">
-          {currentIndex + 1} / {images.length}
-        </div>
-      )}
+      {/* Top-left title + index overlay */}
+      <div className={cn(
+        "absolute left-2 flex items-center gap-2 bg-black/60 text-white text-xs px-2 py-1 rounded z-10",
+        title && showTitle || canNavigate ? "top-2" : "hidden"
+      )}>
+        {title && showTitle && (
+          <>
+            <Images className="h-3.5 w-3.5 text-white/90 shrink-0" />
+            <span className="font-medium text-xs truncate max-w-[120px] text-white drop-shadow-md">{title}</span>
+            {canNavigate && <span className="w-px h-3 bg-white/30" />}
+          </>
+        )}
+        {canNavigate && (
+          <span className="tabular-nums">{currentIndex + 1} / {images.length}</span>
+        )}
+      </div>
 
       {/* Top-right timestamp overlay */}
       {currentImage?.timestamp && (
@@ -508,9 +510,9 @@ export function ImageHistory({
         </div>
       )}
 
-      {/* Label overlay */}
+      {/* Label overlay - positioned below title/index */}
       {currentImage?.label && (
-        <div className="absolute top-10 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded max-w-[150px] truncate z-10">
+        <div className="absolute top-9 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded max-w-[150px] truncate z-10">
           {currentImage.label}
         </div>
       )}
