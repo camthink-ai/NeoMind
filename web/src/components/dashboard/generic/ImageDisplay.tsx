@@ -12,13 +12,14 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useDataSource } from '@/hooks/useDataSource'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
-import { Maximize2, Minimize2, Download, ImageOff, AlertTriangle, RefreshCw } from 'lucide-react'
+import { Maximize2, Minimize2, Download, ImageOff, AlertTriangle, RefreshCw, Image as ImageIcon } from 'lucide-react'
 import type { DataSource } from '@/types/dashboard'
 
 export interface ImageDisplayProps {
   dataSource?: DataSource
   src?: string
   alt?: string
+  title?: string
   caption?: string
   size?: 'sm' | 'md' | 'lg'
 
@@ -27,6 +28,7 @@ export interface ImageDisplayProps {
   objectPosition?: string
   rounded?: boolean
   showShadow?: boolean
+  showTitle?: boolean
 
   // Interactive features
   zoomable?: boolean
@@ -345,12 +347,14 @@ export function ImageDisplay({
   dataSource,
   src: propSrc,
   alt = 'Image',
+  title,
   caption,
   size = 'md',
   fit = 'contain',
   objectPosition = 'center',
   rounded = true,
   showShadow = false,
+  showTitle = true,
   zoomable = true,
   downloadable = false,
   openInNewTab = false,
@@ -504,16 +508,24 @@ export function ImageDisplay({
 
   const sizeConfig = dashboardComponentSize[size]
 
+  // Determine if we should show loading state
+  // Only show loading when there's actually a dataSource to load from
+  const hasDataSource = dataSource !== undefined
+  const shouldShowLoading = loading && hasDataSource && imageLoadState === 'loading'
+
   // Update image load state when src changes
   useEffect(() => {
-    if (loading) {
+    if (!hasDataSource) {
+      // No data source configured - show no-source state
+      setImageLoadState('no-source')
+    } else if (loading) {
       setImageLoadState('loading')
     } else if (!hasValidSource) {
       setImageLoadState('no-source')
     } else {
       setImageLoadState('loading')
     }
-  }, [displaySrc, loading, hasValidSource])
+  }, [displaySrc, loading, hasValidSource, hasDataSource])
 
   const handleImageLoad = useCallback(() => {
     setImageLoadState('loaded')
@@ -524,7 +536,8 @@ export function ImageDisplay({
   }, [])
 
   // Loading state from data source
-  if (loading && imageLoadState === 'loading') {
+  // Only show loading when there's actually a dataSource to load from
+  if (shouldShowLoading) {
     return (
       <div className={cn(dashboardCardBase, 'flex items-center justify-center', sizeConfig.padding, className)}>
         <Skeleton className={cn('w-full h-full', rounded && 'rounded-lg')} />
@@ -602,9 +615,17 @@ export function ImageDisplay({
 
   return (
     <>
-      <div className={cn(dashboardCardBase, 'relative overflow-hidden', className)}>
+      <div className={cn(dashboardCardBase, 'relative overflow-hidden flex flex-col', className)}>
+        {/* Title header */}
+        {title && showTitle && (
+          <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b shrink-0">
+            <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+            <span className="font-medium text-sm truncate flex-1">{title}</span>
+          </div>
+        )}
+
         {/* Image container */}
-        <div className="relative w-full h-full flex items-center justify-center bg-muted/10">
+        <div className="relative w-full h-full flex items-center justify-center bg-muted/10 flex-1 min-h-0">
           <img
             ref={imageRef}
             key={displaySrc}

@@ -242,6 +242,7 @@ function isTitleInDisplayComponent(componentType?: string): boolean {
     'image-history',
     'web-display',
     'markdown-display',
+    'map-display',
   ]
   return titleInConfigTypes.includes(componentType)
 }
@@ -695,6 +696,27 @@ function renderDashboardComponent(component: DashboardComponent) {
         />
       )
 
+    case 'map-display':
+      return (
+        <MapDisplay
+          {...spreadableProps}
+          dataSource={dataSource}
+          markers={config.markers}
+          layers={config.layers}
+          center={config.center}
+          zoom={config.zoom}
+          minZoom={config.minZoom}
+          maxZoom={config.maxZoom}
+          showControls={config.showControls ?? true}
+          showLayers={config.showLayers ?? true}
+          showFullscreen={config.showFullscreen ?? true}
+          interactive={config.interactive ?? true}
+          tileLayer={config.tileLayer || 'osm'}
+          markerColor={config.markerColor}
+          deviceBinding={config.deviceBinding}
+        />
+      )
+
     // Business Components (not implemented)
     case 'agent-status-card':
     case 'decision-list':
@@ -1113,6 +1135,24 @@ export function VisualDashboard() {
           fit: 'contain',
           rounded: true,
           showFullscreen: true,
+        }
+        break
+      case 'map-display':
+        defaultConfig = {
+          center: { lat: 39.9042, lng: 116.4074 }, // Beijing
+          zoom: 10,
+          minZoom: 2,
+          maxZoom: 18,
+          showControls: true,
+          showLayers: true,
+          showFullscreen: true,
+          interactive: true,
+          tileLayer: 'osm',
+          markers: [
+            { id: '1', latitude: 39.9042, longitude: 116.4074, label: 'Beijing', status: 'online' },
+            { id: '2', latitude: 31.2304, longitude: 121.4737, label: 'Shanghai', status: 'online' },
+            { id: '3', latitude: 23.1291, longitude: 113.2644, label: 'Guangzhou', status: 'warning' },
+          ],
         }
         break
       // Business Components (not implemented)
@@ -2914,6 +2954,229 @@ export function VisualDashboard() {
           ],
         }
 
+      case 'map-display':
+        return {
+          dataSourceSections: [
+            {
+              type: 'data-source' as const,
+              props: {
+                dataSource: config.dataSource,
+                onChange: updateDataSource,
+                allowedTypes: ['static', 'device', 'api'],
+              },
+            },
+          ],
+          styleSections: [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-3">
+                  <Field>
+                    <Label htmlFor="map-display-title">显示标题</Label>
+                    <Input
+                      id="map-display-title"
+                      value={config.title as string || ''}
+                      onChange={(e) => updateConfig('title')(e.target.value)}
+                      placeholder="输入组件标题..."
+                      className="h-10"
+                    />
+                  </Field>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field>
+                      <Label>纬度</Label>
+                      <Input
+                        type="number"
+                        step="0.0001"
+                        value={(config.center as { lat: number } | undefined)?.lat ?? 39.9042}
+                        onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lat: parseFloat(e.target.value) })}
+                        placeholder="39.9042"
+                        className="h-9"
+                      />
+                    </Field>
+                    <Field>
+                      <Label>经度</Label>
+                      <Input
+                        type="number"
+                        step="0.0001"
+                        value={(config.center as { lng: number } | undefined)?.lng ?? 116.4074}
+                        onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lng: parseFloat(e.target.value) })}
+                        placeholder="116.4074"
+                        className="h-9"
+                      />
+                    </Field>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <Field>
+                      <Label>缩放级别</Label>
+                      <Input
+                        type="number"
+                        min={config.minZoom ?? 2}
+                        max={config.maxZoom ?? 18}
+                        value={config.zoom ?? 10}
+                        onChange={(e) => updateConfig('zoom')(parseFloat(e.target.value))}
+                        className="h-9"
+                      />
+                    </Field>
+                    <Field>
+                      <Label>最小缩放</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={config.minZoom ?? 2}
+                        onChange={(e) => updateConfig('minZoom')(parseFloat(e.target.value))}
+                        className="h-9"
+                      />
+                    </Field>
+                    <Field>
+                      <Label>最大缩放</Label>
+                      <Input
+                        type="number"
+                        min={10}
+                        max={20}
+                        value={config.maxZoom ?? 18}
+                        onChange={(e) => updateConfig('maxZoom')(parseFloat(e.target.value))}
+                        className="h-9"
+                      />
+                    </Field>
+                  </div>
+
+                  <SelectField
+                    label="地图图层"
+                    value={config.tileLayer || 'osm'}
+                    onChange={updateConfig('tileLayer')}
+                    options={[
+                      { value: 'osm', label: 'OpenStreetMap' },
+                      { value: 'satellite', label: '卫星图' },
+                      { value: 'dark', label: '暗色模式' },
+                      { value: 'terrain', label: '地形图' },
+                    ]}
+                  />
+
+                  <Field>
+                    <Label>标记点颜色</Label>
+                    <Input
+                      type="color"
+                      value={config.markerColor || '#3b82f6'}
+                      onChange={(e) => updateConfig('markerColor')(e.target.value)}
+                      className="h-9 w-full"
+                    />
+                  </Field>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field>
+                      <Label>显示控制栏</Label>
+                      <select
+                        value={String(config.showControls ?? true)}
+                        onChange={(e) => updateConfig('showControls')(e.target.value === 'true')}
+                        className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm"
+                      >
+                        <option value="true">显示</option>
+                        <option value="false">隐藏</option>
+                      </select>
+                    </Field>
+                    <Field>
+                      <Label>显示图层</Label>
+                      <select
+                        value={String(config.showLayers ?? true)}
+                        onChange={(e) => updateConfig('showLayers')(e.target.value === 'true')}
+                        className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm"
+                      >
+                        <option value="true">显示</option>
+                        <option value="false">隐藏</option>
+                      </select>
+                    </Field>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field>
+                      <Label>可交互</Label>
+                      <select
+                        value={String(config.interactive ?? true)}
+                        onChange={(e) => updateConfig('interactive')(e.target.value === 'true')}
+                        className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm"
+                      >
+                        <option value="true">是</option>
+                        <option value="false">否</option>
+                      </select>
+                    </Field>
+                    <Field>
+                      <Label>全屏按钮</Label>
+                      <select
+                        value={String(config.showFullscreen ?? true)}
+                        onChange={(e) => updateConfig('showFullscreen')(e.target.value === 'true')}
+                        className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm"
+                      >
+                        <option value="true">显示</option>
+                        <option value="false">隐藏</option>
+                      </select>
+                    </Field>
+                  </div>
+
+                  {/* Device Binding Options */}
+                  <div className="space-y-3 pt-3 border-t">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">设备数据绑定</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field>
+                        <Label>纬度字段</Label>
+                        <Input
+                          placeholder="lat, latitude"
+                          value={config.deviceBinding?.latField || ''}
+                          onChange={(e) => updateConfig('deviceBinding')({ ...(config.deviceBinding as Record<string, unknown> || {}), latField: e.target.value })}
+                          className="h-9"
+                        />
+                      </Field>
+                      <Field>
+                        <Label>经度字段</Label>
+                        <Input
+                          placeholder="lng, lon, longitude"
+                          value={config.deviceBinding?.lngField || ''}
+                          onChange={(e) => updateConfig('deviceBinding')({ ...(config.deviceBinding as Record<string, unknown> || {}), lngField: e.target.value })}
+                          className="h-9"
+                        />
+                      </Field>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field>
+                        <Label>标签字段</Label>
+                        <Input
+                          placeholder="name, id"
+                          value={config.deviceBinding?.labelField || ''}
+                          onChange={(e) => updateConfig('deviceBinding')({ ...(config.deviceBinding as Record<string, unknown> || {}), labelField: e.target.value })}
+                          className="h-9"
+                        />
+                      </Field>
+                      <Field>
+                        <Label>数值字段</Label>
+                        <Input
+                          placeholder="value, temperature"
+                          value={config.deviceBinding?.valueField || ''}
+                          onChange={(e) => updateConfig('deviceBinding')({ ...(config.deviceBinding as Record<string, unknown> || {}), valueField: e.target.value })}
+                          className="h-9"
+                        />
+                      </Field>
+                    </div>
+                    <Field>
+                      <Label>状态字段</Label>
+                      <Input
+                        placeholder="status, online"
+                        value={config.deviceBinding?.statusField || ''}
+                        onChange={(e) => updateConfig('deviceBinding')({ ...(config.deviceBinding as Record<string, unknown> || {}), statusField: e.target.value })}
+                        className="h-9"
+                      />
+                    </Field>
+                    <p className="text-xs text-muted-foreground">
+                      指定设备数据中包含位置信息的字段名。留空则使用默认字段名（lat/lng/latitude/longitude等）。
+                    </p>
+                  </div>
+                </div>
+              ),
+            },
+          ],
+        }
+
       // ========== Business Components ==========
       case 'agent-status-card':
       case 'decision-list':
@@ -2967,7 +3230,7 @@ export function VisualDashboard() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="flex items-center justify-between px-4 py-3 border-b border-border bg-background">
+        <header className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-background">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"

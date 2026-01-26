@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -21,6 +22,7 @@ import {
   Map as MapIcon,
   Maximize2,
   Minimize2,
+  X,
 } from 'lucide-react'
 import type { DataSource } from '@/types/dashboard'
 import { EmptyState } from '../shared'
@@ -72,14 +74,23 @@ export interface MapDisplayProps {
   tileLayer?: string
   markerColor?: string
   className?: string
+
+  // Device binding options
+  deviceBinding?: {
+    latField?: string      // Field name for latitude (default: 'lat', 'latitude')
+    lngField?: string      // Field name for longitude (default: 'lng', 'lon', 'longitude')
+    labelField?: string    // Field name for marker label (default: 'name', 'id')
+    valueField?: string    // Field name to show as metric value
+    statusField?: string   // Field name for online status (default: 'status', 'online')
+  }
 }
 
 // Default tile layers
-const TILE_LAYERS = {
-  osm: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+const TILE_LAYERS: Record<string, string> = {
+  osm: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   satellite: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  terrain: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+  dark: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+  terrain: 'https://tile.opentopomap.org/{z}/{x}/{y}.png',
 }
 
 // ============================================================================
@@ -149,7 +160,9 @@ interface SimpleSvgMapProps {
   onMarkerClick: (marker: MapMarker) => void
   onZoomIn: () => void
   onZoomOut: () => void
+  onCenterChange?: (newCenter: { lat: number; lng: number }) => void
   interactive: boolean
+  tileLayer: string
 }
 
 function SimpleSvgMap({
@@ -161,118 +174,229 @@ function SimpleSvgMap({
   onMarkerClick,
   onZoomIn,
   onZoomOut,
+  onCenterChange,
   interactive,
+  tileLayer,
 }: SimpleSvgMapProps) {
-  const [dragState, setDragState] = useState<{ isDragging: boolean; startX: number; startY: number; offsetX: number; offsetY: number }>({
-    isDragging: false,
-    startX: 0,
-    startY: 0,
-    offsetX: 0,
-    offsetY: 0,
-  })
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartRef = useRef({ x: 0, y: 0 })
+  const mapRef = useRef<HTMLDivElement>(null)
+  const [actualSize, setActualSize] = useState({ width, height })
 
-  // Convert lat/lng to map coordinates
-  const latLngToMap = (lat: number, lng: number) => {
-    // Simple equirectangular projection
-    const scale = Math.pow(2, zoom) * 100
-    const x = ((lng - center.lng) * scale) + width / 2 + dragState.offsetX
-    const y = ((center.lat - lat) * scale) + height / 2 + dragState.offsetY
+  // Track actual container size
+  useEffect(() => {
+    const updateSize = () => {
+      if (mapRef.current) {
+        const rect = mapRef.current.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) {
+          setActualSize({ width: rect.width, height: rect.height })
+        }
+      }
+    }
+
+    // Initial size
+    updateSize()
+
+    // Watch for size changes
+    const observer = new ResizeObserver(updateSize)
+    if (mapRef.current) {
+      observer.observe(mapRef.current)
+    }
+
+    return () => observer.disconnect()
+  }, [])
+
+  const TILE_SIZE = 256
+
+  // Get the tile coordinates for a lat/lng
+  const getTileCoords = (lat: number, lng: number, z: number) => {
+    const n = Math.pow(2, z)
+    const x = Math.floor((lng + 180) / 360 * n)
+    const latRad = lat * Math.PI / 180
+    const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n)
+    return { x: Math.max(0, Math.min(n - 1, x)), y: Math.max(0, Math.min(n - 1, y)) }
+  }
+
+  // Get the pixel offset of a lat/lng within its tile (0-255)
+  const getPixelOffsetInTile = (lat: number, lng: number, z: number) => {
+    const n = Math.pow(2, z)
+    const x = ((lng + 180) / 360 * n * TILE_SIZE) % TILE_SIZE
+    const latRad = lat * Math.PI / 180
+    const y = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n * TILE_SIZE) % TILE_SIZE
+    return { x, y }
+  }
+
+  // Get the tile URL for a specific tile coordinate
+  const getTileUrl = (x: number, y: number, z: number) => {
+    const templateUrl = TILE_LAYERS[tileLayer] || TILE_LAYERS.osm
+    return templateUrl
+      .replace('{z}', String(z))
+      .replace('{x}', String(x))
+      .replace('{y}', String(y))
+  }
+
+  // Calculate which tiles are visible and their positions
+  const getVisibleTiles = () => {
+    const n = Math.pow(2, zoom)
+    const centerTile = getTileCoords(center.lat, center.lng, zoom)
+    const centerOffset = getPixelOffsetInTile(center.lat, center.lng, zoom)
+
+    // Use actual container size
+    const containerWidth = actualSize.width || width
+    const containerHeight = actualSize.height || height
+
+    // How many tiles do we need in each direction?
+    const tilesX = Math.ceil(containerWidth / TILE_SIZE) + 2
+    const tilesY = Math.ceil(containerHeight / TILE_SIZE) + 2
+
+    const tiles: { x: number; y: number; px: number; py: number; key: string; url: string }[] = []
+
+    // Calculate starting tile (so center is at center of viewport)
+    const startTileX = centerTile.x - Math.floor(tilesX / 2)
+    const startTileY = centerTile.y - Math.floor(tilesY / 2)
+
+    for (let dy = 0; dy < tilesY; dy++) {
+      for (let dx = 0; dx < tilesX; dx++) {
+        // Handle wraparound for X, clamp for Y
+        const tileX = ((startTileX + dx) % n + n) % n
+        const tileY = Math.max(0, Math.min(n - 1, startTileY + dy))
+
+        // Calculate pixel position relative to center of viewport
+        // The center point of the map should be at centerOffset within its tile
+        const baseX = (dx - Math.floor(tilesX / 2)) * TILE_SIZE
+        const baseY = (dy - Math.floor(tilesY / 2)) * TILE_SIZE
+
+        const px = containerWidth / 2 + baseX - centerOffset.x + dragOffset.x
+        const py = containerHeight / 2 + baseY - centerOffset.y + dragOffset.y
+
+        const url = getTileUrl(tileX, tileY, zoom)
+
+        tiles.push({ x: tileX, y: tileY, px, py, key: `${zoom}-${tileX}-${tileY}-${dx}-${dy}`, url })
+      }
+    }
+
+    return tiles
+  }
+
+  // Convert lat/lng to viewport pixel coordinates (for markers)
+  const latLngToViewport = (lat: number, lng: number) => {
+    const n = Math.pow(2, zoom)
+    const tile = getTileCoords(lat, lng, zoom)
+    const offset = getPixelOffsetInTile(lat, lng, zoom)
+    const centerTile = getTileCoords(center.lat, center.lng, zoom)
+    const centerOffset = getPixelOffsetInTile(center.lat, center.lng, zoom)
+
+    const containerWidth = actualSize.width || width
+    const containerHeight = actualSize.height || height
+
+    // Calculate tile distance from center
+    const tileDiffX = tile.x - centerTile.x
+    const tileDiffY = tile.y - centerTile.y
+
+    // Handle X wraparound
+    const adjustedTileDiffX = ((tileDiffX % n) + n) % n
+    const finalTileDiffX = adjustedTileDiffX > n / 2 ? adjustedTileDiffX - n : adjustedTileDiffX
+
+    // Calculate screen position
+    const x = containerWidth / 2 + finalTileDiffX * TILE_SIZE + offset.x - centerOffset.x + dragOffset.x
+    const y = containerHeight / 2 + tileDiffY * TILE_SIZE + offset.y - centerOffset.y + dragOffset.y
+
     return { x, y }
   }
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!interactive) return
-    setDragState(prev => ({
-      ...prev,
-      isDragging: true,
-      startX: e.clientX - prev.offsetX,
-      startY: e.clientY - prev.offsetY,
-    }))
+    setIsDragging(true)
+    dragStartRef.current = { x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y }
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!dragState.isDragging || !interactive) return
-    setDragState(prev => ({
-      ...prev,
-      offsetX: e.clientX - prev.startX,
-      offsetY: e.clientY - prev.startY,
-    }))
+    if (!isDragging || !interactive) return
+    setDragOffset({
+      x: e.clientX - dragStartRef.current.x,
+      y: e.clientY - dragStartRef.current.y,
+    })
   }
 
   const handleMouseUp = () => {
-    setDragState(prev => ({ ...prev, isDragging: false }))
+    setIsDragging(false)
+
+    // Update center position based on drag offset
+    if (onCenterChange && (dragOffset.x !== 0 || dragOffset.y !== 0)) {
+      const n = Math.pow(2, zoom)
+      const containerWidth = actualSize.width || width
+      const containerHeight = actualSize.height || height
+
+      // Convert pixel offset to lat/lng offset
+      // Each pixel at zoom level Z represents 360 / (2^Z * 256) degrees of longitude
+      const pixelsPerDegreeLng = (n * TILE_SIZE) / 360
+      const pixelsPerDegreeLat = (n * TILE_SIZE) / 170 // Approximate for mercator
+
+      const lngOffset = -dragOffset.x / pixelsPerDegreeLng
+      const latOffset = dragOffset.y / pixelsPerDegreeLat
+
+      onCenterChange({
+        lat: center.lat + latOffset,
+        lng: center.lng + lngOffset,
+      })
+
+      // Reset drag offset
+      setDragOffset({ x: 0, y: 0 })
+    }
   }
 
-  // Background grid pattern
-  const gridSize = 50
-  const gridWidth = width * 3
-  const gridHeight = height * 3
+  const visibleTiles = getVisibleTiles()
 
   return (
     <div
-      className="relative w-full h-full overflow-hidden bg-muted/10 cursor-move"
+      ref={mapRef}
+      className="relative w-full h-full overflow-hidden bg-muted/20"
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      style={{ cursor: interactive ? 'grab' : 'default' }}
     >
-      <svg
-        width={width}
-        height={height}
-        className="absolute inset-0"
-        style={{ pointerEvents: 'none' }}
-      >
-        <defs>
-          <pattern
-            id="grid"
-            width={gridSize}
-            height={gridSize}
-            patternUnits="userSpaceOnUse"
-          >
-            <path
-              d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`}
-              fill="none"
-              stroke="hsl(var(--border))"
-              strokeWidth="0.5"
-              opacity="0.3"
-            />
-          </pattern>
-        </defs>
-        <rect
-          width={gridWidth}
-          height={gridHeight}
-          x={-width + dragState.offsetX}
-          y={-height + dragState.offsetY}
-          fill="url(#grid)"
+      {/* Render map tiles */}
+      {visibleTiles.map((tile) => (
+        <img
+          key={tile.key}
+          src={tile.url}
+          alt={`Tile ${tile.x},${tile.y}`}
+          className="absolute"
+          style={{
+            left: tile.px,
+            top: tile.py,
+            width: TILE_SIZE,
+            height: TILE_SIZE,
+          }}
+          draggable={false}
+          loading="lazy"
         />
-      </svg>
+      ))}
 
       {/* Render markers as absolute positioned elements */}
-      <div className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-        {markers.map((marker) => {
-          const pos = latLngToMap(marker.latitude, marker.longitude)
-          const isInBounds = pos.x >= 0 && pos.x <= width && pos.y >= 0 && pos.y <= height
+      {markers.map((marker) => {
+        const pos = latLngToViewport(marker.latitude, marker.longitude)
 
-          if (!isInBounds) return null
-
-          return (
-            <div
-              key={marker.id}
-              className="absolute"
-              style={{
-                left: pos.x,
-                top: pos.y,
-                pointerEvents: interactive ? 'auto' : 'none',
-              }}
-            >
-              <MapMarkerDot
-                marker={marker}
-                onClick={() => onMarkerClick(marker)}
-              />
-            </div>
-          )
-        })}
-      </div>
+        return (
+          <div
+            key={marker.id}
+            className="absolute"
+            style={{
+              left: pos.x - 8,
+              top: pos.y - 8,
+              pointerEvents: interactive ? 'auto' : 'none',
+            }}
+          >
+            <MapMarkerDot
+              marker={marker}
+              onClick={() => onMarkerClick(marker)}
+            />
+          </div>
+        )
+      })}
 
       {/* Zoom controls */}
       {interactive && (
@@ -297,7 +421,7 @@ function SimpleSvgMap({
       )}
 
       {/* Center point indicator */}
-      <div className="absolute top-1/2 left-1/2 w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary/30 bg-primary/10" />
+      <div className="absolute top-1/2 left-1/2 w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-primary/30 bg-primary/10 pointer-events-none" />
     </div>
   )
 }
@@ -305,6 +429,35 @@ function SimpleSvgMap({
 // ============================================================================
 // Main Component
 // ============================================================================
+
+// Helper function to extract value from object with fallback field names
+function extractValue(obj: Record<string, unknown>, preferredField: string | undefined, fallbackFields: string[]): number | string | null {
+  if (preferredField && preferredField in obj) {
+    const val = obj[preferredField]
+    if (val !== null && val !== undefined) return val as number | string
+  }
+  for (const field of fallbackFields) {
+    if (field in obj) {
+      const val = obj[field]
+      if (val !== null && val !== undefined) return val as number | string
+    }
+  }
+  return null
+}
+
+// Helper function to determine status from value
+function determineStatus(value: unknown): 'online' | 'offline' | 'error' | 'warning' | undefined {
+  if (value === null || value === undefined) return undefined
+  if (typeof value === 'boolean') return value ? 'online' : 'offline'
+  if (typeof value === 'string') {
+    const lower = value.toLowerCase()
+    if (lower === 'online' || lower === 'true' || lower === '1' || lower === 'ok') return 'online'
+    if (lower === 'offline' || lower === 'false' || lower === '0') return 'offline'
+    if (lower === 'error' || lower === 'failed') return 'error'
+    if (lower === 'warning' || lower === 'warn') return 'warning'
+  }
+  return undefined
+}
 
 export function MapDisplay({
   dataSource,
@@ -322,9 +475,81 @@ export function MapDisplay({
   tileLayer = 'osm',
   markerColor,
   className,
+  deviceBinding,
 }: MapDisplayProps) {
+  // Transform function to convert device data to MapMarker format
+  const transformDeviceDataToMarkers = useCallback((rawData: unknown): MapMarker[] => {
+    // If already in correct format, return as-is
+    if (Array.isArray(rawData) && rawData.length > 0) {
+      const firstItem = rawData[0]
+      if (typeof firstItem === 'object' && firstItem !== null &&
+          'latitude' in firstItem && 'longitude' in firstItem) {
+        return rawData as MapMarker[]
+      }
+    }
+
+    // If it's a single device object, convert it
+    if (typeof rawData === 'object' && rawData !== null && !Array.isArray(rawData)) {
+      const data = rawData as Record<string, unknown>
+      const markers: MapMarker[] = []
+
+      // Try to find lat/lng from various possible field names
+      const lat = extractValue(data, deviceBinding?.latField, ['lat', 'latitude', 'y'])
+      const lng = extractValue(data, deviceBinding?.lngField, ['lng', 'lon', 'longitude', 'x'])
+
+      if (lat !== null && lng !== null) {
+        const label = extractValue(data, deviceBinding?.labelField, ['name', 'id', 'device_id', 'label'])
+        const value = extractValue(data, deviceBinding?.valueField, ['value', 'metric', 'temperature', 'humidity'])
+        const status = extractValue(data, deviceBinding?.statusField, ['status', 'online', 'state'])
+
+        markers.push({
+          id: String(label || data.id || data.device_id || 'marker'),
+          latitude: Number(lat),
+          longitude: Number(lng),
+          label: String(label || ''),
+          value: value !== null ? Number(value) : undefined,
+          status: determineStatus(status),
+          metricValue: value !== null ? String(value) : undefined,
+        })
+      }
+
+      return markers
+    }
+
+    // If it's an array of devices, convert each one
+    if (Array.isArray(rawData)) {
+      return rawData.flatMap((item) => {
+        if (typeof item === 'object' && item !== null) {
+          const data = item as Record<string, unknown>
+          const lat = extractValue(data, deviceBinding?.latField, ['lat', 'latitude', 'y'])
+          const lng = extractValue(data, deviceBinding?.lngField, ['lng', 'lon', 'longitude', 'x'])
+
+          if (lat !== null && lng !== null) {
+            const label = extractValue(data, deviceBinding?.labelField, ['name', 'id', 'device_id', 'label'])
+            const value = extractValue(data, deviceBinding?.valueField, ['value', 'metric', 'temperature', 'humidity'])
+            const status = extractValue(data, deviceBinding?.statusField, ['status', 'online', 'state'])
+
+            return [{
+              id: String(label || data.id || data.device_id || `marker-${Math.random()}`),
+              latitude: Number(lat),
+              longitude: Number(lng),
+              label: String(label || ''),
+              value: value !== null ? Number(value) : undefined,
+              status: determineStatus(status),
+              metricValue: value !== null ? String(value) : undefined,
+            } as MapMarker]
+          }
+        }
+        return []
+      })
+    }
+
+    return propMarkers
+  }, [deviceBinding, propMarkers])
+
   const { data, loading, error } = useDataSource<MapMarker[]>(dataSource, {
     fallback: propMarkers,
+    transform: transformDeviceDataToMarkers,
   })
 
   const markers = error ? propMarkers : (data ?? propMarkers)
@@ -342,8 +567,14 @@ export function MapDisplay({
   }, [zoom])
 
   useEffect(() => {
-    setCurrentCenter(center)
-  }, [center])
+    setCurrentCenter(prev => {
+      // Only update if values actually changed (prevent infinite loop)
+      if (prev.lat === center.lat && prev.lng === center.lng) {
+        return prev
+      }
+      return center
+    })
+  }, [center.lat, center.lng])
 
   // Track container size
   useEffect(() => {
@@ -424,64 +655,265 @@ export function MapDisplay({
     )
   }
 
-  // Empty state
-  if (markers.length === 0) {
-    return (
-      <EmptyState
-        size={size}
-        className={className}
-        icon={<MapIcon />}
-        message="No Markers"
-        subMessage="Add markers to display on the map"
-      />
-    )
-  }
-
   const mapContent = (
-    <div className={cn(dashboardCardBase, 'relative overflow-hidden flex flex-col', className)}>
-      {/* Header */}
-      {showControls && (
-        <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/20">
-          <div className="flex items-center gap-2">
-            <MapPin className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Map</span>
-            <span className="text-xs text-muted-foreground">
-              ({currentCenter.lat.toFixed(2)}, {currentCenter.lng.toFixed(2)})
-            </span>
+    <>
+      {/* Normal view */}
+      <div className={cn(dashboardCardBase, 'relative overflow-hidden flex flex-col', className)}>
+        {/* Header */}
+        {showControls && (
+          <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/20">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Map</span>
+              <span className="text-xs text-muted-foreground">
+                ({currentCenter.lat.toFixed(2)}, {currentCenter.lng.toFixed(2)})
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              {showLayers && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setShowLayerPanel(!showLayerPanel)}
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                </Button>
+              )}
+              {showFullscreen && !isFullscreen && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setIsFullscreen(true)}
+                >
+                  <Maximize2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            {showLayers && (
+        )}
+
+        {/* Map container */}
+        <div
+          ref={containerRef}
+          className="flex-1 relative min-h-[200px]"
+        >
+          <SimpleSvgMap
+            center={currentCenter}
+            zoom={currentZoom}
+            width={containerSize.width}
+            height={containerSize.height}
+            markers={visibleMarkers}
+            onMarkerClick={handleMarkerClick}
+            onZoomIn={handleZoomIn}
+            onZoomOut={handleZoomOut}
+            onCenterChange={setCurrentCenter}
+            interactive={interactive}
+            tileLayer={tileLayer}
+          />
+
+          {/* Layer panel */}
+          {showLayerPanel && showLayers && (
+            <div className="absolute top-2 left-2 bg-background/95 backdrop-blur rounded-lg shadow-lg border p-2 min-w-[150px]">
+              <div className="text-xs font-medium mb-2">Layers</div>
+              <div className="space-y-1">
+                {layers.map((layer) => (
+                  <label
+                    key={layer.id}
+                    className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/50 px-2 py-1 rounded"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={layer.visible}
+                      onChange={() => toggleLayer(layer.id)}
+                      className="h-3 w-3"
+                    />
+                    <span>{layer.name}</span>
+                    {layer.markers && (
+                      <span className="text-muted-foreground">({layer.markers.length})</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Selected marker info */}
+          {selectedMarker && (
+            <div className="absolute bottom-2 left-2 right-2 bg-background/95 backdrop-blur rounded-lg shadow-lg border p-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="font-medium text-sm">{selectedMarker.label || 'Marker'}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {selectedMarker.latitude.toFixed(4)}, {selectedMarker.longitude.toFixed(4)}
+                  </div>
+                  {selectedMarker.metricValue && (
+                    <div className="text-sm mt-1">{selectedMarker.metricValue}</div>
+                  )}
+                  {selectedMarker.deviceId && (
+                    <div className="text-xs text-muted-foreground mt-1">Device: {selectedMarker.deviceId}</div>
+                  )}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setSelectedMarker(null)}
+                >
+                  ×
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Fullscreen overlay (in-app fullscreen) */}
+      {isFullscreen && (
+        <div className="fixed inset-0 z-[9999] flex flex-col bg-background">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b bg-background/95">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Map</span>
+              <span className="text-xs text-muted-foreground">
+                ({currentCenter.lat.toFixed(2)}, {currentCenter.lng.toFixed(2)})
+              </span>
+            </div>
+            <div className="flex items-center gap-1">
+              {showLayers && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => setShowLayerPanel(!showLayerPanel)}
+                >
+                  <Layers className="h-3.5 w-3.5" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-7 w-7"
-                onClick={() => setShowLayerPanel(!showLayerPanel)}
+                onClick={() => setIsFullscreen(false)}
               >
-                <Layers className="h-3.5 w-3.5" />
+                <X className="h-4 w-4" />
               </Button>
+            </div>
+          </div>
+
+          {/* Map container */}
+          <div className="flex-1 relative">
+            <SimpleSvgMap
+              center={currentCenter}
+              zoom={currentZoom}
+              width={containerSize.width}
+              height={containerSize.height}
+              markers={visibleMarkers}
+              onMarkerClick={handleMarkerClick}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onCenterChange={setCurrentCenter}
+              interactive={interactive}
+              tileLayer={tileLayer}
+            />
+
+            {/* Layer panel */}
+            {showLayerPanel && showLayers && (
+              <div className="absolute top-2 left-2 bg-background/95 backdrop-blur rounded-lg shadow-lg border p-2 min-w-[150px]">
+                <div className="text-xs font-medium mb-2">Layers</div>
+                <div className="space-y-1">
+                  {layers.map((layer) => (
+                    <label
+                      key={layer.id}
+                      className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/50 px-2 py-1 rounded"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={layer.visible}
+                        onChange={() => toggleLayer(layer.id)}
+                        className="h-3 w-3"
+                      />
+                      <span>{layer.name}</span>
+                      {layer.markers && (
+                        <span className="text-muted-foreground">({layer.markers.length})</span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              </div>
             )}
-            {showFullscreen && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setIsFullscreen(!isFullscreen)}
-              >
-                {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-              </Button>
+
+            {/* Selected marker info */}
+            {selectedMarker && (
+              <div className="absolute bottom-4 left-4 right-4 bg-background/95 backdrop-blur rounded-lg shadow-lg border p-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="font-medium text-sm">{selectedMarker.label || 'Marker'}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {selectedMarker.latitude.toFixed(4)}, {selectedMarker.longitude.toFixed(4)}
+                    </div>
+                    {selectedMarker.metricValue && (
+                      <div className="text-sm mt-1">{selectedMarker.metricValue}</div>
+                    )}
+                    {selectedMarker.deviceId && (
+                      <div className="text-xs text-muted-foreground mt-1">Device: {selectedMarker.deviceId}</div>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={() => setSelectedMarker(null)}
+                  >
+                    ×
+                  </Button>
+                </div>
+              </div>
             )}
           </div>
         </div>
       )}
+    </>
+  )
+
+  // Fullscreen overlay (rendered via Portal to document.body)
+  const fullscreenOverlay = isFullscreen && createPortal(
+    <div className="fixed inset-0 z-[9999] flex flex-col bg-background">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b bg-background/95">
+        <div className="flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Map</span>
+          <span className="text-xs text-muted-foreground">
+            ({currentCenter.lat.toFixed(2)}, {currentCenter.lng.toFixed(2)})
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          {showLayers && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setShowLayerPanel(!showLayerPanel)}
+            >
+              <Layers className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => setIsFullscreen(false)}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
 
       {/* Map container */}
-      <div
-        ref={containerRef}
-        className={cn(
-          'flex-1 relative',
-          isFullscreen ? 'fixed inset-0 z-50' : 'min-h-[200px]'
-        )}
-      >
+      <div className="flex-1 relative">
         <SimpleSvgMap
           center={currentCenter}
           zoom={currentZoom}
@@ -491,7 +923,9 @@ export function MapDisplay({
           onMarkerClick={handleMarkerClick}
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
+          onCenterChange={setCurrentCenter}
           interactive={interactive}
+          tileLayer={tileLayer}
         />
 
         {/* Layer panel */}
@@ -522,7 +956,7 @@ export function MapDisplay({
 
         {/* Selected marker info */}
         {selectedMarker && (
-          <div className="absolute bottom-2 left-2 right-2 bg-background/95 backdrop-blur rounded-lg shadow-lg border p-3">
+          <div className="absolute bottom-4 left-4 right-4 bg-background/95 backdrop-blur rounded-lg shadow-lg border p-3">
             <div className="flex items-start justify-between">
               <div>
                 <div className="font-medium text-sm">{selectedMarker.label || 'Marker'}</div>
@@ -548,8 +982,14 @@ export function MapDisplay({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   )
 
-  return mapContent
+  return (
+    <>
+      {mapContent}
+      {fullscreenOverlay}
+    </>
+  )
 }

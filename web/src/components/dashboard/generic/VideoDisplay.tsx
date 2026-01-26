@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -23,6 +24,7 @@ import {
   Webcam,
   AlertCircle,
   Settings,
+  X,
 } from 'lucide-react'
 import type { DataSource } from '@/types/dashboard'
 import { EmptyState, ErrorState } from '../shared'
@@ -412,9 +414,93 @@ export function VideoDisplay({
   }
 
   const content = (
-    <div className={cn(dashboardCardBase, 'relative overflow-hidden', className)}>
+    <>
+      {/* Normal view */}
+      <div className={cn(dashboardCardBase, 'relative overflow-hidden flex flex-col min-h-[200px]', className)}>
+        {/* Video content */}
+        <div className="flex-1 relative bg-black w-full min-h-[200px]">
+          {detectedType === 'rtsp' || detectedType === 'rtmp' || detectedType === 'webrtc' ? (
+            <StreamPlaceholder src={rawSrc || ''} streamType={detectedType === 'webrtc' ? 'rtsp' : detectedType} onRetry={handleRetry} />
+          ) : detectedType === 'device-camera' ? (
+            <CameraAccess
+              key={retryKey}
+              onStreamReady={() => setIsLoading(false)}
+              onError={() => setHasError(true)}
+            />
+          ) : (
+            <VideoPlayer
+              key={retryKey}
+              src={rawSrc || ''}
+              type={detectedType}
+              autoplay={autoplay}
+              muted={muted}
+              controls={controls}
+              loop={loop}
+              fit={fit}
+              onLoadingChange={setIsLoading}
+              onError={setHasError}
+            />
+          )}
+        </div>
+
+        {/* Fullscreen toggle */}
+        {showFullscreen && !isFullscreen && (
+          <Button
+            variant="secondary"
+            size="icon"
+            className="absolute top-2 right-2 h-7 w-7 bg-background/80 backdrop-blur"
+            onClick={() => setIsFullscreen(true)}
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+          </Button>
+        )}
+
+        {/* Type indicator */}
+        {rawSrc && (
+          <div className="absolute top-2 left-2 px-2 py-0.5 bg-background/80 backdrop-blur rounded text-xs text-muted-foreground">
+            {detectedType === 'rtsp' && 'RTSP'}
+            {detectedType === 'rtmp' && 'RTMP'}
+            {detectedType === 'webrtc' && 'WebRTC'}
+            {detectedType === 'hls' && 'HLS'}
+            {detectedType === 'stream' && 'Stream'}
+            {detectedType === 'device-camera' && 'Camera'}
+            {detectedType === 'file' && 'Video'}
+          </div>
+        )}
+      </div>
+    </>
+  )
+
+  // Fullscreen overlay (rendered via Portal to document.body)
+  const fullscreenOverlay = isFullscreen && createPortal(
+    <div className="fixed inset-0 z-[9999] bg-black flex flex-col">
+      {/* Header with close button */}
+      <div className="flex items-center justify-between px-4 py-3 bg-background/95 border-b">
+        <div className="flex items-center gap-2">
+          <Webcam className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium">Video</span>
+          <span className="text-xs text-muted-foreground">
+            {detectedType === 'rtsp' && 'RTSP'}
+            {detectedType === 'rtmp' && 'RTMP'}
+            {detectedType === 'webrtc' && 'WebRTC'}
+            {detectedType === 'hls' && 'HLS'}
+            {detectedType === 'stream' && 'Stream'}
+            {detectedType === 'device-camera' && 'Camera'}
+            {detectedType === 'file' && 'Video'}
+          </span>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8"
+          onClick={() => setIsFullscreen(false)}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
       {/* Video content */}
-      <div className={cn('relative bg-black w-full h-full', rounded && 'rounded-lg', isFullscreen && 'fixed inset-0 z-50 rounded-none')}>
+      <div className="flex-1 relative">
         {detectedType === 'rtsp' || detectedType === 'rtmp' || detectedType === 'webrtc' ? (
           <StreamPlaceholder src={rawSrc || ''} streamType={detectedType === 'webrtc' ? 'rtsp' : detectedType} onRetry={handleRetry} />
         ) : detectedType === 'device-camera' ? (
@@ -438,44 +524,14 @@ export function VideoDisplay({
           />
         )}
       </div>
-
-      {/* Fullscreen toggle */}
-      {showFullscreen && !isFullscreen && (
-        <Button
-          variant="secondary"
-          size="icon"
-          className="absolute top-2 right-2 h-7 w-7 bg-background/80 backdrop-blur"
-          onClick={() => setIsFullscreen(true)}
-        >
-          <Maximize2 className="h-3.5 w-3.5" />
-        </Button>
-      )}
-
-      {isFullscreen && (
-        <Button
-          variant="secondary"
-          size="icon"
-          className="absolute top-4 right-4 z-50 h-9 w-9 bg-background/80 backdrop-blur"
-          onClick={() => setIsFullscreen(false)}
-        >
-          <Minimize2 className="h-4 w-4" />
-        </Button>
-      )}
-
-      {/* Type indicator */}
-      {!isFullscreen && rawSrc && (
-        <div className="absolute top-2 left-2 px-2 py-0.5 bg-background/80 backdrop-blur rounded text-xs text-muted-foreground">
-          {detectedType === 'rtsp' && 'RTSP'}
-          {detectedType === 'rtmp' && 'RTMP'}
-          {detectedType === 'webrtc' && 'WebRTC'}
-          {detectedType === 'hls' && 'HLS'}
-          {detectedType === 'stream' && 'Stream'}
-          {detectedType === 'device-camera' && 'Camera'}
-          {detectedType === 'file' && 'Video'}
-        </div>
-      )}
-    </div>
+    </div>,
+    document.body
   )
 
-  return content
+  return (
+    <>
+      {content}
+      {fullscreenOverlay}
+    </>
+  )
 }

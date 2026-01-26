@@ -338,7 +338,7 @@ export const COMPONENT_SIZE_CONSTRAINTS: Partial<Record<ImplementedComponentType
   'markdown-display': { minW: 2, minH: 2, defaultW: 4, defaultH: 3, maxW: 12, maxH: 12 },
 
   // Spatial & Media
-  'map-display': { minW: 3, minH: 3, defaultW: 6, defaultH: 5, maxW: 12, maxH: 12 },
+  'map-display': { minW: 3, minH: 2, defaultW: 6, defaultH: 3, maxW: 12, maxH: 12 },
   'video-display': { minW: 3, minH: 2, defaultW: 6, defaultH: 4, maxW: 12, maxH: 12 },
   'custom-layer': { minW: 2, minH: 2, defaultW: 6, defaultH: 4, maxW: 12, maxH: 12 },
 

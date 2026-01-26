@@ -10,7 +10,7 @@ import { Slider } from '@/components/ui/slider'
 import { cn } from '@/lib/utils'
 import { useDataSource } from '@/hooks/useDataSource'
 import { dashboardCardBase, dashboardComponentSize } from '@/design-system/tokens/size'
-import { ImageOff, AlertTriangle, RefreshCw } from 'lucide-react'
+import { ImageOff, AlertTriangle, RefreshCw, Images } from 'lucide-react'
 import type { DataSource } from '@/types/dashboard'
 
 type ImageFormatType = 'png' | 'jpeg' | 'jpg' | 'gif' | 'webp' | 'bmp' | 'svg' | 'tiff' | 'ico' | 'unknown'
@@ -114,6 +114,7 @@ export interface ImageHistoryProps {
   // Display options
   fit?: 'contain' | 'cover' | 'fill' | 'none' | 'scale-down'
   rounded?: boolean
+  showTitle?: boolean
 
   // Data options for telemetry
   limit?: number
@@ -333,6 +334,7 @@ export function ImageHistory({
   size = 'md',
   fit = 'fill',
   rounded = true,
+  showTitle = true,
   limit = 50,
   timeRange = 1,
   className,
@@ -463,6 +465,14 @@ export function ImageHistory({
       'relative flex flex-col overflow-hidden',
       className
     )}>
+      {/* Title header */}
+      {title && showTitle && (
+        <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b shrink-0">
+          <Images className="h-4 w-4 text-muted-foreground shrink-0" />
+          <span className="font-medium text-sm truncate flex-1">{title}</span>
+        </div>
+      )}
+
       <div className={cn(
         'w-full flex-1 relative',
         size === 'sm' ? 'h-[120px]' : size === 'md' ? 'h-[180px]' : 'h-[240px]'

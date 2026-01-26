@@ -53,7 +53,7 @@ export function EmptyState({
       className
     )}>
       {icon && (
-        <div className={cn('text-muted-foreground/60', ICON_SIZE[size])}>
+        <div className={cn('flex items-center justify-center text-muted-foreground/60', ICON_SIZE[size])}>
           {icon}
         </div>
       )}
