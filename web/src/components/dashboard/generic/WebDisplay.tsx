@@ -83,11 +83,21 @@ export function WebDisplay({
   borderless = false,
   className,
 }: WebDisplayProps) {
-  const { data, loading, error } = useDataSource<string>(dataSource, {
+  const hasDataSource = dataSource !== undefined
+
+  // Only use useDataSource if we have a dataSource
+  // Otherwise, skip the hook to avoid unnecessary loading states
+  const { data, loading, error } = useDataSource<string>(hasDataSource ? dataSource : undefined, {
     fallback: propSrc,
   })
 
-  const src = error ? propSrc : (data ?? propSrc ?? '')
+  const src = useMemo(() => {
+    if (hasDataSource && !error && data !== undefined && data !== null) {
+      return data
+    }
+    return propSrc ?? ''
+  }, [hasDataSource, error, data, propSrc])
+
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [iframeLoading, setIframeLoading] = useState(true)
   const [currentUrl, setCurrentUrl] = useState(src)
@@ -121,8 +131,8 @@ export function WebDisplay({
     }
   }
 
-  // Initial loading state
-  if (loading && !src) {
+  // Initial loading state - only show loading if we have a dataSource and no src yet
+  if (hasDataSource && loading && !src) {
     return (
       <div className={cn(dashboardCardBase, 'flex items-center justify-center', sizeConfig.padding, className)}>
         <Skeleton className="w-full h-full" />

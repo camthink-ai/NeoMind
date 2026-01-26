@@ -2826,7 +2826,7 @@ export function VisualDashboard() {
                     value={config.type || 'file'}
                     onChange={updateConfig('type')}
                     options={[
-                      { value: 'file', label: '视频文件 (MP4, WebM)' },
+                      { value: 'file', label: '视频文件/URL (MP4, WebM)' },
                       { value: 'stream', label: '视频流' },
                       { value: 'rtsp', label: 'RTSP' },
                       { value: 'rtmp', label: 'RTMP' },

@@ -110,10 +110,11 @@ export function MarkdownDisplay({
   className,
 }: MarkdownDisplayProps) {
   // When there's no dataSource, use propContent directly for preview updates
-  // When there is a dataSource, fetch data but fallback to propContent
   const hasDataSource = dataSource !== undefined
 
-  const { data, loading, error } = useDataSource<string>(dataSource, {
+  // Only use useDataSource if we have a dataSource
+  // Otherwise, skip the hook to avoid unnecessary loading states
+  const { data, loading, error } = useDataSource<string>(hasDataSource ? dataSource : undefined, {
     fallback: propContent,
   })
 
@@ -128,8 +129,8 @@ export function MarkdownDisplay({
 
   const sizeConfig = dashboardComponentSize[size]
 
-  // Loading state
-  if (loading && !content) {
+  // Loading state - only show loading if we have a dataSource and no content yet
+  if (hasDataSource && loading && !content) {
     return (
       <div className={cn(dashboardCardBase, sizeConfig.padding, className)}>
         <div className="w-full space-y-2">
