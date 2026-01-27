@@ -63,6 +63,7 @@ pub mod backend;
 pub mod agents;
 pub mod backup;
 pub mod business;
+pub mod dashboards;
 pub mod decisions;
 pub mod device_registry;
 pub mod device_state;
@@ -144,6 +145,11 @@ pub use device_registry::{
     CommandDefinition, CommandHistoryRecord, CommandStatus, ConnectionConfig, DeviceConfig,
     DeviceRegistryStore, DeviceTypeTemplate, MetricDataType, MetricDefinition, ParamMetricValue,
     ParameterDefinition,
+};
+
+pub use dashboards::{
+    ComponentPosition, Dashboard, DashboardLayout, DashboardStore, DashboardTemplate,
+    LayoutBreakpoints, RequiredResources, RowsValue, default_templates,
 };
 
 // Re-exports from core (backward compatibility)
