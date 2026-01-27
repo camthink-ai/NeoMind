@@ -138,6 +138,9 @@ export function AutomationPage() {
   const handleEditRule = async (rule: Rule) => {
     try {
       const detail = await api.getRule(rule.id)
+      console.log('[DEBUG] Loaded rule detail:', detail.rule)
+      console.log('[DEBUG] Rule condition:', detail.rule?.condition)
+      console.log('[DEBUG] Rule actions:', detail.rule?.actions)
       setEditingRule(detail.rule)
       setShowRuleDialog(true)
     } catch (error) {

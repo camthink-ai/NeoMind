@@ -129,9 +129,20 @@ function getDeviceMetrics(
   devices: Array<{ id: string; name: string; device_type?: string }>,
   deviceTypes?: DeviceType[]
 ): Array<{ name: string; display_name?: string; data_type?: string }> {
-  const deviceTypeName = getDeviceType(deviceId, devices, deviceTypes)
+  const device = devices.find(d => d.id === deviceId)
+  if (!device) return []
+
+  // If device has metrics directly, use them
+  if ((device as any).metrics && Array.isArray((device as any).metrics)) {
+    return (device as any).metrics
+  }
+
+  // Otherwise, look up by device_type
+  const deviceTypeName = device.device_type || deviceTypes?.[0]?.device_type || ''
   const deviceType = deviceTypes?.find(t => t.device_type === deviceTypeName)
-  return deviceType?.metrics || []
+
+  // Return metrics or default fallback
+  return deviceType?.metrics || [{ name: 'value', display_name: 'Value', data_type: 'float' }]
 }
 
 function getMetricDataType(
@@ -221,7 +232,8 @@ function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
     }
   }
 
-  if ('operator' in ruleCond) {
+  // Check for logical conditions first (they have 'conditions' array)
+  if ('conditions' in ruleCond && Array.isArray((ruleCond as any).conditions)) {
     const op = (ruleCond as any).operator
     if (op === 'and' || op === 'or') {
       return {
@@ -239,27 +251,32 @@ function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
     }
   }
 
+  // Check for range condition (has range_min)
   if ('range_min' in ruleCond && (ruleCond as any).range_min !== undefined) {
+    const thresholdVal = ruleCond.threshold
+    const rangeMax = typeof thresholdVal === 'number' ? thresholdVal :
+                     typeof thresholdVal === 'string' ? parseFloat(thresholdVal) || 0 : 0
     return {
       id: crypto.randomUUID(),
       type: 'range',
-      device_id: ruleCond.device_id,
-      metric: ruleCond.metric,
+      device_id: ruleCond.device_id || '',
+      metric: ruleCond.metric || 'value',
       range_min: (ruleCond as any).range_min,
-      range_max: typeof ruleCond.threshold === 'number' ? ruleCond.threshold : 0,
+      range_max: rangeMax,
     }
   }
 
+  // Simple condition
   const thresholdValue = ruleCond.threshold
   const isStringThreshold = typeof thresholdValue === 'string'
 
   return {
     id: crypto.randomUUID(),
     type: 'simple',
-    device_id: ruleCond.device_id,
-    metric: ruleCond.metric,
-    operator: ruleCond.operator,
-    threshold: isStringThreshold ? undefined : thresholdValue as number,
+    device_id: ruleCond.device_id || '',
+    metric: ruleCond.metric || 'value',
+    operator: ruleCond.operator || '>',
+    threshold: isStringThreshold ? undefined : typeof thresholdValue === 'number' ? thresholdValue : 0,
     threshold_value: isStringThreshold ? thresholdValue : undefined,
   }
 }
@@ -360,8 +377,10 @@ function conditionToDSL(
   if ('range_min' in cond && (cond as any).range_min !== undefined) {
     const deviceName = getDeviceNameById(cond.device_id || '', devices)
     const metric = getMetricPath(cond.metric || 'value', cond.device_id || '', devices)
-    const min = (cond as any).range_min
-    const max = typeof cond.threshold === 'number' ? cond.threshold : 100
+    const min = (cond as any).range_min ?? 0
+    // Use range_max if available (from UI), otherwise fall back to threshold
+    const max = 'range_max' in cond ? ((cond as any).range_max ?? 100) :
+                typeof cond.threshold === 'number' ? cond.threshold : 100
     return `${deviceName}.${metric} BETWEEN ${min} AND ${max}`
   }
   const deviceName = getDeviceNameById(cond.device_id || '', devices)
@@ -435,17 +454,46 @@ export function SimpleRuleBuilderSplit({
       setCompletedSteps(new Set())
 
       if (rule) {
+        console.log('[DEBUG] Loading rule into form:', rule)
+        console.log('[DEBUG] Rule condition:', rule.condition)
+        console.log('[DEBUG] Rule actions:', rule.actions)
         setName(rule.name || '')
         setDescription(rule.description || '')
         setEnabled(rule.enabled ?? true)
         setFormErrors({})
         if (rule.condition) {
-          setCondition(ruleConditionToUiCondition(rule.condition))
+          const uiCond = ruleConditionToUiCondition(rule.condition)
+          console.log('[DEBUG] Converted UI condition:', uiCond)
+          setCondition(uiCond)
         } else {
+          console.log('[DEBUG] No condition in rule, setting to null')
           setCondition(null)
         }
         if (rule.actions && rule.actions.length > 0) {
-          setActions(rule.actions)
+          // Validate and clean up actions to ensure correct structure
+          const cleanedActions: RuleAction[] = rule.actions.map(action => {
+            // Ensure action has correct structure based on type
+            switch (action.type) {
+              case 'Log':
+                return { type: 'Log', level: (action as any).level || 'info', message: (action as any).message || 'Rule triggered' } as RuleAction
+              case 'Notify':
+                return { type: 'Notify', message: (action as any).message || '' } as RuleAction
+              case 'Execute':
+                return { type: 'Execute', device_id: (action as any).device_id || '', command: (action as any).command || '', params: (action as any).params || {} } as RuleAction
+              case 'CreateAlert':
+                return { type: 'CreateAlert', title: (action as any).title || '', message: (action as any).message || '', severity: (action as any).severity || 'info' } as RuleAction
+              case 'Set':
+                return { type: 'Set', device_id: (action as any).device_id || '', property: (action as any).property || 'state', value: (action as any).value ?? true } as RuleAction
+              case 'Delay':
+                return { type: 'Delay', duration: (action as any).duration || 1000 } as RuleAction
+              case 'HttpRequest':
+                return { type: 'HttpRequest', method: (action as any).method || 'GET', url: (action as any).url || '' } as RuleAction
+              default:
+                // Unknown action type, default to Log
+                return { type: 'Log', level: 'info', message: 'Rule triggered' } as RuleAction
+            }
+          })
+          setActions(cleanedActions)
         } else {
           setActions([])
         }
@@ -470,9 +518,10 @@ export function SimpleRuleBuilderSplit({
     setCondition(null)
     setForDuration(0)
     setForUnit('minutes')
-    setActions([{ type: 'Log', level: 'info', message: t('automation:ruleTriggered') }])
+    // Use a fixed default message instead of translation to avoid issues
+    setActions([{ type: 'Log', level: 'info', message: 'Rule triggered' }])
     setFormErrors({})
-  }, [t])
+  }, [])
 
   const createDefaultCondition = useCallback((): UICondition => {
     const firstDevice = resources.devices[0]
@@ -971,39 +1020,75 @@ interface ActionStepProps {
 
 function ActionStep({ actions, onActionsChange, devices, deviceTypes, t, tBuilder }: ActionStepProps) {
   const addAction = useCallback((type: 'Notify' | 'Execute' | 'Log' | 'Set' | 'Delay' | 'CreateAlert' | 'HttpRequest') => {
+    // Create a properly typed action based on the type
     let newAction: RuleAction
-    if (type === 'Notify') {
-      newAction = { type: 'Notify', message: '' }
-    } else if (type === 'Execute') {
-      const firstDevice = devices[0]
-      const commands = firstDevice ? getDeviceCommands(firstDevice.id, devices, deviceTypes) : []
-      newAction = {
-        type: 'Execute',
-        device_id: firstDevice?.id || '',
-        command: commands[0]?.name || 'turn_on',
-        params: {},
+    switch (type) {
+      case 'Notify':
+        newAction = { type: 'Notify', message: '' }
+        break
+      case 'Execute': {
+        const firstDevice = devices[0]
+        const commands = firstDevice ? getDeviceCommands(firstDevice.id, devices, deviceTypes) : []
+        newAction = {
+          type: 'Execute',
+          device_id: firstDevice?.id || '',
+          command: commands[0]?.name || 'turn_on',
+          params: {},
+        }
+        break
       }
-    } else if (type === 'Set') {
-      newAction = {
-        type: 'Set',
-        device_id: devices[0]?.id || '',
-        property: 'state',
-        value: true,
-      }
-    } else if (type === 'Delay') {
-      newAction = { type: 'Delay', duration: 5000 }
-    } else if (type === 'CreateAlert') {
-      newAction = { type: 'CreateAlert', title: '', message: '', severity: 'info' }
-    } else if (type === 'HttpRequest') {
-      newAction = { type: 'HttpRequest', method: 'GET', url: '' }
-    } else {
-      newAction = { type: 'Log', level: 'info', message: '' }
+      case 'Set':
+        newAction = {
+          type: 'Set',
+          device_id: devices[0]?.id || '',
+          property: 'state',
+          value: true,
+        }
+        break
+      case 'Delay':
+        newAction = { type: 'Delay', duration: 5000 }
+        break
+      case 'CreateAlert':
+        newAction = { type: 'CreateAlert', title: '', message: '', severity: 'info' }
+        break
+      case 'HttpRequest':
+        newAction = { type: 'HttpRequest', method: 'GET', url: '' }
+        break
+      case 'Log':
+      default:
+        newAction = { type: 'Log', level: 'info', message: '' }
+        break
     }
     onActionsChange([...actions, newAction])
   }, [actions, devices, deviceTypes, onActionsChange])
 
   const updateAction = useCallback((index: number, data: Partial<RuleAction>) => {
-    onActionsChange(actions.map((a, i) => (i !== index ? a : { ...a, ...data } as RuleAction)))
+    onActionsChange(actions.map((a, i) => {
+      if (i !== index) return a
+
+      // Ensure type integrity - only allow updates to fields that belong to this action type
+      const updated = { ...a, ...data } as RuleAction
+
+      // Verify the action maintains its correct structure based on type
+      switch (updated.type) {
+        case 'Log':
+          return { type: 'Log', level: (updated as any).level || 'info', message: (updated as any).message || '' }
+        case 'Notify':
+          return { type: 'Notify', message: (updated as any).message || '' }
+        case 'Execute':
+          return { type: 'Execute', device_id: (updated as any).device_id || '', command: (updated as any).command || '', params: (updated as any).params || {} }
+        case 'CreateAlert':
+          return { type: 'CreateAlert', title: (updated as any).title || '', message: (updated as any).message || '', severity: (updated as any).severity || 'info' }
+        case 'Set':
+          return { type: 'Set', device_id: (updated as any).device_id || '', property: (updated as any).property || '', value: (updated as any).value ?? true }
+        case 'Delay':
+          return { type: 'Delay', duration: (updated as any).duration || 1000 }
+        case 'HttpRequest':
+          return { type: 'HttpRequest', method: (updated as any).method || 'GET', url: (updated as any).url || '' }
+        default:
+          return updated
+      }
+    }))
   }, [actions, onActionsChange])
 
   const removeAction = useCallback((index: number) => {
