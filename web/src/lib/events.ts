@@ -22,6 +22,15 @@ export type EventType =
   | 'ToolExecutionStart'
   | 'ToolExecutionSuccess'
   | 'ToolExecutionFailure'
+  | 'AgentCreated'
+  | 'AgentUpdated'
+  | 'AgentDeleted'
+  | 'AgentExecutionStarted'
+  | 'AgentExecutionCompleted'
+  | 'AgentExecutionFailed'
+  | 'AgentThinking'
+  | 'AgentDecision'
+  | 'AgentMemoryUpdated'
   | 'Custom'
 
 export interface CustomEvent extends NeoTalkEvent {
@@ -32,7 +41,7 @@ export interface CustomEvent extends NeoTalkEvent {
   }
 }
 
-export type EventCategory = 'device' | 'rule' | 'llm' | 'alert' | 'tool' | 'all'
+export type EventCategory = 'device' | 'rule' | 'llm' | 'alert' | 'tool' | 'agent' | 'all'
 
 export interface NeoTalkEvent {
   id: string
@@ -75,6 +84,70 @@ export interface LlmDecisionProposedEvent extends NeoTalkEvent {
       parameters: unknown
     }>
     confidence: number
+  }
+}
+
+// Agent-related events
+export interface AgentExecutionStartedEvent extends NeoTalkEvent {
+  type: 'AgentExecutionStarted'
+  data: {
+    agent_id: string
+    agent_name: string
+    execution_id: string
+    trigger_type: string
+  }
+}
+
+export interface AgentExecutionCompletedEvent extends NeoTalkEvent {
+  type: 'AgentExecutionCompleted'
+  data: {
+    agent_id: string
+    execution_id: string
+    duration_ms: number
+    success: boolean
+    result?: {
+      decisions: Array<{
+        description: string
+        action: string
+      }>
+    }
+  }
+}
+
+export interface AgentThinkingEvent extends NeoTalkEvent {
+  type: 'AgentThinking'
+  data: {
+    agent_id: string
+    execution_id: string
+    step_number: number
+    step_type: 'data_collection' | 'analysis' | 'decision' | 'action'
+    description: string
+    details?: {
+      source?: string
+      data?: unknown
+    }
+  }
+}
+
+export interface AgentDecisionEvent extends NeoTalkEvent {
+  type: 'AgentDecision'
+  data: {
+    agent_id: string
+    execution_id: string
+    description: string
+    rationale: string
+    action: string
+    confidence: number
+  }
+}
+
+export interface AgentMemoryUpdatedEvent extends NeoTalkEvent {
+  type: 'AgentMemoryUpdated'
+  data: {
+    agent_id: string
+    variable?: string
+    value?: unknown
+    learned_pattern?: string
   }
 }
 

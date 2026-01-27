@@ -6,12 +6,13 @@
  * - Gradient fills for decorative progress bar
  * - Glow effects for active states
  * - Multiple variants (default, compact, circular)
- * - Telemetry data support (extracts latest value from arrays)
+ * - Telemetry data support with DataMapper integration
  */
 
+import { useMemo } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
-import { toLatestValue } from '@/design-system/utils/format'
+import { DataMapper } from '@/lib/dataMapping'
 import { useDataSource } from '@/hooks/useDataSource'
 import { dashboardComponentSize, dashboardCardBase } from '@/design-system/tokens/size'
 import {

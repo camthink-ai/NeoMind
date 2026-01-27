@@ -2,32 +2,31 @@
  * NeoTalk AI Agents Page
  *
  * User-defined AI Agents for autonomous IoT automation.
- * Uses PageLayout + PageTabs structure consistent with other pages.
+ * Two-column layout: Agent list (left) + Agent detail (right)
  */
 
 import { useState, useCallback, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { PageTabs, PageTabsContent } from "@/components/shared"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { confirm } from "@/hooks/use-confirm"
-import type { AiAgent, AiAgentDetail, AgentExecution } from "@/types"
+import { useAgentEvents, useAgentStatus } from "@/hooks/useAgentEvents"
+import type { AiAgent, AiAgentDetail } from "@/types"
 
 // Import components
-import { AgentsList } from "./agents-components/AgentsList"
-import { AgentExecutionsList } from "./agents-components/AgentExecutionsList"
-import { AgentCreatorDialogSplit as AgentCreatorDialog } from "./agents-components/AgentCreatorDialogSplit"
-import { AgentMemoryDialog } from "./agents-components/AgentMemoryDialog"
+import { AgentListPanel } from "./agents-components/AgentListPanel"
+import { AgentDetailPanel } from "./agents-components/AgentDetailPanel"
+import { AgentCreatorDialog } from "./agents-components/AgentCreatorDialog"
 import { ExecutionDetailDialog } from "./agents-components/ExecutionDetailDialog"
 
-type AgentTab = 'agents' | 'executions'
+// Import dialogs
+import { AgentMemoryDialog } from "./agents-components/AgentMemoryDialog"
 
 export function AgentsPage() {
   const { t: tCommon } = useTranslation('common')
   const { t: tAgent } = useTranslation('agents')
   const { toast } = useToast()
-  const [activeTab, setActiveTab] = useState<AgentTab>('agents')
 
   // Dialog states
   const [showAgentDialog, setShowAgentDialog] = useState(false)
@@ -45,8 +44,7 @@ export function AgentsPage() {
 
   // Data state
   const [agents, setAgents] = useState<AiAgent[]>([])
-  const [selectedAgent, setSelectedAgent] = useState<AiAgentDetail | undefined>(undefined)
-  const [executions, setExecutions] = useState<AgentExecution[]>([])
+  const [selectedAgent, setSelectedAgent] = useState<AiAgentDetail | null>(null)
   const [loading, setLoading] = useState(false)
 
   // Resources for dialogs
@@ -69,28 +67,31 @@ export function AgentsPage() {
         setDeviceTypes([])
       }
 
-      // Load tab-specific data
-      if (activeTab === 'agents') {
-        const data = await api.listAgents()
-        // Sort by created_at descending (newest first)
-        setAgents((data.agents || []).sort((a, b) =>
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        ))
-      } else if (activeTab === 'executions' && selectedAgent) {
-        const data = await api.getAgentExecutions(selectedAgent.id)
-        setExecutions(data.executions || [])
-      }
+      // Load agents
+      const data = await api.listAgents()
+      // Sort by created_at descending (newest first)
+      setAgents((data.agents || []).sort((a, b) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ))
     } catch (error) {
-      console.error(`Failed to load ${activeTab}:`, error)
+      console.error('Failed to load agents:', error)
     } finally {
       setLoading(false)
     }
-  }, [activeTab, selectedAgent])
+  }, [])
 
-  // Load items when tab changes
+  // Load items on mount
   useEffect(() => {
     loadItems()
   }, [loadItems])
+
+  // When selected agent changes, fetch its details
+  useEffect(() => {
+    if (selectedAgent) {
+      // Refresh agent details
+      api.getAgent(selectedAgent.id).then(setSelectedAgent).catch(console.error)
+    }
+  }, [agents])
 
   // Handlers
   const handleCreate = () => {
@@ -126,6 +127,9 @@ export function AgentsPage() {
     try {
       await api.deleteAgent(agent.id)
       await loadItems()
+      if (selectedAgent?.id === agent.id) {
+        setSelectedAgent(null)
+      }
       toast({
         title: tCommon('success'),
         description: tAgent('agentDeleted'),
@@ -208,12 +212,11 @@ export function AgentsPage() {
     setExecutionDetailOpen(true)
   }
 
-  // Select agent to view executions
-  const handleViewExecutions = async (agent: AiAgent) => {
+  // Select an agent to view details
+  const handleSelectAgent = async (agent: AiAgent) => {
     try {
       const detail = await api.getAgent(agent.id)
       setSelectedAgent(detail)
-      setActiveTab('executions')
     } catch (error) {
       console.error('Failed to load agent details:', error)
       toast({
@@ -229,61 +232,35 @@ export function AgentsPage() {
       title={tAgent('title')}
       subtitle={tAgent('description')}
     >
-      {/* Tabs with Actions */}
-      <PageTabs
-        tabs={[
-          { value: 'agents', label: tAgent('tabs.agents') },
-          ...(selectedAgent ? [{ value: 'executions', label: tAgent('tabs.executions') }] : []),
-        ]}
-        activeTab={activeTab}
-        onTabChange={(v) => setActiveTab(v as AgentTab)}
-        actions={[
-          {
-            label: tCommon('create'),
-            onClick: handleCreate,
-          },
-          {
-            label: tCommon('refresh'),
-            variant: 'outline',
-            onClick: loadItems,
-            disabled: loading,
-          },
-        ]}
-      >
-        {/* Agents Tab */}
-        <PageTabsContent value="agents" activeTab={activeTab}>
-          <AgentsList
+      {/* Two-column layout */}
+      <div className="flex h-[calc(100vh-8rem)] gap-6">
+        {/* Left: Agent List Panel */}
+        <div className="w-80 shrink-0">
+          <AgentListPanel
             agents={agents}
             loading={loading}
+            selectedAgent={selectedAgent}
+            onSelectAgent={handleSelectAgent}
+            onCreate={handleCreate}
             onEdit={handleEdit}
             onDelete={handleDelete}
             onToggleStatus={handleToggleStatus}
             onExecute={handleExecute}
             onViewMemory={handleViewMemory}
-            onViewExecutions={handleViewExecutions}
           />
-        </PageTabsContent>
+        </div>
 
-        {/* Executions Tab */}
-        <PageTabsContent value="executions" activeTab={activeTab}>
-          {selectedAgent && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg font-semibold">{selectedAgent.name}</h3>
-                  <p className="text-sm text-muted-foreground">{selectedAgent.user_prompt}</p>
-                </div>
-              </div>
-              <AgentExecutionsList
-                executions={executions}
-                loading={loading}
-                agentId={selectedAgent.id}
-                onViewDetail={handleViewExecutionDetail}
-              />
-            </div>
-          )}
-        </PageTabsContent>
-      </PageTabs>
+        {/* Right: Agent Detail Panel */}
+        <div className="flex-1 min-w-0">
+          <AgentDetailPanel
+            agent={selectedAgent}
+            onEdit={handleEdit}
+            onExecute={handleExecute}
+            onViewExecutionDetail={handleViewExecutionDetail}
+            onRefresh={loadItems}
+          />
+        </div>
+      </div>
 
       {/* Agent Creator/Editor Dialog */}
       <AgentCreatorDialog
