@@ -39,7 +39,7 @@ export { MarkdownDisplay } from './generic/MarkdownDisplay'
 // Generic components - Spatial & Media
 export { MapDisplay, type MapDisplayProps, type MapMarker } from './generic/MapDisplay'
 export { VideoDisplay, type VideoDisplayProps, type VideoSourceType } from './generic/VideoDisplay'
-export { CustomLayer, type CustomLayerProps, type LayerItem } from './generic/CustomLayer'
+export { CustomLayer, type CustomLayerProps, type LayerItem, LayerEditorDialog, type LayerBinding, type LayerBindingType } from './generic/CustomLayer'
 export { MapEditorDialog, type MapBinding, type MapBindingType } from './generic/MapEditorDialog'
 
 // Config system

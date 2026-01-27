@@ -117,6 +117,7 @@ export interface CustomLayerProps {
   // Callbacks
   onItemsChange?: (items: LayerItem[]) => void
   onBindingsChange?: (bindings: LayerBinding[]) => void
+  onLayerClick?: (x: number, y: number) => void
 
   className?: string
 }
@@ -133,7 +134,48 @@ interface LayerItemComponentProps {
   onDrag: (item: LayerItem, newPosition: { x: number; y: number }) => void
   onToggleVisibility: (id: string) => void
   onToggleLock: (id: string) => void
+  onExecuteCommand?: (deviceId: string, command: string) => Promise<void>
 }
+
+// Type config for styling similar to MapDisplay
+const TYPE_CONFIG = {
+  device: {
+    icon: MapPin,
+    color: 'text-green-600 dark:text-green-400',
+    bgColor: 'bg-green-500/10 dark:bg-green-500/20',
+    borderColor: 'border-green-500/30',
+  },
+  metric: {
+    icon: Activity,
+    color: 'text-purple-600 dark:text-purple-400',
+    bgColor: 'bg-purple-500/10 dark:bg-purple-500/20',
+    borderColor: 'border-purple-500/30',
+  },
+  command: {
+    icon: Zap,
+    color: 'text-blue-600 dark:text-blue-400',
+    bgColor: 'bg-blue-500/10 dark:bg-blue-500/20',
+    borderColor: 'border-blue-500/30',
+  },
+  text: {
+    icon: Type,
+    color: 'text-foreground',
+    bgColor: 'bg-muted/50',
+    borderColor: 'border-border',
+  },
+  icon: {
+    icon: Sparkles,
+    color: 'text-orange-600 dark:text-orange-400',
+    bgColor: 'bg-orange-500/10 dark:bg-orange-500/20',
+    borderColor: 'border-orange-500/30',
+  },
+  component: {
+    icon: Layers,
+    color: 'text-cyan-600 dark:text-cyan-400',
+    bgColor: 'bg-cyan-500/10 dark:bg-cyan-500/20',
+    borderColor: 'border-cyan-500/30',
+  },
+} as const
 
 function LayerItemComponent({
   item,
@@ -143,6 +185,7 @@ function LayerItemComponent({
   onDrag,
   onToggleVisibility,
   onToggleLock,
+  onExecuteCommand,
 }: LayerItemComponentProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
@@ -210,8 +253,24 @@ function LayerItemComponent({
     }
   }
 
-  if (item.visible !== true) {
+  // Only hide if explicitly set to false
+  if (item.visible === false) {
     return null
+  }
+
+  // Get type config for styling
+  const typeConfig = TYPE_CONFIG[item.type] || TYPE_CONFIG.text
+  const Icon = typeConfig.icon
+
+  // Status indicator color
+  const getStatusColor = () => {
+    switch (item.status) {
+      case 'online': return 'bg-green-500'
+      case 'offline': return 'bg-gray-400'
+      case 'error': return 'bg-red-500'
+      case 'warning': return 'bg-yellow-500'
+      default: return null
+    }
   }
 
   return (
@@ -240,9 +299,12 @@ function LayerItemComponent({
       {/* Content based on type */}
       <div
         className={cn(
-          'inline-flex items-center gap-1.5 px-2 py-1 rounded shadow-sm',
+          'inline-flex items-center gap-1.5 px-2 py-1.5 rounded-lg border shadow-sm',
           getFontSizeClass(),
-          getFontWeightClass()
+          getFontWeightClass(),
+          !item.backgroundColor && typeConfig.bgColor,
+          !item.borderColor && typeConfig.borderColor,
+          !item.color && typeConfig.color
         )}
         style={{
           backgroundColor: item.backgroundColor,
@@ -250,19 +312,76 @@ function LayerItemComponent({
           color: item.color,
         }}
       >
-        {item.icon && (
+        {/* Icon based on type */}
+        {item.type === 'device' && (
+          <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+        )}
+        {item.type === 'metric' && (
+          <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+        )}
+        {item.type === 'command' && (
+          <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+        )}
+        {item.type === 'text' && !item.icon && (
+          <Icon className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+        )}
+        {item.type === 'icon' && !item.icon && (
+          <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+        )}
+
+        {/* Custom icon from prop */}
+        {item.icon && item.type !== 'device' && item.type !== 'metric' && item.type !== 'command' && (
           <span className="flex-shrink-0">{item.icon}</span>
         )}
+
+        {/* Label */}
         {item.label && (
-          <span>{item.label}</span>
-        )}
-        {item.value !== undefined && (
           <span className={cn(
-            'tabular-nums',
-            item.type === 'metric' && 'font-semibold'
+            item.type === 'device' && 'font-medium'
+          )}>
+            {item.label}
+          </span>
+        )}
+
+        {/* Value for metrics */}
+        {item.value !== undefined && item.type === 'metric' && (
+          <span className={cn(
+            'tabular-nums font-semibold',
+            typeConfig.color
           )}>
             {item.value}
           </span>
+        )}
+
+        {/* Value for other types */}
+        {item.value !== undefined && item.type !== 'metric' && (
+          <span className="tabular-nums">
+            {item.value}
+          </span>
+        )}
+
+        {/* Status indicator for devices */}
+        {item.type === 'device' && item.status && (
+          <span className={cn(
+            'w-2 h-2 rounded-full flex-shrink-0',
+            getStatusColor()
+          )} />
+        )}
+
+        {/* Command button for command type */}
+        {item.type === 'command' && !isEditing && (
+          <Button
+            size="sm"
+            className="h-5 px-1.5 text-xs bg-blue-500 hover:bg-blue-600 text-white"
+            onClick={async (e) => {
+              e.stopPropagation()
+              if (onExecuteCommand && item.deviceId && item.command) {
+                await onExecuteCommand(item.deviceId, item.command)
+              }
+            }}
+          >
+            执行
+          </Button>
         )}
       </div>
 
@@ -274,8 +393,9 @@ function LayerItemComponent({
             size="icon"
             className="h-5 w-5 bg-background/90"
             onClick={(e) => { e.stopPropagation(); onToggleVisibility(item.id); }}
+            title={(item.visible as boolean | undefined) === false ? '显示' : '隐藏'}
           >
-            {((item.visible as boolean | undefined) !== true) ? <EyeOff className="h-2.5 w-2.5" /> : <Eye className="h-2.5 w-2.5" />}
+            {(item.visible as boolean | undefined) === false ? <EyeOff className="h-2.5 w-2.5" /> : <Eye className="h-2.5 w-2.5" />}
           </Button>
           <Button
             variant="secondary"
@@ -352,6 +472,7 @@ function LayerBackground({ type, color, image, gridSize = 20 }: LayerBackgroundP
 export function CustomLayer({
   dataSource,
   items: propItems = [],
+  bindings,
   backgroundType = 'grid',
   backgroundColor,
   backgroundImage,
@@ -363,48 +484,245 @@ export function CustomLayer({
   showFullscreen = true,
   maintainAspectRatio,
   aspectRatio,
+  onItemsChange,
+  onBindingsChange,
+  onLayerClick,
   className,
 }: CustomLayerProps) {
+  // Get store for device data and command execution
+  const devices = useStore(state => state.devices)
+  const sendCommand = useStore(state => state.sendCommand)
+
+  // Convert bindings to layer items - similar to MapDisplay's convertBindingsToMarkers
+  const convertBindingsToLayerItems = useCallback((): LayerItem[] => {
+    if (!bindings || bindings.length === 0) return []
+
+    const getDeviceName = (deviceId: string) => {
+      const device = devices.find(d => d.id === deviceId)
+      return device?.name || deviceId
+    }
+
+    const getDeviceStatus = (deviceId: string): 'online' | 'offline' | 'error' | 'warning' | undefined => {
+      const device = devices.find(d => d.id === deviceId)
+      if (!device) return undefined
+      return device.online ? 'online' : 'offline'
+    }
+
+    const getDeviceMetricValue = (deviceId: string, metricId: string): string | number | undefined => {
+      const device = devices.find(d => d.id === deviceId)
+      if (!device?.current_values) return undefined
+      const value = device.current_values[metricId]
+      if (value !== undefined && value !== null) {
+        return typeof value === 'number' ? value : String(value)
+      }
+      return undefined
+    }
+
+    return bindings.map((binding): LayerItem => {
+      const position = binding.position === 'auto' || !binding.position
+        ? { x: 50, y: 50 } // Default center position
+        : binding.position
+
+      const ds = binding.dataSource as any
+      const deviceId = ds?.deviceId
+
+      const item: LayerItem = {
+        id: binding.id,
+        type: binding.type || binding.icon || 'text',
+        position,
+        label: binding.name,
+        // Apply binding styling
+        color: binding.color,
+        backgroundColor: binding.backgroundColor,
+        fontSize: binding.fontSize,
+        fontWeight: binding.fontWeight,
+        visible: true,
+        locked: false,
+        draggable: true,
+      }
+
+      // Set type-specific fields
+      if (binding.type === 'metric') {
+        item.deviceId = deviceId
+        item.metricId = ds?.metricId || ds?.property
+        item.deviceName = getDeviceName(deviceId || '')
+        item.metricName = ds?.metricId || ds?.property
+        // Get current metric value
+        const metricValue = getDeviceMetricValue(deviceId || '', item.metricId || '')
+        item.value = metricValue !== undefined ? metricValue : '--'
+      } else if (binding.type === 'command') {
+        item.command = ds?.command
+        item.deviceId = deviceId
+        item.deviceName = getDeviceName(deviceId || '')
+      } else if (binding.type === 'device') {
+        item.deviceId = deviceId
+        item.deviceName = getDeviceName(deviceId || '')
+        item.status = getDeviceStatus(deviceId || '')
+      } else if (binding.type === 'text') {
+        item.value = ds?.text || ''
+      } else if (binding.type === 'icon') {
+        item.icon = ds?.icon || ''
+      }
+
+      return item
+    })
+  }, [bindings, devices])
+
+  // Data source hook for backward compatibility
   const { data, loading, error } = useDataSource<LayerItem[]>(dataSource, {
     fallback: propItems,
   })
 
-  const items = error ? propItems : (data ?? propItems)
+  // Determine final items with priority system:
+  // 1. bindings (highest priority - contains type info from config)
+  // 2. dataSource data (for backward compatibility)
+  // 3. propItems (fallback)
+  const bindingsItems = convertBindingsToLayerItems()
+  const sourceItems = error ? propItems : (data ?? propItems)
+  const items = bindings && bindings.length > 0
+    ? bindingsItems
+    : !dataSource
+      ? propItems
+      : sourceItems
+
   const [isEditing, setIsEditing] = useState(editable)
   const [selectedItem, setSelectedItem] = useState<string | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  // Only use internalItems state when NOT using bindings (for dataSource/propItems mode)
+  // When using bindings, always use the computed items directly to avoid sync issues
+  const useInternalItems = !(bindings && bindings.length > 0)
   const [internalItems, setInternalItems] = useState<LayerItem[]>(items)
+
+  // The items to use for rendering - direct from bindings or from internal state
+  const renderItems = useInternalItems ? internalItems : items
+
+  // Debug log for render (after all state is initialized)
+  console.log('[CustomLayer] Render:', {
+    bindingsCount: bindings?.length || 0,
+    devicesCount: devices.length,
+    deviceIds: devices.map(d => d.id),
+    hasBindings: !!(bindings && bindings.length > 0),
+    useInternalItems,
+    renderItemsCount: renderItems.length,
+  })
 
   // Sync isEditing when editable prop changes (e.g., after configuration update)
   useEffect(() => {
     setIsEditing(editable)
   }, [editable])
 
+  // Sync items when props change (only for dataSource/propItems mode)
   useEffect(() => {
-    setInternalItems(items)
-  }, [items])
+    if (useInternalItems) {
+      setInternalItems(items)
+    }
+  }, [items, useInternalItems])
+
+  // Real-time updates for device/metric bindings (only for dataSource/propItems mode)
+  // In bindings mode, items are computed directly from bindings/devices, so no manual update needed
+  useEffect(() => {
+    if (!bindings || bindings.length === 0) return
+    // Skip this effect in bindings mode - items are computed directly
+    if (!useInternalItems) return
+
+    // Update items with fresh data from store
+    const updateItemFromDevice = (binding: LayerBinding) => {
+      const ds = binding.dataSource as any
+      const deviceId = ds?.deviceId
+
+      if (binding.type === 'metric' && deviceId) {
+        const metricId = ds?.metricId || ds?.property
+        const device = devices.find(d => d.id === deviceId)
+        const metricValue = device?.current_values?.[metricId || '']
+
+        setInternalItems(prev =>
+          prev.map(i => {
+            if (i.id === binding.id && metricValue !== undefined) {
+              return { ...i, value: typeof metricValue === 'number' ? metricValue : String(metricValue) }
+            }
+            return i
+          })
+        )
+      } else if (binding.type === 'device' && deviceId) {
+        const device = devices.find(d => d.id === deviceId)
+        const status = device?.online ? 'online' : 'offline'
+
+        setInternalItems(prev =>
+          prev.map(i => {
+            if (i.id === binding.id) {
+              return { ...i, status }
+            }
+            return i
+          })
+        )
+      }
+    }
+
+    // Update each binding
+    bindings.forEach(updateItemFromDevice)
+  }, [devices, bindings])
 
   const sizeConfig = dashboardComponentSize[size]
 
+  // Notify parent of items change
+  useEffect(() => {
+    if (onItemsChange) {
+      onItemsChange(renderItems)
+    }
+  }, [renderItems, onItemsChange])
+
+  // Handle item position drag - also update bindings
   const handleItemDrag = useCallback((item: LayerItem, newPosition: { x: number; y: number }) => {
-    setInternalItems(prev =>
-      prev.map(i => i.id === item.id ? { ...i, position: newPosition } : i)
-    )
-  }, [])
+    // Only update internalItems in dataSource/propItems mode
+    if (useInternalItems) {
+      setInternalItems(prev =>
+        prev.map(i => i.id === item.id ? { ...i, position: newPosition } : i)
+      )
+    }
 
+    // Always update bindings if present (this is the primary data source in bindings mode)
+    if (bindings && onBindingsChange) {
+      const updatedBindings = bindings.map(b =>
+        b.id === item.id ? { ...b, position: newPosition } : b
+      )
+      onBindingsChange(updatedBindings)
+    }
+  }, [bindings, onBindingsChange, useInternalItems])
+
+  // Handle toggle visibility
   const handleToggleVisibility = useCallback((id: string) => {
-    setInternalItems(prev =>
-      prev.map(i => i.id === id ? { ...i, visible: i.visible === true ? false : true } : i)
-    )
-  }, [])
+    // Only update internalItems in dataSource/propItems mode
+    if (useInternalItems) {
+      setInternalItems(prev =>
+        prev.map(i => i.id === id ? { ...i, visible: i.visible === false ? undefined : false } : i)
+      )
+    }
+    // Note: bindings don't have visible field, this is only for dataSource/propItems mode
+  }, [useInternalItems])
 
+  // Handle toggle lock
   const handleToggleLock = useCallback((id: string) => {
-    setInternalItems(prev =>
-      prev.map(i => i.id === id ? { ...i, locked: !i.locked } : i)
-    )
-  }, [])
+    // Only update internalItems in dataSource/propItems mode
+    if (useInternalItems) {
+      setInternalItems(prev =>
+        prev.map(i => i.id === id ? { ...i, locked: !i.locked } : i)
+      )
+    }
+  }, [useInternalItems])
+
+  // Handle command execution
+  const handleExecuteCommand = useCallback(async (deviceId: string, command: string) => {
+    try {
+      await sendCommand(deviceId, command)
+    } catch (error) {
+      console.error('Failed to execute command:', error)
+    }
+  }, [sendCommand])
 
   const handleAddItem = useCallback(() => {
+    // Only work in dataSource/propItems mode - in bindings mode use LayerEditorDialog
+    if (!useInternalItems) return
+
     const newItem: LayerItem = {
       id: `item-${Date.now()}`,
       type: 'text',
@@ -417,7 +735,7 @@ export function CustomLayer({
     }
     setInternalItems(prev => [...prev, newItem])
     setSelectedItem(newItem.id)
-  }, [])
+  }, [useInternalItems])
 
   // Loading state
   if (loading) {
@@ -436,7 +754,7 @@ export function CustomLayer({
           <div className="flex items-center gap-2">
             <Layers className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-medium">Custom Layer</span>
-            <span className="text-xs text-muted-foreground">({items.length} items)</span>
+            <span className="text-xs text-muted-foreground">({renderItems.length} items)</span>
           </div>
           <div className="flex items-center gap-1">
             {editable && (
@@ -484,7 +802,18 @@ export function CustomLayer({
             ? { aspectRatio: `${aspectRatio}` }
             : undefined
         }
-        onClick={() => setSelectedItem(null)}
+        onClick={(e) => {
+          // Clear selection
+          setSelectedItem(null)
+
+          // Handle layer click for positioning
+          if (onLayerClick && e.currentTarget) {
+            const rect = e.currentTarget.getBoundingClientRect()
+            const x = ((e.clientX - rect.left) / rect.width) * 100
+            const y = ((e.clientY - rect.top) / rect.height) * 100
+            onLayerClick(x, y)
+          }
+        }}
       >
         <LayerBackground
           type={backgroundType}
@@ -494,7 +823,7 @@ export function CustomLayer({
         />
 
         {/* Render items */}
-        {internalItems.map((item) => (
+        {renderItems.map((item) => (
           <LayerItemComponent
             key={item.id}
             item={item}
@@ -504,11 +833,12 @@ export function CustomLayer({
             onDrag={handleItemDrag}
             onToggleVisibility={handleToggleVisibility}
             onToggleLock={handleToggleLock}
+            onExecuteCommand={handleExecuteCommand}
           />
         ))}
 
         {/* Empty state */}
-        {internalItems.length === 0 && (
+        {renderItems.length === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-muted-foreground/60">
             <Square className="h-12 w-12" />
             <div className="text-center">
@@ -536,3 +866,6 @@ export function CustomLayer({
 
   return content
 }
+
+// Export the editor dialog
+export { LayerEditorDialog } from './LayerEditorDialog'
