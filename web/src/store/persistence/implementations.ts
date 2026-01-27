@@ -142,6 +142,7 @@ export class LocalStorageDashboardStorage implements DashboardStorage {
 
 export class ApiDashboardStorage implements DashboardStorage {
   private api: any
+  private currentDashboardId: string | null = null
 
   constructor() {
     // Import api module dynamically to avoid circular deps
@@ -161,9 +162,9 @@ export class ApiDashboardStorage implements DashboardStorage {
       const api = await this.getApi()
       const response = await api.getDashboards()
 
-      // Handle different response formats
+      // Backend returns { dashboards: Dashboard[], count: number }
       const dashboards = 'dashboards' in response
-        ? (response as { dashboards: DashboardDTO[] }).dashboards.map(fromDashboardDTO)
+        ? (response as { dashboards: typeof response.dashboards; count: number }).dashboards.map(fromDashboardDTO)
         : Array.isArray(response)
           ? response.map(fromDashboardDTO)
           : []
@@ -179,8 +180,13 @@ export class ApiDashboardStorage implements DashboardStorage {
   }
 
   async save(dashboards: Dashboard[]): Promise<StorageResult<void>> {
-    // API doesn't support bulk save, so we sync each one
-    // This is a no-op for API storage - use sync() instead
+    // API doesn't support bulk save - sync individual dashboards instead
+    // Cache to localStorage for instant access
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(dashboards))
+    } catch {
+      // Ignore cache errors
+    }
     return { data: undefined, error: null, source: 'api' }
   }
 
@@ -188,20 +194,22 @@ export class ApiDashboardStorage implements DashboardStorage {
     try {
       const api = await this.getApi()
 
-      // Check if dashboard exists
+      // Check if dashboard exists by trying to fetch it
       const existing = await api.getDashboard(dashboard.id).catch(() => null)
 
       if (existing) {
-        // Update existing
+        // Update existing - use UpdateDashboardRequest format
         const updateDto = toUpdateDashboardDTO(dashboard)
-        await api.updateDashboard(dashboard.id, updateDto)
+        const result = await api.updateDashboard(dashboard.id, updateDto)
+        // Backend returns full Dashboard
+        return { data: fromDashboardDTO(result), error: null, source: 'api' }
       } else {
         // Create new
         const createDto = toCreateDashboardDTO(dashboard)
-        await api.createDashboard(createDto)
+        const result = await api.createDashboard(createDto)
+        // Backend returns full Dashboard
+        return { data: fromDashboardDTO(result), error: null, source: 'api' }
       }
-
-      return { data: dashboard, error: null, source: 'api' }
     } catch (error) {
       return {
         data: null,
@@ -215,6 +223,19 @@ export class ApiDashboardStorage implements DashboardStorage {
     try {
       const api = await this.getApi()
       await api.deleteDashboard(id)
+
+      // Also remove from local cache
+      try {
+        const stored = localStorage.getItem(LOCAL_STORAGE_KEY)
+        if (stored) {
+          const dashboards = JSON.parse(stored) as Dashboard[]
+          const filtered = dashboards.filter(d => d.id !== id)
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(filtered))
+        }
+      } catch {
+        // Ignore cache errors
+      }
+
       return { data: undefined, error: null, source: 'api' }
     } catch (error) {
       return {
@@ -235,9 +256,25 @@ export class ApiDashboardStorage implements DashboardStorage {
     return 'api'
   }
 
+  getCurrentDashboardId(): string | null {
+    return this.currentDashboardId
+  }
+
+  setCurrentDashboardId(id: string | null): void {
+    this.currentDashboardId = id
+    // Also sync to localStorage
+    if (id) {
+      localStorage.setItem(CURRENT_DASHBOARD_KEY, id)
+    } else {
+      localStorage.removeItem(CURRENT_DASHBOARD_KEY)
+    }
+  }
+
   clear(): void {
-    // API storage doesn't have local data to clear
-    // This is a no-op for API-only storage
+    // Clear local cache only - server data remains
+    localStorage.removeItem(LOCAL_STORAGE_KEY)
+    localStorage.removeItem(CURRENT_DASHBOARD_KEY)
+    this.currentDashboardId = null
   }
 }
 
@@ -257,11 +294,28 @@ export class HybridDashboardStorage implements DashboardStorage {
   }
 
   async load(): Promise<StorageResult<Dashboard[]>> {
-    // Try API first, fall back to localStorage
+    // Try API first
     const apiResult = await this.apiStorage.load()
 
     if (apiResult.error || !apiResult.data) {
-      console.warn('[HybridStorage] API load failed, falling back to localStorage:', apiResult.error?.message)
+      console.warn('[HybridStorage] API load failed, checking error type:', apiResult.error?.message)
+
+      // Check if the error is because the dashboards table doesn't exist
+      // In this case, fall back to localStorage instead of clearing it
+      // This allows users to work locally when backend is unavailable
+      const errorMessage = apiResult.error?.message || ''
+      const isTableNotExist = errorMessage.includes("Table 'dashboards' does not exist") ||
+                             errorMessage.includes('does not exist')
+
+      if (isTableNotExist) {
+        console.log('[HybridStorage] Dashboards table does not exist on backend, using localStorage')
+        // Don't clear localStorage - let users work with local data
+        // When backend becomes available, data can be synced
+        return this.localStorage.load()
+      }
+
+      // For other errors, also fall back to localStorage
+      console.warn('[HybridStorage] API load failed, falling back to localStorage')
       return this.localStorage.load()
     }
 

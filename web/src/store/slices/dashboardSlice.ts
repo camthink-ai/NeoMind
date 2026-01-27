@@ -148,8 +148,17 @@ export const createDashboardSlice: StateCreator<
   [],
   DashboardState
 > = (set, get) => {
-  // Initialize storage - use localStorage only since backend API is not fully implemented
-  const storage: DashboardStorage = createDashboardStorage({ type: 'local' })
+  // Clear old localStorage dashboard data on initialization
+  try {
+    localStorage.removeItem('neotalk_dashboards')
+    localStorage.removeItem('neotalk_current_dashboard_id')
+    console.log('[DashboardSlice] Cleared old localStorage dashboard data')
+  } catch (e) {
+    // Ignore
+  }
+
+  // Initialize storage - use API as primary with localStorage fallback for caching
+  const storage: DashboardStorage = createDashboardStorage({ type: 'hybrid', cacheEnabled: true })
 
   return {
     // Initial state
@@ -177,29 +186,58 @@ export const createDashboardSlice: StateCreator<
       try {
         const result = await storage.load()
 
+        // Always get current state after potential async changes
+        const currentState = get()
+
         if (result.error) {
           console.warn('[DashboardSlice] Failed to load dashboards:', result.error.message)
+          // Set empty array when loading fails
+          set({ dashboards: [] })
         } else if (result.data) {
-          set({ dashboards: result.data })
+          // Migration: Move dataSource from config to component level
+          // This handles legacy data where dataSource was stored inside config
+          const migratedDashboards = result.data.map((dashboard: Dashboard) => {
+            return {
+              ...dashboard,
+              components: dashboard.components.map((component: any) => {
+                const config = component.config || {}
+                const configDataSource = config.dataSource
+
+                // If dataSource is in config but not at component level, migrate it
+                if (configDataSource) {
+                  // Remove from config and add to component level
+                  const { dataSource, ...configWithoutDataSource } = config
+                  return {
+                    ...component,
+                    config: configWithoutDataSource,
+                    dataSource: configDataSource,
+                  }
+                }
+
+                return component
+              }),
+            }
+          })
+
+          set({ dashboards: migratedDashboards })
 
           // Set current dashboard if not set
           const savedId = (storage as any).getCurrentDashboardId?.()
-          const currentState = get()
 
-          // Determine which dashboard to set as current
+          // Determine which dashboard to set as current - use MIGRATED data, not original
           let dashboardToSet: Dashboard | null = null
 
-          if (savedId && result.data.length > 0) {
-            // First try to use the saved ID from localStorage
-            const savedDashboard = result.data.find((d) => d.id === savedId)
+          if (savedId && migratedDashboards.length > 0) {
+            // First try to use the saved ID from localStorage - use MIGRATED dashboards
+            const savedDashboard = migratedDashboards.find((d) => d.id === savedId)
             if (savedDashboard) {
               dashboardToSet = savedDashboard
             }
           }
 
-          // If no saved dashboard or saved ID not found, use default or first
-          if (!dashboardToSet && !currentState.currentDashboardId && result.data.length > 0) {
-            dashboardToSet = result.data.find((d) => d.isDefault) || result.data[0]
+          // If no saved dashboard or saved ID not found, use default or first - use MIGRATED dashboards
+          if (!dashboardToSet && !currentState.currentDashboardId && migratedDashboards.length > 0) {
+            dashboardToSet = migratedDashboards.find((d) => d.isDefault) || migratedDashboards[0]
           }
 
           // Only update if we found a dashboard and don't already have one set
@@ -208,33 +246,56 @@ export const createDashboardSlice: StateCreator<
               currentDashboardId: dashboardToSet.id,
               currentDashboard: dashboardToSet,
             })
-            console.log('[DashboardSlice] Set current dashboard:', dashboardToSet.name)
+            console.log('[DashboardSlice] Set current dashboard:', dashboardToSet.name, 'from', result.source)
           }
+        } else {
+          // No data and no error - treat as empty
+          set({ dashboards: [] })
         }
+      } catch (err) {
+        console.error('[DashboardSlice] Unexpected error loading dashboards:', err)
+        // Set empty array on unexpected errors
+        set({ dashboards: [] })
       } finally {
         set({ dashboardsLoading: false })
       }
     },
 
     createDashboard: async (dashboard) => {
-      const newDashboard: Dashboard = {
+      // Don't generate ID locally - let the server do it
+      const dashboardForCreate: Omit<Dashboard, 'id' | 'createdAt' | 'updatedAt'> = {
         ...dashboard,
-        id: generateId(),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
       }
 
-      // Update local state immediately
+      // Persist to API first to get server-generated ID
+      const result = await storage.sync(dashboardForCreate as Dashboard)
+
+      if (result.error || !result.data) {
+        console.error('[DashboardSlice] Failed to create dashboard:', result.error)
+        // Fallback: generate local ID
+        const fallbackDashboard: Dashboard = {
+          ...dashboardForCreate,
+          id: generateId(),
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        }
+        set((state) => ({
+          dashboards: [...state.dashboards, fallbackDashboard],
+          currentDashboardId: fallbackDashboard.id,
+          currentDashboard: fallbackDashboard,
+        }))
+        return fallbackDashboard.id
+      }
+
+      // Use the server-returned dashboard
+      const serverDashboard = result.data
       set((state) => ({
-        dashboards: [...state.dashboards, newDashboard],
-        currentDashboardId: newDashboard.id,
-        currentDashboard: newDashboard,
+        dashboards: [...state.dashboards, serverDashboard],
+        currentDashboardId: serverDashboard.id,
+        currentDashboard: serverDashboard,
       }))
 
-      // Persist
-      await storage.sync(newDashboard)
-
-      return newDashboard.id
+      return serverDashboard.id
     },
 
     updateDashboard: async (id, updates) => {
@@ -330,7 +391,6 @@ export const createDashboardSlice: StateCreator<
         return
       }
 
-      console.log('[persistDashboard] Persisting dashboard:', dashboardToPersist.name)
       await storage.sync(dashboardToPersist)
     },
 

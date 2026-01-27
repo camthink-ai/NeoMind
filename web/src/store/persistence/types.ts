@@ -104,10 +104,10 @@ export interface DashboardDTO {
       y: number
       w: number
       h: number
-      minW?: number
-      minH?: number
-      maxW?: number
-      maxH?: number
+      min_w?: number
+      min_h?: number
+      max_w?: number
+      max_h?: number
     }
     title?: string
     dataSource?: Record<string, unknown>
@@ -117,6 +117,7 @@ export interface DashboardDTO {
   }>
   created_at: number
   updated_at: number
+  is_default?: boolean
 }
 
 export interface CreateDashboardDTO {
@@ -137,8 +138,9 @@ export interface UpdateDashboardDTO {
 
 /**
  * Convert internal Dashboard to API DTO format
+ * Returns API format with snake_case fields (data_source)
  */
-export function toDashboardDTO(dashboard: Dashboard): DashboardDTO {
+export function toDashboardDTO(dashboard: Dashboard): any {
   return {
     id: dashboard.id,
     name: dashboard.name,
@@ -146,54 +148,95 @@ export function toDashboardDTO(dashboard: Dashboard): DashboardDTO {
     components: dashboard.components.map(c => ({
       id: c.id,
       type: c.type,
-      position: c.position,
+      position: {
+        x: c.position.x,
+        y: c.position.y,
+        w: c.position.w,
+        h: c.position.h,
+        min_w: c.position.minW,
+        min_h: c.position.minH,
+        max_w: c.position.maxW,
+        max_h: c.position.maxH,
+      },
       title: (c as any).title,
-      dataSource: (c as any).dataSource as Record<string, unknown> | undefined,
+      // API uses snake_case for data_source
+      data_source: (c as any).dataSource as Record<string, unknown> | undefined,
       display: (c as any).display as Record<string, unknown> | undefined,
       config: (c as any).config,
       actions: (c as any).actions?.map((a: unknown) => a as Record<string, unknown>),
     })),
     created_at: dashboard.createdAt,
     updated_at: dashboard.updatedAt,
+    is_default: dashboard.isDefault,
   }
 }
 
 /**
  * Convert API DTO to internal Dashboard format
+ * Handles both DashboardDTO (camelCase) and API DashboardResponse (snake_case)
  */
-export function fromDashboardDTO(dto: DashboardDTO): Dashboard {
+export function fromDashboardDTO(dto: DashboardDTO | any): Dashboard {
+  // Handle API response format with snake_case fields
+  const components = (dto.components || []).map((c: any) => {
+    // API uses data_source (snake_case), internal uses dataSource (camelCase)
+    const dataSource = c.data_source ?? c.dataSource
+
+    return {
+      id: c.id,
+      type: c.type as any,
+      position: {
+        x: c.position.x,
+        y: c.position.y,
+        w: c.position.w,
+        h: c.position.h,
+        minW: c.position.min_w,
+        minH: c.position.min_h,
+        maxW: c.position.max_w,
+        maxH: c.position.max_h,
+      },
+      title: c.title,
+      dataSource: dataSource as any,
+      display: c.display as any,
+      config: c.config,
+      actions: c.actions as any,
+    }
+  })
+
   return {
     id: dto.id,
     name: dto.name,
     layout: dto.layout,
-    components: dto.components.map(c => ({
-      id: c.id,
-      type: c.type as any,
-      position: c.position,
-      title: c.title,
-      dataSource: c.dataSource as any,
-      display: c.display as any,
-      config: c.config,
-      actions: c.actions as any,
-    })),
+    components,
     createdAt: dto.created_at,
     updatedAt: dto.updated_at,
+    isDefault: dto.is_default,
   }
 }
 
 /**
  * Convert to create DTO (without id and timestamps)
+ * Returns API format with snake_case fields (data_source)
  */
-export function toCreateDashboardDTO(dashboard: Omit<Dashboard, 'id' | 'createdAt' | 'updatedAt'>): CreateDashboardDTO {
+export function toCreateDashboardDTO(dashboard: Omit<Dashboard, 'id' | 'createdAt' | 'updatedAt'>): any {
   return {
     name: dashboard.name,
     layout: dashboard.layout,
     components: dashboard.components.map(c => ({
       id: c.id,
       type: c.type,
-      position: c.position,
+      position: {
+        x: c.position.x,
+        y: c.position.y,
+        w: c.position.w,
+        h: c.position.h,
+        min_w: c.position.minW,
+        min_h: c.position.minH,
+        max_w: c.position.maxW,
+        max_h: c.position.maxH,
+      },
       title: (c as any).title,
-      dataSource: (c as any).dataSource as Record<string, unknown> | undefined,
+      // API uses snake_case for data_source
+      data_source: (c as any).dataSource as Record<string, unknown> | undefined,
       display: (c as any).display as Record<string, unknown> | undefined,
       config: (c as any).config,
       actions: (c as any).actions?.map((a: unknown) => a as Record<string, unknown>),
@@ -203,20 +246,32 @@ export function toCreateDashboardDTO(dashboard: Omit<Dashboard, 'id' | 'createdA
 
 /**
  * Convert to update DTO (partial)
+ * Returns API format with snake_case fields (data_source)
  */
-export function toUpdateDashboardDTO(updates: Partial<Dashboard>): UpdateDashboardDTO {
-  const dto: UpdateDashboardDTO = {}
+export function toUpdateDashboardDTO(updates: Partial<Dashboard>): any {
+  const dto: any = {}
 
   if (updates.name !== undefined) dto.name = updates.name
   if (updates.layout !== undefined) dto.layout = updates.layout
 
   if (updates.components !== undefined) {
+    // API expects snake_case field names (data_source)
     dto.components = updates.components.map(c => ({
       id: c.id,
       type: c.type,
-      position: c.position,
+      position: {
+        x: c.position.x,
+        y: c.position.y,
+        w: c.position.w,
+        h: c.position.h,
+        min_w: c.position.minW,
+        min_h: c.position.minH,
+        max_w: c.position.maxW,
+        max_h: c.position.maxH,
+      },
       title: (c as any).title,
-      dataSource: (c as any).dataSource as Record<string, unknown> | undefined,
+      // API uses snake_case for data_source
+      data_source: (c as any).dataSource as Record<string, unknown> | undefined,
       display: (c as any).display as Record<string, unknown> | undefined,
       config: (c as any).config,
       actions: (c as any).actions?.map((a: unknown) => a as Record<string, unknown>),
