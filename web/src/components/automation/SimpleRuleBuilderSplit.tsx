@@ -53,7 +53,14 @@ interface RuleBuilderProps {
   rule?: Rule
   onSave: (rule: Partial<Rule>) => Promise<void>
   resources?: {
-    devices: Array<{ id: string; name: string; device_type?: string }>
+    devices: Array<{
+      id: string
+      name: string
+      device_type: string
+      metrics?: Array<{ name: string; data_type: string; unit?: string | null }>
+      commands?: Array<{ name: string; description: string }>
+      online?: boolean
+    }>
     deviceTypes?: DeviceType[]
   }
 }
@@ -126,15 +133,15 @@ function getDeviceType(
 
 function getDeviceMetrics(
   deviceId: string,
-  devices: Array<{ id: string; name: string; device_type?: string }>,
+  devices: Array<{ id: string; name: string; device_type?: string; metrics?: unknown }>,
   deviceTypes?: DeviceType[]
 ): Array<{ name: string; display_name?: string; data_type?: string }> {
   const device = devices.find(d => d.id === deviceId)
   if (!device) return []
 
-  // If device has metrics directly, use them
-  if ((device as any).metrics && Array.isArray((device as any).metrics)) {
-    return (device as any).metrics
+  // If device has metrics directly (from rule resources), use them
+  if (device.metrics && Array.isArray(device.metrics)) {
+    return device.metrics as Array<{ name: string; display_name?: string; data_type?: string }>
   }
 
   // Otherwise, look up by device_type
@@ -148,7 +155,7 @@ function getDeviceMetrics(
 function getMetricDataType(
   metricName: string,
   deviceId: string,
-  devices: Array<{ id: string; name: string; device_type?: string }>,
+  devices: Array<{ id: string; name: string; device_type?: string; metrics?: unknown }>,
   deviceTypes?: DeviceType[]
 ): string {
   const metrics = getDeviceMetrics(deviceId, devices, deviceTypes)
@@ -158,9 +165,15 @@ function getMetricDataType(
 
 function getDeviceCommands(
   deviceId: string,
-  devices: Array<{ id: string; name: string; device_type?: string }>,
+  devices: Array<{ id: string; name: string; device_type?: string; commands?: unknown }>,
   deviceTypes?: DeviceType[]
 ): Array<{ name: string; display_name?: string }> {
+  // If device has commands directly (from rule resources), use them
+  const device = devices.find(d => d.id === deviceId)
+  if (device?.commands && Array.isArray(device.commands)) {
+    return device.commands as Array<{ name: string; display_name?: string }>
+  }
+
   const deviceTypeName = getDeviceType(deviceId, devices, deviceTypes)
   const deviceType = deviceTypes?.find(t => t.device_type === deviceTypeName)
   return deviceType?.commands || []
@@ -220,7 +233,11 @@ function uiConditionToRuleCondition(cond: UICondition): RuleCondition {
   }
 }
 
-function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
+function ruleConditionToUiCondition(
+  ruleCond?: RuleCondition,
+  devices?: Array<{ id: string; name: string; device_type?: string }>,
+  dsl?: string
+): UICondition {
   if (!ruleCond) {
     return {
       id: crypto.randomUUID(),
@@ -239,14 +256,14 @@ function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
       return {
         id: crypto.randomUUID(),
         type: op,
-        conditions: ((ruleCond as any).conditions || []).map(ruleConditionToUiCondition),
+        conditions: ((ruleCond as any).conditions || []).map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dsl)),
       }
     }
     if (op === 'not') {
       return {
         id: crypto.randomUUID(),
         type: 'not',
-        conditions: [(ruleCond as any).conditions?.[0]].map(ruleConditionToUiCondition).filter(Boolean),
+        conditions: [(ruleCond as any).conditions?.[0]].map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dsl)).filter(Boolean),
       }
     }
   }
@@ -256,11 +273,21 @@ function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
     const thresholdVal = ruleCond.threshold
     const rangeMax = typeof thresholdVal === 'number' ? thresholdVal :
                      typeof thresholdVal === 'string' ? parseFloat(thresholdVal) || 0 : 0
+    let deviceId = ruleCond.device_id || ''
+    let metric = ruleCond.metric || 'value'
+
+    // Try to reconstruct device_id from DSL if missing
+    if (!deviceId && dsl && devices) {
+      const reconstructed = reconstructDeviceIdFromCondition(ruleCond, dsl, devices)
+      deviceId = reconstructed.device_id
+      metric = reconstructed.metric || metric
+    }
+
     return {
       id: crypto.randomUUID(),
       type: 'range',
-      device_id: ruleCond.device_id || '',
-      metric: ruleCond.metric || 'value',
+      device_id: deviceId,
+      metric: metric,
       range_min: (ruleCond as any).range_min,
       range_max: rangeMax,
     }
@@ -269,16 +296,113 @@ function ruleConditionToUiCondition(ruleCond?: RuleCondition): UICondition {
   // Simple condition
   const thresholdValue = ruleCond.threshold
   const isStringThreshold = typeof thresholdValue === 'string'
+  let deviceId = ruleCond.device_id || ''
+  let metric = ruleCond.metric || 'value'
+
+  // Try to reconstruct device_id from DSL if missing
+  if (!deviceId && dsl && devices) {
+    const reconstructed = reconstructDeviceIdFromCondition(ruleCond, dsl, devices)
+    deviceId = reconstructed.device_id
+    metric = reconstructed.metric || metric
+  }
 
   return {
     id: crypto.randomUUID(),
     type: 'simple',
-    device_id: ruleCond.device_id || '',
-    metric: ruleCond.metric || 'value',
+    device_id: deviceId,
+    metric: metric,
     operator: ruleCond.operator || '>',
     threshold: isStringThreshold ? undefined : typeof thresholdValue === 'number' ? thresholdValue : 0,
     threshold_value: isStringThreshold ? thresholdValue : undefined,
   }
+}
+
+// Helper to reconstruct device_id and metric from DSL
+// The backend parses DSL but may lose device_id, so we need to match device names back to IDs
+function reconstructDeviceIdFromCondition(
+  ruleCond: RuleCondition,
+  dsl: string,
+  devices: Array<{ id: string; name: string; device_type?: string }>
+): { device_id: string; metric?: string } {
+  // If we already have device_id, return it
+  if (ruleCond.device_id) {
+    return { device_id: ruleCond.device_id, metric: ruleCond.metric }
+  }
+
+  // The DSL format is: "DeviceName.metric operator threshold"
+  // or for range: "DeviceName.metric BETWEEN min AND max"
+  const dslLines = dsl.split('\n')
+  const whenLine = dslLines.find(line => line.trim().startsWith('WHEN'))
+  if (!whenLine) return { device_id: '' }
+
+  // Extract the condition part after "WHEN"
+  const conditionPart = whenLine.replace(/^WHEN\s+/i, '').trim()
+
+  // Try to parse the condition to extract device name and metric
+  // Format: "DeviceName.metric operator threshold" or "(conditions) operator (conditions)"
+  // For range: "DeviceName.metric BETWEEN min AND max"
+
+  // Try range format first
+  const rangeMatch = conditionPart.match(/(\S+)\s+BETWEEN\s+(\d+)\s+AND\s+(\d+)/i)
+  if (rangeMatch) {
+    const [_, path, min, max] = rangeMatch
+    const result = parseDeviceMetricPath(path, devices)
+    return { device_id: result.device_id, metric: result.metric }
+  }
+
+  // Try simple format: DeviceName.metric operator threshold
+  const simpleMatch = conditionPart.match(/(\S+\.\S+)\s*([<>=!]+)\s*(.+)/)
+  if (simpleMatch) {
+    const [_, path, operator, threshold] = simpleMatch
+    const result = parseDeviceMetricPath(path, devices)
+    return { device_id: result.device_id, metric: result.metric }
+  }
+
+  return { device_id: '' }
+}
+
+// Parse device.metric path and match to device_id
+function parseDeviceMetricPath(
+  path: string,
+  devices: Array<{ id: string; name: string; device_type?: string }>
+): { device_id: string; metric: string } {
+  const parts = path.split('.')
+  if (parts.length < 2) return { device_id: '', metric: 'value' }
+
+  const deviceName = parts[0]
+  const metric = parts.slice(1).join('.')
+
+  // Try exact name match first
+  const exactMatch = devices.find(d => d.name === deviceName)
+  if (exactMatch) {
+    return { device_id: exactMatch.id, metric }
+  }
+
+  // Try case-insensitive match
+  const caseMatch = devices.find(d => d.name.toLowerCase() === deviceName.toLowerCase())
+  if (caseMatch) {
+    return { device_id: caseMatch.id, metric }
+  }
+
+  // Try matching device_type if device_name is a type name
+  const typeMatch = devices.find(d => d.device_type?.toLowerCase() === deviceName.toLowerCase())
+  if (typeMatch) {
+    return { device_id: typeMatch.id, metric }
+  }
+
+  // Try partial match (device name contains the DSL name)
+  const partialMatch = devices.find(d => d.name.toLowerCase().includes(deviceName.toLowerCase()))
+  if (partialMatch) {
+    return { device_id: partialMatch.id, metric }
+  }
+
+  // Try reverse: DSL name contains device name
+  const reverseMatch = devices.find(d => deviceName.toLowerCase().includes(d.name.toLowerCase()))
+  if (reverseMatch) {
+    return { device_id: reverseMatch.id, metric }
+  }
+
+  return { device_id: '', metric }
 }
 
 // Helper to get device name from ID
@@ -456,20 +580,35 @@ export function SimpleRuleBuilderSplit({
       if (rule) {
         console.log('[DEBUG] Loading rule into form:', rule)
         console.log('[DEBUG] Rule condition:', rule.condition)
+        console.log('[DEBUG] Rule source:', (rule as any).source)
         console.log('[DEBUG] Rule actions:', rule.actions)
         setName(rule.name || '')
         setDescription(rule.description || '')
         setEnabled(rule.enabled ?? true)
         setFormErrors({})
-        if (rule.condition) {
-          const uiCond = ruleConditionToUiCondition(rule.condition)
-          console.log('[DEBUG] Converted UI condition:', uiCond)
+
+        // Try to restore from source.uiCondition first (exact restoration)
+        const sourceUiCond = (rule as any).source?.uiCondition
+        if (sourceUiCond) {
+          console.log('[DEBUG] Restoring from source.uiCondition:', sourceUiCond)
+          setCondition(sourceUiCond)
+        } else if (rule.condition) {
+          // Fall back to converting the condition
+          // Pass devices and dsl to help reconstruct device_id if missing
+          const uiCond = ruleConditionToUiCondition(rule.condition, resources.devices, rule.dsl)
+          console.log('[DEBUG] Converted UI condition from rule.condition:', uiCond)
           setCondition(uiCond)
         } else {
           console.log('[DEBUG] No condition in rule, setting to null')
           setCondition(null)
         }
-        if (rule.actions && rule.actions.length > 0) {
+
+        // Restore actions - prefer source.uiActions for exact restoration
+        const sourceUiActions = (rule as any).source?.uiActions
+        if (sourceUiActions && sourceUiActions.length > 0) {
+          console.log('[DEBUG] Restoring from source.uiActions:', sourceUiActions)
+          setActions(sourceUiActions)
+        } else if (rule.actions && rule.actions.length > 0) {
           // Validate and clean up actions to ensure correct structure
           const cleanedActions: RuleAction[] = rule.actions.map(action => {
             // Ensure action has correct structure based on type
@@ -497,19 +636,28 @@ export function SimpleRuleBuilderSplit({
         } else {
           setActions([])
         }
-        const forClause = parseForClauseFromDSL(rule.dsl)
-        if (forClause) {
-          setForDuration(forClause.duration)
-          setForUnit(forClause.unit)
+
+        // Restore forDuration and forUnit - prefer source values
+        const sourceForDuration = (rule as any).source?.forDuration
+        const sourceForUnit = (rule as any).source?.forUnit
+        if (sourceForDuration !== undefined && sourceForUnit !== undefined) {
+          setForDuration(sourceForDuration)
+          setForUnit(sourceForUnit)
         } else {
-          setForDuration(0)
-          setForUnit('minutes')
+          const forClause = parseForClauseFromDSL(rule.dsl)
+          if (forClause) {
+            setForDuration(forClause.duration)
+            setForUnit(forClause.unit)
+          } else {
+            setForDuration(0)
+            setForUnit('minutes')
+          }
         }
       } else {
         resetForm()
       }
     }
-  }, [open, rule])
+  }, [open, rule, resources.devices, resources.deviceTypes])
 
   const resetForm = useCallback(() => {
     setName('')
@@ -631,6 +779,14 @@ export function SimpleRuleBuilderSplit({
         condition: finalCondition,
         actions: actions.length > 0 ? actions : undefined,
         dsl,
+        // Store original UI state in source field for proper restoration on edit
+        source: {
+          condition: finalCondition,
+          uiCondition: condition, // Store the UI condition for exact restoration
+          uiActions: actions, // Store the UI actions for exact restoration
+          forDuration,
+          forUnit,
+        },
       }
       if (rule?.id) ruleData.id = rule.id
       await onSave(ruleData)
@@ -869,7 +1025,12 @@ interface ConditionStepProps {
   condition: UICondition | null
   onConditionChange: (c: UICondition) => void
   onAddCondition: () => UICondition
-  devices: Array<{ id: string; name: string; device_type?: string }>
+  devices: Array<{
+    id: string
+    name: string
+    device_type: string
+    metrics?: Array<{ name: string; data_type: string; unit?: string | null }>
+  }>
   deviceTypes?: DeviceType[]
   forDuration: number
   onForDurationChange: (v: number) => void
@@ -1012,7 +1173,12 @@ function ConditionTypeButton({ label, icon, onClick }: { label: string; icon: Re
 interface ActionStepProps {
   actions: RuleAction[]
   onActionsChange: (actions: RuleAction[]) => void
-  devices: Array<{ id: string; name: string; device_type?: string }>
+  devices: Array<{
+    id: string
+    name: string
+    device_type: string
+    commands?: Array<{ name: string; description: string }>
+  }>
   deviceTypes?: DeviceType[]
   t: (key: string) => string
   tBuilder: (key: string) => string
@@ -1232,7 +1398,14 @@ function ReviewStep({ name, description, enabled, condition, actions, forDuratio
 interface ConditionEditorProps {
   condition: UICondition
   onChange: (c: UICondition) => void
-  devices: Array<{ id: string; name: string; device_type?: string }>
+  devices: Array<{
+    id: string
+    name: string
+    device_type: string
+    metrics?: Array<{ name: string; data_type: string; unit?: string | null }>
+    commands?: Array<{ name: string; description: string }>
+    online?: boolean
+  }>
   deviceTypes?: DeviceType[]
   t: (key: string) => string
   tBuilder: (key: string) => string
@@ -1512,7 +1685,12 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, t, tBuilde
 interface ActionEditorCompactProps {
   action: RuleAction
   index: number
-  devices: Array<{ id: string; name: string; device_type?: string }>
+  devices: Array<{
+    id: string
+    name: string
+    device_type: string
+    commands?: Array<{ name: string; description: string }>
+  }>
   deviceTypes?: DeviceType[]
   t: (key: string) => string
   tBuilder: (key: string) => string

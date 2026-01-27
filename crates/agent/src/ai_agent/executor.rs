@@ -816,21 +816,51 @@ Respond in JSON format:
         parsed_intent: Option<&edge_ai_storage::ParsedIntent>,
     ) -> Result<(String, Vec<ReasoningStep>, Vec<Decision>, String), AgentError> {
         // Try LLM-based analysis first
-        if let Ok(Some(llm)) = self.get_llm_runtime_for_agent(agent).await {
-            if let Ok(result) = self.analyze_with_llm(llm, agent, data, parsed_intent).await {
+        tracing::info!(
+            agent_id = %agent.id,
+            agent_name = %agent.name,
+            "Starting situation analysis, checking LLM availability..."
+        );
+
+        match self.get_llm_runtime_for_agent(agent).await {
+            Ok(Some(llm)) => {
                 tracing::info!(
                     agent_id = %agent.id,
-                    "LLM-based analysis completed successfully"
+                    "LLM runtime available, performing LLM-based analysis"
                 );
-                return Ok(result);
+                match self.analyze_with_llm(llm, agent, data, parsed_intent).await {
+                    Ok(result) => {
+                        tracing::info!(
+                            agent_id = %agent.id,
+                            "LLM-based analysis completed successfully"
+                        );
+                        return Ok(result);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            agent_id = %agent.id,
+                            error = %e,
+                            "LLM analysis failed, falling back to rule-based"
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    agent_id = %agent.id,
+                    "No LLM runtime configured, falling back to rule-based analysis"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    agent_id = %agent.id,
+                    error = %e,
+                    "Failed to get LLM runtime, falling back to rule-based"
+                );
             }
         }
 
         // Fall back to rule-based logic
-        tracing::warn!(
-            agent_id = %agent.id,
-            "LLM not available, falling back to rule-based analysis"
-        );
         self.analyze_rule_based(agent, data, parsed_intent).await
     }
 
@@ -843,6 +873,12 @@ Respond in JSON format:
         parsed_intent: Option<&edge_ai_storage::ParsedIntent>,
     ) -> Result<(String, Vec<ReasoningStep>, Vec<Decision>, String), AgentError> {
         use edge_ai_core::llm::backend::{LlmInput, GenerationParams};
+
+        tracing::info!(
+            agent_id = %agent.id,
+            data_count = data.len(),
+            "Calling LLM for situation analysis..."
+        );
 
         // Build context from data
         let data_summary = if data.is_empty() {

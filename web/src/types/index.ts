@@ -629,6 +629,14 @@ export interface Rule {
   trigger?: RuleTrigger
   // DSL text (used in creation/update)
   dsl?: string
+  // Frontend-only source field for storing original UI state (not sent to backend)
+  source?: {
+    condition?: RuleCondition
+    uiCondition?: any  // UICondition type from SimpleRuleBuilderSplit
+    uiActions?: RuleAction[]
+    forDuration?: number
+    forUnit?: 'seconds' | 'minutes' | 'hours'
+  }
 }
 
 export type RuleTrigger =

@@ -5,7 +5,6 @@
  * Uses Field components and default input/label styles.
  */
 
-import { memo } from 'react'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -48,8 +47,8 @@ export function ConfigRenderer({ sections }: ConfigRendererProps) {
   )
 }
 
-// Memoize ConfigSectionItem to prevent unnecessary re-renders that cause cursor jumping
-const ConfigSectionItem = memo(function ConfigSectionItem({ section }: { section: ConfigSectionType }) {
+// ConfigSectionItem - NOT memoized to ensure updates are properly reflected
+const ConfigSectionItem = function ConfigSectionItem({ section }: { section: ConfigSectionType }) {
   switch (section.type) {
     case 'data-source':
       return null // Handled separately by UnifiedDataSourceConfig
@@ -359,4 +358,4 @@ const ConfigSectionItem = memo(function ConfigSectionItem({ section }: { section
     default:
       return null
   }
-})
+}

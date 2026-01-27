@@ -948,7 +948,18 @@ export const api = {
       body: JSON.stringify({ dsl }),
     }),
   getRuleResources: () =>
-    fetchAPI<{ devices: Array<{ id: string; name: string; type: string }>; metrics: Array<string>; alert_channels: Array<string> }>('/rules/resources'),
+    fetchAPI<{
+      devices: Array<{
+        id: string
+        name: string
+        device_type: string
+        metrics: Array<{ name: string; data_type: string; unit?: string | null; min_value?: number | null; max_value?: number | null }>
+        commands: Array<{ name: string; description: string }>
+        properties: unknown[]
+        online: boolean
+      }>
+      alert_channels: Array<{ id: string; name: string; channel_type: string; enabled: boolean }>
+    }>('/rules/resources'),
 
   exportRules: (format?: 'json') =>
     fetchAPI<{ rules: unknown[]; export_date: string; total_count: number }>(`/rules/export${format ? `?format=${format}` : ''}`),

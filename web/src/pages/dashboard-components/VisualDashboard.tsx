@@ -1055,13 +1055,8 @@ export function VisualDashboard() {
     const components = currentDashboard?.components ?? []
     const prevComponents = prevComponentsRef.current ?? []
 
-    console.log('[componentsStableKey] Recalculating, configVersion:', configVersion)
-    console.log('[componentsStableKey] components.length:', components.length)
-    console.log('[componentsStableKey] prevComponents.length:', prevComponents.length)
-
     // Quick check: if length changed, definitely different
     if (components.length !== prevComponents.length) {
-      console.log('[componentsStableKey] Length changed, returning changed key')
       prevComponentsRef.current = components
       return `changed-${components.length}-${Date.now()}-${configVersion}`
     }
@@ -1395,12 +1390,6 @@ export function VisualDashboard() {
     const component = currentDashboard?.components.find(c => c.id === componentId)
     if (!component) return
 
-    console.log('=== handleOpenConfig ===')
-    console.log('component.id:', component.id)
-    console.log('component.type:', component.type)
-    console.log('component.config:', (component as any).config)
-    console.log('component.dataSource:', (component as any).dataSource)
-
     setSelectedComponent(component)
     // Extract both config and dataSource (they are separate properties on GenericComponent)
     const config = { ...((component as any).config || {}) }
@@ -1409,8 +1398,6 @@ export function VisualDashboard() {
     const configWithTitle = { ...config, title: component.title }
     // Merge dataSource into config for unified state management
     const mergedConfig = dataSource ? { ...configWithTitle, dataSource } : configWithTitle
-
-    console.log('mergedConfig to set as componentConfig:', mergedConfig)
 
     // Store original config for revert on cancel
     setOriginalComponentConfig(mergedConfig)
@@ -1438,23 +1425,31 @@ export function VisualDashboard() {
     className?: string
   }
 
-  const SelectField = useCallback(({ label, value, onChange, options, className }: SelectFieldProps) => (
-    <Field className={className}>
-      <Label>{label}</Label>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger>
-          <SelectValue placeholder={`选择${label}`} />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </Field>
-  ), [])
+  // SelectField component - NOT memoized to ensure it receives fresh props
+  function SelectField({ label, value, onChange, options, className }: SelectFieldProps) {
+    console.log('[SelectField render] label:', label, 'value:', value)
+    const handleChange = (newValue: string) => {
+      console.log('[SelectField handleChange] newValue:', newValue, 'label:', label)
+      onChange(newValue)
+    }
+    return (
+      <Field className={className}>
+        <Label>{label}</Label>
+        <Select value={value} onValueChange={handleChange}>
+          <SelectTrigger>
+            <SelectValue placeholder={`选择${label}`} />
+          </SelectTrigger>
+          <SelectContent>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+    )
+  }
 
   // Memoize grid components to prevent infinite re-renders
   // Only recalculate when actual component data changes (detected via stableKey)
@@ -1771,6 +1766,7 @@ export function VisualDashboard() {
 
     // Helper to create updater functions
     const updateConfig = (key: string) => (value: any) => {
+      console.log('[updateConfig] key:', key, 'value:', value)
       if (key === 'title') {
         // Title changes need to sync with configTitle state and the component
         setConfigTitle(value)
@@ -1778,7 +1774,11 @@ export function VisualDashboard() {
           updateComponent(selectedComponent.id, { title: value }, false)
         }
       }
-      setComponentConfig(prev => ({ ...prev, [key]: value }))
+      setComponentConfig(prev => {
+        const updated = { ...prev, [key]: value }
+        console.log('[updateConfig] componentConfig updated:', updated)
+        return updated
+      })
     }
 
     const updateNestedConfig = (parent: string, key: string) => (value: any) => {

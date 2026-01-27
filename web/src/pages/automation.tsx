@@ -80,12 +80,13 @@ export function AutomationPage() {
   // Resources for dialogs
   const [devices, setDevices] = useState<any[]>([])
   const [deviceTypes, setDeviceTypes] = useState<any[]>([])
+  const [ruleDevices, setRuleDevices] = useState<any[]>([])  // Devices with metrics for rules
 
   // Fetch data
   const loadItems = useCallback(async () => {
     setLoading(true)
     try {
-      // Load devices for all tabs
+      // Load devices for all tabs (for transforms)
       const devicesData = await api.getDevices()
       setDevices(devicesData.devices || [])
 
@@ -95,6 +96,15 @@ export function AutomationPage() {
         setDeviceTypes(typesData.device_types || [])
       } catch {
         setDeviceTypes([])
+      }
+
+      // Load rule resources (for rules - includes metrics)
+      try {
+        const resourcesData = await api.getRuleResources()
+        setRuleDevices(resourcesData.devices || [])
+      } catch (err) {
+        console.error('Failed to load rule resources:', err)
+        setRuleDevices([])
       }
 
       // Load tab-specific data
@@ -401,7 +411,7 @@ export function AutomationPage() {
         onOpenChange={setShowRuleDialog}
         rule={editingRule}
         onSave={handleSaveRule}
-        resources={{ devices, deviceTypes }}
+        resources={{ devices: ruleDevices, deviceTypes }}
       />
 
       {/* Transform Builder Dialog */}

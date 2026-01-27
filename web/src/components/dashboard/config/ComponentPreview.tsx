@@ -85,6 +85,11 @@ export const ComponentPreview = memo(function ComponentPreview({
 }: ComponentPreviewProps) {
   const meta = getComponentMeta(componentType as ImplementedComponentType)
 
+  // Debug logging for custom-layer
+  if (componentType === 'custom-layer') {
+    console.log('[ComponentPreview] config.backgroundType:', config.backgroundType)
+  }
+
   // Track data source changes to show transition
   const [prevDataSourceKey, setPrevDataSourceKey] = useState<string>(() => createDataSourceKey(dataSource))
   const [isTransitioning, setIsTransitioning] = useState(false)
@@ -253,11 +258,11 @@ export const ComponentPreview = memo(function ComponentPreview({
     </div>
   )
 }, (prevProps, nextProps) => {
-  // Custom comparison for memo - check if props actually changed
+  // Simplified memo comparison - only skip re-render if everything is exactly the same
   return (
     prevProps.componentType === nextProps.componentType &&
     prevProps.title === nextProps.title &&
-    createStableKey(prevProps.config) === createStableKey(nextProps.config) &&
-    createStableKey(prevProps.dataSource) === createStableKey(nextProps.dataSource)
+    prevProps.config === nextProps.config &&
+    prevProps.dataSource === nextProps.dataSource
   )
 })
