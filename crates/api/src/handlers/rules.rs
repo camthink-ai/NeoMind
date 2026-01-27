@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use chrono;
 
 use edge_ai_rules::{CompiledRule, RuleId, RuleStatus, RuleCondition, RuleAction, ComparisonOperator, MetricDataType as RulesMetricDataType};
+use edge_ai_rules::dsl::{HttpMethod, AlertSeverity};
 use edge_ai_devices::MetricDataType as DeviceMetricDataType;
 
 use super::{
@@ -29,26 +30,7 @@ struct RuleDetailDto {
     last_triggered: Option<String>,
     created_at: String,
     condition: Value,  // Changed to Value to handle different condition types
-    actions: Vec<RuleActionDto>,
-}
-
-/// Rule action for API responses.
-#[derive(Debug, serde::Serialize)]
-#[serde(tag = "type")]
-enum RuleActionDto {
-    Notify {
-        message: String,
-        channels: Option<Vec<String>>,
-    },
-    Execute {
-        device_id: String,
-        command: String,
-        params: HashMap<String, Value>,
-    },
-    Log {
-        level: String,
-        message: String,
-    },
+    actions: Vec<Value>,  // Changed to Value for frontend-compatible format
 }
 
 /// Simple rule info for list responses.
@@ -71,6 +53,10 @@ pub struct UpdateRuleRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub enabled: Option<bool>,
+    #[serde(default)]
+    pub dsl: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// Request body for enabling/disabling a rule.
@@ -79,85 +65,168 @@ pub struct SetRuleStatusRequest {
     pub enabled: bool,
 }
 
+/// Convert ComparisonOperator to symbol string for frontend
+fn operator_to_symbol(op: &ComparisonOperator) -> &'static str {
+    match op {
+        ComparisonOperator::GreaterThan => ">",
+        ComparisonOperator::LessThan => "<",
+        ComparisonOperator::GreaterEqual => ">=",
+        ComparisonOperator::LessEqual => "<=",
+        ComparisonOperator::Equal => "==",
+        ComparisonOperator::NotEqual => "!=",
+    }
+}
+
+/// Convert LogLevel to frontend-compatible string
+fn log_level_to_string(level: &edge_ai_rules::LogLevel) -> &'static str {
+    match level {
+        edge_ai_rules::LogLevel::Alert => "debug",
+        edge_ai_rules::LogLevel::Info => "info",
+        edge_ai_rules::LogLevel::Warning => "warn",
+        edge_ai_rules::LogLevel::Error => "error",
+    }
+}
+
+/// Convert AlertSeverity to frontend-compatible string
+fn alert_severity_to_string(severity: &AlertSeverity) -> &'static str {
+    match severity {
+        AlertSeverity::Info => "info",
+        AlertSeverity::Warning => "warning",
+        AlertSeverity::Error => "error",
+        AlertSeverity::Critical => "critical",
+    }
+}
+
+/// Convert HttpMethod to frontend-compatible string
+fn http_method_to_string(method: &HttpMethod) -> &'static str {
+    match method {
+        HttpMethod::Get => "GET",
+        HttpMethod::Post => "POST",
+        HttpMethod::Put => "PUT",
+        HttpMethod::Delete => "DELETE",
+        HttpMethod::Patch => "PATCH",
+    }
+}
+
+/// Convert RuleCondition to frontend-compatible JSON Value
+fn condition_to_json(cond: &RuleCondition) -> Value {
+    match cond {
+        RuleCondition::Simple { device_id, metric, operator, threshold } => {
+            json!({
+                "device_id": device_id,
+                "metric": metric,
+                "operator": operator_to_symbol(operator),
+                "threshold": threshold,
+            })
+        }
+        RuleCondition::Range { device_id, metric, min, max } => {
+            json!({
+                "device_id": device_id,
+                "metric": metric,
+                "operator": "between",
+                "range_min": min,
+                "threshold": max,
+            })
+        }
+        RuleCondition::And(conditions) => {
+            json!({
+                "operator": "and",
+                "conditions": conditions.iter().map(condition_to_json).collect::<Vec<_>>(),
+            })
+        }
+        RuleCondition::Or(conditions) => {
+            json!({
+                "operator": "or",
+                "conditions": conditions.iter().map(condition_to_json).collect::<Vec<_>>(),
+            })
+        }
+        RuleCondition::Not(condition) => {
+            json!({
+                "operator": "not",
+                "conditions": [condition_to_json(condition)],
+            })
+        }
+    }
+}
+
+/// Convert RuleAction to frontend-compatible JSON Value
+fn action_to_json(action: &RuleAction) -> Value {
+    match action {
+        RuleAction::Notify { message, channels: _ } => {
+            json!({
+                "type": "Notify",
+                "message": message,
+            })
+        }
+        RuleAction::Execute { device_id, command, params } => {
+            json!({
+                "type": "Execute",
+                "device_id": device_id,
+                "command": command,
+                "params": params,
+            })
+        }
+        RuleAction::Log { level, message, severity: _ } => {
+            json!({
+                "type": "Log",
+                "level": log_level_to_string(level),
+                "message": message,
+            })
+        }
+        RuleAction::Set { device_id, property, value } => {
+            json!({
+                "type": "Set",
+                "device_id": device_id,
+                "property": property,
+                "value": value,
+            })
+        }
+        RuleAction::Delay { duration } => {
+            json!({
+                "type": "Delay",
+                "duration": duration.as_millis(),
+            })
+        }
+        RuleAction::CreateAlert { title, message, severity } => {
+            json!({
+                "type": "CreateAlert",
+                "title": title,
+                "message": message,
+                "severity": alert_severity_to_string(severity),
+            })
+        }
+        RuleAction::HttpRequest { method, url, headers: _, body: _ } => {
+            json!({
+                "type": "HttpRequest",
+                "method": http_method_to_string(method),
+                "url": url,
+            })
+        }
+    }
+}
+
 impl From<&CompiledRule> for RuleDetailDto {
     fn from(rule: &CompiledRule) -> Self {
-        // Convert RuleCondition enum to JSON Value
-        let condition_json = match &rule.condition {
-            RuleCondition::Simple { device_id, metric, operator, threshold } => {
-                json!({
-                    "type": "simple",
-                    "device_id": device_id,
-                    "metric": metric,
-                    "operator": format!("{:?}", operator),
-                    "threshold": threshold,
-                })
-            }
-            RuleCondition::Range { device_id, metric, min, max } => {
-                json!({
-                    "type": "range",
-                    "device_id": device_id,
-                    "metric": metric,
-                    "min": min,
-                    "max": max,
-                })
-            }
-            RuleCondition::And(conditions) => {
-                json!({
-                    "type": "and",
-                    "conditions": conditions,
-                })
-            }
-            RuleCondition::Or(conditions) => {
-                json!({
-                    "type": "or",
-                    "conditions": conditions,
-                })
-            }
-            RuleCondition::Not(condition) => {
-                json!({
-                    "type": "not",
-                    "condition": condition,
-                })
-            }
-        };
+        // Convert RuleCondition to frontend-compatible JSON format
+        let condition_json = condition_to_json(&rule.condition);
+
+        // Convert actions to frontend-compatible format
+        let actions_json: Vec<Value> = rule
+            .actions
+            .iter()
+            .map(action_to_json)
+            .collect();
 
         Self {
             id: rule.id.to_string(),
             name: rule.name.clone(),
-            description: None, // TODO: add description field to CompiledRule
+            description: rule.description.clone(),
             enabled: matches!(rule.status, RuleStatus::Active),
             trigger_count: rule.state.trigger_count,
             last_triggered: rule.state.last_triggered.map(|dt| dt.to_rfc3339()),
             created_at: rule.created_at.to_rfc3339(),
             condition: condition_json,
-            actions: rule
-                .actions
-                .iter()
-                .map(|a| match a {
-                    RuleAction::Notify { message, channels } => RuleActionDto::Notify {
-                        message: message.clone(),
-                        channels: channels.clone(),
-                    },
-                    RuleAction::Execute {
-                        device_id,
-                        command,
-                        params,
-                    } => RuleActionDto::Execute {
-                        device_id: device_id.clone(),
-                        command: command.clone(),
-                        params: params.clone(),
-                    },
-                    RuleAction::Log { level, message, severity: _ } => RuleActionDto::Log {
-                        level: level.to_string(),
-                        message: message.clone(),
-                    },
-                    // For other action types, create a placeholder
-                    _ => RuleActionDto::Log {
-                        level: "info".to_string(),
-                        message: format!("{:?}", a),
-                    },
-                })
-                .collect(),
+            actions: actions_json,
         }
     }
 }
@@ -229,7 +298,60 @@ pub async fn update_rule_handler(
     let rule_id = RuleId::from_string(&id)
         .map_err(|_| ErrorResponse::bad_request(format!("Invalid rule ID: {}", id)))?;
 
-    // Get the current rule
+    // If DSL is provided, re-parse and replace the entire rule
+    if let Some(dsl) = req.dsl {
+        // Use the inner engine to parse DSL and get a CompiledRule
+        let parsed = edge_ai_rules::dsl::RuleDslParser::parse(&dsl)
+            .map_err(|e| ErrorResponse::internal(format!("Failed to parse DSL: {}", e)))?;
+
+        // Create a compiled rule from the parsed DSL, then override with original ID
+        let mut rule = CompiledRule::from_parsed_with_dsl(parsed, dsl);
+        rule.id = rule_id.clone();
+
+        // Override name if provided
+        if let Some(name) = req.name {
+            rule.name = name;
+        }
+
+        // Override description if provided
+        if let Some(description) = req.description {
+            rule.description = Some(description);
+        }
+
+        // Handle enable/disable
+        let enabled = if let Some(enabled) = req.enabled {
+            enabled
+        } else {
+            matches!(rule.status, RuleStatus::Active)
+        };
+
+        rule.status = if enabled {
+            RuleStatus::Active
+        } else {
+            RuleStatus::Paused
+        };
+
+        // Add the rule (this replaces the old one with same ID)
+        state
+            .rule_engine
+            .add_rule(rule.clone())
+            .await
+            .map_err(|e| ErrorResponse::internal(format!("Failed to update rule: {}", e)))?;
+
+        // Persist to store
+        if let Some(ref store) = state.rule_store {
+            if let Err(e) = store.save(&rule) {
+                tracing::warn!("Failed to save rule to store: {}", e);
+            }
+        }
+
+        return ok(json!({
+            "rule": RuleDetailDto::from(&rule),
+            "updated": true,
+        }));
+    }
+
+    // Get the current rule for simple updates
     let mut rule = state
         .rule_engine
         .get_rule(&rule_id)
@@ -239,6 +361,10 @@ pub async fn update_rule_handler(
     // Update fields
     if let Some(name) = req.name {
         rule.name = name;
+    }
+
+    if let Some(description) = req.description {
+        rule.description = Some(description);
     }
 
     // Handle enable/disable
@@ -272,7 +398,7 @@ pub async fn update_rule_handler(
     }
 
     ok(json!({
-        "rule_id": id,
+        "rule": RuleDetailDto::from(&rule),
         "updated": true,
     }))
 }

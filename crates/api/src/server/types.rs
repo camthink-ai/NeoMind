@@ -13,6 +13,7 @@ use edge_ai_devices::adapter::AdapterResult;
 use edge_ai_devices::{DeviceRegistry, DeviceService, TimeSeriesStorage};
 use edge_ai_rules::{InMemoryValueProvider, RuleEngine, store::RuleStore};
 use edge_ai_storage::business::EventLogStore;
+use edge_ai_storage::dashboards::DashboardStore;
 use edge_ai_storage::decisions::DecisionStore;
 use edge_ai_storage::llm_backends::LlmBackendStore;
 
@@ -103,6 +104,8 @@ pub struct ServerState {
     pub agent_manager: Arc<tokio::sync::RwLock<Option<AgentManager>>>,
     /// Server start timestamp.
     pub started_at: i64,
+    /// Dashboard store for visual dashboard persistence.
+    pub dashboard_store: Arc<DashboardStore>,
 }
 
 impl ServerState {
@@ -383,6 +386,22 @@ impl ServerState {
             agent_store,
             // AI Agent manager - lazy initialized, will be started when server is fully ready
             agent_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            // Dashboard store for visual dashboards
+            dashboard_store: {
+                match DashboardStore::open("data/dashboards.redb") {
+                    Ok(store) => {
+                        tracing::info!("Dashboard store initialized at data/dashboards.redb");
+                        store
+                    }
+                    Err(e) => {
+                        tracing::warn!(category = "storage", error = %e, "Failed to open dashboard store, using in-memory");
+                        DashboardStore::memory().unwrap_or_else(|e| {
+                            tracing::error!(category = "storage", error = %e, "Failed to create in-memory dashboard store");
+                            std::process::exit(1);
+                        })
+                    }
+                }
+            },
             started_at,
         }
     }

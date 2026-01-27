@@ -15,9 +15,13 @@ use super::{
     common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
+use edge_ai_storage::dashboards::{
+    Dashboard as StoredDashboard, DashboardStore, DashboardTemplate as StoredTemplate,
+    DashboardLayout as StoredLayout, DashboardComponent as StoredComponent, default_templates,
+};
 
 // ============================================================================
-// Types
+// API Types (match frontend expectations)
 // ============================================================================
 
 /// Dashboard layout configuration
@@ -52,6 +56,14 @@ pub struct ComponentPosition {
     pub y: u32,
     pub w: u32,
     pub h: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_w: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_h: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_w: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_h: Option<u32>,
 }
 
 /// Dashboard component
@@ -157,19 +169,117 @@ pub struct DashboardsResponse {
 }
 
 // ============================================================================
-// Default templates
+// Conversion Helpers
 // ============================================================================
 
-fn default_layout() -> DashboardLayout {
-    DashboardLayout {
-        columns: 12,
-        rows: RowsValue::String("auto".to_string()),
-        breakpoints: LayoutBreakpoints {
-            lg: 1200,
-            md: 996,
-            sm: 768,
-            xs: 480,
+/// Convert stored dashboard to API dashboard
+fn stored_to_api(dashboard: &StoredDashboard) -> Dashboard {
+    Dashboard {
+        id: dashboard.id.clone(),
+        name: dashboard.name.clone(),
+        layout: convert_layout(&dashboard.layout),
+        components: dashboard.components.iter().map(convert_component).collect(),
+        created_at: dashboard.created_at,
+        updated_at: dashboard.updated_at,
+        is_default: dashboard.is_default,
+    }
+}
+
+/// Convert API layout to stored layout
+fn api_to_stored_layout(layout: &DashboardLayout) -> StoredLayout {
+    StoredLayout {
+        columns: layout.columns,
+        rows: match &layout.rows {
+            RowsValue::String(s) => edge_ai_storage::dashboards::RowsValue::String(s.clone()),
+            RowsValue::Number(n) => edge_ai_storage::dashboards::RowsValue::Number(*n),
         },
+        breakpoints: edge_ai_storage::dashboards::LayoutBreakpoints {
+            lg: layout.breakpoints.lg,
+            md: layout.breakpoints.md,
+            sm: layout.breakpoints.sm,
+            xs: layout.breakpoints.xs,
+        },
+    }
+}
+
+/// Convert stored layout to API layout
+fn convert_layout(layout: &StoredLayout) -> DashboardLayout {
+    DashboardLayout {
+        columns: layout.columns,
+        rows: match &layout.rows {
+            edge_ai_storage::dashboards::RowsValue::String(s) => RowsValue::String(s.clone()),
+            edge_ai_storage::dashboards::RowsValue::Number(n) => RowsValue::Number(*n),
+        },
+        breakpoints: LayoutBreakpoints {
+            lg: layout.breakpoints.lg,
+            md: layout.breakpoints.md,
+            sm: layout.breakpoints.sm,
+            xs: layout.breakpoints.xs,
+        },
+    }
+}
+
+/// Convert API component to stored component
+fn api_to_stored_component(component: &CreateDashboardComponent) -> StoredComponent {
+    StoredComponent {
+        id: String::new(), // Will be set by caller
+        component_type: component.component_type.clone(),
+        position: edge_ai_storage::dashboards::ComponentPosition {
+            x: component.position.x,
+            y: component.position.y,
+            w: component.position.w,
+            h: component.position.h,
+            min_w: component.position.min_w,
+            min_h: component.position.min_h,
+            max_w: component.position.max_w,
+            max_h: component.position.max_h,
+        },
+        title: component.title.clone(),
+        data_source: component.data_source.clone(),
+        display: component.display.clone(),
+        config: component.config.clone(),
+        actions: component.actions.clone(),
+    }
+}
+
+/// Convert stored component to API component
+fn convert_component(component: &StoredComponent) -> DashboardComponent {
+    DashboardComponent {
+        id: component.id.clone(),
+        component_type: component.component_type.clone(),
+        position: ComponentPosition {
+            x: component.position.x,
+            y: component.position.y,
+            w: component.position.w,
+            h: component.position.h,
+            min_w: component.position.min_w,
+            min_h: component.position.min_h,
+            max_w: component.position.max_w,
+            max_h: component.position.max_h,
+        },
+        title: component.title.clone(),
+        data_source: component.data_source.clone(),
+        display: component.display.clone(),
+        config: component.config.clone(),
+        actions: component.actions.clone(),
+    }
+}
+
+/// Convert stored template to API template
+fn stored_template_to_api(template: &StoredTemplate) -> DashboardTemplate {
+    DashboardTemplate {
+        id: template.id.clone(),
+        name: template.name.clone(),
+        description: template.description.clone(),
+        category: template.category.clone(),
+        icon: template.icon.clone(),
+        layout: convert_layout(&template.layout),
+        components: template.components.clone(),
+        required_resources: template.required_resources.as_ref().map(|r| RequiredResources {
+            devices: r.devices,
+            agents: r.agents,
+            rules: r.rules,
+        }),
     }
 }
 
@@ -179,71 +289,127 @@ fn default_layout() -> DashboardLayout {
 
 /// List all dashboards
 pub async fn list_dashboards_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
 ) -> HandlerResult<DashboardsResponse> {
-    // For now, return empty list - dashboards are stored in frontend local storage
-    // TODO: Implement persistent dashboard storage in redb
+    let dashboards = state.dashboard_store.list_all()
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to list dashboards: {}", e)))?;
+
+    let api_dashboards: Vec<Dashboard> = dashboards.iter().map(stored_to_api).collect();
+    let count = api_dashboards.len();
+
     ok(DashboardsResponse {
-        dashboards: vec![],
-        count: 0,
+        dashboards: api_dashboards,
+        count,
     })
 }
 
 /// Get a dashboard by ID
 pub async fn get_dashboard_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Dashboard> {
-    // TODO: Implement persistent dashboard storage
-    // For now, return a default dashboard if requested
+    // Special handling for "overview" and "blank" template IDs
     if id == "overview" || id == "blank" {
-        ok(Dashboard {
-            id: id.to_string(),
-            name: if id == "overview" { "Overview" } else { "Blank Canvas" }.to_string(),
-            layout: default_layout(),
+        let templates = default_templates();
+        let template = templates.into_iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| ErrorResponse::not_found(&format!("Template '{}' not found", id)))?;
+
+        let now = chrono::Utc::now().timestamp();
+        return ok(Dashboard {
+            id: template.id,
+            name: template.name,
+            layout: convert_layout(&template.layout),
             components: vec![],
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
+            created_at: now,
+            updated_at: now,
             is_default: Some(id == "overview"),
-        })
-    } else {
-        Err(ErrorResponse::not_found(&format!("Dashboard '{}' not found", id)))
+        });
     }
+
+    let dashboard = state.dashboard_store.load(&id)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to load dashboard: {}", e)))?
+        .ok_or_else(|| ErrorResponse::not_found(&format!("Dashboard '{}' not found", id)))?;
+
+    ok(stored_to_api(&dashboard))
 }
 
 /// Create a new dashboard
 pub async fn create_dashboard_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Json(req): Json<CreateDashboardRequest>,
-) -> HandlerResult<serde_json::Value> {
-    // TODO: Implement persistent dashboard storage
-    let id = format!("dashboard_{}", chrono::Utc::now().timestamp_millis());
-    ok(serde_json::json!({
-        "id": id,
-        "name": req.name,
-    }))
+) -> HandlerResult<Dashboard> {
+    let now = chrono::Utc::now().timestamp();
+    let id = format!("dashboard_{}", now);
+
+    let stored_dashboard = StoredDashboard {
+        id: id.clone(),
+        name: req.name,
+        layout: api_to_stored_layout(&req.layout),
+        components: req.components.iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let mut comp = api_to_stored_component(c);
+                comp.id = format!("component_{}", i);
+                comp
+            })
+            .collect(),
+        created_at: now,
+        updated_at: now,
+        is_default: None,
+    };
+
+    state.dashboard_store.save(&stored_dashboard)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to save dashboard: {}", e)))?;
+
+    ok(stored_to_api(&stored_dashboard))
 }
 
 /// Update a dashboard
 pub async fn update_dashboard_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
-    Json(_req): Json<UpdateDashboardRequest>,
-) -> HandlerResult<serde_json::Value> {
-    // TODO: Implement persistent dashboard storage
-    // Accept any JSON format for now since frontend uses local storage fallback
-    ok(serde_json::json!({
-        "id": id,
-        "updated": true,
-    }))
+    Json(req): Json<UpdateDashboardRequest>,
+) -> HandlerResult<Dashboard> {
+    let mut dashboard = state.dashboard_store.load(&id)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to load dashboard: {}", e)))?
+        .ok_or_else(|| ErrorResponse::not_found(&format!("Dashboard '{}' not found", id)))?;
+
+    // Update fields if provided
+    if let Some(name) = req.name {
+        dashboard.name = name;
+    }
+    if let Some(layout) = req.layout {
+        dashboard.layout = api_to_stored_layout(&layout);
+    }
+    if let Some(components) = req.components {
+        // Parse components from JSON
+        dashboard.components = components.iter()
+            .filter_map(|c| serde_json::from_value::<StoredComponent>(c.clone()).ok())
+            .collect();
+    }
+    dashboard.updated_at = chrono::Utc::now().timestamp();
+
+    state.dashboard_store.save(&dashboard)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to save dashboard: {}", e)))?;
+
+    ok(stored_to_api(&dashboard))
 }
 
 /// Delete a dashboard
 pub async fn delete_dashboard_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    // TODO: Implement persistent dashboard storage
+    // Check if dashboard exists
+    if !state.dashboard_store.exists(&id)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to check dashboard: {}", e)))? {
+        return Err(ErrorResponse::not_found(&format!("Dashboard '{}' not found", id)));
+    }
+
+    state.dashboard_store.delete(&id)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to delete dashboard: {}", e)))?;
+
     ok(serde_json::json!({
         "ok": true,
         "id": id,
@@ -252,10 +418,18 @@ pub async fn delete_dashboard_handler(
 
 /// Set default dashboard
 pub async fn set_default_dashboard_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    // TODO: Implement persistent dashboard storage
+    // Check if dashboard exists
+    if !state.dashboard_store.exists(&id)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to check dashboard: {}", e)))? {
+        return Err(ErrorResponse::not_found(&format!("Dashboard '{}' not found", id)));
+    }
+
+    state.dashboard_store.set_default(&id)
+        .map_err(|e| ErrorResponse::internal(&format!("Failed to set default dashboard: {}", e)))?;
+
     ok(serde_json::json!({
         "id": id,
         "is_default": true,
@@ -266,38 +440,8 @@ pub async fn set_default_dashboard_handler(
 pub async fn list_templates_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<Vec<DashboardTemplate>> {
-    let templates = vec![
-        DashboardTemplate {
-            id: "overview".to_string(),
-            name: "Overview".to_string(),
-            description: "System overview with devices, agents, and events".to_string(),
-            category: "overview".to_string(),
-            icon: Some("LayoutDashboard".to_string()),
-            layout: default_layout(),
-            components: vec![],
-            required_resources: Some(RequiredResources {
-                devices: Some(1),
-                agents: Some(1),
-                rules: Some(0),
-            }),
-        },
-        DashboardTemplate {
-            id: "blank".to_string(),
-            name: "Blank Canvas".to_string(),
-            description: "Start from scratch with an empty dashboard".to_string(),
-            category: "custom".to_string(),
-            icon: Some("Square".to_string()),
-            layout: default_layout(),
-            components: vec![],
-            required_resources: Some(RequiredResources {
-                devices: Some(0),
-                agents: Some(0),
-                rules: Some(0),
-            }),
-        },
-    ];
-
-    ok(templates)
+    let templates = default_templates();
+    ok(templates.iter().map(stored_template_to_api).collect())
 }
 
 /// Get a template by ID
@@ -305,29 +449,10 @@ pub async fn get_template_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<DashboardTemplate> {
-    let templates = vec![
-        ("overview", "Overview", "System overview with devices, agents, and events", "overview", Some("LayoutDashboard")),
-        ("blank", "Blank Canvas", "Start from scratch with an empty dashboard", "custom", Some("Square")),
-    ];
+    let templates = default_templates();
+    let template = templates.into_iter()
+        .find(|t| t.id == id)
+        .ok_or_else(|| ErrorResponse::not_found(&format!("Template '{}' not found", id)))?;
 
-    let template = templates.iter().find(|(tid, _, _, _, _)| tid == &id);
-
-    if let Some((id, name, desc, category, icon)) = template {
-        ok(DashboardTemplate {
-            id: id.to_string(),
-            name: name.to_string(),
-            description: desc.to_string(),
-            category: category.to_string(),
-            icon: icon.map(|s| s.to_string()),
-            layout: default_layout(),
-            components: vec![],
-            required_resources: Some(RequiredResources {
-                devices: Some(1),
-                agents: Some(1),
-                rules: Some(0),
-            }),
-        })
-    } else {
-        Err(ErrorResponse::not_found(&format!("Template '{}' not found", id)))
-    }
+    ok(stored_template_to_api(&template))
 }
