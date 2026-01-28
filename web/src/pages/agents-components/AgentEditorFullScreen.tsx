@@ -672,54 +672,75 @@ export function AgentEditorFullScreen({
 
             {/* Basic Info + Prompt */}
             <div className="space-y-4">
-              {/* Role & Name Row */}
-              <div className="grid grid-cols-12 gap-4">
-                <div className="col-span-5 space-y-2">
-                  <Label className="text-sm">{tAgent('creator.basicInfo.role')}</Label>
-                  <Select value={role} onValueChange={(v) => setRole(v as AgentRole | 'Custom')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ROLES.map((r) => (
-                        <SelectItem key={r.value} value={r.value}>
-                          <div className="flex items-center gap-2">
-                            <r.icon className="h-4 w-4" />
-                            {r.label}
+              {/* Role Selection */}
+              <div>
+                <Label className="text-sm mb-3 block">{tAgent('creator.basicInfo.role')}</Label>
+                <div className="grid grid-cols-4 gap-3">
+                  {ROLES.map((r) => {
+                    const Icon = r.icon
+                    const isSelected = role === r.value
+                    return (
+                      <button
+                        key={r.value}
+                        type="button"
+                        onClick={() => setRole(r.value)}
+                        className={cn(
+                          "relative p-3 rounded-lg border-2 text-left transition-all",
+                          isSelected && "border-primary bg-primary/5"
+                        )}
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className={cn(
+                            "flex items-center justify-center w-8 h-8 rounded-lg",
+                            isSelected ? "bg-primary text-primary-foreground" : "bg-muted"
+                          )}>
+                            <Icon className="h-4 w-4" />
                           </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="col-span-7 space-y-2">
-                  <Label className="text-sm">
-                    {tAgent('creator.basicInfo.name')}
-                    <span className="text-destructive ml-1">*</span>
-                  </Label>
-                  {role === 'Custom' ? (
-                    <div className="flex gap-2">
-                      <Input
-                        value={customRoleName}
-                        onChange={(e) => setCustomRoleName(e.target.value)}
-                        placeholder={tAgent('creator.basicInfo.roles.custom.placeholder')}
-                      />
-                      <Input
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                        placeholder={tAgent('agentNamePlaceholder')}
-                        className="flex-1"
-                      />
-                    </div>
-                  ) : (
-                    <Input
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder={tAgent('agentNamePlaceholder')}
-                    />
-                  )}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">{r.label}</div>
+                            <div className="text-xs text-muted-foreground truncate">{r.description}</div>
+                          </div>
+                        </div>
+                        {isSelected && (
+                          <div className="absolute top-2 right-2">
+                            <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
+                              <Check className="h-2.5 w-2.5 text-primary-foreground" />
+                            </div>
+                          </div>
+                        )}
+                      </button>
+                    )
+                  })}
                 </div>
               </div>
+
+              {/* Name */}
+              <div className="space-y-2">
+                <Label className="text-sm">
+                  {tAgent('creator.basicInfo.name')}
+                  <span className="text-destructive ml-1">*</span>
+                </Label>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={tAgent('agentNamePlaceholder')}
+                />
+              </div>
+
+              {/* Custom Role Name (shown when Custom is selected) */}
+              {role === 'Custom' && (
+                <div className="space-y-2">
+                  <Label className="text-sm">
+                    {tAgent('creator.basicInfo.roles.custom.label')}
+                    <span className="text-destructive ml-1">*</span>
+                  </Label>
+                  <Input
+                    value={customRoleName}
+                    onChange={(e) => setCustomRoleName(e.target.value)}
+                    placeholder={tAgent('creator.basicInfo.roles.custom.placeholder')}
+                  />
+                </div>
+              )}
 
               {/* Description */}
               <div className="space-y-2">
