@@ -45,6 +45,7 @@
   "lastWeek": "最近 7 天",
   "lastMonth": "最近 30 天",
   "older": "更早",
+  "thisWeek": "本周",
   "chatReady": "输入消息开始与 AI 助手对话",
   "connecting": "连接中...",
   "thinkingProcess": "思考过程",
@@ -66,5 +67,15 @@
   "collapseSidebar": "收起侧边栏",
   "openMenu": "打开菜单",
   "selectSession": "选择会话",
-  "enterToSend": "Enter 发送，Shift+Enter 换行"
+  "enterToSend": "Enter 发送，Shift+Enter 换行",
+  "searchPlaceholder": "搜索会话...",
+  "noMatchingSessions": "没有找到匹配的会话",
+  "noSessionsYet": "还没有会话记录",
+  "messages": "条消息",
+  "justNow": "刚刚",
+  "minutesAgo": "{{count}}分钟前",
+  "hoursAgo": "{{count}}小时前",
+  "daysAgo": "{{count}}天前",
+  "confirmDelete": "确定",
+  "cancel": "取消"
 }

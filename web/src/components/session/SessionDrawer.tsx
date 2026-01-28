@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from "react"
+import { useTranslation } from "react-i18next"
 import {
   X,
   Search,
@@ -33,15 +34,15 @@ interface GroupedSessions {
   older: ChatSession[]
 }
 
-function formatTimeAgo(timestamp: number | undefined): string {
+function formatTimeAgo(timestamp: number | undefined, t: (key: string, params?: any) => string): string {
   if (!timestamp) return ""
   const now = Date.now()
   const diff = now - timestamp
 
-  if (diff < 60 * 1000) return "刚刚"
-  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / (60 * 1000))}分钟前`
-  if (diff < 24 * 60 * 60 * 1000) return `${Math.floor(diff / (60 * 60 * 1000))}小时前`
-  if (diff < 7 * 24 * 60 * 60 * 1000) return `${Math.floor(diff / (24 * 60 * 60 * 1000))}天前`
+  if (diff < 60 * 1000) return t('justNow')
+  if (diff < 60 * 60 * 1000) return t('minutesAgo', { count: Math.floor(diff / (60 * 1000)) })
+  if (diff < 24 * 60 * 60 * 1000) return t('hoursAgo', { count: Math.floor(diff / (60 * 60 * 1000)) })
+  if (diff < 7 * 24 * 60 * 60 * 1000) return t('daysAgo', { count: Math.floor(diff / (24 * 60 * 60 * 1000)) })
   return new Date(timestamp).toLocaleDateString()
 }
 
@@ -70,12 +71,14 @@ function SessionItem({
   session,
   isActive,
   onClick,
-  onDelete
+  onDelete,
+  t
 }: {
   session: ChatSession
   isActive: boolean
   onClick: () => void
   onDelete: (e: React.MouseEvent) => void
+  t: (key: string, params?: any) => string
 }) {
   return (
     <button
@@ -99,14 +102,14 @@ function SessionItem({
               "text-sm font-medium truncate",
               isActive ? "text-foreground" : "text-muted-foreground"
             )}>
-              {session.title || "新对话"}
+              {session.title || t('defaultTitle')}
             </h4>
             <span className={cn(
               "flex items-center gap-1 text-xs flex-shrink-0",
               isActive ? "text-foreground/70" : "text-muted-foreground"
             )}>
               <Clock className="h-3 w-3" />
-              {formatTimeAgo(session.updatedAt)}
+              {formatTimeAgo(session.updatedAt, t)}
             </span>
           </div>
           {session.preview && (
@@ -116,7 +119,7 @@ function SessionItem({
           )}
           <div className="flex items-center gap-2 mt-1.5">
             <span className="text-xs text-muted-foreground">
-              {session.messageCount || 0} 条消息
+              {session.messageCount || 0} {t('messages')}
             </span>
           </div>
         </div>
@@ -131,7 +134,7 @@ function SessionItem({
           "hover:bg-destructive/10 hover:text-destructive",
           "text-muted-foreground"
         )}
-        title="删除会话"
+        title={t('deleteSession')}
       >
         <Trash2 className="h-3.5 w-3.5" />
       </button>
@@ -146,6 +149,7 @@ export function SessionDrawer({
   onSelectSession,
   currentSessionId
 }: SessionDrawerProps) {
+  const { t } = useTranslation('dashboard')
   const { sessions, deleteSession } = useStore()
   const [searchQuery, setSearchQuery] = useState("")
   const [isDeleting, setIsDeleting] = useState<string | null>(null)
@@ -186,10 +190,10 @@ export function SessionDrawer({
     if (isDeleting) return
 
     const confirmed = await confirm({
-      title: "删除会话",
-      description: "确定要删除这个会话吗？",
-      confirmText: "删除",
-      cancelText: "取消",
+      title: t('deleteSessionTitle'),
+      description: t('deleteDesc'),
+      confirmText: t('confirmDelete'),
+      cancelText: t('cancel'),
       variant: "destructive"
     })
     if (!confirmed) return
@@ -229,7 +233,7 @@ export function SessionDrawer({
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--session-drawer-border)]">
-          <h2 className="text-lg font-semibold">会话历史</h2>
+          <h2 className="text-lg font-semibold">{t('conversationHistory')}</h2>
           <button
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-[var(--session-item-hover)] transition-colors"
@@ -245,7 +249,7 @@ export function SessionDrawer({
             <input
               ref={searchInputRef}
               type="text"
-              placeholder="搜索会话..."
+              placeholder={t('searchPlaceholder')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={cn(
@@ -276,7 +280,7 @@ export function SessionDrawer({
             ) : (
               <Plus className="h-4 w-4" />
             )}
-            新对话
+            {t('newChat')}
           </button>
         </div>
 
@@ -286,7 +290,7 @@ export function SessionDrawer({
             <div className="text-center py-12">
               <MessageSquare className="h-12 w-12 mx-auto text-muted-foreground/50 mb-3" />
               <p className="text-sm text-muted-foreground">
-                {searchQuery ? "没有找到匹配的会话" : "还没有会话记录"}
+                {searchQuery ? t('noMatchingSessions') : t('noSessionsYet')}
               </p>
             </div>
           ) : (
@@ -295,7 +299,7 @@ export function SessionDrawer({
               {grouped.today.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    今天
+                    {t('today')}
                   </h3>
                   {grouped.today.map(session => (
                     <SessionItem
@@ -307,6 +311,7 @@ export function SessionDrawer({
                         onClose()
                       }}
                       onDelete={(e) => handleDelete(e, session.sessionId)}
+                      t={t}
                     />
                   ))}
                 </div>
@@ -316,7 +321,7 @@ export function SessionDrawer({
               {grouped.yesterday.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    昨天
+                    {t('yesterday')}
                   </h3>
                   {grouped.yesterday.map(session => (
                     <SessionItem
@@ -328,6 +333,7 @@ export function SessionDrawer({
                         onClose()
                       }}
                       onDelete={(e) => handleDelete(e, session.sessionId)}
+                      t={t}
                     />
                   ))}
                 </div>
@@ -337,7 +343,7 @@ export function SessionDrawer({
               {grouped.week.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    本周
+                    {t('thisWeek')}
                   </h3>
                   {grouped.week.map(session => (
                     <SessionItem
@@ -349,6 +355,7 @@ export function SessionDrawer({
                         onClose()
                       }}
                       onDelete={(e) => handleDelete(e, session.sessionId)}
+                      t={t}
                     />
                   ))}
                 </div>
@@ -358,7 +365,7 @@ export function SessionDrawer({
               {grouped.older.length > 0 && (
                 <div className="space-y-2">
                   <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    更早
+                    {t('older')}
                   </h3>
                   {grouped.older.map(session => (
                     <SessionItem
@@ -370,6 +377,7 @@ export function SessionDrawer({
                         onClose()
                       }}
                       onDelete={(e) => handleDelete(e, session.sessionId)}
+                      t={t}
                     />
                   ))}
                 </div>

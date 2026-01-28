@@ -7,6 +7,7 @@
  */
 
 import { memo, useRef, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Eye, EyeOff, AlertCircle, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -50,28 +51,30 @@ const MIN_PREVIEW_HEIGHT = 140
 /**
  * Format data source label for display
  */
-function formatDataSourceLabel(ds: DataSource | undefined): string {
-  if (!ds) return '无数据源'
+function formatDataSourceLabel(ds: DataSource | undefined, t: (key: string) => string): string {
+  if (!ds) return t('dashboardComponents:componentPreview.noDataSource')
+
+  const tc = (key: string) => t(`dashboardComponents:componentPreview.${key}`)
 
   switch (ds.type) {
     case 'device':
-      return `设备: ${ds.deviceId}${ds.property ? ` (${ds.property})` : ''}`
+      return `${tc('device')}: ${ds.deviceId}${ds.property ? ` (${ds.property})` : ''}`
     case 'device-info':
-      return `设备信息: ${ds.deviceId}${ds.infoProperty ? ` (${ds.infoProperty})` : ''}`
+      return `${tc('deviceInfo')}: ${ds.deviceId}${ds.infoProperty ? ` (${ds.infoProperty})` : ''}`
     case 'metric':
-      return `指标: ${ds.metricId || '未指定'}`
+      return `${tc('metric')}: ${ds.metricId || t('dashboardComponents:componentPreview.notSpecified')}`
     case 'command':
-      return `指令: ${ds.deviceId} → ${ds.command || 'toggle'}`
+      return `${tc('command')}: ${ds.deviceId} → ${ds.command || 'toggle'}`
     case 'telemetry':
-      return `遥测: ${ds.deviceId} / ${ds.metricId || 'raw'}`
+      return `${tc('telemetry')}: ${ds.deviceId} / ${ds.metricId || 'raw'}`
     case 'api':
-      return `API: ${ds.endpoint || '自定义'}`
+      return `API: ${ds.endpoint || t('dashboardComponents:componentPreview.custom')}`
     case 'websocket':
-      return `WebSocket: ${ds.endpoint || '实时'}`
+      return `WebSocket: ${ds.endpoint || tc('realTime')}`
     case 'static':
-      return `静态: ${JSON.stringify(ds.staticValue)?.slice(0, 20) || '值'}`
+      return `${tc('static')}: ${JSON.stringify(ds.staticValue)?.slice(0, 20) || tc('value')}`
     default:
-      return '未知类型'
+      return tc('unknownType')
   }
 }
 
@@ -83,12 +86,8 @@ export const ComponentPreview = memo(function ComponentPreview({
   showHeader = true,
   className,
 }: ComponentPreviewProps) {
+  const { t } = useTranslation('dashboardComponents')
   const meta = getComponentMeta(componentType as ImplementedComponentType)
-
-  // Debug logging for custom-layer
-  if (componentType === 'custom-layer') {
-    console.log('[ComponentPreview] config.backgroundType:', config.backgroundType)
-  }
 
   // Track data source changes to show transition
   const [prevDataSourceKey, setPrevDataSourceKey] = useState<string>(() => createDataSourceKey(dataSource))
@@ -184,7 +183,7 @@ export const ComponentPreview = memo(function ComponentPreview({
     id: 'preview',
     type: componentType as ImplementedComponentType,
     position: { x: 0, y: 0, w: defaultW, h: defaultH },
-    title: title || config.title as string || '预览',
+    title: title || config.title as string || t('componentPreview.title'),
     config,
     dataSource,
   }
@@ -208,7 +207,7 @@ export const ComponentPreview = memo(function ComponentPreview({
         <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30 shrink-0">
           <div className="flex items-center gap-2">
             <Eye className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">预览</span>
+            <span className="text-sm font-medium">{t('componentPreview.title')}</span>
             {/* Loading indicator */}
             {(loading || isTransitioning) && (
               <Loader2 className="h-3 w-3 animate-spin text-muted-foreground/50" />
@@ -233,15 +232,15 @@ export const ComponentPreview = memo(function ComponentPreview({
         ) : hasError ? (
           <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground p-4 text-center">
             <AlertCircle className="h-8 w-8 text-destructive/60 mb-2" />
-            <p className="text-sm">预览数据加载失败</p>
-            <p className="text-xs text-muted-foreground/60 mt-1">使用静态数据预览</p>
+            <p className="text-sm">{t('componentPreview.loadingFailed')}</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">{t('componentPreview.usingStaticData')}</p>
           </div>
         ) : (
           <div className={cn(
             'w-full h-full p-2 transition-all duration-200 ease-out overflow-hidden',
             isTransitioning && 'scale-[0.98] blur-[1px]'
           )}>
-            <ComponentRenderer component={mockComponent} />
+            <ComponentRenderer key={`preview-${componentType}-${(config.backgroundType as string) || 'default'}`} component={mockComponent} />
           </div>
         )}
       </div>

@@ -45,6 +45,7 @@
   "lastWeek": "Last 7 Days",
   "lastMonth": "Last 30 Days",
   "older": "Older",
+  "thisWeek": "This Week",
   "chatReady": "Type a message to start chatting with AI",
   "connecting": "Connecting...",
   "thinkingProcess": "Thinking Process",
@@ -55,7 +56,6 @@
   "sessionList": "Sessions",
   "newChat": "New Chat",
   "noSessionsDesc": "Click + to create a new session",
-  "newChat": "New Chat",
   "renameSession": "Rename Session",
   "renameDesc": "Set a custom title for this session.",
   "renamePlaceholder": "Enter session title...",
@@ -67,5 +67,15 @@
   "collapseSidebar": "Collapse sidebar",
   "openMenu": "Open menu",
   "selectSession": "Select session",
-  "enterToSend": "Enter to send, Shift+Enter for new line"
+  "enterToSend": "Enter to send, Shift+Enter for new line",
+  "searchPlaceholder": "Search sessions...",
+  "noMatchingSessions": "No matching sessions found",
+  "noSessionsYet": "No sessions yet",
+  "messages": "messages",
+  "justNow": "Just now",
+  "minutesAgo": "{{count}}m ago",
+  "hoursAgo": "{{count}}h ago",
+  "daysAgo": "{{count}}d ago",
+  "confirmDelete": "Confirm",
+  "cancel": "Cancel"
 }

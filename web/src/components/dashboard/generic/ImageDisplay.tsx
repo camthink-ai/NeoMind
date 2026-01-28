@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -346,7 +347,7 @@ function normalizeDataSourceForImage(
 export function ImageDisplay({
   dataSource,
   src: propSrc,
-  alt = 'Image',
+  alt,
   title,
   caption,
   size = 'md',
@@ -360,6 +361,9 @@ export function ImageDisplay({
   openInNewTab = false,
   className,
 }: ImageDisplayProps) {
+  const { t } = useTranslation('dashboardComponents')
+  const altText = alt || t('imageDisplay.altText')
+
   // Normalize data source to ensure raw points are included
   const normalizedDataSource = useMemo(() => normalizeDataSourceForImage(dataSource), [dataSource])
 
@@ -479,7 +483,7 @@ export function ImageDisplay({
     if (!displaySrc || !originalSrc) return
 
     // For base64 images, extract the correct extension
-    let filename = alt.replace(/[^a-z0-9]/gi, '_') || 'image'
+    let filename = altText.replace(/[^a-z0-9]/gi, '_') || 'image'
 
     if (normalizedImage?.isBase64) {
       filename += `.${getFileExtension(normalizedImage.format)}`
@@ -560,8 +564,8 @@ export function ImageDisplay({
           size === 'sm' ? 'h-8 w-8' : size === 'md' ? 'h-12 w-12' : 'h-16 w-16'
         )} />
         <div className="text-center">
-          <p className="text-muted-foreground text-sm font-medium">No Image Source</p>
-          <p className="text-muted-foreground/50 text-xs mt-1">Configure an image URL or data source</p>
+          <p className="text-muted-foreground text-sm font-medium">{t('imageDisplay.noImageSource')}</p>
+          <p className="text-muted-foreground/50 text-xs mt-1">{t('imageDisplay.configureSource')}</p>
         </div>
       </div>
     )
@@ -587,12 +591,12 @@ export function ImageDisplay({
           )} />
         </div>
         <div className="text-center">
-          <p className="text-muted-foreground text-sm font-medium">Failed to Load Image</p>
-          <p className="text-muted-foreground/50 text-xs mt-1">The image could not be loaded</p>
+          <p className="text-muted-foreground text-sm font-medium">{t('imageDisplay.failedToLoad')}</p>
+          <p className="text-muted-foreground/50 text-xs mt-1">{t('imageDisplay.couldNotLoad')}</p>
         </div>
         {formatInfo && (
           <p className="text-xs text-muted-foreground/60">
-            Format: {formatInfo.format} ({formatInfo.type})
+            {t('imageDisplay.format')}: {formatInfo.format} ({formatInfo.type})
           </p>
         )}
         <Button
@@ -607,7 +611,7 @@ export function ImageDisplay({
           }}
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          Retry
+          {t('imageDisplay.retry')}
         </Button>
       </div>
     )
@@ -622,7 +626,7 @@ export function ImageDisplay({
             ref={imageRef}
             key={displaySrc}
             src={displaySrc}
-            alt={alt}
+            alt={altText}
             className={cn(
               'w-full h-full transition-transform duration-200',
               fit === 'contain' && 'object-contain',
@@ -656,7 +660,10 @@ export function ImageDisplay({
                   size="icon"
                   className="h-7 w-7"
                   onClick={handleDownload}
-                  title={normalizedImage?.isBase64 ? `Download as ${normalizedImage.format.toUpperCase()}` : 'Download'}
+                  title={normalizedImage?.isBase64
+                    ? t('imageDisplay.downloadAs', { format: normalizedImage.format.toUpperCase() })
+                    : t('imageDisplay.download')
+                  }
                 >
                   <Download className="h-3.5 w-3.5" />
                 </Button>
@@ -667,7 +674,7 @@ export function ImageDisplay({
                   size="icon"
                   className="h-7 w-7"
                   onClick={() => setIsFullscreen(true)}
-                  title="View fullscreen"
+                  title={t('imageDisplay.viewFullscreen')}
                 >
                   <Maximize2 className="h-3.5 w-3.5" />
                 </Button>
@@ -691,7 +698,7 @@ export function ImageDisplay({
       {isFullscreen && (
         <FullscreenImage
           src={originalSrc}
-          alt={alt}
+          alt={altText}
           onClose={() => setIsFullscreen(false)}
         />
       )}

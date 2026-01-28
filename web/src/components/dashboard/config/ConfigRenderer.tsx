@@ -5,6 +5,7 @@
  * Uses Field components and default input/label styles.
  */
 
+import { useTranslation } from 'react-i18next'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -49,6 +50,8 @@ export function ConfigRenderer({ sections }: ConfigRendererProps) {
 
 // ConfigSectionItem - NOT memoized to ensure updates are properly reflected
 const ConfigSectionItem = function ConfigSectionItem({ section }: { section: ConfigSectionType }) {
+  const { t } = useTranslation('dashboardComponents')
+
   switch (section.type) {
     case 'data-source':
       return null // Handled separately by UnifiedDataSourceConfig
@@ -58,7 +61,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
       return (
         <div className="space-y-3">
           <Field>
-            <Label>{props.label || '数值'} ({props.min ?? 0} - {props.max ?? 100})</Label>
+            <Label>{props.label || t('configRenderer.value')} ({props.min ?? 0} - {props.max ?? 100})</Label>
             <Input
               type="number"
               min={props.min}
@@ -70,17 +73,17 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
           </Field>
           {props.unit !== undefined && (
             <Field>
-              <Label>单位</Label>
+              <Label>{t('configRenderer.unit')}</Label>
               <Input
                 value={props.unit}
                 onChange={() => {}}
-                placeholder="°C, %, kg..."
+                placeholder={t('configRenderer.unitPlaceholder')}
               />
             </Field>
           )}
           {props.showValue !== undefined && (
             <div className="flex items-center justify-between">
-              <Label>显示数值</Label>
+              <Label>{t('configRenderer.showValue')}</Label>
               <Switch
                 checked={props.showValue}
                 onCheckedChange={() => {}}
@@ -96,7 +99,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
       return (
         <div className="space-y-3">
           <Field>
-            <Label>最小值</Label>
+            <Label>{t('configRenderer.minValue')}</Label>
             <Input
               type="number"
               value={props.min}
@@ -104,7 +107,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
             />
           </Field>
           <Field>
-            <Label>最大值</Label>
+            <Label>{t('configRenderer.maxValue')}</Label>
             <Input
               type="number"
               value={props.max}
@@ -112,7 +115,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
             />
           </Field>
           <Field>
-            <Label>步长</Label>
+            <Label>{t('configRenderer.step')}</Label>
             <Input
               type="number"
               value={props.step}
@@ -126,15 +129,15 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
     case 'size': {
       const props = (section as SizeSection).props
       const sizeOptions = [
-        { value: 'xs', label: '极小' },
-        { value: 'sm', label: '小' },
-        { value: 'md', label: '中' },
-        { value: 'lg', label: '大' },
-        { value: 'xl', label: '极大' },
+        { value: 'xs', label: t('sizes.xs') },
+        { value: 'sm', label: t('sizes.sm') },
+        { value: 'md', label: t('sizes.md') },
+        { value: 'lg', label: t('sizes.lg') },
+        { value: 'xl', label: t('sizes.xl') },
       ]
       return (
         <Field>
-          <Label>{props.label || '尺寸'}</Label>
+          <Label>{props.label || t('configRenderer.size')}</Label>
           <Select value={props.size} onValueChange={props.onChange}>
             <SelectTrigger>
               <SelectValue />
@@ -157,7 +160,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
         <ColorPicker
           value={props.color}
           onChange={props.onChange}
-          label={props.label || '颜色'}
+          label={props.label || t('configRenderer.color')}
           presets="primary"
           disabled={false}
         />
@@ -166,12 +169,12 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
 
     case 'multi-color': {
       const props = (section as MultiColorSection).props
-      const colorFields: { key: string; label: string; defaultColor: string; presetKey?: keyof typeof COLOR_PRESETS }[] = [
-        { key: 'primary', label: '主色', defaultColor: '#3b82f6', presetKey: 'primary' },
-        { key: 'secondary', label: '辅色', defaultColor: '#8b5cf6', presetKey: 'primary' },
-        { key: 'error', label: '错误色', defaultColor: '#ef4444', presetKey: 'semantic' },
-        { key: 'warning', label: '警告色', defaultColor: '#eab308', presetKey: 'semantic' },
-        { key: 'success', label: '成功色', defaultColor: '#22c55e', presetKey: 'semantic' },
+      const colorFields: { key: string; labelKey: string; defaultColor: string; presetKey?: keyof typeof COLOR_PRESETS }[] = [
+        { key: 'primary', labelKey: 'backgroundColor', defaultColor: '#3b82f6', presetKey: 'primary' },
+        { key: 'secondary', labelKey: 'textColor', defaultColor: '#8b5cf6', presetKey: 'primary' },
+        { key: 'error', labelKey: 'borderColor', defaultColor: '#ef4444', presetKey: 'semantic' },
+        { key: 'warning', labelKey: 'color', defaultColor: '#eab308', presetKey: 'semantic' },
+        { key: 'success', labelKey: 'dataMapping', defaultColor: '#22c55e', presetKey: 'semantic' },
       ]
       return (
         <div className="space-y-3">
@@ -179,7 +182,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
             const colorValue = props.colors?.[field.key as keyof typeof props.colors] || field.defaultColor
             return (
               <Field key={field.key}>
-                <Label>{field.label}</Label>
+                <Label>{t(`configRenderer.${field.labelKey}`)}</Label>
                 <CompactColorPicker
                   value={colorValue}
                   onChange={(color) => props.onChange?.(field.key, color)}
@@ -198,7 +201,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
       return (
         <div className="space-y-3">
           <Field>
-            <Label>前缀</Label>
+            <Label>{t('configRenderer.label')}</Label>
             <Input
               value={props.prefix}
               onChange={(e) => props.onChange?.('prefix', e.target.value)}
@@ -206,7 +209,7 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
             />
           </Field>
           <Field>
-            <Label>后缀</Label>
+            <Label>{t('configRenderer.label')}</Label>
             <Input
               value={props.suffix}
               onChange={(e) => props.onChange?.('suffix', e.target.value)}
@@ -214,11 +217,11 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
             />
           </Field>
           <Field>
-            <Label>单位</Label>
+            <Label>{t('configRenderer.unit')}</Label>
             <Input
               value={props.unit}
               onChange={(e) => props.onChange?.('unit', e.target.value)}
-              placeholder="°C, %..."
+              placeholder={t('configRenderer.unitPlaceholder')}
             />
           </Field>
         </div>
@@ -299,14 +302,14 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
       const props = (section as OrientationSection).props
       return (
         <Field>
-          <Label>{props.label || '方向'}</Label>
+          <Label>{props.label || t('configRenderer.orientation')}</Label>
           <Select value={props.orientation} onValueChange={props.onChange}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="horizontal">水平</SelectItem>
-              <SelectItem value="vertical">垂直</SelectItem>
+              <SelectItem value="horizontal">{t('configRenderer.orientationHorizontal')}</SelectItem>
+              <SelectItem value="vertical">{t('configRenderer.orientationVertical')}</SelectItem>
             </SelectContent>
           </Select>
         </Field>
@@ -318,14 +321,14 @@ const ConfigSectionItem = function ConfigSectionItem({ section }: { section: Con
       return (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <Label>启用动画</Label>
+            <Label>{t('configRenderer.animation')}</Label>
             <Switch
               checked={props.animated}
               onCheckedChange={(checked) => props.onChange?.('animated', checked)}
             />
           </div>
           <Field>
-            <Label>时长 (毫秒)</Label>
+            <Label>{t('configRenderer.size')}</Label>
             <Input
               type="number"
               min={0}

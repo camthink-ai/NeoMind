@@ -6,6 +6,7 @@
  */
 
 import { memo, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Components } from 'react-markdown'
@@ -109,6 +110,8 @@ export function MarkdownDisplay({
   maxLines,
   className,
 }: MarkdownDisplayProps) {
+  const { t } = useTranslation('dashboardComponents')
+
   // Always call useDataSource - it will handle undefined dataSource internally
   // This ensures proper cleanup when dataSource is removed
   const { data, loading, error } = useDataSource<string>(dataSource, {
@@ -155,8 +158,8 @@ export function MarkdownDisplay({
         size={size}
         className={className}
         icon={<FileText />}
-        message="No content"
-        subMessage="Add markdown content or data source"
+        message={t('markdownDisplay.noContent')}
+        subMessage={t('markdownDisplay.addContent')}
       />
     )
   }

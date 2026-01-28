@@ -251,6 +251,7 @@ export function AgentsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          <CreateCard onClick={handleCreate} />
           {agents.map((agent) => (
             <AgentCard
               key={agent.id}
@@ -263,7 +264,6 @@ export function AgentsPage() {
               onClick={() => handleViewDetail(agent)}
             />
           ))}
-          <CreateCard onClick={handleCreate} />
         </div>
       )}
 

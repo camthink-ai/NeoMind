@@ -95,31 +95,34 @@ interface FormErrors {
 // Helper Functions
 // ============================================================================
 
-const NUMERIC_OPERATORS = [
-  { value: '>', label: 'Greater than', symbol: '>' },
-  { value: '<', label: 'Less than', symbol: '<' },
-  { value: '>=', label: 'Greater or equal', symbol: '≥' },
-  { value: '<=', label: 'Less or equal', symbol: '≤' },
+const getNumericOperators = (t: (key: string) => string) => [
+  { value: '>', label: t('dashboardComponents:ruleBuilder.operators.greaterThan'), symbol: '>' },
+  { value: '<', label: t('dashboardComponents:ruleBuilder.operators.lessThan'), symbol: '<' },
+  { value: '>=', label: t('dashboardComponents:ruleBuilder.operators.greaterOrEqual'), symbol: '≥' },
+  { value: '<=', label: t('dashboardComponents:ruleBuilder.operators.lessOrEqual'), symbol: '≤' },
 ]
 
-const STRING_OPERATORS = [
-  { value: '==', label: 'Equals', symbol: '=' },
-  { value: '!=', label: 'Not equals', symbol: '≠' },
-  { value: 'contains', label: 'Contains', symbol: '∋' },
-  { value: 'starts_with', label: 'Starts with', symbol: 'a*' },
-  { value: 'ends_with', label: 'Ends with', symbol: '*z' },
-  { value: 'regex', label: 'Regex', symbol: '.*' },
+const getStringOperators = (t: (key: string) => string) => [
+  { value: '==', label: t('dashboardComponents:ruleBuilder.operators.equals'), symbol: '=' },
+  { value: '!=', label: t('dashboardComponents:ruleBuilder.operators.notEquals'), symbol: '≠' },
+  { value: 'contains', label: t('dashboardComponents:ruleBuilder.operators.contains'), symbol: '∋' },
+  { value: 'starts_with', label: t('dashboardComponents:ruleBuilder.operators.startsWith'), symbol: 'a*' },
+  { value: 'ends_with', label: t('dashboardComponents:ruleBuilder.operators.endsWith'), symbol: '*z' },
+  { value: 'regex', label: t('dashboardComponents:ruleBuilder.operators.regex'), symbol: '.*' },
 ]
 
-const BOOLEAN_OPERATORS = [
-  { value: '==', label: 'Equals', symbol: '=' },
-  { value: '!=', label: 'Not equals', symbol: '≠' },
+const getBooleanOperators = (t: (key: string) => string) => [
+  { value: '==', label: t('dashboardComponents:ruleBuilder.operators.equals'), symbol: '=' },
+  { value: '!=', label: t('dashboardComponents:ruleBuilder.operators.notEquals'), symbol: '≠' },
 ]
 
-const getComparisonOperators = (_t: (key: string) => string, dataType?: string) => {
-  if (dataType === 'string') return [...NUMERIC_OPERATORS, ...STRING_OPERATORS]
-  if (dataType === 'boolean') return BOOLEAN_OPERATORS
-  return [...NUMERIC_OPERATORS, { value: '==', label: 'Equals', symbol: '=' }, { value: '!=', label: 'Not equals', symbol: '≠' }]
+const getComparisonOperators = (t: (key: string) => string, dataType?: string) => {
+  if (dataType === 'string') return [...getNumericOperators(t), ...getStringOperators(t)]
+  if (dataType === 'boolean') return getBooleanOperators(t)
+  return [...getNumericOperators(t),
+    { value: '==', label: t('dashboardComponents:ruleBuilder.operators.equals'), symbol: '=' },
+    { value: '!=', label: t('dashboardComponents:ruleBuilder.operators.notEquals'), symbol: '≠' }
+  ]
 }
 
 function getDeviceType(
@@ -552,7 +555,7 @@ export function SimpleRuleBuilderSplit({
   onSave,
   resources = { devices: [], deviceTypes: [] },
 }: RuleBuilderProps) {
-  const { t } = useTranslation(['automation', 'common'])
+  const { t } = useTranslation(['automation', 'common', 'dashboardComponents'])
   const tBuilder = (key: string) => t(`automation:ruleBuilder.${key}`)
   const isEditMode = !!rule
 
@@ -1792,10 +1795,10 @@ function ActionEditorCompact({ action, devices, deviceTypes, t, tBuilder, onUpda
             <Select value={action.level} onValueChange={(v: any) => onUpdate({ level: v })}>
               <SelectTrigger className="w-16 h-9 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="debug">Debug</SelectItem>
-                <SelectItem value="info">Info</SelectItem>
-                <SelectItem value="warn">Warn</SelectItem>
-                <SelectItem value="error">Error</SelectItem>
+                <SelectItem value="debug">{t('dashboardComponents:ruleBuilder.logLevels.debug')}</SelectItem>
+                <SelectItem value="info">{t('dashboardComponents:ruleBuilder.logLevels.info')}</SelectItem>
+                <SelectItem value="warn">{t('dashboardComponents:ruleBuilder.logLevels.warn')}</SelectItem>
+                <SelectItem value="error">{t('dashboardComponents:ruleBuilder.logLevels.error')}</SelectItem>
               </SelectContent>
             </Select>
             <Input
@@ -1860,10 +1863,10 @@ function ActionEditorCompact({ action, devices, deviceTypes, t, tBuilder, onUpda
             <Select value={action.severity} onValueChange={(v: any) => onUpdate({ severity: v })}>
               <SelectTrigger className="w-20 h-9 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="info">Info</SelectItem>
-                <SelectItem value="warning">Warning</SelectItem>
-                <SelectItem value="error">Error</SelectItem>
-                <SelectItem value="critical">Critical</SelectItem>
+                <SelectItem value="info">{t('dashboardComponents:ruleBuilder.severity.info')}</SelectItem>
+                <SelectItem value="warning">{t('dashboardComponents:ruleBuilder.severity.warning')}</SelectItem>
+                <SelectItem value="error">{t('dashboardComponents:ruleBuilder.severity.error')}</SelectItem>
+                <SelectItem value="critical">{t('dashboardComponents:ruleBuilder.severity.critical')}</SelectItem>
               </SelectContent>
             </Select>
           </>
@@ -1874,17 +1877,17 @@ function ActionEditorCompact({ action, devices, deviceTypes, t, tBuilder, onUpda
             <Select value={action.method} onValueChange={(v: any) => onUpdate({ method: v })}>
               <SelectTrigger className="w-20 h-9 text-sm flex-shrink-0"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="GET">GET</SelectItem>
-                <SelectItem value="POST">POST</SelectItem>
-                <SelectItem value="PUT">PUT</SelectItem>
-                <SelectItem value="DELETE">DELETE</SelectItem>
-                <SelectItem value="PATCH">PATCH</SelectItem>
+                <SelectItem value="GET">{t('dashboardComponents:ruleBuilder.httpMethods.GET')}</SelectItem>
+                <SelectItem value="POST">{t('dashboardComponents:ruleBuilder.httpMethods.POST')}</SelectItem>
+                <SelectItem value="PUT">{t('dashboardComponents:ruleBuilder.httpMethods.PUT')}</SelectItem>
+                <SelectItem value="DELETE">{t('dashboardComponents:ruleBuilder.httpMethods.DELETE')}</SelectItem>
+                <SelectItem value="PATCH">{t('dashboardComponents:ruleBuilder.httpMethods.PATCH')}</SelectItem>
               </SelectContent>
             </Select>
             <Input
               value={action.url}
               onChange={(e) => onUpdate({ url: e.target.value })}
-              placeholder="https://example.com/api"
+              placeholder={t('dashboardComponents:ruleBuilder.urlPlaceholder')}
               className="flex-1 min-w-[100px] h-9 text-sm"
             />
           </>

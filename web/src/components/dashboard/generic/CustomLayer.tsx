@@ -429,12 +429,24 @@ interface LayerBackgroundProps {
   gridSize?: number
 }
 
-function LayerBackground({ type, color, image, gridSize = 20 }: LayerBackgroundProps) {
+/**
+ * Generate background style based on type
+ * This is used both by LayerBackground component and directly on the canvas
+ */
+function getBackgroundStyle(
+  type: 'color' | 'image' | 'transparent' | 'grid',
+  color?: string,
+  image?: string,
+  gridSize = 20,
+  maintainAspectRatio?: boolean,
+  aspectRatio?: number
+): React.CSSProperties {
   const backgroundStyle: React.CSSProperties = {}
 
   switch (type) {
     case 'color':
       backgroundStyle.backgroundColor = color || 'hsl(var(--muted) / 0.3)'
+      backgroundStyle.backgroundImage = 'none'
       break
     case 'image':
       backgroundStyle.backgroundImage = image ? `url(${image})` : undefined
@@ -462,7 +474,24 @@ function LayerBackground({ type, color, image, gridSize = 20 }: LayerBackgroundP
       break
   }
 
-  return <div className="absolute inset-0 -z-10" style={backgroundStyle} />
+  // Handle aspect ratio if needed
+  if (maintainAspectRatio && aspectRatio) {
+    backgroundStyle.aspectRatio = `${aspectRatio}`
+  }
+
+  return backgroundStyle
+}
+
+function LayerBackground({ type, color, image, gridSize = 20 }: LayerBackgroundProps) {
+  const backgroundStyle = getBackgroundStyle(type, color, image, gridSize)
+  return (
+    <div
+      className="absolute inset-0 -z-10"
+      style={backgroundStyle}
+      data-bg-type={type}
+      data-bg-color={color}
+    />
+  )
 }
 
 // ============================================================================
@@ -859,14 +888,10 @@ export function CustomLayer({
       {/* Layer canvas */}
       <div
         className={cn(
-          'relative bg-background overflow-hidden',
+          'relative overflow-hidden',
           isFullscreen ? 'fixed inset-0 z-50' : 'min-h-[300px]'
         )}
-        style={
-          maintainAspectRatio && aspectRatio
-            ? { aspectRatio: `${aspectRatio}` }
-            : undefined
-        }
+        style={getBackgroundStyle(backgroundType, backgroundColor, backgroundImage, gridSize, maintainAspectRatio, aspectRatio)}
         onClick={(e) => {
           // Clear selection
           setSelectedItem(null)
@@ -880,13 +905,6 @@ export function CustomLayer({
           }
         }}
       >
-        <LayerBackground
-          type={backgroundType}
-          color={backgroundColor}
-          image={backgroundImage}
-          gridSize={gridSize}
-        />
-
         {/* Render items */}
         {renderItems.map((item) => (
           <LayerItemComponent

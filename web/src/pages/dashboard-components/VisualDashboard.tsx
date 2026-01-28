@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
 import {
@@ -947,6 +948,7 @@ function ComponentWrapper({
 export function VisualDashboard() {
   const { dashboardId } = useParams<{ dashboardId?: string }>()
   const navigate = useNavigate()
+  const { t } = useTranslation('dashboardComponents')
 
   const {
     currentDashboard,
@@ -1437,7 +1439,7 @@ export function VisualDashboard() {
         <Label>{label}</Label>
         <Select value={value} onValueChange={handleChange}>
           <SelectTrigger>
-            <SelectValue placeholder={`选择${label}`} />
+            <SelectValue placeholder={t('visualDashboard.selectPlaceholder', { label })} />
           </SelectTrigger>
           <SelectContent>
             {options.map((option) => (
@@ -1810,76 +1812,76 @@ export function VisualDashboard() {
               render: () => (
                 <div className="space-y-3">
                   <Field>
-                    <Label htmlFor="value-card-title">显示标题</Label>
+                    <Label htmlFor="value-card-title">{t('visualDashboard.showTitle')}</Label>
                     <Input
                       id="value-card-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
 
                   <SelectField
-                    label="样式"
+                    label={t('visualDashboard.style')}
                     value={config.variant || 'default'}
                     onChange={updateConfig('variant')}
                     options={[
-                      { value: 'default', label: '默认 (水平)' },
-                      { value: 'vertical', label: '垂直' },
-                      { value: 'compact', label: '紧凑' },
-                      { value: 'minimal', label: '简约' },
+                      { value: 'default', label: t('visualDashboard.default') },
+                      { value: 'vertical', label: t('visualDashboard.vertical') },
+                      { value: 'compact', label: t('visualDashboard.compact') },
+                      { value: 'minimal', label: t('visualDashboard.minimal') },
                     ]}
                   />
 
                   <EntityIconPicker
                     value={config.icon || ''}
                     onChange={(icon) => updateConfig('icon')(icon)}
-                    label="图标"
+                    label={t('visualDashboard.icon')}
                   />
 
                   <ColorPicker
                     value={config.iconColor || '#3b82f6'}
                     onChange={(color) => updateConfig('iconColor')(color)}
-                    label="图标颜色"
+                    label={t('visualDashboard.iconColor')}
                     presets="primary"
                   />
 
                   <ColorPicker
                     value={config.valueColor || '#3b82f6'}
                     onChange={(color) => updateConfig('valueColor')(color)}
-                    label="数值颜色"
+                    label={t('visualDashboard.valueColor')}
                     presets="primary"
                   />
 
                   <div className="grid grid-cols-2 gap-3">
                     <Field>
-                      <Label>前缀</Label>
+                      <Label>{t('visualDashboard.prefix')}</Label>
                       <Input
                         value={config.prefix || ''}
                         onChange={(e) => updateConfig('prefix')(e.target.value)}
-                        placeholder="如 $, °"
+                        placeholder={t('visualDashboard.prefixPlaceholder')}
                         className="h-9"
                       />
                     </Field>
 
                     <Field>
-                      <Label>单位</Label>
+                      <Label>{t('visualDashboard.unit')}</Label>
                       <Input
                         value={config.unit || ''}
                         onChange={(e) => updateConfig('unit')(e.target.value)}
-                        placeholder="如 %, °C"
+                        placeholder={t('visualDashboard.unitPlaceholder')}
                         className="h-9"
                       />
                     </Field>
                   </div>
 
                   <Field>
-                    <Label>描述</Label>
+                    <Label>{t('visualDashboard.description')}</Label>
                     <Input
                       value={config.description || ''}
                       onChange={(e) => updateConfig('description')(e.target.value)}
-                      placeholder="如当前 CPU 使用率"
+                      placeholder={t('visualDashboard.descriptionPlaceholder')}
                       className="h-9"
                     />
                   </Field>
@@ -1892,7 +1894,7 @@ export function VisualDashboard() {
                         onChange={(e) => updateConfig('showTrend')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">显示趋势</span>
+                      <span className="text-sm">{t('visualDashboard.showTrend')}</span>
                     </label>
 
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -1902,13 +1904,13 @@ export function VisualDashboard() {
                         onChange={(e) => updateConfig('showSparkline')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">显示迷你图</span>
+                      <span className="text-sm">{t('visualDashboard.showSparkline')}</span>
                     </label>
                   </div>
 
                   {config.showTrend && (
                     <Field>
-                      <Label>趋势值 (%)</Label>
+                      <Label>{t('visualDashboard.trendValue')}</Label>
                       <Input
                         type="number"
                         value={config.trendValue ?? 0}
@@ -1942,37 +1944,37 @@ export function VisualDashboard() {
               render: () => (
                 <div className="space-y-3">
                   <Field>
-                    <Label htmlFor="sparkline-title">显示标题</Label>
+                    <Label htmlFor="sparkline-title">{t('visualDashboard.showTitle')}</Label>
                     <Input
                       id="sparkline-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
 
                   <SelectField
-                    label="颜色模式"
+                    label={t('visualDashboard.colorMode')}
                     value={config.colorMode || 'auto'}
                     onChange={updateConfig('colorMode')}
                     options={[
-                      { value: 'auto', label: '自动 (基于趋势)' },
-                      { value: 'primary', label: '主题色' },
-                      { value: 'fixed', label: '固定颜色' },
-                      { value: 'value', label: '基于数值' },
+                      { value: 'auto', label: t('visualDashboard.auto') },
+                      { value: 'primary', label: t('visualDashboard.primaryColor') },
+                      { value: 'fixed', label: t('visualDashboard.fixedColor') },
+                      { value: 'value', label: t('visualDashboard.basedOnValue') },
                     ]}
                   />
 
                   <ColorPicker
                     value={config.color || '#3b82f6'}
                     onChange={(color) => updateConfig('color')(color)}
-                    label="颜色（固定模式）"
+                    label={t('visualDashboard.fixedModeColor')}
                     presets="primary"
                   />
 
                   <Field>
-                    <Label>最大值（用于基于数值的着色）</Label>
+                    <Label>{t('visualDashboard.maxValue')}</Label>
                     <Input
                       type="number"
                       value={config.maxValue || 100}
@@ -1983,7 +1985,7 @@ export function VisualDashboard() {
                   </Field>
 
                   <Field>
-                    <Label>线条宽度</Label>
+                    <Label>{t('visualDashboard.lineWidth')}</Label>
                     <Input
                       type="number"
                       value={config.strokeWidth ?? 2}
@@ -2002,7 +2004,7 @@ export function VisualDashboard() {
                         onChange={(e) => updateConfig('fill')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">填充区域</span>
+                      <span className="text-sm">{t('visualDashboard.fillArea')}</span>
                     </label>
 
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -2012,7 +2014,7 @@ export function VisualDashboard() {
                         onChange={(e) => updateConfig('curved')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">曲线</span>
+                      <span className="text-sm">{t('visualDashboard.curved')}</span>
                     </label>
 
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -2022,7 +2024,7 @@ export function VisualDashboard() {
                         onChange={(e) => updateConfig('showPoints')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">显示数据点</span>
+                      <span className="text-sm">{t('visualDashboard.showDataPoints')}</span>
                     </label>
                   </div>
 
@@ -2033,7 +2035,7 @@ export function VisualDashboard() {
                       onChange={(e) => updateConfig('showValue')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">显示当前值</span>
+                    <span className="text-sm">{t('visualDashboard.showCurrentValue')}</span>
                   </label>
 
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -2043,13 +2045,13 @@ export function VisualDashboard() {
                       onChange={(e) => updateConfig('showThreshold')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">显示阈值线</span>
+                    <span className="text-sm">{t('visualDashboard.showThreshold')}</span>
                   </label>
 
                   {config.showThreshold && (
                     <>
                       <Field>
-                        <Label>阈值</Label>
+                        <Label>{t('visualDashboard.threshold')}</Label>
                         <Input
                           type="number"
                           value={config.threshold ?? 20}
@@ -2061,7 +2063,7 @@ export function VisualDashboard() {
                       <ColorPicker
                         value={config.thresholdColor || '#ef4444'}
                         onChange={(color) => updateConfig('thresholdColor')(color)}
-                        label="阈值颜色"
+                        label={t('visualDashboard.thresholdColor')}
                         presets="semantic"
                       />
                     </>
@@ -2091,51 +2093,51 @@ export function VisualDashboard() {
               render: () => (
                 <div className="space-y-3">
                   <Field>
-                    <Label htmlFor="progress-bar-title">显示标题</Label>
+                    <Label htmlFor="progress-bar-title">{t('visualDashboard.showTitle')}</Label>
                     <Input
                       id="progress-bar-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
 
                   <SelectField
-                    label="样式"
+                    label={t('visualDashboard.style')}
                     value={config.variant || 'default'}
                     onChange={updateConfig('variant')}
                     options={[
-                      { value: 'default', label: '默认 (线性)' },
-                      { value: 'compact', label: '紧凑' },
-                      { value: 'circular', label: '圆形' },
+                      { value: 'default', label: t('visualDashboard.default') },
+                      { value: 'compact', label: t('visualDashboard.compact') },
+                      { value: 'circular', label: t('visualDashboard.horizontal') },
                     ]}
                   />
 
                   <ColorPicker
                     value={config.color || '#3b82f6'}
                     onChange={(color) => updateConfig('color')(color)}
-                    label="颜色"
+                    label={t('visualDashboard.color')}
                     presets="primary"
                   />
 
                   <SelectField
-                    label="尺寸"
+                    label={t('visualDashboard.size')}
                     value={config.size || 'md'}
                     onChange={updateConfig('size')}
                     options={[
-                      { value: 'sm', label: '小' },
-                      { value: 'md', label: '中' },
-                      { value: 'lg', label: '大' },
+                      { value: 'sm', label: t('sizes.sm') },
+                      { value: 'md', label: t('sizes.md') },
+                      { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
 
                   <Field>
-                    <Label>标签</Label>
+                    <Label>{t('visualDashboard.label')}</Label>
                     <Input
                       value={config.label || ''}
                       onChange={(e) => updateConfig('label')(e.target.value)}
-                      placeholder="如 CPU 使用率"
+                      placeholder={t('visualDashboard.descriptionPlaceholder')}
                       className="h-9"
                     />
                   </Field>
@@ -2186,7 +2188,7 @@ export function VisualDashboard() {
                       onChange={(e) => updateConfig('showCard')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">显示卡片</span>
+                    <span className="text-sm">{t('visualDashboard.showTitle')}</span>
                   </label>
                 </div>
               ),
@@ -2201,7 +2203,7 @@ export function VisualDashboard() {
                   dataMapping={config.dataMapping as SingleValueMappingConfig}
                   onChange={updateDataMapping}
                   mappingType="single"
-                  label="数据格式"
+                  label={t('visualDashboard.style')}
                   readonly={!config.dataSource}
                 />
               ),
@@ -2232,36 +2234,36 @@ export function VisualDashboard() {
                       id="led-indicator-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
 
                   <Field>
-                    <Label>标签</Label>
+                    <Label>{t('visualDashboard.label')}</Label>
                     <Input
                       value={config.label || ''}
                       onChange={(e) => updateConfig('label')(e.target.value)}
-                      placeholder="例如：设备状态"
+                      placeholder={t('visualDashboard.descriptionPlaceholder')}
                       className="h-9"
                     />
                   </Field>
 
                   <SelectField
-                    label="尺寸"
+                    label={t('visualDashboard.size')}
                     value={config.size || 'md'}
                     onChange={updateConfig('size')}
                     options={[
-                      { value: 'sm', label: '小' },
-                      { value: 'md', label: '中' },
-                      { value: 'lg', label: '大' },
+                      { value: 'sm', label: t('sizes.sm') },
+                      { value: 'md', label: t('sizes.md') },
+                      { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
 
                   <ColorPicker
                     value={config.color || '#22c55e'}
                     onChange={(color) => updateConfig('color')(color)}
-                    label="颜色"
+                    label={t('visualDashboard.color')}
                     presets="semantic"
                   />
 
@@ -2388,7 +2390,7 @@ export function VisualDashboard() {
                       id="line-chart-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -2401,13 +2403,13 @@ export function VisualDashboard() {
                   />
 
                   <SelectField
-                    label="尺寸"
+                    label={t('visualDashboard.size')}
                     value={config.size || 'md'}
                     onChange={updateConfig('size')}
                     options={[
-                      { value: 'sm', label: '小' },
-                      { value: 'md', label: '中' },
-                      { value: 'lg', label: '大' },
+                      { value: 'sm', label: t('sizes.sm') },
+                      { value: 'md', label: t('sizes.md') },
+                      { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
 
@@ -2429,7 +2431,7 @@ export function VisualDashboard() {
                         onChange={(e) => updateConfig('fillArea')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">填充区域</span>
+                      <span className="text-sm">{t('visualDashboard.fillArea')}</span>
                     </label>
                   </div>
 
@@ -2496,7 +2498,7 @@ export function VisualDashboard() {
                       id="area-chart-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -2509,13 +2511,13 @@ export function VisualDashboard() {
                   />
 
                   <SelectField
-                    label="尺寸"
+                    label={t('visualDashboard.size')}
                     value={config.size || 'md'}
                     onChange={updateConfig('size')}
                     options={[
-                      { value: 'sm', label: '小' },
-                      { value: 'md', label: '中' },
-                      { value: 'lg', label: '大' },
+                      { value: 'sm', label: t('sizes.sm') },
+                      { value: 'md', label: t('sizes.md') },
+                      { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
 
@@ -2604,7 +2606,7 @@ export function VisualDashboard() {
                       id="bar-chart-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -2617,13 +2619,13 @@ export function VisualDashboard() {
                   />
 
                   <SelectField
-                    label="尺寸"
+                    label={t('visualDashboard.size')}
                     value={config.size || 'md'}
                     onChange={updateConfig('size')}
                     options={[
-                      { value: 'sm', label: '小' },
-                      { value: 'md', label: '中' },
-                      { value: 'lg', label: '大' },
+                      { value: 'sm', label: t('sizes.sm') },
+                      { value: 'md', label: t('sizes.md') },
+                      { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
 
@@ -2632,7 +2634,7 @@ export function VisualDashboard() {
                     value={config.layout || 'vertical'}
                     onChange={updateConfig('layout')}
                     options={[
-                      { value: 'vertical', label: '垂直' },
+                      { value: 'vertical', label: t('visualDashboard.vertical') },
                       { value: 'horizontal', label: '水平' },
                     ]}
                   />
@@ -2710,19 +2712,19 @@ export function VisualDashboard() {
                       id="pie-chart-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
 
                   <SelectField
-                    label="尺寸"
+                    label={t('visualDashboard.size')}
                     value={config.size || 'md'}
                     onChange={updateConfig('size')}
                     options={[
-                      { value: 'sm', label: '小' },
-                      { value: 'md', label: '中' },
-                      { value: 'lg', label: '大' },
+                      { value: 'sm', label: t('sizes.sm') },
+                      { value: 'md', label: t('sizes.md') },
+                      { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
 
@@ -2822,13 +2824,13 @@ export function VisualDashboard() {
                       id="toggle-switch-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
 
                   <Field>
-                    <Label>标签</Label>
+                    <Label>{t('visualDashboard.label')}</Label>
                     <input
                       type="text"
                       value={config.label || ''}
@@ -2856,13 +2858,13 @@ export function VisualDashboard() {
                   </Field>
 
                   <SelectField
-                    label="尺寸"
+                    label={t('visualDashboard.size')}
                     value={config.size || 'md'}
                     onChange={updateConfig('size')}
                     options={[
-                      { value: 'sm', label: '小' },
-                      { value: 'md', label: '中' },
-                      { value: 'lg', label: '大' },
+                      { value: 'sm', label: t('sizes.sm') },
+                      { value: 'md', label: t('sizes.md') },
+                      { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
                 </div>
@@ -2918,7 +2920,7 @@ export function VisualDashboard() {
                       id="image-display-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -3005,7 +3007,7 @@ export function VisualDashboard() {
                       id="image-history-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -3087,7 +3089,7 @@ export function VisualDashboard() {
                       id="web-display-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -3150,7 +3152,7 @@ export function VisualDashboard() {
                       id="markdown-display-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -3166,13 +3168,13 @@ export function VisualDashboard() {
                     />
                   </Field>
                   <SelectField
-                    label="样式"
+                    label={t('visualDashboard.style')}
                     value={config.variant || 'default'}
                     onChange={updateConfig('variant')}
                     options={[
                       { value: 'default', label: '默认' },
-                      { value: 'compact', label: '紧凑' },
-                      { value: 'minimal', label: '简约' },
+                      { value: 'compact', label: t('visualDashboard.compact') },
+                      { value: 'minimal', label: t('visualDashboard.minimal') },
                     ]}
                   />
                 </div>
@@ -3204,7 +3206,7 @@ export function VisualDashboard() {
                       id="video-display-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
@@ -3568,7 +3570,7 @@ export function VisualDashboard() {
                       id="map-display-title"
                       value={config.title as string || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="输入组件标题..."
+                      placeholder={t('visualDashboard.enterTitle')}
                       className="h-10"
                     />
                   </Field>
