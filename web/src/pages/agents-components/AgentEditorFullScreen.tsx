@@ -44,6 +44,7 @@ import {
   Activity,
   Settings,
   X,
+  Plus,
 } from "lucide-react"
 import type {
   AiAgentDetail,
@@ -156,6 +157,9 @@ export function AgentEditorFullScreen({
   // Event trigger state
   const [eventType, setEventType] = useState('device.online')
   const [eventDeviceId, setEventDeviceId] = useState('all')
+
+  // Device selection state
+  const [showDeviceList, setShowDeviceList] = useState(false)
 
   // Resource state
   const [selectedResources, setSelectedResources] = useState<SelectedResource[]>([])
@@ -965,31 +969,122 @@ export function AgentEditorFullScreen({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">{tAgent('creator.resources.title')}</Label>
-                {selectedCount > 0 && (
-                  <Badge variant="secondary" className="text-xs">
-                    {selectedCount} {tCommon('selected')}
-                  </Badge>
-                )}
+                <div className="flex items-center gap-2">
+                  {selectedCount > 0 && (
+                    <Badge variant="secondary" className="text-xs">
+                      {selectedCount} {tCommon('selected')}
+                    </Badge>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowDeviceList(!showDeviceList)}
+                    className="text-xs px-3 py-1.5 rounded-md border hover:bg-muted transition-colors flex items-center gap-1"
+                  >
+                    <Plus className="h-3 w-3" />
+                    {selectedResources.length > 0 ? tCommon('add') : tAgent('creator.resources.selectDevice')}
+                  </button>
+                </div>
               </div>
 
-              <div className="grid grid-cols-12 gap-4">
-                {/* Device List */}
-                <div className="col-span-4 space-y-2">
-                  <Input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder={tAgent('creator.resources.searchPlaceholder')}
-                  />
-                  <div className="space-y-1 max-h-[300px] overflow-y-auto">
+              {/* Selected Resources Display */}
+              {selectedResources.length === 0 ? (
+                <div className="text-center py-12 border-2 border-dashed rounded-lg">
+                  <Target className="h-10 w-10 mx-auto mb-3 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">{tAgent('creator.resources.selectDevice')}</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {selectedResources.map((resource) => {
+                    const device = devices.find(d => d.device_id === resource.deviceId)
+                    if (!device) return null
+                    const DeviceIcon = getDeviceIcon(device.device_type)
+
+                    return (
+                      <div key={resource.deviceId} className="border rounded-lg overflow-hidden">
+                        {/* Device Header */}
+                        <div className="px-4 py-2.5 bg-muted/30 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 rounded-md bg-background shadow-sm">{DeviceIcon}</div>
+                            <span className="font-medium text-sm">{device.name}</span>
+                            <span className="text-xs text-muted-foreground">({device.device_type})</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-xs text-muted-foreground">
+                              {resource.metrics.length} {tAgent('creator.resources.metrics').toLowerCase()}, {resource.commands.length} {tAgent('creator.resources.commands').toLowerCase()}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => clearDevice(resource.deviceId)}
+                              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive transition-colors"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Selected Metrics and Commands */}
+                        <div className="p-3 flex flex-wrap gap-2">
+                          {resource.metrics.map((m) => (
+                            <div key={m.name} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-blue-700 text-xs">
+                              <BarChart3 className="h-3 w-3" />
+                              <span>{m.displayName}</span>
+                              <button
+                                type="button"
+                                onClick={() => toggleMetric(resource.deviceId, m.name, m.displayName)}
+                                className="p-0.5 rounded-sm hover:bg-blue-200 transition-colors"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                          {resource.commands.map((c) => (
+                            <div key={c.name} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-orange-50 border border-orange-200 text-orange-700 text-xs">
+                              <Zap className="h-3 w-3" />
+                              <span>{c.displayName}</span>
+                              <button
+                                type="button"
+                                onClick={() => toggleCommand(resource.deviceId, c.name, c.displayName)}
+                                className="p-0.5 rounded-sm hover:bg-orange-200 transition-colors"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Collapsible Device Selection Panel */}
+              {showDeviceList && (
+                <div className="border rounded-lg p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={tAgent('creator.resources.searchPlaceholder')}
+                      className="flex-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDeviceList(false)}
+                      className="p-2 rounded-lg hover:bg-muted"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto">
                     {filteredDevices.length === 0 ? (
-                      <div className="text-center py-8 text-muted-foreground text-sm">
+                      <div className="col-span-full text-center py-8 text-muted-foreground text-sm">
                         {tAgent('creator.noDevices')}
                       </div>
                     ) : (
                       filteredDevices.map((device) => {
                         const Icon = getDeviceIcon(device.device_type)
                         const hasSelection = selectedResources.find(r => r.deviceId === device.device_id)
-                        const isSelected = selectedDeviceId === device.device_id
                         const selectionCount = (hasSelection?.metrics.length || 0) + (hasSelection?.commands.length || 0)
 
                         return (
@@ -998,171 +1093,154 @@ export function AgentEditorFullScreen({
                             type="button"
                             onClick={() => void selectDevice(device.device_id)}
                             className={cn(
-                              "w-full p-2 rounded-md text-left transition-all flex items-center gap-2 text-sm",
-                              isSelected && "bg-primary text-primary-foreground",
-                              !isSelected && "hover:bg-muted"
+                              "p-3 rounded-lg border-2 text-left transition-all",
+                              hasSelection ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/30"
                             )}
                           >
-                            {Icon}
-                            <span className="flex-1 truncate">{device.name}</span>
-                            {selectionCount > 0 && (
-                              <Badge variant={isSelected ? "secondary" : "outline"} className="text-xs h-5 px-1.5">
-                                {selectionCount}
-                              </Badge>
-                            )}
+                            <div className="flex items-center gap-2 mb-2">
+                              <div className={cn(
+                                "p-1.5 rounded-md",
+                                hasSelection ? "bg-primary text-primary-foreground" : "bg-muted"
+                              )}>
+                                {Icon}
+                              </div>
+                              <span className="font-medium text-sm truncate flex-1">{device.name}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>{device.device_type}</span>
+                              {selectionCount > 0 && (
+                                <Badge variant="secondary" className="text-xs h-5">
+                                  {selectionCount}
+                                </Badge>
+                              )}
+                            </div>
                           </button>
                         )
                       })
                     )}
                   </div>
-                </div>
 
-                {/* Selected Device Panel */}
-                <div className="col-span-8">
-                  {!selectedDeviceId ? (
-                    <div className="h-[300px] flex items-center justify-center text-muted-foreground text-sm border rounded-lg">
-                      {tAgent('creator.resources.selectDevice')}
-                    </div>
-                  ) : (
-                    <div className="border rounded-lg overflow-hidden">
-                      {/* Device Header */}
-                      {(() => {
-                        const device = devices.find(d => d.device_id === selectedDeviceId)
-                        if (!device) return null
-                        const metrics = getDeviceMetrics(selectedDeviceId)
-                        const commands = getDeviceCommands(selectedDeviceId)
-                        const isLoading = loadingMetrics[selectedDeviceId]
+                  {/* Device Detail Panel (when a device is selected) */}
+                  {selectedDeviceId && (() => {
+                    const device = devices.find(d => d.device_id === selectedDeviceId)
+                    if (!device) return null
+                    const metrics = getDeviceMetrics(selectedDeviceId)
+                    const commands = getDeviceCommands(selectedDeviceId)
+                    const isLoading = loadingMetrics[selectedDeviceId]
 
-                        return (
-                          <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between">
-                            <span className="font-medium text-sm">{device.name}</span>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => selectAllForDevice(selectedDeviceId)}
-                                className="text-xs px-2 py-1 rounded hover:bg-muted transition-colors text-primary"
-                              >
-                                {tCommon('selectAll')}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => clearDevice(selectedDeviceId)}
-                                className="text-xs px-2 py-1 rounded hover:bg-muted transition-colors text-muted-foreground"
-                              >
-                                {tCommon('clear')}
-                              </button>
-                            </div>
+                    if (isLoading) {
+                      return (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        </div>
+                      )
+                    }
+
+                    if (metrics.length === 0 && commands.length === 0) {
+                      return (
+                        <div className="text-center py-8 text-muted-foreground text-sm">
+                          {tAgent('creator.resources.noMetrics')}
+                        </div>
+                      )
+                    }
+
+                    return (
+                      <div className="border-t pt-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-sm flex items-center gap-2">
+                            {getDeviceIcon(device.device_type)}
+                            {device.name}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => selectAllForDevice(selectedDeviceId)}
+                              className="text-xs px-3 py-1.5 rounded-md hover:bg-muted transition-colors text-primary"
+                            >
+                              {tCommon('selectAll')}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => clearDevice(selectedDeviceId)}
+                              className="text-xs px-3 py-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground"
+                            >
+                              {tCommon('clear')}
+                            </button>
                           </div>
-                        )
-                      })()}
+                        </div>
 
-                      {/* Metrics and Commands */}
-                      <div className="p-3 max-h-[260px] overflow-y-auto">
-                        {(() => {
-                          const device = devices.find(d => d.device_id === selectedDeviceId)
-                          if (!device) return null
-                          const metrics = getDeviceMetrics(selectedDeviceId)
-                          const commands = getDeviceCommands(selectedDeviceId)
-                          const isLoading = loadingMetrics[selectedDeviceId]
-
-                          if (isLoading) {
-                            return (
-                              <div className="flex items-center justify-center py-16">
-                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                        <div className="space-y-3">
+                          {/* Metrics */}
+                          {metrics.length > 0 && (
+                            <div>
+                              <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                                <BarChart3 className="h-3 w-3" />
+                                {tAgent('creator.resources.metrics')}
                               </div>
-                            )
-                          }
-
-                          if (metrics.length === 0 && commands.length === 0) {
-                            return (
-                              <div className="text-center py-16 text-muted-foreground text-sm">
-                                {tAgent('creator.resources.noMetrics')}
+                              <div className="grid grid-cols-3 gap-2">
+                                {metrics.map((metric) => {
+                                  const isSelected = isMetricSelected(selectedDeviceId, metric.name)
+                                  return (
+                                    <button
+                                      key={metric.name}
+                                      type="button"
+                                      onClick={() => toggleMetric(selectedDeviceId, metric.name, metric.display_name)}
+                                      className={cn(
+                                        "p-2 rounded-lg text-left transition-all text-sm",
+                                        isSelected
+                                          ? "bg-blue-600 text-white"
+                                          : "hover:bg-blue-50 border border-blue-200"
+                                      )}
+                                    >
+                                      <div className="flex items-center gap-1.5">
+                                        {isSelected ? <Check className="h-3 w-3" /> : <div className="w-3 h-3 rounded border border-blue-300" />}
+                                        <span className="flex-1 truncate">{metric.display_name}</span>
+                                      </div>
+                                    </button>
+                                  )
+                                })}
                               </div>
-                            )
-                          }
-
-                          return (
-                            <div className="space-y-3">
-                              {/* Metrics */}
-                              {metrics.length > 0 && (
-                                <div>
-                                  <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                    <BarChart3 className="h-3 w-3" />
-                                    {tAgent('creator.resources.metrics')}
-                                  </div>
-                                  <div className="grid grid-cols-2 gap-2">
-                                    {metrics.map((metric) => {
-                                      const isSelected = isMetricSelected(selectedDeviceId, metric.name)
-                                      return (
-                                        <button
-                                          key={metric.name}
-                                          type="button"
-                                          onClick={() => toggleMetric(selectedDeviceId, metric.name, metric.display_name)}
-                                          className={cn(
-                                            "p-2 rounded text-left transition-all flex items-center gap-2 text-sm",
-                                            isSelected
-                                              ? "bg-blue-600 text-white"
-                                              : "hover:bg-blue-50 border border-blue-200"
-                                          )}
-                                        >
-                                          <div className={cn(
-                                            "w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0",
-                                            isSelected ? "border-white/50" : "border-blue-300"
-                                          )}>
-                                            {isSelected && <Check className="h-2.5 w-2.5" />}
-                                          </div>
-                                          <span className="flex-1 truncate">{metric.display_name}</span>
-                                          {metric.unit && <span className="text-xs opacity-70">{metric.unit}</span>}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Commands */}
-                              {commands.length > 0 && (
-                                <div>
-                                  <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-                                    <Zap className="h-3 w-3" />
-                                    {tAgent('creator.resources.commands')}
-                                  </div>
-                                  <div className="space-y-2">
-                                    {commands.map((command) => {
-                                      const isSelected = isCommandSelected(selectedDeviceId, command.name)
-                                      return (
-                                        <button
-                                          key={command.name}
-                                          type="button"
-                                          onClick={() => toggleCommand(selectedDeviceId, command.name, command.display_name)}
-                                          className={cn(
-                                            "p-2 rounded text-left transition-all flex items-center gap-2 text-sm w-full",
-                                            isSelected
-                                              ? "bg-orange-600 text-white"
-                                              : "hover:bg-orange-50 border border-orange-200"
-                                          )}
-                                        >
-                                          <div className={cn(
-                                            "w-3.5 h-3.5 rounded-sm border flex items-center justify-center flex-shrink-0",
-                                            isSelected ? "border-white/50" : "border-orange-300"
-                                          )}>
-                                            {isSelected && <Check className="h-2.5 w-2.5" />}
-                                          </div>
-                                          <span className="flex-1 truncate">{command.display_name}</span>
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-                              )}
                             </div>
-                          )
-                        })()}
+                          )}
+
+                          {/* Commands */}
+                          {commands.length > 0 && (
+                            <div>
+                              <div className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
+                                <Zap className="h-3 w-3" />
+                                {tAgent('creator.resources.commands')}
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                {commands.map((command) => {
+                                  const isSelected = isCommandSelected(selectedDeviceId, command.name)
+                                  return (
+                                    <button
+                                      key={command.name}
+                                      type="button"
+                                      onClick={() => toggleCommand(selectedDeviceId, command.name, command.display_name)}
+                                      className={cn(
+                                        "p-2 rounded-lg text-left transition-all text-sm",
+                                        isSelected
+                                          ? "bg-orange-600 text-white"
+                                          : "hover:bg-orange-50 border border-orange-200"
+                                      )}
+                                    >
+                                      <div className="flex items-center gap-1.5">
+                                        {isSelected ? <Check className="h-3 w-3" /> : <div className="w-3 h-3 rounded border border-orange-300" />}
+                                        <span className="flex-1 truncate">{command.display_name}</span>
+                                      </div>
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )
+                  })()}
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Advanced Config (Collapsible) */}
