@@ -1707,7 +1707,7 @@ export type ExecutionStatus = 'Running' | 'Completed' | 'Failed' | 'Cancelled'
 /**
  * Agent role defining its core responsibility
  */
-export type AgentRole = 'Monitor' | 'Executor' | 'Analyst' | 'Scheduler' | 'Notifier' | 'Controller' | (string & {})
+export type AgentRole = 'Monitor' | 'Executor' | 'Analyst'
 
 /**
  * Input for a single conversation turn (execution)

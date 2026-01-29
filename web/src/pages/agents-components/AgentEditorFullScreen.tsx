@@ -110,10 +110,6 @@ const getRoleConfig = (t: (key: string) => string) => [
   { value: 'Monitor' as const, label: t('creator.basicInfo.roles.monitor.label'), description: t('creator.basicInfo.roles.monitor.description'), icon: Eye },
   { value: 'Executor' as const, label: t('creator.basicInfo.roles.executor.label'), description: t('creator.basicInfo.roles.executor.description'), icon: Fan },
   { value: 'Analyst' as const, label: t('creator.basicInfo.roles.analyst.label'), description: t('creator.basicInfo.roles.analyst.description'), icon: BarChart3 },
-  { value: 'Scheduler' as const, label: t('creator.basicInfo.roles.scheduler.label'), description: t('creator.basicInfo.roles.scheduler.description'), icon: Clock },
-  { value: 'Notifier' as const, label: t('creator.basicInfo.roles.notifier.label'), description: t('creator.basicInfo.roles.notifier.description'), icon: Bell },
-  { value: 'Controller' as const, label: t('creator.basicInfo.roles.controller.label'), description: t('creator.basicInfo.roles.controller.description'), icon: Zap },
-  { value: 'Custom' as const, label: t('creator.basicInfo.roles.custom.label'), description: t('creator.basicInfo.roles.custom.description'), icon: Settings },
 ]
 
 // Helper to get schedule types config
@@ -145,8 +141,7 @@ export function AgentEditorFullScreen({
 
   // Form state
   const [name, setName] = useState("")
-  const [role, setRole] = useState<AgentRole | 'Custom'>('Monitor')
-  const [customRoleName, setCustomRoleName] = useState("")
+  const [role, setRole] = useState<AgentRole>('Monitor')
   const [description, setDescription] = useState("")
   const [userPrompt, setUserPrompt] = useState("")
   const [llmBackendId, setLlmBackendId] = useState<string | null>(null)
@@ -573,20 +568,11 @@ export function AgentEditorFullScreen({
         finalScheduleType = 'once'
       }
 
-      // Determine final role (use custom role name if Custom is selected)
-      const finalRole = role === 'Custom' ? (customRoleName.trim() || 'Custom') : role
-
-      // Validation for custom role
-      if (role === 'Custom' && !customRoleName.trim()) {
-        toast({ title: tAgent('creator.validation.customRoleRequired'), variant: 'destructive' })
-        return
-      }
-
       if (isEditing && agent) {
         const updateData: Partial<AiAgentDetail> = {
           name: name.trim(),
           description: description.trim(),
-          role: finalRole,
+          role,
           user_prompt: userPrompt.trim(),
           llm_backend_id: llmBackendId ?? undefined,
           schedule: {
@@ -600,7 +586,7 @@ export function AgentEditorFullScreen({
       } else {
         const data: CreateAgentRequest = {
           name: name.trim(),
-          role: finalRole,
+          role,
           description: description.trim(),
           user_prompt: userPrompt.trim(),
           device_ids: selectedResources.map(r => r.deviceId),
@@ -675,7 +661,7 @@ export function AgentEditorFullScreen({
               {/* Role Selection */}
               <div>
                 <Label className="text-sm mb-3 block">{tAgent('creator.basicInfo.role')}</Label>
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-3 gap-4">
                   {ROLES.map((r) => {
                     const Icon = r.icon
                     const isSelected = role === r.value
@@ -685,26 +671,26 @@ export function AgentEditorFullScreen({
                         type="button"
                         onClick={() => setRole(r.value)}
                         className={cn(
-                          "relative p-3 rounded-lg border-2 text-left transition-all",
-                          isSelected && "border-primary bg-primary/5"
+                          "relative p-4 rounded-xl border-2 text-left transition-all hover:shadow-sm",
+                          isSelected ? "border-primary bg-primary/5" : "border-border hover:border-muted-foreground/30 bg-card"
                         )}
                       >
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3">
                           <div className={cn(
-                            "flex items-center justify-center w-8 h-8 rounded-lg",
+                            "flex items-center justify-center w-10 h-10 rounded-lg",
                             isSelected ? "bg-primary text-primary-foreground" : "bg-muted"
                           )}>
-                            <Icon className="h-4 w-4" />
+                            <Icon className="h-5 w-5" />
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-medium truncate">{r.label}</div>
-                            <div className="text-xs text-muted-foreground truncate">{r.description}</div>
+                          <div className="flex-1">
+                            <div className="text-sm font-semibold">{r.label}</div>
+                            <div className="text-xs text-muted-foreground line-clamp-1">{r.description}</div>
                           </div>
                         </div>
                         {isSelected && (
-                          <div className="absolute top-2 right-2">
-                            <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
-                              <Check className="h-2.5 w-2.5 text-primary-foreground" />
+                          <div className="absolute top-3 right-3">
+                            <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+                              <Check className="h-3 w-3 text-primary-foreground" />
                             </div>
                           </div>
                         )}
@@ -726,21 +712,6 @@ export function AgentEditorFullScreen({
                   placeholder={tAgent('agentNamePlaceholder')}
                 />
               </div>
-
-              {/* Custom Role Name (shown when Custom is selected) */}
-              {role === 'Custom' && (
-                <div className="space-y-2">
-                  <Label className="text-sm">
-                    {tAgent('creator.basicInfo.roles.custom.label')}
-                    <span className="text-destructive ml-1">*</span>
-                  </Label>
-                  <Input
-                    value={customRoleName}
-                    onChange={(e) => setCustomRoleName(e.target.value)}
-                    placeholder={tAgent('creator.basicInfo.roles.custom.placeholder')}
-                  />
-                </div>
-              )}
 
               {/* Description */}
               <div className="space-y-2">
