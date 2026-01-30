@@ -162,6 +162,433 @@ impl Tool for SystemInfoTool {
     }
 }
 
+// ============================================================================
+// System Help / Onboarding Tools
+// ============================================================================
+
+/// Tool for providing system help and feature information to users.
+///
+/// This tool is designed to help new users understand what the system can do
+/// and how to get started with various features.
+pub struct SystemHelpTool {
+    /// System name
+    system_name: Option<String>,
+}
+
+impl SystemHelpTool {
+    /// Create a new system help tool.
+    pub fn new() -> Self {
+        Self { system_name: None }
+    }
+
+    /// Create with a system name.
+    pub fn with_name(name: impl Into<String>) -> Self {
+        Self {
+            system_name: Some(name.into()),
+        }
+    }
+}
+
+impl Default for SystemHelpTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Tool for SystemHelpTool {
+    fn name(&self) -> &str {
+        "system_help"
+    }
+
+    fn description(&self) -> &str {
+        r#"获取系统帮助信息和功能介绍。
+
+## 使用场景
+- 新用户了解系统功能
+- 查看系统支持的操作
+- 获取快速入门指南
+- 了解可用功能的说明
+
+## 帮助主题
+- overview: 系统概览和主要功能
+- devices: 设备管理相关功能
+- automation: 自动化规则功能
+- agents: AI Agent功能
+- alerts: 告警功能
+- getting_started: 快速入门指南
+- examples: 使用示例"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "topic": string_property("帮助主题：overview（概览）、devices（设备）、automation（自动化）、agents（智能体）、alerts（告警）、getting_started（入门）、examples（示例）"),
+                "detail": string_property("可选，要详细了解的具体功能，如：device_control, rule_creation, agent_monitoring")
+            }),
+            vec![]
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "topic": "overview"
+                }),
+                result: serde_json::json!({
+                    "topic": "overview",
+                    "system_name": "NeoTalk",
+                    "description": "NeoTalk是一个智能物联网平台",
+                    "features": [
+                        {"name": "设备管理", "description": "连接和控制各类IoT设备"},
+                        {"name": "自动化规则", "description": "创建自动化规则实现智能控制"},
+                        {"name": "AI Agent", "description": "创建自主运行的AI智能体"},
+                        {"name": "告警系统", "description": "监控异常并及时告警"}
+                    ],
+                    "quick_commands": [
+                        "查看所有设备",
+                        "创建自动化规则",
+                        "列出所有Agent"
+                    ]
+                }),
+                description: "获取系统概览".to_string(),
+            }),
+            category: ToolCategory::System,
+            scenarios: vec![
+                UsageScenario {
+                    description: "新用户了解系统".to_string(),
+                    example_query: "这个系统能做什么？".to_string(),
+                    suggested_call: Some(r#"{"tool": "system_help", "arguments": {"topic": "overview"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "快速入门".to_string(),
+                    example_query: "如何开始使用？".to_string(),
+                    suggested_call: Some(r#"{"tool": "system_help", "arguments": {"topic": "getting_started"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "了解设备功能".to_string(),
+                    example_query: "设备管理有什么功能？".to_string(),
+                    suggested_call: Some(r#"{"tool": "system_help", "arguments": {"topic": "devices"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec![],
+                output_to: vec!["list_devices".to_string(), "list_agents".to_string(), "list_rules".to_string()],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("detailed".to_string()),
+            namespace: Some("system".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("system")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let topic = args["topic"].as_str().unwrap_or("overview");
+        let detail = args["detail"].as_str();
+
+        let system_name = self.system_name.as_deref().unwrap_or("NeoTalk");
+
+        let result = match topic {
+            "overview" => self.get_overview(system_name),
+            "devices" => self.get_devices_help(detail),
+            "automation" | "rules" => self.get_automation_help(detail),
+            "agents" => self.get_agents_help(detail),
+            "alerts" => self.get_alerts_help(detail),
+            "getting_started" => self.get_getting_started(system_name),
+            "examples" => self.get_examples(),
+            _ => self.get_overview(system_name),
+        };
+
+        Ok(ToolOutput::success(result))
+    }
+}
+
+impl SystemHelpTool {
+    fn get_overview(&self, system_name: &str) -> Value {
+        serde_json::json!({
+            "topic": "overview",
+            "system_name": system_name,
+            "title": format!("{} - 智能物联网边缘平台", system_name),
+            "description": format!("{} 是一个部署在边缘的智能物联网平台，支持设备管理、自动化规则、AI Agent和告警系统。", system_name),
+            "main_features": [
+                {
+                    "name": "设备管理",
+                    "description": "连接和管理各类IoT设备，支持MQTT、Modbus等协议",
+                    "capabilities": ["查看设备状态", "控制设备", "查询设备数据", "数据分析"]
+                },
+                {
+                    "name": "自动化规则",
+                    "description": "通过DSL语言创建自动化规则，实现设备智能联动",
+                    "capabilities": ["创建规则", "启用/禁用规则", "查看规则历史"]
+                },
+                {
+                    "name": "AI Agent",
+                    "description": "创建自主运行的AI智能体，定期执行监控和分析任务",
+                    "capabilities": ["列出Agent", "查看Agent详情", "手动执行Agent", "创建新Agent"]
+                },
+                {
+                    "name": "告警系统",
+                    "description": "监控设备数据和系统状态，异常时及时告警",
+                    "capabilities": ["创建告警", "查看告警历史", "确认告警"]
+                }
+            ],
+            "quick_start_questions": [
+                "有哪些设备在线？",
+                "如何创建自动化规则？",
+                "有哪些Agent正在运行？",
+                "最近有什么告警？"
+            ]
+        })
+    }
+
+    fn get_devices_help(&self, detail: Option<&str>) -> Value {
+        let base = serde_json::json!({
+            "topic": "devices",
+            "title": "设备管理功能",
+            "description": "管理连接到系统的各类IoT设备",
+            "available_commands": [
+                {"command": "list_devices", "description": "查看所有已注册的设备"},
+                {"command": "get_device_data", "description": "获取设备的最新数据"},
+                {"command": "control_device", "description": "控制设备（开关、设置参数等）"},
+                {"command": "device_analyze", "description": "分析设备数据趋势"}
+            ],
+            "example_questions": [
+                "查看所有设备",
+                "温度传感器的当前数据",
+                "打开客厅灯",
+                "分析温度变化趋势"
+            ]
+        });
+
+        if let Some(d) = detail {
+            match d {
+                "control" => serde_json::json!({
+                    "topic": "device_control",
+                    "title": "设备控制功能",
+                    "description": "可以控制连接到系统的执行器设备",
+                    "supported_commands": [
+                        "turn_on - 打开设备",
+                        "turn_off - 关闭设备",
+                        "set_value - 设置参数值",
+                        "toggle - 切换状态"
+                    ],
+                    "example": "控制设备需要提供设备ID和命令，例如：把客厅灯打开"
+                }),
+                _ => base
+            }
+        } else {
+            base
+        }
+    }
+
+    fn get_automation_help(&self, detail: Option<&str>) -> Value {
+        let base = serde_json::json!({
+            "topic": "automation",
+            "title": "自动化规则功能",
+            "description": "通过DSL语言创建自动化规则，实现设备间的智能联动",
+            "available_commands": [
+                {"command": "list_rules", "description": "查看所有自动化规则"},
+                {"command": "create_rule", "description": "创建新的自动化规则"},
+                {"command": "enable_rule/disable_rule", "description": "启用或禁用规则"}
+            ],
+            "rule_dsl_example": "RULE \"高温告警\"\nWHEN sensor.temperature > 35\nFOR 5 minutes\nDO NOTIFY \"温度过高\"\nEND",
+            "example_questions": [
+                "有哪些自动化规则？",
+                "创建一个温度监控规则",
+                "禁用告警规则"
+            ]
+        });
+
+        if let Some(d) = detail {
+            match d {
+                "create" | "creation" => serde_json::json!({
+                    "topic": "rule_creation",
+                    "title": "创建自动化规则",
+                    "description": "使用DSL语言创建规则",
+                    "dsl_format": "RULE \"规则名称\"\nWHEN 条件\nFOR 持续时间（可选）\nDO 动作\nEND",
+                    "condition_examples": [
+                        "sensor.temperature > 30 - 温度超过30度",
+                        "device.humidity < 40 - 湿度低于40%",
+                        "sensor.value == true - 传感器值为true"
+                    ],
+                    "action_examples": [
+                        "NOTIFY \"告警消息\" - 发送通知",
+                        "EXECUTE device.command(param=value) - 执行设备命令"
+                    ]
+                }),
+                _ => base
+            }
+        } else {
+            base
+        }
+    }
+
+    fn get_agents_help(&self, detail: Option<&str>) -> Value {
+        let base = serde_json::json!({
+            "topic": "agents",
+            "title": "AI Agent功能",
+            "description": "AI Agent是自主运行的智能体，可以定期执行监控、分析和决策任务",
+            "available_commands": [
+                {"command": "list_agents", "description": "查看所有Agent及其状态"},
+                {"command": "get_agent", "description": "获取Agent的详细配置和状态"},
+                {"command": "execute_agent", "description": "手动触发Agent执行"},
+                {"command": "control_agent", "description": "暂停/恢复/删除Agent"},
+                {"command": "create_agent", "description": "通过自然语言创建新Agent"},
+                {"command": "agent_memory", "description": "查看Agent学习和记忆内容"}
+            ],
+            "agent_types": [
+                {"type": "监控型", "description": "定期检查设备数据，发现异常"},
+                {"type": "分析型", "description": "分析历史数据，识别趋势"},
+                {"type": "告警型", "description": "检测特定条件，触发告警"}
+            ],
+            "example_questions": [
+                "有哪些Agent正在运行？",
+                "温度监控Agent的状态",
+                "创建一个每5分钟检查温度的Agent",
+                "暂停监控Agent"
+            ]
+        });
+
+        if let Some(d) = detail {
+            match d {
+                "create" => serde_json::json!({
+                    "topic": "agent_creation",
+                    "title": "创建AI Agent",
+                    "description": "通过自然语言描述创建Agent",
+                    "example_prompts": [
+                        "创建一个每5分钟检查温度的Agent",
+                        "创建一个监控湿度的Agent，超过阈值就告警",
+                        "创建一个每天早上8点生成报告的Agent"
+                    ]
+                }),
+                "monitoring" => serde_json::json!({
+                    "topic": "agent_monitoring",
+                    "title": "Agent监控功能",
+                    "description": "Agent可以自动监控设备和数据"
+                }),
+                _ => base
+            }
+        } else {
+            base
+        }
+    }
+
+    fn get_alerts_help(&self, _detail: Option<&str>) -> Value {
+        serde_json::json!({
+            "topic": "alerts",
+            "title": "告警系统功能",
+            "description": "监控系统状态和设备数据，异常时及时告警",
+            "available_commands": [
+                {"command": "查看告警", "description": "查看当前的告警列表"},
+                {"command": "确认告警", "description": "确认已处理的告警"}
+            ],
+            "alert_levels": [
+                {"level": "critical", "description": "严重告警，需要立即处理"},
+                {"level": "warning", "description": "警告告警，需要关注"},
+                {"level": "info", "description": "信息通知"}
+            ],
+            "example_questions": [
+                "有什么告警？",
+                "最近的告警"
+            ]
+        })
+    }
+
+    fn get_getting_started(&self, system_name: &str) -> Value {
+        serde_json::json!({
+            "topic": "getting_started",
+            "title": format!("{} 快速入门", system_name),
+            "steps": [
+                {
+                    "step": 1,
+                    "title": "了解系统状态",
+                    "description": "首先查看当前连接的设备和系统状态",
+                    "commands": ["查看所有设备", "查看系统状态"]
+                },
+                {
+                    "step": 2,
+                    "title": "创建自动化规则",
+                    "description": "根据需要创建简单的自动化规则",
+                    "commands": ["创建温度告警规则", "创建设备联动规则"]
+                },
+                {
+                    "step": 3,
+                    "title": "配置AI Agent",
+                    "description": "创建AI Agent进行自主监控和决策",
+                    "commands": ["列出所有Agent", "创建监控Agent"]
+                },
+                {
+                    "step": 4,
+                    "title": "查看运行状态",
+                    "description": "定期检查系统运行状态和告警",
+                    "commands": ["查看告警", "查看规则执行历史"]
+                }
+            ],
+            "common_tasks": [
+                {"task": "查看设备状态", "query": "查看所有在线设备"},
+                {"task": "控制设备", "query": "打开客厅的灯"},
+                {"task": "创建规则", "query": "创建一个温度超过30度就告警的规则"},
+                {"task": "查询数据", "query": "查看温度传感器最近1小时的数据"},
+                {"task": "分析趋势", "query": "分析温度变化趋势"}
+            ]
+        })
+    }
+
+    fn get_examples(&self) -> Value {
+        serde_json::json!({
+            "topic": "examples",
+            "title": "常用命令示例",
+            "examples": [
+                {
+                    "category": "设备管理",
+                    "commands": [
+                        "查看所有设备",
+                        "温度传感器1的当前数据",
+                        "打开客厅灯",
+                        "将空调温度设置为26度"
+                    ]
+                },
+                {
+                    "category": "数据查询",
+                    "commands": [
+                        "查看温度最近1小时的数据",
+                        "查看所有传感器的最新数据",
+                        "分析温度变化趋势"
+                    ]
+                },
+                {
+                    "category": "自动化",
+                    "commands": [
+                        "查看所有规则",
+                        "创建温度告警规则：温度超过30度时通知",
+                        "禁用规则3"
+                    ]
+                },
+                {
+                    "category": "AI Agent",
+                    "commands": [
+                        "列出所有Agent",
+                        "创建每5分钟检查温度的Agent",
+                        "暂停温度监控Agent",
+                        "查看Agent学到了什么"
+                    ]
+                }
+            ]
+        })
+    }
+}
+
 /// Tool for getting and setting system configuration.
 pub struct SystemConfigTool {
     /// In-memory configuration storage

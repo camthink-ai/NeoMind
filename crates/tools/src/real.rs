@@ -1261,28 +1261,36 @@ impl DeviceAnalyzeTool {
 #[async_trait]
 impl Tool for DeviceAnalyzeTool {
     fn name(&self) -> &str {
-        "device.analyze"
+        "analyze_device"
     }
 
     fn description(&self) -> &str {
-        r#"使用LLM分析设备数据，发现趋势、异常、模式和预测。支持多种分析类型：
-- trend: 趋势分析 - 识别数据上升/下降/稳定趋势
-- anomaly: 异常检测 - 发现数据中的异常点
-- summary: 数据摘要 - 生成统计信息和洞察
+        r#"分析设备数据，发现趋势、异常和模式。
 
-用法示例:
-- '分析温度趋势' → 分析温度变化趋势
-- '检测异常数据' → 检测数据中的异常点
-- '数据摘要' → 生成统计摘要和洞察"#
+## 使用场景
+- 分析温度/湿度等数据的变化趋势
+- 检测数据中的异常点
+- 生成数据统计摘要
+
+## 分析类型（可选）
+- trend: 趋势分析 - 识别上升/下降趋势
+- anomaly: 异常检测 - 发现异常数据点
+- summary: 数据摘要 - 统计信息
+
+## 参数说明
+- device_id: 设备ID（必需）
+- analysis_type: 分析类型（可选，默认summary）
+
+## 示例
+- 分析温度传感器的趋势
+- 检测设备数据的异常"#
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "device_id": string_property("设备ID，支持模糊匹配。例如: 'sensor_temp_living' 或 'temp'"),
-                "metric": string_property("要分析的指标名称，如'temperature'。不指定则分析所有可用指标"),
-                "analysis_type": string_property("分析类型：'trend'趋势分析、'anomaly'异常检测、'summary'数据摘要。默认'summary'"),
-                "limit": number_property("要分析的数据点数量，默认24个点")
+                "device_id": string_property("设备ID，例如：sensor_temp_living"),
+                "analysis_type": string_property("分析类型（可选）：trend（趋势）、anomaly（异常检测）、summary（摘要，默认）")
             }),
             vec!["device_id".to_string()],
         )
@@ -1296,16 +1304,15 @@ impl Tool for DeviceAnalyzeTool {
             example: Some(ToolExample {
                 arguments: serde_json::json!({
                     "device_id": "sensor_temp_living",
-                    "metric": "temperature",
                     "analysis_type": "trend"
                 }),
                 result: serde_json::json!({
+                    "device_id": "sensor_temp_living",
                     "analysis_type": "trend",
-                    "findings": ["温度从 22°C 上升到 28°C", "变化幅度: +6°C"],
-                    "insights": ["趋势: 📈 明显上升"],
-                    "recommendations": ["温度持续上升，建议检查空调设置"]
+                    "findings": ["温度从 22°C 上升到 28°C"],
+                    "insights": ["趋势: 明显上升"]
                 }),
-                description: "分析温度变化趋势".to_string(),
+                description: "分析设备数据".to_string(),
             }),
             category: edge_ai_core::tools::ToolCategory::Device,
             scenarios: vec![

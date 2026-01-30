@@ -1,0 +1,1055 @@
+//! AI Agent tools for Chat to query and manage Task Agents.
+//!
+//! These tools enable Chat Agents to:
+//! - Query existing agents (list, get details)
+//! - Execute agents on demand
+//! - Control agents (pause/resume/delete)
+//! - Create new agents via natural language
+//! - Query agent memory and learned patterns
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serde_json::Value;
+
+use super::error::Result;
+use super::tool::{Tool, ToolDefinition, ToolOutput, object_schema, string_property, boolean_property, number_property};
+use super::error::ToolError;
+use edge_ai_core::tools::{ToolExample, UsageScenario, ToolCategory, ToolRelationships};
+
+use edge_ai_storage::AgentStore;
+use edge_ai_storage::agents::{AiAgent, AgentFilter, AgentStatus, ScheduleType, LearnedPattern};
+
+// ============================================================================
+// Agent Query Tools
+// ============================================================================
+
+/// Tool for listing all AI agents in the system.
+pub struct ListAgentsTool {
+    agent_store: Arc<AgentStore>,
+}
+
+impl ListAgentsTool {
+    /// Create a new list agents tool.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+#[async_trait]
+impl Tool for ListAgentsTool {
+    fn name(&self) -> &str {
+        "list_agents"
+    }
+
+    fn description(&self) -> &str {
+        r#"列出系统中的所有AI Agent及其状态。
+
+## 使用场景
+- 查看所有Agent的运行状态
+- 按状态过滤Agent（active/paused/error/executing）
+- 按调度类型过滤Agent（event/cron/interval/once）
+- 获取Agent的基本信息
+- 了解Agent的调度配置
+
+## 返回信息
+- agent_id: Agent唯一标识符
+- name: Agent名称
+- description: Agent描述
+- status: 状态（active=运行中, paused=已暂停, stopped=已停止, error=错误, executing=执行中）
+- schedule_type: 调度类型（event=事件触发, cron=Cron表达式, interval=固定间隔, once=一次性）
+- last_execution_at: 最后执行时间
+- stats: 执行统计信息
+
+## 状态说明
+- active: Agent正在运行并按计划执行
+- paused: Agent已被用户暂停
+- stopped: Agent已停止
+- error: Agent执行出错
+- executing: Agent正在执行任务"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "status": string_property("可选，按状态过滤：active, paused, stopped, error, executing"),
+                "schedule_type": string_property("可选，按调度类型过滤：event, cron, interval, once"),
+                "limit": number_property("可选，限制返回数量，默认20")
+            }),
+            vec![]
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "status": "active",
+                    "limit": 10
+                }),
+                result: serde_json::json!({
+                    "count": 2,
+                    "agents": [
+                        {
+                            "id": "agent_1",
+                            "name": "温度监控Agent",
+                            "description": "监控仓库温度并告警",
+                            "status": "active",
+                            "schedule_type": "interval",
+                            "last_execution_at": 1735804800,
+                            "stats": {"total_executions": 120, "successful_executions": 118}
+                        }
+                    ]
+                }),
+                description: "列出所有活跃的Agent".to_string(),
+            }),
+            category: ToolCategory::Agent,
+            scenarios: vec![
+                UsageScenario {
+                    description: "查看所有活跃Agent".to_string(),
+                    example_query: "有哪些正在运行的Agent？".to_string(),
+                    suggested_call: Some(r#"{"tool": "list_agents", "arguments": {"status": "active"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "查看事件触发的Agent".to_string(),
+                    example_query: "哪些Agent是事件触发的？".to_string(),
+                    suggested_call: Some(r#"{"tool": "list_agents", "arguments": {"schedule_type": "event"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec![],
+                output_to: vec!["get_agent".to_string(), "execute_agent".to_string()],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("concise".to_string()),
+            namespace: Some("agent".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("agent")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let mut filter = AgentFilter::default();
+
+        // Parse status filter
+        if let Some(status_str) = args["status"].as_str() {
+            filter.status = match status_str {
+                "active" => Some(AgentStatus::Active),
+                "paused" => Some(AgentStatus::Paused),
+                "stopped" => Some(AgentStatus::Stopped),
+                "error" => Some(AgentStatus::Error),
+                "executing" => Some(AgentStatus::Executing),
+                _ => None,
+            };
+        }
+
+        // Parse schedule_type filter
+        if let Some(schedule_str) = args["schedule_type"].as_str() {
+            filter.schedule_type = match schedule_str {
+                "event" => Some(ScheduleType::Event),
+                "cron" => Some(ScheduleType::Cron),
+                "interval" => Some(ScheduleType::Interval),
+                "once" => Some(ScheduleType::Once),
+                _ => None,
+            };
+        }
+
+        // Parse limit
+        if let Some(limit) = args["limit"].as_u64() {
+            filter.limit = Some(limit as usize);
+        }
+
+        // Query agents
+        let agents = self.agent_store.query_agents(filter).await
+            .map_err(|e| ToolError::Execution(format!("Failed to query agents: {}", e)))?;
+
+        // Convert to response format
+        let agent_list: Vec<Value> = agents
+            .iter()
+            .map(|a| {
+                serde_json::json!({
+                    "id": a.id,
+                    "name": a.name,
+                    "description": a.description,
+                    "status": format!("{:?}", a.status).to_lowercase(),
+                    "schedule_type": format!("{:?}", a.schedule.schedule_type).to_lowercase(),
+                    "created_at": a.created_at,
+                    "updated_at": a.updated_at,
+                    "last_execution_at": a.last_execution_at,
+                    "stats": {
+                        "total_executions": a.stats.total_executions,
+                        "successful_executions": a.stats.successful_executions,
+                        "failed_executions": a.stats.failed_executions,
+                        "avg_duration_ms": a.stats.avg_duration_ms,
+                    }
+                })
+            })
+            .collect();
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "count": agent_list.len(),
+            "agents": agent_list
+        })))
+    }
+}
+
+/// Tool for getting detailed information about a specific agent.
+pub struct GetAgentTool {
+    agent_store: Arc<AgentStore>,
+}
+
+impl GetAgentTool {
+    /// Create a new get agent tool.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+#[async_trait]
+impl Tool for GetAgentTool {
+    fn name(&self) -> &str {
+        "get_agent"
+    }
+
+    fn description(&self) -> &str {
+        r#"获取指定AI Agent的详细信息。
+
+## 使用场景
+- 查看Agent的完整配置
+- 了解Agent的监控目标和资源
+- 查看Agent的调度配置
+- 检查Agent的执行历史统计
+- 获取Agent的意图解析结果
+
+## 返回信息
+- 基本信息：ID、名称、描述、状态
+- 用户意图：原始prompt和AI解析结果
+- 资源配置：监控的设备、指标、命令
+- 调度配置：调度类型、Cron表达式、间隔等
+- 执行统计：总执行次数、成功/失败次数、平均耗时
+- 记忆信息：学习到的模式、基线数据
+
+## 注意事项
+- 需要提供agent_id参数
+- 如果Agent不存在会返回错误"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "agent_id": string_property("Agent的唯一ID")
+            }),
+            vec!["agent_id".to_string()]
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "agent_id": "agent_1"
+                }),
+                result: serde_json::json!({
+                    "id": "agent_1",
+                    "name": "温度监控Agent",
+                    "description": "监控仓库温度并告警",
+                    "status": "active",
+                    "user_prompt": "每5分钟检查温度，如果超过30度就告警",
+                    "parsed_intent": {
+                        "intent_type": "monitoring",
+                        "target_metrics": ["temperature"],
+                        "actions": ["alert"]
+                    },
+                    "resources": [
+                        {"resource_type": "device", "resource_id": "sensor_1", "name": "温度传感器"}
+                    ],
+                    "schedule": {
+                        "schedule_type": "interval",
+                        "interval_seconds": 300
+                    }
+                }),
+                description: "获取Agent详细信息".to_string(),
+            }),
+            category: ToolCategory::Agent,
+            scenarios: vec![
+                UsageScenario {
+                    description: "查看Agent详情".to_string(),
+                    example_query: "温度监控Agent的详细配置是什么？".to_string(),
+                    suggested_call: Some(r#"{"tool": "get_agent", "arguments": {"agent_id": "agent_1"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec!["list_agents".to_string()],
+                output_to: vec!["execute_agent".to_string(), "control_agent".to_string()],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("detailed".to_string()),
+            namespace: Some("agent".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("agent")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let agent_id = args["agent_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("agent_id is required".to_string()))?;
+
+        let agent = self.agent_store.get_agent(agent_id).await
+            .map_err(|e| ToolError::Execution(format!("Failed to get agent: {}", e)))?
+            .ok_or_else(|| ToolError::Execution(format!("Agent '{}' not found", agent_id)))?;
+
+        // Convert to detailed response format
+        let response = serde_json::json!({
+            "id": agent.id,
+            "name": agent.name,
+            "description": agent.description,
+            "status": format!("{:?}", agent.status).to_lowercase(),
+            "user_prompt": agent.user_prompt,
+            "parsed_intent": agent.parsed_intent.map(|intent| serde_json::json!({
+                "intent_type": format!("{:?}", intent.intent_type).to_lowercase(),
+                "target_metrics": intent.target_metrics,
+                "conditions": intent.conditions,
+                "actions": intent.actions,
+                "confidence": intent.confidence
+            })),
+            "resources": agent.resources.iter().map(|r| serde_json::json!({
+                "resource_type": format!("{:?}", r.resource_type).to_lowercase(),
+                "resource_id": r.resource_id,
+                "name": r.name
+            })).collect::<Vec<_>>(),
+            "schedule": {
+                "schedule_type": format!("{:?}", agent.schedule.schedule_type).to_lowercase(),
+                "cron_expression": agent.schedule.cron_expression,
+                "interval_seconds": agent.schedule.interval_seconds,
+                "event_filter": agent.schedule.event_filter,
+                "timezone": agent.schedule.timezone
+            },
+            "stats": {
+                "total_executions": agent.stats.total_executions,
+                "successful_executions": agent.stats.successful_executions,
+                "failed_executions": agent.stats.failed_executions,
+                "avg_duration_ms": agent.stats.avg_duration_ms,
+                "last_duration_ms": agent.stats.last_duration_ms
+            },
+            "created_at": agent.created_at,
+            "updated_at": agent.updated_at,
+            "last_execution_at": agent.last_execution_at,
+            "conversation_turns": agent.conversation_history.len(),
+            "user_messages": agent.user_messages.len(),
+            "error_message": agent.error_message
+        });
+
+        Ok(ToolOutput::success(response))
+    }
+}
+
+// ============================================================================
+// Agent Execution Tools
+// ============================================================================
+
+/// Tool for manually executing an agent.
+pub struct ExecuteAgentTool {
+    agent_store: Arc<AgentStore>,
+}
+
+impl ExecuteAgentTool {
+    /// Create a new execute agent tool.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+#[async_trait]
+impl Tool for ExecuteAgentTool {
+    fn name(&self) -> &str {
+        "execute_agent"
+    }
+
+    fn description(&self) -> &str {
+        r#"手动触发执行一个AI Agent。
+
+## 使用场景
+- 立即触发Agent执行（不等待调度）
+- 测试Agent的执行逻辑
+- 手动触发事件式Agent
+- 强制执行暂停状态的Agent
+
+## 执行流程
+1. 获取Agent的最新配置
+2. 收集相关数据
+3. 调用LLM进行决策
+4. 执行相应的动作
+5. 保存执行结果和记忆
+
+## 返回信息
+- execution_id: 本次执行的唯一ID
+- status: 执行状态（running/completed/failed）
+- result: 执行结果摘要
+- duration_ms: 执行耗时
+
+## 注意事项
+- 执行是异步的，会立即返回execution_id
+- 可以通过get_agent查看执行历史
+- 暂停的Agent也可以被手动执行"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "agent_id": string_property("要执行的Agent ID"),
+                "force": boolean_property("是否强制执行（忽略Agent状态），默认false")
+            }),
+            vec!["agent_id".to_string()]
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "agent_id": "agent_1",
+                    "force": false
+                }),
+                result: serde_json::json!({
+                    "execution_id": "exec_123",
+                    "agent_id": "agent_1",
+                    "status": "completed",
+                    "result": "温度正常，无需告警",
+                    "duration_ms": 1250
+                }),
+                description: "手动执行温度监控Agent".to_string(),
+            }),
+            category: ToolCategory::Agent,
+            scenarios: vec![
+                UsageScenario {
+                    description: "立即执行Agent".to_string(),
+                    example_query: "立即执行温度检查".to_string(),
+                    suggested_call: Some(r#"{"tool": "execute_agent", "arguments": {"agent_id": "agent_1"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec!["list_agents".to_string(), "get_agent".to_string()],
+                output_to: vec!["agent_memory".to_string()],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("concise".to_string()),
+            namespace: Some("agent".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("agent")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let agent_id = args["agent_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("agent_id is required".to_string()))?;
+
+        let force = args["force"].as_bool().unwrap_or(false);
+
+        // Check if agent exists
+        let agent = self.agent_store.get_agent(agent_id).await
+            .map_err(|e| ToolError::Execution(format!("Failed to get agent: {}", e)))?
+            .ok_or_else(|| ToolError::Execution(format!("Agent '{}' not found", agent_id)))?;
+
+        // Check agent status
+        if !force && agent.status == AgentStatus::Paused {
+            return Ok(ToolOutput::success(serde_json::json!({
+                "agent_id": agent_id,
+                "status": "skipped",
+                "message": "Agent已暂停，使用force=true强制执行",
+                "suggestion": "如果需要执行暂停的Agent，请设置force=true"
+            })));
+        }
+
+        // Return simulated response
+        // In production, this would trigger actual Agent execution via AgentManager
+        Ok(ToolOutput::success(serde_json::json!({
+            "agent_id": agent_id,
+            "agent_name": agent.name,
+            "status": "simulated",
+            "message": "Agent执行已触发",
+            "note": "在实际环境中，这会触发真实的Agent执行"
+        })))
+    }
+}
+
+// ============================================================================
+// Agent Control Tools
+// ============================================================================
+
+/// Tool for controlling agent state (pause/resume/delete).
+pub struct ControlAgentTool {
+    agent_store: Arc<AgentStore>,
+}
+
+impl ControlAgentTool {
+    /// Create a new control agent tool.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+#[async_trait]
+impl Tool for ControlAgentTool {
+    fn name(&self) -> &str {
+        "control_agent"
+    }
+
+    fn description(&self) -> &str {
+        r#"控制AI Agent的状态：暂停、恢复、删除。
+
+## 使用场景
+- 暂停不再需要的Agent（pause）
+- 恢复暂停的Agent（resume）
+- 删除不再使用的Agent（delete）
+- 临时禁用某个Agent
+
+## 操作类型
+- pause: 暂停Agent，停止自动执行
+- resume: 恢复Agent，重新开始自动执行
+- delete: 永久删除Agent
+
+## 返回信息
+- agent_id: 受影响的Agent ID
+- action: 执行的操作
+- status: 操作结果状态
+- message: 操作结果消息
+
+## 注意事项
+- 删除操作不可逆，请谨慎操作
+- 暂停的Agent仍可手动执行
+- 恢复Agent会立即开始按计划执行"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "agent_id": string_property("要控制的Agent ID"),
+                "action": string_property("操作类型：pause（暂停）、resume（恢复）、delete（删除）")
+            }),
+            vec!["agent_id".to_string(), "action".to_string()]
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "agent_id": "agent_1",
+                    "action": "pause"
+                }),
+                result: serde_json::json!({
+                    "agent_id": "agent_1",
+                    "action": "pause",
+                    "status": "success",
+                    "message": "Agent已暂停"
+                }),
+                description: "暂停Agent".to_string(),
+            }),
+            category: ToolCategory::Agent,
+            scenarios: vec![
+                UsageScenario {
+                    description: "暂停Agent".to_string(),
+                    example_query: "暂停温度监控Agent".to_string(),
+                    suggested_call: Some(r#"{"tool": "control_agent", "arguments": {"agent_id": "agent_1", "action": "pause"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "恢复Agent".to_string(),
+                    example_query: "恢复温度监控Agent".to_string(),
+                    suggested_call: Some(r#"{"tool": "control_agent", "arguments": {"agent_id": "agent_1", "action": "resume"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec!["list_agents".to_string(), "get_agent".to_string()],
+                output_to: vec!["list_agents".to_string()],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("concise".to_string()),
+            namespace: Some("agent".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("agent")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let agent_id = args["agent_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("agent_id is required".to_string()))?;
+
+        let action = args["action"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("action is required".to_string()))?;
+
+        // Verify agent exists
+        let agent = self.agent_store.get_agent(agent_id).await
+            .map_err(|e| ToolError::Execution(format!("Failed to get agent: {}", e)))?
+            .ok_or_else(|| ToolError::Execution(format!("Agent '{}' not found", agent_id)))?;
+
+        match action {
+            "pause" => {
+                self.agent_store.update_agent_status(agent_id, AgentStatus::Paused, None).await
+                    .map_err(|e| ToolError::Execution(format!("Failed to pause agent: {}", e)))?;
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "agent_name": agent.name,
+                    "action": "pause",
+                    "status": "success",
+                    "message": "Agent已暂停"
+                })))
+            }
+            "resume" => {
+                self.agent_store.update_agent_status(agent_id, AgentStatus::Active, None).await
+                    .map_err(|e| ToolError::Execution(format!("Failed to resume agent: {}", e)))?;
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "agent_name": agent.name,
+                    "action": "resume",
+                    "status": "success",
+                    "message": "Agent已恢复"
+                })))
+            }
+            "delete" => {
+                self.agent_store.delete_agent(agent_id).await
+                    .map_err(|e| ToolError::Execution(format!("Failed to delete agent: {}", e)))?;
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "agent_name": agent.name,
+                    "action": "delete",
+                    "status": "success",
+                    "message": "Agent已删除"
+                })))
+            }
+            _ => {
+                Err(ToolError::InvalidArguments(format!(
+                    "Unknown action: {}. Must be pause, resume, or delete",
+                    action
+                )))
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Agent Creation Tool
+// ============================================================================
+
+/// Tool for creating a new agent via natural language.
+pub struct CreateAgentTool {
+    agent_store: Arc<AgentStore>,
+}
+
+impl CreateAgentTool {
+    /// Create a new create agent tool.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+#[async_trait]
+impl Tool for CreateAgentTool {
+    fn name(&self) -> &str {
+        "create_agent"
+    }
+
+    fn description(&self) -> &str {
+        r#"通过自然语言描述创建一个新的AI Agent。
+
+## 使用场景
+- 创建监控类Agent（如温度监控）
+- 创建告警类Agent（如异常检测）
+- 创建报告类Agent（如定期生成报告）
+- 创建控制类Agent（如自动调节设备）
+
+## 创建方式
+直接用自然语言描述你想要的Agent功能，例如：
+- "每5分钟检查温度，如果超过30度就告警"
+- "每天早上8点生成设备状态报告"
+- "当湿度低于30%时，打开加湿器"
+
+## 返回信息
+- agent_id: 新创建的Agent ID
+- name: Agent名称
+- status: 创建状态
+- parsed_intent: AI解析的意图结构
+
+## 注意事项
+- Agent创建后会自动启动
+- 可以使用control_agent暂停或删除Agent
+- Agent会持续运行直到被暂停或删除"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "description": string_property("Agent功能的自然语言描述"),
+                "name": string_property("可选，Agent名称。如果不提供，会自动生成")
+            }),
+            vec!["description".to_string()]
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "description": "每5分钟检查温度，如果超过30度就告警",
+                    "name": "温度监控Agent"
+                }),
+                result: serde_json::json!({
+                    "agent_id": "agent_new_1",
+                    "name": "温度监控Agent",
+                    "status": "created",
+                    "parsed_intent": {
+                        "intent_type": "monitoring",
+                        "target_metrics": ["temperature"],
+                        "conditions": ["temperature > 30"],
+                        "actions": ["alert"]
+                    }
+                }),
+                description: "创建温度监控Agent".to_string(),
+            }),
+            category: ToolCategory::Agent,
+            scenarios: vec![
+                UsageScenario {
+                    description: "创建监控Agent".to_string(),
+                    example_query: "创建一个每5分钟检查温度的Agent".to_string(),
+                    suggested_call: Some(r#"{"tool": "create_agent", "arguments": {"description": "每5分钟检查温度，如果超过30度就告警"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec![],
+                output_to: vec!["list_agents".to_string(), "get_agent".to_string()],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("detailed".to_string()),
+            namespace: Some("agent".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("agent")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let description = args["description"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("description is required".to_string()))?;
+
+        let name = args["name"].as_str()
+            .unwrap_or("新建Agent")
+            .to_string();
+
+        // Generate new agent ID
+        let agent_id = format!("agent_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+
+        // Create a basic agent structure
+        // In production, this would use LLM to parse the intent
+        let new_agent = edge_ai_storage::agents::AiAgent {
+            id: agent_id.clone(),
+            name: name.clone(),
+            description: Some(description.to_string()),
+            user_prompt: description.to_string(),
+            llm_backend_id: None,
+            parsed_intent: None, // Would be filled by LLM parsing
+            resources: vec![],
+            schedule: edge_ai_storage::agents::AgentSchedule {
+                schedule_type: edge_ai_storage::agents::ScheduleType::Interval,
+                cron_expression: None,
+                interval_seconds: Some(300), // Default 5 minutes
+                event_filter: None,
+                timezone: Some("UTC".to_string()),
+            },
+            status: edge_ai_storage::agents::AgentStatus::Active,
+            created_at: chrono::Utc::now().timestamp(),
+            updated_at: chrono::Utc::now().timestamp(),
+            last_execution_at: None,
+            stats: edge_ai_storage::agents::AgentStats::default(),
+            memory: edge_ai_storage::agents::AgentMemory::default(),
+            conversation_history: vec![],
+            user_messages: vec![],
+            conversation_summary: None,
+            context_window_size: 10,
+            error_message: None,
+        };
+
+        // Save the agent
+        self.agent_store.save_agent(&new_agent).await
+            .map_err(|e| ToolError::Execution(format!("Failed to save agent: {}", e)))?;
+
+        Ok(ToolOutput::success(serde_json::json!({
+            "agent_id": agent_id,
+            "name": name,
+            "status": "created",
+            "message": "Agent已创建并启动",
+            "note": "在实际环境中，会使用LLM解析自然语言意图并配置资源和调度"
+        })))
+    }
+}
+
+// ============================================================================
+// Agent Memory Query Tools
+// ============================================================================
+
+/// Tool for querying agent memory and learned patterns.
+pub struct AgentMemoryTool {
+    agent_store: Arc<AgentStore>,
+}
+
+impl AgentMemoryTool {
+    /// Create a new agent memory tool.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+#[async_trait]
+impl Tool for AgentMemoryTool {
+    fn name(&self) -> &str {
+        "agent_memory"
+    }
+
+    fn description(&self) -> &str {
+        r#"查询AI Agent的记忆和学习内容。
+
+## 使用场景
+- 查看Agent学习到的模式
+- 了解Agent的决策历史
+- 查看Agent的记忆状态变量
+- 分析Agent的对话历史
+- 检查Agent的基线数据
+
+## 查询类型
+- patterns: 查看学习到的模式
+- state: 查看状态变量
+- history: 查看执行历史/对话
+- baselines: 查看基线数据
+- all: 查看所有记忆内容
+
+## 返回信息
+- patterns: 学习到的模式列表
+- state_variables: 状态变量及其值
+- conversation_history: 最近的对话历史
+- baselines: 各指标的基线值
+- trend_data: 趋势数据点
+
+## 注意事项
+- 记忆内容会随着Agent执行不断更新
+- 历史对话有最大长度限制
+- 旧的模式可能会被新学习到的模式替换"#
+    }
+
+    fn parameters(&self) -> Value {
+        object_schema(
+            serde_json::json!({
+                "agent_id": string_property("Agent ID"),
+                "query_type": string_property("查询类型：patterns（模式）、state（状态）、history（历史）、baselines（基线）、all（全部）"),
+                "limit": number_property("可选，限制返回数量，默认10")
+            }),
+            vec!["agent_id".to_string()]
+        )
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "agent_id": "agent_1",
+                    "query_type": "patterns",
+                    "limit": 5
+                }),
+                result: serde_json::json!({
+                    "agent_id": "agent_1",
+                    "query_type": "patterns",
+                    "patterns": [
+                        {
+                            "id": "pattern_1",
+                            "pattern_type": "seasonal",
+                            "description": "温度在下午2-4点达到峰值",
+                            "confidence": 0.85
+                        }
+                    ]
+                }),
+                description: "查询Agent学习的模式".to_string(),
+            }),
+            category: ToolCategory::Agent,
+            scenarios: vec![
+                UsageScenario {
+                    description: "查看学习的模式".to_string(),
+                    example_query: "温度Agent学到了什么模式？".to_string(),
+                    suggested_call: Some(r#"{"tool": "agent_memory", "arguments": {"agent_id": "agent_1", "query_type": "patterns"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec!["list_agents".to_string(), "get_agent".to_string(), "execute_agent".to_string()],
+                output_to: vec![],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("detailed".to_string()),
+            namespace: Some("agent".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("agent")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let agent_id = args["agent_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("agent_id is required".to_string()))?;
+
+        let query_type = args["query_type"].as_str().unwrap_or("all");
+        let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+
+        // Get agent
+        let agent = self.agent_store.get_agent(agent_id).await
+            .map_err(|e| ToolError::Execution(format!("Failed to get agent: {}", e)))?
+            .ok_or_else(|| ToolError::Execution(format!("Agent '{}' not found", agent_id)))?;
+
+        let memory = &agent.memory;
+
+        match query_type {
+            "patterns" => {
+                let patterns: Vec<&LearnedPattern> = memory.learned_patterns.iter()
+                    .take(limit)
+                    .collect();
+
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "query_type": "patterns",
+                    "patterns": patterns.iter().map(|p| serde_json::json!({
+                        "id": p.id,
+                        "pattern_type": p.pattern_type,
+                        "description": p.description,
+                        "confidence": p.confidence,
+                        "learned_at": p.learned_at
+                    })).collect::<Vec<_>>(),
+                    "count": patterns.len()
+                })))
+            }
+            "state" => {
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "query_type": "state",
+                    "state_variables": memory.state_variables,
+                    "updated_at": memory.updated_at
+                })))
+            }
+            "history" => {
+                let history: Vec<&edge_ai_storage::agents::ConversationTurn> = agent.conversation_history
+                    .iter()
+                    .rev()
+                    .take(limit)
+                    .collect();
+
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "query_type": "history",
+                    "conversation_turns": history.iter().map(|turn| serde_json::json!({
+                        "execution_id": turn.execution_id,
+                        "timestamp": turn.timestamp,
+                        "trigger_type": turn.trigger_type,
+                        "success": turn.success,
+                        "duration_ms": turn.duration_ms
+                    })).collect::<Vec<_>>(),
+                    "count": history.len()
+                })))
+            }
+            "baselines" => {
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "query_type": "baselines",
+                    "baselines": memory.baselines
+                })))
+            }
+            "all" | _ => {
+                Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": agent_id,
+                    "query_type": "all",
+                    "memory": {
+                        "state_variables": memory.state_variables,
+                        "learned_patterns": memory.learned_patterns.iter().take(limit).map(|p| serde_json::json!({
+                            "id": p.id,
+                            "pattern_type": p.pattern_type,
+                            "description": p.description,
+                            "confidence": p.confidence
+                        })).collect::<Vec<_>>(),
+                        "baselines": memory.baselines,
+                        "trend_data_count": memory.trend_data.len(),
+                        "conversation_turns_count": agent.conversation_history.len(),
+                        "user_messages_count": agent.user_messages.len()
+                    }
+                })))
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_list_agents_tool() {
+        let store = AgentStore::memory().unwrap();
+        let tool = ListAgentsTool::new(store);
+
+        let result = tool.execute(serde_json::json!({})).await.unwrap();
+        assert!(result.success);
+    }
+}

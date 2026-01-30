@@ -18,10 +18,10 @@ pub enum ToolCategory {
     Analysis,
     /// Rule operations (create, update, delete, enable/disable)
     Rule,
-    /// Workflow operations (trigger, query status)
-    Workflow,
     /// Alert operations (query, acknowledge)
     Alert,
+    /// AI Agent operations (query, execute, control, create)
+    Agent,
     /// System operations (search, thinking)
     #[default]
     System,
@@ -37,8 +37,8 @@ impl ToolCategory {
             ToolCategory::Data => "data",
             ToolCategory::Analysis => "analysis",
             ToolCategory::Rule => "rule",
-            ToolCategory::Workflow => "workflow",
             ToolCategory::Alert => "alert",
+            ToolCategory::Agent => "agent",
             ToolCategory::System => "system",
             ToolCategory::Config => "config",
         }
@@ -51,8 +51,8 @@ impl ToolCategory {
             ToolCategory::Data => "数据查询",
             ToolCategory::Analysis => "数据分析",
             ToolCategory::Rule => "规则管理",
-            ToolCategory::Workflow => "工作流",
             ToolCategory::Alert => "告警管理",
+            ToolCategory::Agent => "智能体管理",
             ToolCategory::System => "系统工具",
             ToolCategory::Config => "配置管理",
         }

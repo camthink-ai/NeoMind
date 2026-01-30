@@ -141,7 +141,7 @@ impl ToolRegistry {
 
     /// Search for tools by keyword with category filter.
     ///
-    /// Allows filtering by tool category prefix (e.g., "device", "rule", "workflow").
+    /// Allows filtering by tool category prefix (e.g., "device", "rule", "agent").
     pub fn search_with_category(
         &self,
         keyword: &str,
@@ -379,6 +379,60 @@ impl ToolRegistryBuilder {
     }
 
     // ============================================================================
+    // AI Agent tools for Chat integration
+    // ============================================================================
+
+    /// Add the list agents tool with real agent store.
+    pub fn with_real_list_agents_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_tool(Arc::new(super::agent_tools::ListAgentsTool::new(agent_store)))
+    }
+
+    /// Add the get agent tool with real agent store.
+    pub fn with_real_get_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_tool(Arc::new(super::agent_tools::GetAgentTool::new(agent_store)))
+    }
+
+    /// Add the execute agent tool with real agent store.
+    pub fn with_real_execute_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_tool(Arc::new(super::agent_tools::ExecuteAgentTool::new(agent_store)))
+    }
+
+    /// Add the control agent tool with real agent store.
+    pub fn with_real_control_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_tool(Arc::new(super::agent_tools::ControlAgentTool::new(agent_store)))
+    }
+
+    /// Add the create agent tool with real agent store.
+    pub fn with_real_create_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_tool(Arc::new(super::agent_tools::CreateAgentTool::new(agent_store)))
+    }
+
+    /// Add the agent memory tool with real agent store.
+    pub fn with_real_agent_memory_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_tool(Arc::new(super::agent_tools::AgentMemoryTool::new(agent_store)))
+    }
+
+    /// Add all agent tools with real agent store.
+    pub fn with_real_agent_tools(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_real_list_agents_tool(agent_store.clone())
+            .with_real_get_agent_tool(agent_store.clone())
+            .with_real_execute_agent_tool(agent_store.clone())
+            .with_real_control_agent_tool(agent_store.clone())
+            .with_real_create_agent_tool(agent_store.clone())
+            .with_real_agent_memory_tool(agent_store)
+    }
+
+    /// Add the system help tool for onboarding and feature information.
+    pub fn with_system_help_tool(self) -> Self {
+        self.with_tool(Arc::new(super::system_tools::SystemHelpTool::new()))
+    }
+
+    /// Add the system help tool with a custom system name.
+    pub fn with_system_help_tool_named(self, name: impl Into<String>) -> Self {
+        self.with_tool(Arc::new(super::system_tools::SystemHelpTool::with_name(name)))
+    }
+
+    // ============================================================================
     // Core business-scenario tools (MOCK VERSIONS - FOR TESTING ONLY)
     // ============================================================================
 
@@ -458,7 +512,6 @@ impl ToolRegistryBuilder {
             .with_enable_rule_tool()
             .with_disable_rule_tool()
             .with_update_rule_tool()
-            // Note: with_trigger_workflow_tool() not yet implemented
     }
 
     /// Build the registry.
@@ -497,7 +550,7 @@ pub fn format_for_llm(definitions: &[ToolDefinition]) -> String {
     }
 
     // Define category order
-    let category_order = vec!["device", "data", "analysis", "rule", "workflow", "alert", "config", "system"];
+    let category_order = vec!["device", "data", "analysis", "rule", "alert", "agent", "config", "system"];
 
     // Output tools by category
     for category in category_order {
@@ -507,8 +560,8 @@ pub fn format_for_llm(definitions: &[ToolDefinition]) -> String {
                 "data" => "📊 数据查询 (Data)",
                 "analysis" => "📈 数据分析 (Analysis)",
                 "rule" => "⚙️ 规则管理 (Rule)",
-                "workflow" => "🔄 工作流 (Workflow)",
                 "alert" => "🚨 告警管理 (Alert)",
+                "agent" => "🤖 智能体管理 (Agent)",
                 "config" => "🔧 配置管理 (Config)",
                 "system" => "⚙️ 系统工具 (System)",
                 _ => category,

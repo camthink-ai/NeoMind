@@ -48,6 +48,7 @@
 //! ```
 
 pub mod builtin;
+pub mod agent_tools;
 pub mod core_tools;
 pub mod error;
 pub mod real;
@@ -108,11 +109,16 @@ pub use core_tools::{
 // System management and export tools
 pub use system_tools::{
     // System tools
-    SystemInfoTool, SystemConfigTool, ServiceRestartTool,
+    SystemInfoTool, SystemConfigTool, ServiceRestartTool, SystemHelpTool,
     // Alert tools
     CreateAlertTool, ListAlertsTool, AcknowledgeAlertTool, AlertInfo, AlertSeverity,
     // Export tools
     ExportToCsvTool, ExportToJsonTool, GenerateReportTool,
+};
+
+// AI Agent tools for Chat integration
+pub use agent_tools::{
+    ListAgentsTool, GetAgentTool, ExecuteAgentTool, ControlAgentTool, CreateAgentTool, AgentMemoryTool,
 };
 
 // Feature-gated real tools
