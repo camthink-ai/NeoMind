@@ -705,91 +705,40 @@ export function AgentMonitorWidget({
           </Tabs>
         </div>
 
-        {/* Compact Real-time Progress - shown when executing */}
+        {/* Real-time Progress - full-width, minimal style */}
         {currentlyExecuting && (
-          <div className="px-3 py-2 border-b border-border/50 bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-green-500/10 relative overflow-hidden shrink-0">
-            {/* Animated scan line */}
-            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-blue-500/5 to-transparent animate-pulse pointer-events-none" />
-
-            {/* Stage indicator */}
-            <div className="flex items-center gap-2 mb-2 relative">
+          <div className="w-full bg-primary/5 border-b border-primary/10 relative overflow-hidden shrink-0">
+            {/* Progress bar - full width */}
+            <div className="w-full h-1 bg-muted/30 relative overflow-hidden">
               <div className={cn(
-                "relative",
-                currentStage === 'collecting' && "animate-pulse"
-              )}>
-                <Sparkles className={cn(
-                  "h-3 w-3 transition-all duration-300",
-                  currentStage === 'collecting' ? "text-blue-500 drop-shadow-[0_0_6px_rgba(59,130,246,0.8)]" :
-                  currentStage === 'analyzing' ? "text-purple-500 drop-shadow-[0_0_6px_rgba(168,85,247,0.8)]" :
-                  "text-green-500 drop-shadow-[0_0_6px_rgba(34,197,94,0.8)]"
+                "absolute inset-y-0 left-0 transition-all duration-500 ease-out",
+                "bg-gradient-to-r from-blue-500 via-purple-500 to-green-500",
+                "animate-[shimmer_2s_infinite]"
+              )} style={{
+                width: currentStage === 'collecting' ? '33%' : currentStage === 'analyzing' ? '66%' : '90%'
+              }} />
+            </div>
+
+            {/* Stage info - compact inline */}
+            <div className="flex items-center justify-between px-2 py-1.5">
+              <div className="flex items-center gap-1.5">
+                <div className={cn(
+                  "w-1.5 h-1.5 rounded-full animate-pulse",
+                  currentStage === 'collecting' ? "bg-blue-500" :
+                  currentStage === 'analyzing' ? "bg-purple-500" : "bg-green-500"
                 )} />
+                <span className="text-[9px] font-medium text-foreground/80">
+                  {stageLabel || 'Processing'}
+                </span>
               </div>
-              <span className={cn(
-                "text-[10px] font-bold uppercase tracking-wider",
-                currentStage === 'collecting' ? "text-blue-600 dark:text-blue-400" :
-                currentStage === 'analyzing' ? "text-purple-600 dark:text-purple-400" :
-                "text-green-600 dark:text-green-400"
-              )}>
-                {stageLabel || 'PROCESSING'}
-              </span>
-              <span className="ml-0.5 w-1 h-2 bg-current animate-pulse opacity-70" />
+
+              {/* Current thinking step - single line, truncates */}
+              {thinkingSteps.length > 0 && (
+                <span className="text-[8px] text-muted-foreground truncate max-w-[60%] font-mono">
+                  {thinkingSteps[thinkingSteps.length - 1]?.description}
+                </span>
+              )}
             </div>
-
-            {/* Compact progress bar */}
-            <div className="flex items-center gap-1 relative">
-              <div className={cn(
-                "h-1.5 flex-1 rounded-full transition-all duration-500 relative overflow-hidden",
-                currentStage === 'collecting' ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)]" :
-                currentStage && ['analyzing', 'executing'].includes(currentStage) ? "bg-blue-500" : "bg-blue-200/50 dark:bg-blue-900/30"
-              )}>
-                {currentStage === 'collecting' && (
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_1s_infinite]" />
-                )}
-              </div>
-              <div className={cn(
-                "h-1.5 flex-1 rounded-full transition-all duration-500 relative overflow-hidden",
-                currentStage === 'analyzing' ? "bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]" :
-                currentStage === 'executing' ? "bg-purple-500" : "bg-purple-200/50 dark:bg-purple-900/30"
-              )}>
-                {currentStage === 'analyzing' && (
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_1s_infinite]" />
-                )}
-              </div>
-              <div className={cn(
-                "h-1.5 flex-1 rounded-full transition-all duration-500 relative overflow-hidden",
-                currentStage === 'executing' ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-green-200/50 dark:bg-green-900/30"
-              )}>
-                {currentStage === 'executing' && (
-                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_1s_infinite]" />
-                )}
-              </div>
-            </div>
-
-            {/* Details */}
-            {stageDetails && (
-              <div className="mt-1.5 text-[9px] font-mono text-blue-600 dark:text-blue-400 bg-blue-50/50 dark:bg-blue-950/30 px-2 py-0.5 rounded">
-                {stageDetails}
-              </div>
-            )}
-
-            {/* Thinking steps - compact */}
-            {thinkingSteps.length > 0 && (
-              <div className="mt-1.5 space-y-0.5 max-h-16 overflow-hidden relative">
-                <div className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-inherit to-transparent pointer-events-none" />
-                {thinkingSteps.slice(-2).map((step, i) => (
-                  <div key={i} className={cn(
-                    "text-[8px] font-mono flex items-start gap-1",
-                    "text-muted-foreground"
-                  )}>
-                    <span className={cn(
-                      "shrink-0 opacity-70 w-0.5 h-0.5 rounded-full mt-0.5",
-                      i === thinkingSteps.slice(-2).length - 1 ? "bg-green-500" : "bg-muted-foreground/50"
-                    )} />
-                    <span className="flex-1 break-words">{step.description}</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 
