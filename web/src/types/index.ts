@@ -352,6 +352,12 @@ export type ServerMessage =
   | { type: 'Progress'; elapsed: number; stage: 'thinking' | 'generating' | 'tool_execution'; message?: string; remainingTime?: number; sessionId: string }
   // Warning event when approaching timeout
   | { type: 'Warning'; message: string; elapsed?: number; remainingTime?: number; sessionId: string }
+  // Intent classification result (informational, not displayed in current UI)
+  | { type: 'Intent'; category: string; displayName: string; confidence?: number; keywords?: string[]; sessionId: string }
+  // Execution plan step (informational, not displayed in current UI)
+  | { type: 'Plan'; step: string; stage: string; sessionId: string }
+  // Heartbeat to keep connection alive (not displayed)
+  | { type: 'Heartbeat'; timestamp: number; sessionId: string }
   // Error occurred - sessionId is always included when sent from backend
   | { type: 'Error'; message: string; sessionId: string }
   // Stream ended
