@@ -44,11 +44,9 @@ export function ThinkingBlock({
 
         <div className="flex-1" />
 
-        {isExpanded && (
-          <span className="text-xs text-muted-foreground/70 mr-2">
-            {thinking.length} {t("thinking.characters")}
-          </span>
-        )}
+        <span className="text-xs text-muted-foreground/70 mr-2">
+          {thinking.length} {t("thinking.characters")}
+        </span>
 
         <ChevronDown className={cn(
           "h-4 w-4 text-muted-foreground transition-transform duration-200",
