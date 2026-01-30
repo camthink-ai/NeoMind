@@ -23,7 +23,7 @@ pub struct ChatImage {
     /// Base64-encoded image data with data URL scheme (e.g., "data:image/png;base64,...")
     pub data: String,
     /// MIME type (e.g., "image/png", "image/jpeg")
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
 }
 
