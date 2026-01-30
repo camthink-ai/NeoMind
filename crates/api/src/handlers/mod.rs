@@ -24,6 +24,7 @@ pub mod rules;
 pub mod search;
 pub mod sessions;
 pub mod settings;
+pub mod setup;
 pub mod stats;
 pub mod suggestions;
 pub mod test_data;

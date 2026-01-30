@@ -1,9 +1,10 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { Routes, Route, Navigate } from "react-router-dom"
 import { useStore } from "@/store"
 import { TopNav } from "@/components/layout/TopNav"
 import { LoginPage } from "@/pages/login"
-import { DashboardPage } from "@/pages/dashboard"
+import { SetupPage } from "@/pages/setup"
+import { ChatPage } from "@/pages/chat"
 import { VisualDashboard } from "@/pages/dashboard-components/VisualDashboard"
 import { DevicesPage } from "@/pages/devices"
 import { AutomationPage } from "@/pages/automation"
@@ -89,6 +90,55 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Setup Required Route component
+// Checks if setup is needed and redirects to /setup if required
+// Otherwise redirects to login if authenticated
+function SetupCheckRoute({ children }: { children: React.ReactNode }) {
+  const [setupRequired, setSetupRequired] = useState<boolean | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const checkSetup = async () => {
+      try {
+        const response = await fetch('/api/setup/status')
+        const data = await response.json()
+        setSetupRequired(data.setup_required)
+      } catch {
+        // If API fails, assume setup is not required (fallback to login)
+        setSetupRequired(false)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    checkSetup()
+  }, [])
+
+  const token = tokenManager.getToken()
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
+
+  // Setup is required - redirect to setup page
+  if (setupRequired === true) {
+    return <Navigate to="/setup" replace />
+  }
+
+  // Already authenticated - redirect to dashboard
+  if (token) {
+    return <Navigate to="/" replace />
+  }
+
+  // Otherwise show login page
+  return <>{children}</>
+}
+
 function App() {
   const { isAuthenticated, checkAuthStatus, setWsConnected } = useStore()
 
@@ -128,13 +178,16 @@ function App() {
   return (
     <>
       <Routes>
-        {/* Public routes */}
+        {/* Setup route - always accessible, handles its own redirect logic */}
+        <Route path="/setup" element={<SetupPage />} />
+
+        {/* Login route with setup check - redirects to /setup if needed */}
         <Route
           path="/login"
           element={
-            <PublicRoute>
+            <SetupCheckRoute>
               <LoginPage />
-            </PublicRoute>
+            </SetupCheckRoute>
           }
         />
 
@@ -147,10 +200,10 @@ function App() {
                 <TopNav />
                 <main className="flex-1 min-h-0 overflow-hidden">
                   <Routes>
-                    <Route path="/" element={<DashboardPage />} />
-                    <Route path="/chat" element={<DashboardPage />} />
+                    <Route path="/" element={<ChatPage />} />
+                    <Route path="/chat" element={<ChatPage />} />
                     {/* Session-based routes */}
-                    <Route path="/chat/:sessionId" element={<DashboardPage />} />
+                    <Route path="/chat/:sessionId" element={<ChatPage />} />
                     <Route path="/visual-dashboard" element={<VisualDashboard />} />
                     <Route path="/visual-dashboard/:dashboardId" element={<VisualDashboard />} />
                     {/* Devices with tab routes */}
@@ -176,7 +229,7 @@ function App() {
                     <Route path="/plugins/alert-channels" element={<PluginsPage />} />
                     <Route path="/plugins/extensions" element={<PluginsPage />} />
                     <Route path="/events" element={<EventsPage />} />
-                    {/* Catch all - redirect to dashboard */}
+                    {/* Catch all - redirect to chat */}
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>
                 </main>

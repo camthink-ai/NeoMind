@@ -273,7 +273,7 @@ pub fn get_simplified_tools() -> Vec<LlmToolDefinition> {
         // get_device_data - actual tool name in registry (simpler than query_data)
         LlmToolDefinition {
             name: "get_device_data".to_string(),
-            description: "获取设备的所有当前数据（无需指定指标名称）".to_string(),
+            description: "获取设备的所有当前数据（仅当前值，无历史）。用于查看设备实时状态。如果要分析数据变化/趋势，必须使用query_data工具并指定时间范围".to_string(),
             aliases: vec![
                 "设备数据".to_string(),
                 "查询数据".to_string(),
@@ -293,6 +293,56 @@ pub fn get_simplified_tools() -> Vec<LlmToolDefinition> {
             use_when: vec![
                 "用户询问温度/湿度/数据".to_string(),
                 "用户想查看读数".to_string(),
+            ],
+        },
+
+        // query_data - for historical data and trend analysis with time range
+        LlmToolDefinition {
+            name: "query_data".to_string(),
+            description: "查询设备历史数据并分析趋势。必须指定时间范围来分析数据变化。用当前时间戳减去秒数得到start_time。例如：今天数据=今天0点到现在，最近24小时=当前时间-86400".to_string(),
+            aliases: vec![
+                "历史数据".to_string(),
+                "数据趋势".to_string(),
+                "电量变化".to_string(),
+                "温度变化".to_string(),
+                "分析数据".to_string(),
+                "今天数据".to_string(),
+            ],
+            required: vec!["device_id".to_string(), "metric".to_string()],
+            optional: HashMap::from_iter(vec![
+                ("start_time".to_string(), ParameterInfo {
+                    description: "起始时间戳（Unix秒），分析今天=今天0点，最近X小时=当前时间-X*3600".to_string(),
+                    default: serde_json::json!(null),
+                    examples: vec!["1738368000".to_string(), "当前时间-86400".to_string()],
+                }),
+                ("end_time".to_string(), ParameterInfo {
+                    description: "结束时间戳，默认为当前时间".to_string(),
+                    default: serde_json::json!(null),
+                    examples: vec!["1738454400".to_string(), "当前时间".to_string()],
+                }),
+            ]),
+            examples: vec![
+                Example {
+                    user_query: "分析今天ne101的电池变化".to_string(),
+                    tool_call: "query_data(device_id='4t1vcbefzk', metric='battery', start_time=今天0点时间戳, end_time=当前时间戳)".to_string(),
+                    explanation: "查询今天的历史数据分析趋势".to_string(),
+                },
+                Example {
+                    user_query: "ne101最近24小时温度变化如何".to_string(),
+                    tool_call: "query_data(device_id='4t1vcbefzk', metric='temperature', start_time=当前时间-86400, end_time=当前时间)".to_string(),
+                    explanation: "查询历史数据对比温度变化".to_string(),
+                },
+                Example {
+                    user_query: "电量有没有下降".to_string(),
+                    tool_call: "query_data(device_id='ne101', metric='battery', start_time=当前时间-3600, end_time=当前时间)".to_string(),
+                    explanation: "查询历史数据判断电量变化趋势".to_string(),
+                },
+            ],
+            use_when: vec![
+                "用户询问数据变化/趋势".to_string(),
+                "用户问电量变化/温度变化".to_string(),
+                "用户要分析今天/最近的数据".to_string(),
+                "用户问有没有下降/上升".to_string(),
             ],
         },
 
@@ -454,21 +504,34 @@ pub fn get_simplified_tools() -> Vec<LlmToolDefinition> {
         // get_agent - actual tool name in registry
         LlmToolDefinition {
             name: "get_agent".to_string(),
-            description: "获取Agent详细信息".to_string(),
+            description: "获取Agent详细信息和执行历史。返回执行统计、最后执行时间、成功/失败次数。用户询问Agent执行情况/任务/结果时必须调用此工具".to_string(),
             aliases: vec![
                 "Agent详情".to_string(),
                 "Agent信息".to_string(),
+                "Agent执行情况".to_string(),
+                "Agent执行历史".to_string(),
             ],
             required: vec!["agent_id".to_string()],
             optional: HashMap::new(),
             examples: vec![
+                Example {
+                    user_query: "Agent最近执行了什么".to_string(),
+                    tool_call: "get_agent(agent_id='agent_1')".to_string(),
+                    explanation: "获取Agent执行统计和历史".to_string(),
+                },
                 Example {
                     user_query: "温度监控Agent的详情".to_string(),
                     tool_call: "get_agent(agent_id='agent_1')".to_string(),
                     explanation: "获取Agent详情".to_string(),
                 },
             ],
-            use_when: vec!["用户询问Agent详情".to_string()],
+            use_when: vec![
+                "用户询问Agent详情".to_string(),
+                "用户询问Agent执行情况".to_string(),
+                "用户询问Agent执行历史".to_string(),
+                "用户询问Agent执行结果".to_string(),
+                "用户问Agent做了什么".to_string(),
+            ],
         },
 
         // execute_agent - actual tool name in registry
@@ -515,22 +578,39 @@ pub fn get_simplified_tools() -> Vec<LlmToolDefinition> {
         // create_agent - actual tool name in registry
         LlmToolDefinition {
             name: "create_agent".to_string(),
-            description: "通过自然语言创建新Agent".to_string(),
+            description: "通过自然语言创建新AI Agent。描述应包含：目标设备、监控指标、触发条件、执行动作、执行频率。Agent类型：监控型(monitor)、执行型(executor)、分析型(analyst)".to_string(),
             aliases: vec![
                 "创建Agent".to_string(),
                 "新建Agent".to_string(),
                 "添加Agent".to_string(),
+                "创建智能体".to_string(),
             ],
             required: vec!["description".to_string()],
-            optional: HashMap::new(),
+            optional: HashMap::from_iter(vec![
+                ("name".to_string(), ParameterInfo {
+                    description: "可选，Agent名称".to_string(),
+                    default: Value::Null,
+                    examples: vec!["温度监控Agent".to_string()],
+                }),
+            ]),
             examples: vec![
                 Example {
-                    user_query: "创建每5分钟检查温度的Agent".to_string(),
-                    tool_call: "create_agent(description='每5分钟检查温度，超过30度就告警')".to_string(),
-                    explanation: "创建监控Agent".to_string(),
+                    user_query: "帮我创建一个监控ne101温度的Agent，每5分钟检查一次".to_string(),
+                    tool_call: "create_agent(description='监控ne101设备(4t1vcbefzk)的温度指标，每5分钟检查一次，如果温度超过30度就发送告警通知')".to_string(),
+                    explanation: "创建监控型Agent，先查询设备信息".to_string(),
+                },
+                Example {
+                    user_query: "创建一个分析电池状态的Agent".to_string(),
+                    tool_call: "create_agent(description='每天早上8点分析所有NE101设备的电池状态，识别电池电量低于20%的设备并生成报告')".to_string(),
+                    explanation: "创建分析型Agent，按时间执行".to_string(),
+                },
+                Example {
+                    user_query: "湿度低的时候自动开加湿器".to_string(),
+                    tool_call: "create_agent(description='监控室内湿度，当湿度低于30%时自动打开加湿器，每分钟检查一次')".to_string(),
+                    explanation: "创建执行型Agent，自动控制设备".to_string(),
                 },
             ],
-            use_when: vec!["用户要创建Agent".to_string()],
+            use_when: vec!["用户要创建Agent".to_string(), "用户要添加智能体".to_string(), "用户要做自动化".to_string()],
         },
 
         // agent_memory - actual tool name in registry

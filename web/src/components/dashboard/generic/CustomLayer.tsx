@@ -448,9 +448,9 @@ function LayerItemComponent({
             {/* Value */}
             {item.value !== undefined && (
               <span className={cn(
-                'tabular-nums',
+                'text-xs tabular-nums max-w-[100px] truncate',
                 item.type === 'metric' ? 'font-semibold' : ''
-              )}>
+              )} title={String(item.value)}>
                 {item.value}
               </span>
             )}
@@ -556,7 +556,8 @@ function LayerItemComponent({
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">{t('customLayer.currentValue')}:</span>
-                  <span className={cn('text-lg font-bold tabular-nums', typeConfig.color)}>
+                  <span className={cn('text-sm font-semibold tabular-nums max-w-[120px] truncate', typeConfig.color)}
+                    title={item.value !== undefined ? String(item.value) : '-'}>
                     {item.value !== undefined ? item.value : '-'}
                   </span>
                 </div>
@@ -688,6 +689,51 @@ function LayerBackground({ type, color, image, gridSize = 20 }: LayerBackgroundP
 }
 
 // ============================================================================
+// Helper Functions
+// ============================================================================
+
+// Helper function to find metric value with fuzzy matching (handles nested paths like 'values.image')
+function findMetricValue(currentValues: Record<string, unknown> | undefined, metricId: string): unknown {
+  if (!currentValues) return undefined
+
+  // 1. Try exact match
+  if (metricId in currentValues) {
+    return currentValues[metricId]
+  }
+
+  // 2. Try case-insensitive match
+  const lowerMetricId = metricId.toLowerCase()
+  for (const key of Object.keys(currentValues)) {
+    if (key.toLowerCase() === lowerMetricId) {
+      return currentValues[key]
+    }
+  }
+
+  // 3. Try nested path like "values.image"
+  const parts = metricId.split('.')
+  let nested: any = currentValues
+  for (const part of parts) {
+    if (nested && typeof nested === 'object' && part in nested) {
+      nested = nested[part]
+    } else {
+      // Try case-insensitive nested access
+      let found = false
+      for (const key of Object.keys(nested || {})) {
+        if (key.toLowerCase() === part.toLowerCase()) {
+          nested = nested[key]
+          found = true
+          break
+        }
+      }
+      if (!found) {
+        return undefined
+      }
+    }
+  }
+  return nested
+}
+
+// ============================================================================
 // Main Component
 // ============================================================================
 
@@ -737,7 +783,7 @@ export function CustomLayer({
   const getDeviceMetricValue = useCallback((deviceId: string, metricId: string): string | number | undefined => {
     const device = devices.find(d => d.id === deviceId)
     if (!device?.current_values) return undefined
-    const value = device.current_values[metricId]
+    const value = findMetricValue(device.current_values, metricId)
     if (value !== undefined && value !== null) {
       return typeof value === 'number' ? value : String(value)
     }
@@ -898,7 +944,7 @@ export function CustomLayer({
       if (binding.type === 'metric' && deviceId) {
         const metricId = ds?.metricId || ds?.property
         const device = devices.find(d => d.id === deviceId)
-        const metricValue = device?.current_values?.[metricId || '']
+        const metricValue = device?.current_values ? findMetricValue(device.current_values, metricId || '') : undefined
 
         setInternalItems(prev =>
           prev.map(i => {

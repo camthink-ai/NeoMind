@@ -33,6 +33,10 @@ import {
   History,
   Database,
   Settings,
+  Image as ImageIcon,
+  Monitor,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -224,6 +228,31 @@ function ExecutionDetailDialog({ execution, open, onClose }: ExecutionDetailDial
   const { t } = useTranslation('agents')
   const [detail, setDetail] = useState<any>(null)
   const [loading, setLoading] = useState(false)
+  const [expandedDataIndices, setExpandedDataIndices] = useState<Set<number>>(new Set())
+  const dialogRef = useRef<HTMLDivElement>(null)
+
+  // Prevent event propagation to grid when interacting with dialog
+  useEffect(() => {
+    if (!open || !dialogRef.current) return
+
+    const dialogElement = dialogRef.current
+
+    // Stop propagation of pointer events to prevent grid dragging
+    const stopPropagation = (e: Event) => {
+      e.stopPropagation()
+      e.stopImmediatePropagation()
+    }
+
+    dialogElement.addEventListener('mousedown', stopPropagation, { capture: true })
+    dialogElement.addEventListener('touchstart', stopPropagation, { capture: true })
+    dialogElement.addEventListener('pointerdown', stopPropagation, { capture: true })
+
+    return () => {
+      dialogElement.removeEventListener('mousedown', stopPropagation, { capture: true } as any)
+      dialogElement.removeEventListener('touchstart', stopPropagation, { capture: true } as any)
+      dialogElement.removeEventListener('pointerdown', stopPropagation, { capture: true } as any)
+    }
+  }, [open])
 
   useEffect(() => {
     if (open && execution?.id) {
@@ -236,26 +265,194 @@ function ExecutionDetailDialog({ execution, open, onClose }: ExecutionDetailDial
   }, [open, execution])
 
   const decisionProcess = detail?.decision_process != null ? normalizeDecisionProcess(detail.decision_process) : null
+  const dataCollected = detail?.decision_process?.data_collected || []
+
+  const toggleDataExpanded = (index: number) => {
+    setExpandedDataIndices(prev => {
+      const next = new Set(prev)
+      if (next.has(index)) {
+        next.delete(index)
+      } else {
+        next.add(index)
+      }
+      return next
+    })
+  }
+
+  // Helper functions for image handling
+  const isPureBase64 = (str: string): boolean => {
+    if (!str || str.length < 100) return false
+    const cleaned = str.trim()
+    if (cleaned.startsWith('http://') || cleaned.startsWith('https://') || cleaned.startsWith('/')) return false
+    if (cleaned.startsWith('data:')) return false
+    const base64Regex = /^[A-Za-z0-9+/=_-]+$/
+    if (!base64Regex.test(cleaned)) return false
+    try {
+      atob(cleaned.slice(0, 100))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const detectImageFormat = (base64Data: string): { mime: string } | null => {
+    try {
+      const pureBase64 = base64Data.replace(/^data:image\/[^;]+;base64,/, '').replace(/^data:,/, '')
+      const binaryString = atob(pureBase64.slice(0, 32))
+      const magicBytes: Record<string, { magic: number[]; mime: string }> = {
+        png: { magic: [0x89, 0x50, 0x4E, 0x47], mime: 'image/png' },
+        jpeg: { magic: [0xFF, 0xD8, 0xFF], mime: 'image/jpeg' },
+        gif: { magic: [0x47, 0x49, 0x46], mime: 'image/gif' },
+        webp: { magic: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
+        bmp: { magic: [0x42, 0x4D], mime: 'image/bmp' },
+      }
+      for (const info of Object.values(magicBytes)) {
+        if (info.magic.every((byte, i) => binaryString.charCodeAt(i) === byte)) {
+          return { mime: info.mime }
+        }
+      }
+    } catch {
+      // Invalid base64
+    }
+    return null
+  }
+
+  const normalizeImageUrl = (value: unknown): string | null => {
+    if (!value) return null
+    const valueStr = String(value)
+    const trimmed = valueStr.trim()
+    if (trimmed === '-' || trimmed === 'undefined' || trimmed === 'null' || trimmed === '') return null
+    if (trimmed.startsWith('data:image/')) return trimmed
+    if (trimmed.startsWith('data:base64,')) {
+      const base64Data = trimmed.slice(12)
+      const formatInfo = detectImageFormat(base64Data) || { mime: 'image/png' }
+      return `data:${formatInfo.mime};base64,${base64Data}`
+    }
+    if (isPureBase64(trimmed)) {
+      const formatInfo = detectImageFormat(trimmed) || { mime: 'image/png' }
+      return `data:${formatInfo.mime};base64,${trimmed}`
+    }
+    return trimmed
+  }
+
+  const extractImageData = (data: any) => {
+    const values = data?.values
+    if (!values) return null
+
+    // Helper to check and normalize image value
+    const checkImageValue = (val: any): { src: string; mimeType?: string } | null => {
+      // Skip null/undefined
+      if (val == null) return null
+
+      // If it's a string, check if it's an image
+      if (typeof val === 'string') {
+        const str = val.trim()
+        // Check for data URL format
+        if (str.startsWith('data:image/')) {
+          return { src: str }
+        }
+        // Check for data:image/jpeg;base64, format (may have comma typo)
+        if (str.startsWith('data:image/') && str.includes('base64,')) {
+          return { src: str }
+        }
+        // Check for common base64 patterns
+        if (str.length > 100 && (str.includes('/9j/') || str.includes('iVBORw0KGgo'))) {
+          // Raw base64 - detect format and add prefix
+          const mime = str.includes('iVBORw0KGgo') ? 'image/png' : 'image/jpeg'
+          return { src: `data:${mime};base64,${str}` }
+        }
+        // Check for URL
+        if (str.startsWith('http://') || str.startsWith('https://') || str.startsWith('/')) {
+          return { src: str }
+        }
+      }
+
+      // If it's a number or other type, try to convert to string and check
+      const str = String(val).trim()
+      if (str.length > 100 && (str.includes('/9j/') || str.includes('iVBORw0KGgo'))) {
+        const mime = str.includes('iVBORw0KGgo') ? 'image/png' : 'image/jpeg'
+        return { src: `data:${mime};base64,${str}` }
+      }
+
+      return null
+    }
+
+    // If values is an array
+    if (Array.isArray(values)) {
+      for (const item of values) {
+        if (typeof item === 'object' && item !== null) {
+          // Check common image keys in object
+          for (const key of ['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src', 'value']) {
+            const result = checkImageValue(item[key])
+            if (result) return { ...result, mimeType: item.image_mime_type || item.mimeType }
+          }
+        }
+        // Check if the item itself is an image string
+        const result = checkImageValue(item)
+        if (result) return result
+      }
+    }
+
+    // If values is an object
+    if (typeof values === 'object' && values !== null) {
+      // Check common image keys
+      for (const key of ['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src', 'value']) {
+        const result = checkImageValue(values[key])
+        if (result) return { ...result, mimeType: values.image_mime_type || values.mimeType }
+      }
+    }
+
+    // If values is a string or other primitive
+    const result = checkImageValue(values)
+    if (result) return result
+
+    return null
+  }
+
+  const getDataDisplayPairs = (data: any) => {
+    const values = data?.values
+    const pairs: { key: string; value: string }[] = []
+    if (!values) return pairs
+
+    if (Array.isArray(values)) {
+      values.forEach((item, idx) => {
+        if (typeof item !== 'object' || item === null) {
+          pairs.push({ key: `[${idx}]`, value: String(item ?? '-') })
+        } else {
+          for (const [k, v] of Object.entries(item)) {
+            if (!['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src'].includes(k)) {
+              pairs.push({ key: k, value: String(v ?? '-') })
+            }
+          }
+        }
+      })
+    } else if (typeof values === 'object') {
+      for (const [k, v] of Object.entries(values)) {
+        if (!['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src'].includes(k)) {
+          pairs.push({ key: k, value: String(v ?? '-') })
+        }
+      }
+    } else {
+      pairs.push({ key: 'value', value: String(values) })
+    }
+
+    return pairs
+  }
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent
-        className="max-w-2xl max-h-[80vh] z-[1000]"
+        ref={dialogRef}
+        className="max-w-2xl max-h-[80vh]"
         onOpenAutoFocus={(e) => {
           e.preventDefault()
         }}
-        onPointerDownOutside={(e) => {
-          e.preventDefault()
+        onPointerDownCapture={(e) => {
+          // Prevent event from reaching react-grid-layout
           e.stopPropagation()
         }}
-        onInteractOutside={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-        }}
-        onClick={(e) => {
-          e.stopPropagation()
-        }}
-        onPointerDown={(e) => {
+        onMouseDownCapture={(e) => {
+          // Prevent event from reaching react-grid-layout
           e.stopPropagation()
         }}
       >
@@ -303,7 +500,88 @@ function ExecutionDetailDialog({ execution, open, onClose }: ExecutionDetailDial
               </div>
             )}
 
-            {/* Decision Process - use normalized shape so JSON-string responses display correctly */}
+            {/* Input Data - with Image Support */}
+            {!loading && dataCollected.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-sm font-medium flex items-center gap-2">
+                  <Monitor className="h-4 w-4" />
+                  输入数据
+                  <span className="text-xs text-muted-foreground">({dataCollected.length})</span>
+                </h4>
+                <div className="space-y-2">
+                  {dataCollected.map((data: any, idx: number) => {
+                    const imageData = extractImageData(data)
+                    const hasImage = imageData !== null
+                    const dataPairs = getDataDisplayPairs(data)
+                    const isExpanded = expandedDataIndices.has(idx)
+
+                    return (
+                      <div key={idx} className="border rounded-lg overflow-hidden">
+                        {/* Header */}
+                        <div
+                          className="flex items-center justify-between p-2 bg-muted/50 cursor-pointer hover:bg-muted/70 transition-colors"
+                          onClick={() => toggleDataExpanded(idx)}
+                        >
+                          <div className="flex items-center gap-2 min-w-0 flex-1">
+                            {hasImage && <ImageIcon className="h-3 w-3 text-purple-500 shrink-0" />}
+                            <span className="text-xs font-medium truncate">{data.source}</span>
+                            <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">{data.data_type}</Badge>
+                          </div>
+                          {dataPairs.length > 0 && (
+                            isExpanded ? (
+                              <ChevronUp className="h-3 w-3 text-muted-foreground shrink-0" />
+                            ) : (
+                              <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+                            )
+                          )}
+                        </div>
+
+                        {/* Image Preview */}
+                        {hasImage && (
+                          <div className="p-2 bg-black/5">
+                            <img
+                              src={imageData!.src}
+                              alt={`${data.source} - 输入图像`}
+                              className="w-full max-h-[200px] object-contain rounded-md bg-background"
+                            />
+                          </div>
+                        )}
+
+                        {/* Additional Data */}
+                        {isExpanded && dataPairs.length > 0 && (
+                          <div className="p-2 border-t bg-muted/30">
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+                              {dataPairs.slice(0, 10).map((pair, pairIdx) => (
+                                <div key={pairIdx} className="flex items-baseline gap-1 min-w-0">
+                                  <span className="text-muted-foreground shrink-0">{pair.key}:</span>
+                                  <span className="truncate font-mono">{pair.value}</span>
+                                </div>
+                              ))}
+                              {dataPairs.length > 10 && (
+                                <div className="col-span-2 text-muted-foreground text-[9px]">
+                                  +{dataPairs.length - 10} more fields
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Expand hint */}
+                        {!isExpanded && dataPairs.length > 0 && (
+                          <div className="px-2 pb-1">
+                            <span className="text-[9px] text-muted-foreground">
+                              {dataPairs.length} 个数据字段
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Decision Process */}
             {decisionProcess && (decisionProcess.situation_analysis || decisionProcess.conclusion || decisionProcess.reasoning_steps.length > 0) && (
               <div className="space-y-3">
                 <h4 className="text-sm font-medium flex items-center gap-2">

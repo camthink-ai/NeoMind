@@ -1,0 +1,36 @@
+[package]
+name = "neotalk-tauri"
+version = "0.1.0"
+description = "NeoTalk Edge AI Platform"
+authors = ["NeoTalk Team"]
+license = ""
+repository = ""
+edition = "2021"
+
+# Exclude from parent workspace - Tauri manages its own workspace
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "devtools"] }
+tauri-plugin-shell = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+
+# Local workspace crates - using absolute paths to avoid workspace issues
+edge-api = { path = "/Users/shenmingming/NeoTalk/crates/api", package = "edge-ai-api" }
+edge-core = { path = "/Users/shenmingming/NeoTalk/crates/core", package = "edge-ai-core" }
+edge-llm = { path = "/Users/shenmingming/NeoTalk/crates/llm", package = "edge-ai-llm" }
+edge-agent = { path = "/Users/shenmingming/NeoTalk/crates/agent", package = "edge-ai-agent" }
+edge-devices = { path = "/Users/shenmingming/NeoTalk/crates/devices", package = "edge-ai-devices" }
+
+[features]
+# This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+default = ["embedded-broker"]
+embedded-broker = []

@@ -456,8 +456,6 @@ export const createDeviceSlice: StateCreator<
   // Update device metric from real-time events
   // Supports nested property paths like "values.battery" or "temperature"
   updateDeviceMetric: (deviceId: string, property: string, value: unknown) => {
-    console.log('[updateDeviceMetric] Called:', { deviceId, property, value })
-
     // Helper function to set nested property
     const setNestedProperty = (obj: Record<string, unknown>, path: string, value: unknown) => {
       const parts = path.split('.')
@@ -502,13 +500,6 @@ export const createDeviceSlice: StateCreator<
           last_seen: new Date().toISOString(),
         }
       }
-
-      console.log('[updateDeviceMetric] Updated device in store:', {
-        deviceId,
-        property,
-        value,
-        updatedDevice: updatedDevices.find(d => d.id === deviceId || d.device_id === deviceId)?.current_values,
-      })
 
       return {
         devices: updatedDevices,

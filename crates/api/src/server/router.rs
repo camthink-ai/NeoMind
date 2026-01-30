@@ -5,6 +5,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 
+use super::assets;
 use super::middleware::rate_limit_middleware;
 use super::types::MAX_REQUEST_BODY_SIZE;
 use super::types::ServerState;
@@ -21,7 +22,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
         alert_channels, alerts, agents, automations, auth as auth_handlers, auth_users, basic, bulk, commands, config,
         dashboards, decisions, devices, events, extensions, llm_backends, memory, mqtt, plugins, rules,
-        search, sessions, settings, stats, suggestions, test_data, tools,
+        search, sessions, settings, setup, stats, suggestions, test_data, tools,
     };
 
     // Public routes (no authentication required)
@@ -36,6 +37,11 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // User authentication (public - login and register)
         .route("/api/auth/login", post(auth_users::login_handler))
         .route("/api/auth/register", post(auth_users::register_handler))
+        // Setup endpoints (public - only available when no users exist)
+        .route("/api/setup/status", get(setup::setup_status_handler))
+        .route("/api/setup/initialize", post(setup::initialize_admin_handler))
+        .route("/api/setup/complete", post(setup::complete_setup_handler))
+        .route("/api/setup/llm-config", post(setup::save_llm_config_handler))
         // LLM Backends Types API (public - read-only metadata)
         .route("/api/llm-backends/types", get(llm_backends::list_backend_types_handler))
         .route("/api/llm-backends/types/:type/schema", get(llm_backends::get_backend_schema_handler))
@@ -205,14 +211,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/devices/:id/commands",
             get(devices::get_device_command_history_handler),
-        )
-        .route(
-            "/api/devices/:id/metrics/list",
-            get(devices::list_device_metrics_debug_handler),
-        )
-        .route(
-            "/api/devices/:id/metrics/analyze",
-            get(devices::analyze_metric_timestamps_handler),
         )
         // Device Types API
         .route("/api/device-types", get(devices::list_device_types_handler))
@@ -669,7 +667,15 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .merge(admin_routes)
         .merge(protected_routes);
 
+    // Static file routes - serve embedded frontend assets
+    let static_routes = Router::new()
+        .route("/assets/*path", get(assets::serve_asset))
+        .route("/*path", get(assets::serve_asset))
+        .route("/", get(assets::serve_index));
+
     router
+        // Merge static routes before fallback
+        .merge(static_routes)
         // Apply middleware layers
         .layer(tower_http::compression::CompressionLayer::new())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
@@ -682,7 +688,5 @@ pub fn create_router_with_state(state: ServerState) -> Router {
                 .allow_methods(tower_http::cors::Any)
                 .allow_headers(tower_http::cors::Any),
         )
-        // Serve static files
-        .fallback_service(tower_http::services::ServeDir::new("static"))
         .with_state(state)
 }

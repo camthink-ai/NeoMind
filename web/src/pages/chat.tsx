@@ -109,14 +109,14 @@ function mergeMessagesForDisplay(messages: Message[]): Message[] {
 // Hook to detect desktop breakpoint (lg: 1024px)
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(false)
-  
+
   useEffect(() => {
     const checkIsDesktop = () => setIsDesktop(window.innerWidth >= 1024)
     checkIsDesktop()
     window.addEventListener("resize", checkIsDesktop)
     return () => window.removeEventListener("resize", checkIsDesktop)
   }, [])
-  
+
   return isDesktop
 }
 
@@ -137,8 +137,8 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-export function DashboardPage() {
-  const { t } = useTranslation(['common', 'dashboard', 'chat'])
+export function ChatPage() {
+  const { t } = useTranslation(['common', 'chat'])
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
   const navigate = useNavigate()
   const llmBackends = useStore((state) => state.llmBackends)
@@ -173,7 +173,7 @@ export function DashboardPage() {
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  
+
   // Responsive
   const isDesktop = useIsDesktop()
 
@@ -489,7 +489,7 @@ export function DashboardPage() {
   // Filter out partial messages and merge fragmented assistant messages
   const filteredMessages = messages.filter(msg => !msg.isPartial)
   const displayMessages = mergeMessagesForDisplay(filteredMessages)
-  
+
   // Show chat area if there are messages or currently streaming
   const hasMessages = filteredMessages.length > 0 || isStreaming
 

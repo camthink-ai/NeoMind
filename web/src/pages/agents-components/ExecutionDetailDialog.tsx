@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import {
   Dialog,
@@ -23,6 +23,10 @@ import {
   FileText,
   ChevronRight,
   Sparkles,
+  Image as ImageIcon,
+  ChevronDown,
+  ChevronUp,
+  Monitor,
 } from "lucide-react"
 import { api } from "@/lib/api"
 import { formatTimestamp } from "@/lib/utils/format"
@@ -74,6 +78,216 @@ export function ExecutionDetailDialog({
       default:
         return <AlertCircle className="h-4 w-4 text-gray-500" />
     }
+  }
+
+  // State for expandable input data section
+  const [expandedDataIndices, setExpandedDataIndices] = useState<Set<number>>(new Set())
+
+  const toggleDataExpanded = (index: number) => {
+    setExpandedDataIndices(prev => {
+      const next = new Set(prev)
+      if (next.has(index)) {
+        next.delete(index)
+      } else {
+        next.add(index)
+      }
+      return next
+    })
+  }
+
+  /**
+   * Check if a string looks like pure base64 (no prefix)
+   */
+  const isPureBase64 = (str: string): boolean => {
+    if (!str || str.length < 100) return false
+    const cleaned = str.trim()
+
+    if (cleaned.startsWith('http://') || cleaned.startsWith('https://') || cleaned.startsWith('/')) {
+      return false
+    }
+    if (cleaned.startsWith('data:')) {
+      return false
+    }
+
+    const base64Regex = /^[A-Za-z0-9+/=_-]+$/
+    if (!base64Regex.test(cleaned)) {
+      return false
+    }
+
+    try {
+      atob(cleaned.slice(0, 100))
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Detect image format from magic bytes
+   */
+  const detectImageFormat = (base64Data: string): { mime: string } | null => {
+    try {
+      const pureBase64 = base64Data.replace(/^data:image\/[^;]+;base64,/, '').replace(/^data:,/, '')
+      const binaryString = atob(pureBase64.slice(0, 32))
+
+      const magicBytes: Record<string, { magic: number[]; mime: string }> = {
+        png: { magic: [0x89, 0x50, 0x4E, 0x47], mime: 'image/png' },
+        jpeg: { magic: [0xFF, 0xD8, 0xFF], mime: 'image/jpeg' },
+        gif: { magic: [0x47, 0x49, 0x46], mime: 'image/gif' },
+        webp: { magic: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
+        bmp: { magic: [0x42, 0x4D], mime: 'image/bmp' },
+      }
+
+      for (const info of Object.values(magicBytes)) {
+        if (info.magic.every((byte, i) => binaryString.charCodeAt(i) === byte)) {
+          return { mime: info.mime }
+        }
+      }
+    } catch {
+      // Invalid base64
+    }
+    return null
+  }
+
+  /**
+   * Normalize image value to a displayable src
+   */
+  const normalizeImageUrl = (value: unknown): string | null => {
+    if (!value) return null
+
+    const valueStr = String(value)
+    const trimmed = valueStr.trim()
+
+    if (trimmed === '-' || trimmed === 'undefined' || trimmed === 'null' || trimmed === '') {
+      return null
+    }
+
+    // Already a data URL
+    if (trimmed.startsWith('data:image/')) {
+      return trimmed
+    }
+
+    // Data URL without image/ prefix
+    if (trimmed.startsWith('data:base64,')) {
+      const base64Data = trimmed.slice(12)
+      const formatInfo = detectImageFormat(base64Data) || { mime: 'image/png' }
+      return `data:${formatInfo.mime};base64,${base64Data}`
+    }
+
+    // Pure base64
+    if (isPureBase64(trimmed)) {
+      const formatInfo = detectImageFormat(trimmed) || { mime: 'image/png' }
+      return `data:${formatInfo.mime};base64,${trimmed}`
+    }
+
+    // HTTP/HTTPS URL or relative path
+    return trimmed
+  }
+
+  /**
+   * Extract image data from DataCollected values
+   */
+  const extractImageData = (data: DataCollected) => {
+    const values = data.values
+
+    if (!values) return null
+
+    // Handle array values
+    if (Array.isArray(values)) {
+      for (const item of values) {
+        if (typeof item === 'object' && item !== null) {
+          const obj = item as Record<string, unknown>
+          // Try various image field names
+          for (const key of ['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src']) {
+            const normalized = normalizeImageUrl(obj[key])
+            if (normalized) {
+              return { src: normalized, mimeType: obj.image_mime_type || obj.mimeType }
+            }
+          }
+        }
+      }
+      // If array contains strings, try them
+      for (const item of values) {
+        if (typeof item === 'string') {
+          const normalized = normalizeImageUrl(item)
+          if (normalized) return { src: normalized, mimeType: null }
+        }
+      }
+    }
+
+    // Handle object values
+    if (typeof values === 'object') {
+      const obj = values as Record<string, unknown>
+      for (const key of ['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src', 'value']) {
+        const normalized = normalizeImageUrl(obj[key])
+        if (normalized) {
+          return { src: normalized, mimeType: obj.image_mime_type || obj.mimeType }
+        }
+      }
+    }
+
+    // Handle string values
+    if (typeof values === 'string') {
+      const normalized = normalizeImageUrl(values)
+      if (normalized) return { src: normalized, mimeType: null }
+    }
+
+    return null
+  }
+
+  /**
+   * Format data value for display
+   */
+  const formatValue = (value: unknown): string => {
+    if (value === null || value === undefined) return '-'
+    if (typeof value === 'string') return value
+    if (typeof value === 'number') return String(value)
+    if (typeof value === 'boolean') return value ? 'true' : 'false'
+    if (Array.isArray(value)) return `[${value.length} items]`
+    if (typeof value === 'object') {
+      const str = JSON.stringify(value)
+      return str.length > 100 ? str.slice(0, 100) + '...' : str
+    }
+    return String(value)
+  }
+
+  /**
+   * Get displayable key-value pairs from data
+   */
+  const getDataDisplayPairs = (data: DataCollected) => {
+    const values = data.values
+    const pairs: { key: string; value: string }[] = []
+
+    if (!values) return pairs
+
+    if (Array.isArray(values)) {
+      // For arrays, show index-based pairs
+      values.forEach((item, idx) => {
+        if (typeof item !== 'object' || item === null) {
+          pairs.push({ key: `[${idx}]`, value: formatValue(item) })
+        } else {
+          const obj = item as Record<string, unknown>
+          for (const [k, v] of Object.entries(obj)) {
+            // Skip image fields as they're displayed separately
+            if (!['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src'].includes(k)) {
+              pairs.push({ key: k, value: formatValue(v) })
+            }
+          }
+        }
+      })
+    } else if (typeof values === 'object') {
+      const obj = values as Record<string, unknown>
+      for (const [k, v] of Object.entries(obj)) {
+        // Skip image fields
+        if (!['image_base64', 'imageBase64', 'base64', 'image_url', 'imageUrl', 'url', 'image', 'src'].includes(k)) {
+          pairs.push({ key: k, value: formatValue(v) })
+        }
+      }
+    } else {
+      pairs.push({ key: 'value', value: formatValue(values) })
+    }
+
+    return pairs
   }
 
   if (!execution) {
@@ -132,26 +346,83 @@ export function ExecutionDetailDialog({
                     <p className="text-xs leading-relaxed">{execution.decision_process.situation_analysis}</p>
                   </div>
 
-                  {/* Data Collected - Compact */}
+                  {/* Input Data - Detailed with Image Support */}
                   {execution.decision_process.data_collected.length > 0 && (
                     <div className="p-2.5 bg-muted/20 rounded-lg border">
                       <div className="flex items-center gap-1.5 mb-2">
-                        <Database className="h-3.5 w-3.5 text-purple-500 shrink-0" />
-                        <span className="text-xs font-semibold">数据源</span>
+                        <Monitor className="h-3.5 w-3.5 text-cyan-500 shrink-0" />
+                        <span className="text-xs font-semibold">输入数据</span>
                         <span className="text-[10px] text-muted-foreground">({execution.decision_process.data_collected.length})</span>
                       </div>
-                      <div className="space-y-1.5">
-                        {execution.decision_process.data_collected.slice(0, 5).map((data, idx) => (
-                          <div key={idx} className="flex items-center gap-2 text-[10px]">
-                            <span className="font-medium min-w-0 truncate">{data.source}</span>
-                            <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">{data.data_type}</Badge>
-                          </div>
-                        ))}
-                        {execution.decision_process.data_collected.length > 5 && (
-                          <div className="text-[10px] text-muted-foreground">
-                            +{execution.decision_process.data_collected.length - 5} more
-                          </div>
-                        )}
+                      <div className="space-y-2">
+                        {execution.decision_process.data_collected.map((data, idx) => {
+                          const imageData = extractImageData(data)
+                          const hasImage = imageData !== null
+                          const dataPairs = getDataDisplayPairs(data)
+                          const isExpanded = expandedDataIndices.has(idx)
+
+                          return (
+                            <div key={idx} className="border rounded-lg overflow-hidden">
+                              {/* Header - clickable to expand/collapse */}
+                              <div
+                                className="flex items-center justify-between p-2 bg-background/50 cursor-pointer hover:bg-background/80 transition-colors"
+                                onClick={() => toggleDataExpanded(idx)}
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  {hasImage && <ImageIcon className="h-3 w-3 text-purple-500 shrink-0" />}
+                                  <span className="text-[10px] font-medium truncate">{data.source}</span>
+                                  <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">{data.data_type}</Badge>
+                                </div>
+                                {dataPairs.length > 0 && (
+                                  isExpanded ? (
+                                    <ChevronUp className="h-3 w-3 text-muted-foreground shrink-0" />
+                                  ) : (
+                                    <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+                                  )
+                                )}
+                              </div>
+
+                              {/* Image Preview */}
+                              {hasImage && (
+                                <div className="p-2 bg-black/5">
+                                  <img
+                                    src={imageData!.src}
+                                    alt={`${data.source} - 输入图像`}
+                                    className="w-full max-h-[200px] object-contain rounded-md bg-background"
+                                  />
+                                </div>
+                              )}
+
+                              {/* Additional Data (expandable) */}
+                              {isExpanded && dataPairs.length > 0 && (
+                                <div className="p-2 border-t bg-background/30">
+                                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+                                    {dataPairs.slice(0, 10).map((pair, pairIdx) => (
+                                      <div key={pairIdx} className="flex items-baseline gap-1 min-w-0">
+                                        <span className="text-muted-foreground shrink-0">{pair.key}:</span>
+                                        <span className="truncate font-mono">{pair.value}</span>
+                                      </div>
+                                    ))}
+                                    {dataPairs.length > 10 && (
+                                      <div className="col-span-2 text-muted-foreground text-[9px]">
+                                        +{dataPairs.length - 10} more fields
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+
+                              {/* Expand hint for collapsed state */}
+                              {!isExpanded && dataPairs.length > 0 && (
+                                <div className="px-2 pb-1">
+                                  <span className="text-[9px] text-muted-foreground">
+                                    {dataPairs.length} 个数据字段
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
                   )}

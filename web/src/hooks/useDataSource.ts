@@ -1,10 +1,11 @@
 /**
- * useDataSource Hook (Refactored)
+ * useDataSource Hook
  *
  * Simplified data binding for dashboard components.
- * - Removed debug console.logs
- * - Extracted data utilities to separate module
- * - Cleaner event handling
+ * - Efficient telemetry caching with 5-second TTL
+ * - Real-time WebSocket event handling
+ * - Fuzzy matching for metric value lookup
+ * - Store merge for live updates
  */
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
@@ -127,30 +128,6 @@ async function fetchHistoricalTelemetry(
       const metricData = response.data[metricId]
 
       if (Array.isArray(metricData) && metricData.length > 0) {
-        // Debug: log the first and last items with timestamps
-        const getTimestamp = (point: unknown): number => {
-          if (typeof point === 'object' && point !== null) {
-            const p = point as unknown as Record<string, unknown>
-            const timestamp = p.timestamp ?? p.time ?? p.t
-            if (typeof timestamp === 'number') return timestamp
-          }
-          return Date.now() / 1000
-        }
-
-        const firstTimestamp = getTimestamp(metricData[0])
-        const lastTimestamp = getTimestamp(metricData[metricData.length - 1])
-
-        console.log('[fetchHistoricalTelemetry]', {
-          deviceId,
-          metricId,
-          itemCount: metricData.length,
-          firstTimestamp,
-          firstTime: new Date(firstTimestamp * 1000).toISOString(),
-          lastTimestamp,
-          lastTime: new Date(lastTimestamp * 1000).toISOString(),
-          queryEnd: new Date(now).toISOString(),
-        })
-
         // Helper to extract value from a point
         const extractValue = (point: unknown): number => {
           if (typeof point === 'number') return point
@@ -1216,39 +1193,102 @@ export function useDataSource<T = unknown>(
           finalData = singleResult.raw ?? singleResult.data ?? []
         }
 
-        // CRITICAL: Merge with latest values from store for real-time updates
+        // CRITICAL: Always merge with latest values from store for real-time updates
         // This ensures components see the latest data even if API hasn't persisted it yet
         const storeState = useStore.getState()
+
+        // Helper to check if a value looks like an image (base64 or data URL)
+        const looksLikeImage = (val: unknown): boolean => {
+          if (typeof val !== 'string') return false
+          const str = val.trim()
+          return str.startsWith('data:image/') ||
+                 str.startsWith('data:base64,') ||
+                 (str.length > 100 && /^[A-Za-z0-9+/=_-]+$/.test(str))
+        }
+
+        // Helper to find metric value with fuzzy matching
+        const findMetricValue = (
+          currentValues: Record<string, unknown>,
+          metricId: string
+        ): { value: unknown; matchedKey: string } | undefined => {
+          // 1. Try exact match
+          if (metricId in currentValues) {
+            return { value: currentValues[metricId], matchedKey: metricId }
+          }
+
+          // 2. Try case-insensitive match
+          const lowerMetricId = metricId.toLowerCase()
+          for (const key of Object.keys(currentValues)) {
+            if (key.toLowerCase() === lowerMetricId) {
+              return { value: currentValues[key], matchedKey: key }
+            }
+          }
+
+          // 3. Try with common suffixes/prefixes removed
+          const baseName = metricId
+            .replace(/_base64$/i, '')
+            .replace(/^image_/i, '')
+            .replace(/^img_/i, '')
+            .replace(/_url$/i, '')
+            .replace(/_str$/i, '')
+          for (const key of Object.keys(currentValues)) {
+            const keyBase = key
+              .replace(/_base64$/i, '')
+              .replace(/^image_/i, '')
+              .replace(/^img_/i, '')
+              .replace(/_url$/i, '')
+              .replace(/_str$/i, '')
+            if (keyBase.toLowerCase() === baseName.toLowerCase()) {
+              return { value: currentValues[key], matchedKey: key }
+            }
+          }
+
+          // 4. For image-like metrics, try to find any value that looks like an image
+          if (metricId.toLowerCase().includes('image') || metricId.toLowerCase().includes('img')) {
+            for (const key of Object.keys(currentValues)) {
+              if (looksLikeImage(currentValues[key])) {
+                return { value: currentValues[key], matchedKey: key }
+              }
+            }
+          }
+
+          // 5. Try nested path like "values.image"
+          const parts = metricId.split('.')
+          let nested: any = currentValues
+          for (const part of parts) {
+            if (nested && typeof nested === 'object' && part in nested) {
+              nested = nested[part]
+            } else {
+              nested = undefined
+              break
+            }
+          }
+          if (nested !== undefined) {
+            return { value: nested, matchedKey: metricId }
+          }
+
+          return undefined
+        }
+
         const telemetryDataSourcesWithStore = telemetryDataSources.map((ds) => {
           const device = storeState.devices.find((d: any) => d.id === ds.deviceId || d.device_id === ds.deviceId)
           if (!device?.current_values) return { dataSource: ds, latestValue: undefined }
 
-          // Get the latest value for this metric from store
+          // Get the latest value for this metric from store with fuzzy matching
           const metricId = ds.metricId || ds.property || 'value'
-          const latestValue = (device.current_values as Record<string, unknown>)[metricId]
-          return { dataSource: ds, latestValue, deviceId: ds.deviceId, metricId }
+          const matchResult = findMetricValue(device.current_values as Record<string, unknown>, metricId)
+          const latestValue = matchResult?.value
+
+          return { dataSource: ds, latestValue, deviceId: ds.deviceId, metricId, matchedKey: matchResult?.matchedKey }
         })
 
-        console.log('[useDataSource] Store merge check:', {
-          hasStoreValues: telemetryDataSourcesWithStore.some((item) => item.latestValue !== undefined),
-          storeItems: telemetryDataSourcesWithStore.map((item) => ({
-            deviceId: item.deviceId,
-            metricId: item.metricId,
-            hasLatestValue: item.latestValue !== undefined,
-          })),
-        })
-
-        // If we have latest values from store, merge them with API data
-        // This ensures real-time updates even when API data is delayed
-        if (telemetryDataSourcesWithStore.some((item) => item.latestValue !== undefined)) {
+        // CRITICAL FIX: ALWAYS add store value if it exists, even if API data is newer
+        // This ensures the latest real-time value is always shown
+        const hasStoreValues = telemetryDataSourcesWithStore.some((item) => item.latestValue !== undefined)
+        if (hasStoreValues) {
           // Ensure finalData is an array
           let rawDataArray = Array.isArray(finalData) ? [...finalData] : []
           const now = Math.floor(Date.now() / 1000)
-
-          console.log('[useDataSource] Before store merge:', {
-            rawDataArrayLength: rawDataArray.length,
-            firstItemTimestamp: rawDataArray[0] && typeof rawDataArray[0] === 'object' ? rawDataArray[0].timestamp : 'N/A',
-          })
 
           for (const storeItem of telemetryDataSourcesWithStore) {
             if (storeItem.latestValue === undefined) continue
@@ -1257,32 +1297,24 @@ export function useDataSource<T = unknown>(
             const maxTime = now
             const maxLimit = telemetryDataSources[0].limit ?? 100
 
-            // Add the latest store value at the BEGINNING (index 0)
-            // API returns data in DESCENDING order (newest first), so newest goes at index 0
+            // Create a new point with current timestamp
             const newPoint = {
-              timestamp: maxTime,  // Use 'timestamp' to match API data format
+              timestamp: maxTime,  // Current time - ensures this is the "latest"
+              time: maxTime,       // Also set 'time' for compatibility
               value: latestValue,
             }
 
-            console.log('[useDataSource] Adding store value:', {
-              deviceId: storeItem.deviceId,
-              metricId: storeItem.metricId,
-              newPointTimestamp: newPoint.timestamp,
-              newPointTime: new Date(newPoint.timestamp * 1000).toISOString(),
-            })
-
-            // Add to beginning and trim to limit
+            // ALWAYS add to beginning, even if it might be duplicate
+            // The component will pick the one with the latest timestamp
             rawDataArray.unshift(newPoint)
+
+            // Trim to limit
             if (rawDataArray.length > maxLimit) {
-              // Keep only the first maxLimit items (newest items in descending order)
               rawDataArray = rawDataArray.slice(0, maxLimit)
             }
-          }
 
-          console.log('[useDataSource] After store merge:', {
-            rawDataArrayLength: rawDataArray.length,
-            firstItemTimestamp: rawDataArray[0]?.timestamp,
-          })
+            // Store value merged successfully
+          }
 
           finalData = rawDataArray
         }

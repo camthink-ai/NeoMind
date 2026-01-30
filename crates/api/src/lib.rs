@@ -29,7 +29,7 @@ pub use crypto::{CryptoError, CryptoService};
 pub use rate_limit::{
     RateLimitConfig, RateLimitExceeded, RateLimiter, cleanup_task, extract_client_id,
 };
-pub use server::{ServerState, create_router, run};
+pub use server::{ServerState, create_router, run, start_server};
 pub use validator::{
     AlertQuery, DeviceQuery, PageQuery, RuleQuery, SearchQuery, SortOrder, TimeRangeQuery,
     Validate, ValidationError, ValidationErrors, validate_device_id, validate_ip_address,

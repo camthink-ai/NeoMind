@@ -37,6 +37,47 @@ import { useStore } from '@/store'
 // Re-export types for convenience
 export type { LayerBinding, LayerItem }
 
+// Helper function to find metric value with fuzzy matching (handles nested paths like 'values.image')
+function findMetricValue(currentValues: Record<string, unknown> | undefined, metricId: string): unknown {
+  if (!currentValues) return undefined
+
+  // 1. Try exact match
+  if (metricId in currentValues) {
+    return currentValues[metricId]
+  }
+
+  // 2. Try case-insensitive match
+  const lowerMetricId = metricId.toLowerCase()
+  for (const key of Object.keys(currentValues)) {
+    if (key.toLowerCase() === lowerMetricId) {
+      return currentValues[key]
+    }
+  }
+
+  // 3. Try nested path like "values.image"
+  const parts = metricId.split('.')
+  let nested: any = currentValues
+  for (const part of parts) {
+    if (nested && typeof nested === 'object' && part in nested) {
+      nested = nested[part]
+    } else {
+      // Try case-insensitive nested access
+      let found = false
+      for (const key of Object.keys(nested || {})) {
+        if (key.toLowerCase() === part.toLowerCase()) {
+          nested = nested[key]
+          found = true
+          break
+        }
+      }
+      if (!found) {
+        return undefined
+      }
+    }
+  }
+  return nested
+}
+
 // Type config factory matching CustomLayer
 function getTypeConfig(t: (key: string) => string) {
   return {
@@ -127,7 +168,7 @@ export function LayerEditorDialog({
     const getDeviceMetricValue = (deviceId: string, metricId: string): string | number | undefined => {
       const device = devices.find(d => d.id === deviceId || d.device_id === deviceId)
       if (!device?.current_values) return undefined
-      const value = device.current_values[metricId || '']
+      const value = findMetricValue(device.current_values, metricId || '')
       if (value !== undefined && value !== null) {
         return typeof value === 'number' ? value : String(value)
       }

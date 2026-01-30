@@ -409,12 +409,6 @@ export function ImageDisplay({
         }
       }
 
-      console.log('[ImageDisplay] Array analysis:', {
-        totalItems: value.length,
-        latestTime,
-        latestItemPreview: JSON.stringify(latestItem)?.slice(0, 200),
-      })
-
       return extractImageValue(latestItem)
     }
 
@@ -437,17 +431,6 @@ export function ImageDisplay({
   }
 
   const rawSrc = error ? propSrc : (extractImageValue(data) ?? propSrc ?? '')
-
-  // Debug logging to understand data flow
-  useEffect(() => {
-    console.log('[ImageDisplay] Data received:', {
-      dataType: Array.isArray(data) ? 'array' : typeof data,
-      dataLength: Array.isArray(data) ? data.length : 1,
-      firstItem: Array.isArray(data) && data.length > 0 ? JSON.stringify(data[0])?.slice(0, 100) : data,
-      lastItem: Array.isArray(data) && data.length > 0 ? JSON.stringify(data[data.length - 1])?.slice(0, 100) : data,
-      extractedSrc: rawSrc?.slice(0, 100),
-    })
-  }, [data, rawSrc])
 
   // Track last update timestamp for cache-busting
   const lastUpdate = useRef(Date.now())

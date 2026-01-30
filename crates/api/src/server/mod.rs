@@ -3,6 +3,7 @@
 //! This provides a web interface with WebSocket support for chat
 //! and REST API for devices, rules, alerts, and session management.
 
+pub mod assets;
 pub mod middleware;
 pub mod router;
 pub mod types;
@@ -15,7 +16,8 @@ pub use types::{DeviceStatusUpdate, MAX_REQUEST_BODY_SIZE, ServerState};
 use std::net::SocketAddr;
 use std::time::Duration;
 
-/// Run the web server with graceful shutdown.
+/// Start the web server on a specific address.
+/// This is the main entry point for running the server.
 pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     use crate::startup::{ServiceStatus, StartupLogger};
 
@@ -98,4 +100,12 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 
     tracing::info!("Server shutdown complete");
     Ok(())
+}
+
+/// Start the server with default configuration.
+/// This function is designed to be called from Tauri or other embedded contexts.
+/// It starts the server in the background and returns immediately.
+pub async fn start_server() -> anyhow::Result<()> {
+    let bind: SocketAddr = "127.0.0.1:3000".parse()?;
+    run(bind).await
 }

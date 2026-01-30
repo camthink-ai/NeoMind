@@ -221,26 +221,24 @@ impl Tool for GetAgentTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取指定AI Agent的详细信息。
+        r#"获取指定AI Agent的详细信息和执行历史。
 
 ## 使用场景
+- 用户询问"Agent最近执行了什么任务"时必须调用此工具
+- 用户询问"Agent执行结果是什么"时必须调用此工具
 - 查看Agent的完整配置
 - 了解Agent的监控目标和资源
-- 查看Agent的调度配置
-- 检查Agent的执行历史统计
-- 获取Agent的意图解析结果
+- 检查Agent的执行统计和历史
 
 ## 返回信息
 - 基本信息：ID、名称、描述、状态
+- 执行统计：**总执行次数、成功/失败次数、平均耗时、最后执行时间**
 - 用户意图：原始prompt和AI解析结果
 - 资源配置：监控的设备、指标、命令
 - 调度配置：调度类型、Cron表达式、间隔等
-- 执行统计：总执行次数、成功/失败次数、平均耗时
-- 记忆信息：学习到的模式、基线数据
 
-## 注意事项
-- 需要提供agent_id参数
-- 如果Agent不存在会返回错误"#
+## 关键
+当用户询问Agent的执行情况、任务、结果时，**必须调用此工具获取真实数据，不要编造答案**"#
     }
 
     fn parameters(&self) -> Value {
@@ -691,28 +689,31 @@ impl Tool for CreateAgentTool {
     fn description(&self) -> &str {
         r#"通过自然语言描述创建一个新的AI Agent。
 
-## 使用场景
-- 创建监控类Agent（如温度监控）
-- 创建告警类Agent（如异常检测）
-- 创建报告类Agent（如定期生成报告）
-- 创建控制类Agent（如自动调节设备）
+## Agent 类型
+1. **监控型 (monitor)**: 持续监控设备数据，检测异常并告警
+2. **执行型 (executor)**: 根据条件自动执行设备控制
+3. **分析型 (analyst)**: 分析历史数据，生成洞察报告
 
 ## 创建方式
-直接用自然语言描述你想要的Agent功能，例如：
-- "每5分钟检查温度，如果超过30度就告警"
-- "每天早上8点生成设备状态报告"
-- "当湿度低于30%时，打开加湿器"
+用自然语言描述Agent功能，应包含：
+- **目标设备**: 哪个设备（设备名称或ID）
+- **监控指标**: 哪些数据（温度、湿度、电池等）
+- **触发条件**: 什么情况下触发（温度>30度、电量<20%等）
+- **执行动作**: 要做什么（发送告警、执行命令、生成报告）
+- **执行频率**: 多久检查一次（每5分钟、每天早上8点等）
+
+## 示例描述
+- "监控ne101设备，每5分钟检查温度，超过30度发送告警"
+- "每天早上8点分析所有NE101的电池状态，低于20%告警"
+- "当湿度低于30%时，自动打开加湿器"
+
+## 建议
+创建前先使用 list_devices 查看可用设备，使用 get_device_data 了解设备支持的指标。
 
 ## 返回信息
 - agent_id: 新创建的Agent ID
 - name: Agent名称
-- status: 创建状态
-- parsed_intent: AI解析的意图结构
-
-## 注意事项
-- Agent创建后会自动启动
-- 可以使用control_agent暂停或删除Agent
-- Agent会持续运行直到被暂停或删除"#
+- status: 创建状态"#
     }
 
     fn parameters(&self) -> Value {
@@ -823,9 +824,15 @@ impl Tool for CreateAgentTool {
         Ok(ToolOutput::success(serde_json::json!({
             "agent_id": agent_id,
             "name": name,
+            "description": description,
             "status": "created",
-            "message": "Agent已创建并启动",
-            "note": "在实际环境中，会使用LLM解析自然语言意图并配置资源和调度"
+            "message": format!("Agent '{}' 已创建并启动", name),
+            "schedule": {
+                "schedule_type": "interval",
+                "interval_seconds": 300,
+                "description": "每5分钟执行一次"
+            },
+            "next_action": "使用 list_agents 查看所有Agent，使用 get_agent 查看Agent详情"
         })))
     }
 }

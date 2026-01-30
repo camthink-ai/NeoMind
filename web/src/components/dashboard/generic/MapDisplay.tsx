@@ -327,8 +327,6 @@ function SimpleSvgMap({
   selectedMarkerId,
   t,
 }: SimpleSvgMapProps) {
-  // Debug: log markers received by SimpleSvgMap
-  console.log('SimpleSvgMap received markers:', markers, 'count:', markers?.length)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
   const dragStartRef = useRef({ x: 0, y: 0 })
@@ -553,7 +551,6 @@ function SimpleSvgMap({
       const clickX = e.clientX - rect.left
       const clickY = e.clientY - rect.top
       const { lat, lng } = viewportToLatLng(clickX, clickY)
-      console.log('Map clicked:', { lat, lng, clickX, clickY, target: target.className })
       onMapClick(lat, lng)
     }
   }
@@ -590,8 +587,6 @@ function SimpleSvgMap({
       {/* Render markers as absolute positioned elements */}
       {markers.map((marker) => {
         const pos = latLngToViewport(marker.latitude, marker.longitude)
-        console.log(`Rendering marker ${marker.id} (${marker.label}): lat=${marker.latitude}, lng=${marker.longitude}, screenPos=`, pos)
-
         const isSelected = selectedMarkerId === marker.id
 
         return (
@@ -646,6 +641,47 @@ function SimpleSvgMap({
 // Main Component
 // ============================================================================
 
+// Helper function to find metric value with fuzzy matching (handles nested paths like 'values.image')
+function findMetricValue(currentValues: Record<string, unknown> | undefined, metricId: string): unknown {
+  if (!currentValues) return undefined
+
+  // 1. Try exact match
+  if (metricId in currentValues) {
+    return currentValues[metricId]
+  }
+
+  // 2. Try case-insensitive match
+  const lowerMetricId = metricId.toLowerCase()
+  for (const key of Object.keys(currentValues)) {
+    if (key.toLowerCase() === lowerMetricId) {
+      return currentValues[key]
+    }
+  }
+
+  // 3. Try nested path like "values.image"
+  const parts = metricId.split('.')
+  let nested: any = currentValues
+  for (const part of parts) {
+    if (nested && typeof nested === 'object' && part in nested) {
+      nested = nested[part]
+    } else {
+      // Try case-insensitive nested access
+      let found = false
+      for (const key of Object.keys(nested || {})) {
+        if (key.toLowerCase() === part.toLowerCase()) {
+          nested = nested[key]
+          found = true
+          break
+        }
+      }
+      if (!found) {
+        return undefined
+      }
+    }
+  }
+  return nested
+}
+
 // Helper function to extract value from object with fallback field names
 function extractValue(obj: Record<string, unknown>, preferredField: string | undefined, fallbackFields: string[]): number | string | null {
   if (preferredField && preferredField in obj) {
@@ -698,11 +734,11 @@ export function MapDisplay({
   // Get devices from store for real-time metric updates
   const devices = useStore(state => state.devices)
 
-  // Helper function to get device metric value
+  // Helper function to get device metric value with fuzzy matching
   const getDeviceMetricValue = useCallback((deviceId: string, metricId: string): string | number | undefined => {
     const device = devices.find(d => d.id === deviceId)
     if (!device?.current_values) return undefined
-    const value = device.current_values[metricId]
+    const value = findMetricValue(device.current_values, metricId)
     if (value !== undefined && value !== null) {
       return typeof value === 'number' ? value : String(value)
     }
@@ -726,9 +762,6 @@ export function MapDisplay({
       const device = storeDevices.find(d => d.id === deviceId)
       return device?.name || deviceId
     }
-
-    console.log('=== convertBindingsToMarkers ===')
-    console.log('bindings:', bindings)
 
     return bindings.map((binding): MapMarker => {
       const position = binding.position === 'auto' || !binding.position
@@ -768,8 +801,6 @@ export function MapDisplay({
       } else if (binding.type === 'marker') {
         marker.markerType = 'marker'
       }
-
-      console.log(`  -> binding "${binding.name}" type="${binding.type}" -> markerType="${marker.markerType}"`)
 
       return marker
     })
@@ -871,22 +902,6 @@ export function MapDisplay({
         ? propMarkers
         : ((data && data.length > 0) ? data : propMarkers))
 
-  // Debug: log markers to see what's being rendered
-  console.log('=== MapDisplay markers calculation ===')
-  console.log('  bindings:', bindings)
-  console.log('  bindingsMarkers:', bindingsMarkers)
-  console.log('  dataSource:', !!dataSource)
-  console.log('  propMarkers:', propMarkers)
-  console.log('  data:', data)
-  console.log('  error:', error)
-  console.log('  -> final markers:', markers)
-  console.log('  -> markers by type:', {
-    device: markers.filter(m => m.markerType === 'device').length,
-    metric: markers.filter(m => m.markerType === 'metric').length,
-    command: markers.filter(m => m.markerType === 'command').length,
-    marker: markers.filter(m => m.markerType === 'marker').length,
-  })
-  console.log('===============================')
   const [currentZoom, setCurrentZoom] = useState(zoom)
   const [currentCenter, setCurrentCenter] = useState(center)
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -930,8 +945,6 @@ export function MapDisplay({
   }, [])
 
   const sizeConfig = dashboardComponentSize[size]
-
-  console.log('Displaying markers:', markers)
 
   const handleZoomIn = useCallback(() => {
     setCurrentZoom(prev => Math.min(prev + 1, maxZoom))

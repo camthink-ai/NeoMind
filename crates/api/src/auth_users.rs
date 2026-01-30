@@ -181,6 +181,9 @@ pub struct AuthUserState {
 
 impl AuthUserState {
     /// Create a new auth state with user management.
+    ///
+    /// Note: This no longer creates a default admin user automatically.
+    /// The setup wizard should be used to create the first admin account.
     pub fn new() -> Self {
         let db_path = "data/users.redb";
         let jwt_secret = std::env::var("NEOTALK_JWT_SECRET").unwrap_or_else(|_| {
@@ -189,31 +192,22 @@ impl AuthUserState {
         });
 
         // Load users from database
+        // If no users exist, the setup wizard will handle creating the first admin
         let users = Self::load_users_from_db(db_path).unwrap_or_default();
 
-        // Create default admin user if no users exist
-        let users = if users.is_empty() {
+        if users.is_empty() {
             info!(
                 category = "auth",
-                "No users found, creating default admin user"
+                "No users found. Setup wizard will be shown to create admin account."
             );
-            let default_admin = User {
-                id: uuid::Uuid::new_v4().to_string(),
-                username: "admin".to_string(),
-                password_hash: Self::hash_password("admin123"), // Default password
-                role: UserRole::Admin,
-                created_at: chrono::Utc::now().timestamp(),
-                last_login: None,
-                active: true,
-            };
-            let mut map = HashMap::new();
-            map.insert(default_admin.username.clone(), default_admin.clone());
-            Self::save_user_to_db(db_path, &default_admin);
-            Self::log_default_admin(&default_admin);
-            map
         } else {
-            users
-        };
+            info!(
+                category = "auth",
+                count = users.len(),
+                "Loaded {} user(s) from database",
+                users.len()
+            );
+        }
 
         Self {
             users: Arc::new(RwLock::new(users)),
@@ -224,13 +218,14 @@ impl AuthUserState {
         }
     }
 
-    /// Log default admin credentials.
-    fn log_default_admin(_user: &User) {
-        crate::startup::log_startup().admin_user_banner("admin", "admin123");
-    }
-
     /// Load users from database.
+    /// Returns empty HashMap if database doesn't exist yet (first run).
     fn load_users_from_db(path: &str) -> Result<HashMap<String, User>, Box<dyn std::error::Error>> {
+        // Check if file exists first
+        if !std::path::Path::new(path).exists() {
+            return Ok(HashMap::new());
+        }
+
         let db = Database::open(path)?;
         let read_txn = db.begin_read()?;
 
@@ -256,24 +251,31 @@ impl AuthUserState {
         Ok(users)
     }
 
-    /// Save user to database.
-    fn save_user_to_db(path: &str, user: &User) {
+    /// Save user to database synchronously.
+    /// This ensures data is persisted before returning.
+    fn save_user_to_db(path: &str, user: &User) -> Result<(), Box<dyn std::error::Error>> {
         let username = user.username.clone();
-        let user_bytes = bincode::serialize(user).unwrap_or_default();
-        let path = path.to_string(); // Convert to owned String for 'static
+        let user_bytes = bincode::serialize(user)?;
 
-        std::thread::spawn(move || {
-            if let Ok(db) = Database::open(&path)
-                && let Ok(write_txn) = db.begin_write() {
-                    let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
-                        let mut table = write_txn.open_table(USERS_TABLE)?;
-                        table.insert(username.as_str(), user_bytes.as_slice())?;
-                        drop(table); // Drop table before committing
-                        write_txn.commit()?;
-                        Ok(())
-                    })();
-                }
-        });
+        // Ensure parent directory exists
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Open or create database (redb requires create() for new files)
+        let db = if std::path::Path::new(path).exists() {
+            Database::open(path)?
+        } else {
+            Database::create(path)?
+        };
+
+        let write_txn = db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(USERS_TABLE)?;
+            table.insert(username.as_str(), user_bytes.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     /// Hash password using bcrypt (secure for production use).
@@ -418,8 +420,15 @@ impl AuthUserState {
             active: true,
         };
 
-        // Save to database and memory
-        Self::save_user_to_db(self.db_path, &user);
+        // Save to database synchronously (ensures persistence before returning)
+        if let Err(e) = Self::save_user_to_db(self.db_path, &user) {
+            error!(category = "auth", username = username, error = %e, "Failed to save user to database");
+            return Err(AuthError::DatabaseError(
+                format!("Failed to save user: {}", e),
+            ));
+        }
+
+        // Add to in-memory cache after successful DB save
         let mut users = self.users.write().await;
         users.insert(username.to_string(), user.clone());
         drop(users);
@@ -580,6 +589,7 @@ pub enum AuthError {
     InvalidToken(String),
     ExpiredToken,
     InvalidInput(String),
+    DatabaseError(String),
 }
 
 impl std::fmt::Display for AuthError {
@@ -592,6 +602,7 @@ impl std::fmt::Display for AuthError {
             AuthError::InvalidToken(msg) => write!(f, "Invalid token: {}", msg),
             AuthError::ExpiredToken => write!(f, "Token has expired"),
             AuthError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
+            AuthError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
         }
     }
 }
@@ -613,6 +624,7 @@ impl IntoResponse for AuthError {
             AuthError::InvalidToken(msg) => (HttpStatusCode::UNAUTHORIZED, msg),
             AuthError::ExpiredToken => (HttpStatusCode::UNAUTHORIZED, "Token has expired".into()),
             AuthError::InvalidInput(msg) => (HttpStatusCode::BAD_REQUEST, msg),
+            AuthError::DatabaseError(msg) => (HttpStatusCode::INTERNAL_SERVER_ERROR, msg),
         };
 
         let body = serde_json::json!({

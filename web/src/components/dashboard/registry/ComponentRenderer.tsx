@@ -192,6 +192,11 @@ export default function ComponentRenderer({
     style,
   }
 
+  // Special handling for agent-monitor-widget: extract agentId from dataSource
+  if (component.type === 'agent-monitor-widget' && dataSource?.agentId) {
+    (props as any).agentId = dataSource.agentId
+  }
+
   return (
     <Suspense fallback={<ComponentSkeleton meta={meta} className={className} />}>
       <Component key={component.id} {...props} />

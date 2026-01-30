@@ -110,7 +110,12 @@ impl PromptBuilder {
 - **设备管理**: 查询状态、控制设备、分析遥测数据
 - **自动化规则**: 创建、修改、启用/禁用规则
 - **工作流管理**: 触发、监控、分析工作流执行
-- **系统诊断**: 检测异常、提供解决方案、系统健康检查"#;
+- **系统诊断**: 检测异常、提供解决方案、系统健康检查
+
+### 重要原则
+1. **不要编造数据**: 当用户询问系统状态、执行历史、数据趋势时，**必须调用工具获取真实数据**
+2. **时间感知**: 当前系统时间是 {{CURRENT_TIME}}，查询历史数据时需要正确计算时间范围
+3. **趋势分析**: 分析数据变化时，需要查询时间范围内的多个数据点，不能只看当前值"#;
 
     const VISION_CAPABILITIES_ZH: &str = r#"## 图像理解能力
 
@@ -134,6 +139,46 @@ impl PromptBuilder {
 5. **主动确认**: 执行控制类操作前，告知用户即将发生什么
 6. **批量处理**: 相似操作尽量合并执行，提高效率
 7. **错误恢复**: 操作失败时提供具体的错误和备选方案"#;
+
+    const AGENT_CREATION_GUIDE_ZH: &str = r#"## AI Agent 创建指南
+
+当用户要创建 Agent 时，需要理解以下业务概念：
+
+### Agent 角色类型
+1. **监控型 (monitor)**: 持续监控设备状态和数据，检测异常并告警
+2. **执行型 (executor)**: 根据条件自动执行设备控制操作
+3. **分析型 (analyst)**: 分析历史数据，识别趋势和模式
+
+### Agent 资源配置
+创建 Agent 时需要指定：
+- **device_ids**: 要监控的设备 ID 列表（如：["4t1vcbefzk", "2A3C39"]）
+- **metrics**: 要监控的指标（如：temperature, humidity, battery）
+- **commands**: 可执行的控制命令（如：turn_on, turn_off, set_value）
+
+### 执行策略 (schedule)
+- **interval**: 按固定间隔执行（如：每5分钟 = 300秒）
+- **cron**: 使用 Cron 表达式（如："0 8 * * *" = 每天8点）
+- **event**: 基于事件触发（如：设备上线、数据变化）
+
+### 创建流程建议
+1. 先用 list_devices 查看可用设备
+2. 用 get_device_data 查看设备支持的指标
+3. 在 description 中清晰描述：
+   - 监控哪个设备
+   - 检查什么条件（如：温度 > 30）
+   - 触发什么动作（如：发送告警、执行命令）
+   - 执行频率（如：每5分钟）
+
+### 示例描述
+```
+监控设备 ne101 (ID: 4t1vcbefzk) 的温度指标，
+每5分钟检查一次，如果温度超过30度就发送告警通知
+```
+
+```
+每天早上8点分析所有NE101设备的电池状态，
+生成报告并识别电池电量低于20%的设备
+```"#;
 
     const TOOL_STRATEGY_ZH: &str = r#"## 工具使用策略
 
@@ -277,6 +322,46 @@ When users upload images:
 6. **Batch Processing**: Combine similar operations for efficiency
 7. **Error Recovery**: Provide specific errors and alternative solutions on failure"#;
 
+    const AGENT_CREATION_GUIDE_EN: &str = r#"## AI Agent Creation Guide
+
+When users want to create an Agent, understand these business concepts:
+
+### Agent Role Types
+1. **Monitor**: Continuously monitor device status and data, detect anomalies and send alerts
+2. **Executor**: Automatically execute device control operations based on conditions
+3. **Analyst**: Analyze historical data, identify trends and patterns
+
+### Agent Resource Configuration
+When creating an Agent, specify:
+- **device_ids**: List of device IDs to monitor (e.g., ["4t1vcbefzk", "2A3C39"])
+- **metrics**: Metrics to monitor (e.g., temperature, humidity, battery)
+- **commands**: Available control commands (e.g., turn_on, turn_off, set_value)
+
+### Execution Strategy (schedule)
+- **interval**: Execute at fixed intervals (e.g., every 5 minutes = 300 seconds)
+- **cron**: Use Cron expression (e.g., "0 8 * * *" = daily at 8 AM)
+- **event**: Triggered by events (e.g., device online, data change)
+
+### Creation Workflow
+1. First use list_devices to see available devices
+2. Use get_device_data to see device metrics
+3. In the description, clearly specify:
+   - Which device to monitor
+   - What conditions to check (e.g., temperature > 30)
+   - What action to trigger (e.g., send alert, execute command)
+   - Execution frequency (e.g., every 5 minutes)
+
+### Example Descriptions
+```
+Monitor temperature for device ne101 (ID: 4t1vcbefzk),
+check every 5 minutes, send alert if temperature exceeds 30 degrees
+```
+
+```
+Every day at 8 AM, analyze battery status of all NE101 devices,
+generate report and identify devices with battery below 20%
+```"#;
+
     const TOOL_STRATEGY_EN: &str = r#"## Tool Usage Strategy
 
 ### Execution Order
@@ -393,6 +478,10 @@ The thinking process should be **internal reasoning** - don't over-explain basic
         prompt.push_str(Self::PRINCIPLES_ZH);
         prompt.push_str("\n\n");
 
+        // Agent creation guide
+        prompt.push_str(Self::AGENT_CREATION_GUIDE_ZH);
+        prompt.push_str("\n\n");
+
         // Tool usage strategy
         prompt.push_str(Self::TOOL_STRATEGY_ZH);
         prompt.push_str("\n\n");
@@ -429,6 +518,10 @@ The thinking process should be **internal reasoning** - don't over-explain basic
         }
 
         prompt.push_str(Self::PRINCIPLES_EN);
+        prompt.push_str("\n\n");
+
+        // Agent creation guide
+        prompt.push_str(Self::AGENT_CREATION_GUIDE_EN);
         prompt.push_str("\n\n");
         prompt.push_str(Self::TOOL_STRATEGY_EN);
         prompt.push_str("\n\n");

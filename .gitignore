@@ -23,7 +23,31 @@ web/.vite/
 web/build/
 web/package-lock.json
 web/yarn.lock
+web/pnpm-lock.yaml
 web/.pnpm-store
+web/.turbo/
+web/*.log
+
+# Root level node files (accidental npm runs in wrong directory)
+node_modules/
+package-lock.json
+package.json
+
+# =============================================================================
+# Tauri (Desktop App)
+# =============================================================================
+web/src-tauri/target/
+web/src-tauri/Cargo.lock
+web/src-tauri/WixTools/
+web/src-tauri/icons/NeoTalk.iconset/
+web/src-tauri/gen/
+
+# =============================================================================
+# Playwright Testing
+# =============================================================================
+web/test-results/
+web/playwright-report/
+web/playwright/.cache/
 
 # =============================================================================
 # IDE & Editor
@@ -62,6 +86,8 @@ logs/
 *.bak
 *.backup
 :memory:
+-L
+-o
 
 # =============================================================================
 # Environment & Secrets

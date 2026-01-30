@@ -80,6 +80,47 @@ function getTypeConfig(t: (key: string) => string) {
   } as const
 }
 
+// Helper function to find metric value with fuzzy matching (handles nested paths like 'values.image')
+function findMetricValue(currentValues: Record<string, unknown> | undefined, metricId: string): unknown {
+  if (!currentValues) return undefined
+
+  // 1. Try exact match
+  if (metricId in currentValues) {
+    return currentValues[metricId]
+  }
+
+  // 2. Try case-insensitive match
+  const lowerMetricId = metricId.toLowerCase()
+  for (const key of Object.keys(currentValues)) {
+    if (key.toLowerCase() === lowerMetricId) {
+      return currentValues[key]
+    }
+  }
+
+  // 3. Try nested path like "values.image"
+  const parts = metricId.split('.')
+  let nested: any = currentValues
+  for (const part of parts) {
+    if (nested && typeof nested === 'object' && part in nested) {
+      nested = nested[part]
+    } else {
+      // Try case-insensitive nested access
+      let found = false
+      for (const key of Object.keys(nested || {})) {
+        if (key.toLowerCase() === part.toLowerCase()) {
+          nested = nested[key]
+          found = true
+          break
+        }
+      }
+      if (!found) {
+        return undefined
+      }
+    }
+  }
+  return nested
+}
+
 export function MapEditorDialog({
   open,
   onOpenChange,
@@ -110,8 +151,6 @@ export function MapEditorDialog({
 
   // Convert bindings to map markers for preview
   const convertToMarkers = useCallback((): MapMarker[] => {
-    console.log('convertToMarkers called, bindings:', bindings)
-
     // Get devices from store for metric values and names
     const storeDevices = devices
     const getDeviceName = (deviceId: string) => {
@@ -135,7 +174,6 @@ export function MapEditorDialog({
       const lng = binding.position === 'auto' || !binding.position
         ? center.lng
         : binding.position.lng
-      console.log(`Binding ${binding.name}: lat=${lat}, lng=${lng}, position=`, binding.position)
 
       // Get the device for this binding
       const device = ds?.deviceId ? storeDevices.find(d => d.id === ds.deviceId || d.device_id === ds.deviceId) : undefined
@@ -145,7 +183,7 @@ export function MapEditorDialog({
       if (binding.type === 'metric' && ds?.deviceId) {
         const metricKey = ds.metricId || ds.property
         if (device?.current_values && metricKey) {
-          const rawValue = device.current_values[metricKey]
+          const rawValue = findMetricValue(device.current_values, metricKey)
           if (rawValue !== undefined && rawValue !== null) {
             metricValue = typeof rawValue === 'number'
               ? rawValue.toFixed(1)
@@ -170,12 +208,10 @@ export function MapEditorDialog({
         commandName: binding.type === 'command' ? ds?.command : undefined,
       }
     })
-    console.log('Generated markers:', markers)
     return markers
   }, [bindings, center, devices])
 
   const mapMarkers = convertToMarkers()
-  console.log('mapMarkers prop:', mapMarkers)
 
   // Handle removing a binding
   const handleRemoveBinding = useCallback((id: string) => {
@@ -187,7 +223,6 @@ export function MapEditorDialog({
 
   // Handle updating binding position from map click
   const handleMapClick = useCallback((lat: number, lng: number) => {
-    console.log('MapEditor handleMapClick:', { lat, lng, selectedBinding })
     if (selectedBinding) {
       setBindings(prev => prev.map(b =>
         b.id === selectedBinding
