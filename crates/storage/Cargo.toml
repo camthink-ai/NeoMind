@@ -16,6 +16,9 @@ tracing = { workspace = true }
 # New database: redb
 redb = "2.1"
 
+# LRU cache for hot data
+lru = "0.12"
+
 # Utils
 bincode = "1.3"
 uuid = { workspace = true, features = ["v4", "serde"] }

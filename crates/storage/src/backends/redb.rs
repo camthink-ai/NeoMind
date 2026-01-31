@@ -5,13 +5,18 @@
 use edge_ai_core::storage::{Result as CoreResult, StorageBackend, StorageError};
 use redb::{Database, ReadableTable, TableDefinition};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
+use std::num::NonZeroUsize;
+use lru::LruCache;
 
 type Result<T> = CoreResult<T>;
 
 // Single unified table for all data - using namespaced keys
 // Format: "table_name:key"
 const UNIFIED_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("unified_storage");
+
+// Default cache capacity - number of entries
+const DEFAULT_CACHE_CAPACITY: usize = 1024;
 
 /// Configuration for RedbBackend.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -22,10 +27,18 @@ pub struct RedbBackendConfig {
     /// Create parent directories if they don't exist.
     #[serde(default = "default_create_dirs")]
     pub create_dirs: bool,
+
+    /// LRU cache capacity (number of entries). 0 to disable caching.
+    #[serde(default = "default_cache_capacity")]
+    pub cache_capacity: usize,
 }
 
 fn default_create_dirs() -> bool {
     true
+}
+
+fn default_cache_capacity() -> usize {
+    DEFAULT_CACHE_CAPACITY
 }
 
 impl RedbBackendConfig {
@@ -34,6 +47,7 @@ impl RedbBackendConfig {
         Self {
             path: path.into(),
             create_dirs: true,
+            cache_capacity: DEFAULT_CACHE_CAPACITY,
         }
     }
 
@@ -43,21 +57,34 @@ impl RedbBackendConfig {
         self
     }
 
+    /// Set the cache capacity.
+    pub fn with_cache_capacity(mut self, capacity: usize) -> Self {
+        self.cache_capacity = capacity;
+        self
+    }
+
     /// Create a config for in-memory database.
     pub fn memory() -> Self {
         Self {
             path: ":memory:".to_string(),
             create_dirs: false,
+            cache_capacity: 512, // Smaller cache for in-memory
         }
     }
 }
 
 /// Create a namespaced key for the unified table.
+/// Optimized with pre-allocated capacity to reduce reallocations.
 fn make_key(table: &str, key: &str) -> String {
-    format!("{}:{}", table, key)
+    // Pre-allocate exact capacity needed: table + ':' + key
+    let mut result = String::with_capacity(table.len() + key.len() + 1);
+    result.push_str(table);
+    result.push(':');
+    result.push_str(key);
+    result
 }
 
-/// redb-based persistent storage backend.
+/// redb-based persistent storage backend with optional LRU cache.
 pub struct RedbBackend {
     /// redb database instance.
     db: Arc<Database>,
@@ -65,6 +92,9 @@ pub struct RedbBackend {
     path: String,
     /// Actual file path for temporary databases (for cleanup).
     temp_path: Option<PathBuf>,
+    /// LRU cache for frequently accessed keys (namespaced).
+    /// Uses std::sync::RwLock for compatibility with sync trait methods.
+    cache: Arc<StdRwLock<LruCache<String, Vec<u8>>>>,
 }
 
 impl RedbBackend {
@@ -94,10 +124,20 @@ impl RedbBackend {
             (db, None)
         };
 
+        // Initialize LRU cache with configured capacity
+        let cache = if config.cache_capacity > 0 {
+            LruCache::new(NonZeroUsize::new(config.cache_capacity).expect("capacity > 0"))
+        } else {
+            LruCache::new(NonZeroUsize::new(1).expect("1 > 0"))
+        };
+
+        let cache = Arc::new(StdRwLock::new(cache));
+
         Ok(Self {
             db: Arc::new(db),
             path: config.path,
             temp_path,
+            cache,
         })
     }
 
@@ -126,6 +166,12 @@ impl RedbBackend {
 impl StorageBackend for RedbBackend {
     fn write(&self, table: &str, key: &str, value: &[u8]) -> Result<()> {
         let namespaced = make_key(table, key);
+
+        // Update cache (write-through)
+        if let Ok(mut cache) = self.cache.write() {
+            cache.put(namespaced.clone(), value.to_vec());
+        }
+
         let txn = self
             .db
             .begin_write()
@@ -144,6 +190,15 @@ impl StorageBackend for RedbBackend {
 
     fn read(&self, table: &str, key: &str) -> Result<Option<Vec<u8>>> {
         let namespaced = make_key(table, key);
+
+        // Try cache first - use write lock since get() updates LRU position
+        if let Ok(mut cache) = self.cache.write() {
+            if let Some(cached) = cache.get(&namespaced) {
+                return Ok(Some(cached.clone()));
+            }
+        }
+
+        // Cache miss - read from database
         let txn = self
             .db
             .begin_read()
@@ -152,17 +207,32 @@ impl StorageBackend for RedbBackend {
             .open_table(UNIFIED_TABLE)
             .map_err(|e| StorageError::Backend(e.to_string()))?;
 
-        match t
+        let result = match t
             .get(&*namespaced)
             .map_err(|e| StorageError::Backend(e.to_string()))?
         {
-            Some(value) => Ok(Some(value.value().to_vec())),
+            Some(value) => {
+                let data = value.value().to_vec();
+                // Populate cache for future reads
+                if let Ok(mut cache) = self.cache.write() {
+                    cache.put(namespaced, data.clone());
+                }
+                Ok(Some(data))
+            }
             None => Ok(None),
-        }
+        };
+
+        result
     }
 
     fn delete(&self, table: &str, key: &str) -> Result<bool> {
         let namespaced = make_key(table, key);
+
+        // Remove from cache
+        if let Ok(mut cache) = self.cache.write() {
+            cache.pop(&namespaced);
+        }
+
         let txn = self
             .db
             .begin_write()

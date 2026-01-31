@@ -1741,14 +1741,15 @@ export interface ImportantMemory {
 }
 
 /**
- * Learned pattern
+ * Learned pattern from historical data
  */
 export interface LearnedPattern {
   id: string
   pattern_type: string
   description: string
   confidence: number
-  learned_at: string
+  learned_at: number  // Unix timestamp
+  data: Record<string, unknown>
 }
 
 /**
@@ -2090,18 +2091,6 @@ export interface NotificationSent {
   message: string
   sent_at: number
   success: boolean
-}
-
-/**
- * A learned pattern from historical data
- */
-export interface LearnedPattern {
-  id: string
-  pattern_type: string
-  description: string
-  confidence: number
-  learned_at: number
-  data: Record<string, unknown>
 }
 
 // ============================================================================

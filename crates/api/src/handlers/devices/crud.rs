@@ -311,7 +311,10 @@ pub async fn get_device_current_handler(
         let is_virtual = transform_namespaces.iter().any(|p| metric_name.starts_with(p));
 
         let (display_name, unit, data_type_str, is_virtual_flag) = if is_template {
-            let metric = template.metrics.iter().find(|m| m.name == metric_name).unwrap();
+            // Safe: is_template check above guarantees the metric exists
+            let metric = template.metrics.iter()
+                .find(|m| m.name == metric_name)
+                .expect("metric should exist in template after is_template check");
             let data_type_str = match metric.data_type {
                 edge_ai_devices::mdl::MetricDataType::Integer => "integer",
                 edge_ai_devices::mdl::MetricDataType::Float => "float",

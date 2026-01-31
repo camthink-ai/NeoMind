@@ -144,7 +144,10 @@ export function AgentMemoryDialog({
                     <div className="space-y-2">
                       {memory.learned_patterns.map((pattern, idx) => (
                         <div key={idx} className="text-sm p-2 bg-muted rounded">
-                          {pattern}
+                          <div className="font-medium">{pattern.description}</div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Confidence: {(pattern.confidence * 100).toFixed(0)}%
+                          </div>
                         </div>
                       ))}
                     </div>

@@ -140,11 +140,12 @@
     "clearMemoryConfirm": "Are you sure you want to clear this agent's memory? This action cannot be undone.",
     "shortTerm": "Short-Term Memory",
     "longTerm": "Long-Term Memory",
+    "working": "Working Memory",
+    "decision": "Decision",
     "decisions": "Decisions",
     "situationAnalysis": "Situation Analysis",
     "dataCollected": "Data Collected",
     "reasoningSteps": "Reasoning Steps",
-    "decisions": "Decisions Made",
     "confidence": "Confidence",
     "conclusion": "Conclusion",
     "generatedReport": "Generated Report",
@@ -163,7 +164,8 @@
     "value": "Value",
     "target": "Target",
     "channel": "Channel",
-    "recipient": "Recipient"
+    "recipient": "Recipient",
+    "lastArchived": "Last archived"
   },
   "userMessages": {
     "empty": "No messages yet",

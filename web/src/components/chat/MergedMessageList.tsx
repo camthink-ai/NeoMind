@@ -211,9 +211,9 @@ export function MergedMessageList({
               {/* Loading indicator */}
               {!streamingContent && !streamingThinking && streamingToolCalls.length === 0 && (
                 <div className="flex items-center gap-1">
-                  <span key="dot-1" className="w-2 h-2 rounded-full bg-current animate-bounce" style={{ animationDelay: "0ms" }} />
-                  <span key="dot-2" className="w-2 h-2 rounded-full bg-current animate-bounce" style={{ animationDelay: "150ms" }} />
-                  <span key="dot-3" className="w-2 h-2 rounded-full bg-current animate-bounce" style={{ animationDelay: "300ms" }} />
+                  <span key="dot-1" className="w-2 h-2 rounded-full bg-current animate-bounce delay-0" />
+                  <span key="dot-2" className="w-2 h-2 rounded-full bg-current animate-bounce delay-150" />
+                  <span key="dot-3" className="w-2 h-2 rounded-full bg-current animate-bounce delay-300" />
                 </div>
               )}
             </div>

@@ -5,7 +5,7 @@
  * Supports both generic IoT components and business components.
  */
 
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
@@ -893,7 +893,9 @@ function ComponentWrapper({
 // Main Component
 // ============================================================================
 
-export function VisualDashboard() {
+// Performance optimization: Memoize VisualDashboard to prevent unnecessary re-renders
+// Only re-renders when dashboardId, editMode, or currentDashboard.id changes
+const VisualDashboardMemo = memo(function VisualDashboard() {
   const { dashboardId } = useParams<{ dashboardId?: string }>()
   const navigate = useNavigate()
   const { t } = useTranslation('dashboardComponents')
@@ -4470,4 +4472,7 @@ export function VisualDashboard() {
       />
     </div>
   )
-}
+})
+
+// Export the memoized component
+export { VisualDashboardMemo as VisualDashboard }

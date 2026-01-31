@@ -338,6 +338,23 @@ fn default_long_term_limit() -> usize { 50 }
 /// Default minimum importance score for long-term retention.
 fn default_min_importance() -> f32 { 0.3 }
 
+/// Normalize agent memory limits for backward compatibility.
+///
+/// Agents created before proper memory limits were implemented may have
+/// zero values for these limits. This function ensures they are set to
+/// sensible defaults.
+fn normalize_agent_memory_limits(agent: &mut AiAgent) {
+    if agent.memory.short_term.max_summaries == 0 {
+        agent.memory.short_term.max_summaries = default_short_term_limit();
+    }
+    if agent.memory.long_term.max_memories == 0 {
+        agent.memory.long_term.max_memories = default_long_term_limit();
+    }
+    if agent.memory.long_term.min_importance == 0.0 {
+        agent.memory.long_term.min_importance = default_min_importance();
+    }
+}
+
 impl Default for AgentMemory {
     fn default() -> Self {
         Self {
@@ -940,8 +957,12 @@ impl AgentStore {
 
         match table.get(id)? {
             Some(bytes) => {
-                let agent: AiAgent = serde_json::from_slice(bytes.value())
+                let mut agent: AiAgent = serde_json::from_slice(bytes.value())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
+
+                // Normalize memory limits for backward compatibility
+                normalize_agent_memory_limits(&mut agent);
+
                 Ok(Some(agent))
             }
             None => Ok(None),
@@ -957,8 +978,11 @@ impl AgentStore {
 
         for item in table.iter()? {
             let (_id, bytes) = item?;
-            let agent: AiAgent = serde_json::from_slice(bytes.value())
+            let mut agent: AiAgent = serde_json::from_slice(bytes.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?;
+
+            // Normalize memory limits for backward compatibility
+            normalize_agent_memory_limits(&mut agent);
 
             if self.matches_agent_filter(&agent, &filter) {
                 agents.push(agent);
@@ -1057,11 +1081,26 @@ impl AgentStore {
     }
 
     /// Update agent memory after execution.
+    /// First reads the agent, then updates both tables in a single write transaction.
     pub async fn update_agent_memory(
         &self,
         id: &str,
         memory: AgentMemory,
     ) -> Result<(), Error> {
+        // First, read the current agent data (before starting write transaction)
+        let agent = {
+            let read_txn = self.db.begin_read()?;
+            let table = read_txn.open_table(AGENTS_TABLE)?;
+            match table.get(id)? {
+                Some(bytes) => {
+                    Some(serde_json::from_slice::<AiAgent>(bytes.value())
+                        .map_err(|e| Error::Serialization(e.to_string()))?)
+                }
+                None => None,
+            }
+        };
+
+        // Now start write transaction and update both tables
         let write_txn = self.db.begin_write()?;
 
         // Update memory in dedicated table
@@ -1073,23 +1112,14 @@ impl AgentStore {
         }
 
         // Also update the agent record
-        {
-            let read_txn = self.db.begin_read()?;
-            let table = read_txn.open_table(AGENTS_TABLE)?;
+        if let Some(mut ag) = agent {
+            ag.memory = memory;
+            ag.updated_at = chrono::Utc::now().timestamp();
 
-            if let Some(bytes) = table.get(id)? {
-                let mut agent: AiAgent = serde_json::from_slice(bytes.value())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-                agent.memory = memory.clone();
-                agent.updated_at = chrono::Utc::now().timestamp();
-                drop(table);
-                drop(read_txn);
-
-                let value = serde_json::to_vec(&agent)
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-                let mut agent_table = write_txn.open_table(AGENTS_TABLE)?;
-                agent_table.insert(id, value.as_slice())?;
-            }
+            let value = serde_json::to_vec(&ag)
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            let mut agent_table = write_txn.open_table(AGENTS_TABLE)?;
+            agent_table.insert(id, value.as_slice())?;
         }
 
         write_txn.commit()?;
@@ -1097,7 +1127,8 @@ impl AgentStore {
     }
 
     /// Update agent stats after execution.
-    /// Merges with latest memory from AGENT_MEMORY_TABLE to avoid overwriting.
+    /// Reads latest memory from AGENT_MEMORY_TABLE and only writes to AGENTS_TABLE.
+    /// This avoids overwriting memory data that was just written by update_agent_memory.
     pub async fn update_agent_stats(
         &self,
         id: &str,
@@ -1110,7 +1141,7 @@ impl AgentStore {
         let table = read_txn.open_table(AGENTS_TABLE)?;
         let memory_table = read_txn.open_table(AGENT_MEMORY_TABLE)?;
 
-        let (mut agent, latest_memory) = match table.get(id)? {
+        let agent = match table.get(id)? {
             Some(bytes) => {
                 let mut ag: AiAgent = serde_json::from_slice(bytes.value())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
@@ -1123,6 +1154,11 @@ impl AgentStore {
                     }
                     None => None,
                 };
+
+                // Use latest memory if available (preserves short_term, long_term, etc.)
+                if let Some(ref mem) = latest_mem {
+                    ag.memory = mem.clone();
+                }
 
                 // Update stats
                 ag.stats.total_executions += 1;
@@ -1138,12 +1174,7 @@ impl AgentStore {
                 ag.last_execution_at = Some(chrono::Utc::now().timestamp());
                 ag.updated_at = chrono::Utc::now().timestamp();
 
-                // Use latest memory if available (preserves short_term, long_term, etc.)
-                if let Some(ref mem) = latest_mem {
-                    ag.memory = mem.clone();
-                }
-
-                (ag, latest_mem)
+                ag
             }
             None => return Ok(()),
         };
@@ -1151,6 +1182,8 @@ impl AgentStore {
         drop(memory_table);
         drop(read_txn);
 
+        // Only write to AGENTS_TABLE, not to AGENT_MEMORY_TABLE
+        // (update_agent_memory handles writing to AGENT_MEMORY_TABLE)
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(AGENTS_TABLE)?;
@@ -1159,12 +1192,6 @@ impl AgentStore {
                 serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
 
             table.insert(id, value.as_slice())?;
-
-            // Update memory table as well to keep in sync
-            let memory_value = serde_json::to_vec(&agent.memory)
-                .map_err(|e| Error::Serialization(e.to_string()))?;
-            let mut mem_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            mem_table.insert(id, memory_value.as_slice())?;
         }
         write_txn.commit()?;
         Ok(())

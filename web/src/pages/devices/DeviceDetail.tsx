@@ -500,7 +500,7 @@ export function DeviceDetail({
                                   setImagePreviewOpen(true)
                                 }}
                               >
-                                <img src={String(point.value)} alt="metric" className="h-12 w-12 object-cover rounded-lg" />
+                                <img src={String(point.value)} alt="metric" className="h-12 w-12 object-cover rounded-lg" loading="lazy" />
                               </div>
                             ) : isComplexValue || isLongString ? (
                               <details className="group">

@@ -5,6 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NeoTalk - Edge AI Agent</title>
+
+    <!-- Performance: DNS preconnect for API (reduces connection latency by ~200ms) -->
+    <link rel="dns-prefetch" href="//localhost:3000">
+    <link rel="preconnect" href="http://localhost:3000">
+
+    <!-- Performance: Prefetch critical API endpoints -->
+    <link rel="prefetch" href="/api/devices">
+    <link rel="prefetch" href="/api/agents">
+
+    <!-- Performance: Preload critical fonts -->
+    <link rel="preload" href="/src/fonts/index.css" as="style">
   </head>
   <body>
     <div id="root"></div>

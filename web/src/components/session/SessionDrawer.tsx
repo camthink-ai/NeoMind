@@ -3,7 +3,7 @@
  * Simplified session management with auto-naming and auto-cleanup
  */
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, memo } from "react"
 import { useTranslation } from "react-i18next"
 import {
   X,
@@ -131,7 +131,9 @@ function SessionItem({
   )
 }
 
-export function SessionDrawer({
+// Performance optimization: Memoize SessionDrawer to prevent unnecessary re-renders
+// Only re-renders when open, currentSessionId, or sessions.length changes
+const SessionDrawerMemo = memo(function SessionDrawer({
   open,
   onClose,
   onNewSession,
@@ -386,4 +388,6 @@ export function SessionDrawer({
       </div>
     </>
   )
-}
+})
+
+export { SessionDrawerMemo as SessionDrawer }

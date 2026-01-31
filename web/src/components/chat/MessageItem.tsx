@@ -113,6 +113,7 @@ function MessageImages({ images }: { images: any[] }) {
           src={img.data}
           alt={`Image ${idx + 1}`}
           className="rounded-lg max-w-full max-h-64 object-cover"
+          loading="lazy"
         />
       ))}
     </div>

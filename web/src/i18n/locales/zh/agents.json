@@ -140,11 +140,12 @@
     "clearMemoryConfirm": "确定要清除此智能体的记忆吗？此操作无法撤销。",
     "shortTerm": "短期记忆",
     "longTerm": "长期记忆",
+    "working": "工作记忆",
     "decisions": "决策",
     "situationAnalysis": "情况分析",
     "dataCollected": "收集的数据",
     "reasoningSteps": "推理步骤",
-    "decisions": "做出的决策",
+    "decision": "决策",
     "confidence": "置信度",
     "conclusion": "结论",
     "generatedReport": "生成的报告",
@@ -163,7 +164,8 @@
     "value": "值",
     "target": "目标",
     "channel": "渠道",
-    "recipient": "接收者"
+    "recipient": "接收者",
+    "lastArchived": "上次归档"
   },
   "userMessages": {
     "empty": "暂无消息",

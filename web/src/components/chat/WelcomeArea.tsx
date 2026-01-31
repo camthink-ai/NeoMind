@@ -161,7 +161,7 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
 
         {/* Status cards */}
         {stats && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 animate-fade-in-up" style={{ animationDelay: "100ms" }}>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 animate-fade-in-up delay-100">
             <Link
               to="/devices"
               className="p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors text-left group"
@@ -227,7 +227,7 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
 
         {/* AI Suggestions */}
         {suggestions.length > 0 && (
-          <div className="space-y-2 animate-fade-in-up" style={{ animationDelay: "200ms" }}>
+          <div className="space-y-2 animate-fade-in-up delay-200">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Lightbulb className="h-4 w-4" />
               <span>{t("welcome.aiSuggestion")}</span>
@@ -253,7 +253,7 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
         )}
 
         {/* Prompt suggestions */}
-        <div className="space-y-3 animate-fade-in-up" style={{ animationDelay: "300ms" }}>
+        <div className="space-y-3 animate-fade-in-up delay-300">
           <p className="text-sm text-muted-foreground text-center">
             {t("welcome.suggestionPrompts.title")}
           </p>
@@ -271,7 +271,7 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
         </div>
 
         {/* Quick actions */}
-        <div className="flex justify-center gap-2 animate-fade-in-up" style={{ animationDelay: "400ms" }}>
+        <div className="flex justify-center gap-2 animate-fade-in-up delay-400">
           {quickActions.map((action) => {
             const Icon = action.icon
             return (

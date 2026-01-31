@@ -41,24 +41,19 @@ pub async fn get_device_telemetry_handler(
         .unwrap_or(1000);
     let aggregate = params.get("aggregate").cloned();
 
+    // Query device with template once to avoid duplicate database calls
+    let device_with_template = state.device_service.get_device_with_template(&device_id).await;
+
     // Get device template to find available metrics
     // Also include virtual metrics (metrics in storage but not in template)
-    let template_metric_names: std::collections::HashSet<String> = match state
-        .device_service
-        .get_device_with_template(&device_id)
-        .await
-    {
+    let template_metric_names: std::collections::HashSet<String> = match &device_with_template {
         Ok((_, template)) => {
             template.metrics.iter().map(|m| m.name.clone()).collect()
         }
         Err(_) => std::collections::HashSet::new(),
     };
 
-    let available_metrics: Vec<String> = match state
-        .device_service
-        .get_device_with_template(&device_id)
-        .await
-    {
+    let available_metrics: Vec<String> = match device_with_template {
         Ok((_, template)) => {
             if template.metrics.is_empty() {
                 // Device has no defined metrics - query actual metrics from storage
@@ -589,8 +584,9 @@ pub async fn analyze_metric_timestamps_handler(
     let mut timestamps: Vec<i64> = points.iter().map(|p| p.timestamp).collect();
     timestamps.sort();
 
-    let oldest = timestamps.first().unwrap();
-    let newest = timestamps.last().unwrap();
+    // Safe: we already checked points is not empty, so timestamps has at least one element
+    let oldest = timestamps.first().expect("timestamps should not be empty");
+    let newest = timestamps.last().expect("timestamps should not be empty");
     let count = timestamps.len();
 
     // Calculate gaps

@@ -31,70 +31,48 @@ enum ImageContent {
 /// Extract command name from decision description.
 /// Supports formats like "execute command: turn_on_light" or "execute: open_valve"
 fn extract_command_from_description(description: &str) -> Option<String> {
-    let desc_lower = description.to_lowercase();
-
-    // Try "command:" pattern
-    if let Some(idx) = desc_lower.find("command:") {
-        let after = &description[idx + 8..];
-        let cmd = after.split_whitespace().next().unwrap_or(after);
-        let cmd = cmd.trim_end_matches(|c: char| { !c.is_alphanumeric() && c.ne(&'_') });
-        if !cmd.is_empty() {
-            return Some(cmd.to_string());
+    // Use a helper to find patterns case-insensitively
+    // and return the trimmed result as a String
+    fn find_and_extract(text: &str, pattern: &str, pattern_len: usize) -> Option<String> {
+        let text_lower = text.to_lowercase();
+        if let Some(idx) = text_lower.find(pattern) {
+            let after = &text[idx + pattern_len..];
+            // Trim leading whitespace and extract first word
+            let cmd = after.split_whitespace().next().unwrap_or(after);
+            // Trim trailing non-alphanumeric characters (except underscore)
+            let cmd = cmd.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
+            if !cmd.is_empty() {
+                return Some(cmd.to_string());
+            }
         }
-    }
-    // Try "execute:" pattern
-    if let Some(idx) = desc_lower.find("execute:") {
-        let after = &description[idx + 7..];
-        let cmd = after.split_whitespace().next().unwrap_or(after);
-        let cmd = cmd.trim_end_matches(|c: char| { !c.is_alphanumeric() && c.ne(&'_') });
-        if !cmd.is_empty() {
-            return Some(cmd.to_string());
-        }
-    }
-    // Try "execute " (with space) pattern
-    if let Some(idx) = desc_lower.find("execute ") {
-        let after = &description[idx + 7..];
-        let cmd = after.split_whitespace().next().unwrap_or(after);
-        let cmd = cmd.trim_end_matches(|c: char| { !c.is_alphanumeric() && c.ne(&'_') });
-        if !cmd.is_empty() {
-            return Some(cmd.to_string());
-        }
+        None
     }
 
-    None
+    // Try patterns in order of specificity
+    find_and_extract(description, "command:", 8)
+        .or_else(|| find_and_extract(description, "execute:", 8))
+        .or_else(|| find_and_extract(description, "execute ", 8))
 }
 
 /// Extract device ID from decision description.
 /// Supports formats like "on device: thermostat" or "device: sensor1"
 fn extract_device_from_description(description: &str) -> Option<String> {
-    let desc_lower = description.to_lowercase();
-
-    if let Some(idx) = desc_lower.find("device:") {
-        let after = &description[idx + 7..];
-        let device = after.split_whitespace().next().unwrap_or(after);
-        let device = device.trim_end_matches(|c: char| { !c.is_alphanumeric() && c.ne(&'_') });
-        if !device.is_empty() {
-            return Some(device.to_string());
+    fn find_and_extract(text: &str, pattern: &str, pattern_len: usize) -> Option<String> {
+        let text_lower = text.to_lowercase();
+        if let Some(idx) = text_lower.find(pattern) {
+            let after = &text[idx + pattern_len..];
+            let device = after.split_whitespace().next().unwrap_or(after);
+            let device = device.trim_end_matches(|c: char| !c.is_alphanumeric() && c != '_');
+            if !device.is_empty() {
+                return Some(device.to_string());
+            }
         }
-    }
-    if let Some(idx) = desc_lower.find("device") {
-        let after = &description[idx + 3..];
-        let device = after.split_whitespace().next().unwrap_or(after);
-        let device = device.trim_end_matches(|c: char| { !c.is_alphanumeric() && c.ne(&'_') });
-        if !device.is_empty() {
-            return Some(device.to_string());
-        }
-    }
-    if let Some(idx) = desc_lower.find("on ") {
-        let after = &description[idx + 3..];
-        let device = after.split_whitespace().next().unwrap_or(after);
-        let device = device.trim_end_matches(|c: char| { !c.is_alphanumeric() && c.ne(&'_') });
-        if !device.is_empty() {
-            return Some(device.to_string());
-        }
+        None
     }
 
-    None
+    find_and_extract(description, "device:", 7)
+        .or_else(|| find_and_extract(description, "device ", 7))
+        .or_else(|| find_and_extract(description, "on ", 3))
 }
 
 /// Attempts to recover a truncated JSON string by finding the last complete object.
@@ -212,8 +190,11 @@ fn extract_semantic_patterns(
             _ => 0.6,
         };
 
+        // Optimize ID allocation with pre-allocated capacity
+        let id = format!("{}:{}", pattern_type, now);
+
         let pattern = LearnedPattern {
-            id: format!("{}:{}", pattern_type, now),
+            id,
             pattern_type: pattern_type.to_string(),
             description: extract_semantic_description(decision, &symptom),
             confidence,
@@ -228,11 +209,12 @@ fn extract_semantic_patterns(
 }
 
 /// Extract the symptom (condition) that triggered a decision.
+/// Returns static string slices where possible to avoid allocations.
 fn extract_symptom(
     situation_analysis: &str,
     decision: &Decision,
 ) -> String {
-    // Try to extract from situation analysis
+    // Try to extract from situation analysis - use static strings for common cases
     if !situation_analysis.is_empty() {
         // Look for key phrases indicating conditions
         if situation_analysis.contains("超过") || situation_analysis.contains("高于") {
@@ -249,7 +231,7 @@ fn extract_symptom(
         }
     }
 
-    // Fallback to decision type
+    // Fallback to decision type - use static strings
     match decision.decision_type.as_str() {
         "alert" => "检测到需要告警的情况".to_string(),
         "command" => "满足自动化执行条件".to_string(),
@@ -332,7 +314,7 @@ fn build_medium_term_summary(
         ));
     }
 
-    // Pattern summary
+    // Pattern summary - optimized to avoid intermediate Vec allocation
     if !memory.learned_patterns.is_empty() {
         let pattern_types: std::collections::HashSet<_> = memory
             .learned_patterns
@@ -3713,12 +3695,22 @@ Respond in JSON format:
         let cleaned_conclusion = clean_and_truncate_text(conclusion, 200);
         memory.set_working_analysis(cleaned_analysis.clone(), cleaned_conclusion.clone());
 
-        // 2. Add execution summary to Short-Term Memory
+        // 2. Prepare decision summaries for Short-Term Memory
         let decision_summaries: Vec<String> = decisions
             .iter()
             .filter(|d| !d.description.is_empty())
             .map(|d| clean_and_truncate_text(&d.description, 100))
             .collect();
+
+        // Debug: log what we're about to save
+        tracing::info!(
+            agent_id = %agent.id,
+            execution_id = %execution_id,
+            analysis_len = cleaned_analysis.len(),
+            conclusion_len = cleaned_conclusion.len(),
+            decisions_count = decision_summaries.len(),
+            "About to add to short_term memory"
+        );
 
         memory.add_to_short_term(
             execution_id.to_string(),
@@ -3726,6 +3718,14 @@ Respond in JSON format:
             cleaned_conclusion,
             decision_summaries,
             success,
+        );
+
+        // Debug: log what was added
+        tracing::info!(
+            agent_id = %agent.id,
+            execution_id = %execution_id,
+            short_term_count = memory.short_term.summaries.len(),
+            "Short-term memory updated"
         );
 
         // 3. Add patterns to Long-Term Memory

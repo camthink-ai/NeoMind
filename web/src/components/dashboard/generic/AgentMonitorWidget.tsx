@@ -37,6 +37,8 @@ import {
   Monitor,
   ChevronDown,
   ChevronUp,
+  TrendingUp,
+  Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -215,6 +217,323 @@ function normalizeDecisionProcess(raw: unknown): {
     reasoning_steps: steps,
     conclusion: conclusion || '',
   }
+}
+
+// ============================================================================
+// Memory Content - Structured and readable display (synced with AgentDetailPanel)
+// ============================================================================
+
+interface MemoryContentProps {
+  memory: any
+  loading: boolean
+}
+
+function MemoryContent({ memory, loading }: MemoryContentProps) {
+  const { t } = useTranslation(['common', 'agents'])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (!memory) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Brain className="h-8 w-8 text-muted-foreground opacity-50 mb-2" />
+        <p className="text-xs text-muted-foreground">{t('agents:detail.noMemory')}</p>
+      </div>
+    )
+  }
+
+  // Count memory items
+  const stateVarCount = Object.keys(memory.state_variables || {}).length
+  const learnedPatternsCount = memory.learned_patterns?.length || 0
+  const longTermPatternsCount = memory.long_term?.patterns?.length || 0
+  const shortTermSummariesCount = memory.short_term?.summaries?.length || 0
+  const longTermMemoriesCount = memory.long_term?.memories?.length || 0
+  const hasWorkingMemory = memory.working && (memory.working.current_analysis || memory.working.current_conclusion)
+
+  // Check if memory is empty
+  const isEmptyMemory = stateVarCount === 0 && learnedPatternsCount === 0 &&
+    shortTermSummariesCount === 0 && longTermMemoriesCount === 0 &&
+    longTermPatternsCount === 0 && !hasWorkingMemory
+
+  if (isEmptyMemory) {
+    return (
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Brain className="h-8 w-8 text-muted-foreground opacity-50 mb-2" />
+        <p className="text-xs text-muted-foreground">{t('agents:detail.noMemory')}</p>
+      </div>
+    )
+  }
+
+  // Format timestamp
+  const formatTime = (timestamp: string | number) => {
+    const ts = typeof timestamp === 'number' ? timestamp * 1000 : new Date(timestamp).getTime()
+    const date = new Date(ts)
+    const now = new Date()
+    const diff = now.getTime() - date.getTime()
+    const minutes = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(diff / 86400000)
+
+    if (minutes < 1) return t('agents:time.justNow')
+    if (minutes < 60) return t('agents:time.minutesAgo', { count: minutes })
+    if (hours < 24) return t('agents:time.hoursAgo', { count: hours })
+    return t('agents:time.daysAgo', { count: days })
+  }
+
+  // Memory Stats Summary
+  const showStatsSummary = shortTermSummariesCount > 0 || longTermMemoriesCount > 0 || longTermPatternsCount > 0
+
+  return (
+    <div className="space-y-3">
+      {/* Memory Stats Summary */}
+      {showStatsSummary && (
+        <div className="grid grid-cols-3 gap-2">
+          {shortTermSummariesCount > 0 && (
+            <div className="flex flex-col items-center p-2 rounded-lg bg-blue-500/10 border border-blue-500/20">
+              <History className="h-3 w-3 text-blue-500 mb-1" />
+              <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{shortTermSummariesCount}</span>
+              <span className="text-[8px] text-muted-foreground uppercase tracking-wide">{t('agents:memory.shortTerm')}</span>
+            </div>
+          )}
+          {longTermMemoriesCount > 0 && (
+            <div className="flex flex-col items-center p-2 rounded-lg bg-purple-500/10 border border-purple-500/20">
+              <Sparkles className="h-3 w-3 text-purple-500 mb-1" />
+              <span className="text-sm font-bold text-purple-600 dark:text-purple-400">{longTermMemoriesCount}</span>
+              <span className="text-[8px] text-muted-foreground uppercase tracking-wide">{t('agents:memory.longTerm')}</span>
+            </div>
+          )}
+          {longTermPatternsCount > 0 && (
+            <div className="flex flex-col items-center p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <TrendingUp className="h-3 w-3 text-amber-500 mb-1" />
+              <span className="text-sm font-bold text-amber-600 dark:text-amber-400">{longTermPatternsCount}</span>
+              <span className="text-[8px] text-muted-foreground uppercase tracking-wide">{t('agents:detail.learnedPatterns')}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Working Memory - Current Analysis */}
+      {hasWorkingMemory && (
+        <div className="bg-muted/20 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-2 text-xs font-medium text-muted-foreground">
+            <Zap className="h-3.5 w-3.5" />
+            {t('agents:memory.working')}
+          </div>
+          <div className="p-3 rounded-lg bg-gradient-to-br from-blue-500/5 to-purple-500/5 border border-blue-500/10">
+            {memory.working.current_analysis && (
+              <div className="mb-2">
+                <div className="text-[9px] text-muted-foreground uppercase tracking-wide mb-1">{t('agents:memory.situationAnalysis')}</div>
+                <p className="text-xs leading-relaxed">{memory.working.current_analysis}</p>
+              </div>
+            )}
+            {memory.working.current_conclusion && (
+              <div className="flex items-start gap-2 pt-2 border-t border-border/50">
+                <CheckCircle2 className="h-3 w-3 text-green-500 mt-0.5 shrink-0" />
+                <div>
+                  <div className="text-[9px] text-muted-foreground uppercase tracking-wide mb-0.5">{t('agents:memory.conclusion')}</div>
+                  <p className="text-xs font-medium">{memory.working.current_conclusion}</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Short-Term Memory - Recent Executions */}
+      {shortTermSummariesCount > 0 && (
+        <div className="bg-muted/20 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <History className="h-3.5 w-3.5" />
+              {t('agents:memory.shortTerm')} ({shortTermSummariesCount}/{memory.short_term?.max_summaries || 10})
+            </div>
+          </div>
+          <div className="space-y-2">
+            {memory.short_term?.summaries?.map((summary: any, idx: number) => (
+              <div key={idx} className="group relative overflow-hidden rounded-lg bg-background border border-border/50 hover:border-blue-500/30 transition-colors">
+                {/* Success indicator strip */}
+                <div className={`absolute left-0 top-0 bottom-0 w-1 ${summary.success ? 'bg-green-500' : 'bg-red-500'}`} />
+
+                <div className="pl-4 pr-3 py-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-mono text-muted-foreground bg-muted/50 px-1.5 py-0.5 rounded">
+                        {summary.execution_id?.slice(0, 6)}...
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        {formatTime(summary.timestamp)}
+                      </span>
+                    </div>
+                    <Badge
+                      variant={summary.success ? 'default' : 'destructive'}
+                      className="text-[9px] h-4"
+                    >
+                      {summary.success ? t('agents:executionStatus.completed') : t('agents:executionStatus.failed')}
+                    </Badge>
+                  </div>
+
+                  {summary.conclusion && (
+                    <div className="mb-2">
+                      <div className="text-[9px] text-muted-foreground mb-0.5">{t('agents:memory.conclusion')}</div>
+                      <p className="text-[10px]">{summary.conclusion}</p>
+                    </div>
+                  )}
+
+                  {summary.situation && (
+                    <div className="mb-2">
+                      <div className="text-[9px] text-muted-foreground mb-0.5">{t('agents:memory.situationAnalysis')}</div>
+                      <p className="text-[10px] text-muted-foreground line-clamp-2">{summary.situation}</p>
+                    </div>
+                  )}
+
+                  {summary.decisions && summary.decisions.length > 0 && (
+                    <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground">
+                      <Zap className="h-2.5 w-2.5" />
+                      <span>{summary.decisions.length} {t('agents:memory.decisions')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Archive info */}
+          {memory.short_term?.last_archived_at && (
+            <div className="mt-2 text-[9px] text-center text-muted-foreground">
+              {t('agents:memory.lastArchived')}: {formatTime(memory.short_term.last_archived_at)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Long-Term Memory - Important Memories */}
+      {longTermMemoriesCount > 0 && (
+        <div className="bg-muted/20 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-3 text-xs font-medium text-muted-foreground">
+            <Sparkles className="h-3.5 w-3.5" />
+            {t('agents:memory.longTerm')} ({longTermMemoriesCount}/{memory.long_term?.max_memories || 50})
+          </div>
+          <div className="space-y-2">
+            {memory.long_term?.memories?.map((mem: any, idx: number) => (
+              <div key={idx} className="p-3 rounded-lg bg-gradient-to-br from-purple-500/5 to-pink-500/5 border border-purple-500/10 hover:border-purple-500/20 transition-colors">
+                <div className="flex items-center justify-between mb-2">
+                  <Badge variant="outline" className="text-[9px] h-4">
+                    {mem.memory_type}
+                  </Badge>
+                  <div className="flex items-center gap-1">
+                    <div className="w-12 h-1 bg-muted rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-purple-500 rounded-full"
+                        style={{ width: `${Math.round((mem.importance || 0) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-[9px] text-muted-foreground">{Math.round((mem.importance || 0) * 100)}%</span>
+                  </div>
+                </div>
+                <p className="text-[10px] line-clamp-3">{mem.content}</p>
+                {mem.metadata?.execution_id && (
+                  <div className="mt-2 text-[9px] text-muted-foreground font-mono">
+                    {mem.metadata.execution_id.slice(0, 8)}...
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Learned Patterns (from long_term) */}
+      {longTermPatternsCount > 0 && (
+        <div className="bg-muted/20 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-3 text-xs font-medium text-muted-foreground">
+            <TrendingUp className="h-3.5 w-3.5" />
+            {t('agents:detail.learnedPatterns')} ({longTermPatternsCount})
+          </div>
+          <div className="space-y-2">
+            {memory.long_term?.patterns?.map((pattern: any, idx: number) => (
+              <div key={idx} className="p-3 rounded-lg bg-gradient-to-br from-amber-500/5 to-orange-500/5 border border-amber-500/10">
+                <div className="flex items-center justify-between mb-2">
+                  <Badge variant="outline" className="text-[9px] h-4">
+                    {pattern.pattern_type}
+                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] text-muted-foreground">{formatTime(pattern.learned_at)}</span>
+                    <span className="text-[9px] font-medium text-amber-600 dark:text-amber-400">
+                      {Math.round((pattern.confidence || 0) * 100)}%
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[10px]">{pattern.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Legacy Learned Patterns */}
+      {learnedPatternsCount > 0 && longTermPatternsCount === 0 && (
+        <div className="bg-muted/20 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-3 text-xs font-medium text-muted-foreground">
+            <TrendingUp className="h-3.5 w-3.5" />
+            {t('agents:detail.learnedPatterns')} ({learnedPatternsCount})
+          </div>
+          <div className="space-y-2">
+            {memory.learned_patterns.map((pattern: any, idx: number) => (
+              <div key={idx} className="p-3 rounded-lg bg-gradient-to-br from-amber-500/5 to-orange-500/5 border border-amber-500/10">
+                <div className="flex items-center justify-between mb-2">
+                  <Badge variant="outline" className="text-[9px] h-4">
+                    {pattern.pattern_type}
+                  </Badge>
+                  <span className="text-[9px] font-medium text-amber-600 dark:text-amber-400">
+                    {Math.round((pattern.confidence || 0) * 100)}%
+                  </span>
+                </div>
+                <p className="text-[10px]">{pattern.description}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* State Variables */}
+      {stateVarCount > 0 && (
+        <div className="bg-muted/20 rounded-lg p-3">
+          <div className="flex items-center gap-2 mb-3 text-xs font-medium text-muted-foreground">
+            <Database className="h-3.5 w-3.5" />
+            {t('agents:detail.stateVariables')}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {Object.entries(memory.state_variables || {}).map(([key, value]) => (
+              <div key={key} className="flex items-center justify-between px-3 py-2 rounded-lg bg-background border">
+                <span className="text-[10px] font-medium truncate flex-1 mr-2" title={key}>{key}</span>
+                <span className="text-[10px] font-mono text-muted-foreground truncate max-w-[80px]" title={String(value)}>
+                  {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Updated At footer */}
+      {memory.updated_at && (
+        <div className="flex items-center justify-center gap-2 text-[9px] text-muted-foreground py-2 border-t border-border/50">
+          <Clock className="h-2.5 w-2.5" />
+          <span>{t('agents:memory.updatedAt')}: {
+            typeof memory.updated_at === 'number'
+              ? new Date(memory.updated_at * 1000).toLocaleString()
+              : new Date(memory.updated_at).toLocaleString()
+          }</span>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // Execution Detail Dialog
@@ -543,6 +862,7 @@ function ExecutionDetailDialog({ execution, open, onClose }: ExecutionDetailDial
                               src={imageData!.src}
                               alt={`${data.source} - 输入图像`}
                               className="w-full max-h-[200px] object-contain rounded-md bg-background"
+                              loading="lazy"
                             />
                           </div>
                         )}
@@ -663,6 +983,11 @@ export function AgentMonitorWidget({
   // Dialog state
   const [selectedExecution, setSelectedExecution] = useState<AgentExecution | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+
+  // History Tab - expanded executions and details
+  const [expandedExecutions, setExpandedExecutions] = useState<Set<string>>(new Set())
+  const [executionDetails, setExecutionDetails] = useState<Record<string, any>>({})
+  const [loadingDetails, setLoadingDetails] = useState<Set<string>>(new Set())
 
   // Track if we've loaded data
   const hasLoadedRef = useRef(false)
@@ -865,6 +1190,79 @@ export function AgentMonitorWidget({
   const handleExecutionClick = (execution: AgentExecution) => {
     setSelectedExecution(execution)
     setDetailOpen(true)
+  }
+
+  // Toggle execution expansion in History tab
+  const toggleExecution = async (executionId: string) => {
+    const newExpanded = new Set(expandedExecutions)
+    const isExpanding = !newExpanded.has(executionId)
+
+    if (isExpanding) {
+      newExpanded.add(executionId)
+      // Load details if not already loaded
+      if (!executionDetails[executionId]) {
+        setLoadingDetails(prev => new Set(prev).add(executionId))
+        try {
+          const data = await api.getAgentExecution(agentId!, executionId)
+          setExecutionDetails(prev => ({ ...prev, [executionId]: data }))
+        } catch (error) {
+          console.error('Failed to load execution detail:', error)
+        } finally {
+          setLoadingDetails(prev => {
+            const next = new Set(prev)
+            next.delete(executionId)
+            return next
+          })
+        }
+      }
+    } else {
+      newExpanded.delete(executionId)
+    }
+    setExpandedExecutions(newExpanded)
+  }
+
+  // Helper function to normalize decision process
+  const normalizeDecisionProcessForDisplay = (raw: unknown) => {
+    if (raw == null) return null
+    let dp = raw
+    if (typeof dp === 'string') {
+      try {
+        dp = JSON.parse(dp) as Record<string, unknown>
+      } catch {
+        return null
+      }
+    }
+    if (typeof dp !== 'object' || dp === null) return null
+    const obj = dp as Record<string, unknown>
+    let situation_analysis = (obj.situation_analysis as string) ?? ''
+    let conclusion = (obj.conclusion as string) ?? ''
+    let reasoning_steps = Array.isArray(obj.reasoning_steps) ? obj.reasoning_steps : []
+
+    // If situation_analysis looks like JSON, parse and extract
+    if (typeof situation_analysis === 'string' && situation_analysis.trim().startsWith('{')) {
+      try {
+        const parsed = JSON.parse(situation_analysis) as Record<string, unknown>
+        situation_analysis = (parsed.situation_analysis as string) ?? situation_analysis
+        conclusion = (parsed.conclusion as string) ?? conclusion
+        if (Array.isArray(parsed.reasoning_steps)) reasoning_steps = parsed.reasoning_steps
+      } catch {
+        // keep as-is
+      }
+    }
+
+    return {
+      situation_analysis: situation_analysis || '',
+      reasoning_steps: reasoning_steps.map((s: unknown, i: number) => {
+        if (s && typeof s === 'object' && 'description' in s) {
+          return { description: (s as Record<string, unknown>).description as string, step_number: i + 1 }
+        }
+        if (s && typeof s === 'object' && 'output' in s) {
+          return { description: (s as Record<string, unknown>).output as string, step_number: i + 1 }
+        }
+        return { description: String(s), step_number: i + 1 }
+      }),
+      conclusion: conclusion || '',
+    }
   }
 
   // Display agent and executions - show empty state when no data
@@ -1152,16 +1550,228 @@ export function AgentMonitorWidget({
                       </div>
                     </div>
                   ) : (
-                    <div className="w-full p-1 space-y-0.5">
-                      {displayExecutions.map((exec, index) => (
-                        <ExecutionItem
-                          key={exec.id}
-                          execution={exec}
-                          isLatest={index === 0 && exec.id === newExecutionId}
-                          isRunning={exec.status === 'Running' && (index === 0 || exec.id === newExecutionId)}
-                          onClick={() => handleExecutionClick(exec)}
-                        />
-                      ))}
+                    <div className="w-full p-2 space-y-3">
+                      {displayExecutions.map((exec, index) => {
+                        const isExpanded = expandedExecutions.has(exec.id)
+                        const detail = executionDetails[exec.id]
+                        const isLoadingDetail = loadingDetails.has(exec.id)
+                        const isLatest = index === 0 && exec.id === newExecutionId
+
+                        const getStatusConfig = () => {
+                          switch (exec.status) {
+                            case 'Running':
+                              return { icon: Loader2, color: 'text-blue-500', bg: 'bg-blue-500/10 border-blue-500/20' }
+                            case 'Completed':
+                              return { icon: CheckCircle2, color: 'text-green-500', bg: 'bg-green-500/10 border-green-500/20' }
+                            case 'Failed':
+                            case 'Cancelled':
+                              return { icon: XCircle, color: 'text-red-500', bg: 'bg-red-500/10 border-red-500/20' }
+                            default:
+                              return { icon: AlertCircle, color: 'text-gray-500', bg: 'bg-gray-500/10 border-gray-500/20' }
+                          }
+                        }
+
+                        const statusConfig = getStatusConfig()
+                        const StatusIcon = statusConfig.icon
+
+                        const formatDuration = (ms: number) => {
+                          if (ms < 1000) return `${ms}ms`
+                          return `${(ms / 1000).toFixed(1)}s`
+                        }
+
+                        const formatTime = (timestamp: string | number) => {
+                          const date = typeof timestamp === 'number'
+                            ? new Date(timestamp * 1000)
+                            : new Date(timestamp)
+                          return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                        }
+
+                        return (
+                          <div key={exec.id} className="relative">
+                            {/* Timeline Card */}
+                            <div
+                              className={cn(
+                                "border rounded-lg overflow-hidden transition-all",
+                                isExpanded && statusConfig.bg,
+                                !isExpanded && "hover:bg-muted/30"
+                              )}
+                            >
+                              {/* Header - Always Visible */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  toggleExecution(exec.id)
+                                }}
+                                className="w-full p-2 flex items-center gap-2 text-left"
+                              >
+                                <StatusIcon className={cn("h-3.5 w-3.5 shrink-0", exec.status === 'Running' && "animate-spin")} />
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[10px] font-mono text-muted-foreground">
+                                      #{exec.id.slice(-6)}
+                                    </span>
+                                    {isLatest && (
+                                      <Badge variant="outline" className="text-[8px] h-3.5 px-1">
+                                        New
+                                      </Badge>
+                                    )}
+                                    <span className="text-[9px] text-muted-foreground">{exec.trigger_type}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 text-[9px] text-muted-foreground mt-0.5">
+                                    <span>{formatTime(exec.timestamp)}</span>
+                                    {exec.duration_ms > 0 && (
+                                      <span>{formatDuration(exec.duration_ms)}</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="shrink-0">
+                                  {isExpanded ? (
+                                    <ChevronUp className="h-3 w-3 text-muted-foreground" />
+                                  ) : (
+                                    <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                                  )}
+                                </div>
+                              </button>
+
+                              {/* Expanded Details */}
+                              {isExpanded && (
+                                <div className="border-t p-2">
+                                  {isLoadingDetail ? (
+                                    <div className="flex items-center justify-center py-4">
+                                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                    </div>
+                                  ) : detail ? (
+                                    <div className="space-y-2">
+                                      {/* Situation Analysis */}
+                                      {detail.decision_process?.situation_analysis && (
+                                        <div>
+                                          <div className="flex items-center gap-1 mb-1">
+                                            <Brain className="h-2.5 w-2.5 text-purple-500" />
+                                            <span className="text-[9px] font-medium text-muted-foreground">Situation Analysis</span>
+                                          </div>
+                                          <p className="text-[10px] pl-3">{detail.decision_process.situation_analysis}</p>
+                                        </div>
+                                      )}
+
+                                      {/* Data Collected */}
+                                      {detail.decision_process?.data_collected && detail.decision_process.data_collected.length > 0 && (
+                                        <div>
+                                          <div className="flex items-center gap-1 mb-1">
+                                            <Database className="h-2.5 w-2.5 text-blue-500" />
+                                            <span className="text-[9px] font-medium text-muted-foreground">Data Collected</span>
+                                            <span className="text-[8px] text-muted-foreground">({detail.decision_process.data_collected.length})</span>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-1">
+                                            {detail.decision_process.data_collected.map((data: any, idx: number) => (
+                                              <div key={idx} className="text-[9px] p-1.5 rounded bg-muted/30">
+                                                <div className="flex items-center justify-between mb-0.5">
+                                                  <span className="text-[8px] font-medium truncate flex-1" title={data.source}>{data.source}</span>
+                                                  <Badge variant="outline" className="text-[7px] h-3 px-0.5 shrink-0 ml-1">{data.data_type}</Badge>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Reasoning Steps */}
+                                      {detail.decision_process?.reasoning_steps && detail.decision_process.reasoning_steps.length > 0 && (
+                                        <div>
+                                          <div className="flex items-center gap-1 mb-1">
+                                            <ChevronRight className="h-2.5 w-2.5 text-orange-500" />
+                                            <span className="text-[9px] font-medium text-muted-foreground">Reasoning Steps</span>
+                                          </div>
+                                          <div className="space-y-1 pl-3">
+                                            {detail.decision_process.reasoning_steps.slice(0, 3).map((step: any, idx: number) => (
+                                              <div key={idx} className="text-[9px]">
+                                                <span className="text-muted-foreground">Step {step.step_number ?? idx + 1}:</span>
+                                                <span className="ml-1">{step.description}</span>
+                                              </div>
+                                            ))}
+                                            {detail.decision_process.reasoning_steps.length > 3 && (
+                                              <div className="text-[8px] text-muted-foreground">
+                                                +{detail.decision_process.reasoning_steps.length - 3} more steps
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Decisions */}
+                                      {detail.decision_process?.decisions && detail.decision_process.decisions.length > 0 && (
+                                        <div>
+                                          <div className="flex items-center gap-1 mb-1">
+                                            <Zap className="h-2.5 w-2.5 text-green-500" />
+                                            <span className="text-[9px] font-medium text-muted-foreground">Decisions</span>
+                                          </div>
+                                          <div className="space-y-1">
+                                            {detail.decision_process.decisions.map((decision: any, idx: number) => (
+                                              <div key={idx} className="text-[9px] p-1.5 rounded bg-muted/30">
+                                                <div className="font-medium">{decision.description}</div>
+                                                {decision.action && (
+                                                  <div className="text-[8px] text-muted-foreground mt-0.5">
+                                                    Action: <span className="font-mono">{decision.action}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* Conclusion */}
+                                      {detail.decision_process?.conclusion && (
+                                        <div className="p-2 bg-muted/50 rounded">
+                                          <div className="text-[9px] font-medium">Conclusion</div>
+                                          <p className="text-[10px] mt-1">{detail.decision_process.conclusion}</p>
+                                        </div>
+                                      )}
+
+                                      {/* Actions Executed */}
+                                      {detail.result?.actions_executed && detail.result.actions_executed.length > 0 && (
+                                        <div>
+                                          <div className="flex items-center gap-1 mb-1">
+                                            <Zap className="h-2.5 w-2.5 text-yellow-500" />
+                                            <span className="text-[9px] font-medium text-muted-foreground">Actions Executed</span>
+                                          </div>
+                                          <div className="space-y-1">
+                                            {detail.result.actions_executed.map((action: any, idx: number) => (
+                                              <div key={idx} className={cn(
+                                                "text-[9px] p-1.5 rounded border",
+                                                action.success ? "bg-green-500/10 border-green-500/20" : "bg-red-500/10 border-red-500/20"
+                                              )}>
+                                                <div className="flex items-center justify-between">
+                                                  <span className="font-medium truncate flex-1" title={action.description}>{action.description}</span>
+                                                  <Badge variant={action.success ? "default" : "destructive"} className="text-[7px] h-3 px-0.5 shrink-0 ml-1">
+                                                    {action.success ? '✓' : '✗'}
+                                                  </Badge>
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {/* View full detail button */}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleExecutionClick(exec)}
+                                        className="w-full text-[9px] py-1 px-2 rounded bg-primary/10 hover:bg-primary/20 text-primary text-center transition-colors"
+                                      >
+                                        View Full Detail
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="text-center py-2 text-[9px] text-muted-foreground">
+                                      No detail available
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </ScrollArea>
@@ -1171,97 +1781,8 @@ export function AgentMonitorWidget({
             {/* Memory Tab Content */}
             <TabsContent value="memory" className="w-full flex-1 min-h-0 data-[state=active]:flex data-[state=inactive]:hidden">
               <div className="w-full flex flex-col h-full rounded overflow-hidden p-2">
-                <div className="px-2 py-1 border-b border-border/30 flex items-center rounded-t shrink-0">
-                  <span className="text-[10px] font-medium">Memory</span>
-                </div>
-
                 <ScrollArea className="flex-1 w-full">
-                  {memoryLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : memory ? (
-                    <div className="w-full p-2 space-y-3">
-                      {/* State Variables */}
-                      {memory.state_variables && Object.keys(memory.state_variables).length > 0 && (
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1">
-                            <Database className="h-2.5 w-2.5" />
-                            State Variables
-                          </h4>
-                          <div className="space-y-1.5">
-                            {Object.entries(memory.state_variables).map(([key, value], idx) => (
-                              <div key={idx} className="text-[10px] p-1.5 rounded bg-muted/30">
-                                <div className="flex items-center justify-between mb-0.5">
-                                  <span className="text-[9px] font-mono text-blue-600">{key}</span>
-                                </div>
-                                <p className="text-[10px] break-all font-mono">
-                                  {typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Learned Patterns */}
-                      {memory.learned_patterns && memory.learned_patterns.length > 0 && (
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1">
-                            <Sparkles className="h-2.5 w-2.5" />
-                            Patterns
-                          </h4>
-                          <div className="space-y-1">
-                            {memory.learned_patterns.map((pattern: string, idx: number) => (
-                              <div key={idx} className="text-[10px] p-1.5 rounded bg-purple-500/10 border border-purple-500/20">
-                                <p className="text-[10px]">{pattern}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Trend Data */}
-                      {memory.trend_data && memory.trend_data.length > 0 && (
-                        <div>
-                          <h4 className="text-[10px] font-semibold text-muted-foreground mb-1.5 flex items-center gap-1">
-                            <Clock className="h-2.5 w-2.5" />
-                            Trends
-                          </h4>
-                          <div className="space-y-1">
-                            {memory.trend_data.slice(-5).map((point: any, idx: number) => (
-                              <div key={idx} className="text-[10px] p-1.5 rounded bg-muted/30">
-                                <div className="flex items-center justify-between mb-0.5">
-                                  <span className="text-[9px] text-muted-foreground">
-                                    {new Date(point.timestamp * 1000).toLocaleString()}
-                                  </span>
-                                  <span className="text-[9px] text-green-600">{point.metric}</span>
-                                </div>
-                                <p className="text-[10px] font-mono">{point.value}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* No data */}
-                      {(!memory.state_variables || Object.keys(memory.state_variables).length === 0) &&
-                       (!memory.learned_patterns || memory.learned_patterns.length === 0) &&
-                       (!memory.trend_data || memory.trend_data.length === 0) && (
-                        <div className="flex items-center justify-center h-full min-h-[120px] text-center">
-                          <div className="flex flex-col items-center gap-2">
-                            <Brain className="h-6 w-6 text-muted-foreground opacity-50" />
-                            <p className="text-[10px] text-muted-foreground">No memory data</p>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-8 text-center">
-                      <Brain className="h-6 w-6 text-muted-foreground opacity-50 mb-1" />
-                      <p className="text-[10px] text-muted-foreground">No memory data</p>
-                    </div>
-                  )}
+                  <MemoryContent memory={memory} loading={memoryLoading} />
                 </ScrollArea>
               </div>
             </TabsContent>

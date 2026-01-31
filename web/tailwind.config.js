@@ -96,6 +96,10 @@ export default {
           "from": { opacity: "0" },
           "to": { opacity: "1" },
         },
+        "fade-in-up": {
+          "from": { opacity: "0", transform: "translateY(10px)" },
+          "to": { opacity: "1", transform: "translateY(0)" },
+        },
         "fade-out": {
           "from": { opacity: "1" },
           "to": { opacity: "0" },
@@ -140,6 +144,7 @@ export default {
         "slide-in-from-left": "slide-in-from-left 0.3s ease-out",
         "slide-in-from-right": "slide-in-from-right 0.3s ease-out",
         "fade-in": "fade-in 0.2s ease-out",
+        "fade-in-up": "fade-in-up 0.3s ease-out",
         "fade-out": "fade-out 0.2s ease-out",
         "scale-in": "scale-in 0.2s ease-out",
         "scale-out": "scale-out 0.2s ease-out",
@@ -149,6 +154,16 @@ export default {
         "shimmer": "shimmer 2s linear infinite",
         "typewriter": "typewriter 2s steps(40) infinite",
         "blink": "blink 1s step-end infinite",
+      },
+      // Performance: Animation delay variants for staggered animations
+      animationDelay: {
+        0: "0ms",
+        100: "100ms",
+        150: "150ms",
+        200: "200ms",
+        300: "300ms",
+        400: "400ms",
+        500: "500ms",
       },
     },
   },

@@ -487,6 +487,7 @@ export function ImageHistory({
           fit === 'none' && 'object-none',
           fit === 'scale-down' && 'object-scale-down'
         )}
+        loading="lazy"
         onLoad={handleImageLoad}
         onError={handleImageError}
       />
