@@ -1078,23 +1078,21 @@ Respond in JSON format:
             r.resource_type == ResourceType::Device && r.resource_id == device_id
         });
 
-        if !has_device {
-            tracing::trace!(
-                agent_name = %agent.name,
-                device_id = %device_id,
-                "[EVENT] Agent {} does not have device {} in resources",
-                agent.name,
-                device_id
-            );
-            return false;
-        }
-
         // Check if agent has this metric in its resources
+        // Metric resource_id format is typically "device_id:metric_name"
         let has_metric = agent.resources.iter().any(|r| {
-            r.resource_type == ResourceType::Metric && r.resource_id.contains(metric)
+            r.resource_type == ResourceType::Metric && (
+                r.resource_id.contains(metric) ||          // metric name match
+                r.resource_id.contains(&format!("{}:{}", device_id, metric)) ||  // "device_id:metric" match
+                r.resource_id == format!("{}:{}", device_id, metric)  // exact match
+            )
         });
 
-        let matches = has_metric || agent.resources.is_empty();
+        // Agent matches if:
+        // 1. It has the device in resources, OR
+        // 2. It has the metric in resources (in device_id:metric format), OR
+        // 3. Resources are empty (trigger on all events)
+        let matches = has_device || has_metric || agent.resources.is_empty();
 
         tracing::trace!(
             agent_name = %agent.name,
