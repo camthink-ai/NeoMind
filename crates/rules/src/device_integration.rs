@@ -5,7 +5,8 @@
 
 use crate::dsl::{RuleAction, RuleError};
 use crate::engine::{CompiledRule, RuleExecutionResult, RuleId, ValueProvider};
-use edge_ai_core::{EventBus, MetricValue, NeoTalkEvent};
+use edge_ai_core::{EventBus, MetricValue as CoreMetricValue, NeoTalkEvent};
+use edge_ai_devices::{DeviceService, MetricValue as DeviceMetricValue};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,6 +14,37 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use serde::{Deserialize, Serialize};
+
+/// Convert Device MetricValue to Core MetricValue
+fn convert_metric_value(device_val: DeviceMetricValue) -> CoreMetricValue {
+    match device_val {
+        DeviceMetricValue::Integer(i) => CoreMetricValue::Integer(i),
+        DeviceMetricValue::Float(f) => CoreMetricValue::Float(f),
+        DeviceMetricValue::String(s) => CoreMetricValue::String(s),
+        DeviceMetricValue::Boolean(b) => CoreMetricValue::Boolean(b),
+        DeviceMetricValue::Array(arr) => {
+            // Convert array to JSON
+            let json_arr: Vec<serde_json::Value> = arr
+                .into_iter()
+                .map(|v| match convert_metric_value(v) {
+                    CoreMetricValue::Integer(i) => serde_json::json!(i),
+                    CoreMetricValue::Float(f) => serde_json::json!(f),
+                    CoreMetricValue::String(s) => serde_json::json!(s),
+                    CoreMetricValue::Boolean(b) => serde_json::json!(b),
+                    CoreMetricValue::Json(j) => j,
+                })
+                .collect();
+            CoreMetricValue::Json(serde_json::Value::Array(json_arr))
+        }
+        DeviceMetricValue::Binary(bytes) => {
+            // Convert binary to hex string
+            CoreMetricValue::String(bytes.iter().map(|b| format!("{:02x}", b)).collect())
+        }
+        DeviceMetricValue::Null => {
+            CoreMetricValue::Json(serde_json::Value::Null)
+        }
+    }
+}
 
 /// Result type for device integration operations.
 pub type DeviceIntegrationResult<T> = Result<T, DeviceIntegrationError>;
@@ -40,9 +72,71 @@ pub enum DeviceIntegrationError {
     #[error("HTTP request failed: {0}")]
     HttpRequest(String),
 
+    /// Retry limit exceeded
+    #[error("Retry limit exceeded: {0}")]
+    RetryLimitExceeded(String),
+
     /// Other error
     #[error("Device integration error: {0}")]
     Other(#[from] anyhow::Error),
+}
+
+/// Retry configuration for device command execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts
+    pub max_retries: u32,
+    /// Initial delay between retries in milliseconds
+    pub initial_delay_ms: u64,
+    /// Backoff multiplier for exponential backoff
+    pub backoff_multiplier: f64,
+    /// Maximum delay between retries in milliseconds
+    pub max_delay_ms: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_delay_ms: 1000,
+            backoff_multiplier: 2.0,
+            max_delay_ms: 10000,
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Create a new retry config with custom values.
+    pub fn new(max_retries: u32, initial_delay_ms: u64) -> Self {
+        Self {
+            max_retries,
+            initial_delay_ms,
+            ..Default::default()
+        }
+    }
+
+    /// Create a retry config that doesn't retry.
+    pub fn no_retry() -> Self {
+        Self {
+            max_retries: 0,
+            initial_delay_ms: 0,
+            backoff_multiplier: 1.0,
+            max_delay_ms: 0,
+        }
+    }
+
+    /// Calculate the delay for a given retry attempt.
+    pub fn delay_for_attempt(&self, attempt: u32) -> std::time::Duration {
+        if attempt == 0 {
+            return std::time::Duration::from_millis(0);
+        }
+
+        let delay_ms = (self.initial_delay_ms as f64
+            * self.backoff_multiplier.powi(attempt as i32 - 1))
+            .min(self.max_delay_ms as f64) as u64;
+
+        std::time::Duration::from_millis(delay_ms)
+    }
 }
 
 /// Detailed result of a command execution action.
@@ -84,14 +178,14 @@ pub enum CommandResultValue {
     Null,
 }
 
-impl From<MetricValue> for CommandResultValue {
-    fn from(value: MetricValue) -> Self {
+impl From<CoreMetricValue> for CommandResultValue {
+    fn from(value: CoreMetricValue) -> Self {
         match value {
-            MetricValue::Integer(i) => CommandResultValue::Integer(i),
-            MetricValue::Float(f) => CommandResultValue::Float(f),
-            MetricValue::String(s) => CommandResultValue::String(s),
-            MetricValue::Boolean(b) => CommandResultValue::Bool(b),
-            MetricValue::Json(j) => CommandResultValue::Json(j),
+            CoreMetricValue::Integer(i) => CommandResultValue::Integer(i),
+            CoreMetricValue::Float(f) => CommandResultValue::Float(f),
+            CoreMetricValue::String(s) => CommandResultValue::String(s),
+            CoreMetricValue::Boolean(b) => CommandResultValue::Bool(b),
+            CoreMetricValue::Json(j) => CommandResultValue::Json(j),
         }
     }
 }
@@ -260,6 +354,10 @@ pub struct DeviceActionExecutor {
     event_bus: EventBus,
     /// Command result history
     history: Arc<CommandResultHistory>,
+    /// Optional device service for actual command execution
+    device_service: Option<Arc<DeviceService>>,
+    /// Retry configuration for command execution
+    retry_config: RetryConfig,
 }
 
 impl DeviceActionExecutor {
@@ -268,12 +366,170 @@ impl DeviceActionExecutor {
         Self {
             event_bus,
             history: Arc::new(CommandResultHistory::new()),
+            device_service: None,
+            retry_config: RetryConfig::default(),
         }
+    }
+
+    /// Create a new device action executor with custom retry config.
+    pub fn with_retry_config(event_bus: EventBus, retry_config: RetryConfig) -> Self {
+        Self {
+            event_bus,
+            history: Arc::new(CommandResultHistory::new()),
+            device_service: None,
+            retry_config,
+        }
+    }
+
+    /// Create a new device action executor with device service.
+    pub fn with_device_service(event_bus: EventBus, device_service: Arc<DeviceService>) -> Self {
+        Self {
+            event_bus,
+            history: Arc::new(CommandResultHistory::new()),
+            device_service: Some(device_service),
+            retry_config: RetryConfig::default(),
+        }
+    }
+
+    /// Create a new device action executor with device service and custom retry config.
+    pub fn with_device_service_and_retry(
+        event_bus: EventBus,
+        device_service: Arc<DeviceService>,
+        retry_config: RetryConfig,
+    ) -> Self {
+        Self {
+            event_bus,
+            history: Arc::new(CommandResultHistory::new()),
+            device_service: Some(device_service),
+            retry_config,
+        }
+    }
+
+    /// Set the device service.
+    pub fn set_device_service(&mut self, device_service: Arc<DeviceService>) {
+        self.device_service = Some(device_service);
+    }
+
+    /// Set the retry configuration.
+    pub fn set_retry_config(&mut self, retry_config: RetryConfig) {
+        self.retry_config = retry_config;
+    }
+
+    /// Get the retry configuration.
+    pub fn retry_config(&self) -> &RetryConfig {
+        &self.retry_config
     }
 
     /// Get the command result history.
     pub fn history(&self) -> &Arc<CommandResultHistory> {
         &self.history
+    }
+
+    /// Execute a command with retry logic.
+    async fn execute_command_with_retry(
+        &self,
+        device_id: &str,
+        command: &str,
+        params: &HashMap<String, serde_json::Value>,
+    ) -> Result<Option<DeviceMetricValue>, String> {
+        let max_attempts = self.retry_config.max_retries + 1;
+        let mut last_error = String::new();
+
+        for attempt in 0..max_attempts {
+            // Calculate delay for this attempt
+            if attempt > 0 {
+                let delay = self.retry_config.delay_for_attempt(attempt);
+                tracing::info!(
+                    "Retrying command '{}' on device '{}' (attempt {}/{}) after {:?}",
+                    command,
+                    device_id,
+                    attempt + 1,
+                    max_attempts,
+                    delay
+                );
+                tokio::time::sleep(delay).await;
+            }
+
+            // Try to execute the command
+            if let Some(ref device_service) = self.device_service {
+                match device_service
+                    .send_command(device_id, command, params.clone())
+                    .await
+                {
+                    Ok(result) => {
+                        if attempt > 0 {
+                            tracing::info!(
+                                "Command '{}' on device '{}' succeeded on attempt {}",
+                                command,
+                                device_id,
+                                attempt + 1
+                            );
+                        }
+                        return Ok(result);
+                    }
+                    Err(e) => {
+                        last_error = e.to_string();
+
+                        // Check if this error is retryable
+                        let is_retryable = self.is_error_retryable(&last_error);
+
+                        if !is_retryable {
+                            tracing::warn!(
+                                "Command '{}' on device '{}' failed with non-retryable error: {}",
+                                command,
+                                device_id,
+                                last_error
+                            );
+                            return Err(last_error);
+                        }
+
+                        if attempt < max_attempts - 1 {
+                            tracing::warn!(
+                                "Command '{}' on device '{}' failed (attempt {}): {}",
+                                command,
+                                device_id,
+                                attempt + 1,
+                                last_error
+                            );
+                        }
+                    }
+                }
+            } else {
+                // No device service, this is an error
+                return Err("No device service configured".to_string());
+            }
+        }
+
+        // All attempts failed
+        tracing::error!(
+            "Command '{}' on device '{}' failed after {} attempts: {}",
+            command,
+            device_id,
+            max_attempts,
+            last_error
+        );
+        Err(last_error)
+    }
+
+    /// Check if an error is retryable.
+    fn is_error_retryable(&self, error: &str) -> bool {
+        let error_lower = error.to_lowercase();
+
+        // Don't retry certain errors
+        if error_lower.contains("not found")
+            || error_lower.contains("invalid parameter")
+            || error_lower.contains("permission denied")
+            || error_lower.contains("unauthorized")
+        {
+            return false;
+        }
+
+        // Retry timeout and network errors
+        error_lower.contains("timeout")
+            || error_lower.contains("network")
+            || error_lower.contains("connection")
+            || error_lower.contains("temporary")
+            || error_lower.contains("unavailable")
     }
 
     /// Execute a rule action.
@@ -295,40 +551,100 @@ impl DeviceActionExecutor {
                 let target = device_id.unwrap_or(target_device);
                 actions_executed.push(format!("execute:{}", command));
 
-                // Build the command result with tracking
-                let cmd_result = CommandActionResult {
-                    device_id: target.to_string(),
-                    command: command.clone(),
-                    params: params.clone(),
-                    success: true,
-                    result: Some(CommandResultValue::String("Command sent".to_string())),
-                    error: None,
-                    duration_ms: 0,
-                    timestamp: chrono::Utc::now().timestamp(),
-                };
+                // Try to execute via device service with retry logic
+                let execution_result = if let Some(ref _device_service) = self.device_service {
+                    match self.execute_command_with_retry(target, command, params).await {
+                        Ok(result) => {
+                            info!(
+                                "Executed command '{}' on device '{}' via DeviceService (rule: {})",
+                                command,
+                                target,
+                                rule_id.unwrap_or("none")
+                            );
+                            // Publish success event
+                            let _ = self
+                                .event_bus
+                                .publish(NeoTalkEvent::DeviceCommandResult {
+                                    device_id: target.to_string(),
+                                    command: command.clone(),
+                                    success: true,
+                                    result: Some(serde_json::json!({"status": "executed", "rule_id": rule_id})),
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                })
+                                .await;
 
-                // Publish command event
-                let _ = self
-                    .event_bus
-                    .publish(NeoTalkEvent::DeviceCommandResult {
+                            CommandActionResult {
+                                device_id: target.to_string(),
+                                command: command.clone(),
+                                params: params.clone(),
+                                success: true,
+                                result: result.map(|v| CommandResultValue::from(convert_metric_value(v))),
+                                error: None,
+                                duration_ms: start.elapsed().as_millis() as u64,
+                                timestamp: chrono::Utc::now().timestamp(),
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to execute command '{}' on device '{}' after retries: {}",
+                                command, target, e
+                            );
+                            // Publish failure event
+                            let _ = self
+                                .event_bus
+                                .publish(NeoTalkEvent::DeviceCommandResult {
+                                    device_id: target.to_string(),
+                                    command: command.clone(),
+                                    success: false,
+                                    result: Some(serde_json::json!({"error": e})),
+                                    timestamp: chrono::Utc::now().timestamp(),
+                                })
+                                .await;
+
+                            CommandActionResult {
+                                device_id: target.to_string(),
+                                command: command.clone(),
+                                params: params.clone(),
+                                success: false,
+                                result: None,
+                                error: Some(e),
+                                duration_ms: start.elapsed().as_millis() as u64,
+                                timestamp: chrono::Utc::now().timestamp(),
+                            }
+                        }
+                    }
+                } else {
+                    // Fallback to event bus only (no actual execution)
+                    warn!(
+                        "No DeviceService configured, command '{}' on device '{}' only published to event bus",
+                        command, target
+                    );
+
+                    CommandActionResult {
                         device_id: target.to_string(),
                         command: command.clone(),
+                        params: params.clone(),
                         success: true,
-                        result: Some(serde_json::json!({"status": "sent", "rule_id": rule_id})),
+                        result: Some(CommandResultValue::String("Published to event bus (no actual execution)".to_string())),
+                        error: None,
+                        duration_ms: 0,
                         timestamp: chrono::Utc::now().timestamp(),
-                    })
-                    .await;
+                    }
+                };
 
-                // Store in history if rule_id is provided (clone for logging)
+                // Store in history if rule_id is provided
                 if let Some(rid) = rule_id {
-                    self.history.add(rid, cmd_result.clone()).await;
-                    info!(
-                        "Executed command '{}' on device '{}' (rule: {})",
-                        command, target, rid
-                    );
-                } else {
-                    info!("Executed command '{}' on device '{}'", command, target);
+                    self.history.add(rid, execution_result.clone()).await;
                 }
+
+                return Ok(RuleExecutionResult {
+                    rule_id: rule_id.map(|s| RuleId::from_string(s).unwrap_or_default()).unwrap_or_default(),
+                    rule_name: "device_command".to_string(),
+                    success: execution_result.success,
+                    actions_executed,
+                    error: execution_result.error,
+                    duration_ms: execution_result.duration_ms,
+                });
             }
             RuleAction::Notify { message, channels: _ } => {
                 actions_executed.push(format!("notify:{}", message));

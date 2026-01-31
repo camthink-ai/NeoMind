@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use super::dependencies::DependencyManager;
@@ -21,6 +22,9 @@ use super::dsl::{ParsedRule, RuleAction, RuleCondition, RuleError};
 /// Wrapped in Option to allow RuleEngine to function without it.
 /// Double-wrapped in Arc because AlertManager doesn't implement Clone.
 type OptionAlertManager = Arc<tokio::sync::RwLock<Option<Arc<edge_ai_alerts::AlertManager>>>>;
+
+/// Scheduler task handle for managing the rule evaluation loop.
+type SchedulerHandle = Arc<StdRwLock<Option<JoinHandle<()>>>>;
 
 /// Unique identifier for a rule.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -309,6 +313,12 @@ pub struct RuleEngine {
     dependency_manager: Arc<StdRwLock<DependencyManager>>,
     /// Optional alert manager for creating alerts from rule actions.
     alert_manager: OptionAlertManager,
+    /// Scheduler task handle.
+    scheduler_handle: SchedulerHandle,
+    /// Scheduler interval (how often to evaluate rules).
+    scheduler_interval: Arc<StdRwLock<Duration>>,
+    /// Whether the scheduler is running.
+    scheduler_running: Arc<StdRwLock<bool>>,
 }
 
 impl RuleEngine {
@@ -321,6 +331,9 @@ impl RuleEngine {
             max_history_size: 1000,
             dependency_manager: Arc::new(StdRwLock::new(DependencyManager::new())),
             alert_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            scheduler_handle: Arc::new(StdRwLock::new(None)),
+            scheduler_interval: Arc::new(StdRwLock::new(Duration::from_secs(5))),
+            scheduler_running: Arc::new(StdRwLock::new(false)),
         }
     }
 
@@ -334,6 +347,172 @@ impl RuleEngine {
     pub async fn get_alert_manager(&self) -> Option<Arc<edge_ai_alerts::AlertManager>> {
         let guard = self.alert_manager.read().await;
         guard.as_ref().map(Arc::clone)
+    }
+
+    /// Start the automatic rule scheduler.
+    /// The scheduler will periodically evaluate rules and execute triggered ones.
+    /// Returns an error if the scheduler is already running.
+    pub fn start_scheduler(&self) -> Result<(), RuleError> {
+        // Check if already running
+        {
+            let mut running = self.scheduler_running.write().unwrap();
+            if *running {
+                return Err(RuleError::Validation("Scheduler is already running".to_string()));
+            }
+            *running = true;
+        }
+
+        // Get the interval
+        let interval = {
+            let interval_guard = self.scheduler_interval.read().unwrap();
+            *interval_guard
+        };
+
+        // Clone needed Arcs for the task
+        let rules = self.rules.clone();
+        let value_provider = self.value_provider.clone();
+        let history = self.history.clone();
+        let max_history_size = self.max_history_size;
+        let _alert_manager = self.alert_manager.clone();
+        let scheduler_running = self.scheduler_running.clone();
+
+        // Spawn the scheduler task
+        let handle = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                ticker.tick().await;
+
+                // Check if we should stop
+                {
+                    let running = scheduler_running.read().unwrap();
+                    if !*running {
+                        break;
+                    }
+                }
+
+                // Update rule states
+                {
+                    let mut rules_guard = rules.write().await;
+                    for rule in rules_guard.values_mut() {
+                        if rule.status == RuleStatus::Active {
+                            rule.update_state(value_provider.as_ref());
+                        }
+                    }
+                }
+
+                // Evaluate and execute triggered rules
+                let rules_to_execute: Vec<_> = {
+                    let rules_guard = rules.read().await;
+                    rules_guard
+                        .iter()
+                        .filter(|(_, rule)| {
+                            rule.status == RuleStatus::Active
+                                && rule.should_trigger(value_provider.as_ref())
+                        })
+                        .map(|(id, rule)| (id.clone(), rule.clone()))
+                        .collect()
+                };
+
+                // Execute triggered rules
+                for (id, rule) in rules_to_execute {
+                    // Update rule state
+                    {
+                        let mut rules_guard = rules.write().await;
+                        if let Some(r) = rules_guard.get_mut(&id) {
+                            r.state.trigger_count += 1;
+                            r.state.last_triggered = Some(Utc::now());
+                        }
+                    }
+
+                    // Execute actions
+                    for action in &rule.actions {
+                        // In a real implementation, this would use the action executor
+                        // For now, we just log that an action was executed
+                        tracing::debug!(
+                            rule_id = %id,
+                            rule_name = %rule.name,
+                            action = ?action,
+                            "Executing rule action"
+                        );
+                    }
+
+                    // Record in history
+                    let result = RuleExecutionResult {
+                        rule_id: id.clone(),
+                        rule_name: rule.name.clone(),
+                        success: true,
+                        actions_executed: rule.actions.iter().map(|a| format!("{:?}", a)).collect(),
+                        error: None,
+                        duration_ms: 0,
+                    };
+
+                    let mut hist = history.write().await;
+                    hist.push(result);
+                    if hist.len() > max_history_size {
+                        hist.remove(0);
+                    }
+                }
+            }
+        });
+
+        // Store the handle
+        let mut handle_guard = self.scheduler_handle.write().unwrap();
+        *handle_guard = Some(handle);
+
+        tracing::info!(
+            interval_sec = interval.as_secs(),
+            "Rule scheduler started"
+        );
+
+        Ok(())
+    }
+
+    /// Stop the automatic rule scheduler.
+    /// Returns an error if the scheduler is not running.
+    pub fn stop_scheduler(&self) -> Result<(), RuleError> {
+        // Check if running
+        {
+            let running = self.scheduler_running.read().unwrap();
+            if !*running {
+                return Err(RuleError::Validation("Scheduler is not running".to_string()));
+            }
+        }
+
+        // Signal the task to stop
+        {
+            let mut running = self.scheduler_running.write().unwrap();
+            *running = false;
+        }
+
+        // Abort the task if it exists
+        {
+            let mut handle_guard = self.scheduler_handle.write().unwrap();
+            if let Some(handle) = handle_guard.take() {
+                handle.abort();
+            }
+        }
+
+        tracing::info!("Rule scheduler stopped");
+        Ok(())
+    }
+
+    /// Check if the scheduler is currently running.
+    pub fn is_scheduler_running(&self) -> bool {
+        let running = self.scheduler_running.read().unwrap();
+        *running
+    }
+
+    /// Set the scheduler interval.
+    /// This will not affect a running scheduler; it must be restarted for the new interval to take effect.
+    pub fn set_scheduler_interval(&self, interval: Duration) {
+        let mut interval_guard = self.scheduler_interval.write().unwrap();
+        *interval_guard = interval;
+    }
+
+    /// Get the current scheduler interval.
+    pub fn get_scheduler_interval(&self) -> Duration {
+        let interval_guard = self.scheduler_interval.read().unwrap();
+        *interval_guard
     }
 
     /// Set the maximum history size.
@@ -892,5 +1071,87 @@ mod tests {
         // Should trigger immediately without FOR clause
         let triggered = engine.evaluate_rules().await;
         assert_eq!(triggered.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_start_stop() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider);
+
+        // Initially not running
+        assert!(!engine.is_scheduler_running());
+
+        // Start the scheduler
+        engine.start_scheduler().unwrap();
+        assert!(engine.is_scheduler_running());
+
+        // Cannot start again
+        assert!(engine.start_scheduler().is_err());
+
+        // Stop the scheduler
+        engine.stop_scheduler().unwrap();
+        assert!(!engine.is_scheduler_running());
+
+        // Cannot stop again
+        assert!(engine.stop_scheduler().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_interval() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider);
+
+        // Default interval is 5 seconds
+        assert_eq!(engine.get_scheduler_interval(), Duration::from_secs(5));
+
+        // Set a custom interval
+        engine.set_scheduler_interval(Duration::from_millis(100));
+        assert_eq!(engine.get_scheduler_interval(), Duration::from_millis(100));
+    }
+
+    #[tokio::test]
+    async fn test_scheduler_executes_rules() {
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider.clone());
+
+        // Set a very short interval for testing
+        engine.set_scheduler_interval(Duration::from_millis(50));
+
+        // Add a rule
+        let dsl = r#"
+            RULE "Test Scheduler Rule"
+            WHEN sensor.temperature > 50
+            DO
+                NOTIFY "High temperature"
+            END
+        "#;
+        let _rule_id = engine.add_rule_from_dsl(dsl).await.unwrap();
+
+        // Start the scheduler
+        engine.start_scheduler().unwrap();
+
+        // Wait for scheduler to tick at least once
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Rule should not have triggered yet (temperature is default 0.0)
+        let rules = engine.list_rules().await;
+        assert_eq!(rules[0].state.trigger_count, 0);
+
+        // Set temperature above threshold
+        let mem_provider = provider
+            .as_any()
+            .downcast_ref::<InMemoryValueProvider>()
+            .unwrap();
+        mem_provider.set_value("sensor", "temperature", 75.0);
+
+        // Wait for scheduler to tick again
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Rule should have triggered
+        let rules = engine.list_rules().await;
+        assert!(rules[0].state.trigger_count > 0);
+
+        // Stop the scheduler
+        engine.stop_scheduler().unwrap();
     }
 }

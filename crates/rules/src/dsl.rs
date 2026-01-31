@@ -646,10 +646,16 @@ impl RuleDslParser {
         // NOTIFY "message" [channel1, channel2, ...]
         if line.starts_with("NOTIFY") {
             let rest = &line[6..].trim(); // Skip "NOTIFY"
-            if let Some(msg) = Self::extract_quoted_string(rest) {
+            if let Some((message, remainder)) = Self::extract_quoted_string_with_remainder(rest) {
+                // Parse optional channels from remainder
+                let channels = if remainder.starts_with('[') {
+                    Self::parse_channels(remainder)
+                } else {
+                    None
+                };
                 return Ok(Some(RuleAction::Notify {
-                    message: msg.clone(),
-                    channels: None, // TODO: Parse channels from rest of line
+                    message,
+                    channels,
                 }));
             }
         }
@@ -858,6 +864,35 @@ impl RuleDslParser {
         let start = input.find('"')?;
         let end = input[start + 1..].find('"')?;
         Some(input[start + 1..start + 1 + end].to_string())
+    }
+
+    /// Extract string from quotes and return the remaining text after the closing quote.
+    fn extract_quoted_string_with_remainder(input: &str) -> Option<(String, &str)> {
+        let start = input.find('"')?;
+        let end_offset = input[start + 1..].find('"')?;
+        let end = start + 1 + end_offset;
+        let content = input[start + 1..end].to_string();
+        let remainder = input[end + 1..].trim();
+        Some((content, remainder))
+    }
+
+    /// Parse channel list from brackets like [channel1, channel2, ...]
+    fn parse_channels(input: &str) -> Option<Vec<String>> {
+        let input = input.trim();
+        if !input.starts_with('[') {
+            return None;
+        }
+        let end = input.find(']')?;
+        let inner = &input[1..end];
+        if inner.trim().is_empty() {
+            return Some(Vec::new());
+        }
+        let channels: Vec<String> = inner
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Some(channels)
     }
 
     /// Parse parameters string like "speed=100, mode=auto".
@@ -1286,5 +1321,122 @@ DO NOTIFY \"High temperature\" END"#;
             }
             _ => panic!("Expected Range condition"),
         }
+    }
+
+    #[test]
+    fn test_parse_notify_with_channels() {
+        // Test NOTIFY action with channels array
+        let dsl = r#"
+            RULE "Test Notify Channels"
+            WHEN sensor.temperature > 50
+            DO
+                NOTIFY "High temperature detected" [alerts, mobile]
+            END
+        "#;
+
+        let rule = RuleDslParser::parse(dsl).unwrap();
+        assert_eq!(rule.actions.len(), 1);
+        match &rule.actions[0] {
+            RuleAction::Notify { message, channels } => {
+                assert_eq!(message, "High temperature detected");
+                assert_eq!(channels, &Some(vec!["alerts".to_string(), "mobile".to_string()]));
+            }
+            _ => panic!("Expected Notify action"),
+        }
+    }
+
+    #[test]
+    fn test_parse_notify_without_channels() {
+        // Test NOTIFY action without channels (backward compatibility)
+        let dsl = r#"
+            RULE "Test Notify No Channels"
+            WHEN sensor.temperature > 50
+            DO
+                NOTIFY "High temperature detected"
+            END
+        "#;
+
+        let rule = RuleDslParser::parse(dsl).unwrap();
+        assert_eq!(rule.actions.len(), 1);
+        match &rule.actions[0] {
+            RuleAction::Notify { message, channels } => {
+                assert_eq!(message, "High temperature detected");
+                assert_eq!(channels, &None);
+            }
+            _ => panic!("Expected Notify action"),
+        }
+    }
+
+    #[test]
+    fn test_parse_notify_with_empty_channels() {
+        // Test NOTIFY action with empty channels array
+        let dsl = r#"
+            RULE "Test Notify Empty Channels"
+            WHEN sensor.temperature > 50
+            DO
+                NOTIFY "High temperature detected" []
+            END
+        "#;
+
+        let rule = RuleDslParser::parse(dsl).unwrap();
+        assert_eq!(rule.actions.len(), 1);
+        match &rule.actions[0] {
+            RuleAction::Notify { message, channels } => {
+                assert_eq!(message, "High temperature detected");
+                assert_eq!(channels, &Some(vec![]));
+            }
+            _ => panic!("Expected Notify action"),
+        }
+    }
+
+    #[test]
+    fn test_parse_notify_with_single_channel() {
+        // Test NOTIFY action with single channel
+        let dsl = r#"
+            RULE "Test Notify Single Channel"
+            WHEN sensor.temperature > 50
+            DO
+                NOTIFY "High temperature detected" [alerts]
+            END
+        "#;
+
+        let rule = RuleDslParser::parse(dsl).unwrap();
+        assert_eq!(rule.actions.len(), 1);
+        match &rule.actions[0] {
+            RuleAction::Notify { message, channels } => {
+                assert_eq!(message, "High temperature detected");
+                assert_eq!(channels, &Some(vec!["alerts".to_string()]));
+            }
+            _ => panic!("Expected Notify action"),
+        }
+    }
+
+    #[test]
+    fn test_parse_channels_helper() {
+        // Test the parse_channels helper function directly
+        let channels = RuleDslParser::parse_channels("[channel1, channel2, channel3]");
+        assert_eq!(channels, Some(vec!["channel1".to_string(), "channel2".to_string(), "channel3".to_string()]));
+
+        let empty = RuleDslParser::parse_channels("[]");
+        assert_eq!(empty, Some(vec![]));
+
+        let none = RuleDslParser::parse_channels("channel1, channel2");
+        assert_eq!(none, None);
+    }
+
+    #[test]
+    fn test_extract_quoted_string_with_remainder() {
+        // Test the extract_quoted_string_with_remainder helper
+        let (message, remainder) = RuleDslParser::extract_quoted_string_with_remainder(
+            r#" "Hello world" [chan1, chan2] "#
+        ).unwrap();
+        assert_eq!(message, "Hello world");
+        assert_eq!(remainder, r#"[chan1, chan2]"#);
+
+        let (message, remainder) = RuleDslParser::extract_quoted_string_with_remainder(
+            r#" "Test" "#
+        ).unwrap();
+        assert_eq!(message, "Test");
+        assert_eq!(remainder, "");
     }
 }
