@@ -31,9 +31,6 @@ pub struct MaintenanceConfig {
     /// Memory entry retention (hours, None = keep forever).
     pub memory_retention_hours: Option<u64>,
 
-    /// Event log retention (hours, None = keep forever).
-    pub event_log_retention_hours: Option<u64>,
-
     /// Maximum number of history entries to keep per item.
     pub max_history_entries: usize,
 }
@@ -45,7 +42,6 @@ impl Default for MaintenanceConfig {
             interval_secs: 3600,                      // 1 hour
             timeseries_retention_hours: Some(24 * 7), // 7 days
             memory_retention_hours: Some(24 * 30),    // 30 days
-            event_log_retention_hours: Some(24 * 7),  // 7 days
             max_history_entries: 1000,
         }
     }
@@ -64,8 +60,6 @@ pub struct MaintenanceResult {
     pub timeseries_deleted: usize,
     /// Number of memory entries deleted.
     pub memory_deleted: usize,
-    /// Number of event log entries deleted.
-    pub events_deleted: usize,
     /// Number of config history entries deleted.
     pub config_history_deleted: usize,
     /// Any errors that occurred.
@@ -174,7 +168,6 @@ impl MaintenanceScheduler {
             duration_ms: 0,
             timeseries_deleted: 0,
             memory_deleted: 0,
-            events_deleted: 0,
             config_history_deleted: 0,
             errors: Vec::new(),
         };
@@ -192,14 +185,6 @@ impl MaintenanceScheduler {
             match Self::cleanup_memories(storage, retention_hours).await {
                 Ok(count) => result.memory_deleted = count,
                 Err(e) => result.errors.push(format!("Memory cleanup: {}", e)),
-            }
-        }
-
-        // Cleanup old event logs
-        if let Some(retention_hours) = config.event_log_retention_hours {
-            match Self::cleanup_event_logs(storage, retention_hours).await {
-                Ok(count) => result.events_deleted = count,
-                Err(e) => result.errors.push(format!("Event log cleanup: {}", e)),
             }
         }
 
@@ -234,18 +219,6 @@ impl MaintenanceScheduler {
     async fn cleanup_memories(_storage: &UnifiedStorage, _retention_hours: u64) -> Result<usize> {
         // This would integrate with LongTermMemoryStore's cleanup
         // For now, return a placeholder
-        Ok(0)
-    }
-
-    /// Cleanup old event logs.
-    async fn cleanup_event_logs(_storage: &UnifiedStorage, retention_hours: u64) -> Result<usize> {
-        let _cutoff = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0) as i64
-            - (retention_hours * 3600) as i64;
-
-        // This would scan and delete old event logs
         Ok(0)
     }
 
@@ -304,7 +277,6 @@ mod tests {
         assert_eq!(config.interval_secs, 3600);
         assert_eq!(config.timeseries_retention_hours, Some(24 * 7));
         assert_eq!(config.memory_retention_hours, Some(24 * 30));
-        assert_eq!(config.event_log_retention_hours, Some(24 * 7));
     }
 
     #[test]

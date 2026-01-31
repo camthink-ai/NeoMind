@@ -56,11 +56,8 @@ pub use devices::{
     send_command_handler, validate_device_type_handler,
 };
 pub use events::{
-    event_history_handler, event_stats_handler, event_stream_handler, event_websocket_handler,
-    events_query_handler, subscribe_events_handler, unsubscribe_events_handler,
+    event_stream_handler, event_websocket_handler,
 };
-#[cfg(debug_assertions)]
-pub use events::generate_test_events_handler;
 pub use rules::{create_rule_handler, list_rules_handler};
 pub use sessions::{
     chat_handler, cleanup_sessions_handler, create_session_handler, delete_session_handler,

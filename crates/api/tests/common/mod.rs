@@ -9,7 +9,6 @@ use edge_ai_agent::SessionManager;
 use edge_ai_rules::InMemoryValueProvider;
 use edge_ai_commands::{CommandManager, CommandQueue, CommandStateStore};
 use edge_ai_devices::{DeviceRegistry, DeviceService, TimeSeriesStorage};
-use edge_ai_storage::business::EventLogStore;
 use edge_ai_storage::decisions::DecisionStore;
 use edge_ai_alerts::AlertManager;
 
@@ -37,7 +36,6 @@ pub async fn create_test_server_state() -> ServerState {
     let command_manager = Arc::new(CommandManager::new(command_queue, command_state));
 
     let decision_store = DecisionStore::memory().ok();
-    let event_log = EventLogStore::open(":memory:").ok().map(Arc::new);
 
     let plugin_registry = Arc::new(UnifiedPluginRegistry::new("1.0.0"));
     let device_registry = Arc::new(DeviceRegistry::new());
@@ -56,7 +54,6 @@ pub async fn create_test_server_state() -> ServerState {
         embedded_broker: None,
         device_update_tx,
         event_bus: Some(event_bus),
-        event_log,
         command_manager: Some(command_manager),
         decision_store,
         auth_state: Arc::new(AuthState::new()),
@@ -95,7 +92,7 @@ pub async fn create_test_server_state_with_workflow() -> ServerState {
     let command_manager = Arc::new(CommandManager::new(command_queue, command_state));
 
     let decision_store = DecisionStore::memory().ok();
-    let event_log = EventLogStore::open(":memory:").ok().map(Arc::new);
+
     let plugin_registry = Arc::new(UnifiedPluginRegistry::new("1.0.0"));
     let device_registry = Arc::new(DeviceRegistry::new());
     let device_service = Arc::new(DeviceService::new(
@@ -113,7 +110,6 @@ pub async fn create_test_server_state_with_workflow() -> ServerState {
         embedded_broker: None,
         device_update_tx,
         event_bus: Some(event_bus),
-        event_log,
         command_manager: Some(command_manager),
         decision_store,
         auth_state: Arc::new(AuthState::new()),

@@ -39,7 +39,6 @@ import type {
   ToolExecutionResult,
   SearchResult,
   SearchSuggestion,
-  EventStats,
   Event as NeoTalkEvent,
   ChatSession,
   SessionHistoryResponse,
@@ -1123,28 +1122,6 @@ export const api = {
       method: 'POST',
     }),
 
-  // ========== Events API ==========
-  getEvents: (params?: {
-    event_type?: string | string[]
-    category?: string
-    start?: number
-    end?: number
-    limit?: number
-    offset?: number
-  }) =>
-    fetchAPI<{ events: Array<Event>; total: number; offset: number; limit: number; has_more: boolean }>(
-      `/events${params ? `?${new URLSearchParams(
-        Object.entries(params).flatMap(([key, value]) => {
-          if (value === undefined) return []
-          if (Array.isArray(value)) {
-            return value.map(v => [`${key}[]`, String(v)])
-          }
-          return [[key, String(value)]]
-        })
-      ).toString()}` : ''}`
-    ),
-  subscribeEvents: () => fetchAPI<{ ws_url: string; subscription_id: string }>('/events/subscribe'),
-
   // ========== Plugins API ==========
   // Matches backend: crates/api/src/handlers/plugins.rs
   //
@@ -1456,28 +1433,6 @@ export const api = {
     ),
   getSearchSuggestions: (q: string) =>
     fetchAPI<{ suggestions: SearchSuggestion[] }>(`/search/suggestions?q=${encodeURIComponent(q)}`),
-
-  // ========== Extended Events API ==========
-  getEventHistory: (params?: { event_type?: string; source?: string; limit?: number }) =>
-    fetchAPI<{ events: Array<NeoTalkEvent>; count: number }>('/events/history' +
-      (params ? `?${new URLSearchParams(
-        Object.entries(params).reduce((acc, [key, value]) => {
-          if (value !== undefined) acc[key] = String(value)
-          return acc
-        }, {} as Record<string, string>)
-      )}` : '')
-    ),
-  getEventStats: () =>
-    fetchAPI<{ stats: EventStats }>('/events/stats'),
-  subscribeToEvents: (eventTypes: string[], source?: string) =>
-    fetchAPI<{ subscription_id: string; ws_url: string }>('/events/subscribe', {
-      method: 'POST',
-      body: JSON.stringify({ event_types: eventTypes, source }),
-    }),
-  unsubscribeFromEvents: (id: string) =>
-    fetchAPI<{ message: string }>(`/events/subscribe/${id}`, {
-      method: 'DELETE',
-    }),
 
   // ========== AI Agents API ==========
   // Matches backend: crates/api/src/handlers/agents.rs

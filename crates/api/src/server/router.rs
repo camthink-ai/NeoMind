@@ -80,7 +80,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/plugins/:id/devices", get(plugins::get_adapter_devices_handler))
         // Test data generation (public - for development)
         .route("/api/test-data/alerts", post(test_data::generate_test_alerts_handler))
-        .route("/api/test-data/events", post(test_data::generate_test_events_handler))
         .route("/api/test-data/all", post(test_data::generate_test_data_handler))
         // Suggestions API (public - provides intelligent input suggestions)
         .route("/api/suggestions", get(suggestions::get_suggestions_handler))
@@ -119,18 +118,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
 
     // Protected routes (require API key or JWT via Authorization header)
     let protected_routes = Router::new()
-        // Events API (REST endpoints)
-        .route("/api/events/history", get(events::event_history_handler))
-        .route("/api/events", get(events::events_query_handler))
-        .route("/api/events/stats", get(events::event_stats_handler))
-        .route(
-            "/api/events/subscribe",
-            post(events::subscribe_events_handler),
-        )
-        .route(
-            "/api/events/subscribe/:id",
-            delete(events::unsubscribe_events_handler),
-        )
         // Session management
         .route("/api/sessions", post(sessions::create_session_handler))
         .route("/api/sessions", get(sessions::list_sessions_handler))
@@ -644,7 +631,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
     // Add debug-only routes
     #[cfg(debug_assertions)]
     let debug_routes = Router::new()
-        .route("/api/events/test/generate", post(events::generate_test_events_handler))
         .layer(tower_http::compression::CompressionLayer::new())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             MAX_REQUEST_BODY_SIZE,

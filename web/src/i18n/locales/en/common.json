@@ -19,7 +19,6 @@
     "devices": "Devices",
     "automation": "Automation",
     "agents": "AI Agents",
-    "events": "Events",
     "alerts": "Alerts",
     "decisions": "Decisions",
     "plugins": "Plugins",
@@ -155,7 +154,6 @@
     "quickActions": {
       "devices": "Devices",
       "automation": "Automation",
-      "events": "Events",
       "settings": "Settings"
     }
   },

@@ -129,7 +129,7 @@ pub use device_state::{
 };
 
 pub use business::{
-    Alert, AlertFilter, AlertStatus, AlertStore, EventFilter, EventLog, EventLogStore,
+    Alert, AlertFilter, AlertStatus, AlertStore,
     EventSeverity, RuleExecution, RuleExecutionResult, RuleExecutionStats, RuleHistoryStore,
 };
 

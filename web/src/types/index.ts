@@ -1046,14 +1046,6 @@ export interface EventSubscription {
   created_at: number
 }
 
-export interface EventStats {
-  total_events: number
-  by_type: Record<string, number>
-  by_source: Record<string, number>
-  processed: number
-  pending: number
-}
-
 // ========== LLM Backend Management Types ==========
 
 export type LlmBackendType = 'ollama' | 'openai' | 'anthropic' | 'google' | 'xai'

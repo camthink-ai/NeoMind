@@ -44,10 +44,6 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     state.init_tools().await;
     startup.service("AI tools", ServiceStatus::Started);
 
-    // Initialize event persistence
-    state.init_event_log().await;
-    startup.service("Event persistence", ServiceStatus::Started);
-
     // Initialize rule engine event service
     state.init_rule_engine_events().await;
     startup.service("Rule engine events", ServiceStatus::Started);

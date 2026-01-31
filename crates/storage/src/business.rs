@@ -1,7 +1,6 @@
 //! Business data storage for logs, rules, and alerts.
 //!
 //! Provides storage for:
-//! - Event logs with circular buffer and retention
 //! - Rule execution history
 //! - Alert records with status management
 
@@ -17,31 +16,8 @@ use tokio::sync::RwLock;
 use crate::Result;
 
 // Table definitions
-const EVENT_LOG_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("event_log");
 const RULE_HISTORY_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("rule_history");
 const ALERT_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("alerts");
-
-// Default retention period: 7 days
-const DEFAULT_RETENTION_DAYS: i64 = 7;
-
-/// Event log entry.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventLog {
-    /// Unique event ID
-    pub id: String,
-    /// Event type (e.g., "device_connected", "rule_triggered", "error")
-    pub event_type: String,
-    /// Event source (e.g., device_id, rule_id)
-    pub source: Option<String>,
-    /// Event severity (info, warning, error, critical)
-    pub severity: EventSeverity,
-    /// Event timestamp
-    pub timestamp: i64,
-    /// Event message
-    pub message: String,
-    /// Additional data
-    pub data: Option<serde_json::Value>,
-}
 
 /// Event severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,220 +32,9 @@ pub enum EventSeverity {
     Critical,
 }
 
-/// Event log filter.
-#[derive(Debug, Clone, Default)]
-pub struct EventFilter {
-    /// Filter by event type
-    pub event_types: Vec<String>,
-    /// Filter by severity
-    pub severities: Vec<EventSeverity>,
-    /// Filter by source
-    pub source: Option<String>,
-    /// Start timestamp (inclusive)
-    pub start_time: Option<i64>,
-    /// End timestamp (inclusive)
-    pub end_time: Option<i64>,
-    /// Maximum results (default: 100, max: 1000)
-    pub limit: Option<usize>,
-    /// Skip N results for pagination
-    pub offset: Option<usize>,
-}
 
-impl EventFilter {
-    /// Create a new empty filter.
-    pub fn new() -> Self {
-        Self::default()
-    }
 
-    /// Add event type filter.
-    pub fn with_event_type(mut self, event_type: impl Into<String>) -> Self {
-        self.event_types.push(event_type.into());
-        self
-    }
 
-    /// Add severity filter.
-    pub fn with_severity(mut self, severity: EventSeverity) -> Self {
-        self.severities.push(severity);
-        self
-    }
-
-    /// Set source filter.
-    pub fn with_source(mut self, source: impl Into<String>) -> Self {
-        self.source = Some(source.into());
-        self
-    }
-
-    /// Set time range.
-    pub fn with_time_range(mut self, start: i64, end: i64) -> Self {
-        self.start_time = Some(start);
-        self.end_time = Some(end);
-        self
-    }
-
-    /// Set result limit.
-    pub fn with_limit(mut self, limit: usize) -> Self {
-        self.limit = Some(limit);
-        self
-    }
-
-    /// Set offset for pagination.
-    pub fn with_offset(mut self, offset: usize) -> Self {
-        self.offset = Some(offset);
-        self
-    }
-}
-
-/// Event log store with circular retention.
-pub struct EventLogStore {
-    db: Arc<Database>,
-    retention_days: i64,
-}
-
-impl EventLogStore {
-    /// Open or create an event log store.
-    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path_ref = path.as_ref();
-        let db = if path_ref.exists() {
-            Database::open(path_ref)?
-        } else {
-            if let Some(parent) = path_ref.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            Database::create(path_ref)?
-        };
-
-        Ok(Self {
-            db: Arc::new(db),
-            retention_days: DEFAULT_RETENTION_DAYS,
-        })
-    }
-
-    /// Set retention period in days.
-    pub fn with_retention_days(mut self, days: i64) -> Self {
-        self.retention_days = days.max(1);
-        self
-    }
-
-    /// Write an event log entry.
-    pub fn write(&self, event: &EventLog) -> Result<()> {
-        let key = format!("{}:{}", event.timestamp, event.id);
-        let value = serde_json::to_vec(event)?;
-
-        let txn = self.db.begin_write()?;
-        {
-            let mut table = txn.open_table(EVENT_LOG_TABLE)?;
-            table.insert(&*key, &*value)?;
-        }
-        txn.commit()?;
-
-        Ok(())
-    }
-
-    /// Query events with filter.
-    pub fn query(&self, filter: &EventFilter) -> Result<Vec<EventLog>> {
-        let txn = self.db.begin_read()?;
-
-        // Table may not exist yet if no events have been written
-        let table = match txn.open_table(EVENT_LOG_TABLE) {
-            Ok(t) => t,
-            Err(_) => return Ok(Vec::new()),  // Return empty if table doesn't exist
-        };
-
-        let cutoff_timestamp = Utc::now().timestamp() - (self.retention_days * 86400);
-        let mut all_results = Vec::new();
-
-        let start_key = filter.start_time.unwrap_or(cutoff_timestamp).to_string();
-        let end_key = filter.end_time.unwrap_or(i64::MAX).to_string();
-
-        // Collect all matching events (within reasonable bounds)
-        for result in table.range(&*start_key..=&*end_key)? {
-            let (_key, value) = result?;
-            if let Ok(event) = serde_json::from_slice::<EventLog>(value.value())
-                && self.matches_filter(&event, filter) {
-                    all_results.push(event);
-                    // Safety limit to prevent unbounded memory usage
-                    if all_results.len() >= 10000 {
-                        break;
-                    }
-                }
-        }
-
-        // Apply pagination: offset and limit
-        let offset = filter.offset.unwrap_or(0);
-        let limit = filter.limit.unwrap_or(100).min(1000); // Cap at 1000
-
-        let start = offset.min(all_results.len());
-        let end = (start + limit).min(all_results.len());
-
-        Ok(all_results[start..end].to_vec())
-    }
-
-    /// Get events by type.
-    pub fn get_by_type(&self, event_type: &str, limit: Option<usize>) -> Result<Vec<EventLog>> {
-        let filter = EventFilter::new()
-            .with_event_type(event_type)
-            .with_limit(limit.unwrap_or(100));
-        self.query(&filter)
-    }
-
-    /// Get events by source.
-    pub fn get_by_source(&self, source: &str, limit: Option<usize>) -> Result<Vec<EventLog>> {
-        let filter = EventFilter::new()
-            .with_source(source)
-            .with_limit(limit.unwrap_or(100));
-        self.query(&filter)
-    }
-
-    /// Clean up old events beyond retention period.
-    pub fn cleanup_old_events(&self) -> Result<usize> {
-        let cutoff = Utc::now().timestamp() - (self.retention_days * 86400);
-
-        let write_txn = self.db.begin_write()?;
-        let mut count = 0;
-
-        {
-            let mut table = write_txn.open_table(EVENT_LOG_TABLE)?;
-            let start_key = i64::MIN.to_string();
-            let end_key = cutoff.to_string();
-
-            let mut keys_to_delete: Vec<String> = Vec::new();
-            let mut range = table.range(&*start_key..=&*end_key)?;
-            for result in range.by_ref() {
-                let (key_ref, _) = result?;
-                keys_to_delete.push(key_ref.value().to_string());
-            }
-            drop(range);
-
-            for key in &keys_to_delete {
-                table.remove(&**key)?;
-                count += 1;
-            }
-        }
-
-        write_txn.commit()?;
-        Ok(count)
-    }
-
-    fn matches_filter(&self, event: &EventLog, filter: &EventFilter) -> bool {
-        if !filter.event_types.is_empty() && !filter.event_types.contains(&event.event_type) {
-            return false;
-        }
-
-        if !filter.severities.is_empty() && !filter.severities.contains(&event.severity) {
-            return false;
-        }
-
-        if let Some(ref source) = filter.source {
-            if event.source.as_ref().map(|s| s == source).unwrap_or(false) {
-                // matches
-            } else {
-                return false;
-            }
-        }
-
-        true
-    }
-}
 
 /// Rule execution history entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -762,43 +527,6 @@ impl AlertStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_event_log_store() {
-        // Clean up any existing test database
-        let _ = std::fs::remove_file("/tmp/test_events.redb");
-
-        let store = EventLogStore::open("/tmp/test_events.redb").unwrap();
-
-        let event = EventLog {
-            id: "evt-1".to_string(),
-            event_type: "device_connected".to_string(),
-            source: Some("device-1".to_string()),
-            severity: EventSeverity::Info,
-            timestamp: Utc::now().timestamp(),
-            message: "Device connected".to_string(),
-            data: None,
-        };
-
-        store.write(&event).unwrap();
-
-        let events = store.get_by_source("device-1", Some(10)).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].id, "evt-1");
-    }
-
-    #[test]
-    fn test_event_filter() {
-        let filter = EventFilter::new()
-            .with_event_type("test")
-            .with_severity(EventSeverity::Error)
-            .with_source("device-1")
-            .with_limit(10);
-
-        assert_eq!(filter.event_types.len(), 1);
-        assert_eq!(filter.severities.len(), 1);
-        assert_eq!(filter.limit, Some(10));
-    }
 
     #[test]
     fn test_alert_store() {

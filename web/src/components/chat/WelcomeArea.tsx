@@ -131,7 +131,6 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
     { id: "devices", label: t("welcome.quickActions.devices"), icon: Cpu, path: "/devices" },
     { id: "automation", label: t("welcome.quickActions.automation"), icon: Workflow, path: "/automation" },
     { id: "agents", label: t("nav.agents"), icon: Bot, path: "/agents" },
-    { id: "events", label: t("welcome.quickActions.events"), icon: Bell, path: "/events" },
     { id: "settings", label: t("welcome.quickActions.settings"), icon: Settings, path: "/settings" },
   ]
 
@@ -197,7 +196,7 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
             </Link>
 
             <Link
-              to="/events"
+              to="/settings"
               className="p-4 rounded-xl bg-muted/50 hover:bg-muted transition-colors text-left group"
             >
               <div className="flex items-center justify-between mb-2">

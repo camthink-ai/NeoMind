@@ -12,7 +12,6 @@ use edge_ai_core::{EventBus, extension::ExtensionRegistry};
 use edge_ai_devices::adapter::AdapterResult;
 use edge_ai_devices::{DeviceRegistry, DeviceService, TimeSeriesStorage};
 use edge_ai_rules::{InMemoryValueProvider, RuleEngine, store::RuleStore};
-use edge_ai_storage::business::EventLogStore;
 use edge_ai_storage::dashboards::DashboardStore;
 use edge_ai_storage::decisions::DecisionStore;
 use edge_ai_storage::llm_backends::LlmBackendStore;
@@ -73,8 +72,6 @@ pub struct ServerState {
     pub device_update_tx: broadcast::Sender<DeviceStatusUpdate>,
     /// Event bus for system-wide event distribution.
     pub event_bus: Option<Arc<EventBus>>,
-    /// Event log store for historical events.
-    pub event_log: Option<Arc<EventLogStore>>,
     /// Command manager for command history and retry.
     pub command_manager: Option<Arc<CommandManager>>,
     /// Decision store for LLM decisions.
@@ -114,7 +111,7 @@ pub struct ServerState {
     /// Flag to track if rule engine events have been initialized (prevents duplicate subscribers).
     rule_engine_events_initialized: Arc<std::sync::atomic::AtomicBool>,
     /// Cached rule engine event service instance (prevents duplicate instances).
-    rule_engine_event_service: Arc<tokio::sync::Mutex<Option<crate::event_persistence::RuleEngineEventService>>>,
+    rule_engine_event_service: Arc<tokio::sync::Mutex<Option<crate::event_services::RuleEngineEventService>>>,
 }
 
 impl ServerState {
@@ -198,33 +195,6 @@ impl ServerState {
                             category = "storage",
                             "Failed to create in-memory decision store"
                         );
-                        None
-                    }
-                }
-            }
-        };
-
-        // Create event log store
-        let event_log: Option<Arc<EventLogStore>> = match EventLogStore::open("data/events.redb") {
-            Ok(store) => {
-                tracing::info!(
-                    category = "storage",
-                    "Event log store initialized: data/events.redb"
-                );
-                Some(Arc::new(store))
-            }
-            Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open event log store, using in-memory");
-                match EventLogStore::open(":memory:") {
-                    Ok(store) => {
-                        tracing::info!(
-                            category = "storage",
-                            "Event log store using in-memory storage"
-                        );
-                        Some(Arc::new(store))
-                    }
-                    Err(e) => {
-                        tracing::error!(category = "storage", error = %e, "Failed to create in-memory event log");
                         None
                     }
                 }
@@ -355,7 +325,6 @@ impl ServerState {
             embedded_broker: None,
             device_update_tx,
             event_bus: Some(event_bus),
-            event_log,
             command_manager: Some(command_manager),
             decision_store,
             auth_state: Arc::new(AuthState::new()),
@@ -666,37 +635,6 @@ impl ServerState {
         );
     }
 
-    /// Initialize event persistence service.
-    ///
-    /// Starts a background task that subscribes to EventBus and persists
-    /// events to EventLogStore for historical queries.
-    pub async fn init_event_log(&self) {
-        let (event_bus, event_log) = match (&self.event_bus, &self.event_log) {
-            (Some(bus), Some(log)) => (bus, log),
-            _ => {
-                tracing::warn!("Event persistence not started: event_bus or event_log not available");
-                return;
-            }
-        };
-
-        use crate::event_persistence::EventPersistenceService;
-
-        let service = EventPersistenceService::with_defaults(
-            (*event_bus).clone(),
-            event_log.clone(),
-        );
-
-        let running = service.start();
-        if running.load(std::sync::atomic::Ordering::Relaxed) {
-            tracing::info!(
-                category = "event_persistence",
-                "Event persistence service started - events will be stored to EventLogStore"
-            );
-        } else {
-            tracing::warn!("Event persistence service failed to start");
-        }
-    }
-
     /// Initialize rule engine event service.
     ///
     /// Starts a background task that subscribes to device metric events
@@ -727,21 +665,16 @@ impl ServerState {
             }
         };
 
-        use crate::event_persistence::RuleEngineEventService;
+        use crate::event_services::RuleEngineEventService;
 
         // Get or create the service instance (cached in ServerState)
         {
             let mut cached_service = self.rule_engine_event_service.lock().await;
             if cached_service.is_none() {
-                let device_registry = self.device_service.get_registry().await;
-                let mut service = RuleEngineEventService::new(
+                let service = RuleEngineEventService::new(
                     (*event_bus).clone(),
                     rule_engine.clone(),
-                ).with_device_registry(device_registry);
-                // Add rule store for persisting rule state after execution
-                if let Some(ref store) = self.rule_store {
-                    service = service.with_rule_store(store.clone());
-                }
+                );
                 *cached_service = Some(service);
             }
         }
@@ -997,7 +930,7 @@ impl ServerState {
     /// Starts a background task that subscribes to DeviceMetric events on the EventBus
     /// and processes transforms to generate virtual metrics.
     pub async fn init_transform_event_service(&self) {
-        use crate::event_persistence::TransformEventService;
+        use crate::event_services::TransformEventService;
 
         let (event_bus, transform_engine, automation_store) = match (
             &self.event_bus,

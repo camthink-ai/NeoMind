@@ -19,7 +19,6 @@
     "devices": "设备",
     "automation": "自动化",
     "agents": "智能体",
-    "events": "事件",
     "alerts": "告警",
     "decisions": "决策",
     "plugins": "插件",
@@ -155,7 +154,6 @@
     "quickActions": {
       "devices": "查看设备",
       "automation": "自动化规则",
-      "events": "事件中心",
       "settings": "系统设置"
     }
   },

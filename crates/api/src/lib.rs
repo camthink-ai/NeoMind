@@ -8,7 +8,7 @@ pub mod auth_users;
 pub mod cache;
 pub mod config;
 pub mod crypto;
-pub mod event_persistence;
+pub mod event_services;
 pub mod handlers;
 pub mod models;
 pub mod openapi;

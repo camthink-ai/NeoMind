@@ -14,6 +14,3 @@ export * from './BulkActionBar'
 export * from './MonitorStatsGrid'
 export * from './FullScreenEditor'
 
-// Event components
-export { EventHistory } from '../events/EventHistory'
-export { EventStats } from '../events/EventStats'

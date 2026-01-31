@@ -21,7 +21,6 @@ const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default:
 const CommandsPage = lazy(() => import('@/pages/commands').then(m => ({ default: m.CommandsPage })))
 const DecisionsPage = lazy(() => import('@/pages/decisions').then(m => ({ default: m.DecisionsPage })))
 const PluginsPage = lazy(() => import('@/pages/plugins').then(m => ({ default: m.PluginsPage })))
-const EventsPage = lazy(() => import('@/pages/events').then(m => ({ default: m.EventsPage })))
 
 // Suppress Radix UI Portal cleanup errors during page transitions
 // This is a known issue with React 18 + Radix UI + fast page navigation
@@ -234,7 +233,6 @@ function App() {
                     <Route path="/plugins/connections" element={<PluginsPage />} />
                     <Route path="/plugins/alert-channels" element={<PluginsPage />} />
                     <Route path="/plugins/extensions" element={<PluginsPage />} />
-                    <Route path="/events" element={<EventsPage />} />
                     {/* Catch all - redirect to chat */}
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Routes>

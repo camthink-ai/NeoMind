@@ -17,7 +17,6 @@ import en_auth from './locales/en/auth.json';
 import en_validation from './locales/en/validation.json';
 import en_messages from './locales/en/messages.json';
 import en_dashboard from './locales/en/dashboard.json';
-import en_events from './locales/en/events.json';
 import en_agents from './locales/en/agents.json';
 import en_dashboard_components from './locales/en/dashboard-components.json';
 import en_chat from './locales/en/chat.json';
@@ -37,7 +36,6 @@ import zh_auth from './locales/zh/auth.json';
 import zh_validation from './locales/zh/validation.json';
 import zh_messages from './locales/zh/messages.json';
 import zh_dashboard from './locales/zh/dashboard.json';
-import zh_events from './locales/zh/events.json';
 import zh_agents from './locales/zh/agents.json';
 import zh_dashboard_components from './locales/zh/dashboard-components.json';
 import zh_chat from './locales/zh/chat.json';
@@ -59,7 +57,6 @@ const resources = {
     validation: en_validation,
     messages: en_messages,
     dashboard: en_dashboard,
-    events: en_events,
     agents: en_agents,
     dashboardComponents: en_dashboard_components,
     chat: en_chat,
@@ -80,7 +77,6 @@ const resources = {
     validation: zh_validation,
     messages: zh_messages,
     dashboard: zh_dashboard,
-    events: zh_events,
     agents: zh_agents,
     dashboardComponents: zh_dashboard_components,
     chat: zh_chat,
@@ -98,7 +94,7 @@ i18n
     defaultNS: 'common',
     ns: ['common', 'navigation', 'devices', 'alerts', 'automation',
          'commands', 'decisions', 'plugins', 'extensions', 'settings', 'auth',
-         'validation', 'messages', 'dashboard', 'events', 'agents', 'dashboardComponents', 'chat', 'setup'],
+         'validation', 'messages', 'dashboard', 'agents', 'dashboardComponents', 'chat', 'setup'],
     interpolation: {
       escapeValue: false,
     },
