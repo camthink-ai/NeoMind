@@ -6,13 +6,23 @@
 
 use serde_json::Value;
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::sync::OnceLock;
+
+#[cfg(feature = "cloud")]
+use std::collections::HashMap;
+
+#[cfg(feature = "cloud")]
+use std::sync::RwLock;
 
 #[cfg(feature = "cloud")]
 use crate::backends::openai::{CloudConfig, CloudRuntime};
 
 #[cfg(feature = "cloud")]
 use edge_ai_core::llm::backend::{LlmError, LlmRuntime};
+
+// Ollama imports
+use crate::backends::ollama::{OllamaConfig, OllamaRuntime};
 
 /// Plugin trait for LLM backend implementations.
 pub trait LlmBackendPlugin: Send + Sync {

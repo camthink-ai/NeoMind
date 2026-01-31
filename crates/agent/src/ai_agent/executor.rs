@@ -2598,8 +2598,20 @@ Respond in JSON format:
             })
             .collect();
 
-        // Use has_images flag only if we actually have valid image content
-        let has_valid_images = !image_parts.is_empty();
+        // Check if LLM supports vision/multimodal
+        let llm_supports_vision = llm.capabilities().supports_images;
+
+        // Only use multimodal mode if we have valid images AND LLM supports vision
+        let has_valid_images = !image_parts.is_empty() && llm_supports_vision;
+
+        // Log when images are available but LLM doesn't support vision
+        if !image_parts.is_empty() && !llm_supports_vision {
+            tracing::warn!(
+                agent_id = %agent.id,
+                image_count = image_parts.len(),
+                "Agent has image data but LLM doesn't support vision. Images will be ignored."
+            );
+        }
 
         // Build text data summary for non-image data
         // Limit to prevent token overflow - prioritize most recent/important data
