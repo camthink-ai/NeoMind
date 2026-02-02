@@ -47,8 +47,8 @@ jobs:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
-            target/
-          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+            web/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('web/src-tauri/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.target }}-
             ${{ runner.os }}-cargo-
