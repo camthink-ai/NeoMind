@@ -205,12 +205,11 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| match event {
-            // Handle macOS Dock icon click to reopen window
-            RunEvent::Reopen { .. } => {
+        .run(|app_handle, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
                 show_main_window(app_handle);
             }
-            _ => {}
         });
 }
 
