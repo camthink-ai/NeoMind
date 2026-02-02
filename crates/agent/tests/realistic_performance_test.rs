@@ -7,13 +7,11 @@ use std::time::{Duration, Instant};
 use edge_ai_core::{EventBus, MetricValue, NeoTalkEvent, LlmRuntime, message::{Message, MessageRole, Content}};
 use edge_ai_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
-    AgentRole, ScheduleType, ResourceType, AgentResource,
+    WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType, ResourceType, AgentResource,
     TimeSeriesStore, DataPoint,
 };
 use edge_ai_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
 use edge_ai_llm::backends::ollama::{OllamaRuntime, OllamaConfig};
-// Note: MessageManager is not used in this test, kept for consistency
-// use edge_ai_messages::{MessageManager, MessageSeverity};
 use edge_ai_core::llm::backend::{LlmInput, GenerationParams};
 
 struct RealPerfTestContext {
@@ -43,7 +41,7 @@ impl RealPerfTestContext {
             time_series_storage: Some(time_series.clone()),
             device_service: None,
             event_bus: Some(event_bus.clone()),
-            alert_manager: None,
+            message_manager: None,
             llm_runtime: Some(llm_runtime.clone()),
             llm_backend_store: None,
         };
@@ -108,7 +106,6 @@ impl RealPerfTestContext {
     async fn create_test_agent(
         &self,
         name: &str,
-        role: AgentRole,
         user_prompt: &str,
     ) -> anyhow::Result<AiAgent> {
         let now = chrono::Utc::now().timestamp();
@@ -116,7 +113,9 @@ impl RealPerfTestContext {
         let agent = AiAgent {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
+            description: None,
             user_prompt: user_prompt.to_string(),
+            llm_backend_id: None,
             parsed_intent: None,
             resources: vec![],
             schedule: AgentSchedule {
@@ -143,10 +142,14 @@ impl RealPerfTestContext {
                 learned_patterns: vec![],
                 trend_data: vec![],
                 updated_at: now,
+                working: WorkingMemory::default(),
+                short_term: ShortTermMemory::default(),
+                long_term: LongTermMemory::default(),
             },
             error_message: None,
-            role,
+            priority: 128,
             conversation_history: vec![],
+            user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
         };
@@ -300,7 +303,7 @@ async fn test_llm_vs_mock_comparison() -> anyhow::Result<()> {
         time_series_storage: Some(ctx.time_series.clone()),
         device_service: None,
         event_bus: Some(ctx.event_bus.clone()),
-        alert_manager: None,
+        message_manager: None,
         llm_runtime: None, // 没有LLM
         llm_backend_store: None,
     };
@@ -310,7 +313,9 @@ async fn test_llm_vs_mock_comparison() -> anyhow::Result<()> {
     let agent = AiAgent {
         id: uuid::Uuid::new_v4().to_string(),
         name: "测试Agent".to_string(),
+        description: None,
         user_prompt: "监控温度".to_string(),
+        llm_backend_id: None,
         parsed_intent: None,
         resources: vec![AgentResource {
             resource_type: ResourceType::Metric,
@@ -342,10 +347,14 @@ async fn test_llm_vs_mock_comparison() -> anyhow::Result<()> {
             learned_patterns: vec![],
             trend_data: vec![],
             updated_at: chrono::Utc::now().timestamp(),
+            working: WorkingMemory::default(),
+            short_term: ShortTermMemory::default(),
+            long_term: LongTermMemory::default(),
         },
         error_message: None,
-        role: AgentRole::Monitor,
+        priority: 128,
         conversation_history: vec![],
+        user_messages: vec![],
         conversation_summary: None,
         context_window_size: 10,
     };

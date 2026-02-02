@@ -4,7 +4,8 @@ use std::sync::Arc;
 use edge_ai_core::{EventBus, message::{Message, MessageRole, Content}, MetricValue, NeoTalkEvent};
 use edge_ai_storage::{
     AgentStore, AgentSchedule, AgentResource, AgentStats, AgentStatus, AiAgent, AgentMemory,
-    AgentRole, DataCollected, DecisionProcess, Decision, ReasoningStep,
+    WorkingMemory, ShortTermMemory, LongTermMemory,
+    DataCollected, DecisionProcess, Decision, ReasoningStep,
     ConversationTurn, TurnInput, TurnOutput, ScheduleType,
 };
 use edge_ai_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
@@ -27,7 +28,7 @@ impl TestContext {
             time_series_storage: None,
             device_service: None,
             event_bus: Some(event_bus.clone()),
-            alert_manager: None,
+            message_manager: None,
             llm_runtime: None,
             llm_backend_store: None,
         };
@@ -44,7 +45,6 @@ impl TestContext {
     async fn create_test_agent(
         &self,
         name: &str,
-        role: AgentRole,
         user_prompt: &str,
     ) -> anyhow::Result<AiAgent> {
         let now = chrono::Utc::now().timestamp();
@@ -52,7 +52,9 @@ impl TestContext {
         let agent = AiAgent {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
+            description: None,
             user_prompt: user_prompt.to_string(),
+            llm_backend_id: None,
             parsed_intent: None,
             resources: vec![],
             schedule: AgentSchedule {
@@ -79,10 +81,14 @@ impl TestContext {
                 learned_patterns: vec![],
                 trend_data: vec![],
                 updated_at: now,
+                working: WorkingMemory::default(),
+                short_term: ShortTermMemory::default(),
+                long_term: LongTermMemory::default(),
             },
             error_message: None,
-            role,
+            priority: 128,
             conversation_history: vec![],
+            user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
         };
@@ -112,12 +118,11 @@ async fn test_conversation_history_basic() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "测试Agent",
-        AgentRole::Monitor,
         "监控传感器数据",
     ).await?;
 
     let agent_id = agent.id.clone();
-    println!("创建 Agent: {} ({:?})", agent.name, agent.role);
+    println!("创建 Agent: {}", agent.name);
 
     // Execute 3 times
     for i in 0..3 {
@@ -154,24 +159,23 @@ async fn test_conversation_history_basic() -> anyhow::Result<()> {
 async fn test_all_agent_roles() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
 
-    println!("\n=== 测试所有 Agent 角色 ===");
+    println!("\n=== 测试所有 Agent 类型 ===");
 
-    let roles = vec![
-        (AgentRole::Monitor, "监控专员"),
-        (AgentRole::Executor, "执行专员"),
-        (AgentRole::Analyst, "分析专员"),
+    let agent_configs = vec![
+        ("监控专员", "监控传感器数据，检测异常"),
+        ("执行专员", "执行控制指令，操作设备"),
+        ("分析专员", "分析数据趋势，生成报告"),
     ];
 
-    for (role, name) in roles {
-        println!("\n--- 测试角色: {:?} ---", role);
+    for (name, prompt) in &agent_configs {
+        println!("\n--- 测试类型: {} ---", name);
 
         let agent = ctx.create_test_agent(
             &format!("{}_test", name),
-            role.clone(),
-            &format!("{}的测试描述", name),
+            prompt,
         ).await?;
 
-        println!("创建: {} ({:?})", agent.name, agent.role);
+        println!("创建: {}", agent.name);
 
         // Execute once
         let record = ctx.executor.execute_agent(agent.clone()).await?;
@@ -180,10 +184,9 @@ async fn test_all_agent_roles() -> anyhow::Result<()> {
         // Reload and check history
         let agent = ctx.store.get_agent(&agent.id).await?.unwrap();
         assert_eq!(agent.conversation_history.len(), 1);
-        assert_eq!(agent.role, role);
     }
 
-    println!("\n✅ 所有角色测试通过！");
+    println!("\n✅ 所有类型测试通过！");
     Ok(())
 }
 
@@ -195,7 +198,6 @@ async fn test_conversation_persistence() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "持久化测试",
-        AgentRole::Monitor,
         "测试数据持久化",
     ).await?;
 
@@ -242,7 +244,6 @@ async fn test_context_window_messages() -> anyhow::Result<()> {
 
     let mut agent = ctx.create_test_agent(
         "上下文测试",
-        AgentRole::Monitor,
         "监控温度传感器",
     ).await?;
 
@@ -291,7 +292,6 @@ async fn test_conversation_turn_structure() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "结构测试",
-        AgentRole::Analyst,
         "分析数据趋势",
     ).await?;
 
@@ -346,7 +346,6 @@ async fn test_multiple_executions_accumulation() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "累积测试",
-        AgentRole::Monitor,
         "监控数据变化",
     ).await?;
 
@@ -390,7 +389,6 @@ async fn test_conversation_history_ordering() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "顺序测试",
-        AgentRole::Analyst,
         "验证历史顺序",
     ).await?;
 
@@ -427,31 +425,30 @@ async fn test_conversation_history_ordering() -> anyhow::Result<()> {
 async fn test_agent_role_prompts() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
 
-    println!("\n=== 测试角色专属提示 ===");
+    println!("\n=== 测试不同类型的Agent提示 ===");
 
-    let roles = vec![
-        (AgentRole::Monitor, "Monitor"),
-        (AgentRole::Executor, "Executor"),
-        (AgentRole::Analyst, "Analyst"),
+    let agent_configs = vec![
+        ("Monitor", "监控传感器数据"),
+        ("Executor", "执行控制指令"),
+        ("Analyst", "分析数据趋势"),
     ];
 
-    for (role_ref, name) in roles {
-        println!("\n--- 角色: {:?} ---", role_ref);
+    for (name, prompt) in &agent_configs {
+        println!("\n--- 类型: {} ---", name);
 
         let agent = ctx.create_test_agent(
             &format!("{}_agent", name),
-            role_ref.clone(),
-            &format!("{} 描述", name),
+            prompt,
         ).await?;
 
-        // Build messages to see the role-specific prompt
+        // Build messages to see the agent-specific prompt
         let messages = ctx.executor.build_conversation_messages(
             &agent,
             &[],
             None,
         );
 
-        // First message should be system prompt with role
+        // First message should be system prompt
         if let Some(first_msg) = messages.first() {
             println!("系统提示存在: 是");
             println!("角色: {:?}", first_msg.role);
@@ -459,22 +456,10 @@ async fn test_agent_role_prompts() -> anyhow::Result<()> {
             // Get content for verification
             let content_text = first_msg.content.as_text();
             println!("内容长度: {} 字符", content_text.len());
-
-            // Verify role-specific content is in the prompt
-            if role_ref == AgentRole::Monitor {
-                assert!(content_text.contains("监控") || content_text.contains("Monitor"),
-                    "Monitor prompt should mention monitoring");
-            } else if role_ref == AgentRole::Executor {
-                assert!(content_text.contains("执行") || content_text.contains("Executor"),
-                    "Executor prompt should mention execution");
-            } else if role_ref == AgentRole::Analyst {
-                assert!(content_text.contains("分析") || content_text.contains("Analyst"),
-                    "Analyst prompt should mention analysis");
-            }
         }
     }
 
-    println!("\n✅ 角色提示测试通过！");
+    println!("\n✅ Agent提示测试通过！");
     Ok(())
 }
 
@@ -488,24 +473,24 @@ async fn test_full_lifecycle() -> anyhow::Result<()> {
 
     // Create agents of each type
     let test_agents = vec![
-        (AgentRole::Monitor, "温度监控", "监控温度，超过30度告警"),
-        (AgentRole::Executor, "开关控制", "高温时打开开关"),
-        (AgentRole::Analyst, "趋势分析", "分析数据趋势"),
+        ("温度监控", "监控温度，超过30度告警"),
+        ("开关控制", "高温时打开开关"),
+        ("趋势分析", "分析数据趋势"),
     ];
 
     let mut agent_ids = Vec::new();
 
-    for (role, name, prompt) in test_agents {
-        let agent = ctx.create_test_agent(name, role, prompt).await?;
-        println!("\n创建: {} ({:?})", agent.name, agent.role);
-        agent_ids.push((agent.id.clone(), agent.role, agent.name.clone()));
+    for (name, prompt) in &test_agents {
+        let agent = ctx.create_test_agent(name, prompt).await?;
+        println!("\n创建: {}", agent.name);
+        agent_ids.push((agent.id.clone(), agent.name.clone()));
     }
 
     println!("\n--- 执行阶段 ---");
 
     // Execute each agent multiple times
-    for (agent_id, role, name) in &agent_ids {
-        println!("\n执行: {} ({:?})", name, role);
+    for (agent_id, name) in &agent_ids {
+        println!("\n执行: {}", name);
 
         for i in 0..3 {
             let agent = ctx.store.get_agent(agent_id).await?.unwrap();
@@ -524,17 +509,15 @@ async fn test_full_lifecycle() -> anyhow::Result<()> {
     println!("\n--- 验证阶段 ---");
 
     // Verify all agents have correct history
-    for (agent_id, role, name) in &agent_ids {
+    for (agent_id, name) in &agent_ids {
         let agent = ctx.store.get_agent(agent_id).await?.unwrap();
         let history = ctx.store.get_conversation_history(agent_id, None).await?;
 
-        println!("\n{} ({:?}):", name, role);
+        println!("\n{}:", name);
         println!("  历史轮次: {}", history.len());
-        println!("  角色一致: {}", agent.role == *role);
         println!("  上下文窗口: {}", agent.context_window_size);
 
         assert_eq!(history.len(), 3);
-        assert_eq!(agent.role, *role);
     }
 
     println!("\n{}", "============================================================");
@@ -552,7 +535,6 @@ async fn test_conversation_turn_fields() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "字段完整性测试",
-        AgentRole::Monitor,
         "测试所有字段",
     ).await?;
 

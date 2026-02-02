@@ -11,12 +11,12 @@ use std::time::{Duration, Instant};
 use edge_ai_core::{EventBus, MetricValue, NeoTalkEvent, LlmRuntime, message::{Message, MessageRole, Content}};
 use edge_ai_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
-    AgentRole, ScheduleType, ResourceType, AgentResource,
+    WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType, ResourceType, AgentResource,
     TimeSeriesStore, DataPoint,
 };
 use edge_ai_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
 use edge_ai_llm::backends::ollama::{OllamaRuntime, OllamaConfig};
-use edge_ai_messages::{MessageManager, MessageSeverity, channels::{ConsoleChannel, MessageChannel}};
+use edge_ai_messages::{MessageManager, MessageSeverity, channels::ConsoleChannel};
 use edge_ai_core::llm::backend::{LlmInput, GenerationParams};
 
 // ============================================================================
@@ -51,7 +51,8 @@ impl FullTestContext {
         // Create message manager with console channel
         let message_manager = Arc::new(MessageManager::new());
         let console_channel = Arc::new(ConsoleChannel::new("console".to_string()));
-        message_manager.register_channel(console_channel).await;
+        // Note: MessageManager now initializes with default channels via register_default_channels
+        message_manager.register_default_channels().await;
 
         // Note: We can't create device_service here without the full devices crate
         // So commands will be simulated
@@ -151,7 +152,9 @@ impl FullTestContext {
         let agent = AiAgent {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
+            description: None,
             user_prompt: user_prompt.to_string(),
+            llm_backend_id: None,
             parsed_intent: None,
             resources,
             schedule: AgentSchedule {
@@ -178,10 +181,14 @@ impl FullTestContext {
                 learned_patterns: vec![],
                 trend_data: vec![],
                 updated_at: now,
+                working: WorkingMemory::default(),
+                short_term: ShortTermMemory::default(),
+                long_term: LongTermMemory::default(),
             },
             error_message: None,
-            role: AgentRole::Monitor,
+            priority: 128,
             conversation_history: vec![],
+            user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
         };
@@ -224,7 +231,9 @@ impl FullTestContext {
         let agent = AiAgent {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
+            description: None,
             user_prompt: user_prompt.to_string(),
+            llm_backend_id: None,
             parsed_intent: None,
             resources,
             schedule: AgentSchedule {
@@ -251,10 +260,14 @@ impl FullTestContext {
                 learned_patterns: vec![],
                 trend_data: vec![],
                 updated_at: now,
+                working: WorkingMemory::default(),
+                short_term: ShortTermMemory::default(),
+                long_term: LongTermMemory::default(),
             },
             error_message: None,
-            role: AgentRole::Executor,
+            priority: 128,
             conversation_history: vec![],
+            user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
         };

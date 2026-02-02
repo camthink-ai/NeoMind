@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use edge_ai_core::{EventBus, MetricValue, NeoTalkEvent};
 use edge_ai_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
-    AgentRole, ScheduleType,
+    WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType,
 };
 use edge_ai_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
 use edge_ai_llm::backends::ollama::{OllamaRuntime, OllamaConfig};
@@ -160,7 +160,7 @@ impl LoadTestContext {
             time_series_storage: None,
             device_service: None,
             event_bus: Some(event_bus.clone()),
-            alert_manager: None,
+            message_manager: None,
             llm_runtime: llm_runtime.clone(),
             llm_backend_store: None,
         };
@@ -179,7 +179,6 @@ impl LoadTestContext {
     async fn create_test_agent(
         &self,
         name: &str,
-        role: AgentRole,
         user_prompt: &str,
     ) -> anyhow::Result<AiAgent> {
         let now = chrono::Utc::now().timestamp();
@@ -187,7 +186,9 @@ impl LoadTestContext {
         let agent = AiAgent {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
+            description: None,
             user_prompt: user_prompt.to_string(),
+            llm_backend_id: None,
             parsed_intent: None,
             resources: vec![],
             schedule: AgentSchedule {
@@ -214,10 +215,14 @@ impl LoadTestContext {
                 learned_patterns: vec![],
                 trend_data: vec![],
                 updated_at: now,
+                working: WorkingMemory::default(),
+                short_term: ShortTermMemory::default(),
+                long_term: LongTermMemory::default(),
             },
             error_message: None,
-            role,
+            priority: 128,
             conversation_history: vec![],
+            user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
         };
@@ -362,7 +367,6 @@ async fn test_agent_with_large_dataset() -> anyhow::Result<()> {
     // Create a monitor agent
     let agent = ctx.create_test_agent(
         "大规模数据监控Agent",
-        AgentRole::Monitor,
         &format!("监控所有 {} 个设备的 {} 个指标，检测异常值", device_count, device_count * 3),
     ).await?;
 
@@ -420,7 +424,6 @@ async fn test_conversation_history_under_load() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "压力测试Agent",
-        AgentRole::Analyst,
         "分析所有设备数据，生成报告",
     ).await?;
 
@@ -482,18 +485,18 @@ async fn test_multi_agent_concurrent_execution() -> anyhow::Result<()> {
 
     // Create multiple agents of different types
     let agents = vec![
-        ("温度监控组", AgentRole::Monitor, "监控所有温度传感器，超过35度告警"),
-        ("能耗监控组", AgentRole::Monitor, "监控能耗数据，检测异常"),
-        ("开关控制组", AgentRole::Executor, "根据温度自动控制开关"),
-        ("趋势分析组", AgentRole::Analyst, "分析所有设备的趋势"),
+        ("温度监控组", "监控所有温度传感器，超过35度告警"),
+        ("能耗监控组", "监控能耗数据，检测异常"),
+        ("开关控制组", "根据温度自动控制开关"),
+        ("趋势分析组", "分析所有设备的趋势"),
     ];
 
     let mut agent_ids = Vec::new();
 
-    for (name, role, prompt) in &agents {
-        let agent = ctx.create_test_agent(name, role.clone(), prompt).await?;
-        println!("创建: {} ({:?})", agent.name, agent.role);
-        agent_ids.push(agent.id);
+    for (name, prompt) in &agents {
+        let agent = ctx.create_test_agent(name, prompt).await?;
+        println!("创建: {}", agent.name);
+        agent_ids.push((agent.id, name.clone()));
     }
 
     let execution_rounds = 10;
@@ -505,7 +508,7 @@ async fn test_multi_agent_concurrent_execution() -> anyhow::Result<()> {
     for round in 0..execution_rounds {
         println!("\n--- 第 {} 轮 ---", round + 1);
 
-        for (i, agent_id) in agent_ids.iter().enumerate() {
+        for (i, (agent_id, name)) in agent_ids.iter().enumerate() {
             let agent = ctx.store.get_agent(agent_id).await?.unwrap();
             let agent_start = Instant::now();
 
@@ -514,8 +517,8 @@ async fn test_multi_agent_concurrent_execution() -> anyhow::Result<()> {
             let elapsed = agent_start.elapsed();
             all_times.push(elapsed);
 
-            println!("  Agent{} ({:?}): {:?} - 状态: {:?}",
-                i + 1, agent.role, elapsed, record.status);
+            println!("  Agent{} ({}): {:?} - 状态: {:?}",
+                i + 1, name, elapsed, record.status);
         }
     }
 
@@ -537,9 +540,9 @@ async fn test_multi_agent_concurrent_execution() -> anyhow::Result<()> {
 
     // Verify all agents have correct history
     println!("\n验证对话历史:");
-    for (i, agent_id) in agent_ids.iter().enumerate() {
+    for (i, (agent_id, name)) in agent_ids.iter().enumerate() {
         let agent = ctx.store.get_agent(agent_id).await?.unwrap();
-        println!("  Agent{}: {} 条历史记录", i + 1, agent.conversation_history.len());
+        println!("  Agent{} ({}): {} 条历史记录", i + 1, name, agent.conversation_history.len());
         assert_eq!(agent.conversation_history.len(), execution_rounds);
     }
 
@@ -558,7 +561,6 @@ async fn test_command_execution_simulation() -> anyhow::Result<()> {
     // Create an Executor agent that should make decisions
     let agent = ctx.create_test_agent(
         "自动控制Agent",
-        AgentRole::Executor,
         "当温度超过30度时，打开风扇。当温度低于20度时，关闭风扇",
     ).await?;
 
@@ -645,15 +647,15 @@ async fn test_real_llm_with_large_dataset() -> anyhow::Result<()> {
 
     // Create multiple agents
     let test_cases = vec![
-        ("温度监控Agent", AgentRole::Monitor, "监控所有温度传感器，超过35度告警，低于10度告警"),
-        ("综合分析Agent", AgentRole::Analyst, "分析所有设备的综合数据趋势，识别异常模式"),
-        ("自动控制Agent", AgentRole::Executor, "当温度超过30度时启动降温，低于15度时启动加热"),
+        ("温度监控Agent", "监控所有温度传感器，超过35度告警，低于10度告警"),
+        ("综合分析Agent", "分析所有设备的综合数据趋势，识别异常模式"),
+        ("自动控制Agent", "当温度超过30度时启动降温，低于15度时启动加热"),
     ];
 
-    for (name, role, prompt) in test_cases {
-        println!("\n--- 测试: {} ({:?}) ---", name, role);
+    for (name, prompt) in test_cases {
+        println!("\n--- 测试: {} ---", name);
 
-        let agent = ctx.create_test_agent(name, role.clone(), prompt).await?;
+        let agent = ctx.create_test_agent(name, prompt).await?;
         let executions = 5;
         let mut times = Vec::new();
 
@@ -704,7 +706,6 @@ async fn test_performance_benchmark() -> anyhow::Result<()> {
 
         let agent = ctx.create_test_agent(
             &format!("性能测试Agent_{}", scale),
-            AgentRole::Monitor,
             &format!("监控 {} 个设备", scale),
         ).await?;
 
@@ -720,7 +721,7 @@ async fn test_performance_benchmark() -> anyhow::Result<()> {
     println!("\n[测试2] 吞吐量测试");
     ctx.generate_devices(100);
 
-    let agent = ctx.create_test_agent("吞吐量测试Agent", AgentRole::Monitor, "监控所有设备").await?;
+    let agent = ctx.create_test_agent("吞吐量测试Agent", "监控所有设备").await?;
 
     let iterations = 50;
     let start = Instant::now();
@@ -739,7 +740,7 @@ async fn test_performance_benchmark() -> anyhow::Result<()> {
     // Test 3: Memory efficiency
     println!("\n[测试3] 内存效率测试");
 
-    let agent = ctx.create_test_agent("内存测试Agent", AgentRole::Analyst, "分析数据").await?;
+    let agent = ctx.create_test_agent("内存测试Agent", "分析数据").await?;
 
     // Execute many times and check conversation history doesn't grow unbounded
     for i in 0..20 {
@@ -762,7 +763,6 @@ async fn test_performance_benchmark() -> anyhow::Result<()> {
     for i in 0..concurrent_agents {
         let agent = ctx.create_test_agent(
             &format!("并发Agent_{}", i),
-            AgentRole::Monitor,
             "监控设备",
         ).await?;
         agent_ids.push(agent.id);

@@ -27,12 +27,12 @@ use std::time::{Duration, Instant};
 use edge_ai_core::{EventBus, MetricValue, NeoTalkEvent};
 use edge_ai_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
-    AgentRole, ScheduleType, ResourceType, AgentResource,
+    WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType, ResourceType, AgentResource,
     TimeSeriesStore, DataPoint,
 };
 use edge_ai_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
 use edge_ai_llm::backends::ollama::{OllamaRuntime, OllamaConfig};
-use edge_ai_messages::{MessageManager, MessageSeverity, channels::{ConsoleChannel, MessageChannel}};
+use edge_ai_messages::{MessageManager, MessageSeverity, channels::ConsoleChannel};
 
 // ============================================================================
 // Test Context
@@ -63,7 +63,8 @@ impl SimulationContext {
 
         let message_manager = Arc::new(MessageManager::new());
         let console_channel = Arc::new(ConsoleChannel::new("console".to_string()));
-        message_manager.register_channel(console_channel).await;
+        // Note: MessageManager now initializes with default channels via register_default_channels
+        message_manager.register_default_channels().await;
 
         let executor_config = AgentExecutorConfig {
             store: store.clone(),
@@ -146,7 +147,6 @@ impl SimulationContext {
     async fn create_agent(
         &self,
         name: &str,
-        role: AgentRole,
         resources: Vec<AgentResource>,
         user_prompt: &str,
         interval_seconds: u64,
@@ -156,7 +156,9 @@ impl SimulationContext {
         let agent = AiAgent {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
+            description: None,
             user_prompt: user_prompt.to_string(),
+            llm_backend_id: None,
             parsed_intent: None,
             resources,
             schedule: AgentSchedule {
@@ -183,10 +185,14 @@ impl SimulationContext {
                 learned_patterns: vec![],
                 trend_data: vec![],
                 updated_at: now,
+                working: WorkingMemory::default(),
+                short_term: ShortTermMemory::default(),
+                long_term: LongTermMemory::default(),
             },
             error_message: None,
-            role,
+            priority: 128,
             conversation_history: vec![],
+            user_messages: vec![],
             conversation_summary: None,
             context_window_size: 20, // 保留更多历史
         };
@@ -259,7 +265,6 @@ async fn scenario_1_smart_building_hvac() -> anyhow::Result<()> {
     // 创建HVAC监控Agent
     let hvac_monitor = ctx.create_agent(
         "HVAC环境监控中心",
-        AgentRole::Monitor,
         monitor_resources.clone(),
         "你是智能楼宇HVAC监控中心。职责:
 1. 监控所有区域温度，正常范围: 18-28°C
@@ -386,7 +391,6 @@ async fn scenario_1_smart_building_hvac() -> anyhow::Result<()> {
 
     let energy_analyst = ctx.create_agent(
         "楼宇能耗分析师",
-        AgentRole::Analyst,
         energy_resources,
         "分析楼宇各区域温度数据，评估能耗情况，提供节能建议",
         60,
@@ -457,7 +461,6 @@ async fn scenario_2_industrial_predictive_maintenance() -> anyhow::Result<()> {
 
     let maintenance_monitor = ctx.create_agent(
         "设备健康监控Agent",
-        AgentRole::Monitor,
         resources,
         "监控工业设备运行状态，预测潜在故障:
 1. 监控振动、温度、压力等指标
@@ -580,7 +583,6 @@ async fn scenario_2_industrial_predictive_maintenance() -> anyhow::Result<()> {
 
     let analyst = ctx.create_agent(
         "设备维护分析师",
-        AgentRole::Analyst,
         vec![AgentResource {
             resource_type: ResourceType::Metric,
             resource_id: "motor_1:vibration".to_string(),
@@ -658,7 +660,6 @@ async fn scenario_3_multi_agent_collaboration() -> anyhow::Result<()> {
 
     let monitor_agent = ctx.create_agent(
         "温室环境监控Agent",
-        AgentRole::Monitor,
         monitor_resources,
         "监控温室环境，检测偏离最优范围的情况:
 最优参数: 温度20-28°C, 湿度60-80%, CO2 400-1200ppm, 光照10000-30000lux
@@ -669,7 +670,6 @@ async fn scenario_3_multi_agent_collaboration() -> anyhow::Result<()> {
     // 执行Agent
     let executor_agent = ctx.create_agent(
         "温室设备控制Agent",
-        AgentRole::Executor,
         vec![
             AgentResource {
                 resource_type: ResourceType::Command,
@@ -702,7 +702,6 @@ async fn scenario_3_multi_agent_collaboration() -> anyhow::Result<()> {
     // 分析Agent
     let analyst_agent = ctx.create_agent(
         "温室优化分析师",
-        AgentRole::Analyst,
         vec![
             AgentResource {
                 resource_type: ResourceType::Metric,
@@ -855,7 +854,6 @@ async fn scenario_4_long_running_agent() -> anyhow::Result<()> {
 
     let daily_monitor = ctx.create_agent(
         "24小时环境监控Agent",
-        AgentRole::Monitor,
         vec![AgentResource {
             resource_type: ResourceType::Metric,
             resource_id: "office:temperature".to_string(),
@@ -953,7 +951,6 @@ async fn scenario_4_long_running_agent() -> anyhow::Result<()> {
     // 创建分析师Agent分析全天数据
     let analyst = ctx.create_agent(
         "日报告分析师",
-        AgentRole::Analyst,
         vec![AgentResource {
             resource_type: ResourceType::Metric,
             resource_id: "office:temperature".to_string(),
@@ -1012,16 +1009,16 @@ async fn scenario_5_stress_multi_agent() -> anyhow::Result<()> {
 
     // 创建多个Agent
     let agent_configs = vec![
-        ("温度监控组", AgentRole::Monitor, 10),
-        ("温度执行组", AgentRole::Executor, 5),
-        ("数据分析组", AgentRole::Analyst, 3),
+        ("温度监控组", 10),
+        ("温度执行组", 5),
+        ("数据分析组", 3),
     ];
 
     let mut agent_ids = Vec::new();
 
     ctx.print_subsection("创建Agent团队");
 
-    for (name, role, count) in &agent_configs {
+    for (name, count) in &agent_configs {
         println!("   创建 {} {}...", count, name);
 
         for i in 0..*count {
@@ -1034,7 +1031,6 @@ async fn scenario_5_stress_multi_agent() -> anyhow::Result<()> {
 
             let agent = ctx.create_agent(
                 &format!("{}_{:02}", name, i),
-                role.clone(),
                 resources,
                 &format!("{} Agent #{}", name, i),
                 30,

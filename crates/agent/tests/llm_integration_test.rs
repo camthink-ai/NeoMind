@@ -7,7 +7,7 @@ use std::sync::Arc;
 use edge_ai_core::EventBus;
 use edge_ai_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
-    AgentRole, ScheduleType,
+    ScheduleType, WorkingMemory, ShortTermMemory, LongTermMemory,
 };
 use edge_ai_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
 use edge_ai_llm::backends::ollama::{OllamaRuntime, OllamaConfig};
@@ -41,7 +41,7 @@ impl LlmTestContext {
             time_series_storage: None,
             device_service: None,
             event_bus: Some(event_bus.clone()),
-            alert_manager: None,
+            message_manager: None,
             llm_runtime: Some(llm_runtime.clone()),
             llm_backend_store: None,
         };
@@ -59,7 +59,6 @@ impl LlmTestContext {
     async fn create_test_agent(
         &self,
         name: &str,
-        role: AgentRole,
         user_prompt: &str,
     ) -> anyhow::Result<AiAgent> {
         let now = chrono::Utc::now().timestamp();
@@ -67,7 +66,9 @@ impl LlmTestContext {
         let agent = AiAgent {
             id: uuid::Uuid::new_v4().to_string(),
             name: name.to_string(),
+            description: None,
             user_prompt: user_prompt.to_string(),
+            llm_backend_id: None,
             parsed_intent: None,
             resources: vec![],
             schedule: AgentSchedule {
@@ -78,6 +79,7 @@ impl LlmTestContext {
                 event_filter: None,
             },
             status: AgentStatus::Active,
+            priority: 128,
             created_at: now,
             updated_at: now,
             last_execution_at: None,
@@ -89,17 +91,20 @@ impl LlmTestContext {
                 last_duration_ms: Some(0),
             },
             memory: AgentMemory {
+                working: WorkingMemory::default(),
+                short_term: ShortTermMemory::default(),
+                long_term: LongTermMemory::default(),
                 state_variables: Default::default(),
                 baselines: Default::default(),
                 learned_patterns: vec![],
                 trend_data: vec![],
                 updated_at: now,
             },
-            error_message: None,
-            role,
             conversation_history: vec![],
+            user_messages: vec![],
             conversation_summary: None,
             context_window_size: 5,
+            error_message: None,
         };
 
         self.store.save_agent(&agent).await?;
@@ -133,12 +138,11 @@ async fn test_llm_monitor_agent() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "温度监控Agent",
-        AgentRole::Monitor,
         "监控温度传感器，当温度超过30度时发出告警",
     ).await?;
 
     let agent_id = agent.id.clone();
-    println!("创建 Agent: {} ({:?})", agent.name, agent.role);
+    println!("创建 Agent: {}", agent.name);
 
     // Execute the agent - this will use real LLM
     let agent = ctx.store.get_agent(&agent_id).await?.unwrap();
@@ -189,12 +193,11 @@ async fn test_llm_executor_agent() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "开关控制Agent",
-        AgentRole::Executor,
         "当温度超过25度时，打开风扇开关。当温度低于20度时，关闭风扇开关",
     ).await?;
 
     let agent_id = agent.id.clone();
-    println!("创建 Agent: {} ({:?})", agent.name, agent.role);
+    println!("创建 Agent: {}", agent.name);
 
     // Execute the agent
     let agent = ctx.store.get_agent(&agent_id).await?.unwrap();
@@ -233,12 +236,11 @@ async fn test_llm_analyst_agent() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "数据分析Agent",
-        AgentRole::Analyst,
         "分析温度数据趋势，识别异常模式，生成周报",
     ).await?;
 
     let agent_id = agent.id.clone();
-    println!("创建 Agent: {} ({:?})", agent.name, agent.role);
+    println!("创建 Agent: {}", agent.name);
 
     // Execute the agent
     let agent = ctx.store.get_agent(&agent_id).await?.unwrap();
@@ -275,7 +277,6 @@ async fn test_llm_conversation_context() -> anyhow::Result<()> {
 
     let agent = ctx.create_test_agent(
         "上下文测试Agent",
-        AgentRole::Monitor,
         "监控传感器数据，记住之前的读数，检测趋势变化",
     ).await?;
 
@@ -374,7 +375,7 @@ async fn test_llm_direct_api() -> anyhow::Result<()> {
 
 #[tokio::test]
 #[ignore = "Requires Ollama to be running. Run with: cargo test --test llm_integration_test -- --ignored"]
-async fn test_llm_all_roles_comparison() -> anyhow::Result<()> {
+async fn test_llm_agent_comparison() -> anyhow::Result<()> {
     if !ollama_available() {
         println!("⚠️  Ollama not available, skipping test");
         return Ok(());
@@ -382,20 +383,20 @@ async fn test_llm_all_roles_comparison() -> anyhow::Result<()> {
 
     let ctx = LlmTestContext::new().await?;
 
-    println!("\n=== 对比测试所有角色的 LLM 响应 ===");
+    println!("\n=== 对比测试不同类型的 Agents ===");
 
     let test_cases = vec![
-        (AgentRole::Monitor, "温度监控", "监控温度传感器，超过30度告警"),
-        (AgentRole::Executor, "开关控制", "高温时打开风扇"),
-        (AgentRole::Analyst, "趋势分析", "分析温度数据趋势"),
+        ("温度监控", "监控温度传感器，超过30度告警"),
+        ("开关控制", "高温时打开风扇"),
+        ("趋势分析", "分析温度数据趋势"),
     ];
 
     let mut results = Vec::new();
 
-    for (role, name, prompt) in test_cases {
-        println!("\n--- 测试 {:?}: {} ---", role, name);
+    for (name, prompt) in test_cases {
+        println!("\n--- 测试: {} ---", name);
 
-        let agent = ctx.create_test_agent(name, role.clone(), prompt).await?;
+        let agent = ctx.create_test_agent(name, prompt).await?;
 
         let agent = ctx.store.get_agent(&agent.id).await?.unwrap();
         let record = ctx.executor.execute_agent(agent.clone()).await?;
@@ -405,12 +406,12 @@ async fn test_llm_all_roles_comparison() -> anyhow::Result<()> {
         println!("  结论: {}", record.decision_process.conclusion);
         println!("  耗时: {}ms", record.duration_ms);
 
-        results.push((role, record.duration_ms));
+        results.push((name, record.duration_ms));
     }
 
     println!("\n性能汇总:");
-    for (role, duration) in &results {
-        println!("  {:?}: {}ms", role, duration);
+    for (name, duration) in &results {
+        println!("  {}: {}ms", name, duration);
     }
 
     let avg_duration: u64 = results.iter().map(|(_, d)| d).sum::<u64>() / results.len() as u64;
@@ -418,6 +419,6 @@ async fn test_llm_all_roles_comparison() -> anyhow::Result<()> {
 
     assert!(avg_duration < 30000, "Average execution time should be under 30 seconds");
 
-    println!("\n✅ 所有角色对比测试通过！");
+    println!("\n✅ Agent 对比测试通过！");
     Ok(())
 }
