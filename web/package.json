@@ -14,7 +14,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "tauri:build:debug": "tauri build --debug"
+    "tauri:build:debug": "tauri build --debug",
+    "tauri:build:dmg": "tauri build --bundles dmg"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
