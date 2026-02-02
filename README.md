@@ -1,198 +1,225 @@
-# NeoTalk
+# NeoMind
 
-> **可多部署的边缘 AI 自主物联网平台**
+> **Edge-Deployed LLM Agent Platform for IoT Automation**
 
-NeoTalk 是一个基于 Rust 的边缘 AI 物联网平台，通过 LLM（大语言模型）实现自主设备管理和自动化决策。
+NeoMind is a Rust-based edge AI platform that enables autonomous device management and automated decision-making through Large Language Models (LLMs).
 
-## 核心特性
+[![Build Release](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-### 🧠 LLM 作为系统大脑
-- **被动交互**: 回答用户问题，执行控制命令
-- **主动决策**: 定期分析数据，主动提出优化建议，执行预防性措施
-- **自然语言**: 用对话方式管理设备和规则
+## Features
 
-### 🔌 插件化设备接入
-- **统一抽象**: MDL (Machine Description Language) 描述所有设备
-- **多协议支持**: MQTT、Modbus、HTTP、HASS、OPC-UA、LoRaWAN
-- **热插拔**: 运行时加载/卸载适配器
+### 🧠 LLM as System Brain
+- **Interactive Chat**: Natural language interface for querying and controlling devices
+- **Autonomous Decisions**: Periodic data analysis with proactive optimization suggestions
+- **Tool Calling**: Execute real system actions through LLM function calling
 
-### ⚡ 事件驱动架构
-- **实时响应**: 设备变化自动触发规则和自动化
-- **解耦设计**: 所有组件通过事件总线通信
-- **可扩展**: 轻松添加新的事件处理器
+### 🔌 Modular Device Integration
+- **Unified Abstraction**: MDL (Machine Description Language) for all device types
+- **Multi-Protocol**: MQTT, Modbus, HTTP, Home Assistant, OPC-UA, LoRaWAN
+- **Hot-Plug**: Runtime adapter loading/unloading
 
-### 📦 完整的存储系统
-- **时序数据**: 设备指标历史存储和查询
-- **状态存储**: 设备状态、规则执行记录
-- **LLM 记忆**: 短期/中期/长期三层记忆
-- **向量检索**: 语义搜索相关设备和规则
+### ⚡ Event-Driven Architecture
+- **Real-time Response**: Device changes automatically trigger rules and automations
+- **Decoupled Design**: All components communicate via event bus
+- **Scalable**: Easy to add new event handlers
 
-### 🎯 可靠的命令下发
-- **优先级队列**: 关键命令优先处理
-- **重试机制**: 自动重试失败命令
-- **状态追踪**: 实时查看命令执行状态
+### 📦 Complete Storage System
+- **Time-Series**: Device metrics history and queries
+- **State Storage**: Device states, rule execution records
+- **LLM Memory**: Three-tier memory (short/mid/long-term)
+- **Vector Search**: Semantic search across devices and rules
 
-## 快速开始
+### 🖥️ Desktop Application
+- **Cross-Platform**: macOS, Windows, Linux native apps
+- **Modern UI**: React + TypeScript + Tailwind CSS
+- **System Tray**: Background operation with quick access
+- **Auto-Update**: Built-in update notifications
 
-### 环境要求
+## Quick Start
+
+### Desktop App (Recommended)
+
+Download the latest release for your platform:
+
+[![macOS](https://img.shields.io/badge/macOS-Download-blue.svg)](https://github.com/camthink-ai/NeoMind/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-Download-blue.svg)](https://github.com/camthink-ai/NeoMind/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-Download-blue.svg)](https://github.com/camthink-ai/NeoMind/releases/latest)
+
+On first launch, the setup wizard will guide you through:
+1. Creating an admin account
+2. Configuring LLM backend (Ollama recommended for edge deployment)
+
+### Development Mode
+
+#### Prerequisites
 
 - Rust 1.70+
-- Ollama (本地 LLM) 或 OpenAI API
+- Node.js 20+
+- Ollama (local LLM) or OpenAI API
 
-### 1. 安装 Ollama
+#### 1. Install Ollama
 
 ```bash
 # Linux/macOS
 curl -fsSL https://ollama.com/install.sh | sh
 
-# 拉取轻量级模型
+# Pull a lightweight model
 ollama pull qwen3-vl:2b
 ```
 
-### 2. 配置 NeoTalk
+#### 2. Start Backend
 
 ```bash
-# 使用最小配置
-cp config.minimal.toml config.toml
-
-# 或使用完整配置（包含所有选项）
-cp config.full.toml config.toml
-```
-
-### 3. 启动服务
-
-```bash
-# 启动 API 服务器
+# Build and run API server
 cargo run -p edge-ai-api
-
-# 访问 Web UI
-open http://localhost:3000
 ```
 
-### 配置文件
+#### 3. Start Frontend
 
-| 文件 | 说明 |
-|------|------|
-| `config.minimal.toml` | 最小配置，快速开始 |
-| `config.full.toml` | 完整配置，所有选项 |
-| `config.example.toml` | 标准配置示例 |
+```bash
+cd web
+npm install
+npm run dev
+```
 
-## 文档导航
+#### 4. Access Web UI
 
-### 📖 架构文档
+Open http://localhost:5173 in your browser
 
-| 文档 | 描述 |
-|------|------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 总体架构、核心理念、系统设计 |
-| [CORE_ARCHITECTURE.md](CORE_ARCHITECTURE.md) | 核心架构深度分析、重构方案 |
-| [STORAGE_ARCHITECTURE.md](STORAGE_ARCHITECTURE.md) | 存储系统设计 |
-| [PLUGIN_ARCHITECTURE.md](PLUGIN_ARCHITECTURE.md) | 插件化架构、设备适配器 |
-| [COMMAND_ARCHITECTURE.md](COMMAND_ARCHITECTURE.md) | 命令下发系统 |
-| [MDL_DSL_LLM_INTEGRATION.md](MDL_DSL_LLM_INTEGRATION.md) | MDL/DSL 与 LLM 集成 |
+### Build Desktop App
 
-### 📋 实施文档
+```bash
+cd web
+npm install
+npm run tauri:build
+```
 
-| 文档 | 描述 |
-|------|------|
-| [TASKS.md](TASKS.md) | 开发任务清单、时间表、里程碑 |
-| [CLAUDE.md](CLAUDE.md) | Claude Code 开发指南 |
-| [GLOSSARY.md](GLOSSARY.md) | 术语表、缩写对照 |
+The installer will be in `web/src-tauri/target/release/bundle/`
 
-## 系统架构
+## Configuration
+
+| File | Description |
+|------|-------------|
+| `config.minimal.toml` | Minimal config for quick start |
+| `config.full.toml` | Complete config with all options |
+| `config.example.toml` | Standard configuration template |
+
+### LLM Backend Support
+
+| Backend | Feature Flag | Default Endpoint |
+|---------|--------------|------------------|
+| Ollama | `ollama` | `http://localhost:11434` |
+| OpenAI | `openai` | `https://api.openai.com/v1` |
+| Anthropic | `anthropic` | `https://api.anthropic.com/v1` |
+| Google | `google` | `https://generativelanguage.googleapis.com/v1beta` |
+| xAI | `xai` | `https://api.x.ai/v1` |
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      数据源插件层                            │
-│   HASS │ MQTT Broker │ Modbus │ HTTP │ ...                 │
+│                   Desktop App / Web UI                       │
+│                    React + TypeScript                       │
 └───────────────────────┬─────────────────────────────────────┘
-                        │ DeviceMetric
+                        │ REST API / WebSocket
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      事件总线                                │
-│           所有组件通过事件通信，解耦、异步                   │
+│                      API Gateway                             │
+│                    Axum Web Server                           │
 └──┬──────────────┬──────────────┬───────────────────────────┘
    │              │              │
    ▼              ▼              ▼
-规则引擎      工作流引擎      告警系统
+Rules Engine   Workflow      Alert System
    │              │              │
    └──────────────┴──────────────┘
-                  │ 订阅所有事件
+                  │ Subscribe to all events
                   ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    LLM 大脑                                  │
+│                    LLM Agent                                 │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │  被动交互   │  │  主动分析   │  │   工具集    │        │
-│  │  用户驱动   │  │  定时驱动   │  │  真实系统   │        │
+│  │   Chat      │  │   Tools     │  │  Memory     │        │
+│  │  Interface  │  │  Calling    │  │  System     │        │
 │  └─────────────┘  └─────────────┘  └─────────────┘        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## 项目结构
+## Project Structure
 
 ```
-neo-talk/
+neomind/
 ├── crates/
-│   ├── core/          # 核心 traits 和类型定义
-│   ├── llm/           # LLM 运行时 (Ollama/OpenAI)
-│   ├── api/           # Web API 服务器
-│   ├── agent/         # AI Agent 和工具集成
-│   ├── devices/       # 设备管理和 MDL
-│   ├── rules/         # 规则引擎和 DSL
-│   ├── workflow/      # 工作流引擎
-│   ├── storage/       # 存储系统
-│   ├── memory/        # LLM 三层记忆
+│   ├── core/          # Core traits and type definitions
+│   ├── llm/           # LLM runtime (Ollama/OpenAI/Anthropic)
+│   ├── api/           # Web API server (Axum)
+│   ├── agent/         # AI Agent with tool calling
+│   ├── devices/       # Device management and MDL
+│   ├── rules/         # Rule engine and DSL parser
+│   ├── workflow/      # Workflow orchestration
+│   ├── storage/       # Storage system (redb)
+│   ├── memory/        # Three-tier LLM memory
 │   └── ...
-├── web/               # Web 前端
-├── models/            # 模型文件
-└── docs/              # 文档
+├── web/               # React frontend + Tauri desktop app
+│   ├── src/           # TypeScript source
+│   └── src-tauri/     # Rust backend for desktop
+├── docs/              # Documentation
+└── config.*.toml      # Configuration files
 ```
 
-## 技术栈
+## Tech Stack
 
-- **语言**: Rust 2024
-- **异步运行时**: Tokio
-- **LLM 后端**: Ollama (本地) / OpenAI (云端)
-- **Web 框架**: Axum
-- **存储**: redb (嵌入式数据库)
-- **序列化**: serde / serde_json
-- **日志**: tracing
+### Backend
+- **Language**: Rust 2024
+- **Async Runtime**: Tokio
+- **Web Framework**: Axum
+- **Storage**: redb (embedded key-value database)
+- **Serialization**: serde / serde_json
+- **Logging**: tracing
 
-## 使用示例
+### Frontend
+- **Framework**: React 18 + TypeScript
+- **Build**: Vite
+- **UI**: Tailwind CSS + Radix UI
+- **Desktop**: Tauri 2.x
+- **State**: Zustand
 
-### 查询设备状态
+## Usage Examples
 
-```
-用户: 今天家里温度怎么样？
-LLM: 客厅当前温度 26°C，卧室 24°C。
-     全天平均温度 25.3°C，最高 28°C（下午 3 点）。
-```
-
-### 创建自动化规则
-
-```
-用户: 当温度超过 30 度时帮我开空调
-LLM: 好的，我创建了一条规则：
-     "当客厅温度 > 30°C 持续 5 分钟时，打开空调并设置为 26°C"
-     确认创建吗？
-```
-
-### 主动优化建议
+### Query Device Status
 
 ```
-LLM: [主动通知] 我注意到您的空调在夜间频繁启停。
-     建议：将温度设定值从 24°C 调整到 26°C，
-     可以节省约 20% 的电力。需要我帮您调整吗？
+User: What's the temperature at home today?
+LLM: The living room is currently at 26°C, bedroom at 24°C.
+     Today's average is 25.3°C, with a high of 28°C at 3 PM.
 ```
 
-## 核心概念
+### Create Automation Rule
+
+```
+User: Turn on the AC when temperature exceeds 30 degrees
+LLM: I've created a rule for you:
+     "When living room temperature > 30°C for 5 minutes,
+     turn on AC and set to 26°C"
+     Confirm?
+```
+
+### Proactive Optimization
+
+```
+LLM: [Notification] I noticed your AC is cycling frequently at night.
+     Suggestion: Adjust temperature from 24°C to 26°C
+     to save approximately 20% energy. Shall I adjust it?
+```
+
+## Core Concepts
 
 ### MDL (Machine Description Language)
-统一的设备描述格式，定义设备的上行指标和下行命令。
+Unified device description format defining uplink metrics and downlink commands.
 
 ```json
 {
   "type_id": "temperature_sensor",
-  "name": "温度传感器",
+  "name": "Temperature Sensor",
   "uplink": [
     { "name": "temperature", "type": "float", "unit": "°C" }
   ],
@@ -201,10 +228,10 @@ LLM: [主动通知] 我注意到您的空调在夜间频繁启停。
 ```
 
 ### DSL (Domain Specific Language)
-人类可读的规则语言。
+Human-readable rule language.
 
 ```
-RULE "高温自动开空调"
+RULE "Auto AC on High Temp"
 WHEN device("living_room").temperature > 30
 FOR 5m
 DO
@@ -213,15 +240,39 @@ DO
 END
 ```
 
+## Data Directory
 
-## 贡献
+Desktop app stores data in platform-specific locations:
 
-欢迎贡献！请查看 [CONTRIBUTING.md](CONTRIBUTING.md) 了解详情。
+| Platform | Data Directory |
+|----------|---------------|
+| macOS | `~/Library/Application Support/com.neomind.neomind/data/` |
+| Windows | `%APPDATA%/neomind/data/` |
+| Linux | `~/.config/neomind/data/` |
 
-## 许可证
+## API Endpoints
+
+| Category | Endpoints |
+|----------|-----------|
+| **Health** | `/api/health`, `/api/health/status` |
+| **Auth** | `/api/auth/login`, `/api/auth/register` |
+| **Sessions** | `/api/sessions`, `/api/sessions/:id/chat` |
+| **Devices** | `/api/devices`, `/api/devices/:id/command/:cmd` |
+| **Rules** | `/api/rules`, `/api/rules/:id/test` |
+| **Workflows** | `/api/workflows`, `/api/workflows/:id/execute` |
+| **Agents** | `/api/agents`, `/api/agents/:id/execute` |
+| **Memory** | `/api/memory/query`, `/api/memory/consolidate` |
+
+See [API Documentation](docs/README.md) for more details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
 
 MIT OR Apache-2.0
 
 ---
 
-**[文档索引](DOCS_INDEX.md)** | **[架构设计](ARCHITECTURE.md)** | **[任务清单](TASKS.md)**
+**[Documentation](docs/README.md)** | **[Architecture](docs/ARCHITECTURE.md)** | **[Releases](https://github.com/camthink-ai/NeoMind/releases)**
