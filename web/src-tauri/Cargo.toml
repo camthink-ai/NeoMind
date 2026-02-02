@@ -26,6 +26,11 @@ edge-llm = { path = "../../crates/llm", package = "edge-ai-llm" }
 edge-agent = { path = "../../crates/agent", package = "edge-ai-agent" }
 edge-devices = { path = "../../crates/devices", package = "edge-ai-devices" }
 
+# Disable JavaScript on Windows (quick-js has compilation issues)
+[target.'cfg(windows)'.dependencies]
+edge-api = { path = "../../crates/api", package = "edge-ai-api", default-features = false, features = [] }
+edge-automation = { path = "../../crates/automation", package = "edge-ai-automation", default-features = false, features = [] }
+
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]

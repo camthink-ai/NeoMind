@@ -40,5 +40,5 @@ redb = { workspace = true }
 futures = { workspace = true }
 
 [features]
-default = []
+default = ["javascript"]
 javascript = ["quick-js"]
