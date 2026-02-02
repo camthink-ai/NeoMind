@@ -70,5 +70,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          target: ${{ matrix.target }}
+          args: --target ${{ matrix.target }}
           tauriScript: npm run tauri
