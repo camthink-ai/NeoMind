@@ -5,23 +5,19 @@ use tauri::{AppHandle, Listener, Manager};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
 // Global state for the Axum server
-// We use Arc<Runtime> to keep it alive for the app's lifetime
 struct ServerState {
     runtime: Arc<Mutex<Option<Runtime>>>,
     server_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl ServerState {
-    // Wait for server to be ready by polling the TCP port
     fn wait_for_server_ready(&self, timeout_secs: u64) -> bool {
-        let max_attempts = timeout_secs * 20; // Check every 50ms
-
+        let max_attempts = timeout_secs * 20;
         for _ in 0..max_attempts {
             if self.check_server_health() {
                 return true;
@@ -32,7 +28,6 @@ impl ServerState {
     }
 
     fn check_server_health(&self) -> bool {
-        // Try to connect to the server's port to verify it's listening
         match std::net::TcpStream::connect_timeout(
             &std::net::SocketAddr::from(([127, 0, 0, 1], 3000)),
             Duration::from_millis(100),
@@ -43,38 +38,39 @@ impl ServerState {
     }
 }
 
-// Implement safe shutdown for ServerState
 impl Drop for ServerState {
     fn drop(&mut self) {
-        // Shutdown the runtime gracefully
         if let Some(rt) = self.runtime.lock().unwrap().take() {
             rt.shutdown_background();
         }
     }
 }
 
-/// Get the application data directory for storing databases
-/// This ensures the desktop app uses its own independent data directory
-fn get_app_data_dir(app_handle: &AppHandle) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let data_dir = app_handle.path().app_data_dir()?;
-    // Create the directory if it doesn't exist
-    fs::create_dir_all(&data_dir)?;
-    Ok(data_dir)
+/// Get the application data directory
+fn get_app_data_dir(app_handle: &AppHandle) -> PathBuf {
+    match app_handle.path().app_data_dir() {
+        Ok(dir) => {
+            // Create directory if needed
+            let _ = fs::create_dir_all(&dir);
+            dir
+        }
+        Err(_) => {
+            // Fallback to home directory
+            env::var("HOME")
+                .or_else(|_| env::var("USERPROFILE"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(".neomind")
+        }
+    }
 }
 
-/// Show the main window with comprehensive state handling
+/// Show the main window
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        // Unminimize if minimized (Windows/Linux)
         let _ = window.unminimize();
-
-        // Show the window
         let _ = window.show();
-
-        // Bring to front and focus
         let _ = window.set_focus();
-
-        // Ensure window is not ignoring cursor events
         let _ = window.set_ignore_cursor_events(false);
     }
 }
@@ -86,12 +82,10 @@ fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn s
 
     let show = MenuItem::with_id(app, "show", "Show", true, None::<String>)?;
     let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<String>)?;
-    let dev = MenuItem::with_id(app, "devtools", "DevTools", true, None::<String>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<String>)?;
 
-    let menu = Menu::with_items(app, &[&show, &hide, &dev, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
 
-    // Get AppHandle to use in the closure
     let app_handle = app.handle().clone();
     let tray = TrayIconBuilder::new()
         .menu(&menu)
@@ -105,13 +99,8 @@ fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn s
                     let _ = window.hide();
                 }
             }
-            "devtools" => {
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    window.open_devtools();
-                }
-            }
             "quit" => {
-                process::exit(0);
+                app_handle.exit(0);
             }
             _ => {}
         })
@@ -121,31 +110,22 @@ fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn s
 }
 
 // Global state for the tray icon
-// We need to keep the tray icon alive for the app's lifetime
 struct TrayState {
     _tray: Option<tauri::tray::TrayIcon>,
 }
 
 fn start_axum_server(state: tauri::State<ServerState>) -> Result<(), String> {
-    // Clone the Arc so we can move it into the thread
     let runtime_arc = Arc::clone(&state.runtime);
-
-    // Start the Axum server in a background thread
-    // This thread owns the runtime and keeps it alive
     let thread_handle = std::thread::spawn(move || {
-        // Take ownership of the runtime
         let rt = runtime_arc.lock().unwrap()
             .take()
             .expect("Runtime not available");
-
-        // Run the server - this blocks until the server stops
         rt.block_on(async {
             if let Err(e) = edge_api::start_server().await {
                 eprintln!("Failed to start server: {}", e);
             }
         });
     });
-
     *state.server_thread.lock().unwrap() = Some(thread_handle);
     Ok(())
 }
@@ -161,82 +141,50 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(server_state)
         .setup(|app| {
-            // Set up independent data directory for desktop app
-            // Get the app data directory (e.g., ~/Library/Application Support/com.neomind.neomind/)
-            let app_data_dir = match get_app_data_dir(&app.handle()) {
-                Ok(dir) => {
-                    println!("NeoMind data directory: {}", dir.display());
-                    dir
-                }
-                Err(e) => {
-                    eprintln!("Failed to get app data directory: {}", e);
-                    // Fallback to current directory
-                    env::current_dir().unwrap()
-                }
-            };
+            // Get and set up data directory
+            let app_data_dir = get_app_data_dir(&app.handle());
+            let _ = fs::create_dir_all(&app_data_dir);
 
-            // Change to the app data directory so all relative paths (like "data/") resolve there
-            if let Err(e) = env::set_current_dir(&app_data_dir) {
-                eprintln!("Failed to set current directory: {}", e);
-            }
-
-            // Ensure data subdirectory exists
+            // Change to data directory for relative paths
             let data_dir = app_data_dir.join("data");
-            if let Err(e) = fs::create_dir_all(&data_dir) {
-                eprintln!("Failed to create data directory: {}", e);
-            } else {
-                println!("NeoMind data path: {}", data_dir.display());
+            let _ = fs::create_dir_all(&data_dir);
+
+            // Try to change to data directory, but don't fail if we can't
+            let _ = env::set_current_dir(&data_dir);
+
+            // Create tray menu (don't fail if tray creation fails)
+            if let Ok(tray) = create_tray_menu(app) {
+                app.manage(TrayState { _tray: Some(tray) });
             }
 
-            // Create system tray and store it in global state to keep it alive
-            let tray = match create_tray_menu(app) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("Failed to create tray: {}", e);
-                    return Ok(());
-                }
-            };
-            app.manage(TrayState { _tray: Some(tray) });
+            // Handle window close event
+            if let Some(window) = app.get_webview_window("main") {
+                let window_clone = window.clone();
+                window.on_window_event(move |event| match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        api.prevent_close();
+                        let _ = window_clone.hide();
+                    }
+                    _ => {}
+                });
+            }
 
-            // Handle window close event - minimize to tray instead of quitting
-            let window = app.get_webview_window("main").unwrap();
-            let window_clone = window.clone();
-            window.on_window_event(move |event| match event {
-                tauri::WindowEvent::CloseRequested { api, .. } => {
-                    // Prevent the window from closing
-                    api.prevent_close();
-                    // Hide the window instead
-                    let _ = window_clone.hide();
-                }
-                _ => {}
-            });
-
-            // Get AppHandle for event listeners
+            // Listen for Dock/taskbar clicks
             let app_handle = app.handle().clone();
-
-            // Listen for toolbar/dock clicks to show window
-            // macOS: clicked on dock icon
-            // Windows/Linux: clicked on taskbar icon
             let handle_for_focus = app_handle.clone();
-            app.listen("tauri://focus", move |_| {
+            let _ = app.listen("tauri://focus", move |_| {
                 show_main_window(&handle_for_focus);
             });
 
-            // Also listen for the window focus request
-            app.listen("tauri://window-focus", move |_| {
-                show_main_window(&app_handle);
-            });
-
-            // Start Axum server in background
+            // Start server
             let state = app.state::<ServerState>();
             if let Err(e) = start_axum_server(state) {
-                eprintln!("Failed to start Axum server: {}", e);
+                eprintln!("Failed to start server: {}", e);
             }
 
-            // Wait for server to be ready (up to 10 seconds)
+            // Wait for server ready
             let state = app.state::<ServerState>();
             if !state.wait_for_server_ready(10) {
                 eprintln!("Server did not become ready in time");

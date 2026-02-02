@@ -7,9 +7,6 @@ license = ""
 repository = ""
 edition = "2021"
 
-# Exclude from parent workspace - Tauri manages its own workspace
-[workspace]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -17,14 +14,12 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "devtools"] }
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 
-# Local workspace crates - relative to web/ directory
-# Tauri is in web/src-tauri/, so we need ../../crates/
+# Local workspace crates - relative to web/src-tauri/ directory
 edge-api = { path = "../../crates/api", package = "edge-ai-api" }
 edge-core = { path = "../../crates/core", package = "edge-ai-core" }
 edge-llm = { path = "../../crates/llm", package = "edge-ai-llm" }
