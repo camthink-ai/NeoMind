@@ -1,7 +1,8 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{AppHandle, Listener, Manager};
+use tauri::{AppHandle, Listener, Manager, RunEvent, Emitter};
+use tauri::tray::TrayIconEvent;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
