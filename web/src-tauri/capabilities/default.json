@@ -1,0 +1,31 @@
+{
+  "$schema": "https://tauri.app/schemas/2.0/capability.json",
+  "identifier": "default",
+  "description": "Default permissions for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-center",
+    "core:window:allow-close",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-minimize",
+    "core:window:allow-unminimize",
+    "core:window:allow-set-focus",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:window:allow-is-focused",
+    "core:window:allow-is-maximized",
+    "core:window:allow-is-minimized",
+    "core:window:allow-is-visible",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:app:allow-app-show",
+    "core:app:allow-name",
+    "core:app:allow-version",
+    "core:webview:allow-print",
+    "core:webview:allow-internal-toggle-devtools",
+    "process:allow-exit",
+    "process:allow-restart",
+    "shell:allow-open"
+  ]
+}

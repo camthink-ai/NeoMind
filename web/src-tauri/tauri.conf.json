@@ -26,7 +26,14 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost https://localhost:3000 ws://localhost:3000 ws://localhost:5173",
+        "font-src": "'self' https://fonts.gstatic.com",
+        "img-src": "'self' asset: http://asset.localhost blob: data: https:",
+        "style-src": "'unsafe-inline' 'self' https://fonts.googleapis.com",
+        "script-src": "'self' 'unsafe-inline' 'unsafe-eval'"
+      }
     },
     "withGlobalTauri": true
   },
@@ -45,7 +52,7 @@
     "longDescription": "NeoMind - Edge-deployed LLM agent platform for IoT automation",
     "macOS": {
       "frameworks": [],
-      "minimumSystemVersion": "10.13",
+      "minimumSystemVersion": "10.15",
       "exceptionDomain": "",
       "signingIdentity": null,
       "entitlements": null,
@@ -64,7 +71,17 @@
   },
   "plugins": {
     "shell": {
-      "open": true
+      "open": [
+        "^https://.*",
+        "^http://localhost:[0-9]+.*"
+      ]
+    },
+    "updater": {
+      "endpoints": [
+        "https://github.com/your-org/neomind/releases/latest/download/latest.json"
+      ],
+      "dialog": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQyQzE5MTI4RjYwOjQ4QjY5NEY3ODI3NjIwRDM1NjEwNzU5QTdCNzNCMDEwNjY0RjFGNjY2NDQ0Nzg1MDc1ODc4NjcwNjQwNjYwMzIwMDY4Njk2OTY4NjQ2OTY4NjU3Njg2OTY4NjQ2RTZFNzY4Njk2RTc0Njk2OTZFNjU2ODY5Njk2RTY5Nzk2NjY4NjU2OTc5NjU3NDY5Njk2NzY4Njk2ODZD"
     }
   }
 }
