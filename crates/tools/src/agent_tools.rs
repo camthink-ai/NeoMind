@@ -1380,14 +1380,13 @@ impl Tool for GetAgentExecutionDetailTool {
             .ok_or_else(|| ToolError::Execution(format!("Execution '{}' not found", execution_id)))?;
 
         // Verify agent_id if provided
-        if let Some(id) = agent_id {
-            if execution.agent_id != id {
+        if let Some(id) = agent_id
+            && execution.agent_id != id {
                 return Err(ToolError::Execution(format!(
                     "Execution '{}' belongs to agent '{}', not '{}'",
                     execution_id, execution.agent_id, id
                 )));
             }
-        }
 
         // Build detailed response
         let response = serde_json::json!({

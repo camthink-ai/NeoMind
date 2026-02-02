@@ -4,7 +4,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer, Deserializer};
 use uuid::Uuid;
 
-use super::MessageCategory;
 
 /// Unique message identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -192,11 +192,10 @@ impl StorageBackend for RedbBackend {
         let namespaced = make_key(table, key);
 
         // Try cache first - use write lock since get() updates LRU position
-        if let Ok(mut cache) = self.cache.write() {
-            if let Some(cached) = cache.get(&namespaced) {
+        if let Ok(mut cache) = self.cache.write()
+            && let Some(cached) = cache.get(&namespaced) {
                 return Ok(Some(cached.clone()));
             }
-        }
 
         // Cache miss - read from database
         let txn = self
@@ -207,7 +206,9 @@ impl StorageBackend for RedbBackend {
             .open_table(UNIFIED_TABLE)
             .map_err(|e| StorageError::Backend(e.to_string()))?;
 
-        let result = match t
+        
+
+        match t
             .get(&*namespaced)
             .map_err(|e| StorageError::Backend(e.to_string()))?
         {
@@ -220,9 +221,7 @@ impl StorageBackend for RedbBackend {
                 Ok(Some(data))
             }
             None => Ok(None),
-        };
-
-        result
+        }
     }
 
     fn delete(&self, table: &str, key: &str) -> Result<bool> {

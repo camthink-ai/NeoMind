@@ -167,13 +167,15 @@ impl IntegrationRegistry {
     /// * `id` - The integration ID
     pub async fn unregister(&self, id: &str) -> Result<()> {
         // Stop the integration first if running
-        {
+        let needs_stop = {
             let integrations = self.integrations.read();
-            if let Some(state) = integrations.get(id)
-                && state.running.load(std::sync::atomic::Ordering::Relaxed) {
-                    drop(integrations);
-                    self.stop(id).await?;
-                }
+            integrations
+                .get(id)
+                .is_some_and(|s| s.running.load(std::sync::atomic::Ordering::Relaxed))
+        };
+
+        if needs_stop {
+            self.stop(id).await?;
         }
 
         let mut integrations = self.integrations.write();
@@ -339,13 +341,16 @@ impl IntegrationRegistry {
         id: &str,
         command: IntegrationCommand,
     ) -> Result<IntegrationResponse> {
-        let integrations = self.integrations.read();
-        let state = integrations
-            .get(id)
-            .ok_or_else(|| RegistryError::NotFound(id.to_string()))?;
+        // Clone integration to avoid holding lock across await
+        let integration = {
+            let integrations = self.integrations.read();
+            let state = integrations
+                .get(id)
+                .ok_or_else(|| RegistryError::NotFound(id.to_string()))?;
+            state.integration.clone()
+        };
 
-        state
-            .integration
+        integration
             .send_command(command)
             .await
             .map_err(|e| RegistryError::RouteFailed(e.to_string()))

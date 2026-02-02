@@ -12,10 +12,12 @@ use tokio::sync::Mutex;
 
 /// Event priority levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default)]
 pub enum EventPriority {
     /// Low priority - informational events that can be delayed
     Low = 0,
     /// Normal priority - regular events (default)
+    #[default]
     Normal = 1,
     /// High priority - important events that should be processed soon
     High = 2,
@@ -23,11 +25,6 @@ pub enum EventPriority {
     Critical = 3,
 }
 
-impl Default for EventPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
 
 /// Wrapper that combines an event with its priority for ordering.
 #[derive(Debug, Clone)]

@@ -538,10 +538,8 @@ impl MessageStore {
             let iter = messages_table
                 .iter()
                 .map_err(|e| Error::Storage(format!("Failed to iterate: {}", e)))?;
-            for result in iter {
-                if let Ok((id, _)) = result {
-                    keys_to_delete.push(id.value().to_string());
-                }
+            for (id, _) in iter.flatten() {
+                keys_to_delete.push(id.value().to_string());
             }
         }
 
@@ -554,10 +552,8 @@ impl MessageStore {
             let iter = active_table
                 .iter()
                 .map_err(|e| Error::Storage(format!("Failed to iterate: {}", e)))?;
-            for result in iter {
-                if let Ok((id, _)) = result {
-                    active_keys.push(id.value().to_string());
-                }
+            for (id, _) in iter.flatten() {
+                active_keys.push(id.value().to_string());
             }
         }
 

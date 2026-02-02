@@ -8,6 +8,7 @@ use crate::protocol::mapping::{
     ProtocolMapping,
 };
 use std::collections::HashMap;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 /// MQTT protocol mapping configuration.
 #[derive(Debug, Clone)]
@@ -80,7 +81,8 @@ impl MqttValueParser {
 /// MQTT protocol mapping implementation.
 pub struct MqttMapping {
     config: MqttMappingConfig,
-    /// Capability definitions for data type info
+    /// Capability definitions for data type info (reserved for future use).
+    #[allow(dead_code)]
     capabilities: HashMap<String, MetricDataType>,
 }
 
@@ -237,7 +239,7 @@ impl MqttMapping {
         match format {
             BinaryFormat::Raw => {
                 // Base64 decode if it's encoded
-                let decoded = base64::decode(data).unwrap_or_else(|_| data.to_vec());
+                let decoded = BASE64.decode(data).unwrap_or_else(|_| data.to_vec());
                 Ok(MetricValue::Binary(decoded))
             }
             BinaryFormat::Float32Le => {
@@ -332,7 +334,7 @@ impl MqttMapping {
             }
             BinaryFormat::Base64Hex => {
                 // First base64 decode, then parse as hex string
-                let decoded = base64::decode(data)
+                let decoded = BASE64.decode(data)
                     .map_err(|_| MappingError::ParseError("Invalid base64 encoding".into()))?;
 
                 // Recursively parse as hex string

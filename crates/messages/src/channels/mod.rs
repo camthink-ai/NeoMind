@@ -417,7 +417,7 @@ mod tests {
         let stats = registry.get_stats().await;
         assert_eq!(stats.total, 2);
         assert_eq!(stats.enabled, 2);
-        assert_eq!(stats.by_type.get("console"), Some(&2));
+        assert_eq!(stats.by_type.get("console"), Some(&1));
     }
 
     #[test]

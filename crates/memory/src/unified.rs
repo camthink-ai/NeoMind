@@ -337,14 +337,12 @@ impl UnifiedMemory {
     /// Add a message to short-term memory.
     pub async fn add(&self, role: impl Into<String>, content: impl Into<String>) -> Result<()> {
         let mut memory = self.short_term.write().await;
-        memory.add(role, content).map_err(MemoryError::from)
-    }
+        memory.add(role, content)}
 
     /// Add a pre-built message to short-term memory.
     pub async fn add_message(&self, message: MemoryMessage) -> Result<()> {
         let mut memory = self.short_term.write().await;
-        memory.add_message(message).map_err(MemoryError::from)
-    }
+        memory.add_message(message)}
 
     /// Get all short-term messages.
     pub async fn get_short_term(&self) -> Vec<MemoryMessage> {
@@ -376,9 +374,7 @@ impl UnifiedMemory {
         let memory = self.mid_term.write().await;
         memory
             .add_conversation(session_id, question, answer)
-            .await
-            .map_err(MemoryError::from)
-    }
+            .await}
 
     /// Get conversations for a session.
     pub async fn get_session(&self, session_id: &str) -> Vec<ConversationEntry> {
@@ -391,9 +387,7 @@ impl UnifiedMemory {
         let memory = self.mid_term.write().await;
         memory
             .remove_session(session_id)
-            .await
-            .map_err(MemoryError::from)
-    }
+            .await}
 
     /// Clear mid-term memory.
     pub async fn clear_mid_term(&self) {
@@ -405,9 +399,8 @@ impl UnifiedMemory {
 
     /// Add knowledge to long-term memory.
     pub async fn add_knowledge(&self, entry: KnowledgeEntry) -> Result<()> {
-        let mut memory = self.long_term.write().await;
-        memory.add(entry).await.map_err(MemoryError::from)
-    }
+        let memory = self.long_term.write().await;
+        memory.add(entry).await}
 
     /// Search long-term memory.
     pub async fn search_long_term(&self, query: &str) -> Vec<KnowledgeEntry> {
@@ -573,7 +566,7 @@ impl UnifiedMemory {
 
         Ok(MemoryResults {
             items,
-            total_count: layer_counts.values().map(|&v| v).sum(),
+            total_count: layer_counts.values().copied().sum(),
             layer_counts,
             query_time_ms: elapsed,
         })

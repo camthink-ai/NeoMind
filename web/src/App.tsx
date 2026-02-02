@@ -73,9 +73,43 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Protected Route component
 // Uses tokenManager.getToken() directly to avoid race condition with store hydration
+// Also checks if setup is required before redirecting to login
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const [setupRequired, setSetupRequired] = useState<boolean | null>(null)
+  const [loading, setLoading] = useState(true)
   const token = tokenManager.getToken()
 
+  useEffect(() => {
+    const checkSetup = async () => {
+      try {
+        const response = await fetch('/api/setup/status')
+        const data = await response.json()
+        setSetupRequired(data.setup_required)
+      } catch {
+        setSetupRequired(false)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    checkSetup()
+  }, [])
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
+
+  // Setup is required - redirect to setup page
+  if (setupRequired === true) {
+    return <Navigate to="/setup" replace />
+  }
+
+  // Not authenticated - redirect to login
   if (!token) {
     return <Navigate to="/login" replace />
   }

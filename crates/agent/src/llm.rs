@@ -773,7 +773,7 @@ impl LlmInterface {
         // Parse timezone to get local time
         let tz = effective_timezone
             .parse::<chrono_tz::Tz>()
-            .unwrap_or_else(|_| chrono_tz::Tz::Asia__Shanghai); // Default to Shanghai on error
+            .unwrap_or(chrono_tz::Tz::Asia__Shanghai); // Default to Shanghai on error
 
         let local_time = now.with_timezone(&tz).format("%Y-%m-%d %H:%M:%S").to_string();
 

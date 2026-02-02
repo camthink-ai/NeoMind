@@ -43,6 +43,7 @@ use std::time::Duration;
 use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 /// MQTT device adapter configuration.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
@@ -817,7 +818,7 @@ impl MqttAdapter {
             }
         } else {
             // Binary data - store as base64
-            MetricValue::String(base64::encode(payload))
+            MetricValue::String(BASE64.encode(payload))
         }
     }
 
@@ -1560,7 +1561,7 @@ impl MqttAdapter {
                             (actual_data.clone(), false, "json")
                         } else {
                             // Not JSON - store as base64 encoded binary data
-                            (serde_json::json!(base64::encode(&payload)), true, "base64")
+                            (serde_json::json!(BASE64.encode(&payload)), true, "base64")
                         };
 
                         // Publish unknown_device_data event for auto-onboarding

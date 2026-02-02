@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 
 /// Message category determines the type and handling of the message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum MessageCategory {
     /// Alert - requires attention and action
     #[serde(rename = "alert")]
     Alert,
     /// System - informational messages
     #[serde(rename = "system")]
+    #[default]
     System,
     /// Business - workflow and business events
     #[serde(rename = "business")]
@@ -49,11 +51,6 @@ impl std::fmt::Display for MessageCategory {
     }
 }
 
-impl Default for MessageCategory {
-    fn default() -> Self {
-        Self::System
-    }
-}
 
 #[cfg(test)]
 mod tests {

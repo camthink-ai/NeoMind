@@ -40,7 +40,8 @@ pub struct SandboxModule {
     /// The compiled WASM module.
     module: Module,
 
-    /// Host API reference.
+    /// Host API reference (reserved for future WASM-host integration).
+    #[allow(dead_code)]
     host_api: Arc<super::HostApi>,
 
     /// Engine reference.

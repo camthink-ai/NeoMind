@@ -42,9 +42,7 @@
 //! }
 //! ```
 
-use crate::error::{MemoryError, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -574,8 +572,8 @@ impl ImportanceScorer {
 
         // Logarithmic scaling: log(count) / log(expected_max)
         // This gives diminishing returns for more accesses
-        let score = ((count as f64).ln() / 10.0_f64.ln()).clamp(0.0, 1.0);
-        score
+        
+        ((count as f64).ln() / 10.0_f64.ln()).clamp(0.0, 1.0)
     }
 
     /// Calculate emotional impact score.
@@ -612,8 +610,8 @@ impl ImportanceScorer {
             return 0.0;
         }
 
-        let score = ((item.cross_references as f64).ln() / 3.0_f64.ln()).clamp(0.0, 1.0);
-        score
+        
+        ((item.cross_references as f64).ln() / 3.0_f64.ln()).clamp(0.0, 1.0)
     }
 
     /// Batch calculate heat scores.

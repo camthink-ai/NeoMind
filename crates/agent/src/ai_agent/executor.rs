@@ -94,7 +94,7 @@ fn get_time_context() -> String {
 
     // Parse timezone
     let tz = timezone.parse::<chrono_tz::Tz>()
-        .unwrap_or_else(|_| chrono_tz::Tz::Asia__Shanghai);
+        .unwrap_or(chrono_tz::Tz::Asia__Shanghai);
 
     // Get current time in the configured timezone
     let local_now = now.with_timezone(&tz);
@@ -560,8 +560,8 @@ fn compact_history_context(
         &memory.learned_patterns
     };
 
-    if !patterns.is_empty() {
-        if let Some(best) = patterns.iter().max_by(|a, b| {
+    if !patterns.is_empty()
+        && let Some(best) = patterns.iter().max_by(|a, b| {
             a.confidence.partial_cmp(&b.confidence).unwrap_or(std::cmp::Ordering::Equal)
         }) {
             // Ultra-compact: "模式: 温度>30度告警 (80%)"
@@ -571,7 +571,6 @@ fn compact_history_context(
                 (best.confidence * 100.0) as u32
             ));
         }
-    }
 
     // === STRATEGY 3: Key baseline (关键基线) ===
     // Only show baselines that are relevant to common metrics
@@ -2760,7 +2759,7 @@ Respond in JSON format:
         );
 
         // Check if any data contains images
-        let has_images = data.iter().any(|d| {
+        let _has_images = data.iter().any(|d| {
             d.values.get("_is_image").and_then(|v| v.as_bool()).unwrap_or(false)
         });
 
@@ -3006,12 +3005,11 @@ Respond in JSON format:
                 // Check if any current data significantly deviates from baseline
                 for (metric, baseline) in agent.memory.baselines.iter().take(2) {
                     for d in data.iter().take(3) {
-                        if let Some(val) = d.values.get("value").and_then(|v| v.as_f64()) {
-                            if (val - baseline).abs() / baseline.abs().max(0.1) > 0.3 {
+                        if let Some(val) = d.values.get("value").and_then(|v| v.as_f64())
+                            && (val - baseline).abs() / baseline.abs().max(0.1) > 0.3 {
                                 parts.push(format!("Anomaly: {} changed significantly", metric));
                                 break;
                             }
-                        }
                     }
                 }
             }

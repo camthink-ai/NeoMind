@@ -67,11 +67,10 @@ impl MessageChannel for ConsoleChannel {
                 println!("标签: {:?}", message.tags);
             }
             println!("状态: {}", message.status);
-            if let Some(ref metadata) = message.metadata {
-                if !metadata.is_null() {
+            if let Some(ref metadata) = message.metadata
+                && !metadata.is_null() {
                     println!("数据: {}", metadata);
                 }
-            }
         }
 
         println!("================");
@@ -123,6 +122,7 @@ impl super::ChannelFactory for ConsoleChannelFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::ChannelFactory;
 
     #[tokio::test]
     async fn test_console_channel() {

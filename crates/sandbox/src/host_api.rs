@@ -35,7 +35,8 @@ struct HostApiState {
     /// Device data storage (simulated).
     devices: HashMap<String, DeviceData>,
 
-    /// Rule execution history.
+    /// Rule execution history (reserved for future use).
+    #[allow(dead_code)]
     rule_history: Vec<RuleExecution>,
 
     /// Logs from sandboxed modules.

@@ -9,12 +9,17 @@
 //! ## Example
 //!
 //! ```rust
-//! use edge_ai_core::llm::compaction::{CompactionConfig, MessagePriority, compact_messages};
+//! use edge_ai_core::llm::compaction::{CompactionConfig, compact_messages};
+//! use edge_ai_core::message::Message;
 //!
 //! let config = CompactionConfig::default()
 //!     .with_reserve_tokens_floor(1024)
 //!     .with_max_history_share(0.75);
 //!
+//! let messages = vec![
+//!     Message::system("You are a helpful assistant.".to_string()),
+//!     Message::user("Hello!".to_string()),
+//! ];
 //! let compacted = compact_messages(&messages, &config, 4096);
 //! ```
 

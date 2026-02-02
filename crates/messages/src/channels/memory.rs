@@ -115,6 +115,7 @@ impl super::ChannelFactory for MemoryChannelFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::ChannelFactory;
 
     #[tokio::test]
     async fn test_memory_channel() {

@@ -5,7 +5,7 @@
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
     http::StatusCode,
-    response::{Json, Sse, sse::Event},
+    response::{Sse, sse::Event},
 };
 use futures::stream::Stream;
 use serde::Deserialize;

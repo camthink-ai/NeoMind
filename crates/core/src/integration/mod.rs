@@ -358,6 +358,10 @@ impl IntegrationResponse {
 ///
 /// ```rust
 /// use edge_ai_core::integration::{Integration, IntegrationState, IntegrationMetadata, IntegrationType};
+/// use edge_ai_core::integration::{IntegrationCommand, IntegrationResponse, IntegrationEvent};
+/// use async_trait::async_trait;
+/// use std::pin::Pin;
+/// use futures::Stream;
 ///
 /// struct MyIntegration {
 ///     metadata: IntegrationMetadata,
@@ -371,7 +375,7 @@ impl IntegrationResponse {
 ///     }
 ///
 ///     fn state(&self) -> IntegrationState {
-///         if self.is_running() {
+///         if self.state.load(std::sync::atomic::Ordering::Relaxed) {
 ///             IntegrationState::Connected
 ///         } else {
 ///             IntegrationState::Disconnected
@@ -391,6 +395,7 @@ impl IntegrationResponse {
 ///     fn subscribe(&self) -> Pin<Box<dyn Stream<Item = IntegrationEvent> + Send + '_>> {
 ///         // Return event stream
 ///         // ...
+///         Box::pin(futures::stream::empty())
 ///     }
 ///
 ///     async fn send_command(&self, command: IntegrationCommand) -> edge_ai_core::integration::Result<IntegrationResponse> {

@@ -610,13 +610,12 @@ impl MemoryGraph {
                         continue;
                     }
 
-                    if let Some(rel) = relationships.get(rel_id) {
-                        if rel.relation_type == relation_type {
+                    if let Some(rel) = relationships.get(rel_id)
+                        && rel.relation_type == relation_type {
                             visited.insert(to_id.clone());
                             result.push(to_id.clone());
                             queue.push_back((to_id.clone(), depth + 1));
                         }
-                    }
                 }
             }
         }

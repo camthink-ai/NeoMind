@@ -5,7 +5,7 @@
 use axum::{extract::State};
 
 use edge_ai_messages::{Message, MessageSeverity};
-use edge_ai_core::event::{MetricValue, NeoTalkEvent, ProposedAction};
+use edge_ai_core::event::{MetricValue, NeoTalkEvent};
 
 use super::{ServerState, common::{HandlerResult, ok}};
 

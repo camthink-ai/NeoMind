@@ -13,15 +13,10 @@ use axum::{Json, extract::{Path, State}};
 use serde::{Deserialize, Serialize};
 
 use edge_ai_messages::{
-    ChannelInfo, ChannelStats, ChannelTypeInfo, MessageChannel,
-    ChannelRegistry, ConsoleChannel, MemoryChannel, ChannelFactory,
+    ChannelInfo, ChannelStats, MessageChannel, ChannelFactory,
 };
 
-#[cfg(feature = "webhook")]
-use edge_ai_messages::WebhookChannel;
 
-#[cfg(feature = "email")]
-use edge_ai_messages::EmailChannel;
 
 #[cfg(feature = "webhook")]
 use edge_ai_messages::WebhookChannelFactory;
@@ -178,7 +173,7 @@ pub async fn create_channel_handler(
 
     // Register channel
     {
-        let mut registry_guard = registry.write().await;
+        let registry_guard = registry.write().await;
         registry_guard.register_with_config(req.name.clone(), channel, config_value).await;
     }
 
@@ -202,7 +197,7 @@ pub async fn delete_channel_handler(
     Path(name): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
     let registry = state.message_manager.channels().await;
-    let mut registry_guard = registry.write().await;
+    let registry_guard = registry.write().await;
 
     let removed = registry_guard.unregister(&name).await;
 

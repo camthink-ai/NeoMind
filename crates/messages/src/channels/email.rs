@@ -3,8 +3,6 @@
 #[cfg(feature = "email")]
 use async_trait::async_trait;
 
-#[cfg(feature = "email")]
-use std::collections::HashMap;
 
 #[cfg(feature = "email")]
 use super::MessageChannel;
@@ -244,15 +242,14 @@ impl super::ChannelFactory for EmailChannelFactory {
 
         let mut channel = EmailChannel::new(name, smtp_server.to_string(), smtp_port, username, password, from_address);
 
-        if let Some(recipients) = config.get("recipients") {
-            if let Some(arr) = recipients.as_array() {
+        if let Some(recipients) = config.get("recipients")
+            && let Some(arr) = recipients.as_array() {
                 for addr in arr {
                     if let Some(str_addr) = addr.as_str() {
                         channel = channel.add_recipient(str_addr.to_string());
                     }
                 }
             }
-        }
 
         if !config
             .get("use_tls")

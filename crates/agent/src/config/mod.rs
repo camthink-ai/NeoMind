@@ -159,23 +159,20 @@ impl StreamingConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(timeout) = std::env::var("NEOTALK_STREAM_TIMEOUT") {
-            if let Ok(secs) = timeout.parse::<u64>() {
+        if let Ok(timeout) = std::env::var("NEOTALK_STREAM_TIMEOUT")
+            && let Ok(secs) = timeout.parse::<u64>() {
                 config.max_stream_duration_secs = secs;
             }
-        }
 
-        if let Ok(interval) = std::env::var("NEOTALK_HEARTBEAT_INTERVAL") {
-            if let Ok(secs) = interval.parse::<u64>() {
+        if let Ok(interval) = std::env::var("NEOTALK_HEARTBEAT_INTERVAL")
+            && let Ok(secs) = interval.parse::<u64>() {
                 config.heartbeat_interval_secs = secs;
             }
-        }
 
-        if let Ok(iterations) = std::env::var("NEOTALK_MAX_TOOL_ITERATIONS") {
-            if let Ok(n) = iterations.parse::<usize>() {
+        if let Ok(iterations) = std::env::var("NEOTALK_MAX_TOOL_ITERATIONS")
+            && let Ok(n) = iterations.parse::<usize>() {
                 config.max_tool_iterations = n;
             }
-        }
 
         config
     }
@@ -219,7 +216,7 @@ static DEFAULT_CONFIG: std::sync::OnceLock<StreamingConfig> = std::sync::OnceLoc
 
 /// 获取全局默认配置
 pub fn get_default_config() -> &'static StreamingConfig {
-    DEFAULT_CONFIG.get_or_init(|| StreamingConfig::from_env())
+    DEFAULT_CONFIG.get_or_init(StreamingConfig::from_env)
 }
 
 /// 设置全局默认配置

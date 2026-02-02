@@ -9,7 +9,7 @@
 //! GET    /api/messages/stats        - Message statistics
 
 use axum::{Json, extract::{Path, State}};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use edge_ai_messages::{Message, MessageSeverity, MessageId};
 

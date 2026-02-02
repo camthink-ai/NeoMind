@@ -24,7 +24,7 @@
 //! ```
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;
 
@@ -420,9 +420,9 @@ impl HookChain {
 
     /// 运行 on_error 钩子
     pub async fn run_on_error(&self, ctx: &HookContext, error: &str) -> HookResult<String> {
-        let mut current_error = error.to_string();
+        let current_error = error.to_string();
 
-        for hook in &self.hooks {
+        if let Some(hook) = self.hooks.iter().next() {
             match hook.on_error(ctx, &current_error).await {
                 HookResult::Continue(result) => {
                     return HookResult::Continue(result);

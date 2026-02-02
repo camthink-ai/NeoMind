@@ -9,6 +9,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
 use edge_ai_storage::DataPoint as StorageDataPoint;
 use edge_ai_storage::TimeSeriesStore as StorageTimeSeriesStore;
@@ -56,7 +57,7 @@ impl DataPoint {
                 let json_arr: Vec<Value> = arr.iter().map(Self::metric_value_to_json).collect();
                 Value::Array(json_arr)
             }
-            MetricValue::Binary(data) => Value::String(base64::encode(data)),
+            MetricValue::Binary(data) => Value::String(BASE64.encode(data)),
             MetricValue::Null => Value::Null,
         }
     }
@@ -71,7 +72,7 @@ impl DataPoint {
             }
             Value::String(s) => {
                 // Try to decode as base64 first (for binary data)
-                if let Ok(decoded) = base64::decode(s) {
+                if let Ok(decoded) = BASE64.decode(s) {
                     // Check if it looks like valid binary (not just a regular string that happens to be valid base64)
                     if decoded.iter().any(|&b: &u8| !(32..=126).contains(&b)) {
                         return Some(MetricValue::Binary(decoded));

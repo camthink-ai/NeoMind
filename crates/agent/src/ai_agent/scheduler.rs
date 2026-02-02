@@ -258,7 +258,7 @@ impl AgentScheduler {
                     tokio::spawn(async move {
                         // Acquire semaphore permit for concurrency control
                         // If semaphore is closed, log and skip execution
-                        let permit = match semaphore_clone.acquire().await {
+                        let _permit = match semaphore_clone.acquire().await {
                             Ok(p) => p,
                             Err(_) => {
                                 tracing::error!(agent_id = %agent_id, "Semaphore closed, skipping agent execution");

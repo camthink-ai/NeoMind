@@ -242,7 +242,7 @@ static GLOBAL_MAPPER: OnceLock<ToolNameMapper> = OnceLock::new();
 
 /// 获取全局工具名称映射器
 pub fn get_mapper() -> &'static ToolNameMapper {
-    GLOBAL_MAPPER.get_or_init(|| ToolNameMapper::new())
+    GLOBAL_MAPPER.get_or_init(ToolNameMapper::new)
 }
 
 /// 解析工具名称（便捷函数）

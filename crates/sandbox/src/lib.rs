@@ -83,11 +83,13 @@ impl Default for SandboxConfig {
 /// The WASM sandbox runtime.
 pub struct Sandbox {
     /// The Wasmtime engine.
-    engine: Engine,
+    pub(crate) engine: Engine,
     /// Configuration.
-    config: SandboxConfig,
+    #[allow(dead_code)]
+    config: SandboxConfig,  // Reserved for future use (e.g., execution limits)
     /// Host API for sandboxed modules.
-    host_api: Arc<HostApi>,
+    #[allow(dead_code)]
+    host_api: Arc<HostApi>,  // Exposed via getter method
     /// Loaded modules.
     modules: RwLock<HashMap<String, SandboxModule>>,
 }
@@ -175,6 +177,7 @@ impl Sandbox {
     }
 
     /// Get the host API reference.
+    #[allow(dead_code)]
     pub fn host_api(&self) -> &HostApi {
         &self.host_api
     }

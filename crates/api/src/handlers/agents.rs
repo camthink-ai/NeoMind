@@ -1311,7 +1311,7 @@ pub async fn validate_cron_expression(
     // Get the scheduler from agent manager
     let agent_manager = match state.get_or_init_agent_manager().await {
         Ok(manager) => manager,
-        Err(e) => {
+        Err(_e) => {
             // Create a temporary scheduler for validation
             let scheduler = AgentScheduler::new(SchedulerConfig::default()).await
                 .map_err(|e| ErrorResponse::internal(format!("Failed to create scheduler: {}", e)))?;

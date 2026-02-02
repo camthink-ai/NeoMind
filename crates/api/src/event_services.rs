@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use edge_ai_core::eventbus::{EventBus, EventBusReceiver};
+use edge_ai_core::eventbus::EventBus;
 use edge_ai_core::NeoTalkEvent;
 use edge_ai_rules::RuleEngine;
 use edge_ai_automation::store::SharedAutomationStore;
@@ -37,7 +37,7 @@ impl RuleEngineEventService {
             std::sync::atomic::Ordering::SeqCst,
             std::sync::atomic::Ordering::SeqCst
         ).is_ok() {
-            let running = self.running.clone();
+            let _running = self.running.clone();
             let event_bus = self.event_bus.clone();
             tokio::spawn(async move {
                 let mut rx = event_bus.filter().device_events();
@@ -95,7 +95,7 @@ impl TransformEventService {
             std::sync::atomic::Ordering::SeqCst,
             std::sync::atomic::Ordering::SeqCst
         ).is_ok() {
-            let running = self.running.clone();
+            let _running = self.running.clone();
             let event_bus = self.event_bus.clone();
             tokio::spawn(async move {
                 let mut rx = event_bus.filter().device_events();

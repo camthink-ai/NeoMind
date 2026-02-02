@@ -181,11 +181,10 @@ impl TokenBudget {
             .into_iter()
             .filter(|m| {
                 // Apply priority filter
-                if let PriorityFilter::MinPriority(min_prio) = filter {
-                    if m.priority < min_prio {
+                if let PriorityFilter::MinPriority(min_prio) = filter
+                    && m.priority < min_prio {
                         return false;
                     }
-                }
                 // Filter out low relevance
                 m.score >= 0.15
             })
@@ -322,10 +321,12 @@ impl ScoredMessage {
 
 /// Message priority for allocation decisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Priority {
     /// Low priority - can be dropped first
     Low = 0,
     /// Medium priority - default
+    #[default]
     Medium = 1,
     /// High priority - user messages, important context
     High = 2,
@@ -333,11 +334,6 @@ pub enum Priority {
     Critical = 3,
 }
 
-impl Default for Priority {
-    fn default() -> Self {
-        Self::Medium
-    }
-}
 
 /// Filter for message allocation.
 #[derive(Debug, Clone, Copy)]

@@ -7,6 +7,7 @@
 //!
 //! ```rust
 //! use edge_ai_core::llm::token_counter::{TokenCounter, CounterMode};
+//! use edge_ai_core::message::Message;
 //!
 //! // Create counter with automatic mode (tiktoken if available, else heuristic)
 //! let counter = TokenCounter::new(CounterMode::Auto);
@@ -59,8 +60,10 @@ pub enum EncodingType {
 /// Token counter that can use different counting strategies.
 #[derive(Clone)]
 pub struct TokenCounter {
+    #[allow(dead_code)]
     mode: CounterMode,
-    encoding: EncodingType,
+    /// The encoding type used for token counting.
+    pub encoding: EncodingType,
     #[cfg(feature = "tiktoken")]
     tiktoken: Option<Arc<CoreBPE>>,
 }

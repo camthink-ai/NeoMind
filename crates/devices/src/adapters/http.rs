@@ -160,6 +160,8 @@ struct HttpPollingTask {
     config: HttpDeviceConfig,
     last_poll: Instant,
     next_poll: Instant,
+    /// Error counter (reserved for future retry logic).
+    #[allow(dead_code)]
     error_count: u32,
     is_running: bool,
 }

@@ -310,7 +310,8 @@ impl FilteredSubscriber {
 pub struct EventIntegration {
     /// Event bus
     event_bus: Arc<CommandEventBus>,
-    /// Running flag
+    /// Running flag (reserved for future lifecycle management).
+    #[allow(dead_code)]
     running: Arc<RwLock<bool>>,
 }
 

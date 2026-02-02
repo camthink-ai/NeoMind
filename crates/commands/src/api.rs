@@ -12,7 +12,7 @@ use crate::command::{
     CommandId, CommandPriority, CommandRequest, CommandResult, CommandSource, CommandStatus,
     DeviceId, RetryPolicy,
 };
-use crate::state::CommandManager;
+use crate::state::{CommandManager, CommandStateStore};
 
 /// API request for submitting a command.
 #[derive(Debug, Clone, Serialize, Deserialize)]

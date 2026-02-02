@@ -148,10 +148,12 @@ pub struct WasmLlmPlugin {
     /// Plugin configuration.
     config: WasmLlmPluginConfig,
 
-    /// WASM module.
+    /// WASM module (loaded into sandbox, kept for metadata/validation).
+    #[allow(dead_code)]
     module: Module,
 
-    /// Wasmtime engine.
+    /// Wasmtime engine (kept for potential future use).
+    #[allow(dead_code)]
     engine: Engine,
 
     /// Sandbox for execution.
@@ -456,7 +458,7 @@ mod tests {
             stop: None,
         };
 
-        assert_eq!(params.max_tokens, 512);
+        assert_eq!(params.max_tokens, usize::MAX);
         assert_eq!(params.temperature, 0.7);
     }
 

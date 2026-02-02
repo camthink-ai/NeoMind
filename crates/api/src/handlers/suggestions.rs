@@ -297,7 +297,7 @@ async fn generate_device_based_suggestions(state: &ServerState) -> Vec<Suggestio
             .collect();
 
         let results = future::join_all(status_futures).await;
-        results.into_iter().filter_map(|x| x).count()
+        results.into_iter().flatten().count()
     };
 
     if online_count < devices.len() && !devices.is_empty() {

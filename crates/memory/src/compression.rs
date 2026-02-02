@@ -112,7 +112,7 @@ impl MessageGroup {
     pub fn total_tokens(&self, counter: &TokenBudget) -> usize {
         self.messages
             .iter()
-            .map(|m| counter.available_for_history()) // Approximate
+            .map(|_m| counter.available_for_history()) // Approximate
             .sum()
     }
 
@@ -122,7 +122,7 @@ impl MessageGroup {
             return 0.0;
         }
         let sum: f32 = self.messages.iter().map(|m| m.score).sum();
-        (sum as f64 / self.messages.len() as f64)
+        sum as f64 / self.messages.len() as f64
     }
 }
 

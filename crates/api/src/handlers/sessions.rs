@@ -1,6 +1,6 @@
 //! Session management handlers.
 
-use super::ws::{create_connection_metadata, ConnectionStateRef};
+use super::ws::create_connection_metadata;
 
 use axum::extract::ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade};
 use axum::{
@@ -696,13 +696,12 @@ async fn handle_ws_socket(
                                 conn_meta.increment_received();
 
                                 // Check for pong response to our heartbeat ping
-                                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
-                                    if value.get("type") == Some(&json!("pong")) {
+                                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text)
+                                    && value.get("type") == Some(&json!("pong")) {
                                         conn_meta.record_pong().await;
                                         tracing::debug!("Received pong from client");
                                         continue;
                                     }
-                                }
 
                                 if let Ok(chat_req) = serde_json::from_str::<ChatRequest>(&text) {
                                     // Use the sessionId from the request if provided, otherwise use current

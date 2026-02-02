@@ -408,6 +408,8 @@ impl Default for HttpAdapterConfig {
 pub struct HttpDownlinkAdapter {
     pub id: String,
     pub config: HttpAdapterConfig,
+    /// Connection status (reserved for future connection management).
+    #[allow(dead_code)]
     connected: Arc<RwLock<bool>>,
     stats: Arc<RwLock<AdapterStats>>,
 }

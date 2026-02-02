@@ -23,7 +23,8 @@ pub struct MessageManager {
     channels: Arc<RwLock<ChannelRegistry>>,
     /// Optional event bus for publishing message events
     event_bus: Arc<RwLock<Option<Arc<edge_ai_core::EventBus>>>>,
-    /// Data directory for persistent storage
+    /// Data directory for persistent storage (reserved for future use).
+    #[allow(dead_code)]
     data_dir: Arc<RwLock<Option<String>>>,
 }
 
@@ -83,7 +84,7 @@ impl MessageManager {
             source: stored.source,
             source_type: stored.source_type.unwrap_or_else(|| "system".to_string()),
             timestamp: chrono::DateTime::from_timestamp(stored.timestamp, 0)
-                .unwrap_or_else(|| chrono::Utc::now()),
+                .unwrap_or_else(chrono::Utc::now),
             status: MessageStatus::from_str(&stored.status)
                 .unwrap_or(MessageStatus::Active),
             metadata: stored.metadata,
@@ -143,7 +144,7 @@ impl MessageManager {
     /// Create and send a message.
     pub async fn create_message(&self, message: Message) -> Result<Message> {
         let id = message.id.clone();
-        let is_active = message.is_active();
+        let _is_active = message.is_active();
         let severity = message.severity;
 
         // Store in memory
@@ -162,8 +163,8 @@ impl MessageManager {
         let mut send_results = Vec::new();
 
         for channel_name in &channel_names {
-            if let Some(channel) = channels.get(channel_name).await {
-                if channel.is_enabled() {
+            if let Some(channel) = channels.get(channel_name).await
+                && channel.is_enabled() {
                     match channel.send(&message).await {
                         Ok(()) => send_results.push((channel_name.clone(), Ok(()))),
                         Err(e) => {
@@ -177,7 +178,6 @@ impl MessageManager {
                         }
                     }
                 }
-            }
         }
 
         // Log if all channels failed (but message was still created successfully)
