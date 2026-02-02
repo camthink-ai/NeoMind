@@ -30,8 +30,8 @@ hex = { workspace = true }
 base64 = { workspace = true }
 urlencoding = { workspace = true }
 
-# JavaScript execution
-quick-js = "0.4"
+# JavaScript execution (optional, has issues on Windows)
+quick-js = { version = "0.4", optional = true }
 
 # Storage
 redb = { workspace = true }
@@ -41,3 +41,4 @@ futures = { workspace = true }
 
 [features]
 default = []
+javascript = ["quick-js"]

@@ -25,8 +25,10 @@ use std::sync::Arc;
 ///
 /// Executes AI-generated JavaScript code in a sandboxed environment.
 /// The code receives `input` (raw device data) and should return transformed results.
+#[cfg(feature = "javascript")]
 pub struct JsTransformExecutor;
 
+#[cfg(feature = "javascript")]
 impl JsTransformExecutor {
     /// Create a new JS executor
     pub fn new() -> Self {
@@ -269,6 +271,39 @@ impl JsTransformExecutor {
     }
 }
 
+#[cfg(feature = "javascript")]
+impl Default for JsTransformExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A placeholder JS executor when JavaScript feature is disabled
+#[cfg(not(feature = "javascript"))]
+pub struct JsTransformExecutor;
+
+#[cfg(not(feature = "javascript"))]
+impl JsTransformExecutor {
+    pub fn new() -> Self {
+        JsTransformExecutor
+    }
+
+    pub fn execute(
+        &self,
+        _code: &str,
+        _input: &Value,
+        _output_prefix: &str,
+        _device_id: &str,
+        _timestamp: i64,
+    ) -> Result<Vec<TransformedMetric>> {
+        Err(AutomationError::TransformError {
+            operation: "JsTransform".to_string(),
+            message: "JavaScript support is disabled. Enable the 'javascript' feature to use JS transforms.".to_string(),
+        })
+    }
+}
+
+#[cfg(not(feature = "javascript"))]
 impl Default for JsTransformExecutor {
     fn default() -> Self {
         Self::new()
