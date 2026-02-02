@@ -1,7 +1,7 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use tauri::{AppHandle, Listener, Manager, RunEvent, Emitter};
+use tauri::{AppHandle, Listener, Manager, RunEvent};
 use tauri::tray::TrayIconEvent;
 use std::env;
 use std::fs;
@@ -88,9 +88,19 @@ fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn s
     let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
 
     let app_handle = app.handle().clone();
+    let app_handle_for_tray = app_handle.clone();
     let tray = TrayIconBuilder::new()
         .menu(&menu)
         .show_menu_on_left_click(false)
+        .on_tray_icon_event(move |_app, event| match event {
+            TrayIconEvent::Click { .. } => {
+                show_main_window(&app_handle_for_tray);
+            }
+            TrayIconEvent::DoubleClick { .. } => {
+                show_main_window(&app_handle_for_tray);
+            }
+            _ => {}
+        })
         .on_menu_event(move |_app, event| match event.id.as_ref() {
             "show" => {
                 show_main_window(&app_handle);
@@ -193,8 +203,15 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| match event {
+            // Handle macOS Dock icon click to reopen window
+            RunEvent::Reopen { .. } => {
+                show_main_window(app_handle);
+            }
+            _ => {}
+        });
 }
 
 fn main() {
