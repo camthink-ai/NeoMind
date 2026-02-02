@@ -120,7 +120,9 @@ export function PluginUploadDialog({
       }, 100)
 
       // Upload to the API
-      const response = await fetch("/api/plugins/upload", {
+      // Use correct API base for Tauri environment
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:3000/api' : '/api'
+      const response = await fetch(`${apiBase}/plugins/upload`, {
         method: "POST",
         body: formData,
       })

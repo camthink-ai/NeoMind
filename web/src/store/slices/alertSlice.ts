@@ -36,8 +36,10 @@ export const createAlertSlice: StateCreator<
     set({ alertsLoading: true })
     try {
       const token = getToken()
+      // Use correct API base for Tauri environment
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:3000/api' : '/api'
       // Use the messages API instead of alerts
-      const response = await fetch('/api/messages', {
+      const response = await fetch(`${apiBase}/messages`, {
         headers: {
           'Authorization': token ? `Bearer ${token}` : '',
         },

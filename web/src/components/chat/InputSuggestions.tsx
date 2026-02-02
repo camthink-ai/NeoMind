@@ -102,7 +102,9 @@ export function InputSuggestions({ input, onSelect, visible }: InputSuggestionsP
     setIsLoading(true)
     setApiError(false)
     try {
-      const response = await fetch(`/api/suggestions?input=${encodeURIComponent(searchInput)}&limit=20`)
+      // Use correct API base for Tauri environment
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:3000/api' : '/api'
+      const response = await fetch(`${apiBase}/suggestions?input=${encodeURIComponent(searchInput)}&limit=20`)
       if (response.ok) {
         const data: SuggestionsResponse = await response.json()
         setBackendSuggestions(data.suggestions)

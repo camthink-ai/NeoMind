@@ -98,6 +98,12 @@ export default function MessagesPage() {
   const navigate = useNavigate()
   const location = useLocation()
 
+  // Helper to get API base URL for Tauri environment
+  const getApiUrl = (path: string) => {
+    const apiBase = (window as any).__TAURI__ ? 'http://localhost:3000/api' : '/api'
+    return `${apiBase}${path}`
+  }
+
   // Tab state - sync with URL
   const [activeTab, setActiveTab] = useState<TabValue>(() => getTabFromPath(location.pathname))
 
@@ -166,7 +172,7 @@ export default function MessagesPage() {
   const handleTestChannel = async (channelName: string) => {
     setTestingChannel(channelName)
     try {
-      const response = await fetch(`/api/messages/channels/${encodeURIComponent(channelName)}/test`, {
+      const response = await fetch(getApiUrl(`/messages/channels/${encodeURIComponent(channelName)}/test`), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session') || ''}`,
@@ -226,7 +232,7 @@ export default function MessagesPage() {
   const fetchMessages = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await fetch('/api/messages', {
+      const response = await fetch(getApiUrl('/messages'), {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session') || ''}`,
         },
@@ -316,7 +322,7 @@ export default function MessagesPage() {
   // Message actions - using messages API endpoints
   const handleAcknowledge = async (id: string) => {
     try {
-      const response = await fetch(`/api/messages/${id}/acknowledge`, {
+      const response = await fetch(getApiUrl(`/messages/${id}/acknowledge`), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session') || ''}`,
@@ -339,7 +345,7 @@ export default function MessagesPage() {
 
   const handleResolve = async (id: string) => {
     try {
-      const response = await fetch(`/api/messages/${id}/resolve`, {
+      const response = await fetch(getApiUrl(`/messages/${id}/resolve`), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session') || ''}`,
@@ -362,7 +368,7 @@ export default function MessagesPage() {
 
   const handleArchive = async (id: string) => {
     try {
-      const response = await fetch(`/api/messages/${id}/archive`, {
+      const response = await fetch(getApiUrl(`/messages/${id}/archive`), {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session') || ''}`,
@@ -394,7 +400,7 @@ export default function MessagesPage() {
     if (!confirmed) return
 
     try {
-      const response = await fetch(`/api/messages/${id}`, {
+      const response = await fetch(getApiUrl(`/messages/${id}`), {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session') || ''}`,
@@ -888,7 +894,7 @@ export default function MessagesPage() {
         onOpenChange={setCreateDialogOpen}
         onCreate={async (req) => {
           // Use the messages API to create a new message
-          const response = await fetch('/api/messages', {
+          const response = await fetch(getApiUrl('/messages'), {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session') || ''}`,
