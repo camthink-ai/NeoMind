@@ -74,7 +74,8 @@ export class ChatWebSocket {
     // In Tauri desktop app, use localhost:3000 for WebSocket
     // because window.location would be tauri://localhost
     const isTauri = !!(window as any).__TAURI__
-    const protocol = isTauri || window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const isSecure = window.location.protocol === 'https:'
+    const protocol = (isTauri ? false : isSecure) ? 'wss:' : 'ws:'
     const host = isTauri ? 'localhost:3000' : window.location.host
     let wsUrl = `${protocol}//${host}/api/chat`
 
