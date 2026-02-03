@@ -964,13 +964,13 @@ impl Tool for ListDeviceTypesTool {
 
 /// Tool for deleting rules.
 pub struct DeleteRuleTool {
-    engine: Arc<MockRuleEngine>,
+    _engine: Arc<MockRuleEngine>,
 }
 
 impl DeleteRuleTool {
     /// Create a new delete rule tool.
     pub fn new(engine: Arc<MockRuleEngine>) -> Self {
-        Self { engine }
+        Self { _engine: engine }
     }
 
     /// Create with a mock engine for testing.
@@ -1136,12 +1136,12 @@ impl Tool for DisableRuleTool {
 
 /// Tool for updating rules.
 pub struct UpdateRuleTool {
-    engine: Arc<MockRuleEngine>,
+    _engine: Arc<MockRuleEngine>,
 }
 
 impl UpdateRuleTool {
     pub fn new(engine: Arc<MockRuleEngine>) -> Self {
-        Self { engine }
+        Self { _engine: engine }
     }
 
     pub fn mock() -> Self {
@@ -1282,12 +1282,12 @@ impl Tool for QueryDeviceStatusTool {
 
 /// Tool for getting device configuration.
 pub struct GetDeviceConfigTool {
-    manager: Arc<MockDeviceManager>,
+    _manager: Arc<MockDeviceManager>,
 }
 
 impl GetDeviceConfigTool {
     pub fn new(manager: Arc<MockDeviceManager>) -> Self {
-        Self { manager }
+        Self { _manager: manager }
     }
 
     pub fn mock() -> Self {
@@ -1336,12 +1336,12 @@ impl Tool for GetDeviceConfigTool {
 
 /// Tool for setting device configuration.
 pub struct SetDeviceConfigTool {
-    manager: Arc<MockDeviceManager>,
+    _manager: Arc<MockDeviceManager>,
 }
 
 impl SetDeviceConfigTool {
     pub fn new(manager: Arc<MockDeviceManager>) -> Self {
-        Self { manager }
+        Self { _manager: manager }
     }
 
     pub fn mock() -> Self {

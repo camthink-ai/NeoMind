@@ -231,7 +231,7 @@ impl CompressionConfig {
 
     /// Set hierarchy levels.
     pub fn hierarchy_levels(mut self, levels: usize) -> Self {
-        self.hierarchy_levels = levels.max(1).min(5);
+        self.hierarchy_levels = levels.clamp(1, 5);
         self
     }
 }

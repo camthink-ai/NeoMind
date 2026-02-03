@@ -305,10 +305,10 @@ impl RuleDslParser {
                     // Found keyword - convert to uppercase
                     result.push_str(keyword);
                     if let Some(remaining) = rest.get(keyword.len()..) {
-                        // Handle space after keyword
-                        if remaining.starts_with(' ') {
+                        // Handle space after keyword using strip_prefix
+                        if let Some(stripped) = remaining.strip_prefix(' ') {
                             result.push(' ');
-                            result.push_str(&remaining[1..]);
+                            result.push_str(stripped);
                         } else {
                             result.push_str(remaining);
                         }
@@ -366,7 +366,7 @@ impl RuleDslParser {
 
         for (i, line) in lines.iter().enumerate() {
             if line.starts_with("RULE") {
-                let rest = line[4..].trim(); // Skip "RULE"
+                let rest = line.strip_prefix("RULE").map_or(*line, |s| s.trim()); // Skip "RULE"
                 if let Some(rule_name) = Self::extract_quoted_string(rest) {
                     name = rule_name;
                 }
@@ -376,13 +376,13 @@ impl RuleDslParser {
                 while idx < lines.len() {
                     let next_line = lines[idx].trim();
                     if next_line.starts_with("DESCRIPTION") {
-                        if let Some(desc) = Self::extract_quoted_string(&next_line[11..]) {
+                        if let Some(desc) = Self::extract_quoted_string(next_line.strip_prefix("DESCRIPTION").map_or("", |s| s.trim())) {
                             description = desc;
                         }
                         lines.remove(idx);
                         continue;
                     } else if next_line.starts_with("TAGS") {
-                        let tags_str = &next_line[4..].trim();
+                        let tags_str = next_line.strip_prefix("TAGS").map_or(next_line, |s| s.trim());
                         tags = tags_str.split(',').map(|s| s.trim().to_string()).collect();
                         lines.remove(idx);
                         continue;

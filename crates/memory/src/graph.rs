@@ -86,7 +86,7 @@ impl EntityType {
     }
 
     /// Create an entity type from a string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "person" => Some(Self::Person),
             "device" => Some(Self::Device),
@@ -147,7 +147,7 @@ impl RelationType {
     }
 
     /// Create a relation type from a string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "owns" => Some(Self::Owns),
             "located_at" | "locatedat" => Some(Self::LocatedAt),
@@ -940,16 +940,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_entity_type_from_str() {
-        assert_eq!(EntityType::from_str("person"), Some(EntityType::Person));
-        assert_eq!(EntityType::from_str("device"), Some(EntityType::Device));
-        assert_eq!(EntityType::from_str("unknown"), None);
+        assert_eq!(EntityType::from_string("person"), Some(EntityType::Person));
+        assert_eq!(EntityType::from_string("device"), Some(EntityType::Device));
+        assert_eq!(EntityType::from_string("unknown"), None);
     }
 
     #[tokio::test]
     async fn test_relation_type_from_str() {
-        assert_eq!(RelationType::from_str("owns"), Some(RelationType::Owns));
-        assert_eq!(RelationType::from_str("controls"), Some(RelationType::Controls));
-        assert_eq!(RelationType::from_str("unknown"), None);
+        assert_eq!(RelationType::from_string("owns"), Some(RelationType::Owns));
+        assert_eq!(RelationType::from_string("controls"), Some(RelationType::Controls));
+        assert_eq!(RelationType::from_string("unknown"), None);
     }
 
     #[tokio::test]

@@ -286,6 +286,20 @@
       "settings": "Settings"
     }
   },
+  "llm": {
+    "providers": {
+      "ollama": "Local Model",
+      "openai": "OpenAI",
+      "anthropic": "Anthropic",
+      "google": "Google",
+      "xai": "xAI",
+      "default": "Default Model"
+    },
+    "providerTypes": {
+      "local": "Local",
+      "cloud": "Cloud"
+    }
+  },
   "inputSuggestions": {
     "greeting": {
       "morning": "Good morning",
