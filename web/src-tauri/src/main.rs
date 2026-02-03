@@ -171,6 +171,8 @@ pub fn run() {
             if let tauri::RunEvent::Reopen { .. } = event {
                 show_main_window(app_handle);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = event;
         });
 }
 
