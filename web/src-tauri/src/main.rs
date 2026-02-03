@@ -31,13 +31,11 @@ impl ServerState {
     }
 
     fn check_server_health(&self) -> bool {
-        match std::net::TcpStream::connect_timeout(
+        std::net::TcpStream::connect_timeout(
             &std::net::SocketAddr::from(([127, 0, 0, 1], 9375)),
             Duration::from_millis(100),
-        ) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        )
+        .is_ok()
     }
 }
 
@@ -179,7 +177,7 @@ pub fn run() {
 /// Application setup function
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Get and set up data directory
-    let app_data_dir = get_app_data_dir(&app.handle());
+    let app_data_dir = get_app_data_dir(app.handle());
     fs::create_dir_all(&app_data_dir)?;
 
     // Change to data directory for relative paths
@@ -197,12 +195,11 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Handle window close event
     if let Some(window) = app.get_webview_window("main") {
         let window_clone = window.clone();
-        window.on_window_event(move |event| match event {
-            tauri::WindowEvent::CloseRequested { api, .. } => {
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window_clone.hide();
             }
-            _ => {}
         });
     }
 
