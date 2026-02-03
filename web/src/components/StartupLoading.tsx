@@ -23,7 +23,6 @@ export function StartupLoading({ onReady }: { onReady: () => void }) {
   const [version, setVersion] = useState<string>("")
 
   useEffect(() => {
-    let unlisten: (() => void) | null = null
     let timeoutId: number | null = null
 
     const checkBackendStatus = async () => {
@@ -35,46 +34,69 @@ export function StartupLoading({ onReady }: { onReady: () => void }) {
         // Ignore version fetch errors
       }
 
-      // Listen for backend-ready event from Rust
-      try {
-        unlisten = await listen<BackendReadyEvent>("backend-ready", (event) => {
-          console.log("Backend ready event:", event.payload)
-
-          if (event.payload.status === "ready") {
-            setStatus("ready")
-            // Give UI a moment to render before switching to main app
-            setTimeout(() => {
-              onReady()
-            }, 300)
-          } else {
-            setStatus("timeout")
-            // Still proceed even on timeout - frontend has retry logic
-            setTimeout(() => {
-              onReady()
-            }, 1000)
-          }
-        })
-      } catch (error) {
-        console.error("Failed to listen for backend-ready event:", error)
-        // Fallback: proceed anyway after a delay
-        timeoutId = setTimeout(() => {
-          setStatus("timeout")
-          onReady()
-        }, 3000)
+      // The window is shown after Rust determines backend is ready,
+      // but we should verify by checking the health endpoint directly.
+      // This handles the race condition where the event might have been
+      // emitted before the frontend was ready to listen.
+      const checkHealth = async (): Promise<boolean> => {
+        try {
+          const response = await fetch('http://localhost:9375/api/health', {
+            signal: AbortSignal.timeout(2000),
+          })
+          return response.ok
+        } catch {
+          return false
+        }
       }
 
-      // Safety timeout: if we don't get the event within 35 seconds, proceed anyway
-      timeoutId = setTimeout(() => {
-        console.log("Startup timeout - proceeding to app")
+      // Listen for backend-ready event from Rust (for quick response)
+      try {
+        const unlisten = await listen<BackendReadyEvent>("backend-ready", (event) => {
+          console.log("Backend ready event received:", event.payload)
+          setStatus("ready")
+          onReady()
+        })
+
+        // Also check health directly in case event was already sent
+        let isReady = await checkHealth()
+        if (isReady) {
+          console.log("Backend health check passed immediately")
+          setStatus("ready")
+          onReady()
+          unlisten()
+          return
+        }
+
+        // Poll health endpoint for a few times in case event is missed
+        for (let i = 0; i < 15; i++) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          isReady = await checkHealth()
+          if (isReady) {
+            console.log("Backend health check passed after polling")
+            setStatus("ready")
+            onReady()
+            unlisten()
+            return
+          }
+        }
+
+        // If still not ready after polling, wait for event with timeout
+        timeoutId = setTimeout(() => {
+          console.log("Startup timeout - proceeding to app anyway")
+          setStatus("timeout")
+          onReady()
+        }, 5000)
+      } catch (error) {
+        console.error("Error in startup check:", error)
+        // Proceed anyway on error
         setStatus("timeout")
         onReady()
-      }, 35000)
+      }
     }
 
     checkBackendStatus()
 
     return () => {
-      if (unlisten) unlisten()
       if (timeoutId) clearTimeout(timeoutId)
     }
   }, [onReady])
@@ -105,9 +127,9 @@ export function StartupLoading({ onReady }: { onReady: () => void }) {
 
         {/* Status text */}
         <p className="text-sm text-muted-foreground">
-          {status === "loading" && "正在启动后端服务..."}
-          {status === "ready" && "服务已就绪"}
-          {status === "timeout" && "正在连接..."}
+          {status === "loading" && "Starting backend service..."}
+          {status === "ready" && "Service ready"}
+          {status === "timeout" && "Connecting..."}
         </p>
 
         {/* Version info */}

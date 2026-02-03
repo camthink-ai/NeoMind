@@ -61,40 +61,41 @@ interface FormErrors {
 }
 
 // Code templates for common data transformations
+// Note: names will be translated via i18n
 const CODE_TEMPLATES = [
   {
     key: 'temperature',
-    name: '温度转换',
+    nameKey: 'templates.temperature',
     code: '// Input: input.temp_c (Celsius)\nreturn {\n  temp_f: (input.temp_c || input.temperature || 0) * 9 / 5 + 32\n};',
   },
   {
     key: 'batteryStatus',
-    name: '电池状态',
+    nameKey: 'templates.batteryStatus',
     code: '// Input: input.battery (0-100)\nconst battery = input.battery || input.batt || 0;\nreturn {\n  battery_percent: Math.min(100, Math.max(0, battery)),\n  battery_status: battery > 80 ? \'good\' : battery > 20 ? \'medium\' : \'low\'\n};',
   },
   {
     key: 'hexParse',
-    name: 'Hex 解析',
+    nameKey: 'templates.hexParse',
     code: '// Input: input.hex or input.data (hex string)\nconst hex = input.hex || input.data || \'\';\nconst str = hex.match(/.{1,2}/g)?.map(b => String.fromCharCode(parseInt(b, 16))).join("") || \'\';\ntry {\n  return JSON.parse(str);\n} catch {\n  return { parsed: str };\n}',
   },
   {
     key: 'dataAggregate',
-    name: '数据聚合',
+    nameKey: 'templates.dataAggregate',
     code: '// Input: input.values (array of numbers)\nconst readings = input.values || input.readings || [];\nconst avg = readings.reduce((sum, v) => sum + (v || 0), 0) / readings.length;\nreturn {\n  average: parseFloat(avg.toFixed(2)),\n  count: readings.length,\n  min: Math.min(...readings),\n  max: Math.max(...readings)\n};',
   },
   {
     key: 'addMetrics',
-    name: '添加指标',
+    nameKey: 'templates.addMetrics',
     code: '// Input: input.temp, input.humidity, etc.\nreturn {\n  is_normal: (input.value || input.val || 0) > 0,\n  status_level: (input.confidence || input.conf || 1) > 0.8 ? 1 : 0,\n  event_type: input.type || \'unknown\',\n  processed_at: Date.now()\n};',
   },
   {
     key: 'statusCheck',
-    name: '状态检查',
+    nameKey: 'templates.statusCheck',
     code: '// Input: input.value (sensor reading)\nconst value = input.value || input.val || 0;\nreturn {\n  status: value > 100 ? \'critical\' : value > 80 ? \'warning\' : \'normal\',\n  is_alert: value > 100,\n  severity: value > 100 ? 3 : value > 80 ? 2 : 1\n};',
   },
   {
     key: 'passThrough',
-    name: '直接透传',
+    nameKey: 'templates.passThrough',
     code: '// Pass through all input data unchanged\nreturn input;',
   },
 ]
@@ -752,7 +753,7 @@ function BasicInfoStep({
 interface CodeStepProps {
   jsCode: string
   onCodeChange: (v: string) => void
-  templates: Array<{ key: string; name: string; code: string }>
+  templates: Array<{ key: string; nameKey: string; code: string }>
   onApplyTemplate: (code: string) => void
   scopeType: ScopeType
   scopeValue: string
@@ -810,7 +811,7 @@ function CodeStep({
               onClick={() => onApplyTemplate(tpl.code)}
               className="h-8 text-xs"
             >
-              {tpl.name}
+              {tBuilder(tpl.nameKey)}
             </Button>
           ))}
         </div>

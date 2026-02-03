@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="web/public/logo-square.png" alt="NeoMind Logo" width="120" height="120">
+</p>
+
 # NeoMind
 
 > **Edge-Deployed LLM Agent Platform for IoT Automation**
@@ -5,7 +9,7 @@
 NeoMind is a Rust-based edge AI platform that enables autonomous device management and automated decision-making through Large Language Models (LLMs).
 
 [![Build Release](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
-[![License: MIT OR Apache-2.0](https://img.googleapis.com/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: MIT OR Apache-2.0](https://img.googleapis.com/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
 ## Features
 
@@ -333,6 +337,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 MIT OR Apache-2.0
 
----
-
-**[Documentation](docs/README.md)** | **[Architecture](docs/ARCHITECTURE.md)** | **[Releases](https://github.com/camthink-ai/NeoMind/releases)**
+See [LICENSE](LICENSE) for the full text.

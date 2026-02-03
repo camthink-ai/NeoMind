@@ -1,17 +1,17 @@
 # ============================================================
-# NeoTalk 快速开始配置
+# NeoTalk Quick Start Configuration
 # ============================================================
 #
-# 最小化配置，适合首次使用
+# Minimal configuration for first-time users
 #
-# 使用步骤:
-#   1. 安装 Ollama: curl -fsSL https://ollama.com/install.sh | sh
-#   2. 拉取模型: ollama pull qwen3-vl:2b
-#   3. 复制此文件: cp config.minimal.toml config.toml
-#   4. 启动服务: cargo run -p edge-ai-api
-#   5. 访问: http://localhost:9375
+# Setup steps:
+#   1. Install Ollama: curl -fsSL https://ollama.com/install.sh | sh
+#   2. Pull model: ollama pull qwen3-vl:2b
+#   3. Copy this file: cp config.minimal.toml config.toml
+#   4. Start server: cargo run -p edge-ai-api
+#   5. Open: http://localhost:9375
 #
-# 完整配置请参考: config.toml.example
+# For full configuration options, see CLAUDE.md
 #
 
 [llm]
@@ -23,33 +23,33 @@ mode = "embedded"
 port = 1883
 
 # ============================================================
-# 记忆系统配置 (可选)
+# Memory System Configuration (Optional)
 # ============================================================
-# 配置对话历史的存储和检索方式
+# Configure storage and retrieval of conversation history
 
 [memory]
-# 短期记忆：当前对话上下文
-max_short_term_messages = 100      # 最大消息数量
-max_short_term_tokens = 4000        # 最大token数
+# Short-term memory: current conversation context
+max_short_term_messages = 100      # Max message count
+max_short_term_tokens = 4000        # Max token count
 
-# 中期记忆：最近对话历史，支持语义搜索
-max_mid_term_entries = 1000         # 最大对话条目数
+# Mid-term memory: recent conversation history with semantic search
+max_mid_term_entries = 1000         # Max conversation entries
 
-# 长期记忆：知识库和故障案例
-max_long_term_knowledge = 10000     # 最大知识条目数
+# Long-term memory: knowledge base and troubleshooting cases
+max_long_term_knowledge = 10000     # Max knowledge entries
 
-# 嵌入模型配置 (用于语义搜索)
-# 可选值: "simple" (默认/假嵌入), "ollama" (本地), "openai" (云服务)
+# Embedding model configuration (for semantic search)
+# Options: "simple" (default/fake embedding), "ollama" (local), "openai" (cloud)
 embedding_provider = "simple"
-# embedding_provider = "ollama"     # 使用Ollama嵌入模型
+# embedding_provider = "ollama"     # Use Ollama embedding model
 # embedding_endpoint = "http://localhost:11434"
 # embedding_model = "nomic-embed-text"
-# embedding_api_key = "sk-xxx"     # OpenAI API密钥
+# embedding_api_key = "sk-xxx"     # OpenAI API key
 
-# 混合搜索配置 (结合语义搜索和BM25全文搜索)
-use_hybrid_search = true            # 启用混合搜索
-semantic_weight = 0.7               # 语义搜索权重 (0.0 - 1.0)
-bm25_weight = 0.3                   # BM25全文搜索权重 (0.0 - 1.0)
+# Hybrid search configuration (combines semantic search + BM25 full-text search)
+use_hybrid_search = true            # Enable hybrid search
+semantic_weight = 0.7               # Semantic search weight (0.0 - 1.0)
+bm25_weight = 0.3                   # BM25 full-text search weight (0.0 - 1.0)
 
-# 嵌入维度 (仅simple嵌入有效)
+# Embedding dimension (only used by simple embedding)
 embedding_dim = 64

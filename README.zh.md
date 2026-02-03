@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="web/public/logo-square.png" alt="NeoMind Logo" width="120" height="120">
+</p>
+
 # NeoMind
 
 > **边缘部署的 LLM 智能体物联网自动化平台**
@@ -5,7 +9,7 @@
 NeoMind 是一个基于 Rust 的边缘 AI 平台，通过大语言模型（LLM）实现自主设备管理和自动化决策。
 
 [![构建发布](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
-[![许可证: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![许可证: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
 ## 核心特性
 
@@ -332,6 +336,4 @@ cargo run -p edge-ai-api -- --config path/to/config.toml
 
 MIT OR Apache-2.0
 
----
-
-**[文档](docs/README.md)** | **[架构设计](docs/ARCHITECTURE.md)** | **[发布版本](https://github.com/camthink-ai/NeoMind/releases)**
+详见 [LICENSE](LICENSE)
