@@ -23,20 +23,6 @@ use super::registry::DeviceRegistry;
 use super::telemetry::{DataPoint, TimeSeriesStorage};
 use edge_ai_core::EventBus;
 
-// HASS discovery functionality has been removed - providing stubs
-// TODO: Re-implement HASS discovery if needed
-fn discovery_subscription_patterns(_components: Option<Vec<String>>) -> Vec<String> {
-    vec![]
-}
-#[allow(dead_code)]
-fn _is_discovery_topic(topic: &str) -> bool {
-    topic.starts_with("homeassistant/") && topic.contains("/+/config/")
-}
-#[allow(dead_code)]
-fn parse_discovery_message(_topic: &str, _payload: &[u8]) -> Result<serde_json::Value, String> {
-    Err("HASS discovery deprecated".to_string())
-}
-
 /// Simple discovery announcement for internal NeoTalk discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DiscoveryAnnouncement {
@@ -46,93 +32,6 @@ struct DiscoveryAnnouncement {
     pub name: Option<String>,
     #[serde(default)]
     pub config: std::collections::HashMap<String, String>,
-}
-
-/// Discovered HASS device (single entity)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoveredHassDevice {
-    pub entity_id: String,
-    pub name: Option<String>,
-    pub component: String,
-    pub discovery_topic: String,
-    pub device_info: HashMap<String, String>,
-    pub metric_count: usize,
-    pub command_count: usize,
-    pub discovered_at: chrono::DateTime<chrono::Utc>,
-    /// Raw discovery message for re-processing
-    pub raw_message: String,
-}
-
-/// Aggregated HASS device (multiple entities from the same physical device)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AggregatedHassDevice {
-    /// Unique device identifier (from device.identifiers or derived)
-    pub device_id: String,
-    /// Device name (from device info or first entity)
-    pub name: Option<String>,
-    /// All entities belonging to this device
-    pub entities: Vec<DiscoveredHassDevice>,
-    /// Total metrics across all entities
-    pub total_metrics: usize,
-    /// Total commands across all entities
-    pub total_commands: usize,
-    /// Discovery topics for all entities
-    pub discovery_topics: Vec<String>,
-    /// Device info from first entity
-    pub device_info: HashMap<String, String>,
-}
-
-impl DiscoveredHassDevice {
-    /// Extract the device identifier from this entity's discovery data.
-    /// Uses device.identifiers if available, otherwise derives from topic.
-    pub fn get_device_identifier(&self) -> String {
-        // Try to get device identifier from device_info
-        if let Some(identifiers) = self.device_info.get("identifiers") {
-            // Parse identifiers (stored as JSON array string)
-            if let Ok(parsed) = serde_json::from_str::<Vec<String>>(identifiers)
-                && let Some(first_id) = parsed.first() {
-                    tracing::debug!(
-                        "Entity {} using device.identifiers: {}",
-                        self.entity_id,
-                        first_id
-                    );
-                    return format!("hass_{}", first_id);
-                }
-        }
-
-        // Derive from topic: homeassistant/sensor/hass-simulator-001/temperature/config
-        // Extract the device ID (middle part for 5-part format)
-        let parts: Vec<&str> = self.discovery_topic.split('/').collect();
-        if parts.len() >= 5 && parts[0] == "homeassistant" {
-            // 5-part format: homeassistant/<component>/<device_id>/<entity_id>/config
-            let device_id = parts[2];
-            tracing::debug!(
-                "Entity {} using topic-derived device_id: {} from topic: {}",
-                self.entity_id,
-                device_id,
-                self.discovery_topic
-            );
-            return format!("hass_{}", device_id);
-        }
-
-        // Fallback: use entity_id as device_id (no grouping possible)
-        tracing::warn!(
-            "Entity {} has no device.identifiers and cannot derive from topic, using entity_id as fallback",
-            self.entity_id
-        );
-        format!("hass_{}", self.entity_id.replace('.', "_"))
-    }
-
-    /// Extract device name from device info
-    pub fn get_device_name(&self) -> Option<String> {
-        self.device_info.get("device_name").cloned()
-    }
-}
-
-/// Aggregate HASS entities by device identifier (deprecated - returns empty)
-pub fn aggregate_hass_devices(_entities: Vec<DiscoveredHassDevice>) -> Vec<AggregatedHassDevice> {
-    // HASS discovery deprecated - stub implementation
-    Vec::new()
 }
 
 /// Configuration for the MQTT Device Manager
@@ -242,12 +141,11 @@ impl Default for MqttManagerConfig {
 /// ## 2. Core MQTT Manager (This struct)
 /// - `MqttDeviceManager` - Direct MQTT device management with protocol-specific features
 /// - Used internally by `MqttDevice` for MQTT-specific operations
-/// - Supports Home Assistant Discovery, custom telemetry topics, and direct MQTT operations
+/// - Supports custom telemetry topics and direct MQTT operations
 ///
 /// # Usage Guidelines
 ///
 /// - **New code**: Use `DeviceService` with `MqttAdapter` for unified device management
-/// - **HASS Discovery**: Direct `MqttDeviceManager` access is required for HASS auto-discovery
 /// - **Custom MQTT Protocols**: Use `MqttDeviceManager` for non-standard topic patterns
 /// - **Internal Device Implementations**: `MqttDevice` uses this internally for MQTT operations
 pub struct MqttDeviceManager {
@@ -289,16 +187,6 @@ pub struct MqttDeviceManager {
     /// Initialization flag to prevent double initialization
     initialized: Arc<RwLock<bool>>,
 
-    /// HASS discovery enabled
-    hass_discovery_enabled: Arc<RwLock<bool>>,
-
-    /// Discovered HASS devices (entity_id -> device)
-    hass_discovered_devices: Arc<RwLock<HashMap<String, DiscoveredHassDevice>>>,
-
-    /// Mapping from HASS state_topic to (device_id, metric_name) for handling state updates
-    /// For aggregated devices with multiple metrics, each state_topic maps to its specific metric
-    hass_state_topic_map: Arc<RwLock<HashMap<String, (String, String)>>>,
-
     /// Device timeout monitor task handle
     timeout_monitor_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 
@@ -330,9 +218,6 @@ impl MqttDeviceManager {
             time_series_storage: Arc::new(RwLock::new(None)),
             storage_dir: None,
             initialized: Arc::new(RwLock::new(false)),
-            hass_discovery_enabled: Arc::new(RwLock::new(false)),
-            hass_discovered_devices: Arc::new(RwLock::new(HashMap::new())),
-            hass_state_topic_map: Arc::new(RwLock::new(HashMap::new())),
             timeout_monitor_handle: Arc::new(RwLock::new(None)),
             event_bus: None,
         }
@@ -492,9 +377,6 @@ impl MqttDeviceManager {
                 "Loaded {} device instances from storage",
                 self.devices.read().await.len()
             );
-
-            // Restore HASS state topic mappings from device configs
-            let _ = self.restore_hass_state_topic_mappings().await;
         }
 
         Ok(())
@@ -521,13 +403,6 @@ impl MqttDeviceManager {
     /// Connect to MQTT broker and start processing messages
     pub async fn connect(&self) -> Result<(), DeviceError> {
         *self.connection_status.write().await = ConnectionStatus::Connecting;
-
-        // Load saved HASS discovery state
-        let saved_enabled = self._load_hass_discovery_state().await;
-        *self.hass_discovery_enabled.write().await = saved_enabled;
-        if saved_enabled {
-            tracing::info!("HASS discovery state loaded: enabled");
-        }
 
         let mut mqttoptions = rumqttc::MqttOptions::new(
             self.config
@@ -579,19 +454,6 @@ impl MqttDeviceManager {
             .map_err(|e| DeviceError::Communication(e.to_string()))?;
         tracing::info!("Subscribed to '#' - all MQTT topics for auto-discovery");
 
-        // Subscribe to HASS discovery topics if enabled
-        if saved_enabled {
-            // Subscribe to both 4-part and 5-part topic formats
-            let hass_topics = discovery_subscription_patterns(None);
-            for hass_topic in &hass_topics {
-                client
-                    .subscribe(hass_topic, rumqttc::QoS::AtLeastOnce)
-                    .await
-                    .map_err(|e| DeviceError::Communication(e.to_string()))?;
-                tracing::info!("HASS discovery auto-started: subscribed to {}", hass_topic);
-            }
-        }
-
         let running = Arc::new(RwLock::new(true));
         *self.mqtt_client.write().await = Some(MqttClientInner {
             client,
@@ -626,9 +488,6 @@ impl MqttDeviceManager {
             );
         }
 
-        // Restore HASS state topic mappings and re-subscribe (must be after client is set)
-        let _ = self.restore_hass_state_topic_mappings().await;
-
         // Spawn message processing task
         self.start_message_processor(eventloop, running).await;
 
@@ -651,8 +510,6 @@ impl MqttDeviceManager {
         let metric_cache = self.metric_cache.clone();
         let discovery_prefix = self.config.discovery_prefix.clone();
         let connection_status = self.connection_status.clone();
-        let hass_discovered_devices = self.hass_discovered_devices.clone();
-        let hass_state_topic_map = self.hass_state_topic_map.clone();
         let time_series_storage = self.time_series_storage.clone();
         let storage = self.mdl_registry.storage.clone();
         let event_bus = self.event_bus.clone();
@@ -677,8 +534,6 @@ impl MqttDeviceManager {
                                     &mdl_registry,
                                     &metric_cache,
                                     &discovery_prefix,
-                                    &hass_discovered_devices,
-                                    &hass_state_topic_map,
                                     &time_series_storage,
                                     &storage,
                                     &event_bus,
@@ -772,8 +627,6 @@ impl MqttDeviceManager {
             RwLock<HashMap<String, HashMap<String, (MetricValue, chrono::DateTime<chrono::Utc>)>>>,
         >,
         discovery_prefix: &str,
-        hass_discovered_devices: &Arc<RwLock<HashMap<String, DiscoveredHassDevice>>>,
-        hass_state_topic_map: &Arc<RwLock<HashMap<String, (String, String)>>>,
         time_series_storage: &Arc<RwLock<Option<Arc<TimeSeriesStorage>>>>,
         storage: &Arc<RwLock<Option<Arc<MdlStorage>>>>,
         event_bus: &Option<Arc<EventBus>>,
@@ -784,37 +637,10 @@ impl MqttDeviceManager {
                 let topic = publish.topic.to_string();
                 let payload = publish.payload;
 
-                // Special case: HASS discovery messages (deprecated)
-                if Self::is_hass_discovery_topic(&topic) {
-                    tracing::info!("Received HASS discovery message on topic: {}", topic);
-                    Self::handle_hass_discovery_message(&topic, &payload, hass_discovered_devices)
-                        .await;
-                    return;
-                }
-
                 // Special case: Discovery announcements
                 if topic.starts_with(discovery_prefix) && topic.ends_with("/announce") {
                     Self::handle_discovery_announcement(&payload, devices, mdl_registry, event_bus)
                         .await;
-                    return;
-                }
-
-                // Special case: HASS state updates for registered devices
-                if let Some((device_id, metric_name)) =
-                    hass_state_topic_map.read().await.get(&topic).cloned()
-                {
-                    Self::handle_hass_state_update(
-                        &device_id,
-                        &metric_name,
-                        &topic,
-                        &payload,
-                        devices,
-                        mdl_registry,
-                        metric_cache,
-                        time_series_storage,
-                        event_bus,
-                    )
-                    .await;
                     return;
                 }
 
@@ -1212,25 +1038,6 @@ impl MqttDeviceManager {
         None
     }
 
-    /// Handle HASS discovery message
-    async fn handle_hass_discovery_message(
-        topic: &str,
-        payload: &[u8],
-        _hass_discovered_devices: &Arc<RwLock<HashMap<String, DiscoveredHassDevice>>>,
-    ) {
-        tracing::info!(
-            "HASS discovery is deprecated, ignoring: topic={}, payload_len={}",
-            topic,
-            payload.len()
-        );
-        // HASS discovery functionality removed - stub implementation
-    }
-
-    /// Check if topic is a HASS discovery topic (stub)
-    fn is_hass_discovery_topic(topic: &str) -> bool {
-        topic.starts_with("homeassistant/")
-    }
-
     /// Simple hash function for fallback device_id generation
     fn hash_topic(s: &str) -> u64 {
         let mut hash: u64 = 5381;
@@ -1238,262 +1045,6 @@ impl MqttDeviceManager {
             hash = hash.wrapping_mul(33).wrapping_add(c as u64);
         }
         hash
-    }
-
-    /// Handle HASS device state update (stub - HASS functionality deprecated)
-    async fn handle_hass_state_update(
-        device_id: &str,
-        metric_name: &str,
-        topic: &str,
-        payload: &[u8],
-        devices: &Arc<RwLock<HashMap<String, DeviceInstance>>>,
-        mdl_registry: &MdlRegistry,
-        metric_cache: &Arc<
-            RwLock<HashMap<String, HashMap<String, (MetricValue, chrono::DateTime<chrono::Utc>)>>>,
-        >,
-        time_series_storage: &Arc<RwLock<Option<Arc<TimeSeriesStorage>>>>,
-        event_bus: &Option<Arc<EventBus>>,
-    ) {
-        let now = chrono::Utc::now();
-
-        // Parse the payload as a string value
-        let payload_str = match std::str::from_utf8(payload) {
-            Ok(s) => s.trim(),
-            Err(_) => {
-                tracing::warn!(
-                    "Invalid UTF-8 payload from HASS device {} on topic {}",
-                    device_id,
-                    topic
-                );
-                return;
-            }
-        };
-
-        tracing::info!(
-            "HASS state update: device_id={}, metric_name={}, topic='{}', payload='{}'",
-            device_id,
-            metric_name,
-            topic,
-            payload_str
-        );
-
-        // Get device, auto-register if it doesn't exist
-        let device = {
-            let devices_guard = devices.read().await;
-            devices_guard.get(device_id).cloned()
-        };
-
-        let (device_type_name, device_type) = match device {
-            Some(d) => {
-                // Device exists, get its type
-                match mdl_registry.get(&d.device_type).await {
-                    Some(dt) => (d.device_type.clone(), dt),
-                    None => {
-                        tracing::warn!(
-                            "Device type '{}' not found for HASS device {}",
-                            d.device_type,
-                            device_id
-                        );
-                        return;
-                    }
-                }
-            }
-            None => {
-                // Device doesn't exist - need to find its type from metric name
-                // Search all device types to find one with this metric
-                let mut found_type = None;
-                let mut found_type_name = None;
-                let all_types = mdl_registry.list().await;
-                for dt in all_types {
-                    if dt.uplink.metrics.iter().any(|m| m.name == metric_name) {
-                        found_type_name = Some(dt.device_type.clone());
-                        found_type = Some(dt);
-                        break;
-                    }
-                }
-
-                let (dt_name, dt) = match (found_type_name, found_type) {
-                    (Some(name), Some(dt)) => (name, dt),
-                    _ => {
-                        tracing::warn!(
-                            "Cannot auto-register HASS device {}: metric '{}' not found in any device type",
-                            device_id,
-                            metric_name
-                        );
-                        return;
-                    }
-                };
-
-                // Auto-register the device
-                tracing::info!(
-                    "Auto-registering HASS device {} with type {}",
-                    device_id,
-                    dt_name
-                );
-                let new_device = super::mdl_format::DeviceInstance {
-                    device_type: dt_name.clone(),
-                    device_id: device_id.to_string(),
-                    name: None,
-                    status: super::mdl_format::ConnectionStatus::Online,
-                    last_seen: now,
-                    config: std::collections::HashMap::new(),
-                    current_values: std::collections::HashMap::new(),
-                    adapter_id: Some("hass".to_string()),
-                };
-
-                {
-                    let mut devices_mut = devices.write().await;
-                    devices_mut.insert(device_id.to_string(), new_device.clone());
-                }
-
-                // Publish DeviceOnline event for auto-registered HASS device
-                if let Some(bus) = event_bus {
-                    use edge_ai_core::NeoTalkEvent;
-                    bus.publish(NeoTalkEvent::DeviceOnline {
-                        device_id: device_id.to_string(),
-                        device_type: dt_name.clone(),
-                        timestamp: now.timestamp(),
-                    })
-                    .await;
-                    tracing::debug!("Published DeviceOnline event for HASS device {}", device_id);
-                }
-
-                (dt_name, dt)
-            }
-        };
-
-        tracing::info!(
-            "  Device type '{}' has {} metrics: {:?}",
-            device_type_name,
-            device_type.uplink.metrics.len(),
-            device_type
-                .uplink
-                .metrics
-                .iter()
-                .map(|m| &m.name)
-                .collect::<Vec<_>>()
-        );
-
-        // Find the metric by name (for aggregated devices with multiple metrics)
-        let metric_def = match device_type
-            .uplink
-            .metrics
-            .iter()
-            .find(|m| m.name == metric_name)
-        {
-            Some(m) => m,
-            None => {
-                tracing::warn!(
-                    "Metric '{}' not found in device type {}",
-                    metric_name,
-                    device_type.device_type
-                );
-                return;
-            }
-        };
-
-        // Parse the value based on metric data type
-        let value = match metric_def.data_type {
-            super::mdl::MetricDataType::Float => payload_str
-                .parse::<f64>()
-                .map(super::mdl::MetricValue::Float)
-                .unwrap_or_else(|_| super::mdl::MetricValue::String(payload_str.to_string())),
-            super::mdl::MetricDataType::Integer => payload_str
-                .parse::<i64>()
-                .map(super::mdl::MetricValue::Integer)
-                .unwrap_or_else(|_| super::mdl::MetricValue::String(payload_str.to_string())),
-            super::mdl::MetricDataType::Boolean => {
-                let bool_val = payload_str.eq_ignore_ascii_case("true")
-                    || payload_str.eq_ignore_ascii_case("on")
-                    || payload_str.eq_ignore_ascii_case("1")
-                    || payload_str.eq_ignore_ascii_case("yes");
-                super::mdl::MetricValue::Boolean(bool_val)
-            }
-            _ => super::mdl::MetricValue::String(payload_str.to_string()),
-        };
-
-        // Update metric cache
-        {
-            let mut cache = metric_cache.write().await;
-            cache
-                .entry(device_id.to_string())
-                .or_default()
-                .insert(metric_name.to_string(), (value.clone(), now));
-        }
-
-        // Update device status and current_values
-        {
-            let mut devices_guard = devices.write().await;
-            if let Some(device) = devices_guard.get_mut(device_id) {
-                device.last_seen = now;
-                device.status = super::mdl_format::ConnectionStatus::Online;
-                device
-                    .current_values
-                    .insert(metric_name.to_string(), (value.clone(), now));
-            }
-        }
-
-        // Persist to time series storage (all value types)
-        let ts_storage = time_series_storage.read().await;
-        if let Some(storage) = ts_storage.as_ref() {
-            let data_point = DataPoint {
-                timestamp: now.timestamp(),
-                value: value.clone(),
-                quality: None,
-            };
-            if let Err(e) = storage.write(device_id, &metric_def.name, data_point).await {
-                tracing::error!("Failed to write HASS device telemetry: {}", e);
-            } else {
-                tracing::info!(
-                    "Stored HASS device {} metric {} = {:?} (topic: {})",
-                    device_id,
-                    metric_def.name,
-                    value,
-                    topic
-                );
-            }
-        }
-
-        // Publish DeviceMetric event to EventBus
-        if let Some(bus) = event_bus {
-            use edge_ai_core::{MetricValue as CoreMetricValue, NeoTalkEvent};
-            use serde_json::json;
-            // Convert our MetricValue to core's MetricValue
-            let core_value = match &value {
-                super::mdl::MetricValue::Integer(i) => CoreMetricValue::Integer(*i),
-                super::mdl::MetricValue::Float(f) => CoreMetricValue::Float(*f),
-                super::mdl::MetricValue::String(s) => CoreMetricValue::String(s.clone()),
-                super::mdl::MetricValue::Boolean(b) => CoreMetricValue::Boolean(*b),
-                super::mdl::MetricValue::Array(arr) => {
-                    // Convert array to JSON
-                    let json_arr: Vec<serde_json::Value> = arr.iter().map(|v| match v {
-                        super::mdl::MetricValue::Integer(i) => json!(*i),
-                        super::mdl::MetricValue::Float(f) => json!(*f),
-                        super::mdl::MetricValue::String(s) => json!(s),
-                        super::mdl::MetricValue::Boolean(b) => json!(*b),
-                        _ => json!(null),
-                    }).collect();
-                    CoreMetricValue::Json(json!(json_arr))
-                }
-                super::mdl::MetricValue::Binary(_) => CoreMetricValue::Json(json!(null)),
-                super::mdl::MetricValue::Null => CoreMetricValue::Json(json!(null)),
-            };
-            bus.publish(NeoTalkEvent::DeviceMetric {
-                device_id: device_id.to_string(),
-                metric: metric_name.to_string(),
-                value: core_value,
-                timestamp: now.timestamp(),
-                quality: None,
-            })
-            .await;
-        }
-
-        tracing::info!(
-            "HASS device {} state updated: {} = {:?}",
-            device_id,
-            metric_def.name,
-            value
-        );
     }
 
     /// Handle discovery announcement
@@ -1891,15 +1442,9 @@ impl MqttDeviceManager {
         self.mdl_registry.get(device_type).await
     }
 
-    /// List all device types, filtering out old HASS individual entity types
+    /// List all device types
     pub async fn list_device_types(&self) -> Vec<DeviceTypeDefinition> {
-        let all_types = self.mdl_registry.list().await;
-        // Filter out old HASS individual entity device types (those with "hass_discovery" category)
-        // These are replaced by aggregated HASS devices
-        all_types
-            .into_iter()
-            .filter(|dt| !dt.categories.contains(&"hass_discovery".to_string()))
-            .collect()
+        self.mdl_registry.list().await
     }
 
     /// Add a device manually (without discovery)
@@ -1940,21 +1485,6 @@ impl MqttDeviceManager {
 
     /// Remove a device
     pub async fn remove_device(&self, device_id: &str) -> Result<(), DeviceError> {
-        // Get device's HASS state topics before removing
-        let hass_state_topics: Vec<String> = {
-            let devices = self.devices.read().await;
-            if let Some(device) = devices.get(device_id) {
-                device
-                    .config
-                    .iter()
-                    .filter(|(k, _)| k.starts_with("hass_state:"))
-                    .map(|(_, v)| v.clone())
-                    .collect()
-            } else {
-                Vec::new()
-            }
-        };
-
         let mut devices = self.devices.write().await;
         devices.remove(device_id).ok_or_else(|| {
             DeviceError::InvalidParameter(format!("Device not found: {}", device_id))
@@ -1963,18 +1493,6 @@ impl MqttDeviceManager {
         // Remove from metric cache
         let mut cache = self.metric_cache.write().await;
         cache.remove(device_id);
-
-        // Remove HASS state topic mappings
-        let mut state_map = self.hass_state_topic_map.write().await;
-        for state_topic in hass_state_topics {
-            if let Some((mapped_device_id, _)) = state_map.remove(&state_topic) {
-                tracing::info!(
-                    "Removed HASS state topic mapping: {} -> {}",
-                    state_topic,
-                    mapped_device_id
-                );
-            }
-        }
 
         // Remove from storage
         self.delete_device_instance(device_id).await?;
@@ -2048,20 +1566,10 @@ impl MqttDeviceManager {
 
         let payload = self.mdl_registry.build_command_payload(command, &params)?;
 
-        // Check if this is a HASS device with a custom command topic
-        let topic = if let Some(command_topics) = device.config.get("hass_command_topic") {
-            // HASS devices may have multiple command topics (comma-separated)
-            // Use the first one for now (all entities typically share the same device command topic)
-            command_topics
-                .split(',')
-                .next()
-                .unwrap_or(command_topics)
-                .to_string()
-        } else {
-            // Use the standard downlink topic format
-            self.mdl_registry
-                .downlink_topic(&device.device_type, device_id)
-        };
+        // Use the standard downlink topic format
+        let topic = self
+            .mdl_registry
+            .downlink_topic(&device.device_type, device_id);
 
         let client_guard = self.mqtt_client.read().await;
         let client_wrapper = client_guard
@@ -2127,78 +1635,6 @@ impl MqttDeviceManager {
     /// Get all custom topic mappings (for debugging/monitoring)
     pub async fn get_topic_mappings(&self) -> HashMap<String, String> {
         self.topic_to_device.read().await.clone()
-    }
-
-    /// Start HASS (Home Assistant) MQTT discovery
-    /// HASS discovery functionality is deprecated
-    pub async fn start_hass_discovery(&self) -> Result<(), DeviceError> {
-        tracing::warn!("HASS discovery is deprecated and no longer functional");
-        Ok(())
-    }
-
-    /// Stop HASS discovery (deprecated)
-    pub async fn stop_hass_discovery(&self) -> Result<(), DeviceError> {
-        tracing::warn!("HASS discovery is deprecated and no longer functional");
-        let _ = std::mem::replace(&mut *self.hass_discovery_enabled.write().await, false);
-        self.hass_discovered_devices.write().await.clear();
-        Ok(())
-    }
-
-    /// Register a HASS device state topic mapping (deprecated)
-    pub async fn register_hass_state_topic(
-        &self,
-        _device_id: &str,
-        _metric_name: &str,
-        _state_topic: &str,
-    ) -> Result<(), DeviceError> {
-        tracing::warn!("HASS discovery is deprecated and no longer functional");
-        Ok(())
-    }
-
-    /// Save HASS discovery enabled state to storage (stub)
-    #[allow(dead_code)]
-    async fn _save_hass_discovery_state(&self, _enabled: bool) {
-        // HASS discovery deprecated - stub
-    }
-
-    /// Load HASS discovery enabled state from storage (stub)
-    #[allow(dead_code)]
-    async fn _load_hass_discovery_state(&self) -> bool {
-        false
-    }
-
-    /// Check if HASS discovery is enabled
-    pub async fn is_hass_discovery_enabled(&self) -> bool {
-        *self.hass_discovery_enabled.read().await
-    }
-
-    /// Restore HASS state topic mappings (deprecated)
-    pub async fn restore_hass_state_topic_mappings(&self) -> Result<(), DeviceError> {
-        tracing::warn!("HASS discovery is deprecated and no longer functional");
-        Ok(())
-    }
-
-    /// Get HASS discovered devices (deprecated)
-    pub async fn get_hass_discovered_devices(&self) -> Vec<DiscoveredHassDevice> {
-        Vec::new()
-    }
-
-    /// Get discovered HASS devices aggregated by physical device (deprecated)
-    pub async fn get_hass_discovered_devices_aggregated(&self) -> Vec<AggregatedHassDevice> {
-        Vec::new()
-    }
-
-    /// Clear discovered HASS devices (deprecated)
-    pub async fn clear_hass_discovered_devices(&self) {
-        self.hass_discovered_devices.write().await.clear();
-    }
-
-    /// Get a specific discovered HASS device by entity_id (deprecated)
-    pub async fn get_hass_discovered_device(
-        &self,
-        _entity_id: &str,
-    ) -> Option<DiscoveredHassDevice> {
-        None
     }
 }
 

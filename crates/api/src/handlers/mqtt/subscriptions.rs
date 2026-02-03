@@ -51,23 +51,6 @@ pub async fn list_subscriptions_handler(
         });
     }
 
-    // Check if HASS discovery is enabled
-    let store = crate::config::open_settings_store()
-        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
-    let hass_discovery_enabled = store.load_hass_discovery_enabled().unwrap_or(false);
-    if hass_discovery_enabled {
-        subscriptions.push(MqttSubscriptionDto {
-            topic: "homeassistant/+/+/config".to_string(),
-            qos: 1,
-            device_id: None,
-        });
-        subscriptions.push(MqttSubscriptionDto {
-            topic: "homeassistant/+/+/+/config".to_string(),
-            qos: 1,
-            device_id: None,
-        });
-    }
-
     ok(json!({
         "subscriptions": subscriptions,
         "count": subscriptions.len(),

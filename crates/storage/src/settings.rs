@@ -1026,18 +1026,6 @@ impl SettingsStore {
         Ok(all.into_iter().filter(|b| b.enabled).collect())
     }
 
-    /// Save HASS discovery enabled state (deprecated - returns Ok)
-    pub fn save_hass_discovery_enabled(&self, _enabled: bool) -> Result<(), Error> {
-        // HASS discovery deprecated - stub implementation
-        Ok(())
-    }
-
-    /// Load HASS discovery enabled state (deprecated - returns false)
-    pub fn load_hass_discovery_enabled(&self) -> Result<bool, Error> {
-        // HASS discovery deprecated - stub implementation
-        Ok(false)
-    }
-
     // ========================================================================
     // Global Timezone Settings
     // ========================================================================

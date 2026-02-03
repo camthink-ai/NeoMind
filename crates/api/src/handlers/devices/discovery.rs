@@ -21,7 +21,6 @@ pub async fn discover_devices_handler(
         vec![
             1883, // MQTT
             8883, // MQTT over SSL
-            502,  // Modbus TCP
             80,   // HTTP
             443,  // HTTPS
             5683, // CoAP
@@ -42,7 +41,6 @@ pub async fn discover_devices_handler(
     for port in open_ports {
         let device_type = match port {
             1883 | 8883 => Some("mqtt_gateway".to_string()),
-            502 => Some("modbus_controller".to_string()),
             80 | 443 => Some("http_device".to_string()),
             5683 => Some("coap_device".to_string()),
             _ => None,
@@ -83,11 +81,10 @@ pub async fn discover_devices_handler(
 /// Get discovery status/info.
 pub async fn discovery_info_handler() -> HandlerResult<serde_json::Value> {
     ok(json!({
-        "methods": ["mqtt", "http", "modbus", "coap"],
+        "methods": ["mqtt", "http", "coap"],
         "common_ports": {
             "mqtt": 1883,
             "mqtts": 8883,
-            "modbus": 502,
             "http": 80,
             "https": 443,
             "coap": 5683,

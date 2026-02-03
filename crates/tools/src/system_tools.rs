@@ -324,7 +324,7 @@ impl SystemHelpTool {
             "main_features": [
                 {
                     "name": "设备管理",
-                    "description": "连接和管理各类IoT设备，支持MQTT、Modbus等协议",
+                    "description": "连接和管理各类IoT设备，支持MQTT等协议",
                     "capabilities": ["查看设备状态", "控制设备", "查询设备数据", "数据分析"]
                 },
                 {

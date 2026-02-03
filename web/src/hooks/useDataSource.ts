@@ -534,6 +534,9 @@ export function useDataSource<T = unknown>(
   // This prevents showing loading state on refreshes/updates
   const initialTelemetryFetchDoneRef = useRef(false)
 
+  // Ref to track previous telemetry key to detect config changes
+  const prevTelemetryKeyRef = useRef<string>('')
+
   // Ref to track if initial system fetch has completed
   const initialSystemFetchDoneRef = useRef(false)
 
@@ -992,7 +995,7 @@ export function useDataSource<T = unknown>(
         }
       }
 
-      // For telemetry sources, also trigger telemetry cache invalidation and refetch
+      // For telemetry sources, invalidate cache and trigger refresh on device events
       const hasTelemetrySource = dataSources.some((ds) => ds.type === 'telemetry')
       if (hasTelemetrySource && isDeviceMetricEvent && hasDeviceId) {
         const eventDeviceId = eventData.device_id as string
@@ -1000,8 +1003,8 @@ export function useDataSource<T = unknown>(
           ds.type === 'telemetry' && ds.deviceId === eventDeviceId
         )
 
-        // Invalidate telemetry cache for affected sources and trigger refresh
         if (matchingTelemetrySources.length > 0) {
+          // Invalidate telemetry cache for affected sources to trigger fresh fetch
           matchingTelemetrySources.forEach((ds) => {
             const cacheKey = `${ds.deviceId}|${ds.metricId}|${ds.timeRange ?? 1}|${ds.limit ?? 50}|${ds.aggregate ?? ds.aggregateExt ?? 'raw'}`
             telemetryCache.delete(cacheKey)
@@ -1252,17 +1255,32 @@ export function useDataSource<T = unknown>(
       return
     }
 
+    // Detect telemetry config changes and reset loading state
+    const configChanged = prevTelemetryKeyRef.current !== telemetryKey
+    if (configChanged && telemetryKey) {
+      initialTelemetryFetchDoneRef.current = false
+    }
+    prevTelemetryKeyRef.current = telemetryKey
+
     const fetchTelemetryData = async () => {
       // Only show loading state on initial fetch, not on interval refreshes
       // Use ref to persist state across effect re-runs
-      if (!initialTelemetryFetchDoneRef.current) {
+      const isInitialFetch = !initialTelemetryFetchDoneRef.current
+      if (isInitialFetch) {
         setLoading(true)
       }
       setError(null)
 
+      // Add timeout protection to prevent infinite loading
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Fetch timeout')), 10000)
+      )
+
       try {
-        const results = await Promise.all(
-          telemetryDataSources.map(async (ds) => {
+        // Race between fetch and timeout to prevent hanging
+        const results = await Promise.race([
+          Promise.all(
+            telemetryDataSources.map(async (ds) => {
             if (!ds.deviceId || !ds.metricId) {
               return { data: [], raw: undefined }
             }
@@ -1290,7 +1308,9 @@ export function useDataSource<T = unknown>(
             }
             return { data: response.success ? response.data : [], success: response.success }
           })
-        )
+          ),
+          timeoutPromise
+        ])
 
         // Combine results
         let finalData: unknown
@@ -1409,8 +1429,8 @@ export function useDataSource<T = unknown>(
           return { dataSource: ds, latestValue, deviceId: ds.deviceId, metricId, matchedKey: matchResult?.matchedKey }
         })
 
-        // CRITICAL FIX: ALWAYS add store value if it exists, even if API data is newer
-        // This ensures the latest real-time value is always shown
+        // CRITICAL FIX: Add store value if it exists
+        // This ensures real-time updates from WebSocket events are shown
         const hasStoreValues = telemetryDataSourcesWithStore.some((item) => item.latestValue !== undefined)
         if (hasStoreValues) {
           // Ensure finalData is an array
@@ -1421,26 +1441,48 @@ export function useDataSource<T = unknown>(
             if (storeItem.latestValue === undefined) continue
 
             const latestValue = storeItem.latestValue
-            const maxTime = now
             const maxLimit = telemetryDataSources[0].limit ?? 100
 
-            // Create a new point with current timestamp
-            const newPoint = {
-              timestamp: maxTime,  // Current time - ensures this is the "latest"
-              time: maxTime,       // Also set 'time' for compatibility
-              value: latestValue,
+            // Check if we should add this value
+            // Add if: array is empty, value is different, or first point is old (>30s ago)
+            const firstPoint = rawDataArray[0] as { timestamp?: number; time?: number; value?: unknown } | undefined
+            const firstValue = firstPoint?.value
+            const firstTimestamp = (firstPoint?.timestamp ?? firstPoint?.time ?? 0) as number
+            const firstPointAge = now - firstTimestamp
+
+            // Helper to compare values (handles primitives and objects)
+            const valuesEqual = (a: unknown, b: unknown): boolean => {
+              if (a === b) return true
+              if (a === null || a === undefined || b === null || b === undefined) return false
+              if (typeof a === 'object' && typeof b === 'object') {
+                try {
+                  return JSON.stringify(a) === JSON.stringify(b)
+                } catch {
+                  return false
+                }
+              }
+              return false
             }
 
-            // ALWAYS add to beginning, even if it might be duplicate
-            // The component will pick the one with the latest timestamp
-            rawDataArray.unshift(newPoint)
+            const shouldAddNewPoint = rawDataArray.length === 0 ||
+                                      !valuesEqual(firstValue, latestValue) ||
+                                      firstPointAge > 30
 
-            // Trim to limit
-            if (rawDataArray.length > maxLimit) {
-              rawDataArray = rawDataArray.slice(0, maxLimit)
+            if (shouldAddNewPoint) {
+              const newPoint = {
+                timestamp: now,
+                time: now,
+                value: latestValue,
+              }
+
+              // Add to beginning
+              rawDataArray.unshift(newPoint)
+
+              // Trim to limit
+              if (rawDataArray.length > maxLimit) {
+                rawDataArray = rawDataArray.slice(0, maxLimit)
+              }
             }
-
-            // Store value merged successfully
           }
 
           finalData = rawDataArray

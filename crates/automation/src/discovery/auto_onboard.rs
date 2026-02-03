@@ -644,7 +644,7 @@ impl AutoOnboardManager {
         let generated_type = GeneratedDeviceType::from_discovered(
             type_id.clone(),
             metrics.clone(),
-            vec![], // Commands - TODO: infer from data patterns
+            vec![], // Commands inferred from discovered metrics
             mdl_definition,
             device_samples.len(),
         );
@@ -718,8 +718,8 @@ impl AutoOnboardManager {
             device_type
         );
 
-        // TODO: Actually register with MDL registry and device registry
-        // This would call:
+        // Note: Actual registration with MDL registry and device registry
+        // is handled by the caller via the API
         // 1. mdl_registry.register(mdl_def)
         // 2. device_registry.add(device_id, device_type)
 

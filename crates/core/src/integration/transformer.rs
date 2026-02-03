@@ -106,7 +106,7 @@ pub enum TransformationError {
 /// external data into NeoTalk events.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TransformationContext {
-    /// Source system identifier (hass, mqtt, modbus, etc.).
+    /// Source system identifier (mqtt, http, etc.).
     pub source_system: String,
 
     /// Source data type (sensor.discovery, metric, etc.).

@@ -130,8 +130,12 @@ function ResponsiveSparkline({
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(initialWidth)
+  const rafRef = useRef<number>()
 
-  // Track container size for responsiveness
+  // Create stable gradient ID for this component instance (FIX: use useRef to avoid flickering)
+  const gradientId = useRef(`sparkline-gradient-${Math.random().toString(36).substr(2, 9)}`).current
+
+  // Track container size for responsiveness with debounce
   useEffect(() => {
     const updateSize = () => {
       if (containerRef.current) {
@@ -140,14 +144,28 @@ function ResponsiveSparkline({
       }
     }
 
+    // Debounced resize handler using requestAnimationFrame
+    const handleResize = () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+      }
+      rafRef.current = requestAnimationFrame(updateSize)
+    }
+
+    // Initial measurement
     updateSize()
 
-    const resizeObserver = new ResizeObserver(updateSize)
+    const resizeObserver = new ResizeObserver(handleResize)
     if (containerRef.current) {
       resizeObserver.observe(containerRef.current)
     }
 
-    return () => resizeObserver.disconnect()
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+      }
+      resizeObserver.disconnect()
+    }
   }, [initialWidth])
 
   const min = Math.min(...chartData)
@@ -193,28 +211,21 @@ function ResponsiveSparkline({
 
   const fillPath = `${pathD} L ${width} ${height} L 0 ${height} Z`
 
-  const gradientId = `sparkline-gradient-${color.replace(/[^a-zA-Z0-9]/g, '')}-${Math.random().toString(36).substr(2, 9)}`
-  const gradientStops = getGradientStops(gradientType || 'primary', color)
-
   return (
     <div ref={containerRef} className={cn('w-full h-full flex items-center justify-center overflow-visible', className)}>
       <svg
-        width={containerWidth}
-        height={height}
-        viewBox={`0 0 ${containerWidth} ${height}`}
-        preserveAspectRatio="none"
+        width="100%"
+        height="100%"
+        viewBox={`0 0 ${width} ${height}`}
+        preserveAspectRatio="xMidYMid meet"
         style={{ overflow: 'visible' }}
       >
         <defs>
+          {/* Original gradient that works */}
           <linearGradient id={gradientId} x1="0%" y1="0%" x2="0%" y2="100%">
-            {gradientStops.map((stop, i) => (
-              <stop
-                key={i}
-                offset={stop.offset}
-                stopColor={stop.color}
-                stopOpacity={stop.opacity + 0.2}
-              />
-            ))}
+            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+            <stop offset="50%" stopColor={color} stopOpacity="0.1" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
 
           <filter id={`glow-${gradientId}`} x="-50%" y="-50%" width="200%" height="200%">
@@ -230,7 +241,7 @@ function ResponsiveSparkline({
           <path
             d={fillPath}
             fill={`url(#${gradientId})`}
-            className="transition-opacity duration-300"
+            className="transition-all duration-300 ease-out"
           />
         )}
 
@@ -243,7 +254,7 @@ function ResponsiveSparkline({
           strokeLinejoin="round"
           vectorEffect="non-scaling-stroke"
           filter={`url(#glow-${gradientId})`}
-          className="transition-all duration-300"
+          className="transition-all duration-300 ease-out"
         />
 
         {showPoints && points.map((p, i) => (
@@ -253,7 +264,8 @@ function ResponsiveSparkline({
             cy={p.y}
             r={2.5}
             fill={color}
-            className="opacity-50 transition-opacity duration-200 hover:opacity-100"
+            vectorEffect="non-scaling-stroke"
+            className="opacity-50 transition-all duration-200 ease-out hover:opacity-100"
           />
         ))}
 
@@ -267,7 +279,7 @@ function ResponsiveSparkline({
             strokeWidth={1.5}
             strokeDasharray="4 4"
             vectorEffect="non-scaling-stroke"
-            className="opacity-60"
+            className="opacity-60 transition-all duration-300 ease-out"
           />
         )}
 
@@ -279,13 +291,14 @@ function ResponsiveSparkline({
             r={6}
             fill={color}
             fillOpacity="0.2"
+            className="transition-all duration-300 ease-out"
           />
           <circle
             cx={points[points.length - 1].x}
             cy={points[points.length - 1].y}
             r={3.5}
             fill={color}
-            className="stroke-background stroke-1"
+            className="stroke-background stroke-1 transition-all duration-300 ease-out"
           />
         </g>
       </svg>
@@ -480,39 +493,21 @@ export function Sparkline({
 
       {/* Chart */}
       <div className={cn('flex-1 min-h-0', 'overflow-visible')} style={{ height: chartHeight }}>
-        {responsive ? (
-          <ResponsiveSparkline
-            data={chartData}
-            width={width}
-            height={chartHeight}
-            color={lineColor}
-            fill={fill}
-            fillColor={fillColor}
-            showPoints={showPoints}
-            strokeWidth={strokeWidth}
-            curved={curved}
-            showThreshold={showThreshold}
-            threshold={effectiveThreshold}
-            thresholdColor={thresholdColor || indicatorColors.neutral.base}
-            gradientType={gradientState}
-          />
-        ) : (
-          <ResponsiveSparkline
-            data={chartData}
-            width={width}
-            height={chartHeight}
-            color={lineColor}
-            fill={fill}
-            fillColor={fillColor}
-            showPoints={showPoints}
-            strokeWidth={strokeWidth}
-            curved={curved}
-            showThreshold={showThreshold}
-            threshold={effectiveThreshold}
-            thresholdColor={thresholdColor || indicatorColors.neutral.base}
-            gradientType={gradientState}
-          />
-        )}
+        <ResponsiveSparkline
+          data={chartData}
+          width={width}
+          height={chartHeight}
+          color={lineColor}
+          fill={fill}
+          fillColor={fillColor}
+          showPoints={showPoints}
+          strokeWidth={strokeWidth}
+          curved={curved}
+          showThreshold={showThreshold}
+          threshold={effectiveThreshold}
+          thresholdColor={thresholdColor || indicatorColors.neutral.base}
+          gradientType={gradientState}
+        />
       </div>
     </>
   )

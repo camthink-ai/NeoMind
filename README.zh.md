@@ -19,7 +19,7 @@ NeoMind 是一个基于 Rust 的边缘 AI 平台，通过大语言模型（LLM�
 - **工具调用**: 通过 LLM 函数调用执行真实的系统操作
 
 ### 🔌 模块化设备接入
-- **多协议支持**: MQTT、Modbus、Home Assistant
+- **MQTT 协议**: 主要设备集成方式，支持自动发现
 - **设备发现**: 自动检测设备并注册类型
 - **热插拔**: 运行时通过插件系统动态加载/卸载适配器
 
@@ -154,7 +154,7 @@ neomind/
 │   ├── api/           # Web API 服务器（Axum）
 │   ├── agent/         # AI 智能体与工具调用
 │   ├── automation/    # 统一自动化系统（规则 + 转换）
-│   ├── devices/       # 设备管理（MQTT/Modbus/HASS）
+│   ├── devices/       # 设备管理（MQTT）
 │   ├── rules/         # 规则引擎和 DSL 解析器
 │   ├── storage/       # 存储系统（redb）
 │   ├── memory/        # LLM 三层记忆

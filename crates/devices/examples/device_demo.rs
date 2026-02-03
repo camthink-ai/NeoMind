@@ -150,19 +150,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let discovery = DeviceDiscovery::new();
 
-    let modbus_config = edge_ai_devices::discovery::ModbusDiscoveryConfig::new("127.0.0.1-5")
-        .with_port(502)
-        .with_slave_ids(vec![1, 2]);
-
-    println!("Scanning for Modbus devices on 127.0.0.1-5...");
-    match discovery.scan_modbus(modbus_config).await {
-        Ok(result) => {
-            println!("Discovery completed in {:?}", result.duration);
-            println!("Found {} devices", result.devices.len());
-
-            for device in &result.devices {
-                println!("  - Device ID: {}", device.id);
-                println!("    Confidence: {:.1}%", device.confidence * 100.0);
+    // Scan for MQTT devices on common port
+    println!("Scanning for MQTT devices on localhost...");
+    match discovery.scan_ports("localhost", vec![1883, 8883], 500).await {
+        Ok(ports) => {
+            println!("Found {} open ports", ports.len());
+            for port in ports {
+                println!("  - Port {}: {}", port, if port == 1883 { "MQTT" } else { "MQTTS" });
             }
         }
         Err(e) => {
@@ -187,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nNew Architecture Summary:");
     println!("  - DeviceService: Unified interface for all device operations");
     println!("  - DeviceRegistry: Stores device configurations and type templates");
-    println!("  - DeviceAdapter: Protocol-specific implementations (MQTT, Modbus, HASS)");
+    println!("  - DeviceAdapter: Protocol-specific implementations (MQTT, HTTP)");
     println!("  - EventBus: Event-driven communication between components");
 
     Ok(())

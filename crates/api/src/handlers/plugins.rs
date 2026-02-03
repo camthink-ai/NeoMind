@@ -45,7 +45,7 @@ pub struct AdapterPluginDto {
     pub id: String,
     /// Plugin name
     pub name: String,
-    /// Adapter type (mqtt, modbus, hass, etc.)
+    /// Adapter type (mqtt, http, etc.)
     pub adapter_type: String,
     /// Whether the plugin is enabled
     pub enabled: bool,

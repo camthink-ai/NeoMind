@@ -1,6 +1,6 @@
 //! Downlink adapters for sending commands to devices.
 //!
-//! Supports multiple protocols: MQTT, Modbus, HTTP, etc.
+//! Supports multiple protocols: MQTT, HTTP, etc.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -68,7 +68,6 @@ pub struct AdapterStats {
 /// Downlink adapter types.
 pub enum AnyAdapter {
     Mqtt(MqttDownlinkAdapter),
-    Modbus(ModbusDownlinkAdapter),
     Http(HttpDownlinkAdapter),
 }
 
@@ -77,7 +76,6 @@ impl AnyAdapter {
     pub fn id(&self) -> &str {
         match self {
             AnyAdapter::Mqtt(a) => &a.config.client_id,
-            AnyAdapter::Modbus(a) => &a.id,
             AnyAdapter::Http(a) => &a.id,
         }
     }
@@ -86,7 +84,6 @@ impl AnyAdapter {
     pub fn supported_device_types(&self) -> &[&str] {
         match self {
             AnyAdapter::Mqtt(_) => &["mqtt", "iot", "sensor", "smart_plug", "smart_bulb"],
-            AnyAdapter::Modbus(_) => &["modbus", "modbus_rtu", "modbus_tcp", "plc", "controller"],
             AnyAdapter::Http(_) => &["http", "rest", "webhook", "api"],
         }
     }
@@ -98,7 +95,6 @@ impl AnyAdapter {
     ) -> Result<CommandResult, AdapterError> {
         match self {
             AnyAdapter::Mqtt(a) => a.send_command(command).await,
-            AnyAdapter::Modbus(a) => a.send_command(command).await,
             AnyAdapter::Http(a) => a.send_command(command).await,
         }
     }
@@ -107,7 +103,6 @@ impl AnyAdapter {
     pub async fn is_connected(&self) -> bool {
         match self {
             AnyAdapter::Mqtt(a) => a.is_connected().await,
-            AnyAdapter::Modbus(a) => a.is_connected().await,
             AnyAdapter::Http(a) => a.is_connected().await,
         }
     }
@@ -116,7 +111,6 @@ impl AnyAdapter {
     pub async fn stats(&self) -> AdapterStats {
         match self {
             AnyAdapter::Mqtt(a) => a.stats().await,
-            AnyAdapter::Modbus(a) => a.stats().await,
             AnyAdapter::Http(a) => a.stats().await,
         }
     }
@@ -260,123 +254,6 @@ impl MqttDownlinkAdapter {
     }
 }
 
-/// Modbus downlink adapter configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModbusAdapterConfig {
-    /// Modbus device type (RTU or TCP)
-    pub device_type: ModbusDeviceType,
-    /// Slave address
-    pub slave_address: u8,
-    /// Connection timeout in milliseconds
-    pub timeout_ms: u64,
-}
-
-/// Modbus device type.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ModbusDeviceType {
-    /// Modbus RTU (serial)
-    Rtu {
-        port: String,
-        baud_rate: u32,
-        data_bits: u8,
-        stop_bits: u8,
-        parity: String,
-    },
-    /// Modbus TCP
-    Tcp { host: String, port: u16 },
-}
-
-impl Default for ModbusAdapterConfig {
-    fn default() -> Self {
-        Self {
-            device_type: ModbusDeviceType::Tcp {
-                host: "127.0.0.1".to_string(),
-                port: 502,
-            },
-            slave_address: 1,
-            timeout_ms: 5000,
-        }
-    }
-}
-
-/// Modbus downlink adapter.
-pub struct ModbusDownlinkAdapter {
-    pub id: String,
-    pub config: ModbusAdapterConfig,
-    connected: Arc<RwLock<bool>>,
-    stats: Arc<RwLock<AdapterStats>>,
-}
-
-impl ModbusDownlinkAdapter {
-    /// Create a new Modbus adapter.
-    pub fn new(id: String, config: ModbusAdapterConfig) -> Self {
-        Self {
-            id,
-            config,
-            connected: Arc::new(RwLock::new(false)),
-            stats: Arc::new(RwLock::new(AdapterStats {
-                adapter_id: String::new(),
-                commands_sent: 0,
-                commands_succeeded: 0,
-                commands_failed: 0,
-                avg_response_time_ms: 0.0,
-                connected: false,
-                last_error: None,
-            })),
-        }
-    }
-
-    /// Connect to the Modbus device.
-    pub async fn connect(&self) -> Result<(), AdapterError> {
-        *self.connected.write().await = true;
-        {
-            let mut stats = self.stats.write().await;
-            stats.adapter_id = self.id.clone();
-            stats.connected = true;
-        }
-        Ok(())
-    }
-
-    /// Disconnect from the Modbus device.
-    pub async fn disconnect(&self) {
-        *self.connected.write().await = false;
-        {
-            let mut stats = self.stats.write().await;
-            stats.connected = false;
-        }
-    }
-
-    /// Send a command to a device.
-    pub async fn send_command(
-        &self,
-        command: &CommandRequest,
-    ) -> Result<CommandResult, AdapterError> {
-        if !*self.connected.read().await {
-            return Err(AdapterError::NotConnected);
-        }
-
-        let mut stats = self.stats.write().await;
-        stats.commands_sent += 1;
-        stats.commands_succeeded += 1;
-        drop(stats);
-
-        Ok(CommandResult::success(format!(
-            "Modbus command sent to device {}",
-            command.device_id
-        )))
-    }
-
-    /// Check if adapter is connected.
-    pub async fn is_connected(&self) -> bool {
-        *self.connected.read().await
-    }
-
-    /// Get adapter statistics.
-    pub async fn stats(&self) -> AdapterStats {
-        self.stats.read().await.clone()
-    }
-}
-
 /// HTTP downlink adapter configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpAdapterConfig {
@@ -496,12 +373,6 @@ impl DownlinkAdapterRegistry {
         self.register_adapter(id.clone(), AnyAdapter::Mqtt(adapter));
     }
 
-    /// Register a Modbus adapter.
-    pub fn register_modbus(&mut self, adapter: ModbusDownlinkAdapter) {
-        let id = adapter.id.clone();
-        self.register_adapter(id.clone(), AnyAdapter::Modbus(adapter));
-    }
-
     /// Register an HTTP adapter.
     pub fn register_http(&mut self, adapter: HttpDownlinkAdapter) {
         let id = adapter.id.clone();
@@ -583,13 +454,6 @@ mod tests {
         let config = MqttAdapterConfig::default();
         assert_eq!(config.broker_url, "tcp://localhost:1883");
         assert_eq!(config.qos, 1);
-    }
-
-    #[test]
-    fn test_modbus_config_default() {
-        let config = ModbusAdapterConfig::default();
-        assert_eq!(config.slave_address, 1);
-        assert!(matches!(config.device_type, ModbusDeviceType::Tcp { .. }));
     }
 
     #[test]

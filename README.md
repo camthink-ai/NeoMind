@@ -19,7 +19,7 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 - **Tool Calling**: Execute real system actions through LLM function calling
 
 ### 🔌 Modular Device Integration
-- **Multi-Protocol**: MQTT, Modbus, Home Assistant
+- **MQTT Protocol**: Primary device integration with auto-discovery
 - **Device Discovery**: Automatic device detection and type registration
 - **Hot-Plug**: Runtime adapter loading/unloading via plugin system
 
@@ -154,7 +154,7 @@ neomind/
 │   ├── api/           # Web API server (Axum)
 │   ├── agent/         # AI Agent with tool calling
 │   ├── automation/    # Unified automation system (rules + transforms)
-│   ├── devices/       # Device management (MQTT/Modbus/HASS)
+│   ├── devices/       # Device management (MQTT)
 │   ├── rules/         # Rule engine and DSL parser
 │   ├── storage/       # Storage system (redb)
 │   ├── memory/        # Three-tier LLM memory

@@ -40,10 +40,6 @@ fn get_plugin_info(adapter_id: &Option<String>) -> (Option<String>, Option<Strin
             Some("internal-mqtt".to_string()),
             Some("内置MQTT".to_string()),
         ),
-        Some(id) if id.starts_with("hass") => {
-            (Some(id.clone()), Some("Home Assistant".to_string()))
-        }
-        Some(id) if id.starts_with("modbus") => (Some(id.clone()), Some(format!("Modbus: {}", id))),
         Some(id) if id.starts_with("external-mqtt") => {
             (Some(id.clone()), Some(format!("外部MQTT: {}", id)))
         }

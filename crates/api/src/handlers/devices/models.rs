@@ -107,7 +107,7 @@ pub struct AddDeviceRequest {
     pub device_id: Option<String>,
     /// Device name
     pub name: String,
-    /// Adapter type (mqtt, modbus, hass, etc.)
+    /// Adapter type (mqtt, http, etc.)
     pub adapter_type: String,
     /// Connection configuration (protocol-specific)
     pub connection_config: serde_json::Value,
@@ -120,7 +120,7 @@ pub struct UpdateDeviceRequest {
     /// Device name
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Adapter type (mqtt, modbus, hass, etc.)
+    /// Adapter type (mqtt, http, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adapter_type: Option<String>,
     /// Connection configuration (protocol-specific)
@@ -208,59 +208,6 @@ pub struct DiscoveredDeviceDto {
     pub port: u16,
     pub confidence: f32,
     pub info: HashMap<String, String>,
-}
-
-/// HASS Discovery configuration.
-#[derive(Debug, Deserialize)]
-pub struct HassDiscoveryRequest {
-    /// MQTT broker address with HASS discovery devices
-    pub broker: Option<String>,
-    /// Broker port (default: 1883)
-    pub port: Option<u16>,
-    /// Components to discover (empty = all supported)
-    pub components: Option<Vec<String>>,
-    /// Auto-register discovered devices
-    #[serde(default)]
-    pub auto_register: bool,
-}
-
-/// HASS discovered device info.
-#[derive(Debug, Serialize)]
-pub struct HassDiscoveredDeviceDto {
-    /// Device type identifier
-    pub device_type: String,
-    /// Display name
-    pub name: String,
-    /// Description
-    pub description: String,
-    /// HASS component
-    pub component: String,
-    /// HASS entity ID
-    pub entity_id: String,
-    /// Discovery topic
-    pub discovery_topic: String,
-    /// Device info
-    pub device_info: HashMap<String, String>,
-    /// Metric count
-    pub metric_count: usize,
-    /// Command count
-    pub command_count: usize,
-}
-
-/// Process a HASS discovery message.
-#[derive(Debug, Deserialize)]
-pub struct HassDiscoveryMessageRequest {
-    /// MQTT topic (e.g., "homeassistant/sensor/temperature/config")
-    pub topic: String,
-    /// Discovery message payload (JSON)
-    pub payload: serde_json::Value,
-}
-
-/// Register an aggregated HASS device request.
-#[derive(Debug, Deserialize)]
-pub struct RegisterAggregatedHassDeviceRequest {
-    /// Device ID (aggregated device identifier)
-    pub device_id: String,
 }
 
 /// Request body for MDL generation from sample data.

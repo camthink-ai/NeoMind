@@ -27,8 +27,7 @@ pub use processor::{CommandProcessor, ProcessorConfig};
 
 pub use adapter::{
     AdapterError, AdapterStats, AnyAdapter, DownlinkAdapterRegistry, HttpAdapterConfig,
-    HttpDownlinkAdapter, ModbusAdapterConfig, ModbusDeviceType, ModbusDownlinkAdapter,
-    MqttAdapterConfig, MqttDownlinkAdapter,
+    HttpDownlinkAdapter, MqttAdapterConfig, MqttDownlinkAdapter,
 };
 
 pub use state::{CommandManager, CommandStateStore, StateError, StoreStats};
