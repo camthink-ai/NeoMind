@@ -80,27 +80,37 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = tokenManager.getToken()
 
   useEffect(() => {
-    const checkSetup = async () => {
-      try {
-        // Use correct API base for Tauri environment
-        const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
-        const response = await fetch(`${apiBase}/setup/status`)
-        if (response.ok) {
-          const data = await response.json()
-          setSetupRequired(data.setup_required)
-        } else {
-          // If API returns error, check setup_required status to be safe
-          setSetupRequired(false)
+    const checkSetup = async (retries = 10, delay = 500): Promise<boolean> => {
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
+
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(`${apiBase}/setup/status`, {
+            // Add timeout to prevent hanging
+            signal: AbortSignal.timeout(3000),
+          })
+          if (response.ok) {
+            const data = await response.json() as { setup_required: boolean }
+            return data.setup_required
+          }
+        } catch {
+          // Retry after delay, with exponential backoff
+          if (i < retries - 1) {
+            await new Promise(resolve => setTimeout(resolve, delay * (1 + i * 0.5)))
+          }
         }
-      } catch {
-        // If API is unreachable (backend not ready), assume setup is not required
-        setSetupRequired(false)
-      } finally {
-        setLoading(false)
       }
+      // After all retries, assume setup not required (backend might be genuinely down)
+      return false
     }
 
-    checkSetup()
+    checkSetup().then(result => {
+      setSetupRequired(result)
+      setLoading(false)
+    }).catch(() => {
+      setSetupRequired(false)
+      setLoading(false)
+    })
   }, [])
 
   // Show loading state
@@ -134,24 +144,34 @@ function SetupRoute({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const checkSetup = async () => {
-      try {
-        const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
-        const response = await fetch(`${apiBase}/setup/status`)
-        if (response.ok) {
-          const data = await response.json()
-          setSetupRequired(data.setup_required)
-        } else {
-          setSetupRequired(false)
+    const checkSetup = async (retries = 10, delay = 500): Promise<boolean> => {
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
+
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(`${apiBase}/setup/status`, {
+            signal: AbortSignal.timeout(3000),
+          })
+          if (response.ok) {
+            const data = await response.json() as { setup_required: boolean }
+            return data.setup_required
+          }
+        } catch {
+          if (i < retries - 1) {
+            await new Promise(resolve => setTimeout(resolve, delay * (1 + i * 0.5)))
+          }
         }
-      } catch {
-        setSetupRequired(false)
-      } finally {
-        setLoading(false)
       }
+      return false
     }
 
-    checkSetup()
+    checkSetup().then(result => {
+      setSetupRequired(result)
+      setLoading(false)
+    }).catch(() => {
+      setSetupRequired(false)
+      setLoading(false)
+    })
   }, [])
 
   // Show loading state
@@ -180,24 +200,34 @@ function SetupCheckRoute({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const checkSetup = async () => {
-      try {
-        const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
-        const response = await fetch(`${apiBase}/setup/status`)
-        if (response.ok) {
-          const data = await response.json()
-          setSetupRequired(data.setup_required)
-        } else {
-          setSetupRequired(false)
+    const checkSetup = async (retries = 10, delay = 500): Promise<boolean> => {
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
+
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(`${apiBase}/setup/status`, {
+            signal: AbortSignal.timeout(3000),
+          })
+          if (response.ok) {
+            const data = await response.json() as { setup_required: boolean }
+            return data.setup_required
+          }
+        } catch {
+          if (i < retries - 1) {
+            await new Promise(resolve => setTimeout(resolve, delay * (1 + i * 0.5)))
+          }
         }
-      } catch {
-        setSetupRequired(false)
-      } finally {
-        setLoading(false)
       }
+      return false
     }
 
-    checkSetup()
+    checkSetup().then(result => {
+      setSetupRequired(result)
+      setLoading(false)
+    }).catch(() => {
+      setSetupRequired(false)
+      setLoading(false)
+    })
   }, [])
 
   const token = tokenManager.getToken()

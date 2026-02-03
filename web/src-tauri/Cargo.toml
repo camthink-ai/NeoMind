@@ -18,6 +18,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"
+reqwest = { version = "0.12", features = ["blocking"] }
 
 # Local workspace crates - relative to web/src-tauri/ directory
 edge-api = { path = "../../crates/api", package = "edge-ai-api" }

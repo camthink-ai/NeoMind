@@ -154,11 +154,29 @@ export function SetupPage() {
   const checkSetupStatus = async () => {
     const result = await withErrorHandling(
       async () => {
-        const response = await fetch(getApiUrl('/setup/status'))
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
+        // Retry logic for Tauri environment where backend might be starting up
+        const maxRetries = (window as any).__TAURI__ ? 15 : 3
+        const initialDelay = (window as any).__TAURI__ ? 500 : 100
+
+        for (let i = 0; i < maxRetries; i++) {
+          try {
+            const response = await fetch(getApiUrl('/setup/status'), {
+              signal: AbortSignal.timeout(3000),
+            })
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`)
+            }
+            return await response.json() as { setup_required: boolean }
+          } catch {
+            // Retry with exponential backoff
+            if (i < maxRetries - 1) {
+              await new Promise(resolve => setTimeout(resolve, initialDelay * (1 + i * 0.5)))
+            } else {
+              throw new Error(`Failed after ${maxRetries} retries`)
+            }
+          }
         }
-        return await response.json() as { setup_required: boolean }
+        throw new Error('Failed to check setup status')
       },
       { operation: 'Check setup status', showToast: false }
     )

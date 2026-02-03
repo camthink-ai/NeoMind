@@ -19,10 +19,50 @@ struct ServerState {
 }
 
 impl ServerState {
+    /// Wait for the server to be ready with HTTP health check.
+    /// Uses exponential backoff and checks the actual health endpoint.
     fn wait_for_server_ready(&self, timeout_secs: u64) -> bool {
+        let max_attempts = timeout_secs * 10; // Check every 100ms
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(500))
+            .build();
+
+        if client.is_err() {
+            // Fallback to TCP check if HTTP client fails to build
+            return self.wait_for_server_ready_tcp(timeout_secs);
+        }
+
+        let client = client.unwrap();
+
+        for attempt in 0..max_attempts {
+            // Try HTTP health check first
+            if let Ok(response) = client.get("http://127.0.0.1:9375/api/health").send() {
+                if response.status().is_success() {
+                    println!("Server health check passed via HTTP (attempt {})", attempt + 1);
+                    return true;
+                }
+            }
+
+            // Fallback to TCP check for early startup
+            if self.check_tcp_health() {
+                // If TCP is ready but HTTP isn't, give it a bit more time
+                if attempt > 5 {
+                    println!("Server TCP ready, waiting for HTTP handler (attempt {})", attempt + 1);
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        // Final TCP fallback
+        self.check_tcp_health()
+    }
+
+    /// Simple TCP health check as fallback
+    fn wait_for_server_ready_tcp(&self, timeout_secs: u64) -> bool {
         let max_attempts = timeout_secs * 20;
         for _ in 0..max_attempts {
-            if self.check_server_health() {
+            if self.check_tcp_health() {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -30,7 +70,7 @@ impl ServerState {
         false
     }
 
-    fn check_server_health(&self) -> bool {
+    fn check_tcp_health(&self) -> bool {
         std::net::TcpStream::connect_timeout(
             &std::net::SocketAddr::from(([127, 0, 0, 1], 9375)),
             Duration::from_millis(100),
@@ -220,9 +260,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Failed to start server: {}", e);
     }
 
-    // Wait for server ready
+    // Wait for server ready - increased timeout for Windows/older machines
     let state = app.state::<ServerState>();
-    if !state.wait_for_server_ready(10) {
+    if !state.wait_for_server_ready(30) {
         eprintln!("Server did not become ready in time");
     }
 
