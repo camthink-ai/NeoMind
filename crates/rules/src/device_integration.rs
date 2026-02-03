@@ -426,7 +426,7 @@ impl DeviceActionExecutor {
     }
 
     /// Execute a command with retry logic.
-    async fn execute_command_with_retry(
+    pub async fn execute_command_with_retry(
         &self,
         device_id: &str,
         command: &str,

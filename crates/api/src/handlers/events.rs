@@ -217,47 +217,13 @@ fn create_filtered_receiver(event_bus: &EventBus, category: &Option<String>) -> 
 /// WebSocket endpoint for event streaming.
 ///
 /// Alternative to SSE using WebSocket for bidirectional communication.
-/// Requires JWT token authentication via `?token=xxx` parameter.
+/// Authentication is done via Auth message after connection is established
+/// (more secure than putting token in URL parameter).
 pub async fn event_websocket_handler(
     State(state): State<ServerState>,
     ws: WebSocketUpgrade,
     Query(params): Query<EventStreamParams>,
 ) -> axum::response::Response {
-    // Validate JWT token - reject connection if no token or invalid token
-    let _auth_info = match params.token.as_ref() {
-        Some(token) => match state.auth_user_state.validate_token(token) {
-            Ok(info) => {
-                tracing::info!("WebSocket event stream authenticated");
-                Some(info)
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "JWT validation failed, rejecting WebSocket connection");
-                return ws.on_upgrade(|mut socket| {
-                        async move {
-                            use axum::extract::ws::Message;
-                            let _ = socket.send(Message::Text(
-                                serde_json::json!({"type": "Error", "message": "Invalid or expired token"}).to_string()
-                            )).await;
-                            let _ = socket.close().await;
-                        }
-                    });
-            }
-        },
-        None => {
-            tracing::warn!("No authentication provided, rejecting WebSocket connection");
-            return ws.on_upgrade(|mut socket| async move {
-                use axum::extract::ws::Message;
-                let _ = socket
-                    .send(Message::Text(
-                        serde_json::json!({"type": "Error", "message": "Authentication required"})
-                            .to_string(),
-                    ))
-                    .await;
-                let _ = socket.close().await;
-            });
-        }
-    };
-
     let event_bus = match state.event_bus.as_ref() {
         Some(bus) => bus.clone(),
         None => {
@@ -278,8 +244,60 @@ pub async fn event_websocket_handler(
         use axum::extract::ws::Message;
 
         let mut rx = create_filtered_receiver(&event_bus, &params.category);
+        let mut authenticated = false;
+        let auth_user_state = state.auth_user_state.clone();
 
-        // Send events to the WebSocket client
+        // First, wait for authentication message
+        while let Some(msg) = socket.recv().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    // Handle authentication message
+                    if !authenticated {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if data["type"] == "Auth" {
+                                if let Some(token) = data["token"].as_str() {
+                                    match auth_user_state.validate_token(token) {
+                                        Ok(_) => {
+                                            authenticated = true;
+                                            tracing::info!("WebSocket event stream authenticated");
+                                            let _ = socket.send(Message::Text(
+                                                serde_json::json!({"type": "Authenticated", "message": "Authentication successful"}).to_string()
+                                            )).await;
+
+                                            // Break out of recv loop to start sending events
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(error = %e, "JWT validation failed, rejecting WebSocket connection");
+                                            let _ = socket.send(Message::Text(
+                                                serde_json::json!({"type": "Error", "message": "Invalid or expired token"}).to_string()
+                                            )).await;
+                                            let _ = socket.close().await;
+                                            return;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // If not authenticated after first message, close connection
+                        tracing::warn!("No valid auth message received, closing WebSocket connection");
+                        let _ = socket.send(Message::Text(
+                            serde_json::json!({"type": "Error", "message": "Authentication required"})
+                                .to_string(),
+                        )).await;
+                        let _ = socket.close().await;
+                        return;
+                    }
+                }
+                Ok(Message::Close(_)) | Err(_) => {
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        // Send events to the authenticated WebSocket client
         while let Some((event, metadata)) = rx.recv().await {
             // Apply event type filter
             if !params.event_type.is_empty() {

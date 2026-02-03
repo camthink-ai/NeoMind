@@ -17,11 +17,15 @@ use uuid::Uuid;
 
 use super::dependencies::DependencyManager;
 use super::dsl::{ParsedRule, RuleAction, RuleCondition, RuleError};
+use super::device_integration::DeviceActionExecutor;
 
 /// Optional message manager for creating messages from rule actions.
 /// Wrapped in Option to allow RuleEngine to function without it.
 /// Double-wrapped in Arc because MessageManager doesn't implement Clone.
 type OptionMessageManager = Arc<tokio::sync::RwLock<Option<Arc<edge_ai_messages::MessageManager>>>>;
+
+/// Optional device action executor for executing device commands.
+type OptionDeviceActionExecutor = Arc<tokio::sync::RwLock<Option<Arc<DeviceActionExecutor>>>>;
 
 /// Scheduler task handle for managing the rule evaluation loop.
 type SchedulerHandle = Arc<StdRwLock<Option<JoinHandle<()>>>>;
@@ -313,6 +317,8 @@ pub struct RuleEngine {
     dependency_manager: Arc<StdRwLock<DependencyManager>>,
     /// Optional message manager for creating messages from rule actions.
     message_manager: OptionMessageManager,
+    /// Optional device action executor for executing device commands.
+    device_action_executor: OptionDeviceActionExecutor,
     /// Scheduler task handle.
     scheduler_handle: SchedulerHandle,
     /// Scheduler interval (how often to evaluate rules).
@@ -331,6 +337,7 @@ impl RuleEngine {
             max_history_size: 1000,
             dependency_manager: Arc::new(StdRwLock::new(DependencyManager::new())),
             message_manager: Arc::new(tokio::sync::RwLock::new(None)),
+            device_action_executor: Arc::new(tokio::sync::RwLock::new(None)),
             scheduler_handle: Arc::new(StdRwLock::new(None)),
             scheduler_interval: Arc::new(StdRwLock::new(Duration::from_secs(5))),
             scheduler_running: Arc::new(StdRwLock::new(false)),
@@ -346,6 +353,18 @@ impl RuleEngine {
     /// Get a reference to the message manager (if set).
     pub async fn get_message_manager(&self) -> Option<Arc<edge_ai_messages::MessageManager>> {
         let guard = self.message_manager.read().await;
+        guard.as_ref().map(Arc::clone)
+    }
+
+    /// Set the device action executor for executing device commands from rule actions.
+    /// This must be called after construction as it requires async access.
+    pub async fn set_device_action_executor(&self, executor: Arc<DeviceActionExecutor>) {
+        *self.device_action_executor.write().await = Some(executor);
+    }
+
+    /// Get a reference to the device action executor (if set).
+    pub async fn get_device_action_executor(&self) -> Option<Arc<DeviceActionExecutor>> {
+        let guard = self.device_action_executor.read().await;
         guard.as_ref().map(Arc::clone)
     }
 
@@ -760,14 +779,30 @@ impl RuleEngine {
                 command,
                 params,
             } => {
-                tracing::info!(
-                    "EXECUTE: {}.{} with params {:?}",
-                    device_id,
-                    command,
-                    params
-                );
-                // Here you would integrate with the device manager
-                Ok(format!("EXECUTE: {}.{}", device_id, command))
+                // Try to use DeviceActionExecutor if available
+                let executor = self.device_action_executor.read().await;
+                if let Some(ex) = executor.as_ref() {
+                    match ex.execute_action(action, None, None).await {
+                        Ok(result) if result.success => {
+                            Ok(result.actions_executed.join(", "))
+                        }
+                        Ok(result) => {
+                            Err(result.error.unwrap_or_else(|| "Execution failed".to_string()))
+                        }
+                        Err(e) => {
+                            Err(e.to_string())
+                        }
+                    }
+                } else {
+                    // Fallback: just log (no actual execution)
+                    tracing::info!(
+                        "EXECUTE: {}.{} with params {:?} (no DeviceActionExecutor - logging only)",
+                        device_id,
+                        command,
+                        params
+                    );
+                    Ok(format!("EXECUTE: {}.{} (logged only)", device_id, command))
+                }
             }
             RuleAction::Log {
                 level,
@@ -783,8 +818,33 @@ impl RuleEngine {
                 Ok(log_msg)
             }
             RuleAction::Set { device_id, property, value } => {
-                tracing::info!("SET: {}.{} = {}", device_id, property, value);
-                Ok(format!("SET: {}.{} = {}", device_id, property, value))
+                // Try to use DeviceActionExecutor if available
+                let executor = self.device_action_executor.read().await;
+                if let Some(ex) = executor.as_ref() {
+                    // Convert Set to Execute command
+                    let params = std::collections::HashMap::from([
+                        ("property".to_string(), serde_json::json!(property)),
+                        ("value".to_string(), serde_json::to_value(value).unwrap_or(serde_json::Value::Null)),
+                    ]);
+
+                    match ex.execute_command_with_retry(device_id, "set", &params).await {
+                        Ok(_) => {
+                            Ok(format!("SET: {}.{} = {:?}", device_id, property, value))
+                        }
+                        Err(e) => {
+                            Err(format!("SET failed: {}", e))
+                        }
+                    }
+                } else {
+                    // Fallback: just log (no actual execution)
+                    tracing::info!(
+                        "SET: {}.{} = {} (no DeviceActionExecutor - logging only)",
+                        device_id,
+                        property,
+                        value
+                    );
+                    Ok(format!("SET: {}.{} = {} (logged only)", device_id, property, value))
+                }
             }
             RuleAction::Delay { duration } => {
                 tracing::info!("DELAY: {:?} (sleeping...)", duration);

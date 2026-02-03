@@ -104,10 +104,11 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             jwt_auth_middleware,
         ));
 
-    // WebSocket routes - authentication handled in handler via query parameter
-    // These routes bypass middleware because WebSocket doesn't support custom headers reliably
+    // WebSocket routes - authentication handled in handler
+    // Event WebSocket uses message-based auth (more secure than URL parameter)
+    // Chat WebSocket and SSE use ?token= parameter for compatibility
     let websocket_routes = Router::new()
-        // Event streaming WebSocket/SSE (JWT via ?token= parameter)
+        // Event streaming WebSocket/SSE
         .route("/api/events/ws", get(events::event_websocket_handler))
         .route("/api/events/stream", get(events::event_stream_handler))
         // Chat WebSocket (JWT via ?token= parameter)

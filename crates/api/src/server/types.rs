@@ -11,7 +11,7 @@ use edge_ai_commands::{CommandManager, CommandQueue, CommandStateStore};
 use edge_ai_core::{EventBus, extension::ExtensionRegistry};
 use edge_ai_devices::adapter::AdapterResult;
 use edge_ai_devices::{DeviceRegistry, DeviceService, TimeSeriesStorage};
-use edge_ai_rules::{InMemoryValueProvider, RuleEngine, store::RuleStore};
+use edge_ai_rules::{InMemoryValueProvider, RuleEngine, device_integration::DeviceActionExecutor, store::RuleStore};
 use edge_ai_storage::dashboards::DashboardStore;
 use edge_ai_storage::decisions::DecisionStore;
 use edge_ai_storage::llm_backends::LlmBackendStore;
@@ -285,6 +285,12 @@ impl ServerState {
         let rule_engine = Arc::new(RuleEngine::new(value_provider));
         // Wire rule engine to message manager for CreateAlert actions
         rule_engine.set_message_manager(message_manager.clone()).await;
+        // Wire rule engine to device service for Execute actions
+        let device_action_executor = Arc::new(DeviceActionExecutor::with_device_service(
+            (*event_bus).clone(),
+            device_service.clone()
+        ));
+        rule_engine.set_device_action_executor(device_action_executor.clone()).await;
         // Wire event bus to message manager for MessageCreated events
         message_manager.set_event_bus(event_bus.clone()).await;
 

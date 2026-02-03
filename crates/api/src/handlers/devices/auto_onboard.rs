@@ -114,7 +114,7 @@ pub async fn list_draft_devices(
     let items: Vec<DraftDeviceDto> = drafts.into_iter().map(DraftDeviceDto::from).collect();
 
     ok(DraftDevicesResponse {
-        total: items.len(),
+        count: items.len(),
         items,
     })
 }
@@ -687,7 +687,7 @@ pub async fn upload_device_data(
 /// Response for listing draft devices
 #[derive(Debug, Serialize)]
 pub struct DraftDevicesResponse {
-    pub total: usize,
+    pub count: usize,
     pub items: Vec<DraftDeviceDto>,
 }
 

@@ -10,7 +10,7 @@ import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { MoreVertical } from 'lucide-react'
+import { MoreVertical, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 export interface TableColumn {
@@ -67,33 +67,30 @@ export function ResponsiveTable({
   emptyState,
   getRowClassName,
 }: ResponsiveTableProps) {
+  // Show empty state only on mobile when no data
+  const showEmptyState = data.length === 0 && !loading
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="text-center">
-          <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
+      <div className="flex flex-col items-center justify-center py-16 px-4">
+        <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
+        <p className="text-sm text-muted-foreground font-medium">Loading data...</p>
       </div>
     )
-  }
-
-  if (data.length === 0) {
-    return <>{emptyState}</>
   }
 
   return (
     <>
       {/* Desktop Table */}
-      <div className="hidden md:block">
+      <div className="hidden md:block rounded-xl border bg-card overflow-hidden">
         <table className={cn("w-full caption-bottom text-sm", className)}>
-          <thead className="[&_tr]:border-b">
-            <tr className="border-b bg-muted/30 hover:bg-transparent">
+          <thead>
+            <tr className="border-b bg-muted/50/50">
               {columns.map((column) => (
                 <th
                   key={column.key}
                   className={cn(
-                    "h-11 px-4 align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+                    "h-12 px-4 align-middle text-xs font-semibold text-muted-foreground",
                     column.align === 'center' && 'text-center',
                     column.align === 'right' && 'text-right',
                     !column.align && 'text-left',
@@ -104,76 +101,114 @@ export function ResponsiveTable({
                 </th>
               ))}
               {actions && actions.length > 0 && (
-                <th className="w-12"></th>
+                <th className="w-[60px]"></th>
               )}
             </tr>
           </thead>
-          <tbody className="[&_tr:last-child]:border-0">
-            {data.map((rowData) => {
-              const rowClass = getRowClassName?.(rowData)
-              const visibleActions = actions?.filter(a => a.show?.(rowData) !== false)
+          <tbody className="[&_tr:last-child]:border-0 divide-y divide-border/50">
+            {data.length === 0 ? (
+              <tr>
+                <td colSpan={columns.length + (actions && actions.length > 0 ? 1 : 0)} className="px-4 py-12">
+                  <div className="flex flex-col items-center justify-center text-center">
+                    {emptyState || (
+                      <>
+                        <div className="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
+                          <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30" />
+                        </div>
+                        <p className="text-sm text-muted-foreground">No data available</p>
+                      </>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              data.map((rowData) => {
+                const rowClass = getRowClassName?.(rowData)
+                const visibleActions = actions?.filter(a => a.show?.(rowData) !== false)
 
-              return (
-                <tr
-                  key={rowKey(rowData)}
-                  className={cn(
-                    "border-b transition-colors hover:bg-muted/50 group",
-                    onRowClick && 'cursor-pointer',
-                    rowClass
-                  )}
-                  onClick={() => onRowClick?.(rowData)}
-                >
-                  {columns.map((column) => (
-                    <td
-                      key={column.key}
-                      className={cn(
-                        "p-4 align-middle",
-                        column.align === 'center' && 'text-center',
-                        column.align === 'right' && 'text-right',
-                        !column.align && 'text-left',
-                        column.className
-                      )}
-                    >
-                      {renderCell(column.key, rowData)}
-                    </td>
-                  ))}
-                  {visibleActions && visibleActions.length > 0 && (
-                    <td className="p-4 align-middle">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          {visibleActions.map((action, idx) => (
-                            <DropdownMenuItem
-                              key={idx}
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                action.onClick(rowData)
-                              }}
-                              className={action.variant === 'destructive' ? 'text-destructive' : ''}
-                              disabled={action.disabled}
+                return (
+                  <tr
+                    key={rowKey(rowData)}
+                    className={cn(
+                      "transition-all duration-150 hover:bg-muted/40 group",
+                      onRowClick && 'cursor-pointer',
+                      rowClass
+                    )}
+                    onClick={() => onRowClick?.(rowData)}
+                  >
+                    {columns.map((column) => (
+                      <td
+                        key={column.key}
+                        className={cn(
+                          "px-4 py-3.5 align-middle",
+                          column.align === 'center' && 'text-center',
+                          column.align === 'right' && 'text-right',
+                          !column.align && 'text-left',
+                          column.className
+                        )}
+                      >
+                        {renderCell(column.key, rowData)}
+                      </td>
+                    ))}
+                    {visibleActions && visibleActions.length > 0 && (
+                      <td className="px-4 py-3.5 align-middle">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity data-[state=open]:opacity-100"
                             >
-                              {action.icon && <span className="mr-2 h-4 w-4">{action.icon}</span>}
-                              {action.label}
-                            </DropdownMenuItem>
-                          ))}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </td>
-                  )}
-                </tr>
-              )
-            })}
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-[160px]">
+                            {visibleActions.map((action, idx) => (
+                              <DropdownMenuItem
+                                key={idx}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  action.onClick(rowData)
+                                }}
+                                className={cn(
+                                  "gap-2",
+                                  action.variant === 'destructive' && 'text-destructive focus:text-destructive'
+                                )}
+                                disabled={action.disabled}
+                              >
+                                {action.icon && <span className="h-4 w-4 shrink-0">{action.icon}</span>}
+                                <span>{action.label}</span>
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })
+            )}
           </tbody>
         </table>
       </div>
 
       {/* Mobile Card List */}
       <div className="md:hidden space-y-3">
-        {data.map((rowData) => {
+        {data.length === 0 ? (
+          <Card className="overflow-hidden border-border/60">
+            <div className="p-8">
+              {emptyState || (
+                <div className="flex flex-col items-center justify-center text-center">
+                  <div className="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center mb-3">
+                    <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">No data available</p>
+                </div>
+              )}
+            </div>
+          </Card>
+        ) : (
+          data.map((rowData) => {
           const rowClass = getRowClassName?.(rowData)
           const visibleActions = actions?.filter(a => a.show?.(rowData) !== false)
 
@@ -181,25 +216,29 @@ export function ResponsiveTable({
             <Card
               key={rowKey(rowData)}
               className={cn(
-                'overflow-hidden',
-                onRowClick && 'cursor-pointer hover:bg-accent/50 transition-colors',
+                'overflow-hidden border-border/60 shadow-sm',
+                onRowClick && 'cursor-pointer active:scale-[0.99] transition-all',
                 rowClass
               )}
             >
               {/* Card Header - First column as title */}
-              <div className="bg-muted/30 px-4 py-3 border-b">
-                <div className="flex items-center justify-between">
+              <div className="bg-muted/40 px-4 py-3.5 border-b border-border/60">
+                <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     {renderCell(columns[0].key, rowData)}
                   </div>
                   {visibleActions && visibleActions.length > 0 && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 hover:bg-muted-foreground/10"
+                        >
                           <MoreVertical className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuContent align="end" className="w-[160px]">
                         {visibleActions.map((action, idx) => (
                           <DropdownMenuItem
                             key={idx}
@@ -207,11 +246,14 @@ export function ResponsiveTable({
                               e.stopPropagation()
                               action.onClick(rowData)
                             }}
-                            className={action.variant === 'destructive' ? 'text-destructive' : ''}
+                            className={cn(
+                              "gap-2",
+                              action.variant === 'destructive' && 'text-destructive focus:text-destructive'
+                            )}
                             disabled={action.disabled}
                           >
-                            {action.icon && <span className="mr-2 h-4 w-4">{action.icon}</span>}
-                            {action.label}
+                            {action.icon && <span className="h-4 w-4 shrink-0">{action.icon}</span>}
+                            <span>{action.label}</span>
                           </DropdownMenuItem>
                         ))}
                       </DropdownMenuContent>
@@ -221,7 +263,7 @@ export function ResponsiveTable({
               </div>
 
               {/* Card Body - Other columns as key-value pairs */}
-              <div className="p-4 space-y-3">
+              <div className="p-4 space-y-3.5">
                 {columns.slice(1).map((column) => {
                   const cellContent = renderCell(column.key, rowData)
                   // Skip if content is empty
@@ -231,7 +273,7 @@ export function ResponsiveTable({
 
                   return (
                     <div key={column.key} className="flex items-start gap-3">
-                      <span className="text-xs text-muted-foreground shrink-0 w-24 pt-0.5">
+                      <span className="text-xs text-muted-foreground shrink-0 w-28 pt-0.5 font-medium">
                         {renderColumnLabel(column.label)}
                       </span>
                       <div className="text-sm flex-1 text-left">
@@ -243,7 +285,8 @@ export function ResponsiveTable({
               </div>
             </Card>
           )
-        })}
+        })
+        )}
       </div>
     </>
   )
@@ -264,9 +307,9 @@ export interface MobileCardProps {
 
 export function MobileCard({ title, subtitle, icon, actions, children, className, onClick }: MobileCardProps) {
   return (
-    <Card className={cn('overflow-hidden', onClick && 'cursor-pointer hover:bg-accent/50 transition-colors', className)}>
+    <Card className={cn('overflow-hidden border-border/60 shadow-sm', onClick && 'cursor-pointer active:scale-[0.99] transition-all', className)}>
       {/* Card Header */}
-      <div className="bg-muted/30 px-4 py-3 border-b">
+      <div className="bg-muted/40 px-4 py-3.5 border-b border-border/60">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             {icon && <div className="shrink-0">{icon}</div>}

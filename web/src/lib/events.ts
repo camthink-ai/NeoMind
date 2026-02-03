@@ -272,13 +272,8 @@ export class EventsWebSocket {
     }
     eventTypes.forEach(type => params.append('event_type', type))
 
-    // Add JWT token for authentication
-    const token = tokenManager.getToken()
-    if (token) {
-      params.set('token', token)
-    }
-
-    // Build WebSocket URL
+    // Build WebSocket URL - do NOT include token in URL for security
+    // Token will be sent after connection is established
     // In Tauri, connect to the backend server running on port 9375
     // In development, use direct connection to backend server
     // In production web, use the same host as the frontend
@@ -304,6 +299,20 @@ export class EventsWebSocket {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
       this.notifyConnection(true)
+
+      // Send authentication message after connection is established
+      // This is more secure than putting token in URL
+      const token = tokenManager.getToken()
+      const ws = this.ws
+      if (token && ws) {
+        ws.send(JSON.stringify({
+          type: 'Auth',
+          token: token
+        }))
+      } else if (ws) {
+        // No token available, close the connection
+        ws.close()
+      }
     }
 
     this.ws.onclose = () => {
@@ -318,15 +327,21 @@ export class EventsWebSocket {
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
+        // Handle Authenticated response
+        if (data.type === 'Authenticated') {
+          // Authentication successful, events will start flowing
+          return
+        }
         // Handle error messages from server (e.g., auth failures)
         if (data.type === 'Error') {
           // If it's an auth error, clear the token and stop reconnecting
           if (data.message?.includes('token') || data.message?.includes('Authentication') || data.message?.includes('Unauthorized')) {
             tokenManager.clearToken()
             this.disconnect()
-            return
           }
+          return
         }
+        // Only notify events after successful authentication
         this.notifyEvent(data as NeoMindEvent)
       } catch {
         // Silent error handling for malformed messages
