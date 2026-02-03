@@ -10,7 +10,6 @@ import { type Message } from "@/types"
 import { ThinkingBlock } from "./ThinkingBlock"
 import { ToolCallVisualization } from "./ToolCallVisualization"
 import { MarkdownMessage } from "./MarkdownMessage"
-import { Sparkles } from "lucide-react"
 import { useStore } from "@/store"
 import { MessageItem } from "./MessageItem"
 import { useMemo } from "react"
@@ -185,9 +184,7 @@ export function MergedMessageList({
       {/* Streaming message */}
       {isStreaming && (
         <div className="flex gap-3 justify-start">
-          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-            <Sparkles className="h-4 w-4 text-white animate-pulse" />
-          </div>
+          <img src="/logo-square.png" alt="NeoMind" className="flex-shrink-0 w-8 h-8 rounded-lg animate-pulse" />
           <div className="max-w-[80%]">
             <div className="rounded-2xl px-4 py-3 bg-[var(--msg-ai-bg)] text-[var(--msg-ai-text)]">
               {/* Thinking */}

@@ -5,7 +5,6 @@ import { ToolCallVisualization } from "./ToolCallVisualization"
 import { QuickActions } from "./QuickActions"
 import { MarkdownMessage } from "./MarkdownMessage"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Sparkles } from "lucide-react"
 import { formatTimestamp } from "@/lib/utils/format"
 
 interface MessageItemProps {
@@ -25,9 +24,7 @@ export const MessageItem = React.memo<MessageItemProps>(
         className={`flex gap-3 ${message.role === "user" ? "justify-end" : "justify-start"}`}
       >
         {message.role === "assistant" && (
-          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-            <Sparkles className="h-4 w-4 text-white" />
-          </div>
+          <img src="/logo-square.png" alt="NeoMind" className="flex-shrink-0 w-8 h-8 rounded-lg" />
         )}
 
         <div className={`max-w-[80%] ${message.role === "user" ? "order-1" : ""}`}>

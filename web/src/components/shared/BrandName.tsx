@@ -4,8 +4,10 @@
  * Provides consistent brand name display across the application.
  * Uses centralized i18n configuration for easy rebranding.
  *
- * Logo style inspired: black background, white text, orange accent
- * Supports light/dark themes
+ * Logo images:
+ * - Square logo: for favicons, app icons
+ * - Dark theme logo: for dark backgrounds (logo-dark.png)
+ * - Light theme logo: for light backgrounds (logo-light.png)
  */
 
 import { useBrand, useBrandMessages } from '@/hooks/useBrand'
@@ -40,7 +42,7 @@ export function ShortBrandName({ className }: { className?: string }) {
 }
 
 /**
- * Brand logo with short name
+ * Brand logo with short name (square logo image)
  *
  * @example
  * ```tsx
@@ -48,11 +50,41 @@ export function ShortBrandName({ className }: { className?: string }) {
  * ```
  */
 export function BrandLogo({ className }: { className?: string }) {
-  const { shortName } = useBrand()
   return (
-    <div className={cn('w-9 h-9 rounded-xl bg-foreground flex items-center justify-center shadow-sm', className)}>
-      <span className="text-background font-semibold text-sm">{shortName}</span>
-    </div>
+    <img
+      src="/logo-square.png"
+      alt="NeoMind Logo"
+      className={cn('w-9 h-9 rounded-xl shadow-sm', className)}
+    />
+  )
+}
+
+/**
+ * Horizontal brand logo (auto-switches based on theme)
+ * Uses logo-dark.png for dark theme, logo-light.png for light theme
+ *
+ * @example
+ * ```tsx
+ * <BrandLogoHorizontal />
+ * <BrandLogoHorizontal className="h-8" />
+ * ```
+ */
+export function BrandLogoHorizontal({ className }: { className?: string }) {
+  return (
+    <>
+      {/* Light theme logo */}
+      <img
+        src="/logo-light.png"
+        alt="NeoMind"
+        className={cn('h-6 dark:hidden', className)}
+      />
+      {/* Dark theme logo */}
+      <img
+        src="/logo-dark.png"
+        alt="NeoMind"
+        className={cn('h-6 hidden dark:block', className)}
+      />
+    </>
   )
 }
 
@@ -122,21 +154,8 @@ export function BrandLogoWithName({
   showLogo?: boolean
   styled?: boolean
 }) {
-  const { name } = useBrand()
-
-  if (styled) {
-    return (
-      <StyledBrandName className={nameClassName} />
-    )
-  }
-
+  // Use horizontal logo image by default (auto theme switching)
   return (
-    <div className="flex items-center gap-2">
-      <BrandLogo className={cn('sm:hidden', logoClassName)} />
-      <BrandName className={cn(
-        'font-bold text-lg tracking-tight text-foreground',
-        nameClassName
-      )} />
-    </div>
+    <BrandLogoHorizontal className={cn('h-7', logoClassName)} />
   )
 }

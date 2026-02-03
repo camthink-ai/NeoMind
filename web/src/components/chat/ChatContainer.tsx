@@ -19,7 +19,6 @@ import {
   Send,
   Paperclip,
   MoreVertical,
-  Sparkles,
   Zap,
   ChevronDown
 } from "lucide-react"
@@ -369,9 +368,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
 
           {/* Logo and title */}
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-              <Sparkles className="h-4 w-4 text-white" />
-            </div>
+            <img src="/logo-square.png" alt="NeoMind" className="w-8 h-8 rounded-lg" />
             <div>
               <h1 className="text-lg font-semibold text-[var(--foreground)]"><BrandName /></h1>
               <p className="text-xs text-muted-foreground">{t("title")}</p>
@@ -395,9 +392,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
           {/* Welcome message if no messages */}
           {filteredMessages.length === 0 && !isStreaming && (
             <div className="text-center py-16">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center mx-auto mb-6">
-                <Sparkles className="h-8 w-8 text-white" />
-              </div>
+              <img src="/logo-square.png" alt="NeoMind" className="w-16 h-16 rounded-2xl mx-auto mb-6" />
               <h2 className="text-2xl font-semibold mb-2 text-[var(--foreground)]">
                 {t("welcome.greeting")}
               </h2>
