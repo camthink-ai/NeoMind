@@ -69,7 +69,7 @@ impl MessageSeverity {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Self::from_str(&s).ok_or_else(|| {
+        Self::from_string(&s).ok_or_else(|| {
             serde::de::Error::custom(format!("invalid severity: {}", s))
         })
     }
@@ -83,7 +83,7 @@ impl MessageSeverity {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "info" | "信息" => Some(Self::Info),
             "warning" | "warn" | "警告" => Some(Self::Warning),
@@ -142,7 +142,7 @@ impl MessageStatus {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        Self::from_str(&s).ok_or_else(|| {
+        Self::from_string(&s).ok_or_else(|| {
             serde::de::Error::custom(format!("invalid status: {}", s))
         })
     }
@@ -156,7 +156,7 @@ impl MessageStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "active" | "活跃" => Some(Self::Active),
             "acknowledged" | "已确认" => Some(Self::Acknowledged),
@@ -431,11 +431,11 @@ mod tests {
 
     #[test]
     fn test_severity_from_str() {
-        assert_eq!(MessageSeverity::from_str("info"), Some(MessageSeverity::Info));
-        assert_eq!(MessageSeverity::from_str("warning"), Some(MessageSeverity::Warning));
-        assert_eq!(MessageSeverity::from_str("critical"), Some(MessageSeverity::Critical));
-        assert_eq!(MessageSeverity::from_str("emergency"), Some(MessageSeverity::Emergency));
-        assert_eq!(MessageSeverity::from_str("invalid"), None);
+        assert_eq!(MessageSeverity::from_string("info"), Some(MessageSeverity::Info));
+        assert_eq!(MessageSeverity::from_string("warning"), Some(MessageSeverity::Warning));
+        assert_eq!(MessageSeverity::from_string("critical"), Some(MessageSeverity::Critical));
+        assert_eq!(MessageSeverity::from_string("emergency"), Some(MessageSeverity::Emergency));
+        assert_eq!(MessageSeverity::from_string("invalid"), None);
     }
 
     #[test]

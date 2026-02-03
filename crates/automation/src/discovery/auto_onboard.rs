@@ -15,6 +15,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
+use base64::{Engine as _, engine::general_purpose};
+
+/// Helper to decode base64 string
+fn decode_base64(s: &str) -> Vec<u8> {
+    general_purpose::STANDARD.decode(s).unwrap_or_default()
+}
+
 /// Constants for auto-onboarding limits
 const MAX_DRAFT_DEVICES: usize = 50;  // Maximum concurrent draft devices
 const MIN_SAMPLES_FOR_ANALYSIS: usize = 1;  // Minimum samples before analysis
@@ -360,7 +367,7 @@ impl AutoOnboardManager {
         let sample = if is_binary {
             // For binary data, extract base64 string and decode to raw bytes
             let base64_str = data.as_str().unwrap_or("");
-            let raw_bytes = base64::decode(base64_str).unwrap_or_default();
+            let raw_bytes = decode_base64(base64_str).unwrap_or_default();
             DeviceSample {
                 raw_data: raw_bytes,
                 parsed: None,  // Binary data has no parsed JSON
@@ -435,7 +442,7 @@ impl AutoOnboardManager {
         let source = draft.source.clone();
         let sample = if is_binary {
             let base64_str = data.as_str().unwrap_or("");
-            let raw_bytes = base64::decode(base64_str).unwrap_or_default();
+            let raw_bytes = decode_base64(base64_str).unwrap_or_default();
             DeviceSample {
                 raw_data: raw_bytes,
                 parsed: None,

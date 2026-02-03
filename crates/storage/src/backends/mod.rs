@@ -86,15 +86,17 @@ pub fn create_backend(
 /// println!("Available backends: {:?}", backends);
 /// ```
 pub fn available_backends() -> Vec<&'static str> {
-    let mut backends = Vec::new();
-
     #[cfg(feature = "redb")]
-    backends.push("redb");
-
-    #[cfg(feature = "memory")]
-    backends.push("memory");
-
-    backends
+    {
+        #[cfg(feature = "memory")]
+        return vec!["redb", "memory"];
+        #[cfg(not(feature = "memory"))]
+        return vec!["redb"];
+    }
+    #[cfg(all(not(feature = "redb"), feature = "memory"))]
+    return vec!["memory"];
+    #[cfg(all(not(feature = "redb"), not(feature = "memory")))]
+    vec![]
 }
 
 #[cfg(test)]

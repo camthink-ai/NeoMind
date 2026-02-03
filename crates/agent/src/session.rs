@@ -188,7 +188,7 @@ impl SessionManager {
     pub fn with_path(path: impl AsRef<std::path::Path>) -> Result<Self> {
         // Create or open the database
         let store = SessionStore::open(path)
-            .map_err(|e| AgentError::Storage(format!("Failed to open session store: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to open session store: {}", e)))?;
 
         let manager = Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
@@ -221,7 +221,7 @@ impl SessionManager {
     fn save_session_id(&self, session_id: &str) -> Result<()> {
         self.store
             .save_session_id(session_id)
-            .map_err(|e| AgentError::Storage(format!("Failed to save session: {}", e)))
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to save session: {}", e)))
     }
 
     /// Delete a session from persistent storage.
@@ -229,7 +229,7 @@ impl SessionManager {
         tracing::debug!(" delete_session_id called for: {}", session_id);
         let result = self.store.delete_session(session_id);
         tracing::debug!(" delete_session result: {:?}", result);
-        result.map_err(|e| AgentError::Storage(format!("Failed to delete session: {}", e)))
+        result.map_err(|e| NeoTalkError::Storage(format!("Failed to delete session: {}", e)))
     }
 
     /// Save message history for a session to persistent storage.
@@ -283,7 +283,7 @@ impl SessionManager {
 
         self.store
             .save_history(session_id, &session_messages)
-            .map_err(|e| AgentError::Storage(format!("Failed to save history: {}", e)))
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to save history: {}", e)))
     }
 
     /// Load message history for a session from persistent storage.
@@ -291,7 +291,7 @@ impl SessionManager {
         let session_messages = self
             .store
             .load_history(session_id)
-            .map_err(|e| AgentError::Storage(format!("Failed to load history: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to load history: {}", e)))?;
 
         // Debug: Log loaded messages
         tracing::debug!(" Loaded {} messages from DB for session {}", session_messages.len(), session_id);
@@ -390,12 +390,12 @@ impl SessionManager {
 
         // Get the instance manager
         let manager = get_instance_manager()
-            .map_err(|e| AgentError::Llm(format!("Failed to get instance manager: {}", e)))?;
+            .map_err(|e| NeoTalkError::Llm(format!("Failed to get instance manager: {}", e)))?;
 
         // Get the active backend instance
         let active_instance = manager
             .get_active_instance()
-            .ok_or_else(|| AgentError::Llm("No active LLM backend configured".to_string()))?;
+            .ok_or_else(|| NeoTalkError::Llm("No active LLM backend configured".to_string()))?;
 
         // Convert to LlmBackend enum based on backend type
         let backend = instance_to_llm_backend(&active_instance)?;
@@ -408,11 +408,11 @@ impl SessionManager {
     /// Returns the LlmBackend for direct agent configuration.
     pub fn get_backend_by_id(backend_id: &str) -> Result<LlmBackend> {
         let manager = get_instance_manager()
-            .map_err(|e| AgentError::Llm(format!("Failed to get instance manager: {}", e)))?;
+            .map_err(|e| NeoTalkError::Llm(format!("Failed to get instance manager: {}", e)))?;
 
         // Get the instance by ID using the public method
         let instance = manager.get_instance(backend_id)
-            .ok_or_else(|| AgentError::Llm(format!("Backend '{}' not found", backend_id)))?;
+            .ok_or_else(|| NeoTalkError::Llm(format!("Backend '{}' not found", backend_id)))?;
 
         instance_to_llm_backend(&instance)
     }
@@ -486,14 +486,14 @@ impl SessionManager {
 
         // Session not in memory, check if it exists in database
         let in_db = self.store.session_exists(session_id).map_err(|e| {
-            AgentError::Storage(format!("Failed to check session existence: {}", e))
+            NeoTalkError::Storage(format!("Failed to check session existence: {}", e))
         })?;
 
         if in_db {
             // Session exists in database, restore it
             self.restore_session_from_db(session_id).await
         } else {
-            Err(AgentError::NotFound(format!("Session: {}", session_id)))
+            Err(NeoTalkError::NotFound(format!("Session: {}", session_id)))
         }
     }
 
@@ -632,12 +632,12 @@ impl SessionManager {
         let in_db = self
             .store
             .session_exists(session_id)
-            .map_err(|e| AgentError::Storage(format!("Failed to check session: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to check session: {}", e)))?;
         tracing::debug!(" in_db: {}", in_db);
 
         if !in_memory && !in_db {
             tracing::debug!(" Session not found in memory or database");
-            return Err(AgentError::NotFound(format!("Session: {}", session_id)));
+            return Err(NeoTalkError::NotFound(format!("Session: {}", session_id)));
         }
 
         // Remove from memory (if present)
@@ -663,10 +663,10 @@ impl SessionManager {
         let in_db = self
             .store
             .session_exists(session_id)
-            .map_err(|e| AgentError::Storage(format!("Failed to check session: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to check session: {}", e)))?;
 
         if !in_memory && !in_db {
-            return Err(AgentError::NotFound(format!("Session: {}", session_id)));
+            return Err(NeoTalkError::NotFound(format!("Session: {}", session_id)));
         }
 
         // Save the metadata
@@ -676,7 +676,7 @@ impl SessionManager {
 
         self.store
             .save_session_metadata(session_id, &metadata)
-            .map_err(|e| AgentError::Storage(format!("Failed to save session metadata: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to save session metadata: {}", e)))?;
 
         Ok(())
     }
@@ -685,7 +685,7 @@ impl SessionManager {
     pub async fn get_session_title(&self, session_id: &str) -> Result<Option<String>> {
         self.store
             .get_session_metadata(session_id)
-            .map_err(|e| AgentError::Storage(format!("Failed to get session metadata: {}", e)))
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to get session metadata: {}", e)))
             .map(|meta| meta.title)
     }
 
@@ -963,13 +963,13 @@ impl SessionManager {
         // Try to get the session - this will restore from DB if needed
         match self.get_session(session_id).await {
             Ok(agent) => Ok(agent.history().await),
-            Err(AgentError::NotFound(_)) => {
+            Err(NeoTalkError::NotFound(_)) => {
                 // Session not found in memory or DB - might be dirty data
                 // Return empty history instead of error
                 tracing::warn!(session_id = %session_id, "Session not found, returning empty history");
                 Ok(Vec::new())
             }
-            Err(AgentError::Storage(e)) => {
+            Err(NeoTalkError::Storage(e)) => {
                 // Storage error (database corrupted, etc.) - try to load directly from store
                 tracing::error!(session_id = %session_id, error = %e, "Storage error, trying direct load");
                 // Try to load history directly from storage as a fallback

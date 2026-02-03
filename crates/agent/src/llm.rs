@@ -344,7 +344,7 @@ impl LlmInterface {
         const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
         let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
-            .map_err(|e| AgentError::Generation(format!("Failed to open settings store: {}", e)))?;
+            .map_err(|e| NeoTalkError::Generation(format!("Failed to open settings store: {}", e)))?;
 
         let timezone = settings_store.get_global_timezone();
         self.set_global_timezone(timezone.clone()).await;
@@ -387,7 +387,7 @@ impl LlmInterface {
                 return manager
                     .get_active_runtime()
                     .await
-                    .map_err(|e| AgentError::Generation(e.to_string()));
+                    .map_err(|e| NeoTalkError::Generation(e.to_string()));
             }
 
         // Fall back to direct runtime
@@ -395,7 +395,7 @@ impl LlmInterface {
         llm_guard
             .as_ref()
             .map(Arc::clone)
-            .ok_or(AgentError::LlmNotReady)
+            .ok_or(NeoTalkError::LlmNotReady)
     }
 
     /// Get effective generation parameters.
@@ -444,10 +444,10 @@ impl LlmInterface {
             manager
                 .set_active(backend_id)
                 .await
-                .map_err(|e| AgentError::Generation(e.to_string()))?;
+                .map_err(|e| NeoTalkError::Generation(e.to_string()))?;
             Ok(())
         } else {
-            Err(AgentError::Generation(
+            Err(NeoTalkError::Generation(
                 "No instance manager configured".to_string(),
             ))
         }
@@ -531,7 +531,7 @@ impl LlmInterface {
     /// ```
     pub async fn warmup(&self) -> Result<(), AgentError> {
         match self.get_runtime().await {
-            Ok(runtime) => runtime.warmup().await.map_err(|e| AgentError::Generation(e.to_string())),
+            Ok(runtime) => runtime.warmup().await.map_err(|e| NeoTalkError::Generation(e.to_string())),
             Err(e) => Err(e),
         }
     }
@@ -1127,7 +1127,7 @@ impl LlmInterface {
         let output = llm
             .generate(input)
             .await
-            .map_err(|e| AgentError::Generation(e.to_string()))?;
+            .map_err(|e| NeoTalkError::Generation(e.to_string()))?;
 
         let duration = start.elapsed();
         let tokens_used = output
@@ -1280,7 +1280,7 @@ impl LlmInterface {
         let output = llm
             .generate(input)
             .await
-            .map_err(|e| AgentError::Generation(e.to_string()))?;
+            .map_err(|e| NeoTalkError::Generation(e.to_string()))?;
 
         let duration = start.elapsed();
         let tokens_used = output
@@ -1574,7 +1574,7 @@ impl LlmInterface {
         let stream = llm
             .generate_stream(input)
             .await
-            .map_err(|e| AgentError::Generation(e.to_string()))?;
+            .map_err(|e| NeoTalkError::Generation(e.to_string()))?;
 
         // Acquire permit for concurrency limiting and wrap stream
         let permit = self.limiter.acquire().await;
@@ -1586,7 +1586,7 @@ impl LlmInterface {
             while let Some(result) = futures::StreamExt::next(&mut stream).await {
                 match result {
                     Ok(chunk) => yield Ok(chunk),
-                    Err(e) => yield Err(AgentError::Generation(e.to_string())),
+                    Err(e) => yield Err(NeoTalkError::Generation(e.to_string())),
                 }
             }
         }))
@@ -1753,7 +1753,7 @@ impl LlmInterface {
         let stream = llm
             .generate_stream(input)
             .await
-            .map_err(|e| AgentError::Generation(e.to_string()))?;
+            .map_err(|e| NeoTalkError::Generation(e.to_string()))?;
 
         // Acquire permit for concurrency limiting and wrap stream
         let permit = self.limiter.acquire().await;
@@ -1765,7 +1765,7 @@ impl LlmInterface {
             while let Some(result) = futures::StreamExt::next(&mut stream).await {
                 match result {
                     Ok(chunk) => yield Ok(chunk),
-                    Err(e) => yield Err(AgentError::Generation(e.to_string())),
+                    Err(e) => yield Err(NeoTalkError::Generation(e.to_string())),
                 }
             }
         }))
@@ -1835,13 +1835,13 @@ pub enum AgentError {
 }
 
 /// Convert AgentError to the crate's Result type.
-impl From<AgentError> for super::error::AgentError {
+impl From<AgentError> for crate::error::NeoTalkError {
     fn from(err: AgentError) -> Self {
         match err {
-            AgentError::LlmNotReady => {
-                super::error::AgentError::Llm("LLM backend not ready".to_string())
+            NeoTalkError::LlmNotReady => {
+                super::error::NeoTalkError::Llm("LLM backend not ready".to_string())
             }
-            AgentError::Generation(msg) => super::error::AgentError::Llm(msg),
+            NeoTalkError::Generation(msg) => super::error::NeoTalkError::Llm(msg),
         }
     }
 }
@@ -2089,10 +2089,10 @@ mod tests {
 
     #[test]
     fn test_agent_error_display() {
-        let err = AgentError::LlmNotReady;
+        let err = NeoTalkError::LlmNotReady;
         assert!(err.to_string().contains("not ready"));
 
-        let err = AgentError::Generation("test error".to_string());
+        let err = NeoTalkError::Generation("test error".to_string());
         assert!(err.to_string().contains("test error"));
     }
 }

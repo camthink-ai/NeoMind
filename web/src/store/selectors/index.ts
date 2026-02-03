@@ -133,3 +133,19 @@ export const selectConnectionStatus = (state: NeoTalkStore) => ({
   ai: state.wsConnected ? 'online' : 'offline',
   authenticated: state.isAuthenticated,
 })
+
+// ============================================================================
+// Chat Selectors
+// ============================================================================
+
+export {
+  selectSessionId,
+  selectMessages,
+  selectUser,
+  selectLlmBackends,
+  selectActiveBackendId,
+  selectActiveBackend,
+  selectLlmBackendState,
+  selectChatActions,
+  selectChatState,
+} from './chatSelectors'

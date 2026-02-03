@@ -1227,7 +1227,7 @@ pub async fn process_stream_events_with_safeguards(
             .await
     };
 
-    let stream = stream_result.map_err(|e| AgentError::Llm(e.to_string()))?;
+    let stream = stream_result.map_err(|e| NeoTalkError::Llm(e.to_string()))?;
 
     Ok(Box::pin(async_stream::stream! {
         let mut stream = stream;
@@ -2050,7 +2050,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         .chat_stream_multimodal_with_history(multimodal_user_msg, &history_for_llm)
         .await;
 
-    let stream = stream_result.map_err(|e| AgentError::Llm(e.to_string()))?;
+    let stream = stream_result.map_err(|e| NeoTalkError::Llm(e.to_string()))?;
 
     // Check if images are present (before moving images)
     let has_images = !images.is_empty();

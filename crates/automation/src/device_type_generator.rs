@@ -86,7 +86,6 @@ impl DeviceTypeGenerator {
 
         // Step 3: Generate metrics from paths
         let mut metrics = Vec::new();
-        let mut commands = Vec::new();
 
         for path in &paths {
             if path.is_array || path.is_object {
@@ -104,7 +103,7 @@ impl DeviceTypeGenerator {
         }
 
         // Step 4: Infer commands from writable patterns
-        commands = self.infer_commands(&paths, &context).await?;
+        let commands = self.infer_commands(&paths, &context).await?;
 
         // Step 5: Generate device type definition
         let capabilities = self.infer_capabilities(&metrics, &commands);

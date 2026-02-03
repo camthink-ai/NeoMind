@@ -7,9 +7,17 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
+import { shallow } from "zustand/shallow"
 import { ws } from "@/lib/websocket"
 import type { Message, ServerMessage } from "@/types"
 import type { StreamProgress as StreamProgressType } from "@/types"
+import {
+  selectSessionId,
+  selectMessages,
+  selectUser,
+  selectLlmBackendState,
+  selectChatActions,
+} from "@/store/selectors"
 import { SessionDrawer } from "../session/SessionDrawer"
 import { InputSuggestions } from "./InputSuggestions"
 import { MergedMessageList } from "./MergedMessageList"
@@ -42,18 +50,18 @@ interface ChatContainerProps {
 export function ChatContainer({ className = "" }: ChatContainerProps) {
   const { t } = useTranslation("chat")
   const navigate = useNavigate()
-  // Store state
-  const {
-    sessionId,
-    messages,
-    addMessage,
-    createSession,
-    switchSession,
-    user,
-    llmBackends,
-    activeBackendId,
-    activateBackend
-  } = useStore()
+
+  // Store state - using optimized selectors to prevent unnecessary re-renders
+  // Single values don't need shallow comparison
+  const sessionId = useStore(selectSessionId)
+  const messages = useStore(selectMessages)
+  const user = useStore(selectUser)
+
+  // Arrays/objects use shallow comparison to avoid re-renders on reference changes
+  const { llmBackends, activeBackendId } = useStore(selectLlmBackendState, shallow)
+
+  // Actions are stable functions, no need for shallow comparison
+  const { addMessage, createSession, switchSession, activateBackend } = useStore(selectChatActions)
 
   // Local state
   const [input, setInput] = useState("")
@@ -86,6 +94,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
   const streamingToolCallsRef = useRef<any[]>([])
   const streamStartRef = useRef<number>(Date.now())
   const isStreamingRef = useRef(false)
+  const messagesRef = useRef<Message[]>([])  // Store latest messages for WebSocket handlers
 
   // Auto-scroll to bottom when messages change
   const scrollToBottom = useCallback(() => {
@@ -100,6 +109,11 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
   useEffect(() => {
     isStreamingRef.current = isStreaming
   }, [isStreaming])
+
+  // Sync messages to ref for WebSocket handlers (prevents re-subscription on every message)
+  useEffect(() => {
+    messagesRef.current = messages
+  }, [messages])
 
   // Handle WebSocket events
   useEffect(() => {
@@ -160,7 +174,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
             // If not streaming (stream ended before tool execution),
             // update the saved assistant message's tool_calls
             if (!isStreamingRef.current && lastAssistantMessageId) {
-              const lastMessage = messages.find(m => m.id === lastAssistantMessageId)
+              const lastMessage = messagesRef.current.find(m => m.id === lastAssistantMessageId)
               if (lastMessage && lastMessage.role === "assistant" && lastMessage.tool_calls) {
                 const updatedToolCalls = lastMessage.tool_calls.map(tc =>
                   tc.name === data.tool
@@ -263,7 +277,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
     // ws.onMessage returns an unsubscribe function - we MUST call it in cleanup
     const unsubscribe = ws.onMessage(handleMessage)
     return () => { void unsubscribe() }
-  }, [addMessage, switchSession, lastAssistantMessageId, messages])
+  }, [addMessage, switchSession, lastAssistantMessageId])  // Removed: messages (now using messagesRef)
 
   // Initialize session if none exists
   useEffect(() => {

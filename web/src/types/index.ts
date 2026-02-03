@@ -380,7 +380,7 @@ export type JsonSchema = {
 // Chat Types
 export interface Message {
   id: string
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   timestamp: number
   thinking?: string
@@ -388,6 +388,19 @@ export interface Message {
   images?: ChatImage[]  // Images sent with user messages (multimodal)
   // Indicates if this message is still being streamed (partial)
   isPartial?: boolean
+}
+
+/**
+ * All possible message roles including internal tool messages
+ */
+export type MessageRole = Message['role']
+
+/**
+ * Type guard to check if a message is a tool message (internal LLM context).
+ * Tool messages should be filtered out from display.
+ */
+export function isToolMessage(msg: Message): msg is Message & { role: 'tool' } {
+  return msg.role === 'tool'
 }
 
 export interface ToolCall {

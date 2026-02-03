@@ -537,7 +537,9 @@ If the data appears to be:
         } else {
             let coverage = found_count as f32 / samples.len() as f32;
             // Consider valid if present in at least 50% of samples
-            if coverage >= 0.5 && null_count < found_count {
+            if inconsistent {
+                PathValidity::Inconsistent
+            } else if coverage >= 0.5 && null_count < found_count {
                 PathValidity::Valid
             } else if null_count == found_count {
                 PathValidity::NullValue

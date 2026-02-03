@@ -26,7 +26,7 @@ function mergeAssistantMessages(messages: Message[]): Message[] {
     const msg = messages[i]
 
     // Skip tool role messages (internal LLM context)
-    if ((msg as any).role === 'tool') {
+    if (isToolMessage(msg)) {
       continue
     }
 
@@ -35,7 +35,7 @@ function mergeAssistantMessages(messages: Message[]): Message[] {
       const nextMsg = messages[i + 1]
 
       // Skip if next message is a tool message
-      if ((nextMsg as any).role === 'tool') {
+      if (isToolMessage(nextMsg)) {
         result.push(msg)
         continue
       }
@@ -138,6 +138,8 @@ function shouldMergeMessages(first: Message, second: Message): boolean {
 import type { SessionState } from '../types'
 import type { ChatSession } from '@/types'
 import { api } from '@/lib/api'
+import { normalizeSessions, normalizeSessionsResponse } from '@/lib/api/transforms'
+import { isToolMessage } from '@/types'
 
 export interface SessionSlice extends SessionState {
   // Actions
@@ -222,16 +224,7 @@ export const createSessionSlice: StateCreator<
       // Reload sessions from server to ensure consistency
       // This avoids issues where local state diverges from server state
       const listResult = await api.listSessions()
-      const sessionsArray = Array.isArray(listResult) ? listResult : (listResult as any).sessions || []
-      const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
-        sessionId: s.sessionId || s.id,
-        id: s.sessionId || s.id,
-        createdAt: s.createdAt || s.created_at || Date.now(),
-        updatedAt: s.updatedAt || s.updated_at,
-        messageCount: s.messageCount || s.message_count || 0,
-        title: s.title ?? undefined,
-        preview: s.preview,
-      }))
+      const sessions = normalizeSessionsResponse(listResult)
 
       set({
         sessionId: result.sessionId,
@@ -294,16 +287,7 @@ export const createSessionSlice: StateCreator<
         // Try to reload sessions from server to get accurate list
         try {
           const result = await api.listSessions()
-          const sessionsArray = Array.isArray(result) ? result : (result as any).sessions || []
-          const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
-            sessionId: s.sessionId || s.id,
-            id: s.sessionId || s.id,
-            createdAt: s.createdAt || s.created_at || Date.now(),
-            updatedAt: s.updatedAt || s.updated_at,
-            messageCount: s.messageCount || s.message_count || 0,
-            title: s.title ?? undefined,
-            preview: s.preview,
-          }))
+          const sessions = normalizeSessionsResponse(result)
 
           // Only update sessions if server returned a valid list
           if (sessions.length > 0) {
@@ -339,16 +323,7 @@ export const createSessionSlice: StateCreator<
       // After successful deletion, reload sessions from server
       // This ensures consistency between server and client state
       const result = await api.listSessions()
-      const sessionsArray = Array.isArray(result) ? result : (result as any).sessions || []
-      const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
-        sessionId: s.sessionId || s.id,
-        id: s.sessionId || s.id,
-        createdAt: s.createdAt || s.created_at || Date.now(),
-        updatedAt: s.updatedAt || s.updated_at,
-        messageCount: s.messageCount || s.message_count || 0,
-        title: s.title ?? undefined,
-        preview: s.preview,
-      }))
+      const sessions = normalizeSessionsResponse(result)
 
       set((state) => {
         const wasCurrentSession = state.sessionId === sessionIdToDelete
@@ -472,17 +447,7 @@ export const createSessionSlice: StateCreator<
   loadSessions: async () => {
     try {
       const result = await api.listSessions()
-      // Backend returns an array directly (after ApiResponse auto-unwrap)
-      const sessionsArray = Array.isArray(result) ? result : (result as any).sessions || []
-      const sessions: ChatSession[] = sessionsArray.map((s: any) => ({
-        sessionId: s.sessionId || s.id,
-        id: s.sessionId || s.id,
-        createdAt: s.createdAt || s.created_at || Date.now(),
-        updatedAt: s.updatedAt || s.updated_at,
-        messageCount: s.messageCount || s.message_count || 0,
-        title: s.title ?? undefined,
-        preview: s.preview,
-      }))
+      const sessions = normalizeSessionsResponse(result)
 
       // Only update sessions list, preserve sessionId and messages
       // This prevents accidental session switching or message loss

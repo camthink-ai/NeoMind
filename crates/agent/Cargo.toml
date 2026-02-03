@@ -6,6 +6,10 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+sysinfo = ["dep:sysinfo"]
+
 [dependencies]
 edge-ai-core = { path = "../core" }
 edge-ai-llm = { path = "../llm", features = ["cloud"] }
@@ -31,6 +35,8 @@ rand = { workspace = true }
 # Cron scheduling libraries
 cron = "0.12"
 tokio-cron-scheduler = "0.13"
+# Optional system info dependency
+sysinfo = { version = "0.33", optional = true }
 
 [[bench]]
 name = "agent_bench"

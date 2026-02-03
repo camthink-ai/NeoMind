@@ -112,7 +112,7 @@ pub struct AgentExecutionSummary {
 
 impl AiAgentManager {
     /// Create a new AI Agent manager.
-    pub async fn new(config: AgentExecutorConfig) -> Result<Arc<Self>, crate::AgentError> {
+    pub async fn new(config: AgentExecutorConfig) -> Result<Arc<Self>, crate::error::NeoTalkError> {
         let executor = Arc::new(AgentExecutor::new(config.clone()).await?);
         let scheduler = Arc::new(AgentScheduler::new(SchedulerConfig::default()).await?);
 
@@ -127,7 +127,7 @@ impl AiAgentManager {
     pub async fn create_agent(
         &self,
         request: CreateAgentRequest,
-    ) -> Result<String, crate::AgentError> {
+    ) -> Result<String, crate::error::NeoTalkError> {
         // Parse user intent
         let intent = self.executor.parse_intent(&request.user_prompt).await?;
 
@@ -173,7 +173,7 @@ impl AiAgentManager {
     pub async fn execute_agent_now(
         &self,
         agent_id: &str,
-    ) -> Result<AgentExecutionSummary, crate::AgentError> {
+    ) -> Result<AgentExecutionSummary, crate::error::NeoTalkError> {
         let start_time = std::time::Instant::now();
         let timestamp = chrono::Utc::now().timestamp();
 
@@ -183,7 +183,7 @@ impl AiAgentManager {
             .store()
             .get_agent(agent_id)
             .await?
-            .ok_or_else(|| crate::AgentError::NotFound(format!("Agent: {}", agent_id)))?;
+            .ok_or_else(|| crate::NeoTalkError::NotFound(format!("Agent: {}", agent_id)))?;
 
         // Update status to executing
         self.executor
@@ -240,7 +240,7 @@ impl AiAgentManager {
     }
 
     /// Get an agent by ID.
-    pub async fn get_agent(&self, id: &str) -> Result<Option<AiAgent>, crate::AgentError> {
+    pub async fn get_agent(&self, id: &str) -> Result<Option<AiAgent>, crate::error::NeoTalkError> {
         Ok(self.executor.store().get_agent(id).await?)
     }
 
@@ -248,7 +248,7 @@ impl AiAgentManager {
     pub async fn list_agents(
         &self,
         filter: edge_ai_storage::AgentFilter,
-    ) -> Result<Vec<AiAgent>, crate::AgentError> {
+    ) -> Result<Vec<AiAgent>, crate::error::NeoTalkError> {
         Ok(self.executor.store().query_agents(filter).await?)
     }
 
@@ -257,7 +257,7 @@ impl AiAgentManager {
         &self,
         agent_id: &str,
         limit: usize,
-    ) -> Result<Vec<AgentExecutionRecord>, crate::AgentError> {
+    ) -> Result<Vec<AgentExecutionRecord>, crate::error::NeoTalkError> {
         Ok(self
             .executor
             .store()
@@ -270,7 +270,7 @@ impl AiAgentManager {
         &self,
         id: &str,
         status: AgentStatus,
-    ) -> Result<(), crate::AgentError> {
+    ) -> Result<(), crate::error::NeoTalkError> {
         Ok(self
             .executor
             .store()
@@ -279,7 +279,7 @@ impl AiAgentManager {
     }
 
     /// Delete an agent.
-    pub async fn delete_agent(&self, id: &str) -> Result<(), crate::AgentError> {
+    pub async fn delete_agent(&self, id: &str) -> Result<(), crate::error::NeoTalkError> {
         // Unschedule first
         self.scheduler.unschedule_agent(id).await?;
 
@@ -288,7 +288,7 @@ impl AiAgentManager {
     }
 
     /// Start the scheduler for periodic execution.
-    pub async fn start(&self) -> Result<(), crate::AgentError> {
+    pub async fn start(&self) -> Result<(), crate::error::NeoTalkError> {
         let mut running = self.running.write().await;
         if *running {
             return Ok(());
@@ -304,7 +304,7 @@ impl AiAgentManager {
     }
 
     /// Stop the scheduler.
-    pub async fn stop(&self) -> Result<(), crate::AgentError> {
+    pub async fn stop(&self) -> Result<(), crate::error::NeoTalkError> {
         let mut running = self.running.write().await;
         *running = false;
         drop(running);
@@ -326,11 +326,11 @@ impl AiAgentManager {
     }
 
     /// Set the global default timezone for the scheduler.
-    pub async fn set_global_timezone(&self, timezone: String) -> Result<(), crate::AgentError> {
+    pub async fn set_global_timezone(&self, timezone: String) -> Result<(), crate::error::NeoTalkError> {
         self.scheduler
             .set_default_timezone(timezone)
             .await
-            .map_err(|e| crate::AgentError::Config(format!("Failed to set timezone: {}", e)))
+            .map_err(|e| crate::NeoTalkError::Config(format!("Failed to set timezone: {}", e)))
     }
 
     /// Get the current global default timezone.

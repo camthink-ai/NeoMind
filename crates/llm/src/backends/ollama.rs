@@ -11,7 +11,7 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -1624,8 +1624,6 @@ fn deserialize_arguments<'de, D>(deserializer: D) -> Result<serde_json::Value, D
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de::Error;
-
     // Create a visitor that can handle both string and object
     struct ArgumentsVisitor;
 

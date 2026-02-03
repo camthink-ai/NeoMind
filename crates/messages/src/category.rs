@@ -35,7 +35,7 @@ impl MessageCategory {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_string(s: &str) -> Option<Self> {
         match s {
             "alert" | "告警" => Some(Self::Alert),
             "system" | "系统" => Some(Self::System),
@@ -58,10 +58,10 @@ mod tests {
 
     #[test]
     fn test_category_from_str() {
-        assert_eq!(MessageCategory::from_str("alert"), Some(MessageCategory::Alert));
-        assert_eq!(MessageCategory::from_str("system"), Some(MessageCategory::System));
-        assert_eq!(MessageCategory::from_str("business"), Some(MessageCategory::Business));
-        assert_eq!(MessageCategory::from_str("invalid"), None);
+        assert_eq!(MessageCategory::from_string("alert"), Some(MessageCategory::Alert));
+        assert_eq!(MessageCategory::from_string("system"), Some(MessageCategory::System));
+        assert_eq!(MessageCategory::from_string("business"), Some(MessageCategory::Business));
+        assert_eq!(MessageCategory::from_string("invalid"), None);
     }
 
     #[test]

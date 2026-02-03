@@ -109,7 +109,7 @@ impl IntegrationType {
 impl std::str::FromStr for IntegrationType {
     type Err = std::convert::Infallible;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Ok(match s.to_lowercase().as_str() {
             "mqtt" => Self::Mqtt,
             "http" => Self::Http,

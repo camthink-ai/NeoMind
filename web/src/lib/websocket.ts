@@ -1,5 +1,6 @@
 // WebSocket Manager for Chat
 import type { ServerMessage, ClientChatMessage, ChatImage } from '@/types'
+import { tokenManager } from './auth'
 
 type MessageHandler = (message: ServerMessage) => void
 type ConnectionHandler = (connected: boolean, isReconnect?: boolean) => void
@@ -11,31 +12,6 @@ export interface ConnectionState {
   retryCount?: number
   nextRetryIn?: number  // seconds
   errorMessage?: string
-}
-
-// Get authentication token (JWT)
-function getAuthToken(): string | null {
-  // Try new keys first
-  let token = localStorage.getItem('neomind_token') || sessionStorage.getItem('neomind_token_session')
-
-  // Migration: try old keys if new keys don't exist
-  if (!token) {
-    const oldToken = localStorage.getItem('neotalk_token') || sessionStorage.getItem('neotalk_token_session')
-    if (oldToken) {
-      // Migrate to new key
-      const isLocal = !!localStorage.getItem('neotalk_token')
-      if (isLocal) {
-        localStorage.setItem('neomind_token', oldToken)
-        localStorage.removeItem('neotalk_token')
-      } else {
-        sessionStorage.setItem('neomind_token_session', oldToken)
-        sessionStorage.removeItem('neotalk_token_session')
-      }
-      token = oldToken
-    }
-  }
-
-  return token
 }
 
 export class ChatWebSocket {
@@ -80,7 +56,7 @@ export class ChatWebSocket {
     let wsUrl = `${protocol}//${host}/api/chat`
 
     // Add JWT token as query parameter
-    const token = getAuthToken()
+    const token = tokenManager.getToken()
 
     if (!token) {
       this.disconnect()
@@ -88,7 +64,7 @@ export class ChatWebSocket {
 
       // Poll for token
       this.tokenCheckTimer = setInterval(() => {
-        const newToken = getAuthToken()
+        const newToken = tokenManager.getToken()
         if (newToken) {
           if (this.tokenCheckTimer) {
             clearInterval(this.tokenCheckTimer)

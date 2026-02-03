@@ -17,7 +17,7 @@ impl SessionId {
     }
 
     /// Create a session ID from a string.
-    pub fn from_str(s: impl Into<String>) -> Self {
+    pub fn from_string(s: impl Into<String>) -> Self {
         Self(s.into())
     }
 

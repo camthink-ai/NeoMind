@@ -1120,7 +1120,7 @@ impl Agent {
             .llm_interface
             .chat_with_history(user_message, &core_history)
             .await
-            .map_err(|e| super::error::AgentError::Llm(e.to_string()))?;
+            .map_err(|e| super::error::NeoTalkError::Llm(e.to_string()))?;
 
         // Parse response for tool calls
         tracing::debug!(response_text = %chat_response.text, "LLM response received");
@@ -1580,7 +1580,7 @@ END"#)
             "Tool execution failed after all retries"
         );
 
-        Err(super::error::AgentError::Tool(format!(
+        Err(super::error::NeoTalkError::Tool(format!(
             "工具 {} 执行失败 (session: {}, 尝试: {}次, 耗时: {}ms)",
             real_tool_name,
             self.session_id,

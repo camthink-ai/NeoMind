@@ -115,8 +115,8 @@ impl LlmRuntimePool {
     pub async fn acquire(
         &self,
         key: String,
-        creator: impl Fn() -> Result<Arc<dyn LlmRuntime + Send + Sync>, crate::AgentError>,
-    ) -> Result<PooledRuntimeGuard, crate::AgentError> {
+        creator: impl Fn() -> Result<Arc<dyn LlmRuntime + Send + Sync>, crate::error::NeoTalkError>,
+    ) -> Result<PooledRuntimeGuard, crate::error::NeoTalkError> {
         // Wait for semaphore permit (limits total concurrent acquisitions)
         let mut pools = self.pools.write().await;
         let pool = pools.entry(key.clone()).or_insert_with(|| {
@@ -181,7 +181,7 @@ impl LlmRuntimePool {
 
             // For simplicity, we'll just return an error here
             // A more sophisticated implementation would wait on a condition variable
-            Err(crate::AgentError::Llm(
+            Err(crate::NeoTalkError::Llm(
                 "LLM runtime pool is at maximum capacity".to_string()
             ))
         }

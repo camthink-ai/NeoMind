@@ -44,7 +44,7 @@ impl WasmExtensionLoader {
                     &meta.id,
                     &meta.name,
                     semver::Version::parse(&meta.version).unwrap_or(semver::Version::new(1, 0, 0)),
-                    ExtensionType::from_str(&meta.extension_type),
+                    ExtensionType::from_string(&meta.extension_type),
                 )
                 .with_file_path(path.to_path_buf()));
             }

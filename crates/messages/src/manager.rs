@@ -77,7 +77,7 @@ impl MessageManager {
             id: MessageId::from_string(&stored.id)
                 .unwrap_or_else(|_| MessageId::new()),
             category: stored.category,
-            severity: MessageSeverity::from_str(&stored.severity)
+            severity: MessageSeverity::from_string(&stored.severity)
                 .unwrap_or(MessageSeverity::Info),
             title: stored.title,
             message: stored.message,
@@ -85,7 +85,7 @@ impl MessageManager {
             source_type: stored.source_type.unwrap_or_else(|| "system".to_string()),
             timestamp: chrono::DateTime::from_timestamp(stored.timestamp, 0)
                 .unwrap_or_else(chrono::Utc::now),
-            status: MessageStatus::from_str(&stored.status)
+            status: MessageStatus::from_string(&stored.status)
                 .unwrap_or(MessageStatus::Active),
             metadata: stored.metadata,
             tags: stored.tags.unwrap_or_default(),

@@ -89,6 +89,7 @@ import type {
   DashboardTemplateResponse,
 } from '@/types'
 import { notifyFromError, notifySuccess } from './notify'
+import { tokenManager as unifiedTokenManager } from './auth'
 
 // In Tauri, we need to use the full URL since the backend runs on port 3000
 // In development/web, we can use relative path
@@ -118,98 +119,15 @@ function triggerUnauthorizedCallbacks() {
 }
 
 // ============================================================================
-// JWT Token Manager (for user authentication)
+// Re-export Token Manager from auth module
 // ============================================================================
 
-const TOKEN_KEY = 'neomind_token'
-const TOKEN_KEY_SESSION = 'neomind_token_session'
-const USER_KEY = 'neomind_user'
-const USER_KEY_SESSION = 'neomind_user_session'
-
-export const tokenManager = {
-  getToken: (): string | null => {
-    // Try new keys first
-    let token = localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY_SESSION)
-
-    // Migration: try old keys if new keys don't exist
-    if (!token) {
-      const oldToken = localStorage.getItem('neotalk_token') || sessionStorage.getItem('neotalk_token_session')
-      if (oldToken) {
-        // Migrate to new key
-        const isLocal = !!localStorage.getItem('neotalk_token')
-        if (isLocal) {
-          localStorage.setItem(TOKEN_KEY, oldToken)
-          localStorage.removeItem('neotalk_token')
-        } else {
-          sessionStorage.setItem(TOKEN_KEY_SESSION, oldToken)
-          sessionStorage.removeItem('neotalk_token_session')
-        }
-        token = oldToken
-      }
-    }
-
-    return token
-  },
-  setToken: (token: string, remember: boolean = false): void => {
-    if (remember) {
-      localStorage.setItem(TOKEN_KEY, token)
-      sessionStorage.removeItem(TOKEN_KEY_SESSION)
-    } else {
-      sessionStorage.setItem(TOKEN_KEY_SESSION, token)
-      localStorage.removeItem(TOKEN_KEY)
-    }
-  },
-  clearToken: (): void => {
-    localStorage.removeItem(TOKEN_KEY)
-    sessionStorage.removeItem(TOKEN_KEY_SESSION)
-  },
-  hasToken: (): boolean => {
-    return !!(localStorage.getItem(TOKEN_KEY) || sessionStorage.getItem(TOKEN_KEY_SESSION))
-  },
-  getUser: (): UserInfo | null => {
-    let userStr = localStorage.getItem(USER_KEY) || sessionStorage.getItem(USER_KEY_SESSION)
-
-    // Migration: try old keys if new keys don't exist
-    if (!userStr) {
-      const oldUser = localStorage.getItem('neotalk_user') || sessionStorage.getItem('neotalk_user_session')
-      if (oldUser) {
-        // Migrate to new key
-        const isLocal = !!localStorage.getItem('neotalk_user')
-        if (isLocal) {
-          localStorage.setItem(USER_KEY, oldUser)
-          localStorage.removeItem('neotalk_user')
-        } else {
-          sessionStorage.setItem(USER_KEY_SESSION, oldUser)
-          sessionStorage.removeItem('neotalk_user_session')
-        }
-        userStr = oldUser
-      }
-    }
-
-    if (userStr) {
-      try {
-        return JSON.parse(userStr)
-      } catch {
-        return null
-      }
-    }
-    return null
-  },
-  setUser: (user: UserInfo, remember: boolean = false): void => {
-    const userStr = JSON.stringify(user)
-    if (remember) {
-      localStorage.setItem(USER_KEY, userStr)
-      sessionStorage.removeItem(USER_KEY_SESSION)
-    } else {
-      sessionStorage.setItem(USER_KEY_SESSION, userStr)
-      localStorage.removeItem(USER_KEY)
-    }
-  },
-  clearUser: (): void => {
-    localStorage.removeItem(USER_KEY)
-    sessionStorage.removeItem(USER_KEY_SESSION)
-  },
-}
+/**
+ * Token Manager - unified authentication token management.
+ * @deprecated Use `import { tokenManager } from '@/lib/auth'` instead.
+ * This export is maintained for backward compatibility.
+ */
+export const tokenManager = unifiedTokenManager
 
 // ============================================================================
 // Enhanced Fetch with Auth

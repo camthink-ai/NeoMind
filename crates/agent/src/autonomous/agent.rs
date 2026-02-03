@@ -92,14 +92,14 @@ impl AutonomousAgent {
         let mut state = self.state.write().await;
 
         if !state.can_start() {
-            return Err(AgentError::InvalidState(format!(
+            return Err(NeoTalkError::InvalidState(format!(
                 "Cannot start agent in state: {:?}",
                 state
             )));
         }
 
         if !self.config.enabled {
-            return Err(AgentError::Disabled(
+            return Err(NeoTalkError::Disabled(
                 "Agent is disabled in config".to_string(),
             ));
         }
@@ -121,7 +121,7 @@ impl AutonomousAgent {
         let mut state = self.state.write().await;
 
         if !state.is_running() {
-            return Err(AgentError::InvalidState(format!(
+            return Err(NeoTalkError::InvalidState(format!(
                 "Cannot stop agent in state: {:?}",
                 state
             )));
@@ -139,7 +139,7 @@ impl AutonomousAgent {
         review_type: ReviewType,
     ) -> Result<ReviewResult, AgentError> {
         if !self.state.read().await.is_running() {
-            return Err(AgentError::InvalidState(
+            return Err(NeoTalkError::InvalidState(
                 "Agent must be running to trigger reviews".to_string(),
             ));
         }
@@ -211,7 +211,7 @@ impl AutonomousAgent {
             .reviews
             .iter()
             .find(|r| r.review_type() == review_type)
-            .ok_or(AgentError::ReviewNotFound(review_type))?;
+            .ok_or(NeoTalkError::ReviewNotFound(review_type))?;
 
         // Create review context
         let mut context = ReviewContext::new(review_type);
@@ -224,7 +224,7 @@ impl AutonomousAgent {
         let review_result =
             tokio::time::timeout(self.config.timeout_duration(), review.review(&mut context))
                 .await
-                .map_err(|_| AgentError::Timeout(format!("Review {:?} timed out", review_type)))?;
+                .map_err(|_| NeoTalkError::Timeout(format!("Review {:?} timed out", review_type)))?;
 
         context.complete();
 

@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use futures::future::join_all;
 
 use crate::LlmBackend;
-use crate::error::AgentError;
+use crate::error::NeoTalkError;
 use crate::prompts::CONVERSATION_CONTEXT_ZH;
 
 /// Internal representation of image content for multimodal LLM messages.
@@ -1057,7 +1057,7 @@ Respond in JSON format:
                     "LLM intent parsing timed out after {}s",
                     LLM_TIMEOUT_SECS
                 );
-                return Err(AgentError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
+                return Err(NeoTalkError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
             }
         };
 
@@ -1080,9 +1080,9 @@ Respond in JSON format:
                 };
 
                 serde_json::from_str(json_str)
-                    .map_err(|_| AgentError::Llm("Failed to parse LLM intent response".to_string()))
+                    .map_err(|_| NeoTalkError::Llm("Failed to parse LLM intent response".to_string()))
             }
-            Err(_) => Err(AgentError::Llm("LLM call failed".to_string())),
+            Err(_) => Err(NeoTalkError::Llm("LLM call failed".to_string())),
         }
     }
 
@@ -1358,7 +1358,7 @@ Respond in JSON format:
         self.store
             .update_agent_status(&agent_id, edge_ai_storage::AgentStatus::Executing, None)
             .await
-            .map_err(|e| AgentError::Storage(format!("Failed to update status: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to update status: {}", e)))?;
 
         // Create execution context
         let context = ExecutionContext {
@@ -1523,7 +1523,7 @@ Respond in JSON format:
         self.store
             .update_agent_status(&agent_id, edge_ai_storage::AgentStatus::Executing, None)
             .await
-            .map_err(|e| AgentError::Storage(format!("Failed to update status: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to update status: {}", e)))?;
 
         // Clone event data for later use (before moving)
         let event_device_id = event_data.device_id.clone();
@@ -1729,7 +1729,7 @@ Respond in JSON format:
         }
 
         if records.is_empty() && !errors.is_empty() {
-            return Err(AgentError::Storage(format!(
+            return Err(NeoTalkError::Storage(format!(
                 "All {} agents failed. First error: {}",
                 errors.len(),
                 errors[0]
@@ -1769,7 +1769,7 @@ Respond in JSON format:
         }
 
         Err(last_error.unwrap_or_else(|| {
-            AgentError::Llm("Max retries exceeded".to_string())
+            NeoTalkError::Llm("Max retries exceeded".to_string())
         }))
     }
 
@@ -1804,7 +1804,7 @@ Respond in JSON format:
         }
 
         Err(last_error.unwrap_or_else(|| {
-            AgentError::Llm("Max retries exceeded".to_string())
+            NeoTalkError::Llm("Max retries exceeded".to_string())
         }))
     }
 
@@ -1935,7 +1935,7 @@ Respond in JSON format:
         self.store
             .update_agent_memory(&agent.id, updated_memory.clone())
             .await
-            .map_err(|e| AgentError::Storage(format!("Failed to update memory: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to update memory: {}", e)))?;
 
         // Calculate confidence from reasoning
         let confidence = if reasoning_steps.is_empty() {
@@ -2124,7 +2124,7 @@ Respond in JSON format:
         self.store
             .update_agent_memory(&agent.id, updated_memory.clone())
             .await
-            .map_err(|e| AgentError::Storage(format!("Failed to update memory: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Failed to update memory: {}", e)))?;
 
         // Calculate confidence from reasoning
         let confidence = if reasoning_steps.is_empty() {
@@ -2318,7 +2318,7 @@ Respond in JSON format:
                     Ok(result) => result,
                     Err(_) => {
                         tracing::warn!("Data collection query timed out after {}s", QUERY_TIMEOUT_SECS);
-                        Err(AgentError::Llm(format!("Query timeout after {}s", QUERY_TIMEOUT_SECS)))
+                        Err(NeoTalkError::Llm(format!("Query timeout after {}s", QUERY_TIMEOUT_SECS)))
                     }
                 }
             })
@@ -2351,7 +2351,7 @@ Respond in JSON format:
         let start_time = end_time - ((time_range_minutes * 60) as i64);
 
         let result = storage.query_range(device_id, metric_name, start_time, end_time).await
-            .map_err(|e| AgentError::Storage(format!("Query failed: {}", e)))?;
+            .map_err(|e| NeoTalkError::Storage(format!("Query failed: {}", e)))?;
 
         if result.points.is_empty() {
             return Ok(None);
@@ -3131,7 +3131,7 @@ Respond in JSON format:
                     "LLM generation timed out after {}s",
                     LLM_TIMEOUT_SECS
                 );
-                return Err(AgentError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
+                return Err(NeoTalkError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
             }
         };
 
@@ -3519,7 +3519,7 @@ Respond in JSON format:
                     error_details = ?e,
                     "LLM generation failed - check LLM backend configuration and connectivity"
                 );
-                Err(AgentError::Llm(format!("LLM generation failed: {}", e)))
+                Err(NeoTalkError::Llm(format!("LLM generation failed: {}", e)))
             }
         }
     }
