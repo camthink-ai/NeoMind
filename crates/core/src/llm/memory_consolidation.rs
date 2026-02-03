@@ -178,6 +178,12 @@ pub struct MemoryConsolidator {
     config: MemoryConfig,
 }
 
+impl Default for MemoryConsolidator {
+    fn default() -> Self {
+        Self::new(MemoryConfig::default())
+    }
+}
+
 impl MemoryConsolidator {
     /// Create a new memory consolidator.
     pub fn new(config: MemoryConfig) -> Self {
@@ -185,8 +191,8 @@ impl MemoryConsolidator {
     }
 
     /// Create with default config.
-    pub fn default() -> Self {
-        Self::new(MemoryConfig::default())
+    pub fn with_default_config() -> Self {
+        Self::default()
     }
 
     /// Consolidate a list of messages.

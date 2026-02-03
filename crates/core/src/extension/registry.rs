@@ -289,7 +289,7 @@ impl Default for ExtensionRegistry {
 }
 
 /// Check if a file is an extension file.
-fn is_extension_file(path: &PathBuf) -> bool {
+fn is_extension_file(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|ext| matches!(ext, "so" | "dylib" | "dll" | "wasm"))

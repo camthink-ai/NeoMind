@@ -484,13 +484,13 @@ impl DeviceService {
                     }
 
                     // Publish offline event with reason
-                    event_bus.publish(
+                    let _ = event_bus.publish(
                         edge_ai_core::NeoTalkEvent::DeviceOffline {
                             device_id: device_id.clone(),
                             reason: Some(format!("Heartbeat timeout: no activity for {} seconds", elapsed)),
                             timestamp: now,
                         }
-                    );
+                    ).await;
                 }
             }
         });

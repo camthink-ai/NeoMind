@@ -12,7 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { BrandName, StyledBrandName } from "@/components/shared/BrandName"
+import { BrandName, BrandLogoHorizontal } from "@/components/shared/BrandName"
 
 const languages = [
   { code: 'en', name: 'English' },
@@ -319,7 +319,7 @@ export function SetupPage() {
         <header className="relative z-10 backdrop-blur-sm">
           <div className="flex items-center justify-between px-6 h-16">
             <div className="flex items-center gap-3">
-              <StyledBrandName size="base" />
+              <BrandLogoHorizontal className="h-7" />
             </div>
 
             <DropdownMenu>

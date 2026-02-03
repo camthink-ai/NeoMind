@@ -73,18 +73,24 @@ impl ExtensionType {
             ExtensionType::Generic => "generic",
         }
     }
+}
 
-    /// Parse from string.
-    pub fn from_str(s: &str) -> Self {
+impl std::str::FromStr for ExtensionType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "llm_provider" => ExtensionType::LlmProvider,
-            "device_protocol" => ExtensionType::DeviceProtocol,
-            "alert_channel_type" => ExtensionType::AlertChannelType,
-            "tool" => ExtensionType::Tool,
-            _ => ExtensionType::Generic,
+            "llm_provider" => Ok(ExtensionType::LlmProvider),
+            "device_protocol" => Ok(ExtensionType::DeviceProtocol),
+            "alert_channel_type" => Ok(ExtensionType::AlertChannelType),
+            "tool" => Ok(ExtensionType::Tool),
+            "generic" => Ok(ExtensionType::Generic),
+            _ => Err(format!("Unknown extension type: {}", s)),
         }
     }
+}
 
+impl ExtensionType {
     /// Get display name.
     pub fn display_name(&self) -> &str {
         match self {

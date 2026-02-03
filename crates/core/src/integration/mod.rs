@@ -104,17 +104,20 @@ impl IntegrationType {
             Self::Custom(s) => s,
         }
     }
+}
 
-    /// Parse a string into an IntegrationType.
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "mqtt" => Some(Self::Mqtt),
-            "http" => Some(Self::Http),
-            "websocket" | "ws" => Some(Self::WebSocket),
-            "tasmota" => Some(Self::Tasmota),
-            "zigbee" => Some(Self::Zigbee),
-            _ => Some(Self::Custom(s.to_string())),
-        }
+impl std::str::FromStr for IntegrationType {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
+            "mqtt" => Self::Mqtt,
+            "http" => Self::Http,
+            "websocket" | "ws" => Self::WebSocket,
+            "tasmota" => Self::Tasmota,
+            "zigbee" => Self::Zigbee,
+            _ => Self::Custom(s.to_string()),
+        })
     }
 }
 
