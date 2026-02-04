@@ -74,9 +74,50 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 // Protected Route component
-// Simply checks if user has a valid token
+// Checks setup status first, then authentication
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const [setupRequired, setSetupRequired] = useState<boolean | null>(null)
+  const [loading, setLoading] = useState(true)
   const token = tokenManager.getToken()
+
+  useEffect(() => {
+    const checkSetup = async (): Promise<boolean> => {
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
+      try {
+        const response = await fetch(`${apiBase}/setup/status`, {
+          signal: AbortSignal.timeout(5000),
+        })
+        if (response.ok) {
+          const data = await response.json() as { setup_required: boolean }
+          return data.setup_required
+        }
+      } catch {
+        // On error, assume setup not required to avoid blocking
+      }
+      return false
+    }
+
+    checkSetup().then(result => {
+      setSetupRequired(result)
+      setLoading(false)
+    }).catch(() => {
+      setSetupRequired(false)
+      setLoading(false)
+    })
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
+
+  // Setup required - redirect to setup page
+  if (setupRequired === true) {
+    return <Navigate to="/setup" replace />
+  }
 
   // Not authenticated - redirect to login
   if (!token) {
@@ -105,7 +146,8 @@ function SetupRoute({ children }: { children: React.ReactNode }) {
           return data.setup_required
         }
       } catch {
-        // Ignore errors
+        // On error, allow access to setup (for offline scenarios)
+        return true
       }
       return false
     }
@@ -114,7 +156,7 @@ function SetupRoute({ children }: { children: React.ReactNode }) {
       setSetupRequired(result)
       setLoading(false)
     }).catch(() => {
-      setSetupRequired(false)
+      setSetupRequired(true)
       setLoading(false)
     })
   }, [])
