@@ -734,8 +734,9 @@ export function ChatPage() {
           </div>
         ) : hasMessages ? (
           /* Chat Messages - shown on /chat/:sessionId with messages */
-          <div className="touch-scroll flex-1 overflow-y-auto px-2 sm:px-4 py-4 sm:py-6">
-            <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
+          <div className="touch-scroll flex flex-col items-start justify-start flex-1 overflow-y-auto">
+            <div className="w-full px-2 sm:px-4 py-4 sm:py-6">
+            <div className="w-full max-w-3xl mx-auto space-y-4 sm:space-y-6">
               {displayMessages.map((message) => (
                 <div
                   key={message.id}
@@ -821,6 +822,7 @@ export function ChatPage() {
 
               <div ref={messagesEndRef} />
             </div>
+          </div>
           </div>
         ) : (
           /* Empty chat - shown on /chat/:sessionId with no messages yet */
