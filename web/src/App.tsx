@@ -86,6 +86,56 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Setup Route component
+// Only accessible when setup is required (no users exist yet)
+// If setup is already completed, redirects to login page
+function SetupRoute({ children }: { children: React.ReactNode }) {
+  const [setupRequired, setSetupRequired] = useState<boolean | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const checkSetup = async (): Promise<boolean> => {
+      const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
+      try {
+        const response = await fetch(`${apiBase}/setup/status`, {
+          signal: AbortSignal.timeout(5000),
+        })
+        if (response.ok) {
+          const data = await response.json() as { setup_required: boolean }
+          return data.setup_required
+        }
+      } catch {
+        // Ignore errors
+      }
+      return false
+    }
+
+    checkSetup().then(result => {
+      setSetupRequired(result)
+      setLoading(false)
+    }).catch(() => {
+      setSetupRequired(false)
+      setLoading(false)
+    })
+  }, [])
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-pulse text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
+
+  // Setup already completed - redirect to login
+  if (setupRequired === false) {
+    return <Navigate to="/login" replace />
+  }
+
+  // Show setup page
+  return <>{children}</>
+}
+
 // Loading component for lazy-loaded routes
 function PageLoading() {
   return (
@@ -150,8 +200,15 @@ function App() {
     <>
       <Suspense fallback={<PageLoading />}>
         <Routes>
-          {/* Setup route - accessible via link from login page */}
-          <Route path="/setup" element={<SetupPage />} />
+          {/* Setup route - protected, only accessible when setup required */}
+          <Route
+            path="/setup"
+            element={
+              <SetupRoute>
+                <SetupPage />
+              </SetupRoute>
+            }
+          />
 
           {/* Login route */}
           <Route path="/login" element={<LoginPage />} />
