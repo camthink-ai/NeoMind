@@ -74,54 +74,41 @@ window.addEventListener('unhandledrejection', (event) => {
 })
 
 // Protected Route component
-// Checks setup status first, then authentication
+// Checks authentication first, then setup status in background
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const [setupRequired, setSetupRequired] = useState<boolean | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [setupRequired, setSetupRequired] = useState<boolean | false>(false)
   const token = tokenManager.getToken()
 
   useEffect(() => {
-    const checkSetup = async (): Promise<boolean> => {
+    // Check setup status in background - don't block rendering
+    const checkSetup = async (): Promise<void> => {
       const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
       try {
         const response = await fetch(`${apiBase}/setup/status`, {
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(3000),
         })
         if (response.ok) {
           const data = await response.json() as { setup_required: boolean }
-          return data.setup_required
+          if (data.setup_required) {
+            setSetupRequired(true)
+          }
         }
       } catch {
-        // On error, assume setup not required to avoid blocking
+        // On error, don't redirect - let user continue
       }
-      return false
     }
 
-    checkSetup().then(result => {
-      setSetupRequired(result)
-      setLoading(false)
-    }).catch(() => {
-      setSetupRequired(false)
-      setLoading(false)
-    })
+    checkSetup()
   }, [])
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-pulse text-muted-foreground">Loading...</div>
-      </div>
-    )
-  }
-
-  // Setup required - redirect to setup page
-  if (setupRequired === true) {
-    return <Navigate to="/setup" replace />
-  }
 
   // Not authenticated - redirect to login
   if (!token) {
     return <Navigate to="/login" replace />
+  }
+
+  // Setup required - redirect to setup page
+  if (setupRequired) {
+    return <Navigate to="/setup" replace />
   }
 
   return <>{children}</>
