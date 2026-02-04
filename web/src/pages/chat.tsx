@@ -603,7 +603,7 @@ export function ChatPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-row">
       {/* Pending stream recovery dialog */}
       {pendingStream?.hasPending && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
