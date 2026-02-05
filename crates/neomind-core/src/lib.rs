@@ -1,8 +1,8 @@
-//! Core traits and types for Edge AI Agent.
+//! Core traits and types for NeoMind.
 //!
 //! This crate defines the foundational abstractions used across the project.
 
-pub mod alerts;
+// alerts module removed - use neomind_messages instead
 pub mod brand;
 pub mod config;
 pub mod error;
@@ -75,11 +75,6 @@ pub mod prelude {
 
     // Tools
     pub use crate::tools::{DynTool, Parameter, Tool, ToolDefinition, ToolError, ToolOutput};
-
-    // Alerts
-    pub use crate::alerts::{
-        Alert, AlertChannel, AlertError, AlertSeverity, AlertStatus, ChannelFactory,
-    };
 
     // Extension system (replaces legacy Plugin system)
     pub use crate::extension::{
