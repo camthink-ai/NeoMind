@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react"
+import { useTranslation } from 'react-i18next'
 import { cn } from "@/lib/utils"
 
 interface CodeEditorProps {
@@ -20,6 +21,7 @@ export function CodeEditor({
   readOnly = false,
   error,
 }: CodeEditorProps) {
+  const { t } = useTranslation('ui')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Handle tab key in textarea
@@ -107,10 +109,10 @@ export function CodeEditor({
         spellCheck={false}
       />
       {language === "json" && value.trim() && !isValid && !readOnly && (
-        <p className="text-xs text-destructive mt-1">JSON 格式错误</p>
+        <p className="text-xs text-destructive mt-1">{t('codeEditor.jsonFormatError')}</p>
       )}
       {language === "yaml" && value.trim() && !isValid && !readOnly && (
-        <p className="text-xs text-destructive mt-1">YAML 格式错误（缩进不正确）</p>
+        <p className="text-xs text-destructive mt-1">{t('codeEditor.yamlFormatError')}</p>
       )}
       {error && (
         <p className="text-xs text-destructive mt-1">{error}</p>

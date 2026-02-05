@@ -13,5 +13,28 @@
     "version": "版本",
     "author": "作者",
     "description": "描述"
+  },
+  "card": {
+    "start": "启动",
+    "stop": "停止",
+    "configure": "配置",
+    "unregister": "注销",
+    "running": "运行中",
+    "stopped": "已停止",
+    "byAuthor": "由 {{author}} 开发",
+    "types": {
+      "llm_provider": "LLM 提供者",
+      "device_protocol": "设备协议",
+      "alert_channel_type": "消息通道",
+      "tool": "工具",
+      "generic": "通用",
+      "unknown": "未知"
+    },
+    "states": {
+      "Running": "运行中",
+      "Stopped": "已停止",
+      "Error": "错误",
+      "Initialized": "已初始化"
+    }
   }
 }

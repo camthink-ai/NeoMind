@@ -293,16 +293,17 @@ pub type DynExtension = Arc<tokio::sync::RwLock<dyn Extension>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_extension_type_conversion() {
         assert_eq!(ExtensionType::LlmProvider.as_str(), "llm_provider");
         assert_eq!(
-            ExtensionType::from_str("device_protocol"),
+            ExtensionType::from_string("device_protocol"),
             ExtensionType::DeviceProtocol
         );
         assert_eq!(
-            ExtensionType::from_str("unknown"),
+            ExtensionType::from_string("unknown"),
             ExtensionType::Generic
         );
     }

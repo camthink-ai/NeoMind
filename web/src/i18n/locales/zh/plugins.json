@@ -265,5 +265,40 @@
   "noBackends": "暂无 LLM 后端",
   "noBackendsDesc": "无法从服务器加载 LLM 后端类型",
   "noAdapters": "暂无适配器类型",
-  "noAdaptersDesc": "无法从服务器加载设备适配器类型"
+  "noAdaptersDesc": "无法从服务器加载设备适配器类型",
+  "config": {
+    "fieldPlaceholder": "输入值",
+    "jsonPlaceholder": "{\"key\": \"value\"}",
+    "passwordPlaceholder": "••••••••",
+    "selectPlaceholder": "选择...",
+    "arrayPlaceholder": "{{field}} {{index}}",
+    "noSchema": "无可用配置模式",
+    "schemaLoadError": "加载配置模式失败"
+  },
+  "marketplace": {
+    "title": "插件市场",
+    "searchPlaceholder": "搜索插件...",
+    "noPlugins": "未找到插件",
+    "filter": "按类别筛选",
+    "all": "全部",
+    "featured": "精选",
+    "installed": "已安装"
+  },
+  "alertChannel": {
+    "title": "告警通道配置",
+    "channelType": "通道类型",
+    "configPlaceholder": "输入配置值",
+    "testButton": "发送测试消息",
+    "testSuccess": "测试消息发送成功",
+    "testFailed": "发送测试消息失败"
+  },
+  "universalConfig": {
+    "title": "插件配置",
+    "description": "配置插件设置",
+    "noFields": "无可用配置字段",
+    "invalidJson": "无效的 JSON 格式",
+    "requiredField": "此字段为必填项",
+    "saveConfig": "保存配置",
+    "resetConfig": "重置为默认值"
+  }
 }

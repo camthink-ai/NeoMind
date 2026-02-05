@@ -1,6 +1,6 @@
 //! Error types for the agent crate.
 //!
-//! This module re-exports the unified error type from core for backward compatibility.
+//! This module re-exports the unified error type from core.
 
 // Re-export the core error type
 pub use edge_ai_core::error::Error as NeoTalkError;
@@ -8,13 +8,6 @@ pub use edge_ai_core::error::Result as CoreResult;
 
 /// Result type for agent operations.
 pub type Result<T> = CoreResult<T>;
-
-/// Legacy agent error type.
-///
-/// # Deprecated
-/// Use `NeoTalkError` instead. This type alias is kept for backward compatibility.
-#[deprecated(since = "0.2.0", note = "Use NeoTalkError instead")]
-pub type AgentError = NeoTalkError;
 
 // Helper functions for converting crate-specific errors
 /// Convert from MemoryError

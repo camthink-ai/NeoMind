@@ -19,6 +19,7 @@ import {
   Wrench,
   Package,
 } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import type { Extension } from "@/types"
 
 interface ExtensionCardProps {
@@ -47,20 +48,13 @@ const EXTENSION_COLORS: Record<string, string> = {
   generic: "text-gray-500",
 }
 
-// Extension type names
-const EXTENSION_TYPE_NAMES: Record<string, { en: string; zh: string }> = {
-  llm_provider: { en: "LLM Provider", zh: "LLM 提供者" },
-  device_protocol: { en: "Device Protocol", zh: "设备协议" },
-  alert_channel_type: { en: "Message Channel", zh: "消息通道" },
-  tool: { en: "Tool", zh: "工具" },
-  generic: { en: "Generic", zh: "通用" },
-}
-
 export function ExtensionCard({ extension, onStart, onStop, onDelete, onConfigure }: ExtensionCardProps) {
+  const { t } = useTranslation(["extensions"])
   const isRunning = extension.state === "Running"
   const Icon = EXTENSION_ICONS[extension.extension_type] || FileCode
   const colorClass = EXTENSION_COLORS[extension.extension_type] || "text-gray-500"
-  const typeName = EXTENSION_TYPE_NAMES[extension.extension_type] || { en: "Unknown", zh: "未知" }
+  const typeNameKey = `card.types.${extension.extension_type}` || "card.types.unknown"
+  const stateNameKey = `card.states.${extension.state}` || extension.state
 
   // State badge color
   const getStateColor = (state: string) => {
@@ -101,21 +95,21 @@ export function ExtensionCard({ extension, onStart, onStop, onDelete, onConfigur
               {isRunning ? (
                 <DropdownMenuItem onClick={() => onStop?.()}>
                   <Square className="mr-2 h-4 w-4" />
-                  Stop
+                  {t('card.stop')}
                 </DropdownMenuItem>
               ) : (
                 <DropdownMenuItem onClick={() => onStart?.()}>
                   <Play className="mr-2 h-4 w-4" />
-                  Start
+                  {t('card.start')}
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => onConfigure?.()}>
                 <Settings className="mr-2 h-4 w-4" />
-                Configure
+                {t('card.configure')}
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onDelete?.()} className="text-destructive">
                 <Trash2 className="mr-2 h-4 w-4" />
-                Unregister
+                {t('card.unregister')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -125,10 +119,10 @@ export function ExtensionCard({ extension, onStart, onStop, onDelete, onConfigur
         {/* Extension Type Badge */}
         <div className="flex items-center gap-2">
           <Badge variant="secondary" className="text-xs">
-            {typeName.en}
+            {t(typeNameKey)}
           </Badge>
           <Badge variant={getStateColor(extension.state)} className="text-xs">
-            {extension.state}
+            {t(stateNameKey)}
           </Badge>
         </div>
 
@@ -142,7 +136,7 @@ export function ExtensionCard({ extension, onStart, onStop, onDelete, onConfigur
         {/* Author */}
         {extension.author && (
           <p className="text-xs text-muted-foreground">
-            By {extension.author}
+            {t('card.byAuthor', { author: extension.author })}
           </p>
         )}
 
@@ -156,18 +150,18 @@ export function ExtensionCard({ extension, onStart, onStop, onDelete, onConfigur
         {/* Action buttons */}
         <div className="flex items-center justify-between pt-2 border-t">
           <span className="text-xs text-muted-foreground">
-            {isRunning ? "Running" : "Stopped"}
+            {isRunning ? t('card.running') : t('card.stopped')}
           </span>
           <div className="flex gap-2">
             {isRunning ? (
               <Button size="sm" variant="outline" onClick={() => onStop?.()}>
                 <Square className="mr-1 h-3 w-3" />
-                Stop
+                {t('card.stop')}
               </Button>
             ) : (
               <Button size="sm" variant="default" onClick={() => onStart?.()}>
                 <Play className="mr-1 h-3 w-3" />
-                Start
+                {t('card.start')}
               </Button>
             )}
           </div>

@@ -14,7 +14,6 @@ import type {
   TelemetrySummaryResponse,
   DeviceCurrentStateResponse,
   CommandHistoryResponse,
-  DecisionDto,
   ChatSession,
   UserInfo,
   AdapterPluginDto,
@@ -90,15 +89,6 @@ export interface AlertState {
 }
 
 // ============================================================================
-// Decision State
-// ============================================================================
-
-export interface DecisionState {
-  decisions: DecisionDto[]
-  decisionsLoading: boolean
-}
-
-// ============================================================================
 // Settings State
 // ============================================================================
 // LLM/MQTT/Device settings are now managed via the Plugin system.
@@ -148,7 +138,6 @@ export interface RootState
     DeviceState,
     TelemetryState,
     AlertState,
-    DecisionState,
     SettingsState,
     UIState {}
 

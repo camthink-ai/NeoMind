@@ -5,6 +5,7 @@
  * Provides a standardized way to construct config dialogs with sections.
  */
 
+import { useTranslation } from 'react-i18next'
 import type { DataSource, DataSourceOrList } from '@/types/dashboard'
 import type {
   SizeOption,
@@ -382,18 +383,21 @@ export function createProgressConfig(config: {
   if (config.onLabelChange) {
     sections.push({
       type: 'custom',
-      render: () => (
-        <div className="space-y-2 pt-4 border-t">
-          <label className="text-sm font-medium">Label</label>
-          <input
-            type="text"
-            value={config.label ?? ''}
-            onChange={(e) => config.onLabelChange?.(e.target.value)}
-            placeholder="e.g., CPU Usage"
-            className="w-full h-10 px-3 rounded-md border border-input bg-background"
-          />
-        </div>
-      ),
+      render: () => {
+        const { t } = useTranslation('dashboardComponents')
+        return (
+          <div className="space-y-2 pt-4 border-t">
+            <label className="text-sm font-medium">{t('common.label')}</label>
+            <input
+              type="text"
+              value={config.label ?? ''}
+              onChange={(e) => config.onLabelChange?.(e.target.value)}
+              placeholder={t('placeholders.cpuUsage')}
+              className="w-full h-10 px-3 rounded-md border border-input bg-background"
+            />
+          </div>
+        )
+      },
     })
   }
 
@@ -571,18 +575,21 @@ export function createControlConfig(config: {
   if (config.onUnitChange) {
     sections.push({
       type: 'custom',
-      render: () => (
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Unit</label>
-          <input
-            type="text"
-            value={config.unit ?? ''}
-            onChange={(e) => config.onUnitChange?.(e.target.value)}
-            placeholder="%"
-            className="w-full h-10 px-3 rounded-md border border-input bg-background"
-          />
-        </div>
-      ),
+      render: () => {
+        const { t } = useTranslation('dashboardComponents')
+        return (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">{t('common.unit')}</label>
+            <input
+              type="text"
+              value={config.unit ?? ''}
+              onChange={(e) => config.onUnitChange?.(e.target.value)}
+              placeholder={t('placeholders.percentSymbol')}
+              className="w-full h-10 px-3 rounded-md border border-input bg-background"
+            />
+          </div>
+        )
+      },
     })
   }
 
@@ -752,18 +759,21 @@ export function createContentConfig(config: {
   if (config.onAltChange) {
     sections.push({
       type: 'custom',
-      render: () => (
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Alt Text / Description</label>
-          <input
-            type="text"
-            value={config.alt ?? ''}
-            onChange={(e) => config.onAltChange?.(e.target.value)}
-            placeholder="Description"
-            className="w-full h-10 px-3 rounded-md border border-input bg-background"
-          />
-        </div>
-      ),
+      render: () => {
+        const { t } = useTranslation('dashboardComponents')
+        return (
+          <div className="space-y-2">
+            <label className="text-sm font-medium">{t('codeConfig.altTextDescription', 'Alt Text / Description')}</label>
+            <input
+              type="text"
+              value={config.alt ?? ''}
+              onChange={(e) => config.onAltChange?.(e.target.value)}
+              placeholder={t('placeholders.description')}
+              className="w-full h-10 px-3 rounded-md border border-input bg-background"
+            />
+          </div>
+        )
+      },
     })
   }
 
@@ -948,18 +958,21 @@ export function createChartConfig(config: {
   if (config.onLabelChange) {
     sections.push({
       type: 'custom',
-      render: () => (
-        <div className="space-y-2 pt-4 border-t">
-          <label className="text-sm font-medium">Label</label>
-          <input
-            type="text"
-            value={config.label ?? ''}
-            onChange={(e) => config.onLabelChange?.(e.target.value)}
-            placeholder="e.g., Temperature Trend"
-            className="w-full h-10 px-3 rounded-md border border-input bg-background"
-          />
-        </div>
-      ),
+      render: () => {
+        const { t } = useTranslation('dashboardComponents')
+        return (
+          <div className="space-y-2 pt-4 border-t">
+            <label className="text-sm font-medium">{t('common.label')}</label>
+            <input
+              type="text"
+              value={config.label ?? ''}
+              onChange={(e) => config.onLabelChange?.(e.target.value)}
+              placeholder={t('placeholders.temperatureTrend')}
+              className="w-full h-10 px-3 rounded-md border border-input bg-background"
+            />
+          </div>
+        )
+      },
     })
   }
 

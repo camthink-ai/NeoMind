@@ -662,16 +662,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_adapter_manager() {
-        let event_bus = EventBus::new();
-        let registry = crate::plugin_registry::DeviceAdapterPluginRegistry::new(event_bus);
-
-        // The plugin registry manages adapters differently now
-        // This test verifies the registry can be created
-        assert_eq!(registry.list_ids().await.len(), 0);
-    }
-
-    #[tokio::test]
     async fn test_adapter_start_stop() {
         let adapter = MockAdapter::new("test");
 

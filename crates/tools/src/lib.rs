@@ -1,18 +1,14 @@
 //! Edge AI Tools Crate
 //!
-//! This crate provides function calling capabilities for the NeoTalk platform.
-//!
-//! ## Features
-//!
-//! | Feature | Default | Description |
-//! |---------|---------|-------------|
-//! | `builtin` | ✅ | Built-in mock tools for testing |
-//! | `real` | ❌ | Real tool implementations |
+//! This crate provides function calling capabilities for the NeoMind platform.
 //!
 //! ## Tool Capabilities
 //!
 //! - **Tool Trait**: Unified interface for tool implementation
-//! - **Built-in Tools**: Common tools for data query, device control, rule management
+//! - **Device Tools**: Query, control, and manage IoT devices
+//! - **Rule Tools**: Create and manage automation rules
+//! - **Agent Tools**: AI agent management and execution
+//! - **System Tools**: System info, alerts, and data export
 //! - **Tool Registry**: Manage and execute tools
 //! - **Parallel Execution**: Execute multiple tools concurrently
 //! - **LLM Integration**: Format tool definitions for function calling
@@ -20,16 +16,23 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use edge_ai_tools::{ToolRegistry, ToolRegistryBuilder, ToolCall};
-//! use edge_ai_tools::{QueryDataTool, ControlDeviceTool};
+//! use edge_ai_tools::{ToolRegistry, ToolRegistryBuilder};
+//! use edge_ai_devices::{DeviceService, TimeSeriesStorage};
+//! use edge_ai_rules::RuleEngine;
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create a registry with specific tools
+//!     let device_service = Arc::new(DeviceService::new());
+//!     let storage = Arc::new(TimeSeriesStorage::memory()?);
+//!     let rule_engine = Arc::new(RuleEngine::new());
+//!
+//!     // Create a registry with real tools
 //!     let registry = ToolRegistryBuilder::new()
-//!         .with_tool(Arc::new(QueryDataTool::mock()))
-//!         .with_tool(Arc::new(ControlDeviceTool::mock()))
+//!         .with_query_data_tool(storage.clone())
+//!         .with_control_device_tool(device_service.clone())
+//!         .with_list_devices_tool(device_service)
+//!         .with_create_rule_tool(rule_engine)
 //!         .build();
 //!
 //!     // List available tools
@@ -42,14 +45,12 @@
 //!     ).await?;
 //!
 //!     println!("Result: {:?}", result);
-//!
 //!     Ok(())
 //! }
 //! ```
 
 use std::sync::Arc;
 
-pub mod builtin;
 pub mod agent_tools;
 pub mod core_tools;
 pub mod error;
@@ -78,23 +79,29 @@ pub use edge_ai_core::tools::{
     boolean_property, number_property, object_schema, property, string_property,
 };
 
-// Feature-gated built-in tools
-#[cfg(feature = "builtin")]
-pub use builtin::{
-    CommandInfo, ControlDeviceTool, CreateRuleTool, DataPoint, DeviceInfo, DeviceTypeInfo,
-    DeviceTypeSchema, GetDeviceMetricsTool, GetDeviceTypeSchemaTool, ListDeviceTypesTool,
-    ListDevicesTool, ListRulesTool, MetricDataPoint, MetricInfo, MockDeviceManager,
-    MockDeviceTypeRegistry, MockRuleEngine, MockTimeSeriesStore, QueryDataTool, RuleInfo,
+// ============================================================================
+// Real Tools (Primary Exports)
+// ============================================================================
 
-    // New tools
-    DeleteRuleTool, EnableRuleTool, DisableRuleTool, UpdateRuleTool,
-    QueryDeviceStatusTool, GetDeviceConfigTool, SetDeviceConfigTool, BatchControlDevicesTool,
+/// Device tools
+pub use real::{
+    QueryDataTool, ControlDeviceTool, ListDevicesTool,
+    GetDeviceDataTool, DeviceAnalyzeTool, QueryRuleHistoryTool,
 };
 
-// New core business-scenario tools
+/// Rule tools
+pub use real::{
+    CreateRuleTool, ListRulesTool, DeleteRuleTool,
+};
+
+// ============================================================================
+// Core Business-Scenario Tools
+// ============================================================================
+
+/// Core business-scenario tools with device registry abstraction
 pub use core_tools::{
     // Device tools
-    DeviceDiscoverTool, DeviceQueryTool, DeviceControlTool, DeviceAnalyzeTool,
+    DeviceDiscoverTool,
     // Rule tools
     RuleFromContextTool,
     // Types
@@ -109,11 +116,12 @@ pub use core_tools::{
     AnalysisType, AnalysisResult,
     // Rule types
     ExtractedRuleDefinition, RuleActionDef,
-    // Registry
-    MockDeviceRegistry,
 };
 
-// System management and export tools
+// ============================================================================
+// System Management Tools
+// ============================================================================
+
 pub use system_tools::{
     // System tools
     SystemInfoTool, SystemConfigTool, ServiceRestartTool, SystemHelpTool,
@@ -123,20 +131,14 @@ pub use system_tools::{
     ExportToCsvTool, ExportToJsonTool, GenerateReportTool,
 };
 
-// AI Agent tools for Chat integration
-pub use agent_tools::{
-    ListAgentsTool, GetAgentTool, ExecuteAgentTool, ControlAgentTool, CreateAgentTool, AgentMemoryTool,
-    GetAgentExecutionsTool, GetAgentExecutionDetailTool, GetAgentConversationTool,
-};
+// ============================================================================
+// AI Agent Tools
+// ============================================================================
 
-// Feature-gated real tools
-#[cfg(feature = "real")]
-pub use real::{
-    ControlDeviceTool as RealControlDeviceTool, CreateRuleTool as RealCreateRuleTool,
-    DeleteRuleTool as RealDeleteRuleTool,
-    GetDeviceDataTool as RealGetDeviceDataTool,
-    ListDevicesTool as RealListDevicesTool, ListRulesTool as RealListRulesTool,
-    QueryDataTool as RealQueryDataTool, QueryRuleHistoryTool,
+pub use agent_tools::{
+    ListAgentsTool, GetAgentTool, ExecuteAgentTool, ControlAgentTool,
+    CreateAgentTool, AgentMemoryTool,
+    GetAgentExecutionsTool, GetAgentExecutionDetailTool, GetAgentConversationTool,
 };
 
 /// Version information
@@ -152,17 +154,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_integration() {
-        let registry = ToolRegistryBuilder::new().with_standard_tools().build();
+    async fn test_registry_empty() {
+        let registry = ToolRegistryBuilder::new().build();
+        assert_eq!(registry.len(), 0);
+    }
 
-        // Should have at least 5 standard tools
-        assert!(registry.len() >= 5);
+    #[tokio::test]
+    async fn test_registry_with_system_help() {
+        let registry = ToolRegistryBuilder::new()
+            .with_system_help_tool()
+            .build();
 
-        // Execute list_devices
-        let result = registry
-            .execute("list_devices", serde_json::json!({}))
-            .await
-            .unwrap();
-        assert!(result.success);
+        assert!(registry.len() >= 1);
+        assert!(registry.has("system_help"));
     }
 }

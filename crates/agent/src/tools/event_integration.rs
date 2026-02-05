@@ -813,6 +813,51 @@ impl ToolErrorExt for ToolError {
 mod tests {
     use super::*;
     use edge_ai_tools::ToolRegistryBuilder;
+    use edge_ai_tools::tool::{Tool, ToolOutput, ToolCategory};
+    use std::sync::Arc;
+
+    /// Simple mock tool for testing
+    struct MockTool {
+        name: &'static str,
+        description: &'static str,
+    }
+
+    impl MockTool {
+        fn new(name: &'static str, description: &'static str) -> Self {
+            Self { name, description }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for MockTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn description(&self) -> &str {
+            self.description
+        }
+
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            })
+        }
+
+        async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput, edge_ai_tools::ToolError> {
+            Ok(ToolOutput {
+                success: true,
+                data: serde_json::json!({"status": "ok"}),
+                error: None,
+                metadata: None,
+            })
+        }
+
+        fn category(&self) -> ToolCategory {
+            ToolCategory::System
+        }
+    }
 
     #[tokio::test]
     async fn test_execution_history_add() {
@@ -928,11 +973,11 @@ mod tests {
     #[tokio::test]
     async fn test_event_integrated_registry() {
         let registry = ToolRegistryBuilder::new()
-            .with_query_data_tool()
-            .with_control_device_tool()
-            .with_list_devices_tool()
-            .with_create_rule_tool()
-            .with_list_rules_tool()
+            .with_tool(Arc::new(MockTool::new("query_data", "Query data tool")))
+            .with_tool(Arc::new(MockTool::new("control_device", "Control device tool")))
+            .with_tool(Arc::new(MockTool::new("list_devices", "List devices tool")))
+            .with_tool(Arc::new(MockTool::new("create_rule", "Create rule tool")))
+            .with_tool(Arc::new(MockTool::new("list_rules", "List rules tool")))
             .build();
 
         let event_bus = EventBus::new();
@@ -946,11 +991,7 @@ mod tests {
     #[tokio::test]
     async fn test_event_integrated_registry_execute() {
         let registry = ToolRegistryBuilder::new()
-            .with_query_data_tool()
-            .with_control_device_tool()
-            .with_list_devices_tool()
-            .with_create_rule_tool()
-            .with_list_rules_tool()
+            .with_tool(Arc::new(MockTool::new("list_devices", "List devices tool")))
             .build();
 
         let event_bus = EventBus::new();

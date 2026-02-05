@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
-import { Bot, Languages, Lock, User, Shield, Rocket } from "lucide-react"
+import { Languages, Lock, User, Shield } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -71,6 +71,10 @@ export function LoginPage() {
         if (response.ok) {
           const data = await response.json() as { setup_required: boolean }
           setIsFirstSetup(data.setup_required)
+          // Redirect to setup if no users exist
+          if (data.setup_required) {
+            navigate('/setup', { replace: true })
+          }
         } else {
           setIsFirstSetup(false)
         }
@@ -248,31 +252,6 @@ export function LoginPage() {
             {/* Login Title */}
             <h2 className="text-3xl font-semibold mb-6 text-center">{t('auth:login')}</h2>
 
-            {/* First-time setup notice */}
-            {isFirstSetup === true && (
-              <div className="mb-6 flex items-start gap-3 p-4 bg-primary/10 dark:bg-primary/20 border border-primary/20 rounded-lg">
-                <Rocket className="h-5 w-5 text-primary mt-0.5 flex-shrink-0" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-foreground mb-1">
-                    {t('auth:firstSetupTitle', 'Welcome to NeoMind!')}
-                  </p>
-                  <p className="text-xs text-muted-foreground mb-3">
-                    {t('auth:firstSetupDesc', 'No admin account found. Let\'s create one to get started.')}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => navigate('/setup')}
-                  >
-                    <Rocket className="h-4 w-4 mr-1.5" />
-                    {t('auth:startSetup', 'Start Setup')}
-                  </Button>
-                </div>
-              </div>
-            )}
-
             {/* Login Form */}
             <form onSubmit={handleSubmit} className="flex flex-col gap-5">
               {/* Username Field */}
@@ -345,7 +324,8 @@ export function LoginPage() {
 
             {/* Footer */}
             <div className="text-center mt-6 pt-6">
-              <p className="text-xs text-muted-foreground/70 dark:text-muted-foreground/50">
+              {/* Version Info */}
+              <p className="text-xs text-muted-foreground/50 dark:text-muted-foreground/40">
                 <BrandName /> Edge AI Agent v1.0
               </p>
             </div>

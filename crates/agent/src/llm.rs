@@ -2071,7 +2071,7 @@ mod tests {
 
     #[test]
     fn test_agent_error_display() {
-        let err = NeoTalkError::LlmNotReady;
+        let err = NeoTalkError::Llm("LLM not ready".to_string());
         assert!(err.to_string().contains("not ready"));
 
         let err = NeoTalkError::Llm("test error".to_string());

@@ -1836,13 +1836,24 @@ export function useDataSource<T = unknown>(
   const telemetryKey = useMemo(() => {
     return dataSources
       .filter((ds) => ds.type === 'telemetry')
-      .map((ds) => createStableKey({
-        deviceId: ds.deviceId,
-        metricId: ds.metricId,
-        timeRange: ds.timeRange,
-        limit: ds.limit,
-        aggregate: ds.aggregate ?? ds.aggregateExt
-      }))
+      .map((ds) => {
+        // Use actual values that will be used for fetching, to ensure key matches cache
+        const isImageDataSource = (ds.params?.includeRawPoints === true || ds.transform === 'raw') ||
+                                 (ds.metricId && (ds.metricId.toLowerCase().includes('image') ||
+                                                   ds.metricId.toLowerCase().includes('img') ||
+                                                   ds.metricId.includes('values.image')))
+        const actualTimeRange = ds.timeRange && ds.timeRange > 1 ? ds.timeRange : (isImageDataSource ? 48 : 1)
+        const actualLimit = isImageDataSource ? 200 : (ds.limit ?? 50)
+        const actualAggregate = ds.aggregate ?? ds.aggregateExt ?? 'raw'
+
+        return createStableKey({
+          deviceId: ds.deviceId,
+          metricId: ds.metricId,
+          timeRange: actualTimeRange,
+          limit: actualLimit,
+          aggregate: actualAggregate
+        })
+      })
       .join('|')
   }, [dataSources])
 

@@ -115,7 +115,16 @@
   },
   "execution": {
     "title": "Execution Details",
-    "description": "Detailed view of agent execution process and results"
+    "description": "Detailed view of agent execution process and results",
+    "analysis": "Analysis",
+    "inputData": "Input Data",
+    "inputImage": "Input Image",
+    "dataFieldsCount": "{{count}} data fields",
+    "reasoningSteps": "Reasoning Steps",
+    "decisions": "Decisions",
+    "conclusionLabel": "Conclusion:",
+    "actionsExecuted": "Actions Executed",
+    "moreFields": "{{count}} more fields"
   },
   "thinking": {
     "executing": "Executing...",

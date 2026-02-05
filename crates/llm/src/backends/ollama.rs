@@ -285,11 +285,6 @@ impl OllamaRuntime {
             })
             .collect()
     }
-
-    /// Convert messages to Ollama format (backward compatibility).
-    fn messages_to_ollama(&self, messages: &[Message]) -> Vec<OllamaMessage> {
-        self.messages_to_ollama_with_tools(messages, None, true)
-    }
 }
 
 /// Extract base64-encoded images from message content.

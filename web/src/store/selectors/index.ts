@@ -89,40 +89,6 @@ export {
 } from './alertSelectors'
 
 // ============================================================================
-// Decision Selectors (Legacy - for backward compatibility)
-// ============================================================================
-
-/**
- * Get pending decisions (not approved or rejected)
- */
-export const selectPendingDecisions = (state: NeoTalkStore) =>
-  state.decisions.filter((d) => d.status === 'pending')
-
-/**
- * Get approved decisions
- */
-export const selectApprovedDecisions = (state: NeoTalkStore) =>
-  state.decisions.filter((d) => d.status === 'approved')
-
-/**
- * Get rejected decisions
- */
-export const selectRejectedDecisions = (state: NeoTalkStore) =>
-  state.decisions.filter((d) => d.status === 'rejected')
-
-/**
- * Get executed decisions
- */
-export const selectExecutedDecisions = (state: NeoTalkStore) =>
-  state.decisions.filter((d) => d.status === 'executed')
-
-/**
- * Get count of pending decisions
- */
-export const selectPendingDecisionCount = (state: NeoTalkStore) =>
-  state.decisions.filter((d) => d.status === 'pending').length
-
-// ============================================================================
 // Stats Selectors (Legacy - for backward compatibility)
 // ============================================================================
 

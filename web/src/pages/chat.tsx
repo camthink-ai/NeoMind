@@ -506,7 +506,7 @@ export function ChatPage() {
       }
     } catch (error) {
       handleError(error, { operation: 'Process images', showToast: false })
-      alert(t('imageProcessFailed'))
+      alert(t('common:imageProcessFailed'))
     } finally {
       setIsUploadingImage(false)
       // Reset file input
@@ -613,9 +613,9 @@ export function ChatPage() {
                 <RotateCcw className="h-5 w-5 text-blue-600 dark:text-blue-300" />
               </div>
               <div>
-                <h3 className="font-semibold">恢复未完成的响应？</h3>
+                <h3 className="font-semibold">{t('common:session.resumeResponseTitle')}</h3>
                 <p className="text-sm text-muted-foreground">
-                  检测到之前断线时有正在进行的响应
+                  {t('common:session.resumeResponseDesc')}
                 </p>
               </div>
             </div>
@@ -643,13 +643,13 @@ export function ChatPage() {
                 className="flex-1"
                 onClick={handleDiscardPendingStream}
               >
-                放弃
+                {t('common:session.discard')}
               </Button>
               <Button
                 className="flex-1"
                 onClick={handleRestorePendingStream}
               >
-                恢复
+                {t('common:session.resume')}
               </Button>
             </div>
           </div>

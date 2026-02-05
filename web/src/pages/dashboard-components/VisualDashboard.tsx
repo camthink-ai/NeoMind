@@ -130,11 +130,13 @@ import {
 import type { ComponentConfigSchema } from '@/components/dashboard/config/ComponentConfigBuilder'
 import { ValueMapEditor } from '@/components/dashboard/config/ValueMapEditor'
 import { DataMappingConfig } from '@/components/dashboard/config/UIConfigSections'
-import type { ValueStateMapping } from '@/components/dashboard/config/ValueMapEditor'
+import { LEDStateRulesConfig } from '@/components/dashboard/config/LEDStateRulesConfig'
+import type { StateRule } from '@/components/dashboard/generic/LEDIndicator'
 import type { SingleValueMappingConfig, TimeSeriesMappingConfig, CategoricalMappingConfig } from '@/lib/dataMapping'
 
 // UI components
 import { ColorPicker } from '@/components/ui/color-picker'
+import { IconPicker } from '@/components/ui/icon-picker'
 import { EntityIconPicker } from '@/components/ui/entity-icon-picker'
 
 // Dashboard components
@@ -479,10 +481,6 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
           iconColor={config.iconColor}
           valueColor={config.valueColor}
           showTrend={config.showTrend}
-          trendValue={config.trendValue}
-          trendPeriod={config.trendPeriod}
-          showSparkline={config.showSparkline}
-          sparklineData={config.sparkline}
           size={config.size || 'md'}
         />
       )
@@ -492,16 +490,14 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
         <LEDIndicator
           {...spreadableProps}
           dataSource={dataSource}
-          state={config.state || 'off'}
-          title={config.label || commonProps.title}
+          rules={config.rules as StateRule[]}
+          defaultState={config.defaultState || 'unknown'}
+          stateLabels={config.stateLabels as Record<string, string>}
+          title={config.label}
           size={config.size || 'md'}
-          color={config.color}
-          valueMap={config.valueMap}
-          defaultState={config.defaultState}
           showGlow={config.showGlow ?? true}
           showAnimation={config.showAnimation ?? true}
           showCard={config.showCard ?? true}
-          dataMapping={config.dataMapping}
         />
       )
 
@@ -509,7 +505,7 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
       return (
         <Sparkline
           {...spreadableProps}
-          dataSource={getTelemetryDataSource(dataSource)}
+          dataSource={dataSource}
           data={config.data}
           showCard={commonProps.showCard}
           showThreshold={config.showThreshold ?? false}
@@ -517,13 +513,11 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
           thresholdColor={config.thresholdColor}
           title={commonProps.title}
           color={config.color}
-          colorMode={config.colorMode || 'auto'}
+          colorMode={config.colorMode || 'fixed'}
           fill={config.fill ?? true}
-          fillColor={config.fillColor}
-          showPoints={config.showPoints ?? false}
           strokeWidth={config.strokeWidth}
           curved={config.curved ?? true}
-          showValue={config.showValue}
+          showValue={config.showValue ?? true}
           maxValue={config.maxValue}
         />
       )
@@ -535,7 +529,7 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
           dataSource={dataSource}
           value={dataSource ? undefined : config.value}
           max={config.max ?? 100}
-          title={config.label || commonProps.title}
+          title={commonProps.title}
           color={config.color}
           size={config.size || commonProps.size}
           variant={config.variant || 'default'}
@@ -543,6 +537,9 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
           dangerThreshold={config.dangerThreshold}
           dataMapping={config.dataMapping}
           showCard={config.showCard ?? true}
+          icon={config.icon}
+          iconColor={config.iconColor}
+          backgroundColor={config.backgroundColor}
         />
       )
 
@@ -1319,7 +1316,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         break
       case 'led-indicator':
         defaultConfig = {
-          state: 'on'
+          rules: []
         }
         break
       // Controls
@@ -2023,29 +2020,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       />
                       <span className="text-sm">{t('visualDashboard.showTrend')}</span>
                     </label>
-
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={config.showSparkline ?? false}
-                        onChange={(e) => updateConfig('showSparkline')(e.target.checked)}
-                        className="rounded"
-                      />
-                      <span className="text-sm">{t('visualDashboard.showSparkline')}</span>
-                    </label>
                   </div>
-
-                  {config.showTrend && (
-                    <Field>
-                      <Label>{t('visualDashboard.trendValue')}</Label>
-                      <Input
-                        type="number"
-                        value={config.trendValue ?? 0}
-                        onChange={(e) => updateConfig('trendValue')(Number(e.target.value))}
-                        className="h-9"
-                      />
-                    </Field>
-                  )}
                 </div>
               ),
             },
@@ -2071,7 +2046,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                 <div className="space-y-3">
                   <SelectField
                     label={t('visualDashboard.colorMode')}
-                    value={config.colorMode || 'auto'}
+                    value={config.colorMode || 'fixed'}
                     onChange={updateConfig('colorMode')}
                     options={[
                       { value: 'auto', label: t('visualDashboard.auto') },
@@ -2081,12 +2056,14 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     ]}
                   />
 
-                  <ColorPicker
-                    value={config.color || '#3b82f6'}
-                    onChange={(color) => updateConfig('color')(color)}
-                    label={t('visualDashboard.fixedModeColor')}
-                    presets="primary"
-                  />
+                  {(config.colorMode || 'fixed') === 'fixed' && (
+                    <ColorPicker
+                      value={config.color || '#3b82f6'}
+                      onChange={(color) => updateConfig('color')(color)}
+                      label={t('visualDashboard.fixedModeColor')}
+                      presets="primary"
+                    />
+                  )}
 
                   <Field>
                     <Label>{t('visualDashboard.maxValue')}</Label>
@@ -2111,45 +2088,24 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     />
                   </Field>
 
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={config.fill ?? true}
-                        onChange={(e) => updateConfig('fill')(e.target.checked)}
-                        className="rounded"
-                      />
-                      <span className="text-sm">{t('visualDashboard.fillArea')}</span>
-                    </label>
-
-                    {config.fill && (
-                      <ColorPicker
-                        value={config.fillColor || '#3b82f6'}
-                        onChange={(color) => updateConfig('fillColor')(color)}
-                        label={t('visualDashboard.fillColor')}
-                        presets="primary"
-                      />
-                    )}
-                  </div>
-
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={config.curved ?? false}
-                      onChange={(e) => updateConfig('curved')(e.target.checked)}
+                      checked={config.fill ?? true}
+                      onChange={(e) => updateConfig('fill')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">{t('visualDashboard.curved')}</span>
+                    <span className="text-sm">{t('visualDashboard.fillArea')}</span>
                   </label>
 
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={config.showPoints ?? false}
-                      onChange={(e) => updateConfig('showPoints')(e.target.checked)}
+                      checked={config.curved ?? true}
+                      onChange={(e) => updateConfig('curved')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">{t('visualDashboard.showDataPoints')}</span>
+                    <span className="text-sm">{t('visualDashboard.curved')}</span>
                   </label>
                 </div>
               ),
@@ -2163,7 +2119,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
-                      checked={config.showValue ?? false}
+                      checked={config.showValue ?? true}
                       onChange={(e) => updateConfig('showValue')(e.target.checked)}
                       className="rounded"
                     />
@@ -2224,22 +2180,51 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               render: () => (
                 <div className="space-y-3">
                   <SelectField
-                    label={t('visualDashboard.style')}
+                    label={t('visualDashboard.variant')}
                     value={config.variant || 'default'}
                     onChange={updateConfig('variant')}
                     options={[
                       { value: 'default', label: t('visualDashboard.default') },
-                      { value: 'compact', label: t('visualDashboard.compact') },
-                      { value: 'circular', label: t('visualDashboard.horizontal') },
+                      { value: 'icon', label: t('visualDashboard.icon') },
+                      { value: 'circular', label: t('visualDashboard.circular') },
                     ]}
                   />
 
-                  <ColorPicker
-                    value={config.color || '#3b82f6'}
-                    onChange={(color) => updateConfig('color')(color)}
-                    label={t('visualDashboard.color')}
-                    presets="primary"
-                  />
+                  {/* Icon variant options */}
+                  {config.variant === 'icon' && (
+                    <>
+                      <IconPicker
+                        value={config.icon || ''}
+                        onChange={(iconName) => updateConfig('icon')(iconName || undefined)}
+                        label={t('visualDashboard.selectIcon')}
+                      />
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <ColorPicker
+                          value={config.iconColor || ''}
+                          onChange={(color) => updateConfig('iconColor')(color || undefined)}
+                          label={t('visualDashboard.iconColor')}
+                          presets="primary"
+                        />
+                        <ColorPicker
+                          value={config.backgroundColor || ''}
+                          onChange={(color) => updateConfig('backgroundColor')(color || undefined)}
+                          label={t('visualDashboard.backgroundColor')}
+                          presets="neutral"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Non-icon variants: custom color */}
+                  {config.variant !== 'icon' && (
+                    <ColorPicker
+                      value={config.color || ''}
+                      onChange={(color) => updateConfig('color')(color || undefined)}
+                      label={t('visualDashboard.customColor')}
+                      presets="primary"
+                    />
+                  )}
 
                   <SelectField
                     label={t('visualDashboard.size')}
@@ -2251,6 +2236,17 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       { value: 'lg', label: t('sizes.lg') },
                     ]}
                   />
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <Checkbox
+                      id="showCard"
+                      checked={config.showCard ?? true}
+                      onCheckedChange={(checked) => updateConfig('showCard')(checked === true)}
+                    />
+                    <label htmlFor="showCard" className="text-sm cursor-pointer">
+                      {t('visualDashboard.showCard')}
+                    </label>
+                  </label>
                 </div>
               ),
             },
@@ -2260,16 +2256,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               type: 'custom' as const,
               render: () => (
                 <div className="space-y-3">
-                  <Field>
-                    <Label>{t('visualDashboard.label')}</Label>
-                    <Input
-                      value={config.label || ''}
-                      onChange={(e) => updateConfig('label')(e.target.value)}
-                      placeholder={t('visualDashboard.descriptionPlaceholder')}
-                      className="h-9"
-                    />
-                  </Field>
-
                   <div className="grid grid-cols-2 gap-3">
                     <Field>
                       <Label>{t('visualDashboard.warningThreshold')}</Label>
@@ -2308,20 +2294,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       className="h-9"
                     />
                   </Field>
-
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={config.showCard ?? true}
-                      onChange={(e) => updateConfig('showCard')(e.target.checked)}
-                      className="rounded"
-                    />
-                    <span className="text-sm">{t('visualDashboard.showTitle')}</span>
-                  </label>
                 </div>
               ),
             },
-            // Data mapping configuration in display section
             {
               type: 'custom' as const,
               render: () => (
@@ -2329,8 +2304,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                   dataMapping={config.dataMapping as SingleValueMappingConfig}
                   onChange={updateDataMapping}
                   mappingType="single"
-                  label={t('visualDashboard.style')}
-                  readonly={!config.dataSource}
                 />
               ),
             },
@@ -2363,13 +2336,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       { value: 'md', label: t('sizes.md') },
                       { value: 'lg', label: t('sizes.lg') },
                     ]}
-                  />
-
-                  <ColorPicker
-                    value={config.color || '#22c55e'}
-                    onChange={(color) => updateConfig('color')(color)}
-                    label={t('visualDashboard.color')}
-                    presets="semantic"
                   />
 
                   <div className="flex items-center gap-6">
@@ -2415,37 +2381,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               type: 'custom' as const,
               render: () => (
                 <div className="space-y-3">
-                  <Field>
-                    <Label>{t('visualDashboard.label')}</Label>
-                    <Input
-                      value={config.label || ''}
-                      onChange={(e) => updateConfig('label')(e.target.value)}
-                      placeholder={t('visualDashboard.descriptionPlaceholder')}
-                      className="h-9"
-                    />
-                  </Field>
-
+                  {/* Default State - shown when no data source is configured */}
                   <Field>
                     <Label>{t('visualDashboard.defaultState')}</Label>
-                    <Select
-                      value={config.state || 'on'}
-                      onValueChange={updateConfig('state')}
-                    >
-                      <SelectTrigger className="h-9">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="on">{t('visualDashboard.on')}</SelectItem>
-                        <SelectItem value="off">{t('visualDashboard.off')}</SelectItem>
-                        <SelectItem value="error">{t('visualDashboard.error')}</SelectItem>
-                        <SelectItem value="warning">{t('visualDashboard.warning')}</SelectItem>
-                        <SelectItem value="unknown">{t('visualDashboard.unknown')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </Field>
-
-                  <Field>
-                    <Label>{t('visualDashboard.fallbackState')}</Label>
                     <Select
                       value={config.defaultState || 'unknown'}
                       onValueChange={updateConfig('defaultState')}
@@ -2462,24 +2400,46 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {t('visualDashboard.fallbackStateHint')}
+                      {t('visualDashboard.defaultStateHint')}
                     </p>
                   </Field>
 
+                  {/* State Labels - custom labels for each LED state */}
                   <div className="pt-2 border-t">
-                    <div className="text-sm font-medium mb-3">{t('visualDashboard.stringMapping')}</div>
-                    <ValueMapEditor
-                      valueMap={(config.valueMap || []).map((m: any) => ({
-                        id: m.id || Date.now().toString() + Math.random(),
-                        values: m.values || '',
-                        pattern: m.pattern,
-                        state: m.state || 'unknown',
-                        label: m.label,
-                        color: m.color,
-                      }))}
-                      onChange={(newValueMap) => {
-                        updateConfig('valueMap')(newValueMap)
-                      }}
+                    <div className="text-sm font-medium mb-3">{t('visualDashboard.stateLabels')}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(['on', 'off', 'error', 'warning', 'unknown'] as const).map((state) => (
+                        <div key={state} className="flex items-center gap-2">
+                          <span className={cn(
+                            "text-xs font-medium px-2 py-1 rounded shrink-0",
+                            state === 'on' && "bg-green-500/10 text-green-600",
+                            state === 'off' && "bg-muted text-muted-foreground",
+                            state === 'error' && "bg-red-500/10 text-red-600",
+                            state === 'warning' && "bg-amber-500/10 text-amber-600",
+                            state === 'unknown' && "bg-muted text-muted-foreground"
+                          )}>
+                            {t(`visualDashboard.${state}`)}
+                          </span>
+                          <Input
+                            value={(config.stateLabels as Record<string, string>)?.[state] || ''}
+                            onChange={(e) => {
+                              const current = (config.stateLabels as Record<string, string>) || {}
+                              updateConfig('stateLabels')({ ...current, [state]: e.target.value || undefined })
+                            }}
+                            placeholder={t(`visualDashboard.${state}`)}
+                            className="h-8 text-sm flex-1"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* State Mapping Rules */}
+                  <div className="pt-2 border-t">
+                    <LEDStateRulesConfig
+                      rules={config.rules as StateRule[] || []}
+                      onChange={(newRules) => updateConfig('rules')(newRules)}
+                      readonly={!config.dataSource}
                     />
                   </div>
                 </div>
@@ -3081,15 +3041,15 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               render: () => (
                 <div className="space-y-3">
                   <Field>
-                    <Label>Alt Text</Label>
+                    <Label>{t('imageDisplay.altText')}</Label>
                     <Input
                       value={config.alt || ''}
                       onChange={(e) => updateConfig('alt')(e.target.value)}
-                      placeholder="Describe the image for accessibility"
+                      placeholder={t('placeholders.imageAltText')}
                       className="h-9"
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Alternative text for screen readers and when image fails to load
+                      {t('imageDisplay.altHint', 'Alternative text for screen readers and when image fails to load')}
                     </p>
                   </Field>
 
@@ -3098,28 +3058,28 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     <Input
                       value={config.title || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="Image title"
+                      placeholder={t('placeholders.imageTitle')}
                       className="h-9"
                     />
                   </Field>
 
                   <Field>
-                    <Label>Caption</Label>
+                    <Label>{t('imageDisplay.caption', 'Caption')}</Label>
                     <Input
                       value={config.caption || ''}
                       onChange={(e) => updateConfig('caption')(e.target.value)}
-                      placeholder="Image caption text"
+                      placeholder={t('placeholders.imageCaption')}
                       className="h-9"
                     />
                   </Field>
 
                   <SelectField
-                    label="Loading State"
+                    label={t('placeholders.loadingState')}
                     value={config.loadingState || 'lazy'}
                     onChange={updateConfig('loadingState')}
                     options={[
-                      { value: 'eager', label: 'Load Immediately' },
-                      { value: 'lazy', label: 'Lazy Load' },
+                      { value: 'eager', label: t('imageDisplay.loadImmediately', 'Load Immediately') },
+                      { value: 'lazy', label: t('imageDisplay.lazyLoad', 'Lazy Load') },
                     ]}
                   />
                 </div>
@@ -3218,15 +3178,15 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               render: () => (
                 <div className="space-y-3">
                   <Field>
-                    <Label>Default Alt Text</Label>
+                    <Label>{t('imageHistory.defaultAltText', 'Default Alt Text')}</Label>
                     <Input
                       value={config.alt || ''}
                       onChange={(e) => updateConfig('alt')(e.target.value)}
-                      placeholder="Default alt text for all images"
+                      placeholder={t('placeholders.defaultAltText')}
                       className="h-9"
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Alternative text for accessibility when no specific alt is available
+                      {t('imageHistory.altHint', 'Alternative text for accessibility when no specific alt is available')}
                     </p>
                   </Field>
 
@@ -3235,7 +3195,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     <Input
                       value={config.title || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="Gallery title"
+                      placeholder={t('placeholders.galleryTitle')}
                       className="h-9"
                     />
                   </Field>
@@ -3248,7 +3208,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         onChange={(e) => updateConfig('showNavigation')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">Show Navigation</span>
+                      <span className="text-sm">{t('imageHistory.showNavigation', 'Show Navigation')}</span>
                     </label>
 
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -3258,7 +3218,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         onChange={(e) => updateConfig('showDots')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">Show Dots Indicator</span>
+                      <span className="text-sm">{t('imageHistory.showDotsIndicator', 'Show Dots Indicator')}</span>
                     </label>
 
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -3268,13 +3228,13 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         onChange={(e) => updateConfig('autoPlay')(e.target.checked)}
                         className="rounded"
                       />
-                      <span className="text-sm">Auto Play</span>
+                      <span className="text-sm">{t('imageHistory.autoPlay', 'Auto Play')}</span>
                     </label>
                   </div>
 
                   {config.autoPlay && (
                     <Field>
-                      <Label>Auto Play Interval (seconds)</Label>
+                      <Label>{t('imageHistory.autoPlayInterval', 'Auto Play Interval (seconds)')}</Label>
                       <Input
                         type="number"
                         value={config.autoPlayInterval ?? 3}
@@ -3309,11 +3269,11 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               render: () => (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Website URL</label>
+                    <label className="text-sm font-medium">{t('webDisplay.websiteUrl', 'Website URL')}</label>
                     <Input
                       value={config.src || ''}
                       onChange={(e) => updateConfig('src')(e.target.value)}
-                      placeholder="https://example.com"
+                      placeholder={t('placeholders.urlExample')}
                       className="h-10"
                     />
                   </div>
@@ -3351,13 +3311,13 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     <Input
                       value={config.title || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="Website title"
+                      placeholder={t('placeholders.websiteTitle')}
                       className="h-9"
                     />
                   </Field>
 
                   <Field>
-                    <Label>Refresh Interval (seconds)</Label>
+                    <Label>{t('webDisplay.refreshInterval', 'Refresh Interval (seconds)')}</Label>
                     <Input
                       type="number"
                       value={config.refreshInterval ?? 0}
@@ -3365,20 +3325,20 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       min={0}
                       max={3600}
                       step={10}
-                      placeholder="0 = no refresh"
+                      placeholder={t('webDisplay.noRefreshPlaceholder', '0 = no refresh')}
                       className="h-9"
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Set to 0 to disable auto-refresh
+                      {t('webDisplay.noRefreshHint', 'Set to 0 to disable auto-refresh')}
                     </p>
                   </Field>
 
                   <Field>
-                    <Label>Loading Message</Label>
+                    <Label>{t('webDisplay.loadingMessage', 'Loading Message')}</Label>
                     <Input
                       value={config.loadingMessage || 'Loading...'}
                       onChange={(e) => updateConfig('loadingMessage')(e.target.value)}
-                      placeholder="Message shown while loading"
+                      placeholder={t('placeholders.loadingMessage')}
                       className="h-9"
                     />
                   </Field>
@@ -3390,7 +3350,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       onChange={(e) => updateConfig('allowFullScreen')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">Allow Fullscreen</span>
+                    <span className="text-sm">{t('webDisplay.allowFullscreen', 'Allow Fullscreen')}</span>
                   </label>
                 </div>
               ),
@@ -3449,7 +3409,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     <Input
                       value={config.title || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="Content title"
+                      placeholder={t('placeholders.contentTitle')}
                       className="h-9"
                     />
                   </Field>
@@ -3461,7 +3421,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       onChange={(e) => updateConfig('showCopyButton')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">Show Copy Button</span>
+                    <span className="text-sm">{t('markdownDisplay.showCopyButton', 'Show Copy Button')}</span>
                   </label>
 
                   <label className="flex items-center gap-2 cursor-pointer">
@@ -3471,9 +3431,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       onChange={(e) => updateConfig('sanitizeHtml')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">Sanitize HTML</span>
+                    <span className="text-sm">{t('markdownDisplay.sanitizeHtml', 'Sanitize HTML')}</span>
                     <p className="text-xs text-muted-foreground">
-      Remove potentially dangerous HTML tags
+      {t('markdownDisplay.sanitizeHtmlHint', 'Remove potentially dangerous HTML tags')}
                     </p>
                   </label>
                 </div>
@@ -3610,15 +3570,15 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               render: () => (
                 <div className="space-y-3">
                   <Field>
-                    <Label>Poster Image URL</Label>
+                    <Label>{t('videoDisplay.posterImageUrl', 'Poster Image URL')}</Label>
                     <Input
                       value={config.poster || ''}
                       onChange={(e) => updateConfig('poster')(e.target.value)}
-                      placeholder="https://example.com/poster.jpg"
+                      placeholder={t('videoDisplay.posterPlaceholder', 'https://example.com/poster.jpg')}
                       className="h-9"
                     />
                     <p className="text-xs text-muted-foreground mt-1">
-                      Image shown before video plays
+                      {t('videoDisplay.posterHint', 'Image shown before video plays')}
                     </p>
                   </Field>
 
@@ -3627,17 +3587,17 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     <Input
                       value={config.title || ''}
                       onChange={(e) => updateConfig('title')(e.target.value)}
-                      placeholder="Video title"
+                      placeholder={t('placeholders.videoTitle')}
                       className="h-9"
                     />
                   </Field>
 
                   <Field>
-                    <Label>Description</Label>
+                    <Label>{t('common.description', 'Description')}</Label>
                     <Input
                       value={config.description || ''}
                       onChange={(e) => updateConfig('description')(e.target.value)}
-                      placeholder="Video description"
+                      placeholder={t('placeholders.videoDescription')}
                       className="h-9"
                     />
                   </Field>
@@ -3649,7 +3609,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       onChange={(e) => updateConfig('showTitleOverlay')(e.target.checked)}
                       className="rounded"
                     />
-                    <span className="text-sm">Show Title Overlay</span>
+                    <span className="text-sm">{t('videoDisplay.showTitleOverlay', 'Show Title Overlay')}</span>
                   </label>
                 </div>
               ),
@@ -3770,7 +3730,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         step="0.0001"
                         value={(config.center as { lat: number } | undefined)?.lat ?? 39.9042}
                         onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lat: parseFloat(e.target.value) })}
-                        placeholder="39.9042"
+                        placeholder={t('mapDisplay.defaultLatitude', '39.9042')}
                         className="h-9"
                       />
                     </Field>
@@ -3781,7 +3741,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         step="0.0001"
                         value={(config.center as { lng: number } | undefined)?.lng ?? 116.4074}
                         onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lng: parseFloat(e.target.value) })}
-                        placeholder="116.4074"
+                        placeholder={t('mapDisplay.defaultLongitude', '116.4074')}
                         className="h-9"
                       />
                     </Field>
@@ -4290,7 +4250,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         <Input
                           value={config.backgroundImage || ''}
                           onChange={(e) => updateConfig('backgroundImage')(e.target.value)}
-                          placeholder="https://example.com/image.png"
+                          placeholder={t('placeholders.urlExample')}
                           className="h-9"
                         />
                       </Field>

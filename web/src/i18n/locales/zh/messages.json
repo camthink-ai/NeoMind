@@ -28,5 +28,32 @@
   "confirmDiscard": "您有未保存的更改，确定要放弃吗？",
   "unsavedChanges": "您有未保存的更改",
   "discardChanges": "放弃更改",
-  "keepEditing": "继续编辑"
+  "keepEditing": "继续编辑",
+  "channels": {
+    "webhookUrl": "Webhook URL",
+    "webhookUrlPlaceholder": "https://webhook.site/xxxxx-xxxx-xxxx-xxxx",
+    "headers": "请求头 (JSON)",
+    "headersPlaceholder": "{\"Content-Type\": \"application/json\"}",
+    "smtpServer": "SMTP 服务器",
+    "smtpServerPlaceholder": "smtp.example.com",
+    "smtpPort": "SMTP 端口",
+    "portPlaceholder": "1025",
+    "username": "用户名",
+    "usernamePlaceholder": "your-username",
+    "password": "密码",
+    "emailFrom": "发件人地址",
+    "emailFromPlaceholder": "noreply@example.com",
+    "emailTo": "收件人地址",
+    "emailToPlaceholder": "test@example.com",
+    "yourEmailPlaceholder": "your-email@example.com",
+    "channelName": "通道名称",
+    "channelNamePlaceholder": "my-channel",
+    "optional": "(可选)"
+  },
+  "createDialog": {
+    "tagsPlaceholder": "标签1, 标签2, 标签3"
+  },
+  "search": {
+    "placeholder": "搜索消息..."
+  }
 }

@@ -1568,9 +1568,16 @@ mod tests {
                 max: Some(100.0),
                 unit: "°C".to_string(),
                 allowed_values: vec![],
+                required: true,
+                visible_when: None,
+                group: None,
+                help_text: String::new(),
+                validation: vec![],
             }],
             samples: vec![],
             llm_hints: String::new(),
+            fixed_values: std::collections::HashMap::new(),
+            parameter_groups: vec![],
         };
 
         // Valid parameter
@@ -1606,6 +1613,8 @@ mod tests {
             parameters: vec![],
             samples: vec![],
             llm_hints: String::new(),
+            fixed_values: std::collections::HashMap::new(),
+            parameter_groups: vec![],
         };
 
         let mut params = HashMap::new();

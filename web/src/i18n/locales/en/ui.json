@@ -1,0 +1,42 @@
+{
+  "iconPicker": {
+    "allCategories": "All",
+    "common": "Common",
+    "status": "Status",
+    "arrows": "Arrows",
+    "media": "Media",
+    "files": "Files",
+    "devices": "Devices",
+    "charts": "Charts",
+    "misc": "Misc",
+    "selectIcon": "Select icon",
+    "searchPlaceholder": "Search icons...",
+    "noIconsFound": "No matching icons found",
+    "noIcon": "No icon",
+    "searchIcon": "Search icon...",
+    "notFound": "No matching icon",
+    "clear": "Clear"
+  },
+  "entityIconPicker": {
+    "noIcon": "No icon",
+    "searchIcon": "Search icon...",
+    "notFound": "No matching icon",
+    "clear": "Clear"
+  },
+  "colorPicker": {
+    "themeForegroundColor": "Theme foreground color",
+    "hexValue": "Hex value",
+    "selectColor": "Select color"
+  },
+  "codeEditor": {
+    "jsonFormatError": "Invalid JSON format",
+    "yamlFormatError": "Invalid YAML format (incorrect indentation)"
+  },
+  "toggleSwitch": {
+    "minValue": "Min:",
+    "maxValue": "Max:"
+  },
+  "searchBar": {
+    "placeholder": "Search devices, rules..."
+  }
+}

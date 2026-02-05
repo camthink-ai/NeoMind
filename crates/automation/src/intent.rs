@@ -1,13 +1,12 @@
 //! Intent analysis for determining automation type from natural language
 //!
 //! This module uses LLM analysis to determine whether a user's description
-//! is better suited for a Rule or a Workflow, and provides reasoning.
+//! is better suited for a Transform (data processing) or a Rule (conditional automation).
 
 use std::sync::Arc;
 
 use crate::types::*;
 use crate::error::{AutomationError, Result};
-use crate::{RuleAutomation, WorkflowAutomation};
 
 use edge_ai_core::{LlmRuntime, Message, GenerationParams};
 use edge_ai_core::llm::backend::LlmInput;
@@ -52,20 +51,16 @@ impl IntentAnalyzer {
     fn heuristic_analysis(&self, description: &str) -> IntentResult {
         let desc_lower = description.to_lowercase();
 
-        // Indicators for workflow (complex automation)
-        let workflow_keywords = [
-            "then", "after that", "next", "followed by", "sequence",
-            "wait", "delay", "pause", "sleep",
-            "if then else", "otherwise", "alternative",
-            "loop", "repeat", "for each", "iterate",
-            "parallel", "concurrent", "simultaneous",
-            "check again", "verify", "validate", "confirm",
-            "calculate", "compute", "transform", "convert",
-            "analyze", "process", "aggregate",
-            "step", "phase", "stage",
+        // Indicators for transform (data processing)
+        let transform_keywords = [
+            "calculate", "compute", "aggregate", "average", "sum", "count",
+            "extract", "parse", "transform", "convert", "process",
+            "statistics", "metric", "virtual", "derived",
+            "array", "group by", "filter", "map",
+            "data from", "get value", "field",
         ];
 
-        // Indicators for rule (simple automation)
+        // Indicators for rule (conditional automation)
         let rule_keywords = [
             "when", "if", "whenever", "once",
             "exceeds", "above", "below", "greater", "less",
@@ -73,15 +68,16 @@ impl IntentAnalyzer {
             "send alert", "notify", "send message",
             "turn on", "turn off", "switch", "set",
             "trigger", "activate", "deactivate",
+            "then", "after that",
         ];
 
-        let mut workflow_score = 0i32;
+        let mut transform_score = 0i32;
         let mut rule_score = 0i32;
 
-        // Count workflow indicators
-        for keyword in &workflow_keywords {
+        // Count transform indicators
+        for keyword in &transform_keywords {
             if desc_lower.contains(keyword) {
-                workflow_score += 10;
+                transform_score += 5;
             }
         }
 
@@ -92,54 +88,38 @@ impl IntentAnalyzer {
             }
         }
 
-        // Check for sequential language
-        if desc_lower.contains(" and then ")
-            || desc_lower.contains(", then ")
-            || desc_lower.contains(" after ")
-        {
-            workflow_score += 20;
+        // Check for device/action patterns (suggests rule)
+        if desc_lower.contains("device") || desc_lower.contains("send") {
+            rule_score += 10;
         }
 
-        // Check for condition complexity
-        let condition_count = desc_lower.matches("when").count()
-            + desc_lower.matches("if").count()
-            + desc_lower.matches("whenever").count();
-
-        if condition_count > 1 {
-            workflow_score += 15;
-        }
-
-        // Check for action complexity
-        let action_count = desc_lower.matches(',').count()
-            + desc_lower.matches(" and ").count()
-            + desc_lower.split_whitespace().count() / 5;
-
-        if action_count > 5 {
-            workflow_score += 10;
+        // Check for data processing patterns (suggests transform)
+        if desc_lower.contains("data") || desc_lower.contains("value") {
+            transform_score += 5;
         }
 
         // Determine result
-        let (recommended_type, confidence, reasoning) = if workflow_score > rule_score + 20 {
+        let (recommended_type, confidence, reasoning) = if transform_score > rule_score + 10 {
             (
-                AutomationType::Workflow,
-                (workflow_score - rule_score).min(100) as u8,
+                AutomationType::Transform,
+                (transform_score - rule_score).min(100) as u8,
                 format!(
-                    "This appears to be a multi-step automation with {} workflow indicators",
-                    workflow_score / 10
+                    "This appears to be a data processing automation with {} transform indicators",
+                    transform_score / 5
                 ),
             )
-        } else if rule_score > workflow_score + 20 {
+        } else if rule_score > transform_score + 10 {
             (
                 AutomationType::Rule,
-                (rule_score - workflow_score).min(100) as u8,
-                "This appears to be a simple conditional automation".to_string(),
+                (rule_score - transform_score).min(100) as u8,
+                "This appears to be a conditional automation".to_string(),
             )
         } else {
-            // Uncertain - default to rule as it's simpler
+            // Uncertain - default to rule for automation use cases
             (
                 AutomationType::Rule,
-                50,
-                "This could be either a rule or workflow. Starting with a rule is simpler.".to_string(),
+                55,
+                "This could be either a transform or rule. Defaulting to rule for automation.".to_string(),
             )
         };
 
@@ -159,23 +139,22 @@ impl IntentAnalyzer {
     /// LLM-powered analysis for complex cases
     async fn llm_analysis(&self, description: &str) -> Result<IntentResult> {
         let prompt = format!(
-            r#"Analyze the following automation description and determine whether it's better implemented as a Rule or a Workflow.
+            r#"Analyze the following automation description and determine whether it's better implemented as a Transform (data processing) or a Rule (conditional automation).
 
 Description: "{}"
 
 Respond in JSON format:
 {{
-  "recommended_type": "rule" | "workflow",
+  "recommended_type": "transform" | "rule",
   "confidence": 0-100,
   "reasoning": "Brief explanation",
-  "complexity_indicators": ["list of factors that influenced the decision"],
   "suggested_name": "a clear name for this automation",
   "suggested_description": "a clear description"
 }}
 
 Guidelines:
-- Recommend "rule" for: single condition checks, immediate actions, simple if-then logic
-- Recommend "workflow" for: multiple steps, branching logic, delays/loops, data processing
+- Recommend "transform" for: data processing, calculations, aggregations, extracting values from device data
+- Recommend "rule" for: condition-based actions, sending alerts, device commands, reactive automation
 - Confidence should reflect how clear-cut the choice is"#,
             description
         );
@@ -200,7 +179,7 @@ Guidelines:
             .map_err(|e| AutomationError::IntentAnalysisFailed(format!("Invalid JSON: {}", e)))?;
 
         let recommended_type = match analysis["recommended_type"].as_str() {
-            Some("workflow") => AutomationType::Workflow,
+            Some("transform") => AutomationType::Transform,
             _ => AutomationType::Rule,
         };
 
@@ -225,155 +204,12 @@ Guidelines:
                 name: suggested_name,
                 description: suggested_description,
                 automation_type: recommended_type,
+                transform: None,
                 rule: None,
-                workflow: None,
-                estimated_complexity: if recommended_type == AutomationType::Rule { 1 } else { 3 },
+                estimated_complexity: if recommended_type == AutomationType::Transform { 2 } else { 1 },
             }),
             warnings: Vec::new(),
         })
-    }
-
-    /// Determine if a workflow can be converted to a rule
-    pub fn can_convert_to_rule(&self, workflow: &WorkflowAutomation) -> bool {
-        // Can convert if:
-        // - Single trigger
-        // - Single or simple sequential steps (no branching)
-        // - No delays longer than a few seconds
-        // - No parallel execution
-        // - No loops
-
-        if workflow.triggers.len() != 1 {
-            return false;
-        }
-
-        if workflow.steps.is_empty() || workflow.steps.len() > 3 {
-            return false;
-        }
-
-        // Check for complex step types
-        for step in &workflow.steps {
-            match step {
-                Step::Condition { .. } => return false,
-                Step::Parallel { .. } => return false,
-                Step::ForEach { .. } => return false,
-                Step::LlmAnalysis { .. } => return false,
-                Step::Delay { duration_seconds, .. } => {
-                    // Only short delays allowed
-                    if *duration_seconds > 10 {
-                        return false;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        true
-    }
-
-    /// Convert a rule to a workflow
-    pub fn rule_to_workflow(&self, rule: RuleAutomation) -> WorkflowAutomation {
-        let mut workflow = WorkflowAutomation::new(
-            format!("{}-as-workflow", rule.metadata.id),
-            format!("{} (Workflow)", rule.metadata.name),
-        )
-        .with_description(rule.metadata.description.clone());
-
-        // Convert trigger
-        workflow.triggers.push(rule.trigger.clone());
-
-        // Convert condition to a condition step
-        let condition_str = format!(
-            "{} {} {}",
-            rule.condition.device_id,
-            rule.condition.operator.as_str(),
-            rule.condition.threshold
-        );
-
-        // Convert actions to steps
-        let mut action_steps = Vec::new();
-        for (i, action) in rule.actions.into_iter().enumerate() {
-            let step_id = format!("action_{}", i);
-            match action {
-                Action::Notify { message } => {
-                    action_steps.push(Step::SendAlert {
-                        id: step_id,
-                        severity: AlertSeverity::Info,
-                        title: rule.metadata.name.clone(),
-                        message,
-                        channels: Vec::new(),
-                    });
-                }
-                Action::ExecuteCommand { device_id, command, parameters } => {
-                    action_steps.push(Step::ExecuteCommand {
-                        id: step_id,
-                        device_id,
-                        command,
-                        parameters,
-                        wait_for_result: Some(true),
-                    });
-                }
-                Action::Log { level, message, .. } => {
-                    action_steps.push(Step::SetVariable {
-                        id: step_id,
-                        name: format!("log_{}", i),
-                        value: serde_json::json!({
-                            "level": format!("{:?}", level).to_lowercase(),
-                            "message": message
-                        }),
-                    });
-                }
-                Action::CreateAlert { severity, title, message } => {
-                    action_steps.push(Step::SendAlert {
-                        id: step_id,
-                        severity,
-                        title,
-                        message,
-                        channels: Vec::new(),
-                    });
-                }
-                Action::Delay { duration } => {
-                    action_steps.push(Step::Delay {
-                        id: step_id,
-                        duration_seconds: duration,
-                    });
-                }
-                Action::SetVariable { name, value } => {
-                    action_steps.push(Step::SetVariable {
-                        id: step_id,
-                        name,
-                        value,
-                    });
-                }
-            }
-        }
-
-        // Create a condition step that wraps the actions
-        workflow.steps.push(Step::Condition {
-            id: "check_condition".to_string(),
-            condition: condition_str,
-            then_steps: action_steps,
-            else_steps: Vec::new(),
-            output_variable: None,
-        });
-
-        // Preserve enabled state as a variable
-        workflow.variables.insert(
-            "enabled".to_string(),
-            serde_json::json!(rule.metadata.enabled),
-        );
-
-        workflow
-    }
-
-    /// Convert a workflow to a rule (if simple enough)
-    pub fn workflow_to_rule(&self, workflow: &WorkflowAutomation) -> Option<RuleAutomation> {
-        if !self.can_convert_to_rule(workflow) {
-            return None;
-        }
-
-        // For now, return None if conversion is not straightforward
-        // A full implementation would need to map each workflow step to rule actions
-        None
     }
 }
 
@@ -400,7 +236,7 @@ mod tests {
     use std::result::Result;
     use futures::Stream;
 
-    // Mock LLM for testing - simplified version
+    // Mock LLM for testing
     struct MockLlm;
 
     #[async_trait::async_trait]
@@ -431,7 +267,6 @@ mod tests {
         }
 
         async fn generate_stream(&self, _input: LlmInput) -> Result<Pin<Box<dyn Stream<Item = StreamChunk> + Send>>, LlmError> {
-            // Return an empty stream for tests that don't use streaming
             use futures::stream;
             Ok(Box::pin(stream::empty()))
         }
@@ -448,15 +283,13 @@ mod tests {
     }
 
     #[test]
-    fn test_heuristic_workflow() {
+    fn test_heuristic_transform() {
         let analyzer = IntentAnalyzer {
             llm: Arc::new(MockLlm),
         };
 
-        let result = analyzer.heuristic_analysis(
-            "Check temperature, then wait 5 minutes, if still high send alert, otherwise turn off device"
-        );
-        assert_eq!(result.recommended_type, AutomationType::Workflow);
+        let result = analyzer.heuristic_analysis("Calculate average temperature from sensor array");
+        assert_eq!(result.recommended_type, AutomationType::Transform);
     }
 
     #[test]

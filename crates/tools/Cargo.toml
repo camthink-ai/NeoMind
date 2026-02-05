@@ -23,11 +23,8 @@ base64 = { workspace = true }
 regex = "1"
 
 [features]
-default = ["builtin"]
-# Built-in tools (mock implementations for testing)
-builtin = []
-# Real tools (actual implementations)
-real = []
+default = []
+# All features are enabled by default - no feature flags needed
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

@@ -1,7 +1,19 @@
 //! Core alert abstractions for NeoTalk.
 //!
-//! This module defines the foundational traits for alert notification
-/// channels.
+//! # DEPRECATED
+//!
+//! This module is deprecated and will be removed in a future version.
+//! Alert functionality has been migrated to the `edge_ai_messages` crate.
+//!
+//! ## Migration Guide
+//!
+//! Instead of using `Alert`, `AlertSeverity`, `AlertStatus` from this module:
+//! - Use `Message` and `MessageSeverity` from `edge_ai_messages`
+//! - Use message channels from `edge_ai_messages::channels`
+//!
+//! This module is kept for backward compatibility only.
+
+#![deprecated(since = "0.4.0", note = "Use edge_ai_messages crate instead")]
 use async_trait::async_trait;
 
 /// Result type for alert operations.

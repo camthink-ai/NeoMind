@@ -153,17 +153,6 @@
     "plugins": "Plugins",
     "settings": "Settings"
   },
-  "session": {
-    "history": "Session History",
-    "sessions": "Sessions",
-    "newChat": "New Chat",
-    "search": "Search...",
-    "noSessions": "No sessions yet",
-    "noMatch": "No matching sessions",
-    "totalSessions": "{{count}} sessions",
-    "messages": "{{count}} messages",
-    "defaultTitle": "New Chat"
-  },
   "add": "Add",
   "edit": "Edit",
   "delete": "Delete",
@@ -331,5 +320,118 @@
       "settings": "Settings",
       "general": "General"
     }
+  },
+  "placeholders": {
+    "search": "Search...",
+    "searchComponents": "Search components...",
+    "searchDevices": "Search devices...",
+    "searchAgents": "Search agents...",
+    "searchDashboard": "Search dashboard...",
+    "enterValue": "Enter a value",
+    "enterName": "Enter name",
+    "enterTitle": "Enter title",
+    "enterDescription": "Enter description",
+    "selectOption": "Select an option",
+    "jsonExample": "{\"key\": \"value\"}",
+    "emailExample": "test@example.com",
+    "passwordPlaceholder": "••••••••",
+    "urlExample": "https://example.com",
+    "pathExample": "/path/to/file",
+    "commaSeparated": "item1, item2, item3",
+    "optional": "(optional)"
+  },
+  "units": {
+    "celsius": "°C",
+    "percent": "%",
+    "kilogram": "kg",
+    "dollar": "$",
+    "degrees": "°",
+    "bytes": "B",
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB",
+    "tb": "TB",
+    "milliseconds": "ms",
+    "seconds": "s",
+    "minutes": "min",
+    "hours": "h"
+  },
+  "emptyStates": {
+    "noData": "No data available",
+    "noResults": "No results found",
+    "noItems": "No items",
+    "noDevices": "No devices",
+    "noAgents": "No agents",
+    "noMessages": "No messages",
+    "noAlerts": "No alerts",
+    "trySearch": "Try a different search term",
+    "getStarted": "Get started by adding your first item"
+  },
+  "loadingStates": {
+    "loading": "Loading...",
+    "saving": "Saving...",
+    "processing": "Processing...",
+    "fetching": "Fetching...",
+    "updating": "Updating...",
+    "deleting": "Deleting..."
+  },
+  "searchBar": {
+    "placeholder": "Search devices, rules...",
+    "results": "Results ({{count}})",
+    "suggestions": "Suggestions",
+    "noResults": "No matching results",
+    "startTyping": "Enter keywords to start searching",
+    "typeDevice": "Device",
+    "typeRule": "Rule",
+    "typeAlert": "Alert"
+  },
+  "alertLevels": {
+    "critical": "Critical",
+    "warning": "Warning",
+    "info": "Info",
+    "emergency": "Emergency"
+  },
+  "range": {
+    "min": "Min:",
+    "max": "Max:"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "tools": {
+    "available": "Available Tools",
+    "totalCalls": "Total calls:",
+    "successful": "Success:",
+    "failed": "Failed:",
+    "avgTime": "Avg time:",
+    "all": "All",
+    "loading": "Loading tools...",
+    "noTools": "No tools available",
+    "noToolsDesc": "There are no tools available in the system",
+    "calls": "Calls:",
+    "avg": "Avg:"
+  },
+  "session": {
+    "history": "Session History",
+    "sessions": "Sessions",
+    "newChat": "New Chat",
+    "search": "Search...",
+    "noSessions": "No sessions yet",
+    "noMatch": "No matching sessions",
+    "totalSessions": "Total {{count}} sessions",
+    "messages": "{{count}} messages",
+    "defaultTitle": "New Chat",
+    "deleteTitle": "Delete Session",
+    "deleteDescription": "Are you sure you want to delete this session? This action cannot be undone.",
+    "resumeResponseTitle": "Resume incomplete response?",
+    "resumeResponseDesc": "Detected an in-progress response from previous disconnection",
+    "discard": "Discard",
+    "resume": "Resume"
+  },
+  "language": {
+    "switchToEnglish": "Switch to English",
+    "switchToChinese": "切换到中文"
   }
 }

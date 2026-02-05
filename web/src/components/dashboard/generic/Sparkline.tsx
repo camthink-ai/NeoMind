@@ -6,22 +6,18 @@
  * Fully responsive and adaptive with comprehensive error handling.
  */
 
-import { useRef, useEffect, useMemo, memo } from 'react'
+import { useRef, useMemo, memo } from 'react'
 import { cn } from '@/lib/utils'
-import { Skeleton } from '@/components/ui/skeleton'
 import { useDataSource } from '@/hooks/useDataSource'
 import { toNumberArray } from '@/design-system/utils/format'
 import { dashboardComponentSize, dashboardCardBase } from '@/design-system/tokens/size'
 import {
   indicatorFontWeight,
   indicatorColors,
-  getGradientStops,
   getValueStateColor,
-  getValueGradient,
-  type IndicatorGradientType,
 } from '@/design-system/tokens/indicator'
 import type { DataSourceOrList, TelemetryAggregate, TimeWindowType } from '@/types/dashboard'
-import { EmptyState, ErrorState, LoadingState } from '../shared'
+import { EmptyState, ErrorState } from '../shared'
 import type { SingleValueMappingConfig } from '@/lib/dataMapping'
 import { normalizeDataSource } from '@/types/dashboard'
 import {
@@ -47,10 +43,8 @@ export interface SparklineProps {
 
   // Styling
   color?: string
-  colorMode?: 'auto' | 'primary' | 'fixed' | 'value'  // value: like ProgressBar (based on latest value/max ratio)
+  colorMode?: 'primary' | 'fixed' | 'value'  // value: like ProgressBar (based on latest value/max ratio)
   fill?: boolean
-  fillColor?: string
-  showPoints?: boolean
   strokeWidth?: number
   curved?: boolean
 
@@ -79,20 +73,6 @@ export interface SparklineProps {
   className?: string
 }
 
-// Get trend-based color
-function getTrendColor(trend: number): string {
-  if (trend > 0) return indicatorColors.success.base
-  if (trend < 0) return indicatorColors.error.base
-  return indicatorColors.neutral.base
-}
-
-// Get trend-based text color class
-function getTrendTextColor(trend: number): string {
-  if (trend > 0) return indicatorColors.success.text
-  if (trend < 0) return indicatorColors.error.text
-  return indicatorColors.neutral.text
-}
-
 // Default sample data for preview
 const DEFAULT_SAMPLE_DATA = [12, 15, 13, 18, 14, 16, 19, 17, 20, 18, 22, 19, 21, 24, 22]
 
@@ -104,14 +84,11 @@ const ResponsiveSparkline = memo(function ResponsiveSparkline({
   height,
   color,
   fill,
-  fillColor,
-  showPoints,
   strokeWidth,
   curved,
   showThreshold,
   threshold,
   thresholdColor,
-  gradientType,
   className,
 }: {
   data: number[]
@@ -119,14 +96,11 @@ const ResponsiveSparkline = memo(function ResponsiveSparkline({
   height: number
   color: string
   fill?: boolean
-  fillColor?: string
-  showPoints?: boolean
   strokeWidth?: number
   curved?: boolean
   showThreshold?: boolean
   threshold?: number
   thresholdColor?: string
-  gradientType?: IndicatorGradientType
   className?: string
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -187,16 +161,16 @@ const ResponsiveSparkline = memo(function ResponsiveSparkline({
   }, [pathD])
 
   const thresholdY = useMemo(() => {
-    if (showThreshold && threshold !== undefined && !isFlatLine) {
-      return VIEWBOX_HEIGHT - ((threshold - min) / range) * VIEWBOX_HEIGHT
+    if (showThreshold && threshold !== undefined) {
+      // Clamp threshold to data range for proper positioning
+      const clampedThreshold = Math.max(min, Math.min(max, threshold))
+      if (isFlatLine) {
+        return VIEWBOX_HEIGHT / 2
+      }
+      return VIEWBOX_HEIGHT - ((clampedThreshold - min) / range) * VIEWBOX_HEIGHT
     }
     return null
-  }, [showThreshold, threshold, isFlatLine, min, range])
-
-  // Calculate proportional dash array for threshold line
-  const thresholdDashArray = useMemo(() => {
-    return '4% 4%'
-  }, [])
+  }, [showThreshold, threshold, isFlatLine, min, max, range])
 
   return (
     <div ref={containerRef} className={cn('w-full h-full relative', className)}>
@@ -241,29 +215,17 @@ const ResponsiveSparkline = memo(function ResponsiveSparkline({
           filter={`url(#glow-${gradientId})`}
         />
 
-        {showPoints && points.map((p, i) => (
-          <circle
-            key={i}
-            cx={p.x}
-            cy={p.y}
-            r={2.5}
-            fill={color}
-            vectorEffect="non-scaling-stroke"
-            className="opacity-50 hover:opacity-100"
-          />
-        ))}
-
-        {showThreshold && threshold !== undefined && !isFlatLine && thresholdY !== null && (
+        {showThreshold && threshold !== undefined && thresholdY !== null && (
           <line
             x1={0}
             y1={thresholdY}
             x2={VIEWBOX_WIDTH}
             y2={thresholdY}
             stroke={thresholdColor}
-            strokeWidth={1.5}
-            strokeDasharray={thresholdDashArray}
+            strokeWidth={0.75}
+            strokeDasharray="3 3"
             vectorEffect="non-scaling-stroke"
-            className="opacity-60"
+            className="opacity-70"
           />
         )}
       </svg>
@@ -311,10 +273,8 @@ export function Sparkline({
   responsive = false,
   showCard = true,
   color,
-  colorMode = 'auto',
+  colorMode = 'fixed',
   fill = true,
-  fillColor,
-  showPoints = false,
   strokeWidth = 2,
   curved = true,
   showThreshold = false,
@@ -322,7 +282,7 @@ export function Sparkline({
   thresholdColor,
   dataMapping,
   maxValue,
-  showValue = false,
+  showValue = true,
   title,
   size = 'md',
   timeWindow,
@@ -349,18 +309,17 @@ export function Sparkline({
   // Normalize data sources to telemetry type with transform settings
   const telemetrySources = useMemo(() => {
     const sources = normalizeDataSource(dataSource)
-    const limit = 50 // Default limit for sparkline
     const timeRange = timeWindowToHours(effectiveTimeWindow)
 
     // Determine aggregate value with proper type
     const aggregateValue: 'raw' | 'avg' | 'min' | 'max' | 'sum' = effectiveAggregate === 'raw' ? 'raw' : 'avg'
 
     return sources.map(ds => {
-      // If already telemetry type, update with settings
+      // If already telemetry type, preserve existing settings
       if (ds.type === 'telemetry') {
         return {
           ...ds,
-          limit: ds.limit ?? limit,
+          limit: ds.limit ?? 50,
           timeRange: ds.timeRange ?? timeRange,
           aggregate: ds.aggregate ?? aggregateValue,
           params: {
@@ -378,7 +337,7 @@ export function Sparkline({
           deviceId: ds.deviceId,
           metricId: ds.metricId ?? ds.property ?? 'value',
           timeRange: timeRange,
-          limit: limit,
+          limit: ds.limit ?? 50,
           aggregate: aggregateValue,
           params: {
             includeRawPoints: true,
@@ -396,8 +355,8 @@ export function Sparkline({
     : dataSource
 
   // Fetch data with proper array handling
+  // Don't use fallback for sparkline to avoid showing stale data during drag
   const { data, loading, error } = useDataSource<unknown>(finalDataSource, {
-    fallback: propData,
     preserveMultiple: true,
   })
 
@@ -408,8 +367,9 @@ export function Sparkline({
   const chartData = useMemo(() => {
     if (error) return []
 
-    // Handle multi-source data - combine all sources' data
-    let rawData = data ?? propData
+    // Use propData only when there's no dataSource (static mode)
+    // When dataSource exists, always use live data to avoid stale data during drag
+    let rawData = hasDataSource ? data : propData
     if (Array.isArray(rawData) && rawData.length > 0 && Array.isArray(rawData[0])) {
       // Multi-source detected: combine all sources into one array
       // For sparkline, we interleave or append data from all sources
@@ -439,12 +399,14 @@ export function Sparkline({
   // Memoize stats to prevent recalculation on every render
   const stats = useMemo(() => {
     const latestValue = chartData.length > 0 ? chartData[chartData.length - 1] : 0
-    const prevValue = chartData.length > 1 ? chartData[chartData.length - 2] : latestValue
-    const trend = chartData.length > 1 ? latestValue - prevValue : 0
-    const trendPercent = prevValue !== 0 ? ((trend / prevValue) * 100).toFixed(1) : '0'
     const dataMax = chartData.length > 0 ? Math.max(...chartData) : 0
     const effectiveMax = maxValue ?? dataMax ?? 100
-    return { latestValue, prevValue, trend, trendPercent, dataMax, effectiveMax }
+
+    return {
+      latestValue,
+      dataMax,
+      effectiveMax,
+    }
   }, [chartData, maxValue])
 
   // Derive threshold from dataMapping if not explicitly provided
@@ -452,27 +414,14 @@ export function Sparkline({
 
   // Memoize color calculation to prevent flickering
   const lineColor = useMemo(() => {
-    if (colorMode === 'auto') {
-      return color || getTrendColor(stats.trend)
-    } else if (colorMode === 'value') {
-      return color || getValueStateColor(stats.latestValue, stats.effectiveMax)
+    if (colorMode === 'value') {
+      return getValueStateColor(stats.latestValue, stats.effectiveMax)
     } else if (colorMode === 'primary') {
       return indicatorColors.primary.base
     }
+    // 'fixed' mode - use the configured color or default to primary
     return color || indicatorColors.primary.base
-  }, [color, colorMode, stats.trend, stats.latestValue, stats.effectiveMax])
-
-  // Memoize gradient state
-  const gradientState = useMemo((): IndicatorGradientType => {
-    if (colorMode === 'value') {
-      return getValueGradient(stats.latestValue, stats.effectiveMax)
-    } else if (colorMode === 'primary') {
-      return 'primary'
-    } else if (colorMode === 'auto') {
-      return stats.trend > 0 ? 'success' : stats.trend < 0 ? 'error' : 'neutral'
-    }
-    return 'neutral'
-  }, [colorMode, stats.trend, stats.latestValue, stats.effectiveMax])
+  }, [color, colorMode, stats.latestValue, stats.effectiveMax])
 
   // Inner content component
   const SparklineContent = () => (
@@ -486,20 +435,9 @@ export function Sparkline({
             </span>
           )}
           {showValue && (
-            <div className="flex items-center gap-2">
-              <span className={cn(indicatorFontWeight.value, 'text-foreground tabular-nums', sizeConfig.valueText)}>
-                {stats.latestValue.toLocaleString(undefined, { maximumFractionDigits: 1 })}
-              </span>
-              {stats.trend !== 0 && (
-                <span className={cn(
-                  indicatorFontWeight.meta,
-                  'text-xs',
-                  stats.trend > 0 ? indicatorColors.success.text : indicatorColors.error.text
-                )}>
-                  {stats.trend > 0 ? '+' : ''}{stats.trendPercent}%
-                </span>
-              )}
-            </div>
+            <span className={cn(indicatorFontWeight.value, 'text-foreground tabular-nums', sizeConfig.valueText)}>
+              {stats.latestValue.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+            </span>
           )}
         </div>
       )}
@@ -512,14 +450,11 @@ export function Sparkline({
           height={chartHeight}
           color={lineColor}
           fill={fill}
-          fillColor={fillColor}
-          showPoints={showPoints}
           strokeWidth={strokeWidth}
           curved={curved}
           showThreshold={showThreshold}
           threshold={effectiveThreshold}
           thresholdColor={thresholdColor || indicatorColors.neutral.base}
-          gradientType={gradientState}
         />
       </div>
     </>

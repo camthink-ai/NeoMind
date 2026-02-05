@@ -28,5 +28,32 @@
   "confirmDiscard": "You have unsaved changes, are you sure you want to discard?",
   "unsavedChanges": "You have unsaved changes",
   "discardChanges": "Discard Changes",
-  "keepEditing": "Keep Editing"
+  "keepEditing": "Keep Editing",
+  "channels": {
+    "webhookUrl": "Webhook URL",
+    "webhookUrlPlaceholder": "https://webhook.site/xxxxx-xxxx-xxxx-xxxx",
+    "headers": "Headers (JSON)",
+    "headersPlaceholder": "{\"Content-Type\": \"application/json\"}",
+    "smtpServer": "SMTP Server",
+    "smtpServerPlaceholder": "smtp.example.com",
+    "smtpPort": "SMTP Port",
+    "portPlaceholder": "1025",
+    "username": "Username",
+    "usernamePlaceholder": "your-username",
+    "password": "Password",
+    "emailFrom": "From Address",
+    "emailFromPlaceholder": "noreply@example.com",
+    "emailTo": "To Address",
+    "emailToPlaceholder": "test@example.com",
+    "yourEmailPlaceholder": "your-email@example.com",
+    "channelName": "Channel Name",
+    "channelNamePlaceholder": "my-channel",
+    "optional": "(optional)"
+  },
+  "createDialog": {
+    "tagsPlaceholder": "tag1, tag2, tag3"
+  },
+  "search": {
+    "placeholder": "Search messages..."
+  }
 }

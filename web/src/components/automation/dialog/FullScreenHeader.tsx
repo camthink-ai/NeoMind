@@ -6,6 +6,7 @@
  */
 
 import { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, X, Save, Loader2, Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -39,6 +40,7 @@ export function FullScreenHeader({
   showTest = false,
   extraActions,
 }: FullScreenHeaderProps) {
+  const { t } = useTranslation(['common'])
   return (
     <header className="flex items-center justify-between px-4 md:px-6 py-4 border-b bg-background shrink-0">
       {/* Left: Back button + Title */}
@@ -76,8 +78,8 @@ export function FullScreenHeader({
             disabled={!canTest || saving}
           >
             <Play className="h-4 w-4 mr-1.5" />
-            <span className="hidden sm:inline">测试</span>
-            <span className="sm:hidden">测试</span>
+            <span className="hidden sm:inline">{t('common:test')}</span>
+            <span className="sm:hidden">{t('common:test')}</span>
           </Button>
         )}
         <Button onClick={onSave} disabled={!canSave || saving}>
@@ -86,7 +88,7 @@ export function FullScreenHeader({
           ) : (
             <Save className="h-4 w-4 mr-1.5" />
           )}
-          {saving ? '保存中...' : '保存'}
+          {saving ? t('common:saving') : t('common:save')}
         </Button>
         <Button
           variant="ghost"

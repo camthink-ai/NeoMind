@@ -13,7 +13,6 @@ use edge_ai_devices::adapter::AdapterResult;
 use edge_ai_devices::{DeviceRegistry, DeviceService, TimeSeriesStorage};
 use edge_ai_rules::{InMemoryValueProvider, RuleEngine, device_integration::DeviceActionExecutor, store::RuleStore};
 use edge_ai_storage::dashboards::DashboardStore;
-use edge_ai_storage::decisions::DecisionStore;
 use edge_ai_storage::llm_backends::LlmBackendStore;
 
 use edge_ai_automation::{AutoOnboardManager, store::SharedAutomationStore, intent::IntentAnalyzer, transform::TransformEngine};
@@ -74,8 +73,6 @@ pub struct ServerState {
     pub event_bus: Option<Arc<EventBus>>,
     /// Command manager for command history and retry.
     pub command_manager: Option<Arc<CommandManager>>,
-    /// Decision store for LLM decisions.
-    pub decision_store: Option<Arc<DecisionStore>>,
     /// Authentication state for API key validation.
     pub auth_state: Arc<AuthState>,
     /// User authentication state for JWT token validation.
@@ -178,26 +175,6 @@ impl ServerState {
         let command_queue = Arc::new(CommandQueue::new(1000));
         let command_state = Arc::new(CommandStateStore::new(10000));
         let command_manager = Arc::new(CommandManager::new(command_queue, command_state));
-
-        // Create decision store
-        let decision_store: Option<Arc<DecisionStore>> = match DecisionStore::open(
-            "data/decisions.redb",
-        ) {
-            Ok(store) => Some(store),
-            Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open decision store, using in-memory");
-                match DecisionStore::memory() {
-                    Ok(store) => Some(store),
-                    Err(_) => {
-                        tracing::error!(
-                            category = "storage",
-                            "Failed to create in-memory decision store"
-                        );
-                        None
-                    }
-                }
-            }
-        };
 
         // Load rate limit configuration
         let rate_limit_config = RateLimitConfig::default();
@@ -342,7 +319,6 @@ impl ServerState {
             device_update_tx,
             event_bus: Some(event_bus),
             command_manager: Some(command_manager),
-            decision_store,
             auth_state: Arc::new(AuthState::new()),
             auth_user_state: Arc::new(AuthUserState::new()),
             response_cache: Arc::new(crate::cache::ResponseCache::with_default_ttl()),
@@ -614,16 +590,16 @@ impl ServerState {
         // Build tool registry with real implementations that connect to actual services
         let builder = ToolRegistryBuilder::new()
             // Real implementations
-            .with_real_query_data_tool(self.time_series_storage.clone())
-            .with_real_get_device_data_tool(self.device_service.clone(), self.time_series_storage.clone())
-            .with_real_control_device_tool(self.device_service.clone())
-            .with_real_list_devices_tool(self.device_service.clone())
-            .with_real_device_analyze_tool(self.device_service.clone(), self.time_series_storage.clone())
-            .with_real_create_rule_tool(self.rule_engine.clone())
-            .with_real_list_rules_tool(self.rule_engine.clone())
-            .with_real_delete_rule_tool(self.rule_engine.clone())
+            .with_query_data_tool(self.time_series_storage.clone())
+            .with_get_device_data_tool(self.device_service.clone(), self.time_series_storage.clone())
+            .with_control_device_tool(self.device_service.clone())
+            .with_list_devices_tool(self.device_service.clone())
+            .with_device_analyze_tool(self.device_service.clone(), self.time_series_storage.clone())
+            .with_create_rule_tool(self.rule_engine.clone())
+            .with_list_rules_tool(self.rule_engine.clone())
+            .with_delete_rule_tool(self.rule_engine.clone())
             // AI Agent tools for Chat integration
-            .with_real_agent_tools(self.agent_store.clone())
+            .with_agent_tools(self.agent_store.clone())
             // System help tool for onboarding
             .with_system_help_tool_named("NeoTalk");
 

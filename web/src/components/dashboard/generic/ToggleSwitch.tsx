@@ -356,9 +356,9 @@ export function ToggleSwitch({
                         </Label>
                         {(param.min !== undefined || param.max !== undefined) && (
                           <span className="text-xs text-muted-foreground">
-                            {param.min !== undefined && `最小: ${param.min}`}
+                            {param.min !== undefined && `${t('range.min')} ${param.min}`}
                             {param.min !== undefined && param.max !== undefined && ' | '}
-                            {param.max !== undefined && `最大: ${param.max}`}
+                            {param.max !== undefined && `${t('range.max')} ${param.max}`}
                           </span>
                         )}
                       </div>

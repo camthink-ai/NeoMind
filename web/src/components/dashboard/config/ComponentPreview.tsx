@@ -179,11 +179,14 @@ export const ComponentPreview = memo(function ComponentPreview({
   const defaultH = meta?.sizeConstraints.defaultH ?? 3
 
   // Build a mock component for rendering with actual default size
+  // Some components (led-indicator, progress-bar) use 'label' instead of 'title'
+  const componentDisplayTitle = title || (config.label as string) || (config.title as string) || ''
+
   const mockComponent: DashboardComponent = {
     id: 'preview',
     type: componentType as ImplementedComponentType,
     position: { x: 0, y: 0, w: defaultW, h: defaultH },
-    title: title || config.title as string || t('componentPreview.title'),
+    title: componentDisplayTitle,
     config: {
       ...config,
       editMode: true, // Signal to components that this is a preview/edit mode
@@ -240,7 +243,7 @@ export const ComponentPreview = memo(function ComponentPreview({
           </div>
         ) : (
           <div className={cn(
-            'w-full h-full p-2 transition-all duration-200 ease-out overflow-hidden',
+            'w-full h-full flex items-center justify-center p-2 transition-all duration-200 ease-out overflow-hidden',
             isTransitioning && 'scale-[0.98] blur-[1px]'
           )}>
             <ComponentRenderer key={`preview-${componentType}-${(config.backgroundType as string) || 'default'}`} component={mockComponent} />

@@ -20,8 +20,6 @@ pub struct SystemStats {
     pub alerts: AlertStats,
     /// Command statistics
     pub commands: CommandStats,
-    /// Decision statistics
-    pub decisions: DecisionStats,
     /// System info
     pub system: SystemInfo,
 }
@@ -74,19 +72,6 @@ pub struct CommandStats {
     pub failed_commands: usize,
     /// Success rate
     pub success_rate: f32,
-}
-
-/// Decision statistics.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct DecisionStats {
-    /// Total decisions
-    pub total_decisions: usize,
-    /// Pending decisions
-    pub pending_decisions: usize,
-    /// Executed decisions
-    pub executed_decisions: usize,
-    /// Average confidence
-    pub avg_confidence: f32,
 }
 
 /// Workflow statistics (placeholder - workflow module removed).
@@ -266,31 +251,6 @@ pub async fn get_system_stats_handler(
         }
     };
 
-    // Get decision stats
-    let decision_stats = if let Some(store) = &state.decision_store {
-        match store.stats().await {
-            Ok(stats) => DecisionStats {
-                total_decisions: stats.total_count,
-                pending_decisions: stats.by_status.get("Proposed").copied().unwrap_or(0),
-                executed_decisions: stats.by_status.get("Executed").copied().unwrap_or(0),
-                avg_confidence: stats.avg_confidence,
-            },
-            Err(_) => DecisionStats {
-                total_decisions: 0,
-                pending_decisions: 0,
-                executed_decisions: 0,
-                avg_confidence: 0.0,
-            },
-        }
-    } else {
-        DecisionStats {
-            total_decisions: 0,
-            pending_decisions: 0,
-            executed_decisions: 0,
-            avg_confidence: 0.0,
-        }
-    };
-
     // System info
     let now = chrono::Utc::now().timestamp();
     let uptime = now - state.started_at;
@@ -340,7 +300,6 @@ pub async fn get_system_stats_handler(
         rules: rule_stats,
         alerts: alert_stats,
         commands: command_stats,
-        decisions: decision_stats,
         system: system_info.clone(),
     };
 
@@ -583,12 +542,6 @@ mod tests {
                 pending_commands: 5,
                 failed_commands: 2,
                 success_rate: 95.0,
-            },
-            decisions: DecisionStats {
-                total_decisions: 20,
-                pending_decisions: 3,
-                executed_decisions: 15,
-                avg_confidence: 0.85,
             },
             system: SystemInfo {
                 version: "0.1.0".to_string(),

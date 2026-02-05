@@ -1,4 +1,5 @@
 import { Moon, Sun, Monitor } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { Button } from "@/components/ui/button"
 import { useTheme } from "@/components/ui/theme"
 import {
@@ -9,6 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 
 export function ThemeToggle() {
+  const { t } = useTranslation('common')
   const { theme, setTheme, resolvedTheme } = useTheme()
 
   const getIcon = () => {
@@ -30,15 +32,15 @@ export function ThemeToggle() {
       <DropdownMenuContent align="end" className="w-36">
         <DropdownMenuItem onClick={() => setTheme("light")} className="gap-2 cursor-pointer">
           <Sun className="h-4 w-4" />
-          <span>浅色</span>
+          <span>{t('theme.light')}</span>
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setTheme("dark")} className="gap-2 cursor-pointer">
           <Moon className="h-4 w-4" />
-          <span>深色</span>
+          <span>{t('theme.dark')}</span>
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => setTheme("system")} className="gap-2 cursor-pointer">
           <Monitor className="h-4 w-4" />
-          <span>跟随系统</span>
+          <span>{t('theme.system')}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -118,7 +118,7 @@ pub async fn generate_mdl_handler(
 }
 
 /// Flatten a JSON value into a map of dot-separated keys to values.
-/// Supports up to 10 levels of nesting, including arrays of objects.
+/// Supports up to 10 levels of nesting, including arrays of objects and arrays of primitives.
 fn flatten_json(value: &serde_json::Value, prefix: &str) -> BTreeMap<String, serde_json::Value> {
     let mut result = BTreeMap::new();
 
@@ -131,7 +131,7 @@ fn flatten_json(value: &serde_json::Value, prefix: &str) -> BTreeMap<String, ser
                     format!("{}.{}", prefix, key)
                 };
                 // Recursively flatten nested objects and arrays
-                if val.is_object() || (val.is_array() && may_contain_objects(val)) {
+                if val.is_object() || val.is_array() {
                     result.extend(flatten_json(val, &new_key));
                 } else {
                     result.insert(new_key, val.clone());
@@ -147,7 +147,7 @@ fn flatten_json(value: &serde_json::Value, prefix: &str) -> BTreeMap<String, ser
                     format!("{}.{}", prefix, i)
                 };
 
-                if val.is_object() || (val.is_array() && may_contain_objects(val)) {
+                if val.is_object() || val.is_array() {
                     result.extend(flatten_json(val, &new_key));
                 } else {
                     result.insert(new_key, val.clone());
@@ -162,15 +162,6 @@ fn flatten_json(value: &serde_json::Value, prefix: &str) -> BTreeMap<String, ser
     }
 
     result
-}
-
-/// Check if a value may contain nested objects that should be flattened.
-fn may_contain_objects(val: &serde_json::Value) -> bool {
-    match val {
-        serde_json::Value::Object(_) => true,
-        serde_json::Value::Array(arr) => arr.iter().any(|v| v.is_object() || v.is_array()),
-        _ => false,
-    }
 }
 
 /// Infer data type from a JSON value.
@@ -268,11 +259,11 @@ fn parse_one_json(input: &str) -> Result<(serde_json::Value, &str), String> {
     let mut start_idx = None;
     let mut end_idx = 0;
 
-    // Skip leading whitespace
-    while let Some(&c) = chars.peek() {
-        if !c.is_whitespace() {
-            break;
-        }
+    // Skip leading whitespace and count how many we skipped
+    let leading_ws = input.chars().take_while(|c| c.is_whitespace()).count();
+
+    // Skip the same whitespace in the iterator
+    for _ in 0..leading_ws {
         chars.next();
     }
 
@@ -288,20 +279,18 @@ fn parse_one_json(input: &str) -> Result<(serde_json::Value, &str), String> {
             }
             '"' if !escape_next => {
                 in_string = !in_string;
-                if !in_string && start_idx.is_none() {
-                    // First closing quote, this might be the start
-                }
             }
             '{' | '[' if !in_string => {
                 if depth == 0 {
-                    start_idx = Some(i);
+                    // Store the actual position in the original string
+                    start_idx = Some(leading_ws + i);
                 }
                 depth += 1;
             }
             '}' | ']' if !in_string => {
                 depth -= 1;
                 if depth == 0 {
-                    end_idx = i + 1;
+                    end_idx = leading_ws + i + 1;
                     break;
                 }
             }

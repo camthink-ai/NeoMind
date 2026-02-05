@@ -270,7 +270,7 @@ export function SessionTabs({ className, onSessionChange }: SessionTabsProps) {
             ))}
             <DropdownMenuSeparator />
             <DropdownMenuItem className="text-xs text-muted-foreground justify-center">
-              共 {sortedSessions.length} 个会话
+              {t('session.totalSessions', { count: sortedSessions.length })}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -280,9 +280,9 @@ export function SessionTabs({ className, onSessionChange }: SessionTabsProps) {
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('deleteSessionTitle', { ns: 'session' }) || '删除会话'}</DialogTitle>
+            <DialogTitle>{t('session.deleteTitle')}</DialogTitle>
             <DialogDescription>
-              {t('deleteDesc', { ns: 'session' }) || '确定要删除这个会话吗？此操作无法撤销。'}
+              {t('session.deleteDescription')}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

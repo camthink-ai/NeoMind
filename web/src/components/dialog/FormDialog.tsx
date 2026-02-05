@@ -1,4 +1,5 @@
 import { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -53,6 +54,7 @@ export function FormDialog({
   loading = false,
   className,
 }: FormDialogProps) {
+  const { t } = useTranslation('common')
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -99,7 +101,7 @@ export function FormDialog({
                 className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground"
               >
                 <X className="h-4 w-4" />
-                <span className="sr-only">关闭</span>
+                <span className="sr-only">{t('close')}</span>
               </DialogPrimitive.Close>
             </div>
             {description && (

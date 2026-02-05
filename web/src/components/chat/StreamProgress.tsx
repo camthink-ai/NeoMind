@@ -13,14 +13,14 @@ interface StreamProgressProps {
 }
 
 // Map backend stage values to UI labels and icons
-function getStageConfig(stage?: string) {
+function getStageConfig(stage?: string, t?: (key: string) => string) {
   // Normalize stage to lowercase for comparison
   const normalized = stage?.toLowerCase() || ''
 
   // If no stage provided, default to thinking
   if (!normalized) {
     return {
-      label: '思考中',
+      label: t ? t('stage.thinking') : '思考中',
       icon: <Activity className="h-4 w-4 animate-pulse" />
     }
   }
@@ -28,25 +28,25 @@ function getStageConfig(stage?: string) {
   // Map backend stage values to UI
   if (normalized.includes('collect') || normalized.includes('收集')) {
     return {
-      label: '收集中',
+      label: t ? t('stage.collecting') : '收集中',
       icon: <Activity className="h-4 w-4 animate-pulse" />
     }
   }
   if (normalized.includes('analyz') || normalized.includes('分析') || normalized.includes('thinking') || normalized.includes('思考')) {
     return {
-      label: '分析中',
+      label: t ? t('stage.analyzing') : '分析中',
       icon: <Sparkles className="h-4 w-4 animate-pulse" />
     }
   }
   if (normalized.includes('execut') || normalized.includes('tool') || normalized.includes('执行') || normalized.includes('工具')) {
     return {
-      label: '执行中',
+      label: t ? t('stage.executing') : '执行中',
       icon: <Loader2 className="h-4 w-4 animate-spin" />
     }
   }
   if (normalized.includes('generat') || normalized.includes('生成')) {
     return {
-      label: '生成中',
+      label: t ? t('stage.generating') : '生成中',
       icon: <Loader2 className="h-4 w-4 animate-spin" />
     }
   }
@@ -69,7 +69,7 @@ export function StreamProgress({
   const { t } = useTranslation("chat")
   const progress = Math.min((elapsed / totalDuration) * 100, 100)
 
-  const stageConfig = getStageConfig(stage)
+  const stageConfig = getStageConfig(stage, t)
   const isNearTimeout = progress > 80
   const barColor = isNearTimeout ? 'bg-yellow-500' : 'bg-blue-500'
 

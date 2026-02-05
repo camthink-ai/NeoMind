@@ -117,7 +117,7 @@ export interface UsePaginatedDataReturn<T> {
  *
  * @example
  * const { data, page, setPage, totalPages, loading } = usePaginatedData(
- *   (page, limit) => api.listCommands({ page, limit }),
+ *   (page, limit) => api.listRules({ limit }),
  *   { pageSize: 20 }
  * )
  */

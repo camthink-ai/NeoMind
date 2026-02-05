@@ -41,14 +41,6 @@ pub mod protocol;
 // Adapter interface for event-driven architecture
 pub mod adapter;
 
-// Device adapter plugin integration - DEPRECATED
-// The plugin system has been migrated to the Extension system.
-// Device adapters are now managed directly through DeviceService.
-// See: edge_ai_core::extension
-//
-// pub mod plugin_adapter;
-// pub mod plugin_registry;
-
 // Protocol mapping re-exports
 pub use protocol::{
     Address, BinaryFormat, Capability, CapabilityType,
@@ -123,20 +115,3 @@ pub use adapter::{
 
 // Adapter creation utilities
 pub use adapters::{available_adapters, create_adapter};
-
-// Specialized adapter plugins - DEPRECATED
-// These have been migrated to use the Extension system.
-// pub use adapters::plugins::{
-//     ExternalBrokerConfig, ExternalMqttBrokerPlugin,
-//     UnifiedAdapterPluginFactory,
-// };
-//
-// #[cfg(feature = "embedded-broker")]
-// pub use adapters::plugins::InternalMqttBrokerPlugin;
-//
-// // Device adapter plugin integration
-// pub use plugin_adapter::{
-//     AdapterDeviceInfo, AdapterPluginInfo, DeviceAdapterPlugin, DeviceAdapterPluginFactory,
-//     DeviceAdapterStats,
-// };
-// pub use plugin_registry::{AdapterPluginConfig, DeviceAdapterPluginRegistry};

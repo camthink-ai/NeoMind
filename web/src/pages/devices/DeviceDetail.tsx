@@ -49,7 +49,9 @@ function renderMetricValue(
   maxLength = 50
 ): React.ReactNode {
   if (value === null || value === undefined) return <span className="text-muted-foreground/60">-</span>
-  if (typeof value === "boolean") return value ? <span className="text-green-600 dark:text-green-400">是</span> : <span className="text-red-600 dark:text-red-400">否</span>
+  // Note: This is a helper function that will receive t through props when needed in i18n context
+  // For now, we'll use the component's i18n context by moving this inside the component
+  if (typeof value === "boolean") return <span className={value ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}>{value ? "Yes" : "No"}</span>
   if (typeof value === "number") return <span className="font-semibold tabular-nums">{parseFloat(value.toFixed(2))}</span>
   if (typeof value === "string" && isBase64Image(value)) {
     return (
@@ -269,7 +271,7 @@ export function DeviceDetail({
                 "h-2 w-2 rounded-full animate-pulse",
                 device.status === 'online' ? "bg-green-500" : "bg-gray-400"
               )} />
-              {device.status === 'online' ? '在线' : '离线'}
+              {device.status === 'online' ? t('devices:status.online') : t('devices:status.offline')}
             </div>
             <Button variant="ghost" size="icon" onClick={onRefresh} disabled={telemetryLoading} className="rounded-full">
               <RefreshCw className={cn("h-5 w-5", telemetryLoading && "animate-spin")} />
@@ -285,26 +287,26 @@ export function DeviceDetail({
             <div className="bg-gradient-to-br from-card to-muted/30 rounded-3xl p-6 shadow-sm">
               <div className="flex items-center gap-2 mb-4">
                 <Info className="h-5 w-5 text-muted-foreground" />
-                <h2 className="font-semibold">设备信息</h2>
+                <h2 className="font-semibold">{t('devices:detailPage.deviceInfo')}</h2>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">连接方式</p>
+                  <p className="text-xs text-muted-foreground">{t('devices:detailPage.connectionMethod')}</p>
                   <Badge variant="secondary" className="text-xs">{device.adapter_type || 'mqtt'}</Badge>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">设备类型</p>
+                  <p className="text-xs text-muted-foreground">{t('devices:detailPage.deviceTypeLabel')}</p>
                   <p className="text-sm font-medium">{device.device_type || '-'}</p>
                 </div>
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">最后在线</p>
+                  <p className="text-xs text-muted-foreground">{t('devices:detailPage.lastOnlineLabel')}</p>
                   <p className="text-sm font-medium">
                     {device.last_seen ? formatTimestamp(new Date(device.last_seen).getTime() / 1000) : '-'}
                   </p>
                 </div>
                 {device.connection_config?.telemetry_topic && (
                   <div className="space-y-1">
-                    <p className="text-xs text-muted-foreground">遥测主题</p>
+                    <p className="text-xs text-muted-foreground">{t('devices:detailPage.telemetryTopicLabel')}</p>
                     <p className="text-sm font-mono text-muted-foreground truncate">
                       {device.connection_config.telemetry_topic}
                     </p>
@@ -318,7 +320,7 @@ export function DeviceDetail({
               <div className="bg-gradient-to-br from-card to-muted/30 rounded-3xl p-6 shadow-sm">
                 <div className="flex items-center gap-2 mb-4">
                   <Database className="h-5 w-5 text-muted-foreground" />
-                  <h2 className="font-semibold">原始数据 (Raw Data)</h2>
+                  <h2 className="font-semibold">{t('devices:detailPage.rawDataTitle')}</h2>
                   <Badge variant="outline" className="text-xs">Raw Mode</Badge>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-4 overflow-x-auto">
@@ -328,12 +330,12 @@ export function DeviceDetail({
                         ? device.current_values._raw
                         : JSON.stringify(device.current_values._raw, null, 2)
                     ) : (
-                      <span className="text-muted-foreground/60">暂无数据</span>
+                      <span className="text-muted-foreground/60">{t('devices:detailPage.noData')}</span>
                     )}
                   </pre>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
-                  数据按原样存储，可通过 Transforms 解码和提取指标
+                  {t('devices:detailPage.rawDataDescription')}
                 </p>
               </div>
             )}
@@ -343,11 +345,11 @@ export function DeviceDetail({
               <div>
                 <div className="flex items-center gap-2 mb-4">
                   <Settings className="h-5 w-5 text-muted-foreground" />
-                  <h2 className="font-semibold">实时指标</h2>
+                  <h2 className="font-semibold">{t('devices:detailPage.realtimeMetrics')}</h2>
                   <span className="text-xs text-muted-foreground">({metricDefinitions.length})</span>
                   {Object.values(metricsMap).filter(m => m.is_virtual).length > 0 && (
                     <Badge variant="secondary" className="text-xs ml-2">
-                      {Object.values(metricsMap).filter(m => m.is_virtual).length} 虚拟指标
+                      {Object.values(metricsMap).filter(m => m.is_virtual).length} {t('devices:detailPage.virtualMetrics')}
                     </Badge>
                   )}
                 </div>
@@ -386,7 +388,7 @@ export function DeviceDetail({
                               </p>
                               {isVirtual && (
                                 <Badge variant="outline" className="text-xs px-1.5 py-0 shrink-0">
-                                  虚拟
+                                  {t('devices:detailPage.virtual')}
                                 </Badge>
                               )}
                             </div>
@@ -417,7 +419,7 @@ export function DeviceDetail({
               <div>
                 <div className="flex items-center gap-2 mb-4">
                   <Send className="h-5 w-5 text-muted-foreground" />
-                  <h2 className="font-semibold">命令控制</h2>
+                  <h2 className="font-semibold">{t('devices:detailPage.commandControl')}</h2>
                   <span className="text-xs text-muted-foreground">({commands.length})</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -478,8 +480,8 @@ export function DeviceDetail({
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent border-border/50">
-                      <TableHead className="text-muted-foreground w-[180px]">时间</TableHead>
-                      <TableHead className="text-muted-foreground">值</TableHead>
+                      <TableHead className="text-muted-foreground w-[180px]">{t('devices:detailPage.timeLabel')}</TableHead>
+                      <TableHead className="text-muted-foreground">{t('devices:detailPage.valueLabel')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -505,7 +507,7 @@ export function DeviceDetail({
                             ) : isComplexValue || isLongString ? (
                               <details className="group">
                                 <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors list-none flex items-center gap-2">
-                                  <span>点击查看完整数据</span>
+                                  <span>{t('devices:detailPage.clickToViewFull')}</span>
                                   <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" />
                                 </summary>
                                 <div className="mt-2 p-3 bg-muted/50 rounded-lg max-h-[300px] overflow-auto">
@@ -527,7 +529,7 @@ export function DeviceDetail({
                   </TableBody>
                 </Table>
               ) : (
-                <div className="text-center py-8 text-muted-foreground">暂无历史数据</div>
+                <div className="text-center py-8 text-muted-foreground">{t('devices:detailPage.noHistoryData')}</div>
               )}
             </div>
           </ScrollArea>
@@ -545,7 +547,7 @@ export function DeviceDetail({
           </button>
           {previewImageSrc && (
             <div className="flex items-center justify-center min-h-[300px]">
-              <img src={previewImageSrc} alt="预览" className="max-w-full max-h-[70vh] object-contain rounded-lg" />
+              <img src={previewImageSrc} alt={t('devices:detailPage.preview')} className="max-w-full max-h-[70vh] object-contain rounded-lg" />
             </div>
           )}
         </DialogContent>
@@ -585,7 +587,7 @@ export function DeviceDetail({
                           onClick={() => setDialogParams(p => ({ ...p, [param.name]: true }))}
                           className="rounded-full"
                         >
-                          是
+                          {t('devices:command.dialog.yes')}
                         </Button>
                         <Button
                           type="button"
@@ -594,7 +596,7 @@ export function DeviceDetail({
                           onClick={() => setDialogParams(p => ({ ...p, [param.name]: false }))}
                           className="rounded-full"
                         >
-                          否
+                          {t('devices:command.dialog.no')}
                         </Button>
                       </div>
                     ) : param.allowed_values ? (
@@ -633,11 +635,11 @@ export function DeviceDetail({
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setCommandDialogOpen(false)} className="rounded-full">
-                取消
+                {t('common:cancel')}
               </Button>
               <Button onClick={handleSendCommand} className="rounded-full">
                 <Send className="h-4 w-4 mr-2" />
-                发送命令
+                {t('devices:command.dialog.sendCommand')}
               </Button>
             </DialogFooter>
           </DialogContent>

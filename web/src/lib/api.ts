@@ -18,9 +18,6 @@ import type {
   CommandDto,
   CommandListResponse,
   CommandStatsResponse,
-  DecisionDto,
-  DecisionListResponse,
-  DecisionStatsResponse,
   Rule,
   MemoryEntry,
   Plugin,
@@ -822,81 +819,6 @@ export const api = {
       `/devices/${deviceId}/commands${limit ? `?limit=${limit}` : ''}`
     ),
 
-  // ========== Commands API ==========
-  listCommands: (params?: {
-    device_id?: string
-    status?: string
-    source?: string
-    limit?: number
-    offset?: number
-  }) =>
-    fetchAPI<CommandListResponse>(
-      `/commands${params ? `?${new URLSearchParams(
-        Object.entries(params).reduce((acc, [key, value]) => {
-          if (value !== undefined) acc[key] = String(value)
-          return acc
-        }, {} as Record<string, string>)
-      )}` : ''}`
-    ),
-  getCommand: (id: string) => fetchAPI<{ command: CommandDto }>(`/commands/${id}`),
-  retryCommand: (id: string) =>
-    fetchAPI<{ message: string; command_id: string }>(`/commands/${id}/retry`, {
-      method: 'POST',
-    }),
-  cancelCommand: (id: string) =>
-    fetchAPI<{ message: string; command_id: string }>(`/commands/${id}/cancel`, {
-      method: 'POST',
-    }),
-  getCommandStats: () => fetchAPI<CommandStatsResponse>('/commands/stats'),
-  cleanupCommands: (olderThanDays: number = 7) =>
-    fetchAPI<{ cleaned_count: number; message: string }>('/commands/cleanup', {
-      method: 'POST',
-      body: JSON.stringify({ older_than_days: olderThanDays }),
-    }),
-
-  // ========== Decisions API ==========
-  listDecisions: (params?: {
-    decision_type?: string
-    priority?: string
-    status?: string
-    min_confidence?: number
-    start_time?: number
-    end_time?: number
-    limit?: number
-    offset?: number
-  }) =>
-    fetchAPI<DecisionListResponse>(
-      `/decisions${params ? `?${new URLSearchParams(
-        Object.entries(params).reduce((acc, [key, value]) => {
-          if (value !== undefined) acc[key] = String(value)
-          return acc
-        }, {} as Record<string, string>)
-      )}` : ''}`
-    ),
-  getDecision: (id: string) => fetchAPI<{ decision: DecisionDto }>(`/decisions/${id}`),
-  executeDecision: (id: string) =>
-    fetchAPI<{ message: string; decision_id: string }>(`/decisions/${id}/execute`, {
-      method: 'POST',
-    }),
-  approveDecision: (id: string) =>
-    fetchAPI<{ message: string; decision_id: string }>(`/decisions/${id}/approve`, {
-      method: 'POST',
-    }),
-  rejectDecision: (id: string) =>
-    fetchAPI<{ message: string; decision_id: string }>(`/decisions/${id}/reject`, {
-      method: 'POST',
-    }),
-  deleteDecision: (id: string) =>
-    fetchAPI<{ message: string; decision_id: string }>(`/decisions/${id}`, {
-      method: 'DELETE',
-    }),
-  getDecisionStats: () => fetchAPI<DecisionStatsResponse>('/decisions/stats'),
-  cleanupDecisions: (olderThanDays: number = 30) =>
-    fetchAPI<{ cleaned_count: number; message: string }>('/decisions/cleanup', {
-      method: 'POST',
-      body: JSON.stringify({ older_than_days: olderThanDays }),
-    }),
-
   // ========== Stats API ==========
   getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number; gpus: Array<{ name: string; vendor: string; total_memory_mb: number | null; driver_version: string | null }> }>('/stats/system'),
   getRuleStats: () => fetchAPI<{ stats: { total_rules: number; enabled_rules: number; disabled_rules: number; by_type: Record<string, number> } }>('/stats/rules'),
@@ -1349,21 +1271,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ command, args }),
     }),
-
-  // ========== Tools API ==========
-  listTools: () =>
-    fetchAPI<{ tools: Tool[] }>('/tools'),
-  getToolSchema: (name: string) =>
-    fetchAPI<{ schema: ToolSchema }>(`/tools/${name}/schema`),
-  getToolMetrics: () =>
-    fetchAPI<{ metrics: ToolMetrics }>('/tools/metrics'),
-  executeTool: (name: string, parameters: Record<string, unknown>) =>
-    fetchAPI<{ result: ToolExecutionResult }>(`/tools/${name}/execute`, {
-      method: 'POST',
-      body: JSON.stringify({ parameters }),
-    }),
-  formatForLLM: () =>
-    fetchAPI<{ formatted: string }>('/tools/format-for-llm'),
 
   // ========== Bulk Operations API ==========
   bulkCreateMessages: (messages: Array<{ title: string; message: string; severity?: string; category?: string }>) =>

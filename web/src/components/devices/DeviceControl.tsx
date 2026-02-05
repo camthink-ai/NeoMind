@@ -4,6 +4,7 @@
 // tracking command history, and viewing results.
 
 import { useState, useCallback, useMemo } from "react"
+import { useTranslation } from "react-i18next"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -145,6 +146,7 @@ export function DeviceControl({
   onRefreshDevices,
   maxHistory = 50,
 }: DeviceControlProps) {
+  const { t } = useTranslation(['common', 'devices'])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null)
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null)
   const [commandParams, setCommandParams] = useState<Record<string, unknown>>({})
@@ -230,15 +232,8 @@ export function DeviceControl({
 
   // Get status label
   const getStatusLabel = useCallback((status: CommandExecution["status"]): string => {
-    const labels: Record<CommandExecution["status"], string> = {
-      pending: "等待中",
-      sent: "已发送",
-      success: "成功",
-      failed: "失败",
-      timeout: "超时",
-    }
-    return labels[status]
-  }, [])
+    return t(`devices:control.statusLabels.${status}`)
+  }, [t])
 
   // Handle device selection
   const handleDeviceSelect = useCallback((deviceId: string) => {
@@ -320,7 +315,7 @@ export function DeviceControl({
     try {
       payload = JSON.parse(quickCommandPayload)
     } catch {
-      alert("JSON 格式错误")
+      alert(t('devices:control.jsonFormatError'))
       return
     }
 
@@ -358,7 +353,7 @@ export function DeviceControl({
           onValueChange={(v) => updateParameter(param.name, v)}
         >
           <SelectTrigger>
-            <SelectValue placeholder="选择值" />
+            <SelectValue placeholder={t('devices:control.selectValue')} />
           </SelectTrigger>
           <SelectContent>
             {param.allowedValues.map((allowed, idx) => (
@@ -381,8 +376,8 @@ export function DeviceControl({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="true">是</SelectItem>
-            <SelectItem value="false">否</SelectItem>
+            <SelectItem value="true">{t('devices:yes')}</SelectItem>
+            <SelectItem value="false">{t('devices:no')}</SelectItem>
           </SelectContent>
         </Select>
       )
@@ -426,35 +421,35 @@ export function DeviceControl({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Terminal className="h-5 w-5" />
-          <h2 className="text-xl font-semibold">设备命令</h2>
+          <h2 className="text-xl font-semibold">{t('devices:control.title')}</h2>
         </div>
 
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onRefreshDevices}>
             <RefreshCw className="mr-2 h-4 w-4" />
-            刷新设备
+            {t('devices:control.refreshDevices')}
           </Button>
 
           <Dialog open={quickCommandOpen} onOpenChange={setQuickCommandOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm" disabled={!selectedDeviceId}>
                 <Terminal className="mr-2 h-4 w-4" />
-                快速命令
+                {t('devices:control.quickCommand')}
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>发送自定义命令</DialogTitle>
+                <DialogTitle>{t('devices:control.sendCustomCommand')}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label>目标设备</Label>
+                  <Label>{t('devices:control.targetDevice')}</Label>
                   <p className="text-sm text-muted-foreground">
-                    {selectedDevice?.name || selectedDevice?.id || "未选择"}
+                    {selectedDevice?.name || selectedDevice?.id || t('devices:control.notSelected')}
                   </p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="quick-payload">命令参数 (JSON)</Label>
+                  <Label htmlFor="quick-payload">{t('devices:control.commandParamsJson')}</Label>
                   <Textarea
                     id="quick-payload"
                     value={quickCommandPayload}
@@ -467,10 +462,10 @@ export function DeviceControl({
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setQuickCommandOpen(false)}>
-                  取消
+                  {t('common:cancel')}
                 </Button>
                 <Button onClick={handleQuickCommand} disabled={isSending}>
-                  {isSending ? "发送中..." : "发送"}
+                  {isSending ? t('devices:control.sending') : t('devices:control.send')}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -486,7 +481,7 @@ export function DeviceControl({
                   setSelectedDevicesForBatch(new Set())
                 }}
               >
-                取消批量
+                {t('devices:control.cancelBatch')}
               </Button>
               <Button
                 size="sm"
@@ -494,7 +489,7 @@ export function DeviceControl({
                 disabled={selectedDevicesForBatch.size === 0 || !selectedCommand || isSending}
               >
                 <Send className="mr-2 h-4 w-4" />
-                发送批量 ({selectedDevicesForBatch.size})
+                {t('devices:control.sendBatch')} ({selectedDevicesForBatch.size})
               </Button>
             </>
           ) : (
@@ -505,7 +500,7 @@ export function DeviceControl({
               disabled={!selectedCommand}
             >
               <Plus className="mr-2 h-4 w-4" />
-              批量模式
+              {t('devices:control.batchMode')}
             </Button>
           )}
         </div>
@@ -515,16 +510,16 @@ export function DeviceControl({
         {/* Command Panel */}
         <Card className="flex flex-col">
           <CardHeader>
-            <CardTitle>发送命令</CardTitle>
-            <CardDescription>选择设备和命令，配置参数后发送</CardDescription>
+            <CardTitle>{t('devices:control.sendCommand')}</CardTitle>
+            <CardDescription>{t('devices:control.targetDevice')}</CardDescription>
           </CardHeader>
           <CardContent className="flex-1 space-y-4 overflow-auto">
             {/* Device Selection */}
             <div className="space-y-2">
-              <Label>目标设备</Label>
+              <Label>{t('devices:control.targetDevice')}</Label>
               <Select value={selectedDeviceId || ""} onValueChange={handleDeviceSelect}>
                 <SelectTrigger>
-                  <SelectValue placeholder="选择设备" />
+                  <SelectValue placeholder={t('devices:control.selectDevice')} />
                 </SelectTrigger>
                 <SelectContent>
                   {devices.map((device) => (
@@ -535,7 +530,7 @@ export function DeviceControl({
                           variant={device.status === "online" ? "default" : "secondary"}
                           className="text-xs"
                         >
-                          {device.status === "online" ? "在线" : "离线"}
+                          {device.status === "online" ? t('devices:status.online') : t('devices:status.offline')}
                         </Badge>
                       </div>
                     </SelectItem>
@@ -547,7 +542,7 @@ export function DeviceControl({
             {/* Batch Device Selection */}
             {batchMode && (
               <div className="space-y-2">
-                <Label>批量目标设备</Label>
+                <Label>{t('devices:control.batchTargetDevices')}</Label>
                 <ScrollArea className="h-32 border rounded-md p-2">
                   <div className="space-y-1">
                     {devices.map((device) => (
@@ -589,15 +584,15 @@ export function DeviceControl({
             {/* Command Selection */}
             {!batchMode && selectedDevice && (
               <div className="space-y-2">
-                <Label>命令</Label>
+                <Label>{t('devices:control.selectCommand')}</Label>
                 {availableCommands.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    该设备类型没有可用命令
+                    {t('devices:control.noCommandsAvailable')}
                   </p>
                 ) : (
                   <Select value={selectedCommand || ""} onValueChange={handleCommandSelect}>
                     <SelectTrigger>
-                      <SelectValue placeholder="选择命令" />
+                      <SelectValue placeholder={t('devices:control.selectCommand')} />
                     </SelectTrigger>
                     <SelectContent>
                       {availableCommands.map((cmd) => (
@@ -615,7 +610,7 @@ export function DeviceControl({
             {currentCommandDef && currentCommandDef.parameters && (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <Label>参数</Label>
+                  <Label>{t('devices:command.parameters')}</Label>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -630,7 +625,7 @@ export function DeviceControl({
                     }}
                   >
                     <RotateCcw className="h-3 w-3 mr-1" />
-                    重置
+                    {t('devices:control.reset')}
                   </Button>
                 </div>
                 {currentCommandDef.parameters.map((param) => (
@@ -642,9 +637,9 @@ export function DeviceControl({
                       </Label>
                       {(param.minValue !== undefined || param.maxValue !== undefined) && (
                         <span className="text-xs text-muted-foreground">
-                          {param.minValue !== undefined && `最小: ${param.minValue}`}
+                          {param.minValue !== undefined && t('devices:control.minValue', { value: param.minValue })}
                           {param.minValue !== undefined && param.maxValue !== undefined && " | "}
-                          {param.maxValue !== undefined && `最大: ${param.maxValue}`}
+                          {param.maxValue !== undefined && t('devices:control.maxValue', { value: param.maxValue })}
                         </span>
                       )}
                     </div>
@@ -665,12 +660,12 @@ export function DeviceControl({
                 {isSending ? (
                   <>
                     <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                    发送中...
+                    {t('devices:control.sending')}
                   </>
                 ) : (
                   <>
                     <Send className="mr-2 h-4 w-4" />
-                    发送命令
+                    {t('devices:control.sendCommand')}
                   </>
                 )}
               </Button>
@@ -681,9 +676,9 @@ export function DeviceControl({
         {/* History Panel */}
         <Card className="flex flex-col">
           <CardHeader>
-            <CardTitle>命令历史</CardTitle>
+            <CardTitle>{t('devices:control.commandHistory')}</CardTitle>
             <CardDescription>
-              {filteredHistory.length} 条记录
+              {t('devices:control.recordsCount', { count: filteredHistory.length })}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex-1 p-0 min-h-0">
@@ -691,15 +686,15 @@ export function DeviceControl({
               <Table>
                 <TableHeader className="sticky top-0 bg-background">
                   <TableRow>
-                    <TableHead className="w-[180px]">时间</TableHead>
-                    <TableHead>设备</TableHead>
-                    <TableHead>命令</TableHead>
-                    <TableHead align="center">状态</TableHead>
+                    <TableHead className="w-[180px]">{t('devices:control.historyHeaders.time')}</TableHead>
+                    <TableHead>{t('devices:control.historyHeaders.device')}</TableHead>
+                    <TableHead>{t('devices:control.historyHeaders.command')}</TableHead>
+                    <TableHead align="center">{t('devices:control.historyHeaders.status')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredHistory.length === 0 ? (
-                    <EmptyStateInline title="暂无命令历史" colSpan={4} />
+                    <EmptyStateInline title={t('devices:control.noCommandHistory')} colSpan={4} />
                   ) : (
                     filteredHistory.map((entry) => {
                       const isExpanded = expandedHistory.has(entry.id)
@@ -727,14 +722,14 @@ export function DeviceControl({
                               <TableCell colSpan={4} className="bg-muted/50">
                                 <div className="space-y-2 py-2">
                                   <div className="text-sm">
-                                    <span className="font-medium">参数:</span>
+                                    <span className="font-medium">{t('devices:control.historyDetails.parameters')}</span>
                                     <pre className="mt-1 text-xs bg-background p-2 rounded overflow-x-auto">
                                       {String(JSON.stringify(entry.parameters, null, 2))}
                                     </pre>
                                   </div>
                                   {entry.result != null && (
                                     <div className="text-sm">
-                                      <span className="font-medium">结果:</span>
+                                      <span className="font-medium">{t('devices:control.historyDetails.result')}</span>
                                       <pre className="mt-1 text-xs bg-background p-2 rounded overflow-x-auto">
                                         {String(JSON.stringify(entry.result, null, 2))}
                                       </pre>
@@ -742,13 +737,13 @@ export function DeviceControl({
                                   )}
                                   {entry.error && (
                                     <div className="text-sm text-destructive">
-                                      <span className="font-medium">错误:</span>
+                                      <span className="font-medium">{t('devices:control.historyDetails.error')}</span>
                                       <p className="mt-1">{entry.error}</p>
                                     </div>
                                   )}
                                   {entry.executionTime && (
                                     <div className="text-xs text-muted-foreground">
-                                      执行时间: {entry.executionTime}ms
+                                      {t('devices:control.historyDetails.executionTime', { time: entry.executionTime })}
                                     </div>
                                   )}
                                 </div>

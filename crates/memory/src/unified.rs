@@ -845,10 +845,10 @@ mod tests {
         assert_eq!(config.min_age_hours, 24);
     }
 
-    #[test]
-    fn test_unified_memory_creation() {
+    #[tokio::test]
+    async fn test_unified_memory_creation() {
         let memory = UnifiedMemory::new();
-        let stats = memory.stats_blocking();
+        let stats = memory.stats().await;
         assert_eq!(stats.short_term_messages, 0);
         assert_eq!(stats.mid_term_entries, 0);
         assert_eq!(stats.long_term_entries, 0);
@@ -895,23 +895,5 @@ mod tests {
         // Mid-term should have the session
         let session = memory.get_session("test_session").await;
         assert_eq!(session.len(), 2);
-    }
-}
-
-// Helper for blocking tests
-impl UnifiedMemory {
-    fn stats_blocking(&self) -> UnifiedMemoryStats {
-        use std::sync::OnceLock;
-        use tokio::runtime::Runtime;
-
-        static RT: OnceLock<Runtime> = OnceLock::new();
-        let rt = RT.get_or_init(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-        });
-
-        rt.block_on(self.stats())
     }
 }

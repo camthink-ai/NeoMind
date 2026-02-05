@@ -153,17 +153,6 @@
     "plugins": "插件",
     "settings": "设置"
   },
-  "session": {
-    "history": "会话历史",
-    "sessions": "会话",
-    "newChat": "新建对话",
-    "search": "搜索...",
-    "noSessions": "暂无会话",
-    "noMatch": "没有找到匹配的会话",
-    "totalSessions": "{{count}} 个会话",
-    "messages": "{{count}} 条消息",
-    "defaultTitle": "新对话"
-  },
   "add": "添加",
   "edit": "编辑",
   "delete": "删除",
@@ -331,5 +320,118 @@
       "settings": "设置",
       "general": "通用"
     }
+  },
+  "placeholders": {
+    "search": "搜索...",
+    "searchComponents": "搜索组件...",
+    "searchDevices": "搜索设备...",
+    "searchAgents": "搜索智能体...",
+    "searchDashboard": "搜索仪表板...",
+    "enterValue": "输入值",
+    "enterName": "输入名称",
+    "enterTitle": "输入标题",
+    "enterDescription": "输入描述",
+    "selectOption": "选择选项",
+    "jsonExample": "{\"key\": \"value\"}",
+    "emailExample": "test@example.com",
+    "passwordPlaceholder": "••••••••",
+    "urlExample": "https://example.com",
+    "pathExample": "/path/to/file",
+    "commaSeparated": "项目1, 项目2, 项目3",
+    "optional": "(可选)"
+  },
+  "units": {
+    "celsius": "°C",
+    "percent": "%",
+    "kilogram": "kg",
+    "dollar": "¥",
+    "degrees": "°",
+    "bytes": "B",
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB",
+    "tb": "TB",
+    "milliseconds": "毫秒",
+    "seconds": "秒",
+    "minutes": "分钟",
+    "hours": "小时"
+  },
+  "emptyStates": {
+    "noData": "暂无数据",
+    "noResults": "未找到结果",
+    "noItems": "暂无项目",
+    "noDevices": "暂无设备",
+    "noAgents": "暂无智能体",
+    "noMessages": "暂无消息",
+    "noAlerts": "暂无告警",
+    "trySearch": "尝试不同的搜索关键词",
+    "getStarted": "添加第一个项目开始使用"
+  },
+  "loadingStates": {
+    "loading": "加载中...",
+    "saving": "保存中...",
+    "processing": "处理中...",
+    "fetching": "获取中...",
+    "updating": "更新中...",
+    "deleting": "删除中..."
+  },
+  "searchBar": {
+    "placeholder": "搜索设备、规则...",
+    "results": "搜索结果 ({{count}})",
+    "suggestions": "建议",
+    "noResults": "未找到匹配结果",
+    "startTyping": "输入关键词开始搜索",
+    "typeDevice": "设备",
+    "typeRule": "规则",
+    "typeAlert": "告警"
+  },
+  "alertLevels": {
+    "critical": "严重",
+    "warning": "警告",
+    "info": "信息",
+    "emergency": "紧急"
+  },
+  "range": {
+    "min": "最小:",
+    "max": "最大:"
+  },
+  "theme": {
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统"
+  },
+  "tools": {
+    "available": "可用工具",
+    "totalCalls": "总调用:",
+    "successful": "成功:",
+    "failed": "失败:",
+    "avgTime": "平均耗时:",
+    "all": "全部",
+    "loading": "加载工具中...",
+    "noTools": "暂无工具",
+    "noToolsDesc": "系统中没有可用的工具",
+    "calls": "调用:",
+    "avg": "平均:"
+  },
+  "session": {
+    "history": "会话历史",
+    "sessions": "会话",
+    "newChat": "新建对话",
+    "search": "搜索...",
+    "noSessions": "暂无会话",
+    "noMatch": "没有找到匹配的会话",
+    "totalSessions": "共 {{count}} 个会话",
+    "messages": "{{count}} 条消息",
+    "defaultTitle": "新对话",
+    "deleteTitle": "删除会话",
+    "deleteDescription": "确定要删除这个会话吗？此操作无法撤销。",
+    "resumeResponseTitle": "恢复未完成的响应？",
+    "resumeResponseDesc": "检测到之前断线时有正在进行的响应",
+    "discard": "放弃",
+    "resume": "恢复"
+  },
+  "language": {
+    "switchToEnglish": "Switch to English",
+    "switchToChinese": "切换到中文"
   }
 }

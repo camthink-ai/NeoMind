@@ -2,15 +2,15 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: false,
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  workers: 1,
+  workers: process.env.CI ? 1 : undefined,
   reporter: 'line',
   use: {
     // 使用系统已安装的 Chrome
     channel: 'chrome',
-    headless: false,
+    headless: true,
     baseURL: 'http://localhost:5173',
   },
   projects: [

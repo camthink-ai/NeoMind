@@ -1367,13 +1367,13 @@ mod tests {
                     {
                         "name": "temperature",
                         "display_name": "温度",
-                        "data_type": "Float",
+                        "data_type": "float",
                         "unit": "°C"
                     },
                     {
                         "name": "humidity",
                         "display_name": "湿度",
-                        "data_type": "Float",
+                        "data_type": "float",
                         "unit": "%"
                     }
                 ]
@@ -1416,7 +1416,7 @@ mod tests {
                             {
                                 "name": "state",
                                 "display_name": "状态",
-                                "data_type": "String",
+                                "data_type": "string",
                                 "allowed_values": [{"String": "on"}, {"String": "off"}]
                             }
                         ]

@@ -13,5 +13,28 @@
     "version": "Version",
     "author": "Author",
     "description": "Description"
+  },
+  "card": {
+    "start": "Start",
+    "stop": "Stop",
+    "configure": "Configure",
+    "unregister": "Unregister",
+    "running": "Running",
+    "stopped": "Stopped",
+    "byAuthor": "By {{author}}",
+    "types": {
+      "llm_provider": "LLM Provider",
+      "device_protocol": "Device Protocol",
+      "alert_channel_type": "Message Channel",
+      "tool": "Tool",
+      "generic": "Generic",
+      "unknown": "Unknown"
+    },
+    "states": {
+      "Running": "Running",
+      "Stopped": "Stopped",
+      "Error": "Error",
+      "Initialized": "Initialized"
+    }
   }
 }

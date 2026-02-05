@@ -158,7 +158,7 @@ export function AddDeviceDialog({
                   id="device-id"
                   value={deviceId}
                   onChange={(e) => setDeviceId(e.target.value)}
-                  placeholder="自动生成"
+                  placeholder={t('devices:id.autoGenerate')}
                   className="font-mono"
                 />
                 <Button
@@ -166,7 +166,7 @@ export function AddDeviceDialog({
                   variant="outline"
                   size="icon"
                   onClick={() => setDeviceId(generateRandomId())}
-                  title="重新生成"
+                  title={t('devices:id.regenerate')}
                 >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
@@ -185,7 +185,7 @@ export function AddDeviceDialog({
 
           {/* Adapter Type */}
           <div className="space-y-2">
-            <Label htmlFor="adapter-type">适配器类型</Label>
+            <Label htmlFor="adapter-type">{t('devices:add.adapterType')}</Label>
             <Select
               value={adapterType}
               onValueChange={(v) => setAdapterType(v as "mqtt" | "http" | "webhook")}
@@ -205,7 +205,7 @@ export function AddDeviceDialog({
           {adapterType === 'mqtt' && (
             <div className="space-y-3">
               <div className="space-y-2">
-                <Label htmlFor="telemetry-topic">遥测主题</Label>
+                <Label htmlFor="telemetry-topic">{t('devices:add.telemetryTopic')}</Label>
                 <Input
                   id="telemetry-topic"
                   value={connectionConfig.telemetry_topic || ''}
@@ -216,7 +216,7 @@ export function AddDeviceDialog({
               </div>
               {hasCommands && (
                 <div className="space-y-2">
-                  <Label htmlFor="command-topic">命令主题</Label>
+                  <Label htmlFor="command-topic">{t('devices:add.commandTopic')}</Label>
                   <Input
                     id="command-topic"
                     value={connectionConfig.command_topic || ''}
@@ -232,7 +232,7 @@ export function AddDeviceDialog({
           {adapterType === 'http' && (
             <div className="space-y-3">
               <div className="space-y-2">
-                <Label htmlFor="http-url">URL</Label>
+                <Label htmlFor="http-url">{t('devices:add.httpUrl')}</Label>
                 <Input
                   id="http-url"
                   value={connectionConfig.url || ''}
@@ -243,7 +243,7 @@ export function AddDeviceDialog({
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="http-method">请求方法</Label>
+                  <Label htmlFor="http-method">{t('devices:add.requestMethod')}</Label>
                   <Select
                     value={connectionConfig.method || 'GET'}
                     onValueChange={(v) => setConnectionConfig({ ...connectionConfig, method: v })}
@@ -258,7 +258,7 @@ export function AddDeviceDialog({
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="poll-interval">轮询间隔(秒)</Label>
+                  <Label htmlFor="poll-interval">{t('devices:add.pollInterval')}</Label>
                   <Input
                     id="poll-interval"
                     type="number"
@@ -274,7 +274,7 @@ export function AddDeviceDialog({
           {adapterType === 'webhook' && (
             <div className="rounded-lg border bg-muted p-4">
               <p className="text-sm text-muted-foreground mb-2">
-                设备添加后，使用以下 Webhook URL 配置您的设备：
+                {t('devices:add.webhookUrlDescription')}
               </p>
               <code className="text-xs break-all block">
                 {window.location.origin}/api/devices/webhook/{deviceId}

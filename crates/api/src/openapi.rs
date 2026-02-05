@@ -40,7 +40,6 @@ impl Modify for ServerModifier {
         (name = "documentation", description = "API documentation"),
         (name = "devices", description = "Device management"),
         (name = "commands", description = "Command history"),
-        (name = "decisions", description = "AI decision management"),
         (name = "stats", description = "System statistics"),
         (name = "sessions", description = "Chat sessions"),
         (name = "settings", description = "System settings"),

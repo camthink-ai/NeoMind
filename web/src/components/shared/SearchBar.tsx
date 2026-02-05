@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react"
+import { useTranslation } from 'react-i18next'
 import { Search, X, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -17,8 +18,10 @@ interface SearchBarProps {
   placeholder?: string
 }
 
-export function SearchBar({ placeholder = "搜索设备、规则..." }: SearchBarProps) {
+export function SearchBar({ placeholder }: SearchBarProps) {
+  const { t } = useTranslation('common')
   const { handleError } = useErrorHandler()
+  const defaultPlaceholder = placeholder || t('searchBar.placeholder')
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<SearchResult[]>([])
@@ -110,10 +113,10 @@ export function SearchBar({ placeholder = "搜索设备、规则..." }: SearchBa
   }
 
   const getTypeLabel = (type: SearchResult["type"]) => {
-    const labels = {
-      device: "设备",
-      rule: "规则",
-      alert: "告警",
+    const labels: Record<string, string> = {
+      device: t('searchBar.typeDevice'),
+      rule: t('searchBar.typeRule'),
+      alert: t('searchBar.typeAlert'),
     }
     return labels[type] || type
   }
@@ -136,7 +139,7 @@ export function SearchBar({ placeholder = "搜索设备、规则..." }: SearchBa
           onClick={() => setOpen(true)}
         >
           <Search className="mr-2 h-4 w-4" />
-          <span className="truncate">{placeholder}</span>
+          <span className="truncate">{defaultPlaceholder}</span>
           <kbd className="pointer-events-none absolute right-1.5 top-1.5 hidden h-6 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex">
             <span className="text-xs">⌘</span>K
           </kbd>
@@ -150,7 +153,7 @@ export function SearchBar({ placeholder = "搜索设备、规则..." }: SearchBa
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={placeholder}
+            placeholder={defaultPlaceholder}
             className="flex h-8 w-full rounded-none border-0 bg-transparent py-2 pl-2 pr-0 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-0 focus-visible:ring-offset-0"
             autoFocus
           />
@@ -174,7 +177,7 @@ export function SearchBar({ placeholder = "搜索设备、规则..." }: SearchBa
           ) : results.length > 0 ? (
             <div className="p-2">
               <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                搜索结果 ({results.length})
+                {t('searchBar.results', { count: results.length })}
               </div>
               {results.map((result, idx) => (
                 <button
@@ -210,7 +213,7 @@ export function SearchBar({ placeholder = "搜索设备、规则..." }: SearchBa
           ) : suggestions.length > 0 && !results.length ? (
             <div className="p-2">
               <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                建议
+                {t('searchBar.suggestions')}
               </div>
               {suggestions.map((suggestion, idx) => (
                 <button
@@ -232,11 +235,11 @@ export function SearchBar({ placeholder = "搜索设备、规则..." }: SearchBa
             </div>
           ) : query.length >= 2 ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              未找到匹配结果
+              {t('searchBar.noResults')}
             </div>
           ) : (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              输入关键词开始搜索
+              {t('searchBar.startTyping')}
             </div>
           )}
         </ScrollArea>

@@ -16,6 +16,58 @@ import type { DataSourceOrList } from '@/types/dashboard'
 import { useDataSource } from '@/hooks/useDataSource'
 import { ErrorState } from '../shared'
 
+// ============================================================================
+// Module-level cache for trend data (persists across component remounts)
+// Similar to telemetryCache in useDataSource.ts
+// ============================================================================
+interface TrendCacheEntry {
+  direction: 'up' | 'down' | 'neutral' | null
+  value: number
+  timestamp: number
+  dataHash: string  // Hash of current+previous values to detect real changes
+}
+
+const trendCache = new Map<string, TrendCacheEntry>()
+const TREND_CACHE_TTL = 60000 // 60 seconds - longer than telemetry cache
+const MAX_TREND_CACHE_SIZE = 100
+
+function getTrendCacheKey(dataSource: DataSourceOrList | undefined): string {
+  if (!dataSource) return ''
+  if (Array.isArray(dataSource)) return `multi:${dataSource.length}`
+  if (typeof dataSource === 'string') return `ref:${dataSource}`
+  return JSON.stringify(dataSource)
+}
+
+function getCachedTrend(cacheKey: string, dataHash: string): TrendCacheEntry | null {
+  if (!cacheKey) return null
+  const cached = trendCache.get(cacheKey)
+  if (cached && cached.dataHash === dataHash && Date.now() - cached.timestamp < TREND_CACHE_TTL) {
+    return cached
+  }
+  return null
+}
+
+function setCachedTrend(cacheKey: string, dataHash: string, direction: 'up' | 'down' | 'neutral' | null, value: number): void {
+  if (!cacheKey) return
+
+  // Enforce cache size limit
+  if (trendCache.size >= MAX_TREND_CACHE_SIZE) {
+    const firstKey = trendCache.keys().next().value
+    if (firstKey) trendCache.delete(firstKey)
+  }
+
+  trendCache.set(cacheKey, {
+    direction,
+    value,
+    timestamp: Date.now(),
+    dataHash
+  })
+}
+
+// ============================================================================
+// Props
+// ============================================================================
+
 export interface ValueCardProps {
   dataSource?: DataSourceOrList
 
@@ -27,14 +79,8 @@ export interface ValueCardProps {
   iconType?: 'auto' | 'entity' | 'emoji'
   description?: string
 
-  // Trend
+  // Trend - auto-calculated from data
   showTrend?: boolean
-  trendValue?: number
-  trendPeriod?: string
-
-  // Sparkline
-  showSparkline?: boolean
-  sparklineData?: number[]
 
   // Styling - controls relative scale, not fixed size
   size?: ValueCardSize
@@ -43,67 +89,6 @@ export interface ValueCardProps {
   valueColor?: string
 
   className?: string
-}
-
-// ============================================================================
-// Sparkline Renderer
-// ============================================================================
-
-interface SparklineProps {
-  data: number[]
-  color?: string
-  trendDirection?: 'up' | 'down' | 'neutral' | null
-}
-
-function Sparkline({ data, color, trendDirection }: SparklineProps) {
-  const validData = data.filter((v): v is number => typeof v === 'number' && !isNaN(v))
-  if (validData.length < 2) return null
-
-  const min = Math.min(...validData)
-  const max = Math.max(...validData)
-  const range = max - min || 1
-
-  // Use 100% width/height, responsive via svg viewBox
-  const points = validData.map((v, i) => {
-    const x = (i / (validData.length - 1)) * 100
-    const y = 100 - ((v - min) / range) * 100
-    return `${x},${y}`
-  }).join(' ')
-
-  const strokeColor = color || (
-    trendDirection === 'up'
-      ? chartColors[2]
-      : trendDirection === 'down'
-        ? chartColors[4]
-        : 'hsl(var(--muted-foreground) / 0.5)'
-  )
-
-  // Fill gradient
-  const fillPoints = `${points} 100,0 0,0`
-
-  return (
-    <svg viewBox="0 0 100 25" className="w-full h-auto opacity-80" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id={`gradient-${strokeColor}`} x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" stopColor={strokeColor} stopOpacity="0.2" />
-          <stop offset="100%" stopColor={strokeColor} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon
-        points={fillPoints}
-        fill={`url(#gradient-${strokeColor})`}
-      />
-      <polyline
-        points={points}
-        fill="none"
-        stroke={strokeColor}
-        strokeWidth="2"
-        vectorEffect="non-scaling-stroke"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  )
 }
 
 // ============================================================================
@@ -196,10 +181,6 @@ export function ValueCard({
   iconType = 'entity',
   description,
   showTrend = false,
-  trendValue,
-  trendPeriod = 'last hour',
-  showSparkline = false,
-  sparklineData,
   size = 'md',
   variant = 'default',
   iconColor,
@@ -212,6 +193,124 @@ export function ValueCard({
 
   // Check if dataSource is configured
   const hasDataSource = dataSource !== undefined
+
+  // Extract numeric value from data for calculations
+  const extractNumericValue = useMemo(() => {
+    if (data === null || data === undefined) return null
+
+    let rawValue: unknown = data
+    if (Array.isArray(data) && data.length > 0) {
+      rawValue = data[0]
+    }
+
+    if (typeof rawValue === 'object' && rawValue !== null) {
+      const obj = rawValue as Record<string, unknown>
+      const extractedValue = obj.value ?? obj.v ?? obj.avg ?? obj.min ?? obj.max ?? obj.result
+      if (extractedValue !== undefined) {
+        rawValue = extractedValue
+      }
+    }
+
+    if (typeof rawValue === 'number') return rawValue
+    if (typeof rawValue === 'string') {
+      const parsed = parseFloat(rawValue)
+      if (!isNaN(parsed)) return parsed
+    }
+    return null
+  }, [data])
+
+  // Calculate trend using module-level cache (like useDataSource does)
+  const { trendDirection, trendValue, hasValidTrend } = useMemo(() => {
+    if (!showTrend) {
+      return { trendDirection: null, trendValue: 0, hasValidTrend: false }
+    }
+
+    // Get cache key for this dataSource (independent of data reference)
+    const cacheKey = getTrendCacheKey(dataSource)
+    if (!cacheKey) {
+      return { trendDirection: null, trendValue: 0, hasValidTrend: false }
+    }
+
+    // Extract value helper (inline for useMemo)
+    const extractValue = (item: unknown): number | null => {
+      if (typeof item === 'number') return item
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>
+        const val = obj.value ?? obj.v ?? obj.avg ?? obj.min ?? obj.max ?? obj.result
+        if (typeof val === 'number') return val
+      }
+      if (typeof item === 'string') {
+        const parsed = parseFloat(item)
+        if (!isNaN(parsed)) return parsed
+      }
+      return null
+    }
+
+    // Extract values from data array
+    let currentVal: number | null = null
+    let previousVal: number | null = null
+
+    if (Array.isArray(data) && data.length >= 1) {
+      // Current value is always the first element (latest)
+      currentVal = extractValue(data[0])
+
+      // Find a different value for comparison (skip identical adjacent values)
+      if (data.length >= 2) {
+        for (let i = 1; i < data.length; i++) {
+          const val = extractValue(data[i])
+          if (val !== null && val !== currentVal) {
+            previousVal = val
+            break
+          }
+        }
+      }
+
+      // If all values are the same, use the last element as previous
+      if (previousVal === null && data.length >= 2) {
+        previousVal = extractValue(data[data.length - 1])
+      }
+    }
+
+    // Create data hash from current+previous values for cache
+    const dataHash = (currentVal !== null && previousVal !== null)
+      ? `${currentVal}_${previousVal}`
+      : ''
+
+    // First, try to get cached trend with matching dataHash
+    const cached = getCachedTrend(cacheKey, dataHash)
+    if (cached) {
+      return {
+        trendDirection: cached.direction,
+        trendValue: cached.value,
+        hasValidTrend: cached.direction !== null
+      }
+    }
+
+    // If we have valid data, calculate and cache new trend
+    if (currentVal !== null && previousVal !== null && previousVal !== 0) {
+      const percentChange = ((currentVal - previousVal) / Math.abs(previousVal)) * 100
+      const direction = percentChange > 0 ? 'up' : percentChange < 0 ? 'down' : 'neutral'
+      const value = Math.round(percentChange * 10) / 10
+
+      // Store in module-level cache
+      setCachedTrend(cacheKey, dataHash, direction, value)
+
+      return { trendDirection: direction, trendValue: value, hasValidTrend: true }
+    }
+
+    // Data is insufficient right now, try to return last cached trend for this dataSource
+    const lastCached = trendCache.get(cacheKey)
+    if (lastCached && lastCached.direction !== null) {
+      return {
+        trendDirection: lastCached.direction,
+        trendValue: lastCached.value,
+        hasValidTrend: true
+      }
+    }
+
+    // No valid data and no cache
+    return { trendDirection: null, trendValue: 0, hasValidTrend: false }
+  }, [showTrend, data, dataSource])
 
   // Format the value with unit and prefix - uses raw data
   // For arrays, use the first value (API returns data DESCENDING, so first is latest)
@@ -252,10 +351,6 @@ export function ValueCard({
     return `${prefixStr}${valueStr}${unitStr}`
   }, [data, error, prefix, unit])
 
-  const trendDirection = trendValue !== undefined
-    ? trendValue > 0 ? 'up' : trendValue < 0 ? 'down' : 'neutral'
-    : null
-
   // Get size config with fallback - only 'sm', 'md', 'lg' are valid
   const safeSize: ValueCardSize = (size === 'sm' || size === 'md' || size === 'lg') ? size : 'md'
   const sizeConfig = valueCardSize[safeSize]
@@ -289,7 +384,7 @@ export function ValueCard({
             {formattedValue}
           </span>
         )}
-        {showTrend && trendDirection && (
+        {showTrend && hasValidTrend && trendDirection && (
           <div className={cn(
             'flex items-center gap-1 mt-1',
             trendDirection === 'up' && indicatorColors.success.text,
@@ -342,15 +437,8 @@ export function ValueCard({
           </span>
         )}
 
-        {/* Sparkline */}
-        {showSparkline && sparklineData && sparklineData.length >= 2 && (
-          <div className="w-full mt-3">
-            <Sparkline data={sparklineData} trendDirection={trendDirection} />
-          </div>
-        )}
-
         {/* Trend */}
-        {showTrend && trendDirection && (
+        {showTrend && hasValidTrend && trendDirection && (
           <div className={cn(
             'flex items-center gap-1 mt-2 px-2 py-1 rounded-full',
             trendDirection === 'up' && indicatorColors.success.bg + ' ' + indicatorColors.success.text,
@@ -396,7 +484,7 @@ export function ValueCard({
         </div>
 
         {/* Trend indicator */}
-        {showTrend && trendDirection && (
+        {showTrend && hasValidTrend && trendDirection && (
           <div className={cn(
             'flex items-center gap-1 px-2 py-1 rounded-full shrink-0',
             trendDirection === 'up' && indicatorColors.success.bg + ' ' + indicatorColors.success.text,
@@ -444,7 +532,7 @@ export function ValueCard({
         </div>
 
         {/* Optional trend indicator on the right */}
-        {showTrend && trendDirection && (
+        {showTrend && hasValidTrend && trendDirection && (
           <div className={cn(
             'flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium shrink-0',
             trendDirection === 'up' && 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',

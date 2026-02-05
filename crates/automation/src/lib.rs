@@ -1,13 +1,12 @@
 //! Edge AI Unified Automation Crate
 //!
-//! This crate provides a unified abstraction for transforms, rules, and workflows in the NeoTalk platform.
+//! This crate provides a unified abstraction for transforms and rules in the NeoTalk platform.
 //!
 //! ## Features
 //!
 //! - **Transform Layer**: Process raw device data into usable metrics
-//! - **Unified Types**: Single `Automation` enum that wraps transforms, rules, and workflows
-//! - **Intent Analysis**: AI-powered recommendation of transform/rule/workflow based on natural language
-//! - **Type Conversion**: Convert between automation types when appropriate
+//! - **Unified Types**: Single `Automation` enum that wraps transforms and rules
+//! - **Intent Analysis**: AI-powered recommendation of transform/rule based on natural language
 //! - **Shared Resources**: Common templates, devices, and metrics for all types
 //!
 //! ## Example
@@ -79,10 +78,10 @@ pub use discovery::{
 pub use types::{
     TransformAutomation, TransformOperation, TransformScope,
     AggregationFunc, TimeWindow,
-    RuleAutomation, WorkflowAutomation,
+    RuleAutomation,
     Automation, AutomationType, AutomationMetadata,
     Trigger, TriggerType, Condition, ComparisonOperator,
-    Action, LogLevel, AlertSeverity, Step, AggregationType,
+    Action, LogLevel, AlertSeverity,
     IntentResult, SuggestedAutomation,
     AutomationTemplate, TemplateParameter, TemplateParameterType,
     ExecutionRecord, ExecutionStatus,

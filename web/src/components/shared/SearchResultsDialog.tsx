@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { useTranslation } from "react-i18next"
 import {
   Dialog,
   DialogContent,
@@ -23,6 +24,7 @@ interface SearchResultsDialogProps {
 }
 
 export function SearchResultsDialog({ open, onOpenChange, initialQuery = "" }: SearchResultsDialogProps) {
+  const { t } = useTranslation('common')
   const { handleError } = useErrorHandler()
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<SearchResult[]>([])
@@ -137,7 +139,7 @@ export function SearchResultsDialog({ open, onOpenChange, initialQuery = "" }: S
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入搜索关键词..."
+            placeholder={t('placeholders.search')}
             className="flex-1"
             autoFocus
           />

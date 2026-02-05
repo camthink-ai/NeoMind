@@ -6,6 +6,7 @@
  */
 
 import { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -73,6 +74,7 @@ export function ProgressStepper({
   onStepClick,
   className,
 }: ProgressStepperProps) {
+  const { t } = useTranslation(['common'])
   const getStepStatus = (step: Step): StepStatus => {
     if (completedSteps.includes(step.id)) return 'completed'
     if (currentStep === step.id) return 'active'
@@ -112,7 +114,7 @@ export function ProgressStepper({
                   >
                     {step.label}
                     {step.optional && (
-                      <span className="text-muted-foreground/60 ml-1">(选填)</span>
+                      <span className="text-muted-foreground/60 ml-1">({t('common:optional')})</span>
                     )}
                   </span>
                 </button>

@@ -15,7 +15,7 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 
 ### 🧠 LLM as System Brain
 - **Interactive Chat**: Natural language interface for querying and controlling devices
-- **Autonomous Decisions**: Periodic data analysis with proactive optimization suggestions
+- **AI Agents**: Autonomous agents with tool calling capabilities for automation
 - **Tool Calling**: Execute real system actions through LLM function calling
 
 ### 🔌 Modular Device Integration
@@ -201,7 +201,7 @@ neomind/
 | **Device Types** | `/api/device-types`, `/api/device-types/:id` |
 | **Automations** | `/api/automations`, `/api/automations/:id`, `/api/automations/templates` |
 | **Rules** | `/api/rules`, `/api/rules/:id`, `/api/rules/:id/test` |
-| **Transforms** | `/api/transforms`, `/api/transforms/:id` |
+| **Transforms** | `/api/automations/transforms`, `/api/automations/transforms/:id` |
 | **Sessions** | `/api/sessions`, `/api/sessions/:id`, `/api/sessions/:id/chat` |
 | **Chat** | `/api/chat` (WebSocket) |
 | **LLM Backends** | `/api/llm-backends`, `/api/llm-backends/:id`, `/api/llm-backends/types` |
@@ -212,6 +212,7 @@ neomind/
 | **Extensions** | `/api/extensions` (dynamic plugins) |
 | **Events** | `/api/events/stream` (SSE), `/api/events/ws` (WebSocket) |
 | **Stats** | `/api/stats/system`, `/api/stats/devices`, `/api/stats/rules` |
+| **Dashboards** | `/api/dashboards`, `/api/dashboards/:id`, `/api/dashboards/templates` |
 | **Search** | `/api/search` |
 
 ## Usage Examples
@@ -234,13 +235,6 @@ LLM: I've created a rule for you:
      Confirm?
 ```
 
-### Proactive Optimization
-
-```
-LLM: [Notification] I noticed your AC is cycling frequently at night.
-     Suggestion: Adjust temperature from 24°C to 26°C
-     to save approximately 20% energy. Shall I adjust it?
-```
 
 ## Core Concepts
 

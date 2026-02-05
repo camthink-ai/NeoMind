@@ -5,7 +5,8 @@
  * Displays errors and warnings with dismiss option.
  */
 
-import { ReactNode } from 'react'
+import { ReactNode, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, AlertTriangle, Info, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -34,12 +35,6 @@ const icons = {
   info: Info,
 }
 
-const titles = {
-  error: '请完善以下配置',
-  warning: '注意事项',
-  info: '提示',
-}
-
 export function ValidationBanner({
   type = 'error',
   errors = [],
@@ -49,12 +44,14 @@ export function ValidationBanner({
   className,
   showIcon = true,
 }: ValidationBannerProps) {
+  const { t } = useTranslation(['automation'])
+
   const messages = type === 'error' ? errors : type === 'warning' ? warnings : info
 
   if (messages.length === 0) return null
 
   const Icon = icons[type]
-  const title = titles[type]
+  const title = t(`validation.${type}Title`)
 
   return (
     <div
@@ -104,6 +101,8 @@ export interface ValidationBadgeProps {
 }
 
 export function ValidationBadge({ count, type = 'error', onClick }: ValidationBadgeProps) {
+  const { t } = useTranslation(['automation'])
+
   if (count === 0) return null
 
   const styles = {
@@ -121,7 +120,7 @@ export function ValidationBadge({ count, type = 'error', onClick }: ValidationBa
         onClick && 'cursor-pointer hover:opacity-80'
       )}
     >
-      {count} {type === 'error' ? '错误' : type === 'warning' ? '警告' : '提示'}
+      {count} {t(`validation.${type}`)}
     </button>
   )
 }

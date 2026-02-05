@@ -393,7 +393,7 @@ export function ConfigFormBuilder({
                       setValue(fieldName, e.target.value)
                     }
                   }}
-                  placeholder='{"key": "value"}'
+                  placeholder={t('plugins:config.jsonPlaceholder')}
                   rows={4}
                   className="font-mono text-xs"
                 />

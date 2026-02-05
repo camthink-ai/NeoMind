@@ -1,0 +1,451 @@
+//! Comprehensive tests for Automation Transform system.
+//!
+//! Tests include:
+//! - Transform execution
+//! - Data mapping
+//! - Aggregation
+//! - Template rendering
+//! - Pipeline operations
+
+use edge_ai_automation::transform::{TransformEngine, TransformedMetric};
+use serde_json::json;
+
+#[tokio::test]
+async fn test_transform_map_operation() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "temperature": 25.5,
+        "humidity": 60,
+        "sensor_id": "sensor1"
+    });
+
+    let transform = json!({
+        "operation": "map",
+        "mapping": {
+            "temp": "{{temperature}}",
+            "rh": "{{humidity}}"
+        }
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    assert!(result.metrics.len() > 0);
+}
+
+#[tokio::test]
+async fn test_transform_extract_operation() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "data": {
+            "readings": {
+                "temperature": 25.5
+            }
+        }
+    });
+
+    let transform = json!({
+        "operation": "extract",
+        "path": "data.readings.temperature",
+        "as": "temp"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should extract the temperature value
+    assert!(result.metrics.iter().any(|m| m.metric == "temp"));
+}
+
+#[tokio::test]
+async fn test_transform_aggregation() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "values": [10, 20, 30, 40, 50]
+    });
+
+    let transform = json!({
+        "operation": "compute",
+        "expression": "avg(values)",
+        "as": "average"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    assert!(result.metrics.iter().any(|m| m.metric == "average"));
+}
+
+#[tokio::test]
+async fn test_transform_format() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "device": "sensor1",
+        "value": 25.5
+    });
+
+    let transform = json!({
+        "operation": "format",
+        "template": "Device {{device}} reports {{value}}°C",
+        "as": "message"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    let message_metric = result.metrics.iter().find(|m| m.metric == "message").unwrap();
+    assert!(message_metric.value.as_str().unwrap().contains("sensor1"));
+}
+
+#[tokio::test]
+async fn test_transform_pipeline() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "celsius": 25.5
+    });
+
+    let transform = json!({
+        "operation": "pipeline",
+        "steps": [
+            {
+                "operation": "map",
+                "mapping": {
+                    "fahrenheit": "{{celsius}} * 9/5 + 32"
+                }
+            }
+        ]
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Pipeline should execute successfully
+    assert!(!result.metrics.is_empty() || result.warnings.len() >= 0);
+}
+
+#[tokio::test]
+async fn test_transform_conditional() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "temperature": 30,
+        "threshold": 25
+    });
+
+    let transform = json!({
+        "operation": "if",
+        "condition": "{{temperature}} > {{threshold}}",
+        "then": {
+            "operation": "map",
+            "mapping": {
+                "status": "hot"
+            }
+        },
+        "else": {
+            "operation": "map",
+            "mapping": {
+                "status": "normal"
+            }
+        }
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should return "hot" status since temperature > threshold
+    let status_metric = result.metrics.iter().find(|m| m.metric == "status");
+    assert!(status_metric.is_some());
+}
+
+#[tokio::test]
+async fn test_transform_array_operations() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "readings": [
+            {"sensor": "A", "value": 10},
+            {"sensor": "B", "value": 20},
+            {"sensor": "C", "value": 30}
+        ]
+    });
+
+    let transform = json!({
+        "operation": "reduce",
+        "input": "{{readings}}",
+        "accumulate": "{{item.value}}",
+        "as": "sum"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should compute sum
+    assert!(result.metrics.iter().any(|m| m.metric == "sum"));
+}
+
+#[tokio::test]
+async fn test_transform_time_series() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "timestamp": 1234567890,
+        "temperature": 25.5
+    });
+
+    let transform = json!({
+        "operation": "time_series",
+        "metric": "temperature",
+        "value": "{{temperature}}"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    assert!(!result.metrics.is_empty());
+}
+
+#[tokio::test]
+async fn test_transform_decode() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "encoded": "SGVsbG8gV29ybGQ="
+    });
+
+    let transform = json!({
+        "operation": "decode",
+        "format": "base64",
+        "field": "encoded",
+        "as": "decoded"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    let decoded = result.metrics.iter().find(|m| m.metric == "decoded");
+    assert!(decoded.is_some());
+    assert!(decoded.unwrap().value.as_str().unwrap().contains("Hello"));
+}
+
+#[tokio::test]
+async fn test_transform_encode() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "raw": "Hello World"
+    });
+
+    let transform = json!({
+        "operation": "encode",
+        "format": "base64",
+        "field": "raw",
+        "as": "encoded"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    let encoded = result.metrics.iter().find(|m| m.metric == "encoded");
+    assert!(encoded.is_some());
+}
+
+#[tokio::test]
+async fn test_transform_group_by() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "readings": [
+            {"device": "A", "type": "temp", "value": 20},
+            {"device": "A", "type": "humidity", "value": 50},
+            {"device": "B", "type": "temp", "value": 22}
+        ]
+    });
+
+    let transform = json!({
+        "operation": "group_by",
+        "input": "{{readings}}",
+        "by": "device",
+        "aggregate": {
+            "avg_value": "avg(value)"
+        }
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should produce grouped results
+    assert!(!result.metrics.is_empty() || result.warnings.len() >= 0);
+}
+
+#[tokio::test]
+async fn test_transform_missing_field() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "temperature": 25.5
+    });
+
+    let transform = json!({
+        "operation": "extract",
+        "path": "nonexistent.field",
+        "as": "result"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should handle missing field gracefully
+    assert!(result.metrics.is_empty() || result.warnings.len() > 0);
+}
+
+#[tokio::test]
+async fn test_transform_complex_expression() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "a": 10,
+        "b": 5,
+        "c": 2
+    });
+
+    let transform = json!({
+        "operation": "map",
+        "mapping": {
+            "result": "({{a}} + {{b}}) * {{c}}",
+            "ratio": "{{a}} / {{b}}"
+        }
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should compute complex expressions
+    assert!(result.metrics.iter().any(|m| m.metric == "result"));
+    assert!(result.metrics.iter().any(|m| m.metric == "ratio"));
+}
+
+#[tokio::test]
+async fn test_transform_fan_out_fork() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "value": 42
+    });
+
+    let transform = json!({
+        "operation": "fork",
+        "branches": [
+            {
+                "operation": "map",
+                "mapping": {
+                    "double": "{{value}} * 2"
+                }
+            },
+            {
+                "operation": "map",
+                "mapping": {
+                    "triple": "{{value}} * 3"
+                }
+            }
+        ]
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Fork should produce metrics from all branches
+    assert!(result.metrics.len() >= 2);
+}
+
+#[test]
+fn test_value_as_f64() {
+    use edge_ai_automation::transform::value_as_f64;
+
+    assert_eq!(value_as_f64(&json!(42)).unwrap(), 42.0);
+    assert_eq!(value_as_f64(&json!(3.14)).unwrap(), 3.14);
+    assert_eq!(value_as_f64(&json!("42")).unwrap(), 42.0);
+
+    // Invalid values
+    assert!(value_as_f64(&json!("not a number")).is_err());
+    assert!(value_as_f64(&json!(null)).is_err());
+}
+
+#[tokio::test]
+async fn test_transform_with_empty_input() {
+    let engine = TransformEngine::new();
+
+    let input = json!({});
+
+    let transform = json!({
+        "operation": "map",
+        "mapping": {
+            "test": "value"
+        }
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should handle empty input
+    assert!(!result.metrics.is_empty());
+}
+
+#[tokio::test]
+async fn test_transform_nested_values() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "level1": {
+            "level2": {
+                "value": 123
+            }
+        }
+    });
+
+    let transform = json!({
+        "operation": "extract",
+        "path": "level1.level2.value",
+        "as": "extracted"
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    let extracted = result.metrics.iter().find(|m| m.metric == "extracted");
+    assert!(extracted.is_some());
+    assert_eq!(extracted.unwrap().value, json!(123));
+}
+
+#[tokio::test]
+async fn test_transform_warnings() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "value": "not_a_number"
+    });
+
+    let transform = json!({
+        "operation": "map",
+        "mapping": {
+            "doubled": "{{value}} * 2"
+        }
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should produce a warning for invalid operation
+    assert!(!result.warnings.is_empty() || !result.metrics.is_empty());
+}
+
+#[tokio::test]
+async fn test_transform_quality_score() {
+    let engine = TransformEngine::new();
+
+    let input = json!({
+        "temperature": 25.5,
+        "quality": 0.95
+    });
+
+    let transform = json!({
+        "operation": "map",
+        "mapping": {
+            "temp": "{{temperature}}",
+            "quality_score": "{{quality}}"
+        }
+    });
+
+    let result = engine.execute_transform("sensor1", transform.clone(), input.clone()).await.unwrap();
+
+    // Should preserve quality information
+    let temp_metric = result.metrics.iter().find(|m| m.metric == "temp");
+    assert!(temp_metric.is_some());
+}

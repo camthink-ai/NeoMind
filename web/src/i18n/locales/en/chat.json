@@ -36,6 +36,13 @@
     "generating": "Generating",
     "toolExecution": "Running tool"
   },
+  "stage": {
+    "thinking": "Thinking",
+    "collecting": "Collecting",
+    "analyzing": "Analyzing",
+    "executing": "Executing",
+    "generating": "Generating"
+  },
   "toolCall": {
     "title": "Tool calls",
     "status": {

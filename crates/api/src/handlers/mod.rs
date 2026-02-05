@@ -13,7 +13,6 @@ pub mod bulk;
 pub mod commands;
 pub mod common;
 pub mod config;
-pub mod decisions;
 pub mod devices;
 pub mod events;
 pub mod extensions;
@@ -64,12 +63,6 @@ pub use settings::llm_generate_handler;
 pub use commands::{
     cancel_command_handler, cleanup_commands_handler, get_command_handler,
     get_command_stats_handler, list_commands_handler, retry_command_handler,
-};
-// Decisions API
-pub use decisions::{
-    approve_decision_handler, cleanup_decisions_handler, delete_decision_handler,
-    execute_decision_handler, get_decision_handler, get_decision_stats_handler,
-    list_decisions_handler, reject_decision_handler,
 };
 // Stats API
 pub use stats::{get_device_stats_handler, get_rule_stats_handler, get_system_stats_handler};

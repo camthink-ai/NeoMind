@@ -138,8 +138,8 @@ impl From<std::io::Error> for ErrorResponse {
     }
 }
 
-impl From<edge_ai_agent::AgentError> for ErrorResponse {
-    fn from(e: edge_ai_agent::AgentError) -> Self {
+impl From<edge_ai_agent::NeoTalkError> for ErrorResponse {
+    fn from(e: edge_ai_agent::NeoTalkError) -> Self {
         Self::internal(format!("Agent error: {}", e))
     }
 }

@@ -36,6 +36,13 @@
     "generating": "生成中",
     "toolExecution": "执行工具"
   },
+  "stage": {
+    "thinking": "思考中",
+    "collecting": "收集中",
+    "analyzing": "分析中",
+    "executing": "执行中",
+    "generating": "生成中"
+  },
   "toolCall": {
     "title": "工具调用",
     "status": {

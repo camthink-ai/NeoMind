@@ -443,7 +443,10 @@ impl VectorStore {
     pub async fn delete(&self, id: &str) -> Result<bool, Error> {
         let mut docs = self.documents.write().await;
         let mut graph = self.graph_index.write().await;
-        Ok(graph.remove(id).is_some() || docs.remove(id).is_some())
+        // Call both removes to avoid short-circuit evaluation bug
+        let removed_from_graph = graph.remove(id).is_some();
+        let removed_from_docs = docs.remove(id).is_some();
+        Ok(removed_from_graph || removed_from_docs)
     }
 
     /// Get the number of documents in the store.

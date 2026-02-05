@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::error::{Result, ToolError};
-use super::tool::{DynTool, ToolDefinition, ToolOutput};
+use super::tool::{DynTool, ToolDefinition, ToolOutput, Tool};
 
 /// Tool registry for managing available tools.
 pub struct ToolRegistry {
@@ -225,6 +225,29 @@ pub struct ToolResult {
 }
 
 /// Builder for creating a tool registry with common tools.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use edge_ai_tools::ToolRegistryBuilder;
+/// use edge_ai_devices::{DeviceService, TimeSeriesStorage};
+/// use edge_ai_rules::RuleEngine;
+/// use std::sync::Arc;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let device_service = Arc::new(DeviceService::new());
+/// let storage = Arc::new(TimeSeriesStorage::memory()?);
+/// let rule_engine = Arc::new(RuleEngine::new());
+///
+/// let registry = ToolRegistryBuilder::new()
+///     .with_query_data_tool(storage)
+///     .with_control_device_tool(device_service.clone())
+///     .with_list_devices_tool(device_service)
+///     .with_create_rule_tool(rule_engine)
+///     .build();
+/// # Ok(())
+/// # }
+/// ```
 pub struct ToolRegistryBuilder {
     registry: ToolRegistry,
 }
@@ -243,129 +266,33 @@ impl ToolRegistryBuilder {
         self
     }
 
-    /// Add the query data tool (mock).
-    pub fn with_query_data_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::QueryDataTool::mock()))
-    }
-
-    /// Add the control device tool (mock).
-    pub fn with_control_device_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::ControlDeviceTool::mock()))
-    }
-
-    /// Add the list devices tool (mock).
-    pub fn with_list_devices_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::ListDevicesTool::mock()))
-    }
-
-    /// Add the create rule tool (mock).
-    pub fn with_create_rule_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::CreateRuleTool::mock()))
-    }
-
-    /// Add the list rules tool (mock).
-    pub fn with_list_rules_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::ListRulesTool::mock()))
-    }
-
-
-    /// Add the get device metrics tool (mock).
-    pub fn with_get_device_metrics_tool(self) -> Self {
-        self.with_tool(super::builtin::GetDeviceMetricsTool::mock())
-    }
-
-    /// Add the get device type schema tool (mock).
-    pub fn with_get_device_type_schema_tool(self) -> Self {
-        self.with_tool(super::builtin::GetDeviceTypeSchemaTool::mock())
-    }
-
-    /// Add the list device types tool (mock).
-    pub fn with_list_device_types_tool(self) -> Self {
-        self.with_tool(super::builtin::ListDeviceTypesTool::mock())
-    }
-
     // ============================================================================
-    // New tool builders
+    // Device Tools
     // ============================================================================
 
-    /// Add the delete rule tool (mock).
-    pub fn with_delete_rule_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::DeleteRuleTool::mock()))
-    }
-
-    /// Add the enable rule tool (mock).
-    pub fn with_enable_rule_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::EnableRuleTool::mock()))
-    }
-
-    /// Add the disable rule tool (mock).
-    pub fn with_disable_rule_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::DisableRuleTool::mock()))
-    }
-
-    /// Add the update rule tool (mock).
-    pub fn with_update_rule_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::UpdateRuleTool::mock()))
-    }
-
-    /// Add the query device status tool (mock).
-    pub fn with_query_device_status_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::QueryDeviceStatusTool::mock()))
-    }
-
-    /// Add the get device config tool (mock).
-    pub fn with_get_device_config_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::GetDeviceConfigTool::mock()))
-    }
-
-    /// Add the set device config tool (mock).
-    pub fn with_set_device_config_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::SetDeviceConfigTool::mock()))
-    }
-
-    /// Add the batch control devices tool (mock).
-    pub fn with_batch_control_devices_tool(self) -> Self {
-        self.with_tool(Arc::new(super::builtin::BatchControlDevicesTool::mock()))
-    }
-
-    /// Add the query data tool with real storage.
-    pub fn with_real_query_data_tool(
+    /// Add the query data tool.
+    pub fn with_query_data_tool(
         self,
         storage: Arc<edge_ai_devices::TimeSeriesStorage>,
     ) -> Self {
         self.with_tool(Arc::new(super::real::QueryDataTool::new(storage)))
     }
 
-    /// Add the control device tool with real device manager.
-    pub fn with_real_control_device_tool(
+    /// Add the control device tool.
+    pub fn with_control_device_tool(
         self,
         service: Arc<edge_ai_devices::DeviceService>,
     ) -> Self {
         self.with_tool(Arc::new(super::real::ControlDeviceTool::new(service)))
     }
 
-    /// Add the list devices tool with real device service.
-    pub fn with_real_list_devices_tool(self, service: Arc<edge_ai_devices::DeviceService>) -> Self {
+    /// Add the list devices tool.
+    pub fn with_list_devices_tool(self, service: Arc<edge_ai_devices::DeviceService>) -> Self {
         self.with_tool(Arc::new(super::real::ListDevicesTool::new(service)))
     }
 
-    /// Add the create rule tool with real rule engine.
-    pub fn with_real_create_rule_tool(self, engine: Arc<edge_ai_rules::RuleEngine>) -> Self {
-        self.with_tool(Arc::new(super::real::CreateRuleTool::new(engine)))
-    }
-
-    /// Add the list rules tool with real rule engine.
-    pub fn with_real_list_rules_tool(self, engine: Arc<edge_ai_rules::RuleEngine>) -> Self {
-        self.with_tool(Arc::new(super::real::ListRulesTool::new(engine)))
-    }
-
-    /// Add the delete rule tool with real rule engine.
-    pub fn with_real_delete_rule_tool(self, engine: Arc<edge_ai_rules::RuleEngine>) -> Self {
-        self.with_tool(Arc::new(super::real::DeleteRuleTool::new(engine)))
-    }
-
-    /// Add the device analyze tool with real device service and storage.
-    pub fn with_real_device_analyze_tool(
+    /// Add the device analyze tool.
+    pub fn with_device_analyze_tool(
         self,
         service: Arc<edge_ai_devices::DeviceService>,
         storage: Arc<edge_ai_devices::TimeSeriesStorage>,
@@ -373,9 +300,8 @@ impl ToolRegistryBuilder {
         self.with_tool(Arc::new(super::real::DeviceAnalyzeTool::new(service, storage)))
     }
 
-
-    /// Add the get device data tool with real device service and storage (simplified interface).
-    pub fn with_real_get_device_data_tool(
+    /// Add the get device data tool (simplified interface for device status and latest data).
+    pub fn with_get_device_data_tool(
         self,
         service: Arc<edge_ai_devices::DeviceService>,
         storage: Arc<edge_ai_devices::TimeSeriesStorage>,
@@ -384,66 +310,94 @@ impl ToolRegistryBuilder {
     }
 
     // ============================================================================
-    // AI Agent tools for Chat integration
+    // Rule Tools
     // ============================================================================
 
-    /// Add the list agents tool with real agent store.
-    pub fn with_real_list_agents_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the create rule tool.
+    pub fn with_create_rule_tool(self, engine: Arc<edge_ai_rules::RuleEngine>) -> Self {
+        self.with_tool(Arc::new(super::real::CreateRuleTool::new(engine)))
+    }
+
+    /// Add the list rules tool.
+    pub fn with_list_rules_tool(self, engine: Arc<edge_ai_rules::RuleEngine>) -> Self {
+        self.with_tool(Arc::new(super::real::ListRulesTool::new(engine)))
+    }
+
+    /// Add the delete rule tool.
+    pub fn with_delete_rule_tool(self, engine: Arc<edge_ai_rules::RuleEngine>) -> Self {
+        self.with_tool(Arc::new(super::real::DeleteRuleTool::new(engine)))
+    }
+
+    /// Add the query rule history tool.
+    pub fn with_query_rule_history_tool(self, history: Arc<edge_ai_rules::RuleHistoryStorage>) -> Self {
+        self.with_tool(Arc::new(super::real::QueryRuleHistoryTool::new(history)))
+    }
+
+    // ============================================================================
+    // AI Agent Tools
+    // ============================================================================
+
+    /// Add the list agents tool.
+    pub fn with_list_agents_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::ListAgentsTool::new(agent_store)))
     }
 
-    /// Add the get agent tool with real agent store.
-    pub fn with_real_get_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the get agent tool.
+    pub fn with_get_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::GetAgentTool::new(agent_store)))
     }
 
-    /// Add the execute agent tool with real agent store.
-    pub fn with_real_execute_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the execute agent tool.
+    pub fn with_execute_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::ExecuteAgentTool::new(agent_store)))
     }
 
-    /// Add the control agent tool with real agent store.
-    pub fn with_real_control_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the control agent tool.
+    pub fn with_control_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::ControlAgentTool::new(agent_store)))
     }
 
-    /// Add the create agent tool with real agent store.
-    pub fn with_real_create_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the create agent tool.
+    pub fn with_create_agent_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::CreateAgentTool::new(agent_store)))
     }
 
-    /// Add the agent memory tool with real agent store.
-    pub fn with_real_agent_memory_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the agent memory tool.
+    pub fn with_agent_memory_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::AgentMemoryTool::new(agent_store)))
     }
 
-    /// Add the get agent executions tool with real agent store.
-    pub fn with_real_get_agent_executions_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the get agent executions tool.
+    pub fn with_get_agent_executions_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::GetAgentExecutionsTool::new(agent_store)))
     }
 
-    /// Add the get agent execution detail tool with real agent store.
-    pub fn with_real_get_agent_execution_detail_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the get agent execution detail tool.
+    pub fn with_get_agent_execution_detail_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::GetAgentExecutionDetailTool::new(agent_store)))
     }
 
-    /// Add the get agent conversation tool with real agent store.
-    pub fn with_real_get_agent_conversation_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+    /// Add the get agent conversation tool.
+    pub fn with_get_agent_conversation_tool(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::GetAgentConversationTool::new(agent_store)))
     }
 
-    /// Add all agent tools with real agent store.
-    pub fn with_real_agent_tools(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
-        self.with_real_list_agents_tool(agent_store.clone())
-            .with_real_get_agent_tool(agent_store.clone())
-            .with_real_execute_agent_tool(agent_store.clone())
-            .with_real_control_agent_tool(agent_store.clone())
-            .with_real_create_agent_tool(agent_store.clone())
-            .with_real_agent_memory_tool(agent_store.clone())
-            .with_real_get_agent_executions_tool(agent_store.clone())
-            .with_real_get_agent_execution_detail_tool(agent_store.clone())
-            .with_real_get_agent_conversation_tool(agent_store)
+    /// Add all agent tools.
+    pub fn with_agent_tools(self, agent_store: Arc<edge_ai_storage::AgentStore>) -> Self {
+        self.with_list_agents_tool(agent_store.clone())
+            .with_get_agent_tool(agent_store.clone())
+            .with_execute_agent_tool(agent_store.clone())
+            .with_control_agent_tool(agent_store.clone())
+            .with_create_agent_tool(agent_store.clone())
+            .with_agent_memory_tool(agent_store.clone())
+            .with_get_agent_executions_tool(agent_store.clone())
+            .with_get_agent_execution_detail_tool(agent_store.clone())
+            .with_get_agent_conversation_tool(agent_store)
     }
+
+    // ============================================================================
+    // System Tools
+    // ============================================================================
 
     /// Add the system help tool for onboarding and feature information.
     pub fn with_system_help_tool(self) -> Self {
@@ -453,88 +407,6 @@ impl ToolRegistryBuilder {
     /// Add the system help tool with a custom system name.
     pub fn with_system_help_tool_named(self, name: impl Into<String>) -> Self {
         self.with_tool(Arc::new(super::system_tools::SystemHelpTool::with_name(name)))
-    }
-
-    // ============================================================================
-    // Core business-scenario tools (MOCK VERSIONS - FOR TESTING ONLY)
-    // ============================================================================
-
-    /// Add the device discover tool (mock).
-    /// Note: This uses mock data and should only be used for testing.
-    #[cfg(test)]
-    pub fn with_device_discover_tool(self) -> Self {
-        self.with_tool(Arc::new(super::core_tools::DeviceDiscoverTool::mock()))
-    }
-
-    /// Add the device query tool (mock).
-    /// Note: This uses mock data and should only be used for testing.
-    #[cfg(test)]
-    pub fn with_device_query_tool(self) -> Self {
-        self.with_tool(Arc::new(super::core_tools::DeviceQueryTool::mock()))
-    }
-
-    /// Add the device control tool (mock).
-    /// Note: This uses mock data and should only be used for testing.
-    #[cfg(test)]
-    pub fn with_device_control_tool(self) -> Self {
-        self.with_tool(Arc::new(super::core_tools::DeviceControlTool::mock()))
-    }
-
-    /// Add the device analyze tool (mock).
-    /// Note: This uses mock data and should only be used for testing.
-    #[cfg(test)]
-    pub fn with_device_analyze_tool(self) -> Self {
-        self.with_tool(Arc::new(super::core_tools::DeviceAnalyzeTool::mock()))
-    }
-
-    /// Add the rule from context tool (mock).
-    /// Note: This uses mock data and should only be used for testing.
-    #[cfg(test)]
-    pub fn with_rule_from_context_tool(self) -> Self {
-        self.with_tool(Arc::new(super::core_tools::RuleFromContextTool::mock()))
-    }
-
-    /// Add all core business-scenario tools (mock versions).
-    /// Note: This uses mock data and should only be used for testing.
-    #[cfg(test)]
-    pub fn with_core_tools(self) -> Self {
-        self.with_device_discover_tool()
-            .with_device_query_tool()
-            .with_device_control_tool()
-            .with_device_analyze_tool()
-            .with_rule_from_context_tool()
-    }
-
-    /// Add all standard tools (mock versions).
-    /// Note: This uses mock data for core tools and should only be used for testing.
-    /// For production, use the specific with_real_*_tool() methods instead.
-    #[cfg(test)]
-    pub fn with_standard_tools(self) -> Self {
-        // Core mock tools
-        let registry = self
-            .with_device_discover_tool()
-            .with_device_query_tool()
-            .with_device_control_tool()
-            .with_device_analyze_tool()
-            .with_rule_from_context_tool();
-
-        // Standard mock tools (from the simplified module)
-        registry.with_query_data_tool()
-            .with_control_device_tool()
-            .with_list_devices_tool()
-            .with_get_device_metrics_tool()
-            .with_query_device_status_tool()
-            .with_get_device_type_schema_tool()
-            .with_list_device_types_tool()
-            .with_get_device_config_tool()
-            .with_set_device_config_tool()
-            .with_batch_control_devices_tool()
-            .with_create_rule_tool()
-            .with_list_rules_tool()
-            .with_delete_rule_tool()
-            .with_enable_rule_tool()
-            .with_disable_rule_tool()
-            .with_update_rule_tool()
     }
 
     /// Build the registry.
@@ -671,38 +543,77 @@ pub fn format_for_llm(definitions: &[ToolDefinition]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use serde_json::Value;
+    use edge_ai_core::tools::{ToolCategory, ToolRelationships, ToolDefinition};
+
+    // Simple test tool for registry testing
+    struct TestTool {
+        name: String,
+    }
+
+    #[async_trait]
+    impl Tool for TestTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn description(&self) -> &str {
+            "A test tool"
+        }
+
+        fn parameters(&self) -> Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {},
+            })
+        }
+
+        fn category(&self) -> ToolCategory {
+            ToolCategory::System
+        }
+
+        async fn execute(&self, _args: Value) -> crate::error::Result<ToolOutput> {
+            Ok(ToolOutput {
+                success: true,
+                data: serde_json::json!({"result": "test"}),
+                error: None,
+                metadata: None,
+            })
+        }
+    }
 
     #[tokio::test]
     async fn test_registry_register() {
         let mut registry = ToolRegistry::new();
         assert_eq!(registry.len(), 0);
 
-        let tool = Arc::new(crate::builtin::QueryDataTool::mock());
+        let tool = Arc::new(TestTool { name: "test_tool".to_string() });
         registry.register(tool);
 
         assert_eq!(registry.len(), 1);
-        assert!(registry.has("query_data"));
+        assert!(registry.has("test_tool"));
     }
 
     #[tokio::test]
     async fn test_registry_get() {
         let mut registry = ToolRegistry::new();
-        let tool = Arc::new(crate::builtin::ListDevicesTool::mock());
+        let tool = Arc::new(TestTool { name: "test_tool".to_string() });
         registry.register(tool.clone());
 
-        let retrieved = registry.get("list_devices");
+        let retrieved = registry.get("test_tool");
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().name(), "list_devices");
+        assert_eq!(retrieved.unwrap().name(), "test_tool");
     }
 
     #[tokio::test]
     async fn test_registry_execute() {
         let mut registry = ToolRegistry::new();
-        let tool = Arc::new(crate::builtin::ListDevicesTool::mock());
+        let tool = Arc::new(TestTool { name: "test_tool".to_string() });
         registry.register(tool);
 
         let result = registry
-            .execute("list_devices", serde_json::json!({}))
+            .execute("test_tool", serde_json::json!({}))
             .await
             .unwrap();
 
@@ -723,12 +634,12 @@ mod tests {
     #[tokio::test]
     async fn test_registry_execute_parallel() {
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(crate::builtin::ListDevicesTool::mock()));
-        registry.register(Arc::new(crate::builtin::ListRulesTool::mock()));
+        registry.register(Arc::new(TestTool { name: "tool1".to_string() }));
+        registry.register(Arc::new(TestTool { name: "tool2".to_string() }));
 
         let calls = vec![
-            ToolCall::new("list_devices", serde_json::json!({})),
-            ToolCall::new("list_rules", serde_json::json!({})),
+            ToolCall::new("tool1", serde_json::json!({})),
+            ToolCall::new("tool2", serde_json::json!({})),
         ];
 
         let results = registry.execute_parallel(calls).await;
@@ -738,18 +649,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_builder_with_standard_tools() {
-        let registry = ToolRegistryBuilder::new().with_standard_tools().build();
+    async fn test_builder_with_system_help() {
+        let registry = ToolRegistryBuilder::new()
+            .with_system_help_tool()
+            .build();
 
-        assert!(registry.len() >= 5);
-        assert!(registry.has("query_data"));
-        assert!(registry.has("control_device"));
+        assert!(registry.len() >= 1);
+        assert!(registry.has("system_help"));
     }
 
     #[test]
     fn test_format_for_llm() {
-        use edge_ai_core::tools::{ToolCategory, ToolRelationships, UsageScenario};
-
         let definitions = vec![ToolDefinition {
             name: "test_tool".to_string(),
             description: "A test tool".to_string(),

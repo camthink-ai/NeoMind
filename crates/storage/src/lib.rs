@@ -64,7 +64,6 @@ pub mod agents;
 pub mod backup;
 pub mod business;
 pub mod dashboards;
-pub mod decisions;
 pub mod device_registry;
 pub mod device_state;
 pub mod error;
@@ -121,11 +120,6 @@ pub use agents::{
     UserMessage,
     // Hierarchical memory types
     WorkingMemory, ShortTermMemory, LongTermMemory, MemorySummary, ImportantMemory,
-};
-
-pub use decisions::{
-    DecisionFilter, DecisionPriority, DecisionStats, DecisionStatus, DecisionStore, DecisionType,
-    StoredAction, StoredDecision,
 };
 
 pub use device_state::{

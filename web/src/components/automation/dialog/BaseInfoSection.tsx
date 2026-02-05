@@ -6,6 +6,7 @@
  */
 
 import { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -65,10 +66,15 @@ export function BaseInfoSection({
   onScopeValueChange,
   scopeOptions = [],
   extraContent,
-  nameLabel = '名称',
-  namePlaceholder = '输入名称...',
-  descriptionPlaceholder = '可选描述...',
+  nameLabel,
+  namePlaceholder,
+  descriptionPlaceholder,
 }: BaseInfoSectionProps) {
+  const { t } = useTranslation(['automation'])
+
+  const defaultNameLabel = nameLabel || t('baseInfo.name')
+  const defaultNamePlaceholder = namePlaceholder || t('baseInfo.namePlaceholder')
+  const defaultDescriptionPlaceholder = descriptionPlaceholder || t('baseInfo.descriptionPlaceholder')
   return (
     <section className="px-4 md:px-8 py-4 md:py-6 border-b bg-muted/10 shrink-0">
       <div className="max-w-4xl mx-auto">
@@ -76,13 +82,13 @@ export function BaseInfoSection({
           {/* Name */}
           <div className="space-y-2">
             <Label htmlFor="info-name" className="text-sm font-medium">
-              {nameLabel} <span className="text-destructive">*</span>
+              {defaultNameLabel} <span className="text-destructive">*</span>
             </Label>
             <Input
               id="info-name"
               value={name}
               onChange={e => onNameChange(e.target.value)}
-              placeholder={namePlaceholder}
+              placeholder={defaultNamePlaceholder}
               className={cn(errors?.name && "border-destructive focus-visible:ring-destructive")}
             />
             {errors?.name && (
@@ -92,12 +98,12 @@ export function BaseInfoSection({
 
           {/* Description */}
           <div className="space-y-2">
-            <Label htmlFor="info-desc" className="text-sm font-medium">描述</Label>
+            <Label htmlFor="info-desc" className="text-sm font-medium">{t('baseInfo.description')}</Label>
             <Input
               id="info-desc"
               value={description}
               onChange={e => onDescriptionChange(e.target.value)}
-              placeholder={descriptionPlaceholder}
+              placeholder={defaultDescriptionPlaceholder}
             />
           </div>
 
@@ -109,22 +115,22 @@ export function BaseInfoSection({
               onCheckedChange={onEnabledChange}
             />
             <Label htmlFor="info-enabled" className="text-sm font-medium cursor-pointer">
-              启用此{showScope ? '转换' : '规则'}
+              {showScope ? t('baseInfo.enableTransform') : t('baseInfo.enableRule')}
             </Label>
           </div>
 
           {/* Transform: Scope Type */}
           {showScope && onScopeTypeChange && (
             <div className="space-y-2">
-              <Label className="text-sm font-medium">作用范围</Label>
+              <Label className="text-sm font-medium">{t('baseInfo.scopeLabel')}</Label>
               <Select value={scopeType} onValueChange={onScopeTypeChange}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="global">全局</SelectItem>
-                  <SelectItem value="device_type">设备类型</SelectItem>
-                  <SelectItem value="device">单个设备</SelectItem>
+                  <SelectItem value="global">{t('baseInfo.scope.global')}</SelectItem>
+                  <SelectItem value="device_type">{t('baseInfo.scope.deviceType')}</SelectItem>
+                  <SelectItem value="device">{t('baseInfo.scope.device')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -134,11 +140,11 @@ export function BaseInfoSection({
           {showScope && scopeType !== 'global' && onScopeValueChange && (
             <div className="space-y-2">
               <Label className="text-sm font-medium">
-                {scopeType === 'device_type' ? '设备类型' : '设备'}
+                {scopeType === 'device_type' ? t('baseInfo.scope.deviceType') : t('baseInfo.scope.device')}
               </Label>
               <Select value={scopeValue} onValueChange={onScopeValueChange}>
                 <SelectTrigger>
-                  <SelectValue placeholder="选择..." />
+                  <SelectValue placeholder={t('baseInfo.selectScope')} />
                 </SelectTrigger>
                 <SelectContent>
                   {scopeOptions.map(opt => (

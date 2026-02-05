@@ -115,7 +115,16 @@
   },
   "execution": {
     "title": "执行详情",
-    "description": "智能体执行过程和结果的详细视图"
+    "description": "智能体执行过程和结果的详细视图",
+    "analysis": "分析",
+    "inputData": "输入数据",
+    "inputImage": "输入图像",
+    "dataFieldsCount": "{{count}} 个数据字段",
+    "reasoningSteps": "推理步骤",
+    "decisions": "决策",
+    "conclusionLabel": "结论:",
+    "actionsExecuted": "执行动作",
+    "moreFields": "还有 {{count}} 个字段"
   },
   "thinking": {
     "executing": "执行中...",

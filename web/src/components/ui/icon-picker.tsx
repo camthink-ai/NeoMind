@@ -6,6 +6,7 @@
  */
 
 import { useState, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Search, X, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,7 +20,7 @@ import {
 import { cn } from '@/lib/utils'
 import * as LucideIcons from 'lucide-react'
 
-// Icon categories with their icons
+// Icon categories with their icons (no duplicates across categories)
 export const ICON_CATEGORIES = {
   common: [
     'Settings', 'Home', 'User', 'Users', 'Search', 'Bell', 'Heart',
@@ -32,7 +33,7 @@ export const ICON_CATEGORIES = {
   arrows: [
     'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUpDown',
     'ChevronUp', 'ChevronDown', 'ChevronLeft', 'ChevronRight',
-    'Expand', 'Shrink', 'Minimize', 'Maximize', 'Move', 'Copy',
+    'Expand', 'Shrink', 'Minimize', 'Maximize', 'Move',
   ],
   media: [
     'Image', 'Video', 'Camera', 'Mic', 'Volume2', 'VolumeX', 'Music',
@@ -44,29 +45,18 @@ export const ICON_CATEGORIES = {
   ],
   devices: [
     'Laptop', 'Monitor', 'Smartphone', 'Tablet', 'HardDrive', 'Cpu',
-    'Wifi', 'Bluetooth', 'Usb', 'Cable', 'Plug', 'Zap', 'Power',
+    'Wifi', 'Bluetooth', 'Usb', 'Cable', 'Plug', 'Power',
   ],
   charts: [
     'BarChart', 'BarChart2', 'BarChart3', 'BarChart4', 'LineChart',
     'PieChart', 'TrendingUp', 'TrendingDown', 'Activity', 'Target',
-    'Zap', 'Flame', 'Droplet', 'Wind',
+    'Flame', 'Droplet', 'Wind',
   ],
   misc: [
     'Sun', 'Moon', 'Cloud', 'CloudRain', 'Snow', 'Thunder',
     'MapPin', 'Navigation', 'Compass', 'Globe', 'Earth',
     'Package', 'Box', 'ShoppingCart', 'CreditCard',
   ],
-}
-
-const CATEGORY_LABELS: Record<keyof typeof ICON_CATEGORIES, string> = {
-  common: '常用',
-  status: '状态',
-  arrows: '箭头',
-  media: '媒体',
-  files: '文件',
-  devices: '设备',
-  charts: '图表',
-  misc: '其他',
 }
 
 export interface IconPickerProps {
@@ -86,8 +76,22 @@ export function IconPicker({
   className,
   allowedCategories,
 }: IconPickerProps) {
+  const { t } = useTranslation('ui')
   const [searchQuery, setSearchQuery] = useState('')
   const [activeCategory, setActiveCategory] = useState<keyof typeof ICON_CATEGORIES | 'all'>('all')
+
+  // Get category labels from i18n
+  const CATEGORY_LABELS: Record<keyof typeof ICON_CATEGORIES | 'all', string> = {
+    all: t('iconPicker.allCategories', 'All'),
+    common: t('iconPicker.common', 'Common'),
+    status: t('iconPicker.status', 'Status'),
+    arrows: t('iconPicker.arrows', 'Arrows'),
+    media: t('iconPicker.media', 'Media'),
+    files: t('iconPicker.files', 'Files'),
+    devices: t('iconPicker.devices', 'Devices'),
+    charts: t('iconPicker.charts', 'Charts'),
+    misc: t('iconPicker.misc', 'Misc'),
+  }
 
   // Filter categories based on allowedCategories
   const categories = useMemo(() => {
@@ -119,10 +123,10 @@ export function IconPicker({
     return ICON_CATEGORIES[activeCategory as keyof typeof ICON_CATEGORIES] || []
   }, [activeCategory, filteredIcons])
 
-  // Get icon component by name
-  const IconComponent = (name: string) => {
+  // Get icon component by name - returns JSX element or null
+  const renderIcon = (name: string, className = 'h-4 w-4') => {
     const Icon = (LucideIcons as any)[name]
-    return Icon ? Icon : null
+    return Icon ? <Icon className={className} /> : null
   }
 
   const handleSelectIcon = (iconName: string) => {
@@ -146,11 +150,11 @@ export function IconPicker({
             >
               {value ? (
                 <div className="flex items-center gap-2">
-                  {IconComponent(value) && <span className="h-4 w-4">{IconComponent(value)}</span>}
+                  {renderIcon(value, 'h-4 w-4')}
                   <span className="text-sm truncate">{value}</span>
                 </div>
               ) : (
-                <span className="text-sm text-muted-foreground">选择图标</span>
+                <span className="text-sm text-muted-foreground">{t('iconPicker.selectIcon', 'Select icon')}</span>
               )}
             </Button>
           </PopoverTrigger>
@@ -160,7 +164,7 @@ export function IconPicker({
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="搜索图标..."
+                  placeholder={t('iconPicker.searchPlaceholder')}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-9 h-9"
@@ -181,7 +185,7 @@ export function IconPicker({
                       : 'border-transparent text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  全部
+                  {CATEGORY_LABELS.all}
                 </button>
                 {categories.map((cat) => (
                   <button
@@ -205,13 +209,13 @@ export function IconPicker({
             <div className="p-3 max-h-64 overflow-y-auto">
               {categoryIcons.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground text-sm">
-                  未找到匹配的图标
+                  {t('iconPicker.noIconsFound', 'No matching icons found')}
                 </div>
               ) : (
                 <div className="grid grid-cols-8 gap-1">
                   {categoryIcons.map((iconName) => {
-                    const Icon = IconComponent(iconName)
-                    if (!Icon) return null
+                    const iconElement = renderIcon(iconName, 'h-4 w-4')
+                    if (!iconElement) return null
                     return (
                       <button
                         key={iconName}
@@ -227,7 +231,7 @@ export function IconPicker({
                         )}
                         title={iconName}
                       >
-                        <Icon className="h-4 w-4" />
+                        {iconElement}
                       </button>
                     )
                   })}
@@ -248,7 +252,7 @@ export function IconPicker({
                   className="h-7 px-2 text-xs"
                 >
                   <X className="h-3 w-3 mr-1" />
-                  清除
+                  {t('common.clear', 'Clear')}
                 </Button>
               </div>
             )}

@@ -343,7 +343,7 @@ export function ExecutionDetailDialog({
                   <div className="p-2.5 bg-muted/20 rounded-lg border">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <Brain className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                      <span className="text-xs font-semibold">分析</span>
+                      <span className="text-xs font-semibold">{t('execution.analysis')}</span>
                     </div>
                     <p className="text-xs leading-relaxed">{execution.decision_process.situation_analysis}</p>
                   </div>
@@ -353,7 +353,7 @@ export function ExecutionDetailDialog({
                     <div className="p-2.5 bg-muted/20 rounded-lg border">
                       <div className="flex items-center gap-1.5 mb-2">
                         <Monitor className="h-3.5 w-3.5 text-cyan-500 shrink-0" />
-                        <span className="text-xs font-semibold">输入数据</span>
+                        <span className="text-xs font-semibold">{t('execution.inputData')}</span>
                         <span className="text-[10px] text-muted-foreground">({execution.decision_process.data_collected.length})</span>
                       </div>
                       <div className="space-y-2">
@@ -389,7 +389,7 @@ export function ExecutionDetailDialog({
                                 <div className="p-2 bg-black/5">
                                   <img
                                     src={imageData!.src}
-                                    alt={`${data.source} - 输入图像`}
+                                    alt={`${data.source} - ${t('execution.inputImage')}`}
                                     className="w-full max-h-[200px] object-contain rounded-md bg-background"
                                   />
                                 </div>
@@ -407,7 +407,7 @@ export function ExecutionDetailDialog({
                                     ))}
                                     {dataPairs.length > 10 && (
                                       <div className="col-span-2 text-muted-foreground text-[9px]">
-                                        +{dataPairs.length - 10} more fields
+                                        {t('execution.moreFields', { count: dataPairs.length - 10 })}
                                       </div>
                                     )}
                                   </div>
@@ -418,7 +418,7 @@ export function ExecutionDetailDialog({
                               {!isExpanded && dataPairs.length > 0 && (
                                 <div className="px-2 pb-1">
                                   <span className="text-[9px] text-muted-foreground">
-                                    {dataPairs.length} 个数据字段
+                                    {t('execution.dataFieldsCount', { count: dataPairs.length })}
                                   </span>
                                 </div>
                               )}
@@ -434,7 +434,7 @@ export function ExecutionDetailDialog({
                     <div className="p-2.5 bg-muted/20 rounded-lg border">
                       <div className="flex items-center gap-1.5 mb-2">
                         <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                        <span className="text-xs font-semibold">推理步骤</span>
+                        <span className="text-xs font-semibold">{t('execution.reasoningSteps')}</span>
                       </div>
                       <div className="space-y-2">
                         {execution.decision_process.reasoning_steps.map((step, idx, arr) => (
@@ -467,7 +467,7 @@ export function ExecutionDetailDialog({
                     <div className="p-2.5 bg-muted/20 rounded-lg border">
                       <div className="flex items-center gap-1.5 mb-2">
                         <Play className="h-3.5 w-3.5 text-green-500 shrink-0" />
-                        <span className="text-xs font-semibold">决策</span>
+                        <span className="text-xs font-semibold">{t('execution.decisions')}</span>
                       </div>
                       <div className="space-y-1.5">
                         {execution.decision_process.decisions.map((decision, idx) => (
@@ -486,7 +486,7 @@ export function ExecutionDetailDialog({
                   {/* Conclusion - Compact */}
                   <Card className="p-2 bg-primary/5 border-primary/20">
                     <div className="text-xs">
-                      <span className="font-semibold text-primary">结论:</span>
+                      <span className="font-semibold text-primary">{t('execution.conclusionLabel')}</span>
                       <span className="ml-1">{execution.decision_process.conclusion}</span>
                     </div>
                   </Card>
@@ -496,7 +496,7 @@ export function ExecutionDetailDialog({
                     <div className="p-2.5 bg-muted/20 rounded-lg border">
                       <div className="flex items-center gap-1.5 mb-2">
                         <Play className="h-3.5 w-3.5 text-green-500 shrink-0" />
-                        <span className="text-xs font-semibold">执行动作</span>
+                        <span className="text-xs font-semibold">{t('execution.actionsExecuted')}</span>
                       </div>
                       <div className="space-y-1">
                         {execution.result.actions_executed.map((action, idx) => (

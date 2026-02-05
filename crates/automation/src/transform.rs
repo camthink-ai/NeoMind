@@ -362,12 +362,43 @@ impl TransformEngine {
         let mut warnings = Vec::new();
         let timestamp = Utc::now().timestamp();
 
-        // Ensure output_prefix is never empty (use default "transform" if empty)
-        let output_prefix = if transform.output_prefix.is_empty() {
-            "transform"
-        } else {
-            &transform.output_prefix
+        // Build the actual output prefix based on scope to avoid naming conflicts
+        // - Global: "transform.{metric}"
+        // - DeviceType: "transform.{device_type}.{metric}"
+        // - Device: "transform.{metric}" (already isolated by device_id)
+        let actual_prefix = match &transform.scope {
+            crate::types::TransformScope::Global => {
+                if transform.output_prefix.is_empty() {
+                    "transform".to_string()
+                } else {
+                    transform.output_prefix.clone()
+                }
+            }
+            crate::types::TransformScope::DeviceType(device_type) => {
+                let base = if transform.output_prefix.is_empty() {
+                    "transform"
+                } else {
+                    &transform.output_prefix
+                };
+                format!("{}.{}", base, device_type)
+            }
+            crate::types::TransformScope::Device(_) => {
+                if transform.output_prefix.is_empty() {
+                    "transform".to_string()
+                } else {
+                    transform.output_prefix.clone()
+                }
+            }
         };
+
+        tracing::debug!(
+            transform_id = %transform.metadata.id,
+            transform_name = %transform.metadata.name,
+            scope = ?transform.scope,
+            output_prefix = %actual_prefix,
+            device_id = %device_id,
+            "Executing transform with scoped output prefix"
+        );
 
         // Try JS-based execution first (new AI-native approach)
         if let Some(ref js_code) = transform.js_code
@@ -375,7 +406,7 @@ impl TransformEngine {
                 match self.js_executor.execute(
                     js_code,
                     raw_data,
-                    output_prefix,
+                    &actual_prefix,
                     device_id,
                     timestamp,
                 ) {
@@ -906,46 +937,6 @@ impl TransformEngine {
                 }),
             Err(_) => Ok(0.0),
         }
-    }
-
-    /// Evaluate a condition expression
-    fn evaluate_condition(&self, condition: &str, data: &Value) -> Result<bool> {
-        // Simple condition evaluator
-        let rendered = self.render_template(condition, data, None, 0);
-
-        // Check for comparison operators
-        if rendered.contains(" > ") {
-            let parts: Vec<&str> = rendered.split(" > ").collect();
-            if parts.len() == 2 {
-                let left = parts[0].trim().parse::<f64>().unwrap_or(0.0);
-                let right = parts[1].trim().parse::<f64>().unwrap_or(0.0);
-                return Ok(left > right);
-            }
-        } else if rendered.contains(" < ") {
-            let parts: Vec<&str> = rendered.split(" < ").collect();
-            if parts.len() == 2 {
-                let left = parts[0].trim().parse::<f64>().unwrap_or(0.0);
-                let right = parts[1].trim().parse::<f64>().unwrap_or(0.0);
-                return Ok(left < right);
-            }
-        } else if rendered.contains(" == ") {
-            let parts: Vec<&str> = rendered.split(" == ").collect();
-            if parts.len() == 2 {
-                let left = parts[0].trim();
-                let right = parts[1].trim();
-                return Ok(left == right);
-            }
-        } else if rendered.contains("!=") || rendered.contains(" !== ") {
-            let parts: Vec<&str> = rendered.split("!=").collect();
-            if parts.len() == 2 {
-                let left = parts[0].trim();
-                let right = parts[1].trim();
-                return Ok(left != right);
-            }
-        }
-
-        // Default: try to parse as boolean
-        Ok(rendered.trim() == "true" || rendered.trim() == "1")
     }
 
     /// Execute a Single operation - extract a value using JSONPath-like syntax
@@ -1539,6 +1530,8 @@ struct DataPoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use crate::TransformScope;
 
     #[test]
     fn test_extract_value_by_path() {

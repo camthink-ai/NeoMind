@@ -510,17 +510,18 @@ impl IntegrationConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_integration_type() {
         assert_eq!(IntegrationType::Mqtt.as_str(), "mqtt");
         assert_eq!(
-            IntegrationType::from_str("mqtt"),
-            Some(IntegrationType::Mqtt)
+            IntegrationType::from_str("mqtt").unwrap(),
+            IntegrationType::Mqtt
         );
         assert_eq!(
-            IntegrationType::from_str("unknown"),
-            Some(IntegrationType::Custom("unknown".to_string()))
+            IntegrationType::from_str("unknown").unwrap(),
+            IntegrationType::Custom("unknown".to_string())
         );
     }
 

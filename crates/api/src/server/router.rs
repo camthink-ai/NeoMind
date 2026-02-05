@@ -21,7 +21,7 @@ pub async fn create_router() -> Router {
 pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
         agents, automations, auth as auth_handlers, auth_users, basic, bulk, commands, config,
-        dashboards, decisions, devices, events, extensions, llm_backends, memory, message_channels, messages, mqtt, plugins, rules,
+        dashboards, devices, events, extensions, llm_backends, memory, message_channels, messages, mqtt, plugins, rules,
         search, sessions, settings, setup, stats, suggestions, test_data, tools,
     };
 
@@ -485,33 +485,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/commands/cleanup",
             post(commands::cleanup_commands_handler),
-        )
-        // Decisions API
-        .route("/api/decisions", get(decisions::list_decisions_handler))
-        .route("/api/decisions/:id", get(decisions::get_decision_handler))
-        .route(
-            "/api/decisions/:id/execute",
-            post(decisions::execute_decision_handler),
-        )
-        .route(
-            "/api/decisions/:id/approve",
-            post(decisions::approve_decision_handler),
-        )
-        .route(
-            "/api/decisions/:id/reject",
-            post(decisions::reject_decision_handler),
-        )
-        .route(
-            "/api/decisions/:id",
-            delete(decisions::delete_decision_handler),
-        )
-        .route(
-            "/api/decisions/stats",
-            get(decisions::get_decision_stats_handler),
-        )
-        .route(
-            "/api/decisions/cleanup",
-            post(decisions::cleanup_decisions_handler),
         )
         // Stats API (devices and rules require auth, system info is public)
         .route("/api/stats/devices", get(stats::get_device_stats_handler))

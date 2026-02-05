@@ -541,9 +541,10 @@ mod tests {
             extractor.extract_by_path(&data, "temp", 0).unwrap(),
             Some(json!(23.5))
         );
+        // Note: Missing keys return Some(Null) not None, as null values are valid metrics
         assert_eq!(
             extractor.extract_by_path(&data, "missing", 0).unwrap(),
-            None
+            Some(Value::Null)
         );
     }
 

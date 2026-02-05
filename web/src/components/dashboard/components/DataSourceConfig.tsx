@@ -4,6 +4,7 @@
  * Allows users to bind dashboard components to data sources.
  */
 
+import { useTranslation } from 'react-i18next'
 import { Server, Globe, Calculator, Plug, Unplug } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -30,15 +31,16 @@ export interface DataSourceConfigProps {
   className?: string
 }
 
-const dataSourceTypes = [
-  { value: 'static', label: 'Static Value', icon: Calculator, description: 'Fixed value' },
-  { value: 'api', label: 'API Endpoint', icon: Server, description: 'Fetch from API' },
-  { value: 'websocket', label: 'WebSocket', icon: Globe, description: 'Real-time updates' },
-  { value: 'computed', label: 'Computed', icon: Calculator, description: 'Calculate from others' },
-]
-
 export function DataSourceConfig({ dataSource, onChange, className }: DataSourceConfigProps) {
+  const { t } = useTranslation('dashboardComponents')
   const currentType = dataSource?.type || 'static'
+
+  const dataSourceTypes = [
+    { value: 'static', label: t('dataSource.staticValue', 'Static Value'), icon: Calculator, description: t('dataSource.fixedValue', 'Fixed value') },
+    { value: 'api', label: t('dataSource.apiEndpoint', 'API Endpoint'), icon: Server, description: t('dataSource.fetchFromApi', 'Fetch from API') },
+    { value: 'websocket', label: t('dataSource.websocket', 'WebSocket'), icon: Globe, description: t('dataSource.realtimeUpdates', 'Real-time updates') },
+    { value: 'computed', label: t('dataSource.computed', 'Computed'), icon: Calculator, description: t('dataSource.calculateFromOthers', 'Calculate from others') },
+  ]
 
   const handleTypeChange = (type: DataSource['type']) => {
     if (type === 'static') {
@@ -60,7 +62,7 @@ export function DataSourceConfig({ dataSource, onChange, className }: DataSource
     <div className={cn('space-y-4', className)}>
       {/* Data Source Toggle */}
       <div className="flex items-center justify-between">
-        <Label>Data Source</Label>
+        <Label>{t('dataSource.title')}</Label>
         {dataSource && (
           <Button
             variant="ghost"
@@ -69,7 +71,7 @@ export function DataSourceConfig({ dataSource, onChange, className }: DataSource
             className="h-7 text-xs text-muted-foreground"
           >
             <Unplug className="w-3 h-3 mr-1" />
-            Unbind
+            {t('dataSource.unbind', 'Unbind')}
           </Button>
         )}
       </div>
@@ -81,7 +83,7 @@ export function DataSourceConfig({ dataSource, onChange, className }: DataSource
           onClick={() => onChange({ type: 'static', staticValue: 0 })}
         >
           <Plug className="w-4 h-4 mr-2 text-muted-foreground" />
-          Bind to Data Source
+          {t('dataSource.bindToDataSource', 'Bind to Data Source')}
         </Button>
       )}
 
@@ -102,12 +104,12 @@ export function DataSourceConfig({ dataSource, onChange, className }: DataSource
           {/* Static Value */}
           <TabsContent value="static" className="space-y-4 mt-4">
             <div className="space-y-2">
-              <Label>Static Value</Label>
+              <Label>{t('dataSource.staticValue')}</Label>
               <Input
                 type="number"
                 value={String(dataSource.staticValue ?? 0)}
                 onChange={(e) => updateField('staticValue', parseFloat(e.target.value) || 0)}
-                placeholder="Enter a fixed value"
+                placeholder={t('dataSourceConfig.fixedValue')}
               />
             </div>
           </TabsContent>
@@ -115,18 +117,18 @@ export function DataSourceConfig({ dataSource, onChange, className }: DataSource
           {/* API Endpoint */}
           <TabsContent value="api" className="space-y-4 mt-4">
             <div className="space-y-2">
-              <Label>API Endpoint</Label>
+              <Label>{t('dataSource.apiEndpoint')}</Label>
               <Input
                 value={dataSource.endpoint || ''}
                 onChange={(e) => updateField('endpoint', e.target.value)}
-                placeholder="/api/devices/telemetry"
+                placeholder={t('dataSourceConfig.apiUrl')}
               />
               <p className="text-xs text-muted-foreground">
-                Enter the API path to fetch data from
+                {t('dataSourceConfig.apiEndpointHint', 'Enter the API path to fetch data from')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Refresh Interval (seconds)</Label>
+              <Label>{t('dataSourceConfig.refreshInterval', 'Refresh Interval (seconds)')}</Label>
               <Input
                 type="number"
                 min={1}
@@ -140,18 +142,18 @@ export function DataSourceConfig({ dataSource, onChange, className }: DataSource
           {/* WebSocket */}
           <TabsContent value="websocket" className="space-y-4 mt-4">
             <div className="space-y-2">
-              <Label>Event Topic</Label>
+              <Label>{t('dataSourceConfig.eventTopic', 'Event Topic')}</Label>
               <Input
                 value={dataSource.endpoint || ''}
                 onChange={(e) => updateField('endpoint', e.target.value)}
-                placeholder="device.metric"
+                placeholder={t('dataSourceConfig.metricPath')}
               />
               <p className="text-xs text-muted-foreground">
-                Subscribe to real-time event updates
+                {t('dataSourceConfig.subscribeHint', 'Subscribe to real-time event updates')}
               </p>
             </div>
             <div className="space-y-2">
-              <Label>Refresh Interval (seconds)</Label>
+              <Label>{t('dataSourceConfig.refreshInterval', 'Refresh Interval (seconds)')}</Label>
               <Input
                 type="number"
                 min={1}
@@ -165,14 +167,14 @@ export function DataSourceConfig({ dataSource, onChange, className }: DataSource
           {/* Computed */}
           <TabsContent value="computed" className="space-y-4 mt-4">
             <div className="space-y-2">
-              <Label>Expression</Label>
+              <Label>{t('dataSourceConfig.expression', 'Expression')}</Label>
               <Input
                 value={(dataSource.params?.expression as string) || ''}
                 onChange={(e) => updateField('params', { ...dataSource.params, expression: e.target.value })}
-                placeholder="data1 + data2 * 0.5"
+                placeholder={t('dataSourceConfig.transformExpression')}
               />
               <p className="text-xs text-muted-foreground">
-                Simple math expression (e.g., 10 + 20)
+                {t('dataSourceConfig.expressionHint', 'Simple math expression (e.g., 10 + 20)')}
               </p>
             </div>
           </TabsContent>
@@ -200,9 +202,11 @@ export function QuickDataSourceSelector({
   availableSources: _availableSources = [],
   className,
 }: QuickDataSourceSelectorProps) {
+  const { t } = useTranslation('dashboardComponents')
+
   return (
     <div className={cn('space-y-2', className)}>
-      <Label>Data Source</Label>
+      <Label>{t('dataSource.title')}</Label>
       <Select
         value={value?.type || 'none'}
         onValueChange={(type) => {
@@ -218,25 +222,25 @@ export function QuickDataSourceSelector({
         }}
       >
         <SelectTrigger>
-          <SelectValue placeholder="Select data source" />
+          <SelectValue placeholder={t('dataSourceConfig.selectPlaceholder')} />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="static">
             <div className="flex items-center gap-2">
               <Calculator className="w-4 h-4" />
-              <span>Static Value</span>
+              <span>{t('dataSource.staticValue')}</span>
             </div>
           </SelectItem>
           <SelectItem value="api">
             <div className="flex items-center gap-2">
               <Server className="w-4 h-4" />
-              <span>API Endpoint</span>
+              <span>{t('dataSource.apiEndpoint')}</span>
             </div>
           </SelectItem>
           <SelectItem value="websocket">
             <div className="flex items-center gap-2">
               <Globe className="w-4 h-4" />
-              <span>WebSocket</span>
+              <span>{t('DataSource.websocket')}</span>
             </div>
           </SelectItem>
         </SelectContent>
@@ -245,14 +249,14 @@ export function QuickDataSourceSelector({
       {/* Show endpoint input for API/WebSocket */}
       {value && (value.type === 'api' || value.type === 'websocket') && (
         <div className="space-y-2">
-          <Label>Endpoint / Topic</Label>
+          <Label>{t('dataSourceConfig.endpointOrTopic', 'Endpoint / Topic')}</Label>
           <Input
             value={value.endpoint || ''}
             onChange={(e) => onChange({ ...value, endpoint: e.target.value })}
-            placeholder={value.type === 'api' ? '/api/devices/telemetry' : 'device.metric'}
+            placeholder={value.type === 'api' ? t('dataSourceConfig.apiUrl') : t('dataSourceConfig.metricPath')}
           />
           <div className="flex items-center gap-2">
-            <Label className="text-xs">Refresh (s)</Label>
+            <Label className="text-xs">{t('dataSourceConfig.refreshShort', 'Refresh (s)')}</Label>
             <Input
               type="number"
               min={1}
@@ -268,7 +272,7 @@ export function QuickDataSourceSelector({
       {/* Show static value input */}
       {value && value.type === 'static' && (
         <div className="space-y-2">
-          <Label>Value</Label>
+          <Label>{t('dataSourceConfig.value', 'Value')}</Label>
           <Input
             type="number"
             value={String(value.staticValue ?? 0)}

@@ -1,6 +1,6 @@
 //! Unified automations API handlers.
 //!
-//! This module provides a unified API for both rules and workflows,
+//! This module provides a unified API for transforms and rules,
 //! allowing them to be managed through a single interface.
 
 use axum::{
@@ -38,7 +38,6 @@ pub struct AutomationFilter {
 pub enum AutomationTypeFilter {
     Transform,
     Rule,
-    Workflow,
     All,
 }
 
@@ -47,7 +46,6 @@ impl From<AutomationTypeFilter> for Option<AutomationType> {
         match filter {
             AutomationTypeFilter::Transform => Some(AutomationType::Transform),
             AutomationTypeFilter::Rule => Some(AutomationType::Rule),
-            AutomationTypeFilter::Workflow => Some(AutomationType::Workflow),
             AutomationTypeFilter::All => None,
         }
     }
@@ -108,7 +106,7 @@ pub struct CreateAutomationRequest {
     /// Whether to enable immediately
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// Automation definition (rule or workflow)
+    /// Automation definition (transform or rule)
     pub definition: Value,
 }
 
@@ -171,25 +169,13 @@ impl From<Automation> for AutomationDto {
                 created_at: rule.metadata.created_at,
                 updated_at: rule.metadata.updated_at,
             },
-            Automation::Workflow(workflow) => Self {
-                id: workflow.metadata.id.clone(),
-                name: workflow.metadata.name.clone(),
-                description: workflow.metadata.description.clone(),
-                automation_type: AutomationType::Workflow,
-                enabled: workflow.metadata.enabled,
-                execution_count: workflow.metadata.execution_count,
-                last_executed: workflow.metadata.last_executed,
-                complexity: workflow.complexity_score(),
-                created_at: workflow.metadata.created_at,
-                updated_at: workflow.metadata.updated_at,
-            },
         }
     }
 }
 
 /// List all automations.
 ///
-/// GET /api/automations?type=rule|workflow|all&enabled=true|false&search=query
+/// GET /api/automations?type=transform|rule|all&enabled=true|false&search=query
 pub async fn list_automations_handler(
     Query(filter): Query<AutomationFilter>,
     State(state): State<ServerState>,
@@ -211,7 +197,6 @@ pub async fn list_automations_handler(
                 let filter_type = match type_filter {
                     AutomationTypeFilter::Transform => AutomationType::Transform,
                     AutomationTypeFilter::Rule => AutomationType::Rule,
-                    AutomationTypeFilter::Workflow => AutomationType::Workflow,
                     AutomationTypeFilter::All => return true,
                 };
                 if a.automation_type() != filter_type {
@@ -232,7 +217,6 @@ pub async fn list_automations_handler(
                 let desc_matches = match a {
                     Automation::Transform(t) => t.metadata.description.to_lowercase().contains(&search_lower),
                     Automation::Rule(r) => r.metadata.description.to_lowercase().contains(&search_lower),
-                    Automation::Workflow(w) => w.metadata.description.to_lowercase().contains(&search_lower),
                 };
                 if !name_matches && !desc_matches {
                     return false;
@@ -316,15 +300,6 @@ pub async fn create_automation_handler(
                 }
             }
         }
-        AutomationType::Workflow => {
-            // Parse workflow from definition
-            match serde_json::from_value(req.definition) {
-                Ok(workflow) => Automation::Workflow(workflow),
-                Err(e) => {
-                    return Err(ErrorResponse::bad_request(format!("Invalid workflow definition: {}", e)));
-                }
-            }
-        }
     };
 
     // Save the automation
@@ -392,18 +367,6 @@ pub async fn update_automation_handler(
             }
             // Definition updates would require parsing the new definition
             Automation::Rule(rule)
-        }
-        Automation::Workflow(mut workflow) => {
-            if let Some(name) = req.name {
-                workflow.metadata.name = name;
-            }
-            if let Some(description) = req.description {
-                workflow.metadata.description = description;
-            }
-            if let Some(enabled) = req.enabled {
-                workflow.metadata.enabled = enabled;
-            }
-            Automation::Workflow(workflow)
         }
     };
 
@@ -479,9 +442,6 @@ pub async fn set_automation_status_handler(
         Automation::Rule(rule) => {
             rule.metadata.enabled = req.enabled;
         }
-        Automation::Workflow(workflow) => {
-            workflow.metadata.enabled = req.enabled;
-        }
     }
 
     // Save the updated automation
@@ -529,32 +489,29 @@ fn heuristic_analysis(description: &str) -> IntentResult {
 
     let desc_lower = description.to_lowercase();
 
-    // Workflow indicators (multi-step, complex logic)
-    let workflow_keywords = [
-        "then", "after that", "next", "followed by", "sequence",
-        "wait", "delay", "pause", "sleep",
-        "if then else", "otherwise", "alternative",
-        "loop", "repeat", "for each", "iterate",
-        "branch", "conditional path", "depending on",
-        "step 1", "step 2", "first", "second", "finally",
-        "workflow", "process", "pipeline",
+    // Transform indicators (data processing keywords)
+    let transform_keywords = [
+        "calculate", "compute", "aggregate", "average", "sum", "count",
+        "extract", "parse", "transform", "convert", "process",
+        "statistics", "metric", "virtual", "derived",
+        "array", "group by", "filter", "map",
     ];
 
     // Rule indicators (simple if-then)
     let rule_keywords = [
         "when", "if", "then", "trigger", "activates",
-        "exceeds", "below", "above", "equals",
-        "sensor", "detects", "monitors",
-        "simple", "basic", "straightforward",
+        "exceeds", "below", "above", "equals", "threshold",
+        "sensor", "detects", "monitors", "alert",
+        "send", "notify", "execute", "command",
     ];
 
-    let mut workflow_score = 0i32;
+    let mut transform_score = 0i32;
     let mut rule_score = 0i32;
 
-    // Check for workflow indicators
-    for keyword in &workflow_keywords {
+    // Check for transform indicators
+    for keyword in &transform_keywords {
         if desc_lower.contains(keyword) {
-            workflow_score += 10;
+            transform_score += 5;
         }
     }
 
@@ -565,65 +522,40 @@ fn heuristic_analysis(description: &str) -> IntentResult {
         }
     }
 
-    // Check for sequential language
-    if desc_lower.contains(" and then ")
-        || desc_lower.contains(", then ")
-        || desc_lower.contains(" after ")
-    {
-        workflow_score += 20;
+    // Check for device/action patterns (suggests rule)
+    if desc_lower.contains("device") || desc_lower.contains("send") {
+        rule_score += 10;
     }
 
-    // Check for multiple conditions
-    let condition_count = desc_lower.matches("when").count()
-        + desc_lower.matches("if").count()
-        + desc_lower.matches("whenever").count();
-
-    if condition_count > 1 {
-        workflow_score += 15;
-    }
-
-    // Check for action complexity
-    let action_count = desc_lower.matches(',').count()
-        + desc_lower.matches(" and ").count();
-
-    if action_count > 3 {
-        workflow_score += 15;
+    // Check for data processing patterns (suggests transform)
+    if desc_lower.contains("data") || desc_lower.contains("value") {
+        transform_score += 5;
     }
 
     // Determine result
     let (recommended_type, confidence, reasoning, warnings) =
-        if workflow_score > rule_score + 20 {
+        if transform_score > rule_score + 10 {
             (
-                AutomationType::Workflow,
-                (workflow_score - rule_score).min(100) as u8,
-                format!("This appears to be a multi-step automation (workflow score: {}, rule score: {})", workflow_score, rule_score),
+                AutomationType::Transform,
+                (transform_score - rule_score).min(100) as u8,
+                "This appears to be a data processing automation".to_string(),
                 vec![]
             )
-        } else if rule_score > workflow_score + 20 {
+        } else if rule_score > transform_score + 10 {
             (
                 AutomationType::Rule,
-                (rule_score - workflow_score).min(100) as u8,
-                "This appears to be a simple conditional automation".to_string(),
+                (rule_score - transform_score).min(100) as u8,
+                "This appears to be a conditional automation".to_string(),
                 vec![]
             )
         } else {
-            // Close call - use word count and complexity to decide
-            let word_count = desc_lower.split_whitespace().count();
-            if word_count > 15 || action_count > 2 {
-                (
-                    AutomationType::Workflow,
-                    60,
-                    "This description has multiple elements - consider using a workflow for better structure".to_string(),
-                    vec!["Moderate confidence - description is somewhat complex".to_string()]
-                )
-            } else {
-                (
-                    AutomationType::Rule,
-                    65,
-                    "This appears to be a straightforward condition-action pattern".to_string(),
-                    vec![]
-                )
-            }
+            // Close call - default to rule for automation use cases
+            (
+                AutomationType::Rule,
+                55,
+                "This could be either a transform or rule - defaulting to rule".to_string(),
+                vec!["Moderate confidence - consider specifying the type explicitly".to_string()]
+            )
         };
 
     IntentResult {
@@ -690,36 +622,19 @@ pub async fn convert_automation_handler(
         }
     };
 
-    // Perform conversion
+    // Perform conversion - only Transform <-> Rule conversion is supported
     let converted = match (existing, req.r#type) {
+        (Automation::Transform(_), AutomationType::Transform) => {
+            return Err(ErrorResponse::bad_request("Cannot convert to the same type"));
+        }
+        (Automation::Rule(_), AutomationType::Rule) => {
+            return Err(ErrorResponse::bad_request("Cannot convert to the same type"));
+        }
         (Automation::Transform(_), AutomationType::Rule) => {
             return Err(ErrorResponse::bad_request("Transform to Rule conversion is not directly supported. Create a new Rule based on the Transform's output metrics."));
         }
-        (Automation::Transform(_), AutomationType::Workflow) => {
-            return Err(ErrorResponse::bad_request("Transform to Workflow conversion is not directly supported. Create a new Workflow that uses the Transform's output metrics."));
-        }
-        (Automation::Rule(_rule), AutomationType::Transform) => {
+        (Automation::Rule(_), AutomationType::Transform) => {
             return Err(ErrorResponse::bad_request("Rule to Transform conversion is not supported. Transforms are for data processing, not reactive automation."));
-        }
-        (Automation::Rule(rule), AutomationType::Workflow) => {
-            Automation::Workflow(AutomationConverter::rule_to_workflow(rule))
-        }
-        (Automation::Workflow(_workflow), AutomationType::Transform) => {
-            return Err(ErrorResponse::bad_request("Workflow to Transform conversion is not supported. Transforms are for data processing, not complex automation."));
-        }
-        (Automation::Workflow(workflow), AutomationType::Rule) => {
-            match AutomationConverter::workflow_to_rule(&workflow) {
-                Some(rule) => Automation::Rule(rule),
-                None => {
-                    return Err(ErrorResponse::bad_request("Workflow is too complex to convert to a Rule"));
-                }
-            }
-        }
-        (automation, _) => {
-            return Err(ErrorResponse::bad_request(format!(
-                "Cannot convert to the same type (current: {:?})",
-                automation.automation_type()
-            )));
         }
     };
 
@@ -735,11 +650,6 @@ pub async fn convert_automation_handler(
             rule.metadata.id = new_id.clone();
             rule.metadata.name = format!("{} (converted)", rule.metadata.name);
             Automation::Rule(rule)
-        }
-        Automation::Workflow(mut workflow) => {
-            workflow.metadata.id = new_id.clone();
-            workflow.metadata.name = format!("{} (converted)", workflow.metadata.name);
-            Automation::Workflow(workflow)
         }
     };
 

@@ -2,14 +2,13 @@
  * LED Indicator Component
  *
  * State indicator with LED-like visual feedback.
- * Layout matches ValueCard: left LED container + right content.
- * Supports data mapping configuration for flexible value handling.
+ * Simplified design with unified state mapping rules.
  */
 
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import { DataMapper, type SingleValueMappingConfig } from '@/lib/dataMapping'
+import { DataMapper } from '@/lib/dataMapping'
 import { useDataSource } from '@/hooks/useDataSource'
 import { Skeleton } from '@/components/ui/skeleton'
 import { dashboardComponentSize, dashboardCardBase } from '@/design-system/tokens/size'
@@ -23,34 +22,46 @@ import { ErrorState } from '../shared'
 
 export type LEDState = 'on' | 'off' | 'error' | 'warning' | 'unknown'
 
-export interface ValueStateMapping {
-  values?: string
-  pattern?: string
+/**
+ * Unified state mapping rule
+ * One rule can match by threshold, string values, or regex pattern
+ * When matched, it determines the state, optional label, and optional color
+ */
+export interface StateRule {
+  // Match condition (exactly one should be set for meaningful matching)
+  threshold?: { operator: '>' | '<' | '>=' | '<=' | '==' | '!='; value: number }
+  values?: string      // Comma-separated values, e.g., "online,active,true"
+  pattern?: string     // Regex pattern, e.g., "^on|active$"
+
+  // Result when matched
   state: LEDState
-  label?: string
-  color?: string
+  label?: string       // Custom label for this specific match (overrides stateLabels)
+  color?: string       // Custom color for this specific match
 }
 
 export interface LEDIndicatorProps {
   dataSource?: DataSource
-  state?: LEDState
-  title?: string
-  size?: 'sm' | 'md' | 'lg'
-  valueMap?: ValueStateMapping[]
+
+  // Unified state mapping rules
+  rules?: StateRule[]
+
+  // Fallback when no rules match
   defaultState?: LEDState
-  color?: string
+
+  // Optional global label overrides (applied when rule doesn't specify label)
+  stateLabels?: Record<string, string>
+
+  // Display options
+  title?: string       // Primary label (static, e.g., "Living Room Light")
+  size?: 'sm' | 'md' | 'lg'
   showCard?: boolean
   showGlow?: boolean
-  showAnimation?: boolean  // Control pulse/breathing animation
-
-  // Data mapping configuration (enhances valueMap with thresholds)
-  // stateThresholds is now part of SingleValueMappingConfig
-  dataMapping?: SingleValueMappingConfig
+  showAnimation?: boolean
 
   className?: string
 }
 
-// State configuration factory (uses translations)
+// Default state configuration
 function getStateConfig(t: (key: string) => string) {
   return {
     on: {
@@ -81,281 +92,145 @@ function getStateConfig(t: (key: string) => string) {
   }
 }
 
-// Extract value for matching - handles objects and arrays
-function extractValueForMatching(value: unknown): string {
-  if (value === null || value === undefined) {
-    return ''
+// Extract value from data for matching
+function extractValue(data: unknown): string | number | null {
+  if (data === null || data === undefined) {
+    return null
   }
 
-  // Direct string or number
-  if (typeof value === 'string' || typeof value === 'number') {
-    return String(value).trim().toLowerCase()
+  // Direct number
+  if (typeof data === 'number') {
+    return data
+  }
+
+  // Direct string
+  if (typeof data === 'string') {
+    // Try to parse as number first
+    const num = parseFloat(data)
+    if (!isNaN(num) && /^\s*-?\d+(\.\d+)?\s*$/.test(data)) {
+      return num
+    }
+    return data.trim().toLowerCase()
   }
 
   // Boolean
-  if (typeof value === 'boolean') {
-    return value ? 'true' : 'false'
+  if (typeof data === 'boolean') {
+    return data ? 1 : 0
   }
 
   // Array - take last element (most recent)
-  if (Array.isArray(value)) {
-    if (value.length > 0) {
-      return extractValueForMatching(value[value.length - 1])
+  if (Array.isArray(data)) {
+    if (data.length > 0) {
+      return extractValue(data[data.length - 1])
     }
-    return ''
+    return null
   }
 
   // Object - try to extract value field
-  if (typeof value === 'object') {
-    const obj = value as Record<string, unknown>
-    // Try common value fields
+  if (typeof data === 'object') {
+    const obj = data as Record<string, unknown>
     const valueField = obj.value ?? obj.v ?? obj.val ?? obj.result ?? obj.data ?? obj.state
     if (valueField !== undefined) {
-      return extractValueForMatching(valueField)
+      return extractValue(valueField)
     }
   }
 
-  return String(value).trim().toLowerCase()
+  return String(data).trim().toLowerCase()
 }
 
-// Match value to state
-function matchValueToState(
-  value: unknown,
-  valueMap: ValueStateMapping[],
+// Match a single rule against the data
+function matchRule(rule: StateRule, data: unknown): boolean {
+  const value = extractValue(data)
+  if (value === null) return false
+
+  // Threshold matching (for numeric values)
+  if (rule.threshold) {
+    if (typeof value !== 'number') return false
+    return DataMapper.evaluateThreshold(value, rule.threshold.operator, rule.threshold.value)
+  }
+
+  // String values matching
+  if (rule.values) {
+    const valueStr = String(value).toLowerCase().trim()
+    const values = rule.values.toLowerCase().split(',').map(v => v.trim())
+    return values.some(v => v === valueStr)
+  }
+
+  // Regex pattern matching
+  if (rule.pattern) {
+    try {
+      const valueStr = String(value)
+      return new RegExp(rule.pattern, 'i').test(valueStr)
+    } catch {
+      return false
+    }
+  }
+
+  // Rule with no condition matches everything (fallback rule)
+  return true
+}
+
+// Find first matching rule and return its state/label/color
+function findMatch(
+  rules: StateRule[],
+  data: unknown,
   defaultState: LEDState
-): LEDState {
-  if (value === null || value === undefined) {
-    return defaultState
+): { state: LEDState; label?: string; color?: string } {
+  if (!rules || rules.length === 0) {
+    return { state: defaultState }
   }
 
-  const normalizedValue = extractValueForMatching(value)
-
-  for (const mapping of valueMap) {
-    if (mapping.values) {
-      const values = mapping.values.toLowerCase().split(',').map(v => v.trim())
-      if (values.some(v => v === normalizedValue)) {
-        return mapping.state
-      }
-    }
-
-    if (mapping.pattern) {
-      try {
-        const regex = new RegExp(mapping.pattern, 'i')
-        if (regex.test(normalizedValue)) {
-          return mapping.state
-        }
-      } catch {
-        // Skip invalid regex
+  for (const rule of rules) {
+    if (matchRule(rule, data)) {
+      return {
+        state: rule.state,
+        label: rule.label,
+        color: rule.color,
       }
     }
   }
 
-  return defaultState
-}
-
-function getCustomLabel(
-  value: unknown,
-  valueMap: ValueStateMapping[],
-  matchedState: LEDState
-): string | undefined {
-  if (!valueMap) return undefined
-
-  const normalizedValue = extractValueForMatching(value)
-
-  for (const mapping of valueMap) {
-    if (mapping.state === matchedState && mapping.label) {
-      if (mapping.values) {
-        const values = mapping.values.toLowerCase().split(',').map(v => v.trim())
-        if (values.some(v => v === normalizedValue)) {
-          return mapping.label
-        }
-      }
-      if (mapping.pattern) {
-        try {
-          if (new RegExp(mapping.pattern, 'i').test(normalizedValue)) {
-            return mapping.label
-          }
-        } catch {
-          // Skip
-        }
-      }
-    }
-  }
-
-  return undefined
-}
-
-function getCustomColor(
-  value: unknown,
-  valueMap: ValueStateMapping[],
-  matchedState: LEDState
-): string | undefined {
-  if (!valueMap) return undefined
-
-  const normalizedValue = extractValueForMatching(value)
-
-  for (const mapping of valueMap) {
-    if (mapping.state === matchedState && mapping.color) {
-      if (mapping.values) {
-        const values = mapping.values.toLowerCase().split(',').map(v => v.trim())
-        if (values.some(v => v === normalizedValue)) {
-          return mapping.color
-        }
-      }
-      if (mapping.pattern) {
-        try {
-          if (new RegExp(mapping.pattern, 'i').test(normalizedValue)) {
-            return mapping.color
-          }
-        } catch {
-          // Skip
-        }
-      }
-    }
-  }
-
-  return undefined
-}
-
-// Determine state from numeric value using thresholds
-function getStateFromThresholds(
-  value: number,
-  thresholds?: SingleValueMappingConfig['stateThresholds']
-): LEDState | null {
-  if (!thresholds) return null
-
-  // Check in order: error > warning > on > off
-  if (thresholds.error) {
-    const { operator, value: threshold } = thresholds.error
-    if (DataMapper.evaluateThreshold(value, operator, threshold)) {
-      return 'error'
-    }
-  }
-
-  if (thresholds.warning) {
-    const { operator, value: threshold } = thresholds.warning
-    if (DataMapper.evaluateThreshold(value, operator, threshold)) {
-      return 'warning'
-    }
-  }
-
-  if (thresholds.on) {
-    const { operator, value: threshold } = thresholds.on
-    if (DataMapper.evaluateThreshold(value, operator, threshold)) {
-      return 'on'
-    }
-  }
-
-  if (thresholds.off) {
-    const { operator, value: threshold } = thresholds.off
-    if (DataMapper.evaluateThreshold(value, operator, threshold)) {
-      return 'off'
-    }
-  }
-
-  return null
+  return { state: defaultState }
 }
 
 export function LEDIndicator({
   dataSource,
-  state: propState = 'off',
+  rules = [],
+  defaultState = 'unknown',
+  stateLabels,
   title,
   size = 'md',
-  valueMap,
-  defaultState = 'unknown',
-  color,
   showCard = true,
   showGlow = true,
   showAnimation = true,
-  dataMapping,
   className,
 }: LEDIndicatorProps) {
   const { t } = useTranslation('dashboardComponents')
   const stateConfig = getStateConfig(t)
   const { data, loading, error } = useDataSource<unknown>(dataSource)
 
-  // Determine the final state
-  const ledState = useMemo(() => {
-    if (error) return 'error'
-    if (loading) return 'unknown'
+  // Determine state, label, and color from matching rule
+  const { state: ledState, label: ruleLabel, color: ruleColor } = useMemo(() => {
+    if (error) return { state: 'error' as LEDState }
+    if (loading) return { state: 'unknown' as LEDState }
 
-    // Extract numeric value if available
-    const numericValue = DataMapper.extractValue(data, dataMapping)
+    // Find first matching rule
+    return findMatch(rules, data, defaultState)
+  }, [data, rules, defaultState, error, loading])
 
-    // First try: Use state thresholds from dataMapping
-    if (numericValue !== null && numericValue !== undefined) {
-      const thresholdState = getStateFromThresholds(numericValue, dataMapping?.stateThresholds)
-      if (thresholdState) {
-        return thresholdState
-      }
-    }
-
-    // Second try: Use valueMap for string/enum matching
-    if (valueMap && valueMap.length > 0) {
-      return matchValueToState(data, valueMap, defaultState)
-    }
-
-    // Third try: Auto-detect boolean/string states
-    if (data !== null && data !== undefined) {
-      // Extract value for matching (handles objects and arrays)
-      const dataStr = extractValueForMatching(data)
-
-      // Check for boolean-like values
-      const boolValue = DataMapper.mapToBoolean(data, {
-        valueMapping: {
-          onValues: ['true', 'on', '1', 'yes', 'enabled', 'active', 'online'],
-          offValues: ['false', 'off', '0', 'no', 'disabled', 'inactive', 'offline'],
-        },
-      })
-
-      if (typeof data === 'boolean' || boolValue !== undefined) {
-        return boolValue ? 'on' : 'off'
-      }
-
-      // Check for string states
-      if (['on', 'true', '1', 'yes', 'enabled', 'active', 'online'].includes(dataStr)) {
-        return 'on'
-      }
-      if (['off', 'false', '0', 'no', 'disabled', 'inactive', 'offline'].includes(dataStr)) {
-        return 'off'
-      }
-      if (['error', 'failed', 'failure', 'critical'].includes(dataStr)) {
-        return 'error'
-      }
-      if (['warning', 'warn'].includes(dataStr)) {
-        return 'warning'
-      }
-    }
-
-    return propState
-  }, [data, valueMap, defaultState, propState, loading, error, dataMapping])
-
-  const customLabel = useMemo(() => {
-    if (data !== undefined && valueMap) {
-      return getCustomLabel(data, valueMap, ledState)
-    }
-    return undefined
-  }, [data, valueMap, ledState])
-
-  const customColor = useMemo(() => {
-    if (data !== undefined && valueMap) {
-      return getCustomColor(data, valueMap, ledState)
-    }
-    return undefined
-  }, [data, valueMap, ledState])
-
-  const config = dashboardComponentSize[size]
   const stateCfg = stateConfig[ledState] || stateConfig.unknown
-  const indicatorState = stateCfg.indicatorState
   const isActive = ledState === 'on' || ledState === 'error' || ledState === 'warning'
 
-  const finalColor = customColor || color || stateCfg.color.base
-  const colorConfig = stateCfg.color
+  // Label priority: rule.label > stateLabels[ledState] > default state label
+  const displayLabel = ruleLabel || (stateLabels?.[ledState]) || stateCfg.label
 
-  // Animation: all active states (on, error, warning) get pulse effect when showAnimation is true
+  // Color priority: rule.color > default state color
+  const displayColor = ruleColor || stateCfg.color.base
+
+  // Animation class
   const animationClassName = showAnimation && isActive ? 'animate-pulse' : ''
 
-  // Convert hex to rgba for background opacity
+  // Convert hex to rgba for background
   const hexToRgba = (hex: string, alpha: number) => {
     const cleanHex = hex.replace('#', '')
     const r = parseInt(cleanHex.substring(0, 2), 16)
@@ -364,16 +239,12 @@ export function LEDIndicator({
     return `rgba(${r}, ${g}, ${b}, ${alpha})`
   }
 
-  // Use custom color or default background
-  const useCustomBg = customColor || color
-  const containerBgColor = useCustomBg && isActive ? hexToRgba(useCustomBg, 0.15) : undefined
+  const containerBgColor = isActive ? hexToRgba(displayColor, 0.15) : undefined
 
-  // Enhanced glow effect
+  // Glow effect
   const glowStyle = showGlow && isActive
-    ? `0 0 8px ${finalColor}60, 0 0 16px ${finalColor}40, 0 0 24px ${finalColor}20`
+    ? `0 0 8px ${displayColor}60, 0 0 16px ${displayColor}40, 0 0 24px ${displayColor}20`
     : 'none'
-
-  const displayLabel = title || customLabel || stateCfg.label
 
   // Error state
   if (error && dataSource) {
@@ -383,8 +254,8 @@ export function LEDIndicator({
   // Loading state
   if (loading) {
     return (
-      <div className={cn(dashboardCardBase, 'flex-row items-center', config.contentGap, config.padding, className)}>
-        <Skeleton className={cn(config.iconContainer, 'rounded-full')} />
+      <div className={cn(dashboardCardBase, 'flex-row items-center', dashboardComponentSize[size].contentGap, dashboardComponentSize[size].padding, className)}>
+        <Skeleton className={cn(dashboardComponentSize[size].iconContainer, 'rounded-full')} />
         <Skeleton className={cn('h-4 w-20 rounded')} />
       </div>
     )
@@ -392,11 +263,11 @@ export function LEDIndicator({
 
   const content = (
     <>
-      {/* LED Section - left side like ValueCard icon */}
+      {/* LED Section */}
       <div className={cn(
         'flex items-center justify-center shrink-0 rounded-full',
-        config.iconContainer,
-        !containerBgColor && (isActive ? colorConfig.bg : 'bg-muted/30'),
+        dashboardComponentSize[size].iconContainer,
+        !containerBgColor && (isActive ? stateCfg.color.bg : 'bg-muted/30'),
         animationClassName
       )}
       style={{
@@ -411,33 +282,39 @@ export function LEDIndicator({
             isActive && 'ring-2 ring-white/20'
           )}
           style={{
-            backgroundColor: finalColor,
+            backgroundColor: displayColor,
             boxShadow: isActive ? `inset 0 1px 2px rgba(255,255,255,0.3), inset 0 -1px 2px rgba(0,0,0,0.2)` : undefined,
           }}
         />
       </div>
 
-      {/* Label section - right side */}
+      {/* Label section */}
       <div className="flex flex-col min-w-0 flex-1">
-        <span className={cn(indicatorFontWeight.title, 'text-foreground truncate', config.titleText)}>
-          {displayLabel}
-        </span>
-        {customLabel && (
-          <span className={cn(indicatorFontWeight.label, 'text-muted-foreground', config.labelText)}>
-            {stateCfg.label}
+        {/* Primary label - title */}
+        {title && (
+          <span className={cn(indicatorFontWeight.title, 'text-foreground truncate', dashboardComponentSize[size].titleText)}>
+            {title}
           </span>
         )}
+        {/* Secondary label - state */}
+        <span className={cn(
+          indicatorFontWeight.label,
+          title ? 'text-muted-foreground' : 'text-foreground',
+          dashboardComponentSize[size].labelText
+        )}>
+          {displayLabel}
+        </span>
       </div>
     </>
   )
 
   if (showCard) {
     return (
-      <div className={cn(dashboardCardBase, 'flex-row items-center', config.contentGap, config.padding, className)}>
+      <div className={cn(dashboardCardBase, 'flex-row items-center', dashboardComponentSize[size].contentGap, dashboardComponentSize[size].padding, className)}>
         {content}
       </div>
     )
   }
 
-  return <div className={cn('flex items-center', config.contentGap, 'w-full', config.padding, className)}>{content}</div>
+  return <div className={cn('flex items-center', dashboardComponentSize[size].contentGap, 'w-full', dashboardComponentSize[size].padding, className)}>{content}</div>
 }

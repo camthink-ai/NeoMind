@@ -1,4 +1,5 @@
 import { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -33,15 +34,17 @@ export function SubPageHeader({
   description,
   icon,
   onBack,
-  backLabel = '返回',
+  backLabel,
   actions,
   className,
 }: SubPageHeaderProps) {
+  const { t } = useTranslation('common')
+  const defaultBackLabel = backLabel || t('back')
   return (
     <div className={cn('flex items-center gap-4 mb-6', className)}>
       <Button variant="ghost" size="sm" onClick={onBack} className="gap-1">
         <ArrowLeft className="h-4 w-4" />
-        {backLabel}
+        {defaultBackLabel}
       </Button>
       <div className="flex-1 flex items-center justify-between">
         <div>

@@ -7,7 +7,6 @@ declare module 'react-i18next' {
       alerts: typeof import('./locales/en/alerts.json')
       automation: typeof import('./locales/en/automation.json')
       commands: typeof import('./locales/en/commands.json')
-      decisions: typeof import('./locales/en/decisions.json')
       plugins: typeof import('./locales/en/plugins.json')
       settings: typeof import('./locales/en/settings.json')
       auth: typeof import('./locales/en/auth.json')

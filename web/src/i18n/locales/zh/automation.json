@@ -1,6 +1,29 @@
 {
   "title": "自动化",
   "pageDescription": "管理规则和数据处理",
+  "baseInfo": {
+    "name": "名称",
+    "namePlaceholder": "输入名称...",
+    "description": "描述",
+    "descriptionPlaceholder": "可选描述...",
+    "enableRule": "启用此规则",
+    "enableTransform": "启用此转换",
+    "scopeLabel": "作用范围",
+    "scope": {
+      "global": "全局",
+      "deviceType": "设备类型",
+      "device": "单个设备"
+    },
+    "selectScope": "选择..."
+  },
+  "validation": {
+    "errorTitle": "请完善以下配置",
+    "warningTitle": "注意事项",
+    "infoTitle": "提示",
+    "error": "错误",
+    "warning": "警告",
+    "info": "信息"
+  },
   "tabs": {
     "agents": "AI 智能体",
     "rules": "规则",

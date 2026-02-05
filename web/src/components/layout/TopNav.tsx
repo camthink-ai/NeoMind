@@ -316,7 +316,7 @@ export function TopNav() {
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-xs sm:block">
-              {i18n.language === 'zh' ? 'Switch to English' : '切换到中文'}
+              {i18n.language === 'zh' ? t('language.switchToEnglish') : t('language.switchToChinese')}
             </TooltipContent>
           </Tooltip>
 

@@ -82,16 +82,15 @@ export const componentRegistry: ComponentRegistry = {
     hasActions: false,
     acceptsProp: (prop) => [
       'title', 'unit', 'prefix', 'suffix', 'size', 'variant',
-      'showTrend', 'trendValue', 'trendPeriod', 'showSparkline',
+      'showTrend',
       'icon', 'iconType', 'iconColor', 'valueColor',
-      'description', 'sparklineData',
+      'description',
       'dataMapping', 'className'
     ].includes(prop),
     defaultProps: {
       size: 'md',
       variant: 'default',
       showTrend: false,
-      showSparkline: false,
     },
     variants: ['default', 'vertical', 'compact', 'minimal'],
   },

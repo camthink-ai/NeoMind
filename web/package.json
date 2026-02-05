@@ -62,6 +62,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
     "@playwright/test": "^1.57.0",
     "@tauri-apps/cli": "^2.0.0",
     "@types/react": "^18.3.3",

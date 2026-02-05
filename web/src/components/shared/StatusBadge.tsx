@@ -1,5 +1,6 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { getStatusColor, getStatusLabel } from '@/lib/utils/status'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 const badgeVariants = cva(
@@ -69,11 +70,13 @@ export interface AlertBadgeProps {
 }
 
 export function AlertBadge({ level, className }: AlertBadgeProps) {
+  const { t } = useTranslation('common')
+
   const config = {
-    critical: { label: '严重', className: 'bg-error/10 text-error border-error/20' },
-    warning: { label: '警告', className: 'bg-warning/10 text-warning border-warning/20' },
-    info: { label: '信息', className: 'bg-info/10 text-info border-info/20' },
-    emergency: { label: '紧急', className: 'bg-red-600/10 text-red-600 border-red-600/20' },
+    critical: { label: t('alertLevels.critical'), className: 'bg-error/10 text-error border-error/20' },
+    warning: { label: t('alertLevels.warning'), className: 'bg-warning/10 text-warning border-warning/20' },
+    info: { label: t('alertLevels.info'), className: 'bg-info/10 text-info border-info/20' },
+    emergency: { label: t('alertLevels.emergency'), className: 'bg-red-600/10 text-red-600 border-red-600/20' },
   }
 
   const { label, className: levelClass } = config[level]

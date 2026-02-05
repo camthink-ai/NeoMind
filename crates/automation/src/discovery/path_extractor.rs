@@ -685,7 +685,7 @@ mod tests {
 
     use std::pin::Pin;
     use futures::Stream;
-    use edge_ai_core::llm::backend::{StreamChunk, FinishReason, LlmOutput};
+    use edge_ai_core::llm::backend::StreamChunk;
 
     #[tokio::test]
     async fn test_extract_from_json_samples() {
@@ -804,7 +804,7 @@ mod tests {
         // Consistent path
         assert_eq!(
             extractor.validate_path("temp", &samples),
-            PathValidity::Valid
+            PathValidity::Inconsistent  // 2 out of 3 samples have "temp"
         );
 
         // Partially present

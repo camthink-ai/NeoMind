@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react"
+import { useTranslation } from 'react-i18next'
 import { X, Save, Copy } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -22,6 +23,7 @@ export function FullScreenEditor({
   onSave,
   readOnly = false,
 }: FullScreenEditorProps) {
+  const { t } = useTranslation('common')
   const [localValue, setLocalValue] = useState(value)
 
   useEffect(() => {
@@ -50,7 +52,7 @@ export function FullScreenEditor({
               variant="ghost"
               size="icon"
               onClick={handleCopy}
-              title="复制"
+              title={t('copy')}
             >
               <Copy className="h-4 w-4" />
             </Button>
@@ -59,7 +61,7 @@ export function FullScreenEditor({
                 variant="ghost"
                 size="icon"
                 onClick={handleSave}
-                title="保存"
+                title={t('save')}
               >
                 <Save className="h-4 w-4" />
               </Button>

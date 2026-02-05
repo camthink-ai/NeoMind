@@ -8,7 +8,9 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Unified automation type that can be a Transform, Rule, or Workflow
+/// Unified automation type that can be a Transform or Rule
+///
+/// Note: Workflow support has been removed as it was unused in production.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Automation {
@@ -18,9 +20,6 @@ pub enum Automation {
     /// Simple rule-based automation (if-then)
     #[serde(rename = "rule")]
     Rule(RuleAutomation),
-    /// Complex workflow automation (multi-step)
-    #[serde(rename = "workflow")]
-    Workflow(WorkflowAutomation),
 }
 
 impl Automation {
@@ -29,7 +28,6 @@ impl Automation {
         match self {
             Automation::Transform(t) => &t.metadata.id,
             Automation::Rule(r) => &r.metadata.id,
-            Automation::Workflow(w) => &w.metadata.id,
         }
     }
 
@@ -38,7 +36,6 @@ impl Automation {
         match self {
             Automation::Transform(t) => &t.metadata.name,
             Automation::Rule(r) => &r.metadata.name,
-            Automation::Workflow(w) => &w.metadata.name,
         }
     }
 
@@ -47,7 +44,6 @@ impl Automation {
         match self {
             Automation::Transform(_) => AutomationType::Transform,
             Automation::Rule(_) => AutomationType::Rule,
-            Automation::Workflow(_) => AutomationType::Workflow,
         }
     }
 
@@ -56,7 +52,6 @@ impl Automation {
         match self {
             Automation::Transform(t) => t.metadata.enabled,
             Automation::Rule(r) => r.metadata.enabled,
-            Automation::Workflow(w) => w.metadata.enabled,
         }
     }
 
@@ -65,7 +60,6 @@ impl Automation {
         match self {
             Automation::Transform(t) => t.metadata.execution_count,
             Automation::Rule(r) => r.metadata.execution_count,
-            Automation::Workflow(w) => w.metadata.execution_count,
         }
     }
 
@@ -74,17 +68,6 @@ impl Automation {
         match self {
             Automation::Transform(t) => t.complexity_score(),
             Automation::Rule(_) => 1, // Rules are always simple
-            Automation::Workflow(w) => {
-                // Base complexity on step count and nesting
-                let step_count = w.steps.len();
-                match step_count {
-                    0 => 1,
-                    1..=2 => 2,
-                    3..=5 => 3,
-                    6..=10 => 4,
-                    _ => 5,
-                }
-            }
         }
     }
 
@@ -93,7 +76,6 @@ impl Automation {
         match self {
             Automation::Transform(t) => t.metadata.last_executed,
             Automation::Rule(r) => r.metadata.last_executed,
-            Automation::Workflow(w) => w.metadata.last_executed,
         }
     }
 }
@@ -104,7 +86,6 @@ impl Automation {
 pub enum AutomationType {
     Transform,
     Rule,
-    Workflow,
 }
 
 impl AutomationType {
@@ -112,7 +93,6 @@ impl AutomationType {
         match self {
             AutomationType::Transform => "transform",
             AutomationType::Rule => "rule",
-            AutomationType::Workflow => "workflow",
         }
     }
 }
@@ -973,103 +953,6 @@ impl RuleAutomation {
     }
 }
 
-/// Workflow-based automation (complex multi-step)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkflowAutomation {
-    /// Shared metadata
-    #[serde(flatten)]
-    pub metadata: AutomationMetadata,
-    /// Triggers for this workflow
-    #[serde(default)]
-    pub triggers: Vec<Trigger>,
-    /// Workflow steps
-    pub steps: Vec<Step>,
-    /// Workflow variables
-    #[serde(default)]
-    pub variables: HashMap<String, serde_json::Value>,
-    /// Maximum execution time in seconds
-    #[serde(default = "default_timeout")]
-    pub timeout_seconds: u64,
-}
-
-fn default_timeout() -> u64 {
-    300
-}
-
-impl WorkflowAutomation {
-    /// Create a new workflow automation
-    pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
-        Self {
-            metadata: AutomationMetadata::new(id, name),
-            triggers: Vec::new(),
-            steps: Vec::new(),
-            variables: HashMap::new(),
-            timeout_seconds: 300,
-        }
-    }
-
-    /// Set description
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.metadata.description = description.into();
-        self
-    }
-
-    /// Add a trigger
-    pub fn with_trigger(mut self, trigger: Trigger) -> Self {
-        self.triggers.push(trigger);
-        self
-    }
-
-    /// Add a step
-    pub fn with_step(mut self, step: Step) -> Self {
-        self.steps.push(step);
-        self
-    }
-
-    /// Add a variable
-    pub fn with_variable(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
-        self.variables.insert(key.into(), value);
-        self
-    }
-
-    /// Calculate complexity based on steps and nesting
-    pub fn calculate_complexity(&self) -> u8 {
-        let mut complexity = 1u8;
-        let mut max_depth = 0u8;
-
-        fn count_step_depth(step: &Step, depth: u8) -> u8 {
-            let mut max_d = depth;
-            if let Step::Condition { then_steps, else_steps, .. } = step {
-                for s in then_steps {
-                    max_d = max_d.max(count_step_depth(s, depth + 1));
-                }
-                for s in else_steps {
-                    max_d = max_d.max(count_step_depth(s, depth + 1));
-                }
-            }
-            max_d
-        }
-
-        for step in &self.steps {
-            max_depth = max_depth.max(count_step_depth(step, 1));
-        }
-
-        // Workflows with steps have minimum complexity of 2
-        if !self.steps.is_empty() {
-            complexity = 2;
-        }
-
-        complexity = complexity.max(max_depth.min(5));
-        complexity = complexity.min(5);
-        complexity
-    }
-
-    /// Get complexity score (alias for calculate_complexity)
-    pub fn complexity_score(&self) -> u8 {
-        self.calculate_complexity()
-    }
-}
-
 /// Trigger definition for automations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trigger {
@@ -1349,113 +1232,6 @@ impl AlertSeverity {
     }
 }
 
-/// Workflow step types
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "step_type", rename_all = "snake_case")]
-pub enum Step {
-    /// Query a device for data
-    DeviceQuery {
-        id: String,
-        device_id: String,
-        metric: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        aggregation: Option<AggregationType>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output_variable: Option<String>,
-    },
-    /// Conditional branching
-    Condition {
-        id: String,
-        condition: String,
-        then_steps: Vec<Step>,
-        #[serde(default)]
-        else_steps: Vec<Step>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output_variable: Option<String>,
-    },
-    /// Send an alert
-    SendAlert {
-        id: String,
-        #[serde(default)]
-        severity: AlertSeverity,
-        title: String,
-        message: String,
-        #[serde(default)]
-        channels: Vec<String>,
-    },
-    /// Delay execution
-    Delay {
-        id: String,
-        duration_seconds: u64,
-    },
-    /// Execute a device command
-    ExecuteCommand {
-        id: String,
-        device_id: String,
-        command: String,
-        #[serde(default)]
-        parameters: HashMap<String, String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        wait_for_result: Option<bool>,
-    },
-    /// Execute LLM analysis
-    LlmAnalysis {
-        id: String,
-        prompt: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output_variable: Option<String>,
-        #[serde(default)]
-        model: Option<String>,
-    },
-    /// Set a variable
-    SetVariable {
-        id: String,
-        name: String,
-        value: serde_json::Value,
-    },
-    /// Parallel execution
-    Parallel {
-        id: String,
-        steps: Vec<Step>,
-    },
-    /// Loop over values
-    ForEach {
-        id: String,
-        iterator_variable: String,
-        collection: String,
-        steps: Vec<Step>,
-    },
-}
-
-impl Step {
-    /// Get the step ID
-    pub fn id(&self) -> &str {
-        match self {
-            Step::DeviceQuery { id, .. } => id,
-            Step::Condition { id, .. } => id,
-            Step::SendAlert { id, .. } => id,
-            Step::Delay { id, .. } => id,
-            Step::ExecuteCommand { id, .. } => id,
-            Step::LlmAnalysis { id, .. } => id,
-            Step::SetVariable { id, .. } => id,
-            Step::Parallel { id, .. } => id,
-            Step::ForEach { id, .. } => id,
-        }
-    }
-}
-
-/// Aggregation types for device queries
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AggregationType {
-    Average,
-    Min,
-    Max,
-    Sum,
-    Count,
-    Last,
-}
-
 /// Intent analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntentResult {
@@ -1479,12 +1255,12 @@ pub struct SuggestedAutomation {
     pub name: String,
     /// Suggested description
     pub description: String,
-    /// Whether this is a rule or workflow
+    /// Whether this is a transform or rule
     pub automation_type: AutomationType,
+    /// Suggested transform (if applicable)
+    pub transform: Option<TransformAutomation>,
     /// Suggested rule (if applicable)
     pub rule: Option<RuleAutomation>,
-    /// Suggested workflow (if applicable)
-    pub workflow: Option<WorkflowAutomation>,
     /// Estimated complexity
     pub estimated_complexity: u8,
 }
@@ -1621,7 +1397,6 @@ pub struct TypeCounts {
     pub total: usize,
     pub transforms: usize,
     pub rules: usize,
-    pub workflows: usize,
 }
 
 #[cfg(test)]
@@ -1630,8 +1405,8 @@ mod tests {
 
     #[test]
     fn test_automation_type_display() {
+        assert_eq!(AutomationType::Transform.as_str(), "transform");
         assert_eq!(AutomationType::Rule.as_str(), "rule");
-        assert_eq!(AutomationType::Workflow.as_str(), "workflow");
     }
 
     #[test]
@@ -1663,11 +1438,8 @@ mod tests {
         let rule = RuleAutomation::new("test", "Test");
         assert_eq!(rule.complexity_score(), 1);
 
-        let workflow = WorkflowAutomation::new("test", "Test")
-            .with_step(Step::Delay {
-                id: "delay1".to_string(),
-                duration_seconds: 5,
-            });
-        assert_eq!(workflow.complexity_score(), 2);
+        let transform = TransformAutomation::new("test", "Test", TransformScope::Global)
+            .with_complexity(2);
+        assert_eq!(transform.complexity_score(), 2);
     }
 }

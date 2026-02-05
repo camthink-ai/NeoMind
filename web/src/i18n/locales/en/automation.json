@@ -1,6 +1,29 @@
 {
   "title": "Automation",
   "pageDescription": "Manage rules and data transformations",
+  "baseInfo": {
+    "name": "Name",
+    "namePlaceholder": "Enter name...",
+    "description": "Description",
+    "descriptionPlaceholder": "Optional description...",
+    "enableRule": "Enable this rule",
+    "enableTransform": "Enable this transform",
+    "scopeLabel": "Scope",
+    "scope": {
+      "global": "Global",
+      "deviceType": "Device Type",
+      "device": "Single Device"
+    },
+    "selectScope": "Select..."
+  },
+  "validation": {
+    "errorTitle": "Please complete the following configuration",
+    "warningTitle": "Notes",
+    "infoTitle": "Tips",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Info"
+  },
   "tabs": {
     "agents": "AI Agents",
     "rules": "Rules",

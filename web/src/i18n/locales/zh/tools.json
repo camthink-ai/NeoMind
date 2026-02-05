@@ -1,0 +1,32 @@
+{
+  "execute": {
+    "title": "执行工具: {{name}}",
+    "loading": "加载中...",
+    "parameters": "参数",
+    "required": "必填",
+    "executeResult": "执行结果",
+    "success": "成功",
+    "failed": "失败",
+    "executionTime": "耗时: {{time}}ms",
+    "close": "关闭",
+    "executing": "执行中...",
+    "execute": "执行",
+    "placeholder": "请输入 {{key}}",
+    "errors": {
+      "loadFailed": "加载失败",
+      "loadFailedDesc": "无法加载工具 {{name}} 的参数定义",
+      "execFailed": "执行失败",
+      "execFailedDesc": "工具执行返回失败状态",
+      "execError": "工具执行出错",
+      "unknownError": "未知错误"
+    },
+    "success": {
+      "title": "执行成功",
+      "description": "工具 {{name}} 执行完成"
+    },
+    "boolean": {
+      "true": "true",
+      "false": "false"
+    }
+  }
+}

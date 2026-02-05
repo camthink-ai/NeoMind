@@ -144,14 +144,6 @@ impl ToolNameMapper {
         input.to_string()
     }
 
-    /// 检查是否是真实工具名称
-    fn is_real_name(&self, name: &str) -> bool {
-        // 真实工具名称不会出现在简化名称映射的值中
-        // 更可靠的检查是验证该工具是否存在于注册表中
-        // 但这里我们使用一个启发式方法
-        !self.simplified_to_real.contains_key(name)
-    }
-
     /// 模糊匹配
     ///
     /// 对于部分匹配的别名，尝试找到最相似的工具

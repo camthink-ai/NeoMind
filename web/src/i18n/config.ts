@@ -9,7 +9,6 @@ import en_devices from './locales/en/devices.json';
 import en_alerts from './locales/en/alerts.json';
 import en_automation from './locales/en/automation.json';
 import en_commands from './locales/en/commands.json';
-import en_decisions from './locales/en/decisions.json';
 import en_plugins from './locales/en/plugins.json';
 import en_extensions from './locales/en/extensions.json';
 import en_settings from './locales/en/settings.json';
@@ -28,7 +27,6 @@ import zh_devices from './locales/zh/devices.json';
 import zh_alerts from './locales/zh/alerts.json';
 import zh_automation from './locales/zh/automation.json';
 import zh_commands from './locales/zh/commands.json';
-import zh_decisions from './locales/zh/decisions.json';
 import zh_plugins from './locales/zh/plugins.json';
 import zh_extensions from './locales/zh/extensions.json';
 import zh_settings from './locales/zh/settings.json';
@@ -49,7 +47,6 @@ const resources = {
     alerts: en_alerts,
     automation: en_automation,
     commands: en_commands,
-    decisions: en_decisions,
     plugins: en_plugins,
     extensions: en_extensions,
     settings: en_settings,
@@ -69,7 +66,6 @@ const resources = {
     alerts: zh_alerts,
     automation: zh_automation,
     commands: zh_commands,
-    decisions: zh_decisions,
     plugins: zh_plugins,
     extensions: zh_extensions,
     settings: zh_settings,
@@ -93,7 +89,7 @@ i18n
     fallbackLng: 'en',
     defaultNS: 'common',
     ns: ['common', 'navigation', 'devices', 'alerts', 'automation',
-         'commands', 'decisions', 'plugins', 'extensions', 'settings', 'auth',
+         'commands', 'plugins', 'extensions', 'settings', 'auth',
          'validation', 'messages', 'dashboard', 'agents', 'dashboardComponents', 'chat', 'setup'],
     interpolation: {
       escapeValue: false,

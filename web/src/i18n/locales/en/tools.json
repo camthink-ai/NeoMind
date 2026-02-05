@@ -1,0 +1,32 @@
+{
+  "execute": {
+    "title": "Execute Tool: {{name}}",
+    "loading": "Loading...",
+    "parameters": "Parameters",
+    "required": "Required",
+    "executeResult": "Execution Result",
+    "success": "Success",
+    "failed": "Failed",
+    "executionTime": "Time: {{time}}ms",
+    "close": "Close",
+    "executing": "Executing...",
+    "execute": "Execute",
+    "placeholder": "Enter {{key}}",
+    "errors": {
+      "loadFailed": "Load Failed",
+      "loadFailedDesc": "Unable to load parameter definition for tool {{name}}",
+      "execFailed": "Execution Failed",
+      "execFailedDesc": "Tool execution returned failed status",
+      "execError": "Tool execution error",
+      "unknownError": "Unknown error"
+    },
+    "success": {
+      "title": "Execution Successful",
+      "description": "Tool {{name}} executed successfully"
+    },
+    "boolean": {
+      "true": "true",
+      "false": "false"
+    }
+  }
+}

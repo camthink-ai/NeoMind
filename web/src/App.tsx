@@ -20,8 +20,6 @@ const DevicesPage = lazy(() => import('@/pages/devices').then(m => ({ default: m
 const AutomationPage = lazy(() => import('@/pages/automation').then(m => ({ default: m.AutomationPage })))
 const AgentsPage = lazy(() => import('@/pages/agents').then(m => ({ default: m.AgentsPage })))
 const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default: m.SettingsPage })))
-const CommandsPage = lazy(() => import('@/pages/commands').then(m => ({ default: m.CommandsPage })))
-const DecisionsPage = lazy(() => import('@/pages/decisions').then(m => ({ default: m.DecisionsPage })))
 const MessagesPage = lazy(() => import('@/pages/messages').then(m => ({ default: m.default })))
 const PluginsPage = lazy(() => import('@/pages/plugins').then(m => ({ default: m.PluginsPage })))
 
@@ -272,12 +270,6 @@ function App() {
                     {/* Agents */}
                     <Route path="/agents" element={<AgentsPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
-                    <Route path="/commands" element={<CommandsPage />} />
-                    <Route path="/decisions" element={<DecisionsPage />} />
-                    {/* Decisions with filter routes */}
-                    <Route path="/decisions/proposed" element={<DecisionsPage />} />
-                    <Route path="/decisions/executed" element={<DecisionsPage />} />
-                    <Route path="/decisions/rejected" element={<DecisionsPage />} />
                     {/* Messages with tab routes */}
                     <Route path="/messages" element={<MessagesPage />} />
                     <Route path="/messages/channels" element={<MessagesPage />} />

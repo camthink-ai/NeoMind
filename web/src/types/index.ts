@@ -719,56 +719,6 @@ export interface CommandStatsResponse {
   }
 }
 
-// ========== Decision Types ==========
-
-export interface DecisionDto {
-  id: string
-  title: string
-  description: string
-  reasoning: string
-  actions: DecisionActionDto[]
-  confidence: number
-  decision_type: string
-  priority: string
-  status: string
-  created_at: number
-  executed_at: number | null
-  execution_result: ExecutionResultDto | null
-}
-
-export interface DecisionActionDto {
-  id: string
-  action_type: string
-  description: string
-  parameters: Record<string, unknown>
-  required: boolean
-}
-
-export interface ExecutionResultDto {
-  success: boolean
-  actions_executed: number
-  success_count: number
-  failure_count: number
-  error: string | null
-  timestamp: number
-}
-
-export interface DecisionListResponse {
-  decisions: DecisionDto[]
-  count: number
-}
-
-export interface DecisionStatsResponse {
-  stats: {
-    total_count: number
-    by_type: Record<string, number>
-    by_priority: Record<string, number>
-    by_status: Record<string, number>
-    avg_confidence: number
-    success_rate: number
-  }
-}
-
 // ========== Chat Input Types ==========
 
 export interface ChatMessage {

@@ -1,0 +1,42 @@
+{
+  "iconPicker": {
+    "allCategories": "全部",
+    "common": "常用",
+    "status": "状态",
+    "arrows": "箭头",
+    "media": "媒体",
+    "files": "文件",
+    "devices": "设备",
+    "charts": "图表",
+    "misc": "其他",
+    "selectIcon": "选择图标",
+    "searchPlaceholder": "搜索图标...",
+    "noIconsFound": "未找到匹配的图标",
+    "noIcon": "无图标",
+    "searchIcon": "搜索图标...",
+    "notFound": "未找到匹配",
+    "clear": "清除"
+  },
+  "entityIconPicker": {
+    "noIcon": "无图标",
+    "searchIcon": "搜索图标...",
+    "notFound": "未找到匹配",
+    "clear": "清除"
+  },
+  "colorPicker": {
+    "themeForegroundColor": "主题前景色",
+    "hexValue": "十六进制值",
+    "selectColor": "选择颜色"
+  },
+  "codeEditor": {
+    "jsonFormatError": "JSON 格式错误",
+    "yamlFormatError": "YAML 格式错误（缩进不正确）"
+  },
+  "toggleSwitch": {
+    "minValue": "最小:",
+    "maxValue": "最大:"
+  },
+  "searchBar": {
+    "placeholder": "搜索设备、规则..."
+  }
+}

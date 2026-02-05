@@ -255,17 +255,27 @@ mod tests {
         let metrics = vec![
             DiscoveredMetric {
                 name: "temp1".to_string(),
+                display_name: "Temperature 1".to_string(),
+                description: "Temperature reading".to_string(),
                 path: "sensors[0].temp".to_string(),
+                data_type: DataType::Float,
                 semantic_type: SemanticType::Temperature,
-                confidence: 0.8,
-                ..Default::default()
+                unit: Some("°C".to_string()),
+                value_range: None,
+                is_readable: true,
+                is_writable: false,
             },
             DiscoveredMetric {
                 name: "temp2".to_string(),
+                display_name: "Temperature 2".to_string(),
+                description: "Temperature reading".to_string(),
                 path: "sensors[1].temp".to_string(),
+                data_type: DataType::Float,
                 semantic_type: SemanticType::Temperature,
-                confidence: 0.9,
-                ..Default::default()
+                unit: Some("°C".to_string()),
+                value_range: None,
+                is_readable: true,
+                is_writable: false,
             },
         ];
 

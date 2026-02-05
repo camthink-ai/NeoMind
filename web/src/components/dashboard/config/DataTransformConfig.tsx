@@ -5,9 +5,9 @@
  * Uses unified Field component for consistent styling.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Clock, BarChart3, Sliders, Layers } from 'lucide-react'
+import { Clock, Layers } from 'lucide-react'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -20,8 +20,6 @@ import { Field } from '@/components/ui/field'
 import type {
   TelemetryAggregate,
   TimeWindowType,
-  ChartViewMode,
-  FillMissingStrategy,
   DataSource,
   DataSourceOrList,
 } from '@/types/dashboard'
@@ -57,30 +55,48 @@ function getTimeWindowOptions(t: (key: string) => string): Array<{ value: TimeWi
   ]
 }
 
-// Aggregation method options factory (uses translations)
-function getAggregateOptions(t: (key: string) => string): Array<{ value: TelemetryAggregate; label: string }> {
-  return [
-    { value: 'latest', label: t('dataTransform.aggregate.latest') },
-    { value: 'first', label: t('dataTransform.aggregate.first') },
-    { value: 'avg', label: t('dataTransform.aggregate.avg') },
-    { value: 'min', label: t('dataTransform.aggregate.min') },
-    { value: 'max', label: t('dataTransform.aggregate.max') },
-    { value: 'sum', label: t('dataTransform.aggregate.sum') },
-    { value: 'count', label: t('dataTransform.aggregate.count') },
-    { value: 'delta', label: t('dataTransform.aggregate.delta') },
-    { value: 'rate', label: t('dataTransform.aggregate.rate') },
-    { value: 'raw', label: t('dataTransform.aggregate.raw') },
-  ]
+// All available aggregation options
+const ALL_AGGREGATE_OPTIONS: Array<{ value: TelemetryAggregate; labelKey: string }> = [
+  { value: 'latest', labelKey: 'dataTransform.aggregate.latest' },
+  { value: 'first', labelKey: 'dataTransform.aggregate.first' },
+  { value: 'avg', labelKey: 'dataTransform.aggregate.avg' },
+  { value: 'min', labelKey: 'dataTransform.aggregate.min' },
+  { value: 'max', labelKey: 'dataTransform.aggregate.max' },
+  { value: 'sum', labelKey: 'dataTransform.aggregate.sum' },
+  { value: 'count', labelKey: 'dataTransform.aggregate.count' },
+  { value: 'delta', labelKey: 'dataTransform.aggregate.delta' },
+  { value: 'rate', labelKey: 'dataTransform.aggregate.rate' },
+  { value: 'raw', labelKey: 'dataTransform.aggregate.raw' },
+]
+
+// Aggregation options for each chart type (only show meaningful options)
+const AGGREGATE_OPTIONS_BY_CHART_TYPE: Record<string, TelemetryAggregate[]> = {
+  // Time-series charts: show raw points and aggregations
+  'line-chart': ['raw', 'latest', 'avg', 'min', 'max', 'sum'],
+  'area-chart': ['raw', 'latest', 'avg', 'min', 'max', 'sum'],
+  'bar-chart': ['raw', 'avg', 'count', 'latest', 'min', 'max', 'sum'],
+  'sparkline': ['raw', 'latest', 'avg', 'min', 'max', 'sum'],
+  // Pie chart: part-to-whole, single values only
+  'pie-chart': ['latest', 'avg', 'sum', 'count'],
+  // Single-value indicators: latest or aggregated values
+  'card': ['latest', 'avg', 'min', 'max'],
+  'led': ['latest', 'avg', 'min', 'max'],
+  'progress': ['latest', 'avg', 'min', 'max'],
+  // Image history: raw points for history
+  'image-history': ['raw', 'latest'],
+  // Default: show all options
+  'default': ['latest', 'first', 'avg', 'min', 'max', 'sum', 'count', 'delta', 'rate', 'raw'],
 }
 
-// Chart view mode options factory (uses translations)
-function getChartViewOptions(t: (key: string) => string): Array<{ value: ChartViewMode; label: string }> {
-  return [
-    { value: 'timeseries', label: t('dataTransform.chartViewTimeseries') },
-    { value: 'snapshot', label: t('dataTransform.chartViewSnapshot') },
-    { value: 'distribution', label: t('dataTransform.chartViewDistribution') },
-    { value: 'histogram', label: t('dataTransform.chartViewHistogram') },
-  ]
+// Aggregation method options factory (uses translations)
+function getAggregateOptions(
+  t: (key: string) => string,
+  chartType: string
+): Array<{ value: TelemetryAggregate; label: string }> {
+  const allowedValues = AGGREGATE_OPTIONS_BY_CHART_TYPE[chartType] ?? AGGREGATE_OPTIONS_BY_CHART_TYPE['default']
+  return ALL_AGGREGATE_OPTIONS
+    .filter(opt => allowedValues.includes(opt.value))
+    .map(opt => ({ value: opt.value, label: t(opt.labelKey) }))
 }
 
 // Data point limit options factory (uses translations)
@@ -91,29 +107,6 @@ function getDataPointOptions(t: (key: string) => string): Array<{ value: number;
     { value: 50, label: t('dataTransform.dataPoints.50') },
     { value: 100, label: t('dataTransform.dataPoints.100') },
     { value: 200, label: t('dataTransform.dataPoints.200') },
-  ]
-}
-
-// Fill missing strategy options factory (uses translations)
-function getFillMissingOptions(t: (key: string) => string): Array<{ value: FillMissingStrategy; label: string }> {
-  return [
-    { value: 'none', label: t('dataTransform.fillMissing.none') },
-    { value: 'zero', label: t('dataTransform.fillMissing.zero') },
-    { value: 'previous', label: t('dataTransform.fillMissing.previous') },
-    { value: 'linear', label: t('dataTransform.fillMissing.linear') },
-  ]
-}
-
-// Sample interval options factory (uses translations)
-function getSampleIntervalOptions(t: (key: string) => string): Array<{ value: number; label: string }> {
-  return [
-    { value: 30, label: t('dataTransform.sampleInterval.30') },
-    { value: 60, label: t('dataTransform.sampleInterval.60') },
-    { value: 300, label: t('dataTransform.sampleInterval.300') },
-    { value: 600, label: t('dataTransform.sampleInterval.600') },
-    { value: 900, label: t('dataTransform.sampleInterval.900') },
-    { value: 1800, label: t('dataTransform.sampleInterval.1800') },
-    { value: 3600, label: t('dataTransform.sampleInterval.3600') },
   ]
 }
 
@@ -163,6 +156,10 @@ export function DataTransformConfig({
 
   // Get current values from the first source with defaults
   const currentAggregate = useMemo(() => {
+    // For card and progress types, prefer 'latest' over 'raw' as default
+    if (chartType === 'card' || chartType === 'progress') {
+      return firstSource?.aggregateExt ?? firstSource?.aggregate ?? 'latest'
+    }
     return firstSource?.aggregateExt ?? firstSource?.aggregate ?? DEFAULTS_BY_CHART[chartType]?.aggregate ?? 'raw'
   }, [firstSource, chartType])
 
@@ -170,21 +167,9 @@ export function DataTransformConfig({
     return firstSource?.timeWindow?.type ?? 'last_1hour'
   }, [firstSource])
 
-  const currentChartViewMode = useMemo(() => {
-    return firstSource?.chartViewMode ?? (chartType === 'pie' ? 'distribution' : 'timeseries')
-  }, [firstSource, chartType])
-
   const currentLimit = useMemo(() => {
     return firstSource?.limit ?? DEFAULTS_BY_CHART[chartType]?.limit ?? 50
   }, [firstSource, chartType])
-
-  const currentFillMissing = useMemo(() => {
-    return firstSource?.fillMissing ?? 'none'
-  }, [firstSource])
-
-  const currentSampleInterval = useMemo(() => {
-    return firstSource?.sampleInterval ?? 60
-  }, [firstSource])
 
   // Detect if sources have different settings (for visual feedback)
   const hasMixedSettings = useMemo(() => {
@@ -210,8 +195,21 @@ export function DataTransformConfig({
     return { hasMixedAggregate, hasMixedTimeWindow, hasMixedLimit }
   }, [sources, firstSource])
 
-  // Choose aggregate options based on mode
-  const aggregateOptions = isSimplified ? getSimplifiedAggregateOptions(t) : getAggregateOptions(t)
+  // Choose aggregate options based on mode and chart type
+  const aggregateOptions = isSimplified
+    ? getSimplifiedAggregateOptions(t)
+    : getAggregateOptions(t, chartType)
+
+  // Initialize aggregate to correct default for card/progress when not explicitly set
+  useEffect(() => {
+    const shouldDefaultToLatest = (chartType === 'card' || chartType === 'progress') &&
+      !firstSource?.aggregateExt &&
+      firstSource?.aggregate === 'raw'
+
+    if (shouldDefaultToLatest) {
+      onChange({ aggregateExt: 'latest' })
+    }
+  }, [chartType, firstSource, onChange])
 
   // Update handlers
   const handleAggregateChange = (value: string) => {
@@ -233,20 +231,8 @@ export function DataTransformConfig({
     })
   }
 
-  const handleChartViewModeChange = (value: string) => {
-    onChange({ chartViewMode: value as ChartViewMode })
-  }
-
   const handleLimitChange = (value: string) => {
     onChange({ limit: parseInt(value) || 50 })
-  }
-
-  const handleFillMissingChange = (value: string) => {
-    onChange({ fillMissing: value as FillMissingStrategy })
-  }
-
-  const handleSampleIntervalChange = (value: string) => {
-    onChange({ sampleInterval: parseInt(value) || 60 })
   }
 
   return (
@@ -315,112 +301,34 @@ export function DataTransformConfig({
         </Select>
       </Field>
 
-      {/* Chart View Mode - only for bar/line/area charts (not simplified) */}
-      {!isSimplified && (chartType === 'bar' || chartType === 'line' || chartType === 'area') && (
+      {/* Data Points Limit - only for charts with raw aggregate */}
+      {!isSimplified && (currentAggregate === 'raw' || chartType === 'bar' || chartType === 'line' || chartType === 'area' || chartType === 'sparkline') && (
         <Field>
-          <Label>{t('dataTransform.chartView')}</Label>
-          <Select value={currentChartViewMode} onValueChange={handleChartViewModeChange} disabled={readonly}>
+          <div className="flex items-center justify-between">
+            <Label>{t('dataTransform.dataPointLimit')}</Label>
+            {hasMixedSettings?.hasMixedLimit && (
+              <span className="text-[10px] text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                {t('dataTransform.mixedValues')}
+              </span>
+            )}
+          </div>
+          <Select
+            value={String(currentLimit)}
+            onValueChange={handleLimitChange}
+            disabled={readonly}
+          >
             <SelectTrigger>
-              <SelectValue placeholder={t('dataTransform.selectChartView')} />
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {getChartViewOptions(t).filter(o => {
-                // Filter based on chart type
-                if (chartType === 'line' || chartType === 'area') {
-                  return o.value === 'timeseries' || o.value === 'snapshot'
-                }
-                return true
-              }).map((option) => (
-                <SelectItem key={option.value} value={option.value}>
+              {getDataPointOptions(t).map((option) => (
+                <SelectItem key={option.value} value={String(option.value)}>
                   {option.label}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </Field>
-      )}
-
-      {/* Advanced Options - only for non-simplified charts with raw aggregate */}
-      {!isSimplified && (currentAggregate === 'raw' || chartType === 'bar' || chartType === 'line' || chartType === 'area' || chartType === 'sparkline') && (
-        <>
-          <div className="pt-2 border-t">
-            <div className="text-xs font-medium text-muted-foreground mb-3">{t('dataTransform.advancedOptions')}</div>
-          </div>
-
-          {/* Data Points Limit */}
-          <Field>
-            <div className="flex items-center justify-between">
-              <Label>{t('dataTransform.dataPointLimit')}</Label>
-              {hasMixedSettings?.hasMixedLimit && (
-                <span className="text-[10px] text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">
-                  {t('dataTransform.mixedValues')}
-                </span>
-              )}
-            </div>
-            <Select
-              value={String(currentLimit)}
-              onValueChange={handleLimitChange}
-              disabled={readonly}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {getDataPointOptions(t).map((option) => (
-                  <SelectItem key={option.value} value={String(option.value)}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-
-          {/* Sample Interval - only for raw aggregate */}
-          {currentAggregate === 'raw' && (
-            <Field>
-              <Label>{t('dataTransform.sampleIntervalLabel')}</Label>
-              <Select
-                value={String(currentSampleInterval)}
-                onValueChange={handleSampleIntervalChange}
-                disabled={readonly}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {getSampleIntervalOptions(t).map((option) => (
-                    <SelectItem key={option.value} value={String(option.value)}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          )}
-
-          {/* Fill Missing Strategy - only for raw aggregate */}
-          {currentAggregate === 'raw' && (
-            <Field>
-              <Label>{t('dataTransform.fillMissingLabel')}</Label>
-              <Select
-                value={currentFillMissing}
-                onValueChange={handleFillMissingChange}
-                disabled={readonly}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {getFillMissingOptions(t).map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          )}
-        </>
       )}
     </div>
   )

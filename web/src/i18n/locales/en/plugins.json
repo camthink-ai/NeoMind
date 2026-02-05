@@ -207,5 +207,40 @@
   "noBackends": "No LLM backends available",
   "noBackendsDesc": "Unable to load LLM backend types from the server",
   "noAdapters": "No adapter types available",
-  "noAdaptersDesc": "Unable to load device adapter types from the server"
+  "noAdaptersDesc": "Unable to load device adapter types from the server",
+  "config": {
+    "fieldPlaceholder": "Enter value",
+    "jsonPlaceholder": "{\"key\": \"value\"}",
+    "passwordPlaceholder": "••••••••",
+    "selectPlaceholder": "Select...",
+    "arrayPlaceholder": "{{field}} {{index}}",
+    "noSchema": "No configuration schema available",
+    "schemaLoadError": "Failed to load configuration schema"
+  },
+  "marketplace": {
+    "title": "Plugin Marketplace",
+    "searchPlaceholder": "Search plugins...",
+    "noPlugins": "No plugins found",
+    "filter": "Filter by category",
+    "all": "All",
+    "featured": "Featured",
+    "installed": "Installed"
+  },
+  "alertChannel": {
+    "title": "Alert Channel Configuration",
+    "channelType": "Channel Type",
+    "configPlaceholder": "Enter configuration value",
+    "testButton": "Send Test Message",
+    "testSuccess": "Test message sent successfully",
+    "testFailed": "Failed to send test message"
+  },
+  "universalConfig": {
+    "title": "Plugin Configuration",
+    "description": "Configure plugin settings",
+    "noFields": "No configuration fields available",
+    "invalidJson": "Invalid JSON format",
+    "requiredField": "This field is required",
+    "saveConfig": "Save Configuration",
+    "resetConfig": "Reset to Defaults"
+  }
 }

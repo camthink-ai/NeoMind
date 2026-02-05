@@ -24,8 +24,6 @@ export type EventType =
   | 'AgentExecutionCompleted'
   | 'AgentMemoryUpdated'
   | 'PeriodicReviewTriggered'
-  | 'LlmDecisionProposed'
-  | 'LlmDecisionExecuted'
   | 'UserMessage'
   | 'LlmResponse'
   | 'ToolExecutionStart'
@@ -68,22 +66,6 @@ export interface RuleTriggeredEvent extends NeoMindEvent {
     rule_name: string
     trigger_value: number
     actions: string[]
-  }
-}
-
-export interface LlmDecisionProposedEvent extends NeoMindEvent {
-  type: 'LlmDecisionProposed'
-  data: {
-    decision_id: string
-    title: string
-    description: string
-    reasoning: string
-    actions: Array<{
-      action_type: string
-      description: string
-      parameters: unknown
-    }>
-    confidence: number
   }
 }
 
@@ -519,13 +501,6 @@ export class EventsWebSocket {
    */
   onRuleEvent(handler: (event: RuleTriggeredEvent) => void) {
     return this.on('RuleTriggered', handler)
-  }
-
-  /**
-   * Subscribe to LLM decision events
-   */
-  onLlmDecisionEvent(handler: (event: LlmDecisionProposedEvent) => void) {
-    return this.on('LlmDecisionProposed', handler)
   }
 
   /**

@@ -284,34 +284,35 @@ export function LabelConfig({
   label = 'Labels',
   readonly = false,
 }: LabelConfigProps) {
+  const { t } = useTranslation('dashboardComponents')
   return (
     <ConfigSection title={label} bordered>
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-2">
-          <Label>Prefix</Label>
+          <Label>{t('uiConfig.prefix', 'Prefix')}</Label>
           <Input
             value={prefix}
             onChange={(e) => onChange?.('prefix', e.target.value)}
-            placeholder="$"
+            placeholder={t('uiConfig.prefixPlaceholder')}
             disabled={readonly}
           />
         </div>
         <div className="space-y-2">
-          <Label>Suffix</Label>
+          <Label>{t('uiConfig.suffix', 'Suffix')}</Label>
           <Input
             value={suffix}
             onChange={(e) => onChange?.('suffix', e.target.value)}
-            placeholder="kg"
+            placeholder={t('uiConfig.suffixPlaceholder')}
             disabled={readonly}
           />
         </div>
       </div>
       <div className="space-y-2">
-        <Label>Unit</Label>
+        <Label>{t('common.unit')}</Label>
         <Input
           value={unit}
           onChange={(e) => onChange?.('unit', e.target.value)}
-          placeholder="°C, %..."
+          placeholder={t('uiConfig.unitPlaceholder')}
           disabled={readonly}
         />
       </div>

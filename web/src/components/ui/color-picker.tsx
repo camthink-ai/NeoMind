@@ -6,6 +6,7 @@
  */
 
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, Palette, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -89,6 +90,7 @@ export function ColorPicker({
   disabled = false,
   className,
 }: ColorPickerProps) {
+  const { t } = useTranslation('ui')
   const [inputValue, setInputValue] = useState(value)
 
   const handleInputChange = (newValue: string) => {
@@ -199,7 +201,7 @@ export function ColorPicker({
                 <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground px-1">
                   <div className="flex items-center gap-1">
                     <Sun className="h-3 w-3" />
-                    <span>主题前景色</span>
+                    <span>{t('colorPicker.themeForegroundColor')}</span>
                   </div>
                 </div>
               </div>

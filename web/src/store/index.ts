@@ -16,7 +16,6 @@ import { createUISlice } from './slices/uiSlice'
 import { createAlertSlice } from './slices/alertSlice'
 import { createDeviceSlice } from './slices/deviceSlice'
 import { createSettingsSlice } from './slices/settingsSlice'
-import { createDecisionSlice } from './slices/decisionSlice'
 import { createExtensionSlice } from './slices/extensionSlice'
 import { createLlmBackendSlice } from './slices/llmBackendSlice'
 import { createDashboardSlice } from './slices/dashboardSlice'
@@ -28,7 +27,6 @@ import type { UISlice } from './slices/uiSlice'
 import type { AlertSlice } from './slices/alertSlice'
 import type { DeviceSlice } from './slices/deviceSlice'
 import type { SettingsSlice } from './slices/settingsSlice'
-import type { DecisionSlice } from './slices/decisionSlice'
 import type { ExtensionSlice } from './slices/extensionSlice'
 import type { LlmBackendSlice } from './slices/llmBackendSlice'
 import type { DashboardState } from './slices/dashboardSlice'
@@ -43,7 +41,6 @@ export type NeoTalkStore = AuthSlice
   & AlertSlice
   & DeviceSlice
   & SettingsSlice
-  & DecisionSlice
   & ExtensionSlice
   & LlmBackendSlice
   & DashboardState
@@ -63,7 +60,6 @@ export const useStore = create<NeoTalkStore>()(
         ...createAlertSlice(set, get, api),
         ...createDeviceSlice(set, get, api),
         ...createSettingsSlice(set, get, api),
-        ...createDecisionSlice(set, get, api),
         ...createExtensionSlice(set, get, api),
         ...createLlmBackendSlice(set, get, api),
         ...createDashboardSlice(set, get, api),

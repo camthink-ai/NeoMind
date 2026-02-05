@@ -6,6 +6,7 @@
  */
 
 import { useState, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,15 +20,6 @@ import {
 import { cn } from '@/lib/utils'
 import { entityIcons, getIconForEntity } from '@/design-system/icons'
 import type { EntityIcon } from '@/design-system/icons'
-
-// Build icon list from entityIcons
-const ALL_ENTITY_ICONS = [
-  { id: '', name: '无图标' },
-  ...Object.keys(entityIcons).map(key => ({
-    id: key,
-    name: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1').trim(),
-  }))
-]
 
 export interface EntityIconPickerProps {
   value?: string
@@ -44,7 +36,17 @@ export function EntityIconPicker({
   disabled = false,
   className,
 }: EntityIconPickerProps) {
+  const { t } = useTranslation('ui')
   const [searchQuery, setSearchQuery] = useState('')
+
+  // Build icon list from entityIcons
+  const ALL_ENTITY_ICONS = useMemo(() => [
+    { id: '', name: t('entityIconPicker.noIcon') },
+    ...Object.keys(entityIcons).map(key => ({
+      id: key,
+      name: key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, ' $1').trim(),
+    }))
+  ], [t])
 
   // Filter icons by search query
   const filteredIcons = useMemo(() => {
@@ -54,7 +56,7 @@ export function EntityIconPicker({
       icon.name.toLowerCase().includes(query) ||
       (icon.id && icon.id.toLowerCase().includes(query))
     )
-  }, [searchQuery])
+  }, [searchQuery, ALL_ENTITY_ICONS])
 
   // Get icon component for preview
   const IconPreview = ({ iconName, size = 16 }: { iconName: string; size?: number }) => {
@@ -83,10 +85,10 @@ export function EntityIconPicker({
 
   // Get current icon name for display
   const currentIconName = useMemo(() => {
-    if (!value) return '无图标'
+    if (!value) return t('entityIconPicker.noIcon')
     const icon = ALL_ENTITY_ICONS.find(i => i.id === value)
     return icon?.name || value
-  }, [value])
+  }, [value, ALL_ENTITY_ICONS, t])
 
   return (
     <Field className={className}>
@@ -109,7 +111,7 @@ export function EntityIconPicker({
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="搜索图标..."
+                placeholder={t('entityIconPicker.searchIcon')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9 h-9"
@@ -121,7 +123,7 @@ export function EntityIconPicker({
           <div className="p-3 max-h-80 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/20 scrollbar-track-transparent hover:scrollbar-thumb-muted-foreground/40">
             {filteredIcons.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground text-sm">
-                未找到匹配的图标
+                {t('entityIconPicker.notFound')}
               </div>
             ) : (
               <div className="grid grid-cols-6 gap-1.5">
@@ -164,7 +166,7 @@ export function EntityIconPicker({
                 className="h-7 px-2 text-xs"
               >
                 <X className="h-3 w-3 mr-1" />
-                清除
+                {t('entityIconPicker.clear')}
               </Button>
             </div>
           )}

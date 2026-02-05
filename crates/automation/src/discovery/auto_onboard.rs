@@ -11,6 +11,7 @@ use crate::discovery::{DataPathExtractor, SemanticInference, VirtualMetricGenera
 use edge_ai_core::{EventBus, LlmRuntime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -77,12 +78,6 @@ impl MessageRateLimiter {
     /// Get the total count of messages processed
     async fn total_count(&self) -> usize {
         *self.total_count.read().await
-    }
-
-    /// Reset the limiter (e.g., after device is registered)
-    async fn reset(&self) {
-        self.timestamps.write().await.clear();
-        *self.total_count.write().await = 0;
     }
 }
 
@@ -324,17 +319,6 @@ impl AutoOnboardManager {
 
         // Create new draft device
         self.create_draft_with_topic(device_id, source, data, is_binary, original_topic, adapter_id).await
-    }
-
-    /// Create a new draft device
-    async fn create_draft(
-        &self,
-        device_id: &str,
-        source: &str,
-        data: &serde_json::Value,
-        is_binary: bool,
-    ) -> Result<bool> {
-        self.create_draft_with_topic(device_id, source, data, is_binary, None, None).await
     }
 
     /// Create a new draft device with original topic
@@ -1504,6 +1488,7 @@ mod tests {
 
     fn create_test_manager() -> AutoOnboardManager {
         use edge_ai_core::{EventBus, LlmRuntime};
+        use futures::Stream;
 
         // Create a simple test helper - the manager only needs the reference
         // for infer_category which is a pure function
@@ -1511,7 +1496,7 @@ mod tests {
         #[async_trait::async_trait]
         impl LlmRuntime for DummyLlm {
             fn backend_id(&self) -> edge_ai_core::llm::backend::BackendId {
-                edge_ai_core::llm::backend::BackendId::Ollama
+                edge_ai_core::llm::backend::BackendId::new("ollama")
             }
             fn model_name(&self) -> &str {
                 "dummy"
@@ -1519,26 +1504,27 @@ mod tests {
             fn capabilities(&self) -> edge_ai_core::llm::backend::BackendCapabilities {
                 edge_ai_core::llm::backend::BackendCapabilities::default()
             }
-            fn generate(&self, _input: &edge_ai_core::llm::backend::LlmInput) -> edge_ai_core::llm::backend::LlmOutput {
-                edge_ai_core::llm::backend::LlmOutput {
-                    text: String::new(),
-                    finish_reason: edge_ai_core::llm::backend::FinishReason::Stop,
-                    usage: edge_ai_core::llm::backend::TokenUsage::default(),
-                }
+            fn max_context_length(&self) -> usize {
+                4096
             }
-            fn generate_stream(
+            async fn generate(&self, _input: edge_ai_core::llm::backend::LlmInput) -> std::result::Result<edge_ai_core::llm::backend::LlmOutput, edge_ai_core::llm::backend::LlmError> {
+                Ok(edge_ai_core::llm::backend::LlmOutput {
+                    text: String::new(),
+                    thinking: None,
+                    finish_reason: edge_ai_core::llm::backend::FinishReason::Stop,
+                    usage: Some(edge_ai_core::llm::backend::TokenUsage::new(0, 0)),
+                })
+            }
+            async fn generate_stream(
                 &self,
-                _input: &edge_ai_core::llm::backend::LlmInput,
-            ) -> edge_ai_core::futures::stream::BoxStream<
-                'static,
-                Result<(String, bool), edge_ai_core::llm::backend::LlmError>,
-            > {
-                Box::pin(edge_ai_core::futures::stream::empty())
+                _input: edge_ai_core::llm::backend::LlmInput,
+            ) -> std::result::Result<Pin<Box<dyn futures::Stream<Item = std::result::Result<(String, bool), edge_ai_core::llm::backend::LlmError>> + Send>>, edge_ai_core::llm::backend::LlmError> {
+                Ok(Box::pin(futures::stream::empty()))
             }
         }
 
         let llm = Arc::new(DummyLlm) as Arc<dyn LlmRuntime>;
-        let event_bus = Arc::new(EventBus::new(100));
+        let event_bus = Arc::new(EventBus::new());
 
         AutoOnboardManager::new(llm, event_bus)
     }

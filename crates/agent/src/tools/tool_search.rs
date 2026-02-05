@@ -97,18 +97,6 @@ impl ToolSearchTool {
         result.sort();
         result
     }
-
-    /// List all tools.
-    fn list_all(&self) -> Vec<ToolSearchResult> {
-        self.tool_descriptions
-            .iter()
-            .map(|(name, description)| ToolSearchResult {
-                name: name.clone(),
-                description: description.clone(),
-                matched_field: "name".to_string(),
-            })
-            .collect()
-    }
 }
 
 /// Result of a tool search.

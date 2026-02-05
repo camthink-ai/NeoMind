@@ -36,7 +36,6 @@
 
 pub mod agent;
 pub mod ai_agent;
-pub mod autonomous;
 pub mod concurrency;
 pub mod config;
 pub mod context;
@@ -47,7 +46,6 @@ pub mod error;
 pub mod llm;
 pub mod prompts;
 pub mod session;
-// pub mod session_sync; // TODO: Implement session_sync module
 pub mod smart_conversation;
 pub mod task_orchestrator;
 pub mod tools;
@@ -67,25 +65,12 @@ pub use state_machine::{
     ProcessState, StateMachine, StateMachineConfig, StateMonitor, StateTransition,
     StateTransitionError,
 };
-pub use autonomous::{
-    AgentState, AutonomousAgent, AutonomousConfig, ReviewContext, ReviewResult, ReviewType,
-    SystemReview,
-};
 pub use concurrency::{
     ConcurrencyStats, DEFAULT_GLOBAL_LIMIT, DEFAULT_PER_SESSION_LIMIT, GlobalConcurrencyLimiter,
     GlobalPermit, SessionConcurrencyLimiter, SessionPermit,
 };
-// Re-export AgentError for backward compatibility (deprecated, use NeoTalkError)
-#[allow(deprecated)]
-pub use error::AgentError;
 pub use error::{NeoTalkError, Result};
 pub use session::SessionManager;
-// TODO: Uncomment when session_sync module is implemented
-// pub use session_sync::{
-//     ConflictResolution, SerializableMessage, SessionStateUpdate, SessionSyncAdapter,
-//     SessionSyncConfig, SessionSyncManager,
-//     merge_messages,
-// };
 pub use tools::{
     EventIntegratedToolRegistry, ToolExecutionHistory, ToolExecutionRecord, ToolExecutionStats,
     resolve_tool_name as map_tool_name, ToolNameMapper,
