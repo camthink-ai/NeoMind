@@ -21,16 +21,16 @@ anyhow = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
 
 # Local workspace crates - relative to web/src-tauri/ directory
-edge-api = { path = "../../crates/api", package = "neomind-api" }
-edge-core = { path = "../../crates/core", package = "neomind-core" }
-edge-llm = { path = "../../crates/llm", package = "neomind-llm" }
-edge-agent = { path = "../../crates/agent", package = "neomind-agent" }
-edge-devices = { path = "../../crates/devices", package = "neomind-devices" }
+edge-api = { path = "../../crates/neomind-api", package = "neomind-api" }
+edge-core = { path = "../../crates/neomind-core", package = "neomind-core" }
+edge-llm = { path = "../../crates/neomind-llm", package = "neomind-llm" }
+edge-agent = { path = "../../crates/neomind-agent", package = "neomind-agent" }
+edge-devices = { path = "../../crates/neomind-devices", package = "neomind-devices" }
 
 # Disable JavaScript on Windows (quick-js has compilation issues)
 [target.'cfg(windows)'.dependencies]
-edge-api = { path = "../../crates/api", package = "neomind-api", default-features = false, features = [] }
-edge-automation = { path = "../../crates/automation", package = "neomind-automation", default-features = false, features = [] }
+edge-api = { path = "../../crates/neomind-api", package = "neomind-api", default-features = false, features = [] }
+edge-automation = { path = "../../crates/neomind-automation", package = "neomind-automation", default-features = false, features = [] }
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!
