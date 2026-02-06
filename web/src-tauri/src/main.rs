@@ -139,6 +139,7 @@ fn clean_shutdown(app_handle: &AppHandle) {
 fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn std::error::Error>> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::TrayIconBuilder;
+    use tauri::image::Img;
 
     let show = MenuItem::with_id(app, "show", "Show", true, None::<String>)?;
     let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<String>)?;
@@ -149,8 +150,12 @@ fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn s
     let app_handle = app.handle().clone();
     let app_handle_for_tray = app_handle.clone();
 
+    // Load tray icon - use 32x32 PNG for better compatibility
+    let tray_icon = Img::from_bytes(include_bytes!("../icons/32x32.png"))?;
+
     // Try to load tray icon at compile time
     let tray = TrayIconBuilder::new()
+        .icon(tray_icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(move |_app, event| match event {

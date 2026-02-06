@@ -1701,9 +1701,10 @@ impl Agent {
             }
         }
 
-        // === P4.2: INTELLIGENT MEMORY INJECTION ===
+        // === P4.2: INTELLIGENT MEMORY INJECTION (TEMPORARILY DISABLED FOR DEBUGGING) ===
         // Detect stale context and inject relevant long-term memory summaries
         // This improves context continuity in long conversations
+        /*
         use crate::context::{calculate_health, ContextHealth};
         let health = calculate_health(&history_without_last);
 
@@ -1728,6 +1729,7 @@ impl Agent {
                 }
             }
         }
+        */
 
         // Call LLM with conversation history (user message will be added by LLM interface)
         let chat_response = self
