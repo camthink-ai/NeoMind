@@ -10,7 +10,6 @@ use super::super::{Message, Result, Error};
 pub struct ConsoleChannel {
     name: String,
     enabled: bool,
-    include_details: bool,
 }
 
 impl ConsoleChannel {
@@ -18,13 +17,7 @@ impl ConsoleChannel {
         Self {
             name,
             enabled: true,
-            include_details: true,
         }
-    }
-
-    pub fn with_details(mut self, include: bool) -> Self {
-        self.include_details = include;
-        self
     }
 
     pub fn enable(&mut self) {
@@ -55,33 +48,15 @@ impl MessageChannel for ConsoleChannel {
             return Err(Error::ChannelDisabled(self.name.clone()));
         }
 
-        println!("=== {} ===", message.severity);
-        println!("时间: {}", message.timestamp.format("%Y-%m-%d %H:%M:%S"));
-        println!("类别: {}", message.category);
-        println!("标题: {}", message.title);
-        println!("消息: {}", message.message);
-        println!("来源: {}", message.source);
-
-        if self.include_details {
-            if !message.tags.is_empty() {
-                println!("标签: {:?}", message.tags);
-            }
-            println!("状态: {}", message.status);
-            if let Some(ref metadata) = message.metadata
-                && !metadata.is_null() {
-                    println!("数据: {}", metadata);
-                }
-        }
-
-        println!("================");
+        // Simplified single-line output: [时间] 严重程度 - 标题
+        let time = message.timestamp.format("%H:%M:%S");
+        println!("[{}] {} - {}", time, message.severity, message.title);
 
         Ok(())
     }
 
     fn get_config(&self) -> Option<serde_json::Value> {
-        Some(serde_json::json!({
-            "include_details": self.include_details,
-        }))
+        Some(serde_json::json!({}))
     }
 }
 
@@ -100,17 +75,12 @@ impl super::ChannelFactory for ConsoleChannelFactory {
             .unwrap_or("console")
             .to_string();
 
-        let include_details = config
-            .get("include_details")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-
         let enabled = config
             .get("enabled")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
-        let mut channel = ConsoleChannel::new(name).with_details(include_details);
+        let mut channel = ConsoleChannel::new(name);
         if !enabled {
             channel.disable();
         }
@@ -155,7 +125,6 @@ mod tests {
 
         let config = serde_json::json!({
             "name": "test_console",
-            "include_details": false,
             "enabled": true
         });
 

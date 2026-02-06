@@ -5,7 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "SDK for building NeoTalk dynamic plugins"
+description = "SDK for building NeoMind dynamic plugins"
 
 [lib]
 name = "neomind_extension_sdk"

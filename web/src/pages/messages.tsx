@@ -265,7 +265,6 @@ export default function MessagesPage() {
         },
       })
       const rawData: unknown = await response.json()
-      console.log('Messages API response:', rawData)
 
       // Handle different response formats from messages endpoint
       let messagesArray: RawNotificationMessage[] = []

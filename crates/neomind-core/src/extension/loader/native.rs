@@ -20,7 +20,7 @@ impl NativeExtensionLoader {
 
     /// Load extension metadata from a native library.
     ///
-    /// The library should export a `neotalk_extension_descriptor` function
+    /// The library should export a `neomind_extension_descriptor` function
     /// that returns extension metadata.
     pub async fn load(&self, path: &Path) -> Result<ExtensionMetadata> {
         // Validate file exists

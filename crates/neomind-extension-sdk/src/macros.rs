@@ -118,12 +118,12 @@ macro_rules! export_plugin {
 
         // Export the descriptor
         #[no_mangle]
-        pub static neotalk_plugin_descriptor: $crate::descriptor::CPluginDescriptor =
+        pub static neomind_plugin_descriptor: $crate::descriptor::CPluginDescriptor =
             unsafe { DESCRIPTOR.export() };
 
         // Create function
         #[no_mangle]
-        pub extern "C" fn neotalk_plugin_create(
+        pub extern "C" fn neomind_plugin_create(
             config_json: *const u8,
             config_len: usize,
         ) -> *mut () {
@@ -155,7 +155,7 @@ macro_rules! export_plugin {
 
         // Destroy function
         #[no_mangle]
-        pub extern "C" fn neotalk_plugin_destroy(instance: *mut ()) {
+        pub extern "C" fn neomind_plugin_destroy(instance: *mut ()) {
             unsafe {
                 let _ = Box::from_raw(instance as *mut serde_json::Value);
             }

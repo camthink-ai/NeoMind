@@ -1,4 +1,4 @@
-//! Device adapters for NeoTalk event-driven architecture.
+//! Device adapters for NeoMind event-driven architecture.
 //!
 //! This module contains implementations of the `DeviceAdapter` trait
 //! for various data sources and protocols.

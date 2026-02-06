@@ -34,7 +34,7 @@ pub use message::{Content, ContentPart, ImageDetail, Message, MessageRole};
 pub use session::{Session, SessionId};
 
 // Event exports
-pub use event::{EventMetadata, MetricValue, NeoTalkEvent, ProposedAction};
+pub use event::{EventMetadata, MetricValue, NeoMindEvent, ProposedAction};
 
 // Event bus exports
 pub use eventbus::{
@@ -65,7 +65,7 @@ pub mod prelude {
     pub use crate::llm::modality::{ImageContent, ModalityContent};
 
     // Event types
-    pub use crate::event::{EventMetadata, MetricValue, NeoTalkEvent, ProposedAction};
+    pub use crate::event::{EventMetadata, MetricValue, NeoMindEvent, ProposedAction};
 
     // Event bus
     pub use crate::eventbus::{EventBus, SharedEventBus};

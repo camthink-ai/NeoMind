@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 
 use neomind_core::eventbus::EventBus;
-use neomind_core::{NeoTalkEvent, MetricValue};
+use neomind_core::{NeoMindEvent, MetricValue};
 use neomind_rules::RuleEngine;
 use neomind_automation::{store::SharedAutomationStore, Automation, TransformEngine};
 use neomind_devices::DeviceRegistry;
@@ -46,7 +46,7 @@ impl RuleEngineEventService {
                 tracing::info!("Rule engine event service started - subscribing to device events");
 
                 while let Some((event, _metadata)) = rx.recv().await {
-                    if let NeoTalkEvent::DeviceMetric { device_id, metric, value, .. } = event {
+                    if let NeoMindEvent::DeviceMetric { device_id, metric, value, .. } = event {
                         tracing::trace!(device_id = %device_id, metric = %metric, "Device metric received for rule evaluation");
                         // Rule states are updated by the separate value provider update task in init_rule_engine_events
                         let _ = (device_id, metric, value);
@@ -116,7 +116,7 @@ impl TransformEventService {
                 const DEBOUNCE_MS: u64 = 100; // 100ms debounce window
 
                 while let Some((event, _metadata)) = rx.recv().await {
-                    if let NeoTalkEvent::DeviceMetric { device_id, metric, value, timestamp, quality: _ } = event {
+                    if let NeoMindEvent::DeviceMetric { device_id, metric, value, timestamp, quality: _ } = event {
                         // Skip transform output metrics to prevent infinite loop
                         // Transforms publish metrics with "transform." prefix, which should not be re-processed
                         if metric.starts_with("transform.") {
@@ -241,7 +241,7 @@ impl TransformEventService {
                                         // Publish transformed metrics back to event bus
                                         for transformed_metric in result.metrics {
                                             // Publish as DeviceMetric event so rules can also use them
-                                            let _ = event_bus_clone.publish(NeoTalkEvent::DeviceMetric {
+                                            let _ = event_bus_clone.publish(NeoMindEvent::DeviceMetric {
                                                 device_id: transformed_metric.device_id.clone(),
                                                 metric: transformed_metric.metric.clone(),
                                                 value: MetricValue::Float(transformed_metric.value),

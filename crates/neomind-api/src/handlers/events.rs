@@ -14,21 +14,21 @@ use serde_json::Value;
 use crate::handlers::ServerState;
 use neomind_core::eventbus::{EventBus, EventBusReceiver, FilteredReceiver};
 use neomind_core::event::EventMetadata;
-use neomind_core::NeoTalkEvent;
+use neomind_core::NeoMindEvent;
 
 /// Wrapper for either filtered or unfiltered event receiver.
 enum EventBusReceiverWrapper {
     Unfiltered(EventBusReceiver),
-    FilteredDevice(FilteredReceiver<fn(&NeoTalkEvent) -> bool>),
-    FilteredRule(FilteredReceiver<fn(&NeoTalkEvent) -> bool>),
-    FilteredWorkflow(FilteredReceiver<fn(&NeoTalkEvent) -> bool>),
-    FilteredAgent(FilteredReceiver<fn(&NeoTalkEvent) -> bool>),
-    FilteredLlm(FilteredReceiver<fn(&NeoTalkEvent) -> bool>),
-    FilteredAlert(FilteredReceiver<fn(&NeoTalkEvent) -> bool>),
+    FilteredDevice(FilteredReceiver<fn(&NeoMindEvent) -> bool>),
+    FilteredRule(FilteredReceiver<fn(&NeoMindEvent) -> bool>),
+    FilteredWorkflow(FilteredReceiver<fn(&NeoMindEvent) -> bool>),
+    FilteredAgent(FilteredReceiver<fn(&NeoMindEvent) -> bool>),
+    FilteredLlm(FilteredReceiver<fn(&NeoMindEvent) -> bool>),
+    FilteredAlert(FilteredReceiver<fn(&NeoMindEvent) -> bool>),
 }
 
 impl EventBusReceiverWrapper {
-    async fn recv(&mut self) -> Option<(NeoTalkEvent, EventMetadata)> {
+    async fn recv(&mut self) -> Option<(NeoMindEvent, EventMetadata)> {
         match self {
             EventBusReceiverWrapper::Unfiltered(rx) => rx.recv().await,
             EventBusReceiverWrapper::FilteredDevice(rx) => rx.recv().await,
@@ -48,9 +48,9 @@ impl EventBusReceiverWrapper {
 ///
 /// But the frontend expects `data` to contain just the fields without `type`:
 ///   `{ "agent_id": "...", "agent_name": "...", ... }`
-fn extract_event_data(event: &NeoTalkEvent) -> Value {
+fn extract_event_data(event: &NeoMindEvent) -> Value {
     match event {
-        NeoTalkEvent::AgentExecutionStarted { agent_id, agent_name, execution_id, trigger_type, .. } => {
+        NeoMindEvent::AgentExecutionStarted { agent_id, agent_name, execution_id, trigger_type, .. } => {
             serde_json::json!({
                 "agent_id": agent_id,
                 "agent_name": agent_name,
@@ -58,7 +58,7 @@ fn extract_event_data(event: &NeoTalkEvent) -> Value {
                 "trigger_type": trigger_type,
             })
         }
-        NeoTalkEvent::AgentExecutionCompleted { agent_id, execution_id, success, duration_ms, error, .. } => {
+        NeoMindEvent::AgentExecutionCompleted { agent_id, execution_id, success, duration_ms, error, .. } => {
             serde_json::json!({
                 "agent_id": agent_id,
                 "execution_id": execution_id,
@@ -67,7 +67,7 @@ fn extract_event_data(event: &NeoTalkEvent) -> Value {
                 "error": error,
             })
         }
-        NeoTalkEvent::AgentThinking { agent_id, execution_id, step_number, step_type, description, details, .. } => {
+        NeoMindEvent::AgentThinking { agent_id, execution_id, step_number, step_type, description, details, .. } => {
             serde_json::json!({
                 "agent_id": agent_id,
                 "execution_id": execution_id,
@@ -77,7 +77,7 @@ fn extract_event_data(event: &NeoTalkEvent) -> Value {
                 "details": details,
             })
         }
-        NeoTalkEvent::AgentDecision { agent_id, execution_id, description, rationale, action, confidence, .. } => {
+        NeoMindEvent::AgentDecision { agent_id, execution_id, description, rationale, action, confidence, .. } => {
             serde_json::json!({
                 "agent_id": agent_id,
                 "execution_id": execution_id,
@@ -87,13 +87,13 @@ fn extract_event_data(event: &NeoTalkEvent) -> Value {
                 "confidence": confidence,
             })
         }
-        NeoTalkEvent::AgentMemoryUpdated { agent_id, memory_type, .. } => {
+        NeoMindEvent::AgentMemoryUpdated { agent_id, memory_type, .. } => {
             serde_json::json!({
                 "agent_id": agent_id,
                 "memory_type": memory_type,
             })
         }
-        NeoTalkEvent::AgentProgress { agent_id, execution_id, stage, stage_label, progress, details, .. } => {
+        NeoMindEvent::AgentProgress { agent_id, execution_id, stage, stage_label, progress, details, .. } => {
             serde_json::json!({
                 "agent_id": agent_id,
                 "execution_id": execution_id,
@@ -105,7 +105,7 @@ fn extract_event_data(event: &NeoTalkEvent) -> Value {
         }
         // DeviceMetric: payload must match frontend expectation (device_id, metric, value).
         // MetricValue serializes untagged (String => plain string, Float => number, etc.).
-        NeoTalkEvent::DeviceMetric { device_id, metric, value, timestamp, quality, .. } => {
+        NeoMindEvent::DeviceMetric { device_id, metric, value, timestamp, quality, .. } => {
             serde_json::json!({
                 "device_id": device_id,
                 "metric": metric,

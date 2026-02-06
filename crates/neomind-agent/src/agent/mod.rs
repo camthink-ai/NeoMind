@@ -41,7 +41,7 @@ use futures::Stream;
 use tokio::sync::RwLock;
 
 // Re-export error types
-pub use crate::error::NeoTalkError;
+pub use crate::error::NeoMindError;
 use serde_json::Value;
 
 use super::error::Result;
@@ -355,7 +355,7 @@ impl Agent {
                     .with_endpoint(&endpoint)
                     .with_timeout_secs(ollama_timeout);
                 let runtime =
-                    OllamaRuntime::new(config).map_err(|e| NeoTalkError::llm(e.to_string()))?;
+                    OllamaRuntime::new(config).map_err(|e| NeoMindError::llm(e.to_string()))?;
                 (Arc::new(runtime) as Arc<dyn LlmRuntime>, model)
             }
             LlmBackend::OpenAi {
@@ -378,7 +378,7 @@ impl Agent {
                         .with_timeout_secs(cloud_timeout)
                 };
                 let runtime =
-                    CloudRuntime::new(config).map_err(|e| NeoTalkError::llm(e.to_string()))?;
+                    CloudRuntime::new(config).map_err(|e| NeoMindError::llm(e.to_string()))?;
                 (Arc::new(runtime) as Arc<dyn LlmRuntime>, model)
             }
         };
@@ -656,10 +656,10 @@ impl Agent {
 
         // Greeting patterns
         let greeting_responses: &[(&str, &str)] = &[
-            ("你好", "你好！我是 NeoTalk 智能助手，有什么可以帮您？"),
-            ("您好", "您好！我是 NeoTalk 智能助手，有什么可以帮您？"),
-            ("hi", "Hello! I'm NeoTalk, your smart assistant. How can I help you?"),
-            ("hello", "Hello! I'm NeoTalk, your smart assistant."),
+            ("你好", "你好！我是 NeoMind 智能助手，有什么可以帮您？"),
+            ("您好", "您好！我是 NeoMind 智能助手，有什么可以帮您？"),
+            ("hi", "Hello! I'm NeoMind, your smart assistant. How can I help you?"),
+            ("hello", "Hello! I'm NeoMind, your smart assistant."),
             ("早上好", "早上好！今天有什么可以帮您的？"),
             ("下午好", "下午好！有什么可以帮您的？"),
             ("晚上好", "晚上好！有什么可以帮您的？"),
@@ -953,7 +953,7 @@ impl Agent {
 
         // Check if LLM is configured (required for multimodal)
         if !self.llm_interface.is_ready().await {
-            return Err(NeoTalkError::Llm(
+            return Err(NeoMindError::Llm(
                 "Multimodal input requires LLM support".to_string(),
             ));
         }
@@ -1000,7 +1000,7 @@ impl Agent {
                 })
             }
             Err(e) => {
-                Err(NeoTalkError::Llm(format!("LLM processing failed: {}", e)))
+                Err(NeoMindError::Llm(format!("LLM processing failed: {}", e)))
             }
         }
     }
@@ -1158,7 +1158,7 @@ impl Agent {
             .llm_interface
             .chat_with_history(user_message, &core_history)
             .await
-            .map_err(|e| super::error::NeoTalkError::Llm(e.to_string()))?;
+            .map_err(|e| super::error::NeoMindError::Llm(e.to_string()))?;
 
         // Parse response for tool calls
         tracing::debug!(response_text = %chat_response.text, "LLM response received");
@@ -1622,7 +1622,7 @@ END"#)
             "Tool execution failed after all retries"
         );
 
-        Err(super::error::NeoTalkError::Tool(format!(
+        Err(super::error::NeoMindError::Tool(format!(
             "工具 {} 执行失败 (session: {}, 尝试: {}次, 耗时: {}ms)",
             real_tool_name,
             self.session_id,

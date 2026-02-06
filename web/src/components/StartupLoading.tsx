@@ -52,16 +52,14 @@ export function StartupLoading({ onReady }: { onReady: () => void }) {
       // Listen for backend-ready event from Rust (for quick response)
       try {
         const unlisten = await listen<BackendReadyEvent>("backend-ready", (event) => {
-          console.log("Backend ready event received:", event.payload)
-          setStatus("ready")
+                    setStatus("ready")
           onReady()
         })
 
         // Also check health directly in case event was already sent
         let isReady = await checkHealth()
         if (isReady) {
-          console.log("Backend health check passed immediately")
-          setStatus("ready")
+                    setStatus("ready")
           onReady()
           unlisten()
           return
@@ -72,8 +70,7 @@ export function StartupLoading({ onReady }: { onReady: () => void }) {
           await new Promise(resolve => setTimeout(resolve, 200))
           isReady = await checkHealth()
           if (isReady) {
-            console.log("Backend health check passed after polling")
-            setStatus("ready")
+                        setStatus("ready")
             onReady()
             unlisten()
             return
@@ -82,8 +79,7 @@ export function StartupLoading({ onReady }: { onReady: () => void }) {
 
         // If still not ready after polling, wait for event with timeout
         timeoutId = setTimeout(() => {
-          console.log("Startup timeout - proceeding to app anyway")
-          setStatus("timeout")
+                    setStatus("timeout")
           onReady()
         }, 5000)
       } catch (error) {

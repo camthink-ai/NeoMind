@@ -718,7 +718,7 @@ pub async fn list_ollama_models_handler(
         let caps = match get_model_capabilities_from_show(&client, &show_url, &model.name).await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to get capabilities for {}: {}, using fallback detection", model.name, e);
+                tracing::warn!("Failed to get capabilities for {}: {}, using fallback detection", model.name, e);
                 // Fallback to name-based detection if /api/show fails
                 detect_ollama_model_capabilities_from_name(&model.name)
             }

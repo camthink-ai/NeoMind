@@ -185,7 +185,10 @@ impl Sandbox {
 
 impl Default for Sandbox {
     fn default() -> Self {
-        Self::new(SandboxConfig::default()).unwrap()
+        // Note: Using expect instead of unwrap to provide context on failure.
+        // In production, consider using a proper Result-based constructor.
+        Self::new(SandboxConfig::default())
+            .expect("Failed to create default sandbox with default config")
     }
 }
 

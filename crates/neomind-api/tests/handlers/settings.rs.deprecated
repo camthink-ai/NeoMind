@@ -8,6 +8,7 @@ use neomind_api::handlers::llm_backends::{
 use neomind_api::handlers::ServerState;
 use axum::extract::{Query, State};
 use axum::Json;
+use std::collections::HashMap;
 
 async fn create_test_server_state() -> ServerState {
     crate::common::create_test_server_state().await

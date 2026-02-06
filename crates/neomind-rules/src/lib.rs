@@ -1,6 +1,6 @@
 //! Edge AI Rules Engine Crate
 //!
-//! This crate provides a rule engine with DSL support for the NeoTalk platform.
+//! This crate provides a rule engine with DSL support for the NeoMind platform.
 //!
 //! ## Features
 //!
@@ -56,7 +56,7 @@ pub use engine::{
     CompiledRule, InMemoryValueProvider, RuleEngine, RuleExecutionResult, RuleId, RuleState,
     RuleStatus, ValueProvider,
 };
-pub use error::{NeoTalkError, RuleError};
+pub use error::{NeoMindError, RuleError};
 
 pub use history::{
     HistoryError, HistoryFilter, RuleHistoryEntry, RuleHistoryStats, RuleHistoryStorage,

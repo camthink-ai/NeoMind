@@ -1,4 +1,4 @@
-//! Core tool abstractions for NeoTalk.
+//! Core tool abstractions for NeoMind.
 //!
 //! This module defines the foundational traits for function calling
 /// used by LLM agents.

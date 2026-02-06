@@ -212,7 +212,6 @@ export class ApiDashboardStorage implements DashboardStorage {
           const createDto = toCreateDashboardDTO(dashboardForCreate as any)
           const result = await api.createDashboard(createDto)
           // Backend returns full Dashboard
-          console.log('[ApiStorage] Created dashboard on server, server ID:', result.id)
           return { data: fromDashboardDTO(result), error: null, source: 'api' }
         } catch (createError) {
           // If create fails with 409 (conflict) or similar, it might already exist
@@ -237,7 +236,6 @@ export class ApiDashboardStorage implements DashboardStorage {
         try {
           const createDto = toCreateDashboardDTO(dashboard)
           const result = await api.createDashboard(createDto)
-          console.log('[ApiStorage] Created dashboard on server (fallback), server ID:', result.id)
           return { data: fromDashboardDTO(result), error: null, source: 'api' }
         } catch (createError) {
           // Create failed - keep local version
@@ -343,7 +341,7 @@ export class HybridDashboardStorage implements DashboardStorage {
                              errorMessage.includes('does not exist')
 
       if (isTableNotExist) {
-        console.log('[HybridStorage] Dashboards table does not exist on backend, using localStorage')
+        // Dashboards table does not exist on backend, using localStorage
         // Don't clear localStorage - let users work with local data
         // When backend becomes available, data can be synced
         return this.localStorage.load()
@@ -388,8 +386,6 @@ export class HybridDashboardStorage implements DashboardStorage {
         const apiResult = await this.apiStorage.sync(dashboard)
         if (apiResult.data && apiResult.data.id !== dashboard.id) {
           // Server assigned a new ID - update localStorage with the server ID
-          console.log('[HybridStorage] Dashboard created on server, updating local ID from',
-                      dashboard.id, 'to', apiResult.data.id)
           await this.localStorage.sync(apiResult.data)
           return apiResult
         }

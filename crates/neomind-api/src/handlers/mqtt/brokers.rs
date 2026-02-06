@@ -133,7 +133,7 @@ pub async fn create_and_connect_broker(
         mqtt: neomind_devices::mqtt::MqttConfig {
             broker: broker.broker.clone(),
             port: broker.port,
-            client_id: Some(format!("neotalk-external-{}", broker.id)),
+            client_id: Some(format!("neomind-external-{}", broker.id)),
             username: broker.username.clone(),
             password: broker.password.clone(),
             keep_alive: 60,
@@ -144,7 +144,7 @@ pub async fn create_and_connect_broker(
         },
         subscribe_topics: broker.subscribe_topics.clone(),
         discovery_topic: None,
-        discovery_prefix: "neotalk".to_string(),
+        discovery_prefix: "neomind".to_string(),
         auto_discovery: false,
         storage_dir: Some("data".to_string()),
     };

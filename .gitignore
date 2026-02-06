@@ -1,4 +1,4 @@
-# NeoTalk .gitignore
+# NeoMind .gitignore
 
 # =============================================================================
 # Build Artifacts
@@ -39,7 +39,7 @@ package.json
 web/src-tauri/target/
 web/src-tauri/Cargo.lock
 web/src-tauri/WixTools/
-web/src-tauri/icons/NeoTalk.iconset/
+web/src-tauri/icons/NeoMind.iconset/
 web/src-tauri/gen/
 
 # =============================================================================

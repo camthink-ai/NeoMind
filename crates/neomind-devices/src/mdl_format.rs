@@ -1,6 +1,6 @@
 //! Machine Description Language (MDL) - Device Type Definition
 //!
-//! MDL is a JSON-based format for describing device types in the NeoTalk IoT platform.
+//! MDL is a JSON-based format for describing device types in the NeoMind IoT platform.
 //!
 //! ## MDL Structure
 //!

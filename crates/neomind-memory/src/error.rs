@@ -1,7 +1,7 @@
 //! Error types for the memory crate.
 
 // Re-export the core error type
-pub use neomind_core::error::Error as NeoTalkError;
+pub use neomind_core::error::Error as NeoMindError;
 
 /// Memory error types.
 #[derive(Debug, thiserror::Error)]
@@ -54,21 +54,21 @@ pub enum MemoryError {
 /// Result type for memory operations.
 pub type Result<T> = std::result::Result<T, MemoryError>;
 
-// Convert MemoryError to NeoTalkError
-impl From<MemoryError> for NeoTalkError {
+// Convert MemoryError to NeoMindError
+impl From<MemoryError> for NeoMindError {
     fn from(e: MemoryError) -> Self {
         match e {
             MemoryError::ShortTermMemory(s)
             | MemoryError::MidTermMemory(s)
-            | MemoryError::LongTermMemory(s) => NeoTalkError::Memory(s),
-            MemoryError::NotFound(s) => NeoTalkError::NotFound(s),
-            MemoryError::CapacityExceeded(s) => NeoTalkError::Validation(s),
-            MemoryError::InvalidFormat(s) => NeoTalkError::Validation(s),
-            MemoryError::Storage(s) => NeoTalkError::Storage(s),
-            MemoryError::Serialization(s) => NeoTalkError::Serialization(s),
-            MemoryError::Embedding(s) => NeoTalkError::Memory(s),
-            MemoryError::Config(s) => NeoTalkError::Validation(s),
-            MemoryError::Other(s) => NeoTalkError::Config(s),
+            | MemoryError::LongTermMemory(s) => NeoMindError::Memory(s),
+            MemoryError::NotFound(s) => NeoMindError::NotFound(s),
+            MemoryError::CapacityExceeded(s) => NeoMindError::Validation(s),
+            MemoryError::InvalidFormat(s) => NeoMindError::Validation(s),
+            MemoryError::Storage(s) => NeoMindError::Storage(s),
+            MemoryError::Serialization(s) => NeoMindError::Serialization(s),
+            MemoryError::Embedding(s) => NeoMindError::Memory(s),
+            MemoryError::Config(s) => NeoMindError::Validation(s),
+            MemoryError::Other(s) => NeoMindError::Config(s),
         }
     }
 }
@@ -99,11 +99,11 @@ mod tests {
     #[test]
     fn test_memory_error_to_neo_talk_error() {
         let mem_err = MemoryError::NotFound("test_key".to_string());
-        let neo_err: NeoTalkError = mem_err.into();
-        assert!(matches!(neo_err, NeoTalkError::NotFound(_)));
+        let neo_err: NeoMindError = mem_err.into();
+        assert!(matches!(neo_err, NeoMindError::NotFound(_)));
 
         let cap_err = MemoryError::CapacityExceeded("limit reached".to_string());
-        let neo_err: NeoTalkError = cap_err.into();
-        assert!(matches!(neo_err, NeoTalkError::Validation(_)));
+        let neo_err: NeoMindError = cap_err.into();
+        assert!(matches!(neo_err, NeoMindError::Validation(_)));
     }
 }

@@ -1,9 +1,9 @@
-//! Unified error handling for NeoTalk.
+//! Unified error handling for NeoMind.
 //!
 //! This module provides a common error type that can be used across all crates,
 //! reducing boilerplate and making error handling consistent.
 
-/// Unified error type for NeoTalk.
+/// Unified error type for NeoMind.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     /// Configuration-related errors.
@@ -297,4 +297,4 @@ macro_rules! auth_err {
 }
 
 // Module re-export
-pub use Error as NeoTalkError;
+pub use Error as NeoMindError;

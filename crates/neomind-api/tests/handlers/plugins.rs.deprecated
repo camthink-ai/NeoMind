@@ -1,20 +1,29 @@
 //! Tests for plugin management handlers.
+//!
+//! NOTE: This test file is deprecated. The legacy plugin system has been migrated
+//! to the Extension system. These tests are kept for historical reference but are
+//! currently disabled. Use /api/extensions/* endpoints for dynamic extension loading.
 
-use neomind_api::handlers::plugins::*;
-use neomind_api::handlers::ServerState;
-use axum::extract::{Path, Query, State};
-use axum::Json;
-use serde_json::json;
+#![allow(dead_code)]
 
-async fn create_test_server_state() -> ServerState {
+async fn create_test_server_state() -> neomind_api::handlers::ServerState {
     crate::common::create_test_server_state().await
 }
+
+// Stubs for removed types to allow compilation
+struct PluginListQuery;
+struct RegisterPluginRequest;
+struct UpdatePluginConfigRequest;
+struct PluginCommandRequest;
+struct PluginDto;
+struct PluginStatsDto;
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_list_plugins_handler() {
         let state = create_test_server_state().await;
         let query = PluginListQuery {
@@ -32,6 +41,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_list_plugins_handler_with_type_filter() {
         let state = create_test_server_state().await;
         let query = PluginListQuery {
@@ -48,6 +58,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_list_plugins_handler_extension_only() {
         let state = create_test_server_state().await;
         let query = PluginListQuery {
@@ -66,6 +77,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_get_plugin_handler_not_found() {
         let state = create_test_server_state().await;
         let result = get_plugin_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -75,6 +87,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_register_plugin_handler_missing_path() {
         let state = create_test_server_state().await;
         let req = RegisterPluginRequest {
@@ -93,6 +106,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_register_plugin_handler_invalid_file() {
         let state = create_test_server_state().await;
         let req = RegisterPluginRequest {
@@ -110,6 +124,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_unregister_plugin_handler() {
         let state = create_test_server_state().await;
         let result = unregister_plugin_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -117,6 +132,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_enable_plugin_handler() {
         let state = create_test_server_state().await;
         let result = enable_plugin_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -124,6 +140,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_disable_plugin_handler() {
         let state = create_test_server_state().await;
         let result = disable_plugin_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -131,6 +148,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_start_plugin_handler() {
         let state = create_test_server_state().await;
         let result = start_plugin_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -138,6 +156,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_stop_plugin_handler() {
         let state = create_test_server_state().await;
         let result = stop_plugin_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -145,6 +164,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_plugin_health_handler_not_found() {
         let state = create_test_server_state().await;
         let result = plugin_health_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -154,6 +174,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_get_plugin_config_handler_not_found() {
         let state = create_test_server_state().await;
         let result = get_plugin_config_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -163,6 +184,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_update_plugin_config_handler() {
         let state = create_test_server_state().await;
         let req = UpdatePluginConfigRequest {
@@ -174,6 +196,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_execute_plugin_command_handler() {
         let state = create_test_server_state().await;
         let req = PluginCommandRequest {
@@ -185,6 +208,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_get_plugin_stats_handler_not_found() {
         let state = create_test_server_state().await;
         let result = get_plugin_stats_handler(State(state), Path("nonexistent_plugin".to_string())).await;
@@ -194,6 +218,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_discover_plugins_handler() {
         let state = create_test_server_state().await;
         let result = discover_plugins_handler(State(state)).await;
@@ -205,6 +230,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_list_plugins_by_type_handler() {
         let state = create_test_server_state().await;
         let result = list_plugins_by_type_handler(State(state), Path("llm_backend".to_string())).await;
@@ -217,6 +243,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_get_plugin_types_handler() {
         let state = create_test_server_state().await;
         let result = get_plugin_types_handler(State(state)).await;
@@ -228,6 +255,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_list_device_adapter_plugins_handler() {
         let state = create_test_server_state().await;
         let result = list_device_adapter_plugins_handler(State(state)).await;
@@ -240,6 +268,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_register_device_adapter_handler_missing_fields() {
         let state = create_test_server_state().await;
         let req = json!({"id": "test_adapter"}); // Missing required fields
@@ -250,6 +279,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_register_device_adapter_handler() {
         let state = create_test_server_state().await;
         let req = json!({
@@ -276,6 +306,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_get_adapter_devices_handler() {
         let state = create_test_server_state().await;
         let result = get_adapter_devices_handler(State(state), Path("internal-mqtt".to_string())).await;
@@ -295,6 +326,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_get_device_adapter_stats_handler() {
         let state = create_test_server_state().await;
         let result = get_device_adapter_stats_handler(State(state)).await;
@@ -313,6 +345,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_plugin_dto() {
         let dto = PluginDto {
             id: "plugin1".to_string(),
@@ -338,6 +371,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_plugin_stats_dto_default() {
         let stats = PluginStatsDto::default();
         assert_eq!(stats.start_count, 0);
@@ -348,6 +382,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_adapter_plugin_dto() {
         let dto = AdapterPluginDto {
             id: "adapter1".to_string(),
@@ -368,6 +403,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_register_plugin_request() {
         let req = RegisterPluginRequest {
             id: "test_plugin".to_string(),
@@ -384,6 +420,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_update_plugin_config_request() {
         let req = UpdatePluginConfigRequest {
             config: json!({"key": "value"}),
@@ -394,6 +431,7 @@ mod tests {
     }
 
     #[tokio::test]
+#[ignore = "Legacy plugin system migrated to Extension system"]
     async fn test_plugin_command_request() {
         let req = PluginCommandRequest {
             command: "execute".to_string(),

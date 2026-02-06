@@ -9,7 +9,7 @@
 //! - Priority event bus
 
 use neomind_core::{
-    event::{EventMetadata, MetricValue, NeoTalkEvent, ProposedAction as Action},
+    event::{EventMetadata, MetricValue, NeoMindEvent, ProposedAction as Action},
     eventbus::{EventBus, FilterBuilder, SharedEventBus},
     priority_eventbus::{EventPriority, PriorityEventBus},
 };
@@ -22,7 +22,7 @@ async fn test_event_bus_basic_publish_subscribe() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
 
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "device1".to_string(),
         device_type: "sensor".to_string(),
         timestamp: 0,
@@ -40,7 +40,7 @@ async fn test_event_bus_multiple_subscribers() {
     let mut rx2 = bus.subscribe();
     let mut rx3 = bus.subscribe();
 
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "device1".to_string(),
         device_type: "sensor".to_string(),
         timestamp: 0,
@@ -63,7 +63,7 @@ async fn test_event_bus_filtered_device_events() {
     let mut rx = bus.filter().device_events();
 
     // Publish device event
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "sensor1".to_string(),
         device_type: "temperature".to_string(),
         timestamp: 1000,
@@ -71,7 +71,7 @@ async fn test_event_bus_filtered_device_events() {
     .await;
 
     // Publish non-device event
-    bus.publish(NeoTalkEvent::RuleTriggered {
+    bus.publish(NeoMindEvent::RuleTriggered {
         rule_id: "rule1".to_string(),
         rule_name: "Test Rule".to_string(),
         trigger_value: 25.0,
@@ -82,7 +82,7 @@ async fn test_event_bus_filtered_device_events() {
 
     // Should only receive the device event
     let received = rx.recv().await.unwrap();
-    assert!(matches!(received.0, NeoTalkEvent::DeviceOnline { .. }));
+    assert!(matches!(received.0, NeoMindEvent::DeviceOnline { .. }));
 }
 
 #[tokio::test]
@@ -90,7 +90,7 @@ async fn test_event_bus_filtered_rule_events() {
     let bus = EventBus::new();
     let mut rx = bus.filter().rule_events();
 
-    bus.publish(NeoTalkEvent::RuleTriggered {
+    bus.publish(NeoMindEvent::RuleTriggered {
         rule_id: "rule1".to_string(),
         rule_name: "Temperature Alert".to_string(),
         trigger_value: 30.0,
@@ -108,7 +108,7 @@ async fn test_event_bus_filtered_llm_events() {
     let bus = EventBus::new();
     let mut rx = bus.filter().llm_events();
 
-    bus.publish(NeoTalkEvent::LlmDecisionProposed {
+    bus.publish(NeoMindEvent::LlmDecisionProposed {
         decision_id: "decision1".to_string(),
         title: "Adjust Thermostat".to_string(),
         description: "Temperature is too high".to_string(),
@@ -132,7 +132,7 @@ async fn test_event_bus_filtered_alert_events() {
     let bus = EventBus::new();
     let mut rx = bus.filter().alert_events();
 
-    bus.publish(NeoTalkEvent::AlertCreated {
+    bus.publish(NeoMindEvent::AlertCreated {
         alert_id: "alert1".to_string(),
         title: "High Temperature".to_string(),
         severity: "warning".to_string(),
@@ -150,16 +150,16 @@ async fn test_event_bus_custom_filter() {
     let bus = EventBus::new();
     let mut rx = bus
         .filter()
-        .custom(|event| matches!(event, NeoTalkEvent::DeviceMetric { .. }));
+        .custom(|event| matches!(event, NeoMindEvent::DeviceMetric { .. }));
 
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "device1".to_string(),
         device_type: "sensor".to_string(),
         timestamp: 0,
     })
     .await;
 
-    bus.publish(NeoTalkEvent::DeviceMetric {
+    bus.publish(NeoMindEvent::DeviceMetric {
         device_id: "sensor1".to_string(),
         metric: "temperature".to_string(),
         value: MetricValue::Float(25.5),
@@ -173,7 +173,7 @@ async fn test_event_bus_custom_filter() {
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(received.0, NeoTalkEvent::DeviceMetric { .. }));
+    assert!(matches!(received.0, NeoMindEvent::DeviceMetric { .. }));
 }
 
 #[tokio::test]
@@ -182,7 +182,7 @@ async fn test_event_bus_publish_with_source() {
     let mut rx = bus.subscribe();
 
     bus.publish_with_source(
-        NeoTalkEvent::DeviceOnline {
+        NeoMindEvent::DeviceOnline {
             device_id: "device1".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
@@ -219,7 +219,7 @@ async fn test_event_bus_shared() {
 
     tokio::spawn(async move {
         bus_clone
-            .publish(NeoTalkEvent::DeviceOnline {
+            .publish(NeoMindEvent::DeviceOnline {
                 device_id: "device1".to_string(),
                 device_type: "sensor".to_string(),
                 timestamp: 0,
@@ -245,7 +245,7 @@ async fn test_event_bus_concurrent_publish() {
             let bus_clone = bus.clone();
             tokio::spawn(async move {
                 bus_clone
-                    .publish(NeoTalkEvent::DeviceOnline {
+                    .publish(NeoMindEvent::DeviceOnline {
                         device_id: format!("device{}", i),
                         device_type: "sensor".to_string(),
                         timestamp: 0,
@@ -277,7 +277,7 @@ async fn test_event_bus_device_metric_event() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
 
-    bus.publish(NeoTalkEvent::DeviceMetric {
+    bus.publish(NeoMindEvent::DeviceMetric {
         device_id: "sensor1".to_string(),
         metric: "temperature".to_string(),
         value: MetricValue::Float(25.5),
@@ -289,7 +289,7 @@ async fn test_event_bus_device_metric_event() {
     let received = rx.recv().await.unwrap();
 
     match received.0 {
-        NeoTalkEvent::DeviceMetric {
+        NeoMindEvent::DeviceMetric {
             device_id,
             metric,
             value,
@@ -317,7 +317,7 @@ async fn test_event_bus_try_recv() {
     assert!(rx.try_recv().is_none());
 
     // Publish an event
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "device1".to_string(),
         device_type: "sensor".to_string(),
         timestamp: 0,
@@ -339,7 +339,7 @@ async fn test_event_bus_with_capacity() {
 
     assert_eq!(bus.subscriber_count(), 1);
 
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "device1".to_string(),
         device_type: "sensor".to_string(),
         timestamp: 0,
@@ -366,7 +366,7 @@ async fn test_priority_event_bus() {
 
     // Publish events with different priorities
     priority_bus
-        .publish_critical(NeoTalkEvent::AlertCreated {
+        .publish_critical(NeoMindEvent::AlertCreated {
             alert_id: "alert1".to_string(),
             title: "Critical Alert".to_string(),
             severity: "critical".to_string(),
@@ -377,7 +377,7 @@ async fn test_priority_event_bus() {
 
     priority_bus
         .publish_with_priority(
-            NeoTalkEvent::DeviceOnline {
+            NeoMindEvent::DeviceOnline {
                 device_id: "device1".to_string(),
                 device_type: "sensor".to_string(),
                 timestamp: 1001,
@@ -388,7 +388,7 @@ async fn test_priority_event_bus() {
 
     priority_bus
         .publish_with_priority(
-            NeoTalkEvent::DeviceMetric {
+            NeoMindEvent::DeviceMetric {
                 device_id: "sensor1".to_string(),
                 metric: "temperature".to_string(),
                 value: MetricValue::Float(25.0),
@@ -418,14 +418,14 @@ async fn test_event_bus_multiple_filter_types() {
     let mut alert_rx = bus.filter().alert_events();
 
     // Publish one of each type
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "device1".to_string(),
         device_type: "sensor".to_string(),
         timestamp: 0,
     })
     .await;
 
-    bus.publish(NeoTalkEvent::RuleTriggered {
+    bus.publish(NeoMindEvent::RuleTriggered {
         rule_id: "rule1".to_string(),
         rule_name: "Test".to_string(),
         trigger_value: 1.0,
@@ -434,7 +434,7 @@ async fn test_event_bus_multiple_filter_types() {
     })
     .await;
 
-    bus.publish(NeoTalkEvent::LlmDecisionProposed {
+    bus.publish(NeoMindEvent::LlmDecisionProposed {
         decision_id: "decision1".to_string(),
         title: "Test".to_string(),
         description: "Test".to_string(),
@@ -445,7 +445,7 @@ async fn test_event_bus_multiple_filter_types() {
     })
     .await;
 
-    bus.publish(NeoTalkEvent::AlertCreated {
+    bus.publish(NeoMindEvent::AlertCreated {
         alert_id: "alert1".to_string(),
         title: "Test".to_string(),
         severity: "info".to_string(),
@@ -537,7 +537,7 @@ async fn test_priority_event_bus_max_queue() {
     for i in 0..5 {
         priority_bus
             .publish_with_priority(
-                NeoTalkEvent::DeviceOnline {
+                NeoMindEvent::DeviceOnline {
                     device_id: format!("device{}", i),
                     device_type: "sensor".to_string(),
                     timestamp: i as i64,
@@ -552,7 +552,7 @@ async fn test_priority_event_bus_max_queue() {
     // Low priority event should be dropped when queue is full
     let result = priority_bus
         .publish_with_priority(
-            NeoTalkEvent::DeviceOnline {
+            NeoMindEvent::DeviceOnline {
                 device_id: "overflow".to_string(),
                 device_type: "sensor".to_string(),
                 timestamp: 100,
@@ -571,7 +571,7 @@ async fn test_event_bus_clone() {
 
     let mut rx = bus_clone.subscribe();
 
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "device1".to_string(),
         device_type: "sensor".to_string(),
         timestamp: 0,

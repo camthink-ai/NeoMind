@@ -16,7 +16,7 @@
  *   const devices = useStore(selectDevicesRaw, shallow)
  */
 
-import type { NeoTalkStore } from '..'
+import type { NeoMindStore } from '..'
 
 // ============================================================================
 // Device Selectors
@@ -95,7 +95,7 @@ export {
 /**
  * Get connection status summary
  */
-export const selectConnectionStatus = (state: NeoTalkStore) => ({
+export const selectConnectionStatus = (state: NeoMindStore) => ({
   ai: state.wsConnected ? 'online' : 'offline',
   authenticated: state.isAuthenticated,
 })

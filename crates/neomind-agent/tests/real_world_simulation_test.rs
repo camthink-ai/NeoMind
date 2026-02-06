@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use neomind_core::{EventBus, MetricValue, NeoTalkEvent};
+use neomind_core::{EventBus, MetricValue, NeoMindEvent};
 use neomind_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
     WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType, ResourceType, AgentResource,
@@ -127,7 +127,7 @@ impl SimulationContext {
             self.time_series.write(device_id, metric, point).await.ok();
 
             // 发布事件
-            let event = NeoTalkEvent::DeviceMetric {
+            let event = NeoMindEvent::DeviceMetric {
                 device_id: device_id.to_string(),
                 metric: metric.to_string(),
                 value: MetricValue::Float(current),

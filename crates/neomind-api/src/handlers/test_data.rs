@@ -5,7 +5,7 @@
 use axum::{extract::State};
 
 use neomind_messages::{Message, MessageSeverity};
-use neomind_core::event::{MetricValue, NeoTalkEvent};
+use neomind_core::event::{MetricValue, NeoMindEvent};
 
 use super::{ServerState, common::{HandlerResult, ok}};
 
@@ -190,31 +190,31 @@ fn generate_test_messages() -> Vec<Message> {
     messages
 }
 
-fn generate_test_events() -> Vec<NeoTalkEvent> {
+fn generate_test_events() -> Vec<NeoMindEvent> {
     let now = chrono::Utc::now().timestamp();
     let mut events = Vec::new();
 
     // Device online events
-    events.push(NeoTalkEvent::DeviceOnline {
+    events.push(NeoMindEvent::DeviceOnline {
         device_id: "sensor/living".to_string(),
         device_type: "sensor".to_string(),
         timestamp: now,
     });
 
-    events.push(NeoTalkEvent::DeviceOnline {
+    events.push(NeoMindEvent::DeviceOnline {
         device_id: "light/bedroom".to_string(),
         device_type: "light".to_string(),
         timestamp: now,
     });
 
-    events.push(NeoTalkEvent::DeviceOnline {
+    events.push(NeoMindEvent::DeviceOnline {
         device_id: "sensor/temp".to_string(),
         device_type: "sensor".to_string(),
         timestamp: now,
     });
 
     // Device metric events
-    events.push(NeoTalkEvent::DeviceMetric {
+    events.push(NeoMindEvent::DeviceMetric {
         device_id: "sensor/temp".to_string(),
         metric: "temperature".to_string(),
         value: MetricValue::Float(25.5),
@@ -222,7 +222,7 @@ fn generate_test_events() -> Vec<NeoTalkEvent> {
         quality: None,
     });
 
-    events.push(NeoTalkEvent::DeviceMetric {
+    events.push(NeoMindEvent::DeviceMetric {
         device_id: "sensor/temp".to_string(),
         metric: "humidity".to_string(),
         value: MetricValue::Float(60.0),
@@ -230,7 +230,7 @@ fn generate_test_events() -> Vec<NeoTalkEvent> {
         quality: Some(100.0),
     });
 
-    events.push(NeoTalkEvent::DeviceMetric {
+    events.push(NeoMindEvent::DeviceMetric {
         device_id: "sensor/living".to_string(),
         metric: "temperature".to_string(),
         value: MetricValue::Float(28.5),
@@ -239,7 +239,7 @@ fn generate_test_events() -> Vec<NeoTalkEvent> {
     });
 
     // Device command result events
-    events.push(NeoTalkEvent::DeviceCommandResult {
+    events.push(NeoMindEvent::DeviceCommandResult {
         device_id: "light/living".to_string(),
         command: "on".to_string(),
         success: true,
@@ -247,7 +247,7 @@ fn generate_test_events() -> Vec<NeoTalkEvent> {
         timestamp: now,
     });
 
-    events.push(NeoTalkEvent::DeviceCommandResult {
+    events.push(NeoMindEvent::DeviceCommandResult {
         device_id: "lock/front".to_string(),
         command: "lock".to_string(),
         success: true,
@@ -256,7 +256,7 @@ fn generate_test_events() -> Vec<NeoTalkEvent> {
     });
 
     // Message created events (for testing)
-    events.push(NeoTalkEvent::MessageCreated {
+    events.push(NeoMindEvent::MessageCreated {
         message_id: "test-msg-1".to_string(),
         title: "测试消息".to_string(),
         severity: "info".to_string(),

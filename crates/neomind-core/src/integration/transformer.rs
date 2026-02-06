@@ -1,17 +1,17 @@
 //! Transformer trait for data format conversion.
 //!
 //! Transformers are responsible for converting data between external formats
-//! and NeoTalk's internal representation. They handle:
+//! and NeoMind's internal representation. They handle:
 //!
-//! - External format → NeoTalk Event
-//! - NeoTalk Command → External format
+//! - External format → NeoMind Event
+//! - NeoMind Command → External format
 //! - Entity/Device discovery mapping
 //! - Data type validation and normalization
 //!
 //! ## Architecture
 //!
 //! ```text
-//! External Format              Transformer              NeoTalk
+//! External Format              Transformer              NeoMind
 //! ┌─────────────┐             ┌─────────────┐          ┌──────────┐
 //! │ MQTT JSON   │             │             │  Event   │          │
 //! │     payload │────────────▶│  Transformer│──────────▶│ EventBus │
@@ -25,18 +25,18 @@
 //!
 //! ```rust,ignore
 //! use neomind_core::integration::transformer::{Transformer, TransformationContext, TransformationError};
-//! use neomind_core::event::NeoTalkEvent;
+//! use neomind_core::event::NeoMindEvent;
 //!
 //! struct MqttTransformer;
 //!
 //! impl Transformer for MqttTransformer {
-//!     fn to_event(&self, data: &[u8], ctx: &TransformationContext) -> Result<NeoTalkEvent, TransformationError> {
+//!     fn to_event(&self, data: &[u8], ctx: &TransformationContext) -> Result<NeoMindEvent, TransformationError> {
 //!         // Parse JSON payload
 //!         let json: serde_json::Value = serde_json::from_slice(data)
 //!             .map_err(|e| TransformationError::ParseError(e.to_string()))?;
 //!
-//!         // Transform to NeoTalk event
-//!         Ok(NeoTalkEvent::Metric {
+//!         // Transform to NeoMind event
+//!         Ok(NeoMindEvent::Metric {
 //!             name: "temperature".to_string(),
 //!             value: MetricValue::Number(json["value"].as_f64().unwrap_or(0.0)),
 //!             source: ctx.source_system.clone(),
@@ -45,7 +45,7 @@
 //!     }
 //!
 //!     fn to_external(&self, command: &IntegrationCommand, target_format: &str) -> Result<Vec<u8>, TransformationError> {
-//!         // Transform NeoTalk command to external format
+//!         // Transform NeoMind command to external format
 //!         match command {
 //!             IntegrationCommand::SendData { payload, .. } => Ok(payload.clone()),
 //!             _ => Err(TransformationError::UnsupportedCommand(command.to_string())),
@@ -103,7 +103,7 @@ pub enum TransformationError {
 /// Context for data transformation.
 ///
 /// Provides metadata and context information for transforming
-/// external data into NeoTalk events.
+/// external data into NeoMind events.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TransformationContext {
     /// Source system identifier (mqtt, http, etc.).
@@ -194,7 +194,7 @@ impl Default for TransformationContext {
 
 /// Entity mapping information.
 ///
-/// Maps external entities to NeoTalk's internal representation.
+/// Maps external entities to NeoMind's internal representation.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EntityMapping {
     /// External entity ID.
@@ -310,19 +310,19 @@ pub enum ConversionFunction {
 /// Transformer trait for data format conversion.
 ///
 /// Transformers are responsible for converting between external formats
-/// and NeoTalk's internal representation.
+/// and NeoMind's internal representation.
 pub trait Transformer: Send + Sync {
-    /// Transform external data to a NeoTalk event.
+    /// Transform external data to a NeoMind event.
     ///
     /// # Arguments
     /// * `data` - Raw data bytes from the external system
     /// * `ctx` - Transformation context with metadata
     ///
     /// # Returns
-    /// A NeoTalk event if transformation succeeds
+    /// A NeoMind event if transformation succeeds
     fn to_event(&self, data: &[u8], ctx: &TransformationContext) -> Result<serde_json::Value>;
 
-    /// Transform a NeoTalk command to external format.
+    /// Transform a NeoMind command to external format.
     ///
     /// # Arguments
     /// * `command` - Integration command to transform

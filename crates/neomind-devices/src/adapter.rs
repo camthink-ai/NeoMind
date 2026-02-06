@@ -1,11 +1,11 @@
-//! Device adapter interface for NeoTalk event-driven architecture.
+//! Device adapter interface for NeoMind event-driven architecture.
 //!
 //! This module defines the adapter pattern for integrating various data sources
-//! (MQTT, HASS, HTTP, etc.) into the NeoTalk platform through a unified interface.
+//! (MQTT, HASS, HTTP, etc.) into the NeoMind platform through a unified interface.
 
 use crate::mdl::MetricValue;
 use async_trait::async_trait;
-use neomind_core::{EventBus, NeoTalkEvent};
+use neomind_core::{EventBus, NeoMindEvent};
 use futures::{Stream, StreamExt};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ pub enum AdapterError {
 /// Device event emitted by adapters.
 ///
 /// These events are the primary way adapters communicate with the rest of
-/// the NeoTalk system. They are typically converted to NeoTalkEvent and
+/// the NeoMind system. They are typically converted to NeoMindEvent and
 /// published on the event bus.
 #[derive(Debug, Clone)]
 pub enum DeviceEvent {
@@ -104,15 +104,15 @@ impl DeviceEvent {
         }
     }
 
-    /// Convert to NeoTalkEvent.
-    pub fn to_neotalk_event(self) -> NeoTalkEvent {
+    /// Convert to NeoMindEvent.
+    pub fn to_neomind_event(self) -> NeoMindEvent {
         match self {
             Self::Metric {
                 device_id,
                 metric,
                 value,
                 timestamp,
-            } => NeoTalkEvent::DeviceMetric {
+            } => NeoMindEvent::DeviceMetric {
                 device_id,
                 metric,
                 value: convert_metric_value(value),
@@ -126,13 +126,13 @@ impl DeviceEvent {
                 timestamp,
             } => {
                 match new_state {
-                    ConnectionStatus::Connected => NeoTalkEvent::DeviceOnline {
+                    ConnectionStatus::Connected => NeoMindEvent::DeviceOnline {
                         device_id,
                         device_type: "unknown".to_string(),
                         timestamp,
                     },
                     ConnectionStatus::Disconnected | ConnectionStatus::Error => {
-                        NeoTalkEvent::DeviceOffline {
+                        NeoMindEvent::DeviceOffline {
                             device_id,
                             reason: Some(format!("{:?}", new_state)),
                             timestamp,
@@ -140,7 +140,7 @@ impl DeviceEvent {
                     }
                     _ => {
                         // Other state transitions don't generate online/offline events
-                        NeoTalkEvent::DeviceOnline {
+                        NeoMindEvent::DeviceOnline {
                             device_id,
                             device_type: "unknown".to_string(),
                             timestamp,
@@ -150,7 +150,7 @@ impl DeviceEvent {
             }
             Self::Discovery { device } => {
                 // Discovery creates an online event
-                NeoTalkEvent::DeviceOnline {
+                NeoMindEvent::DeviceOnline {
                     device_id: device.device_id,
                     device_type: device.device_type.clone(),
                     timestamp: device.timestamp,
@@ -162,7 +162,7 @@ impl DeviceEvent {
                 success,
                 result,
                 timestamp,
-            } => NeoTalkEvent::DeviceCommandResult {
+            } => NeoMindEvent::DeviceCommandResult {
                 device_id,
                 command,
                 success,
@@ -457,9 +457,9 @@ impl EventPublishingAdapter {
                 match rx.next().await {
                     Some(event) => {
                         let device_id = event.device_id().unwrap_or("unknown").to_string();
-                        let neotalk_event = event.to_neotalk_event();
+                        let neomind_event = event.to_neomind_event();
                         let source = format!("adapter:{}", device_id);
-                        event_bus.publish_with_source(neotalk_event, source).await;
+                        event_bus.publish_with_source(neomind_event, source).await;
                     }
                     None => break,
                 }
@@ -636,7 +636,7 @@ mod tests {
     }
 
     #[test]
-    fn test_device_event_to_neotalk() {
+    fn test_device_event_to_neomind() {
         let event = DeviceEvent::Metric {
             device_id: "sensor1".to_string(),
             metric: "temperature".to_string(),
@@ -644,12 +644,12 @@ mod tests {
             timestamp: 1234567890,
         };
 
-        let neotalk = event.to_neotalk_event();
-        assert!(matches!(neotalk, NeoTalkEvent::DeviceMetric { .. }));
+        let neomind = event.to_neomind_event();
+        assert!(matches!(neomind, NeoMindEvent::DeviceMetric { .. }));
     }
 
     #[test]
-    fn test_device_event_state_to_neotalk() {
+    fn test_device_event_state_to_neomind() {
         let event = DeviceEvent::State {
             device_id: "sensor1".to_string(),
             old_state: ConnectionStatus::Disconnected,
@@ -657,8 +657,8 @@ mod tests {
             timestamp: 0,
         };
 
-        let neotalk = event.to_neotalk_event();
-        assert!(matches!(neotalk, NeoTalkEvent::DeviceOnline { .. }));
+        let neomind = event.to_neomind_event();
+        assert!(matches!(neomind, NeoMindEvent::DeviceOnline { .. }));
     }
 
     #[tokio::test]

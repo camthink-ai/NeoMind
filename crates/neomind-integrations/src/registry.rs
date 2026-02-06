@@ -7,7 +7,7 @@
 //! - Health monitoring and automatic reconnection
 
 use crate::{DynIntegration, IntegrationCommand, IntegrationEvent, IntegrationResponse};
-use neomind_core::event::{MetricValue, NeoTalkEvent};
+use neomind_core::event::{MetricValue, NeoMindEvent};
 use neomind_core::eventbus::EventBus;
 use neomind_core::integration::IntegrationType;
 use futures::StreamExt;
@@ -240,9 +240,9 @@ impl IntegrationRegistry {
                     });
                 }
 
-                // Convert integration event to NeoTalk event and publish
-                if let Ok(neotalk_event) = Self::integration_to_neotalk_event(event, &id_for_task) {
-                    let _ = event_bus.publish(neotalk_event).await;
+                // Convert integration event to NeoMind event and publish
+                if let Ok(neomind_event) = Self::integration_to_neomind_event(event, &id_for_task) {
+                    let _ = event_bus.publish(neomind_event).await;
                 }
             }
 
@@ -417,11 +417,11 @@ impl IntegrationRegistry {
         let _ = self.registry_sender.send(event);
     }
 
-    /// Convert an integration event to a NeoTalk event.
-    fn integration_to_neotalk_event(
+    /// Convert an integration event to a NeoMind event.
+    fn integration_to_neomind_event(
         event: IntegrationEvent,
         source_id: &str,
-    ) -> Result<NeoTalkEvent> {
+    ) -> Result<NeoMindEvent> {
         // Get timestamp first to avoid borrow issues
         let timestamp = event.timestamp();
 
@@ -434,7 +434,7 @@ impl IntegrationRegistry {
             } => {
                 // Try to parse as metric and create DeviceMetric event
                 if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&payload) {
-                    NeoTalkEvent::DeviceMetric {
+                    NeoMindEvent::DeviceMetric {
                         device_id: source,
                         metric: data_type,
                         value: Self::json_to_metric_value(json),
@@ -443,7 +443,7 @@ impl IntegrationRegistry {
                     }
                 } else {
                     // Fallback: create a DeviceOnline event for unknown data
-                    NeoTalkEvent::DeviceOnline {
+                    NeoMindEvent::DeviceOnline {
                         device_id: source,
                         device_type: data_type,
                         timestamp,
@@ -454,19 +454,19 @@ impl IntegrationRegistry {
                 discovered_id,
                 discovery_type,
                 ..
-            } => NeoTalkEvent::DeviceOnline {
+            } => NeoMindEvent::DeviceOnline {
                 device_id: discovered_id,
                 device_type: discovery_type,
                 timestamp,
             },
-            IntegrationEvent::StateChanged { .. } => NeoTalkEvent::LlmResponse {
+            IntegrationEvent::StateChanged { .. } => NeoMindEvent::LlmResponse {
                 session_id: source_id.to_string(),
                 content: "Integration state changed".to_string(),
                 tools_used: vec![],
                 processing_time_ms: 0,
                 timestamp,
             },
-            IntegrationEvent::Error { message, .. } => NeoTalkEvent::ToolExecutionFailure {
+            IntegrationEvent::Error { message, .. } => NeoMindEvent::ToolExecutionFailure {
                 tool_name: source_id.to_string(),
                 arguments: serde_json::json!({}),
                 error: message,

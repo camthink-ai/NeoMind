@@ -186,7 +186,7 @@ impl AuthUserState {
     /// The setup wizard should be used to create the first admin account.
     pub fn new() -> Self {
         let db_path = "data/users.redb";
-        let jwt_secret = std::env::var("NEOTALK_JWT_SECRET").unwrap_or_else(|_| {
+        let jwt_secret = std::env::var("NEOMIND_JWT_SECRET").unwrap_or_else(|_| {
             // Generate a random secret (warning: changes on restart!)
             uuid::Uuid::new_v4().to_string().replace("-", "")
         });
@@ -718,7 +718,7 @@ mod tests {
     fn make_test_auth(test_name: &str) -> AuthUserState {
         let db_path = format!("data/test_{}.redb", test_name);
         cleanup_test_db(&db_path);
-        let jwt_secret = std::env::var("NEOTALK_JWT_SECRET")
+        let jwt_secret = std::env::var("NEOMIND_JWT_SECRET")
             .unwrap_or_else(|_| "test_secret_key_12345678".to_string());
         AuthUserState::with_config(db_path, jwt_secret)
     }

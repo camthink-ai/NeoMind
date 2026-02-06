@@ -21,7 +21,7 @@
 ## Phase 1: 统一品牌名为 NeoMind 🔴
 
 ### 目标
-将所有 `edge_ai-*` 和 `neotalk*` 统一为 `neomind-*`
+将所有 `edge_ai-*` 和 `neomind*` 统一为 `neomind-*`
 
 ### 改动范围
 ```
@@ -53,7 +53,7 @@ cat > RENAME_MAP.md << 'EOF'
 | edge-ai-integrations | neomind-integrations |
 | edge-ai-cli | neomind-cli |
 | edge-ai-testing | neomind-testing |
-| neotalk-plugin-sdk | neomind-plugin-sdk |
+| neomind-plugin-sdk | neomind-plugin-sdk |
 EOF
 ```
 
@@ -75,7 +75,7 @@ sed -i '' "s/name = \"$OLD_NAME\"/name = \"$NEW_NAME\"/g" "crates/$NEW_NAME/Carg
 
 # 3. 更新所有依赖引用
 find . -type f -name "*.toml" -exec sed -i '' "s/edge-ai-$OLD_NAME/neomind-$NEW_NAME/g" {} \;
-find . -type f -name "*.toml" -exec sed -i '' "s/neotalk-$OLD_NAME/neomind-$NEW_NAME/g" {} \;
+find . -type f -name "*.toml" -exec sed -i '' "s/neomind-$OLD_NAME/neomind-$NEW_NAME/g" {} \;
 
 # 4. 更新 Rust 源码中的 use 语句
 find . -type f -name "*.rs" -exec sed -i '' "s/use edge_ai::$OLD_NAME/use neomind::$NEW_NAME/g" {} \;
@@ -416,7 +416,7 @@ let agents = &state.agents;
 mv crates/plugin-sdk crates/extension-sdk
 
 # 更新名称
-sed -i '' 's/neotalk-plugin-sdk/neomind-extension-sdk/g' Cargo.toml
+sed -i '' 's/neomind-plugin-sdk/neomind-extension-sdk/g' Cargo.toml
 ```
 
 #### 5.2 更新文档和注释
@@ -459,7 +459,7 @@ sed -i '' 's/neotalk-plugin-sdk/neomind-extension-sdk/g' Cargo.toml
 
 ### Phase 1
 - [ ] 所有 crate 名称统一为 `neomind-*`
-- [ ] 代码中无 `edge_ai` 或 `neotalk` 引用
+- [ ] 代码中无 `edge_ai` 或 `neomind` 引用
 - [ ] `cargo build --all-targets` 通过
 - [ ] `cargo test --all` 通过
 

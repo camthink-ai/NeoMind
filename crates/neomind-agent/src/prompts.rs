@@ -1,4 +1,4 @@
-//! Prompt generation utilities for the NeoTalk AI Agent.
+//! Prompt generation utilities for the NeoMind AI Agent.
 //!
 //! ## Architecture
 //!
@@ -132,7 +132,7 @@ impl PromptBuilder {
     // Chinese content
     const IDENTITY_ZH: &str = r#"## 核心身份
 
-你是 **NeoTalk 智能物联网助手**，具备专业的设备和系统管理能力。
+你是 **NeoMind 智能物联网助手**，具备专业的设备和系统管理能力。
 
 ### 核心能力
 - **设备管理**: 查询状态、控制设备、分析遥测数据
@@ -309,7 +309,7 @@ impl PromptBuilder {
 ### 无需工具的场景：
 
 **用户**: "你好"
-→ 直接回复："你好！我是 NeoTalk 智能助手，有什么可以帮你的吗？"
+→ 直接回复："你好！我是 NeoMind 智能助手，有什么可以帮你的吗？"
 
 **用户**: "谢谢你"
 → 直接回复："不客气！有其他问题随时问我。"
@@ -323,7 +323,7 @@ impl PromptBuilder {
     // English content
     const IDENTITY_EN: &str = r#"## Core Identity
 
-You are the **NeoTalk Intelligent IoT Assistant** with professional device and system management capabilities.
+You are the **NeoMind Intelligent IoT Assistant** with professional device and system management capabilities.
 
 ### Core Capabilities
 - **Device Management**: Query status, control devices, analyze telemetry data
@@ -479,7 +479,7 @@ The thinking process should be **internal reasoning** - don't over-explain basic
 ### Scenarios NOT requiring tools:
 
 **User**: "Hello"
-→ Respond directly: "Hello! I'm NeoTalk, your intelligent assistant. How can I help you?"
+→ Respond directly: "Hello! I'm NeoMind, your intelligent assistant. How can I help you?"
 
 **User**: "Thank you"
 → Respond directly: "You're welcome! Feel free to ask if you have any other questions."
@@ -702,13 +702,13 @@ When analyzing the current situation, reference history:
 const GENERIC_ROLE_PROMPT_ZH: &str = r#"
 ## 角色定位
 
-你是 NeoTalk 智能物联网系统的自动化助手。你的任务是按照用户定义的需求，持续监控系统状态并做出适当的响应。
+你是 NeoMind 智能物联网系统的自动化助手。你的任务是按照用户定义的需求，持续监控系统状态并做出适当的响应。
 "#;
 
 const GENERIC_ROLE_PROMPT_EN: &str = r#"
 ## Role
 
-You are an automation assistant for the NeoTalk intelligent IoT system. Your task is to continuously monitor system status and respond appropriately according to user-defined requirements.
+You are an automation assistant for the NeoMind intelligent IoT system. Your task is to continuously monitor system status and respond appropriately according to user-defined requirements.
 "#;
 
 // Monitor role - focused on detection and alerting
@@ -912,7 +912,7 @@ mod tests {
     fn test_prompt_builder_zh() {
         let builder = PromptBuilder::new().with_language(Language::Chinese);
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("NeoTalk"));
+        assert!(prompt.contains("NeoMind"));
         assert!(prompt.contains("物联网"));
         assert!(prompt.contains("交互原则"));
         // Vision should not be included by default
@@ -923,7 +923,7 @@ mod tests {
     fn test_prompt_builder_en() {
         let builder = PromptBuilder::new().with_language(Language::English);
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("NeoTalk"));
+        assert!(prompt.contains("NeoMind"));
         assert!(prompt.contains("IoT"));
         assert!(prompt.contains("Interaction"));
         // Vision should not be included by default

@@ -20,7 +20,7 @@ use neomind_core::{
 // Import intent classifier for staged processing
 use crate::agent::staged::{IntentCategory, IntentClassifier, IntentResult, ToolFilter};
 // Import the unified error type
-use crate::error::NeoTalkError;
+use crate::error::NeoMindError;
 // Import the Result type alias
 use crate::error::Result as AgentResult;
 
@@ -348,7 +348,7 @@ impl LlmInterface {
         const SETTINGS_DB_PATH: &str = "data/settings.redb";
 
         let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
-            .map_err(|e| NeoTalkError::Llm(format!("Failed to open settings store: {}", e)))?;
+            .map_err(|e| NeoMindError::Llm(format!("Failed to open settings store: {}", e)))?;
 
         let timezone = settings_store.get_global_timezone();
         self.set_global_timezone(timezone.clone()).await;
@@ -391,7 +391,7 @@ impl LlmInterface {
                 return manager
                     .get_active_runtime()
                     .await
-                    .map_err(|e| NeoTalkError::Llm(e.to_string()));
+                    .map_err(|e| NeoMindError::Llm(e.to_string()));
             }
 
         // Fall back to direct runtime
@@ -399,7 +399,7 @@ impl LlmInterface {
         llm_guard
             .as_ref()
             .map(Arc::clone)
-            .ok_or(NeoTalkError::Llm("LLM backend not ready".to_string()))
+            .ok_or(NeoMindError::Llm("LLM backend not ready".to_string()))
     }
 
     /// Get effective generation parameters.
@@ -448,10 +448,10 @@ impl LlmInterface {
             manager
                 .set_active(backend_id)
                 .await
-                .map_err(|e| NeoTalkError::Llm(e.to_string()))?;
+                .map_err(|e| NeoMindError::Llm(e.to_string()))?;
             Ok(())
         } else {
-            Err(NeoTalkError::Llm(
+            Err(NeoMindError::Llm(
                 "No instance manager configured".to_string(),
             ))
         }
@@ -535,7 +535,7 @@ impl LlmInterface {
     /// ```
     pub async fn warmup(&self) -> AgentResult<()> {
         match self.get_runtime().await {
-            Ok(runtime) => runtime.warmup().await.map_err(|e| NeoTalkError::Llm(e.to_string())),
+            Ok(runtime) => runtime.warmup().await.map_err(|e| NeoMindError::Llm(e.to_string())),
             Err(e) => Err(e),
         }
     }
@@ -994,7 +994,7 @@ impl LlmInterface {
             .any(|&pat| trimmed.eq_ignore_ascii_case(pat) || trimmed.starts_with(pat));
 
         if is_greeting && trimmed.len() < 20 {
-            let greeting_response = "您好！我是 NeoTalk 智能助手。我可以帮您：\n\
+            let greeting_response = "您好！我是 NeoMind 智能助手。我可以帮您：\n\
                 • 查看设备列表 - 说「列出设备」\n\
                 • 查询设备数据 - 说「查询温度」\n\
                 • 创建自动化规则 - 说「创建规则」\n\
@@ -1132,7 +1132,7 @@ impl LlmInterface {
         let output = llm
             .generate(input)
             .await
-            .map_err(|e| NeoTalkError::Llm(e.to_string()))?;
+            .map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
         let duration = start.elapsed();
         let tokens_used = output
@@ -1285,7 +1285,7 @@ impl LlmInterface {
         let output = llm
             .generate(input)
             .await
-            .map_err(|e| NeoTalkError::Llm(e.to_string()))?;
+            .map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
         let duration = start.elapsed();
         let tokens_used = output
@@ -1426,7 +1426,7 @@ impl LlmInterface {
         } else {
             // Phase 2 system prompt - NO tool calling, just generate response based on tool results
             // Tool execution is already complete, this phase is for summarizing results
-            "你是NeoTalk物联网助手。
+            "你是NeoMind物联网助手。
 
 ## 当前阶段：工具执行完成，需要生成最终回复
 
@@ -1579,7 +1579,7 @@ impl LlmInterface {
         let stream = llm
             .generate_stream(input)
             .await
-            .map_err(|e| NeoTalkError::Llm(e.to_string()))?;
+            .map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
         // Acquire permit for concurrency limiting and wrap stream
         let permit = self.limiter.acquire().await;
@@ -1591,7 +1591,7 @@ impl LlmInterface {
             while let Some(result) = futures::StreamExt::next(&mut stream).await {
                 match result {
                     Ok(chunk) => yield Ok(chunk),
-                    Err(e) => yield Err(NeoTalkError::Llm(e.to_string())),
+                    Err(e) => yield Err(NeoMindError::Llm(e.to_string())),
                 }
             }
         }))
@@ -1616,7 +1616,7 @@ impl LlmInterface {
         } else {
             // Phase 2 system prompt - NO tool calling, just generate response based on tool results
             // Tool execution is already complete, this phase is for summarizing results
-            "你是NeoTalk物联网助手。
+            "你是NeoMind物联网助手。
 
 ## 当前阶段：工具执行完成，需要生成最终回复
 
@@ -1758,7 +1758,7 @@ impl LlmInterface {
         let stream = llm
             .generate_stream(input)
             .await
-            .map_err(|e| NeoTalkError::Llm(e.to_string()))?;
+            .map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
         // Acquire permit for concurrency limiting and wrap stream
         let permit = self.limiter.acquire().await;
@@ -1770,7 +1770,7 @@ impl LlmInterface {
             while let Some(result) = futures::StreamExt::next(&mut stream).await {
                 match result {
                     Ok(chunk) => yield Ok(chunk),
-                    Err(e) => yield Err(NeoTalkError::Llm(e.to_string())),
+                    Err(e) => yield Err(NeoMindError::Llm(e.to_string())),
                 }
             }
         }))
@@ -2071,10 +2071,10 @@ mod tests {
 
     #[test]
     fn test_agent_error_display() {
-        let err = NeoTalkError::Llm("LLM not ready".to_string());
+        let err = NeoMindError::Llm("LLM not ready".to_string());
         assert!(err.to_string().contains("not ready"));
 
-        let err = NeoTalkError::Llm("test error".to_string());
+        let err = NeoMindError::Llm("test error".to_string());
         assert!(err.to_string().contains("test error"));
     }
 }

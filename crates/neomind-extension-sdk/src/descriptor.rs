@@ -2,7 +2,7 @@
 //!
 //! This module provides the descriptor structure that defines a plugin's metadata.
 
-/// Plugin ABI version (must match NeoTalk core)
+/// Plugin ABI version (must match NeoMind core)
 pub const PLUGIN_ABI_VERSION: u32 = 1;
 
 /// Plugin type identifiers
@@ -57,8 +57,8 @@ pub struct PluginDescriptor {
     /// Plugin description
     pub description: String,
 
-    /// Required NeoTalk version (semver requirement)
-    pub required_neotalk: String,
+    /// Required NeoMind version (semver requirement)
+    pub required_neomind: String,
 
     /// Author name
     pub author: Option<String>,
@@ -88,7 +88,7 @@ impl PluginDescriptor {
             version: version.into(),
             plugin_type: PluginType::Tool,
             description: String::new(),
-            required_neotalk: ">=1.0.0".to_string(),
+            required_neomind: ">=1.0.0".to_string(),
             author: None,
             homepage: None,
             repository: None,
@@ -117,9 +117,9 @@ impl PluginDescriptor {
         self
     }
 
-    /// Set the required NeoTalk version
-    pub fn with_required_neotalk(mut self, version: impl Into<String>) -> Self {
-        self.required_neotalk = version.into();
+    /// Set the required NeoMind version
+    pub fn with_required_neomind(mut self, version: impl Into<String>) -> Self {
+        self.required_neomind = version.into();
         self
     }
 
@@ -176,8 +176,8 @@ impl PluginDescriptor {
             version_len: self.version.len(),
             description: self.description.as_ptr(),
             description_len: self.description.len(),
-            required_neotalk: self.required_neotalk.as_ptr(),
-            required_neotalk_len: self.required_neotalk.len(),
+            required_neomind: self.required_neomind.as_ptr(),
+            required_neomind_len: self.required_neomind.len(),
             author: self
                 .author
                 .as_ref()
@@ -224,8 +224,8 @@ pub struct CPluginDescriptor {
     pub version_len: usize,
     pub description: *const u8,
     pub description_len: usize,
-    pub required_neotalk: *const u8,
-    pub required_neotalk_len: usize,
+    pub required_neomind: *const u8,
+    pub required_neomind_len: usize,
     pub author: *const u8,
     pub author_len: usize,
     pub homepage: *const u8,

@@ -69,7 +69,7 @@ pub use concurrency::{
     ConcurrencyStats, DEFAULT_GLOBAL_LIMIT, DEFAULT_PER_SESSION_LIMIT, GlobalConcurrencyLimiter,
     GlobalPermit, SessionConcurrencyLimiter, SessionPermit,
 };
-pub use error::{NeoTalkError, Result};
+pub use error::{NeoMindError, Result};
 pub use session::SessionManager;
 pub use tools::{
     EventIntegratedToolRegistry, ToolExecutionHistory, ToolExecutionRecord, ToolExecutionStats,

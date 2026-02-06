@@ -283,8 +283,8 @@ impl SessionStore {
     /// Uses a singleton pattern to prevent multiple opens of the same database.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Arc<Self>, Error> {
         let path_str = path.as_ref().to_string_lossy().to_string();
-        eprintln!(
-            "[DEBUG SessionStore::open] Opening session store at: {}",
+        tracing::debug!(
+            "[SessionStore::open] Opening session store at: {}",
             path_str
         );
 
@@ -295,8 +295,8 @@ impl SessionStore {
             };
             if let Some(store) = singleton.as_ref()
                 && store.path == path_str {
-                    eprintln!(
-                        "[DEBUG SessionStore::open] Returning cached store for: {}",
+                    tracing::debug!(
+                        "[SessionStore::open] Returning cached store for: {}",
                         path_str
                     );
                     return Ok(store.clone());
@@ -305,16 +305,16 @@ impl SessionStore {
 
         // Create new store and save to singleton
         let path_ref = path.as_ref();
-        eprintln!(
-            "[DEBUG SessionStore::open] Path exists: {}, is_file: {}",
+        tracing::debug!(
+            "[SessionStore::open] Path exists: {}, is_file: {}",
             path_ref.exists(),
             path_ref.is_file()
         );
         let db = if path_ref.exists() {
-            eprintln!("[DEBUG SessionStore::open] Opening existing database");
+            tracing::debug!("[SessionStore::open] Opening existing database");
             Database::open(path_ref)?
         } else {
-            eprintln!("[DEBUG SessionStore::open] Creating new database");
+            tracing::debug!("[SessionStore::open] Creating new database");
             Database::create(path_ref)?
         };
 
@@ -329,7 +329,7 @@ impl SessionStore {
             };
             *singleton = Some(store.clone());
         }
-        eprintln!("[DEBUG SessionStore::open] Session store created/loaded successfully");
+        tracing::debug!("[SessionStore::open] Session store created/loaded successfully");
         Ok(store)
     }
 
@@ -362,8 +362,8 @@ impl SessionStore {
                 if let Ok(mut r) = range
                     && r.next().is_some() {
                         // Existing history found, don't clear it
-                        eprintln!(
-                            "[DEBUG save_history] Refusing to clear existing history for session {}",
+                        tracing::debug!(
+                            "[save_history] Refusing to clear existing history for session {}",
                             session_id
                         );
                         return Ok(());
@@ -378,7 +378,7 @@ impl SessionStore {
             // If messages is empty, don't delete existing data
             // This prevents accidental data loss
             if messages.is_empty() {
-                eprintln!("[save_history] Warning: Attempting to save empty message list for session {}, skipping to avoid data loss", session_id);
+                tracing::warn!("[save_history] Warning: Attempting to save empty message list for session {}, skipping to avoid data loss", session_id);
                 return Ok(());
             }
 
@@ -408,7 +408,7 @@ impl SessionStore {
                 table.insert(key, value)?;
             }
 
-            eprintln!("[save_history] Saved {} messages for session {}", messages.len(), session_id);
+            tracing::debug!("[save_history] Saved {} messages for session {}", messages.len(), session_id);
         }
         write_txn.commit()?;
         Ok(())
@@ -575,37 +575,37 @@ impl SessionStore {
 
     /// Delete a session.
     pub fn delete_session(&self, session_id: &str) -> Result<(), Error> {
-        eprintln!(
-            "[DEBUG SessionStore] delete_session called for: {}",
+        tracing::debug!(
+            "[SessionStore] delete_session called for: {}",
             session_id
         );
         let write_txn = self.db.begin_write()?;
-        eprintln!("[DEBUG SessionStore] write transaction started");
+        tracing::debug!("[SessionStore] write transaction started");
 
         // Delete from sessions table
         {
             let mut sessions_table = write_txn.open_table(SESSIONS_TABLE)?;
-            eprintln!("[DEBUG SessionStore] removing from SESSIONS_TABLE");
+            tracing::debug!("[SessionStore] removing from SESSIONS_TABLE");
             sessions_table.remove(session_id)?;
-            eprintln!("[DEBUG SessionStore] removed from SESSIONS_TABLE");
+            tracing::debug!("[SessionStore] removed from SESSIONS_TABLE");
         }
 
         // Delete from metadata table
         {
             let mut meta_table = write_txn.open_table(SESSIONS_META_TABLE)?;
             let _ = meta_table.remove(session_id); // Ignore error if not exists
-            eprintln!("[DEBUG SessionStore] removed from SESSIONS_META_TABLE");
+            tracing::debug!("[SessionStore] removed from SESSIONS_META_TABLE");
         }
 
         // Delete from history table - we need to collect the actual key tuples
         {
-            eprintln!("[DEBUG SessionStore] opening HISTORY_TABLE");
+            tracing::debug!("[SessionStore] opening HISTORY_TABLE");
             let mut history_table = write_txn.open_table(HISTORY_TABLE)?;
             let start_key = (session_id, 0u64);
             let end_key = (session_id, u64::MAX);
 
             let mut keys_to_delete: Vec<(String, u64)> = Vec::new();
-            eprintln!("[DEBUG SessionStore] collecting history keys to delete");
+            tracing::debug!("[SessionStore] collecting history keys to delete");
             let mut range = history_table.range(start_key..=end_key)?;
             for result in range.by_ref() {
                 let (key_ref, _val_ref) = result?;
@@ -614,20 +614,20 @@ impl SessionStore {
                 keys_to_delete.push((sid.to_string(), idx));
             }
             drop(range);
-            eprintln!(
-                "[DEBUG SessionStore] found {} history keys to delete",
+            tracing::debug!(
+                "[SessionStore] found {} history keys to delete",
                 keys_to_delete.len()
             );
 
             for key in &keys_to_delete {
                 history_table.remove((key.0.as_str(), key.1))?;
             }
-            eprintln!("[DEBUG SessionStore] removed history entries");
+            tracing::debug!("[SessionStore] removed history entries");
         }
 
-        eprintln!("[DEBUG SessionStore] committing transaction");
+        tracing::debug!("[SessionStore] committing transaction");
         write_txn.commit()?;
-        eprintln!("[DEBUG SessionStore] delete_session complete");
+        tracing::debug!("[SessionStore] delete_session complete");
         Ok(())
     }
 

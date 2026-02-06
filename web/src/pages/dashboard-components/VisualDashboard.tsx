@@ -1239,11 +1239,10 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   useEffect(() => {
     const loadAgents = async () => {
       if (configOpen && selectedComponent?.type === 'agent-monitor-widget') {
-        console.log('[AgentMonitorWidget] Loading agents...')
         setAgentsLoading(true)
         try {
           const data = await api.listAgents()
-          console.log('[AgentMonitorWidget] Agents loaded:', data.agents?.length || 0)
+          
           setAgents(data.agents || [])
         } catch (error) {
           handleError(error, { operation: 'Load agents for dashboard', showToast: false })
@@ -1260,7 +1259,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   // This ensures the render function has access to the agents list
   useEffect(() => {
     if (configOpen && selectedComponent?.type === 'agent-monitor-widget' && !agentsLoading) {
-      console.log('[AgentMonitorWidget] Agents loaded (or empty), updating config. Agents:', agents.length)
+      
       // Store agents in componentConfig so the render function can access them
       setComponentConfig(prev => ({ ...prev, _agentsList: agents }))
     }
@@ -1662,15 +1661,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   // Handle saving component config - persist the dashboard to localStorage
   const handleSaveConfig = async () => {
     if (selectedComponent) {
-      console.log('=== handleSaveConfig ===')
-
       // Get the latest component from the store to merge with local changes
       const latestDashboard = useStore.getState().currentDashboard
       const latestComponent = latestDashboard?.components.find(c => c.id === selectedComponent.id)
-
-      console.log('selectedComponent.id:', selectedComponent.id)
-      console.log('local componentConfig:', componentConfig)
-      console.log('latestComponent:', latestComponent)
 
       // Extract dataSource from multiple possible locations:
       // 1. componentConfig.dataSource (newly selected/changed in config dialog)
@@ -1686,14 +1679,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       // Priority: componentConfig.dataSource > nested config.dataSource > latest component.dataSource > latest config.dataSource
       const finalDataSource = configDataSource ?? nestedConfigDataSource ?? latestComponentDataSource ?? latestConfigDataSource
 
-      console.log('dataSource sources:', {
-        configDataSource,
-        nestedConfigDataSource,
-        latestConfigDataSource,
-        latestComponentDataSource,
-        finalDataSource,
-      })
-
       // Merge local config changes with the latest component config
       // Local changes take precedence
       const mergedConfig = {
@@ -1705,8 +1690,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       // dataSource should be stored as a separate property, not inside config
       delete (mergedConfig as any).dataSource
 
-      console.log('mergedConfig (after dataSource extraction):', mergedConfig)
-
       // Update the component in the store
       // CRITICAL: dataSource must be saved as a separate property, not inside config
       const updateData: any = {
@@ -1717,8 +1700,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         updateData.dataSource = finalDataSource
       }
 
-      console.log('updateData to save:', updateData)
-
       updateComponent(selectedComponent.id, updateData, false)
 
       // Force immediate re-render by incrementing configVersion
@@ -1728,9 +1709,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       setTimeout(() => {
         const verifyDashboard = useStore.getState().currentDashboard
         const verifyComponent = verifyDashboard?.components.find(c => c.id === selectedComponent.id)
-        console.log('=== After saveConfig verification ===')
-        console.log('verifyComponent.config:', (verifyComponent as any)?.config)
-        console.log('verifyComponent.dataSource:', (verifyComponent as any)?.dataSource)
+        // Component updated successfully
       }, 50)
     }
     // Persist all changes to localStorage
@@ -1740,10 +1719,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
   // Handle saving map editor bindings
   const handleMapEditorSave = async (bindings: MapBinding[]) => {
-    console.log('=== handleMapEditorSave ===')
-    console.log('bindings received:', bindings)
-    console.log('bindings count:', bindings?.length)
-
     // Fix any duplicate IDs in bindings before saving
     const idCount = new Map<string, number>() as Map<string, number>
     const fixedBindings = bindings.map((binding, index) => {
@@ -1761,7 +1736,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         } else {
           newId = `device-${ds?.deviceId}-${index}`
         }
-        console.log(`Fixing duplicate ID in save: ${currentId} -> ${newId}`)
         return { ...binding, id: newId }
       }
       return binding
@@ -1772,15 +1746,8 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       const latestDashboard = useStore.getState().currentDashboard
       const latestComponent = latestDashboard?.components.find(c => c.id === selectedComponent.id)
 
-      console.log('selectedComponent.id:', selectedComponent.id)
-      console.log('latestComponent found:', !!latestComponent)
-
       const latestConfig = (latestComponent as any)?.config || {}
       const latestDataSource = (latestComponent as any)?.dataSource
-
-      console.log('latestConfig keys:', Object.keys(latestConfig))
-      console.log('latestConfig.bindings:', latestConfig.bindings)
-      console.log('latestDataSource:', latestDataSource)
 
       // Merge the latest config with the new bindings, preserving dataSource
       const newConfig = { ...latestConfig, bindings: fixedBindings }
@@ -1790,9 +1757,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       if (latestDataSource) {
         updateData.dataSource = latestDataSource
       }
-
-      console.log('updateData to save:', updateData)
-      console.log('updateData.config.bindings:', updateData.config.bindings)
 
       // Update the store with both config and dataSource
       updateComponent(selectedComponent.id, updateData, false)
@@ -1807,11 +1771,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       setTimeout(() => {
         const verifyDashboard = useStore.getState().currentDashboard
         const verifyComponent = verifyDashboard?.components.find(c => c.id === selectedComponent.id)
-        console.log('=== After save verification ===')
-        console.log('verifyComponent.config:', (verifyComponent as any)?.config)
-        console.log('verifyComponent.config.bindings:', ((verifyComponent as any)?.config)?.bindings)
-        console.log('verifyComponent.dataSource:', (verifyComponent as any)?.dataSource)
-        console.log('=============================')
+        // Component updated successfully
       }, 50)
     }
 
@@ -1823,10 +1783,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
   // Handle saving layer editor bindings
   const handleLayerEditorSave = async (bindings: LayerBinding[]) => {
-    console.log('=== handleLayerEditorSave ===')
-    console.log('bindings received:', bindings)
-    console.log('bindings count:', bindings?.length)
-
     if (selectedComponent) {
       const latestDashboard = useStore.getState().currentDashboard
       const latestComponent = latestDashboard?.components.find(c => c.id === selectedComponent.id)
@@ -1874,8 +1830,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
     // Helper to create updater functions
     const updateConfig = (key: string) => (value: any) => {
-      console.log('[updateConfig] key:', key, 'value:', value)
-      if (key === 'title') {
+            if (key === 'title') {
         // Title changes need to sync with configTitle state and the component
         setConfigTitle(value)
         if (selectedComponent) {
@@ -1884,8 +1839,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       }
       setComponentConfig(prev => {
         const updated = { ...prev, [key]: value }
-        console.log('[updateConfig] componentConfig updated:', updated)
-        return updated
+                return updated
       })
     }
 
@@ -3625,30 +3579,25 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               props: {
                 dataSource: config.dataSource,
                 onChange: (newSource: DataSourceOrList | DataSource | undefined) => {
-                  console.log('=== DataSource onChange ===')
-                  console.log('newSource:', newSource)
+                  
+                  
 
                   updateDataSource(newSource)
                   // When data source changes, update bindings automatically
                   if (Array.isArray(newSource) && newSource.length > 0) {
                     const newBindings: MapBinding[] = newSource.map((ds, index) => {
-                      console.log(`=== Processing dataSource[${index}] ===`)
-                      console.log('  ds:', JSON.stringify(ds))
-
                       // Determine type based on dataSource type
                       let bindingType: MapBindingType = 'device'
                       if (ds.type === 'metric' || ds.type === 'telemetry') bindingType = 'metric'
                       else if (ds.type === 'command') bindingType = 'command'
 
-                      console.log(`  ds.type="${ds.type}" -> bindingType="${bindingType}"`)
-
+                      
                       // Use metricId for metrics/telemetry, deviceId for devices/commands
                       const identifier = (ds.type === 'metric' || ds.type === 'telemetry')
                         ? (ds.metricId || ds.property || 'unknown')
                         : (ds.deviceId || ds.command || 'unknown')
 
-                      console.log(`  identifier="${identifier}"`)
-
+                      
                       // Look for existing binding - match by dataSource content
                       // We match regardless of type to allow type corrections
                       const existingBinding = (config.bindings as MapBinding[])?.find(b => {
@@ -3702,12 +3651,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         // Preserve position if existing
                         position: existingBinding?.position || baseBinding.position,
                       }
-
-                      console.log(`  -> Created binding:`, newBinding)
                       return newBinding
                     })
 
-                    console.log('Final newBindings:', newBindings)
                     updateConfig('bindings')(newBindings)
                   }
                 },
@@ -3900,14 +3846,12 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                             } else {
                               newId = `device-${ds?.deviceId}-${index}`
                             }
-                            console.log(`Fixing duplicate ID: ${currentId} -> ${newId}`)
-                            return { ...binding, id: newId }
+                                                        return { ...binding, id: newId }
                           }
 
                           return binding
                         })
 
-                        console.log('Opening map editor with bindings from store:', latestBindings)
                         setMapEditorBindings(latestBindings)
                         setMapEditorOpen(true)
                       }}
@@ -3949,17 +3893,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                           } else {
                             newId = `device-${ds?.deviceId}-${index}`
                           }
-                          console.log(`Fixing binding: ${currentId} -> ${newId}, type: ${binding.type} -> ${newType}`)
-                          return { ...binding, id: newId, type: newType as any, icon: newType as any }
+                                                    return { ...binding, id: newId, type: newType as any, icon: newType as any }
                         }
                         return binding
-                      })
-
-                      // Debug logging for bindings
-                      console.log('=== Display Bindings Debug ===')
-                      console.log('displayBindings count:', displayBindings.length)
-                      displayBindings.forEach((b, i) => {
-                        console.log(`  [${i}] id="${b.id}" type="${b.type}" name="${b.name}"`)
                       })
 
                       // Group by type
@@ -3969,13 +3905,6 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                         command: displayBindings.filter(b => b.type === 'command'),
                         marker: displayBindings.filter(b => b.type === 'marker'),
                       }
-
-                      console.log('Grouped counts:', {
-                        device: groupedBindings.device.length,
-                        metric: groupedBindings.metric.length,
-                        command: groupedBindings.command.length,
-                        marker: groupedBindings.marker.length,
-                      })
 
                       const TYPE_CONFIG = {
                         device: {
@@ -4067,15 +3996,12 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                                       // Different interactions based on type
                                       if (type === 'device') {
                                         // Show device details
-                                        console.log('Device clicked:', deviceId)
                                         // TODO: Open device details panel
                                       } else if (type === 'metric') {
                                         // Show metric value/trend
-                                        console.log('Metric clicked:', deviceId, metricId)
                                         // TODO: Show metric tooltip
                                       } else if (type === 'command') {
                                         // Execute command
-                                        console.log('Command clicked:', deviceId, command)
                                         // TODO: Execute command
                                       }
                                     }}
@@ -4516,7 +4442,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                 const currentAgentId = (config.dataSource as any)?.agentId || ''
                 // Read agents from config - populated by the agents loading effect
                 const agentsList = (config as any)._agentsList || agents
-                console.log('[AgentMonitorWidget] Render - agentsList.length:', agentsList.length, 'loading:', agentsLoading)
+                
                 return (
                   <div className="space-y-3">
                     <Field>
@@ -4524,7 +4450,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                       <Select
                         value={currentAgentId}
                         onValueChange={(value) => {
-                          console.log('[AgentMonitorWidget] Agent selected:', value)
+                          
                           updateDataSource({ type: 'agent', agentId: value })
                         }}
                         disabled={agentsLoading}

@@ -1,4 +1,4 @@
-# NeoTalk 性能优化方案
+# NeoMind 性能优化方案
 
 > 优化目标: 提升系统响应速度、降低资源消耗、改善用户体验
 > 执行周期: 4周
@@ -259,7 +259,7 @@ pub struct PriorityEventBus {
 
 #[derive(Clone, Debug)]
 pub struct PriorityEvent {
-    pub event: NeoTalkEvent,
+    pub event: NeoMindEvent,
     pub priority: EventPriority,
 }
 

@@ -6,7 +6,7 @@
 //! # Security
 //!
 //! API keys are stored encrypted using AES-256-GCM. The key is derived from
-//! the `NEOTALK_ENCRYPTION_KEY` environment variable or generated randomly
+//! the `NEOMIND_ENCRYPTION_KEY` environment variable or generated randomly
 //! (not persistent across restarts).
 
 use std::collections::HashMap;
@@ -190,7 +190,7 @@ impl AuthState {
 
     /// Generate a default API key for first-time setup.
     fn generate_default_key(crypto: &CryptoService) -> HashMap<String, (String, ApiKeyInfo)> {
-        let key = format!("ntk_{}", Uuid::new_v4().to_string().replace("-", ""));
+        let key = format!("nmk_{}", Uuid::new_v4().to_string().replace("-", ""));
         let info = ApiKeyInfo {
             id: Uuid::new_v4().to_string(),
             name: "Default API Key".to_string(),
@@ -215,8 +215,8 @@ impl AuthState {
     fn load_default_keys(crypto: &CryptoService) -> HashMap<String, (String, ApiKeyInfo)> {
         let mut keys = HashMap::new();
 
-        // Load from NEOTALK_API_KEY environment variable
-        if let Ok(default_key) = std::env::var("NEOTALK_API_KEY") {
+        // Load from NEOMIND_API_KEY environment variable
+        if let Ok(default_key) = std::env::var("NEOMIND_API_KEY") {
             let info = ApiKeyInfo {
                 id: Uuid::new_v4().to_string(),
                 name: "Default API Key (from env)".to_string(),
@@ -231,7 +231,7 @@ impl AuthState {
             keys.insert(hash, (encrypted, info));
             info!(
                 category = "auth",
-                "Loaded default API key from NEOTALK_API_KEY"
+                "Loaded default API key from NEOMIND_API_KEY"
             );
         }
 
@@ -262,7 +262,7 @@ impl AuthState {
 
     /// Create a new API key and persist to database.
     pub async fn create_key(&self, name: String, permissions: Vec<String>) -> (String, ApiKeyInfo) {
-        let key = format!("ntk_{}", Uuid::new_v4().to_string().replace("-", ""));
+        let key = format!("nmk_{}", Uuid::new_v4().to_string().replace("-", ""));
         let info = ApiKeyInfo {
             id: Uuid::new_v4().to_string(),
             name,

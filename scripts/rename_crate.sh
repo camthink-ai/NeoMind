@@ -23,7 +23,7 @@ if [ $# -ne 2 ]; then
     echo ""
     echo "Example:"
     echo "  $0 core core          # edge-ai-core -> neomind-core"
-    echo "  $0 plugin-sdk plugin-sdk  # neotalk-plugin-sdk -> neomind-plugin-sdk"
+    echo "  $0 plugin-sdk plugin-sdk  # neomind-plugin-sdk -> neomind-plugin-sdk"
     exit 1
 fi
 
@@ -32,7 +32,7 @@ NEW_NAME=$2
 
 OLD_CRATE_NAME="edge-ai-${OLD_NAME}"
 if [ "$OLD_NAME" = "plugin-sdk" ]; then
-    OLD_CRATE_NAME="neotalk-plugin-sdk"
+    OLD_CRATE_NAME="neomind-plugin-sdk"
 fi
 
 NEW_CRATE_NAME="neomind-${NEW_NAME}"
@@ -88,7 +88,7 @@ replace_in_files "name = \"${OLD_CRATE_NAME}\"" "name = \"${NEW_CRATE_NAME}\" "*
 
 # Handle lib.rs naming for plugin-sdk
 if [ "$OLD_NAME" = "plugin-sdk" ]; then
-    replace_in_files "name = \"neotalk_plugin_sdk\"" "name = \"neomind_plugin_sdk\"" "*/Cargo.toml"
+    replace_in_files "name = \"neomind_plugin_sdk\"" "name = \"neomind_plugin_sdk\"" "*/Cargo.toml"
 fi
 
 echo ""
@@ -108,17 +108,17 @@ replace_in_files "edge_ai::" "neomind::" "*.rs"
 echo ""
 echo -e "${GREEN}Step 5: Updating documentation...${NC}"
 replace_in_files "edge-ai" "neomind" "*.md"
-replace_in_files "NeoTalk" "NeoMind" "*.md"
+replace_in_files "NeoMind" "NeoMind" "*.md"
 
 echo ""
 echo -e "${GREEN}Step 6: Updating config files...${NC}"
 replace_in_files "edge_ai" "neomind" "*.toml"
-replace_in_files "neotalk" "neomind" "*.toml"
+replace_in_files "neomind" "neomind" "*.toml"
 
 echo ""
 echo -e "${GREEN}Step 7: Checking for remaining references...${NC}"
-REMAINING=$(grep -r "edge_ai\|neotalk" --include="*.rs" --include="*.toml" . 2>/dev/null | grep -v "Binary file" | wc -l | tr -d ' ')
-echo "Remaining references to edge_ai or neotalk: $REMAINING"
+REMAINING=$(grep -r "edge_ai\|neomind" --include="*.rs" --include="*.toml" . 2>/dev/null | grep -v "Binary file" | wc -l | tr -d ' ')
+echo "Remaining references to edge_ai or neomind: $REMAINING"
 
 echo ""
 echo -e "${GREEN}========================================${NC}"

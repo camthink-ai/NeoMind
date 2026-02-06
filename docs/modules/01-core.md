@@ -7,7 +7,7 @@
 
 ## 概述
 
-Core 模块是 NeoTalk 项目的基石，定义了所有其他模块依赖的核心抽象和类型。它不包含具体实现，只提供接口定义。
+Core 模块是 NeoMind 项目的基石，定义了所有其他模块依赖的核心抽象和类型。它不包含具体实现，只提供接口定义。
 
 ## 模块结构
 
@@ -207,10 +207,10 @@ pub enum ContentPart {
 }
 ```
 
-### NeoTalkEvent - 事件类型
+### NeoMindEvent - 事件类型
 
 ```rust
-pub enum NeoTalkEvent {
+pub enum NeoMindEvent {
     // 设备事件
     DeviceOnline { device_id: String, timestamp: i64 },
     DeviceOffline { device_id: String, timestamp: i64 },
@@ -259,7 +259,7 @@ pub struct EventBus {
     // 通道容量
     capacity: usize,
     // 广播发送器
-    sender: broadcast::Sender<NeoTalkEvent>,
+    sender: broadcast::Sender<NeoMindEvent>,
 }
 
 impl EventBus {
@@ -270,7 +270,7 @@ impl EventBus {
     pub fn with_capacity(capacity: usize) -> Self;
 
     /// 发布事件
-    pub fn publish(&self, event: NeoTalkEvent);
+    pub fn publish(&self, event: NeoMindEvent);
 
     /// 订阅所有事件
     pub fn subscribe(&self) -> EventBusReceiver;
@@ -298,7 +298,7 @@ impl<'a> FilterBuilder<'a> {
     /// 自定义过滤
     pub fn custom<F>(self, f: F) -> FilteredReceiver
     where
-        F: Fn(&NeoTalkEvent) -> bool + Send + 'static;
+        F: Fn(&NeoMindEvent) -> bool + Send + 'static;
 }
 ```
 
@@ -330,7 +330,7 @@ pub fn endpoints() -> HashMap<String, String> {
 
 ```rust
 use edge_ai_core::EventBus;
-use edge_ai_core::NeoTalkEvent;
+use edge_ai_core::NeoMindEvent;
 
 #[tokio::main]
 async fn main() {
@@ -343,7 +343,7 @@ async fn main() {
     let mut device_rx = bus.filter().device_events();
 
     // 发布事件
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "sensor_1".to_string(),
         timestamp: chrono::Utc::now().timestamp(),
     });

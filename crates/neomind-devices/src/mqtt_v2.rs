@@ -23,7 +23,7 @@ use super::registry::DeviceRegistry;
 use super::telemetry::{DataPoint, TimeSeriesStorage};
 use neomind_core::EventBus;
 
-/// Simple discovery announcement for internal NeoTalk discovery
+/// Simple discovery announcement for internal NeoMind discovery
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct DiscoveryAnnouncement {
     pub device_type: String,
@@ -408,7 +408,7 @@ impl MqttDeviceManager {
             self.config
                 .client_id
                 .clone()
-                .unwrap_or_else(|| format!("neotalk_mgr_{}", Uuid::new_v4())),
+                .unwrap_or_else(|| format!("neomind_mgr_{}", Uuid::new_v4())),
             &self.config.broker,
             self.config.port,
         );
@@ -760,7 +760,7 @@ impl MqttDeviceManager {
                                     serde_json::Value::Bool(b) => CoreMetricValue::Boolean(*b),
                                     _ => CoreMetricValue::String("null".to_string()),
                                 };
-                                let _ = bus.publish(neomind_core::NeoTalkEvent::DeviceMetric {
+                                let _ = bus.publish(neomind_core::NeoMindEvent::DeviceMetric {
                                     device_id: device_id.clone(),
                                     metric: key.clone(),
                                     value: core_value,
@@ -770,7 +770,7 @@ impl MqttDeviceManager {
                             }
                         }
 
-                        let _ = bus.publish(neomind_core::NeoTalkEvent::DeviceOnline {
+                        let _ = bus.publish(neomind_core::NeoMindEvent::DeviceOnline {
                             device_id: device_id.clone(),
                             device_type: device_type_name.clone(),
                             timestamp: now.timestamp(),
@@ -832,7 +832,7 @@ impl MqttDeviceManager {
                                     serde_json::Value::Bool(b) => CoreMetricValue::Boolean(*b),
                                     _ => CoreMetricValue::String("null".to_string()),
                                 };
-                                let _ = bus.publish(neomind_core::NeoTalkEvent::DeviceMetric {
+                                let _ = bus.publish(neomind_core::NeoMindEvent::DeviceMetric {
                                     device_id: device_id.clone(),
                                     metric: key.clone(),
                                     value: core_value,
@@ -842,7 +842,7 @@ impl MqttDeviceManager {
                             }
                         }
 
-                        let _ = bus.publish(neomind_core::NeoTalkEvent::DeviceOnline {
+                        let _ = bus.publish(neomind_core::NeoMindEvent::DeviceOnline {
                             device_id: device_id.clone(),
                             device_type: config.device_type.clone(),
                             timestamp: now.timestamp(),
@@ -917,7 +917,7 @@ impl MqttDeviceManager {
 
                 // Publish event
                 if let Some(bus) = event_bus {
-                    let _ = bus.publish(neomind_core::NeoTalkEvent::DeviceOnline {
+                    let _ = bus.publish(neomind_core::NeoMindEvent::DeviceOnline {
                         device_id: device_id.clone(),
                         device_type: device_type_name.clone(),
                         timestamp: now.timestamp(),
@@ -983,7 +983,7 @@ impl MqttDeviceManager {
             // Include broker_id and adapter_id so auto-onboarding knows which adapter to use
             let adapter_id = format!("external-{}", broker_id);
 
-            let event = neomind_core::NeoTalkEvent::Custom {
+            let event = neomind_core::NeoMindEvent::Custom {
                 event_type: "unknown_device_data".to_string(),
                 data: serde_json::json!({
                     "device_id": device_id,
@@ -1103,8 +1103,8 @@ impl MqttDeviceManager {
 
         // Publish DeviceOnline event to EventBus
         if let Some(bus) = event_bus {
-            use neomind_core::NeoTalkEvent;
-            bus.publish(NeoTalkEvent::DeviceOnline {
+            use neomind_core::NeoMindEvent;
+            bus.publish(NeoMindEvent::DeviceOnline {
                 device_id: announcement.device_id.clone(),
                 device_type: announcement.device_type.clone(),
                 timestamp: now.timestamp(),
@@ -1166,7 +1166,7 @@ impl MqttDeviceManager {
                             "data": json_value
                         });
 
-                        let event = neomind_core::NeoTalkEvent::Custom {
+                        let event = neomind_core::NeoMindEvent::Custom {
                             event_type: "unknown_device_data".to_string(),
                             data: serde_json::json!({
                                 "device_id": device_id,
@@ -1273,8 +1273,8 @@ impl MqttDeviceManager {
 
                     // Publish DeviceOnline event for new device
                     if let Some(bus) = event_bus {
-                        use neomind_core::NeoTalkEvent;
-                        bus.publish(NeoTalkEvent::DeviceOnline {
+                        use neomind_core::NeoMindEvent;
+                        bus.publish(NeoMindEvent::DeviceOnline {
                             device_id: device_id.clone(),
                             device_type: device_type_name.clone(),
                             timestamp: now.timestamp(),
@@ -1343,7 +1343,7 @@ impl MqttDeviceManager {
 
                             // Publish DeviceMetric event to EventBus
                             if let Some(bus) = event_bus {
-                                use neomind_core::{MetricValue as CoreMetricValue, NeoTalkEvent};
+                                use neomind_core::{MetricValue as CoreMetricValue, NeoMindEvent};
                                 use serde_json::json;
                                 // Convert our MetricValue to core's MetricValue
                                 let core_value = match &value {
@@ -1375,7 +1375,7 @@ impl MqttDeviceManager {
                                         CoreMetricValue::Json(json!(null))
                                     }
                                 };
-                                bus.publish(NeoTalkEvent::DeviceMetric {
+                                bus.publish(NeoMindEvent::DeviceMetric {
                                     device_id: device_id.clone(),
                                     metric: metric_def.name.clone(),
                                     value: core_value,

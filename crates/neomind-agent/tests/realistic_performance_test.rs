@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use neomind_core::{EventBus, MetricValue, NeoTalkEvent, LlmRuntime, message::{Message, MessageRole, Content}};
+use neomind_core::{EventBus, MetricValue, NeoMindEvent, LlmRuntime, message::{Message, MessageRole, Content}};
 use neomind_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
     WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType, ResourceType, AgentResource,

@@ -6,7 +6,7 @@
  */
 
 import type { Device } from '@/types'
-import type { NeoTalkStore } from '../'
+import type { NeoMindStore } from '../'
 
 // ============================================================================
 // Base Selectors (Non-memoized - use with caution)
@@ -15,7 +15,7 @@ import type { NeoTalkStore } from '../'
 /**
  * Direct access to devices array - only use when you need the full array
  */
-export const selectDevicesRaw = (state: NeoTalkStore): Device[] => state.devices
+export const selectDevicesRaw = (state: NeoMindStore): Device[] => state.devices
 
 // ============================================================================
 // Memoized Derived Selectors
@@ -25,35 +25,35 @@ export const selectDevicesRaw = (state: NeoTalkStore): Device[] => state.devices
  * Get all online devices
  * Memoized - only recomputes when devices array changes
  */
-export const selectOnlineDevices = (state: NeoTalkStore): Device[] =>
+export const selectOnlineDevices = (state: NeoMindStore): Device[] =>
   state.devices.filter((d) => d.status === 'online')
 
 /**
  * Get all offline devices
  * Memoized - only recomputes when devices array changes
  */
-export const selectOfflineDevices = (state: NeoTalkStore): Device[] =>
+export const selectOfflineDevices = (state: NeoMindStore): Device[] =>
   state.devices.filter((d) => d.status === 'offline')
 
 /**
  * Get devices by type
  * Memoized - only recomputes when devices array changes
  */
-export const selectDevicesByType = (state: NeoTalkStore, deviceType: string): Device[] =>
+export const selectDevicesByType = (state: NeoMindStore, deviceType: string): Device[] =>
   state.devices.filter((d) => d.device_type === deviceType)
 
 /**
  * Get device by ID
  * Note: This creates a new function on each call, prefer using selectDeviceByIdMap
  */
-export const selectDeviceById = (state: NeoTalkStore, deviceId: string): Device | undefined =>
+export const selectDeviceById = (state: NeoMindStore, deviceId: string): Device | undefined =>
   state.devices.find((d) => d.id === deviceId)
 
 /**
  * Get devices as a Map for O(1) lookups
  * Memoized for efficient ID-based lookups
  */
-export const selectDeviceMap = (state: NeoTalkStore): Map<string, Device> => {
+export const selectDeviceMap = (state: NeoMindStore): Map<string, Device> => {
   const map = new Map<string, Device>()
   state.devices.forEach(d => map.set(d.id, d))
   return map
@@ -66,19 +66,19 @@ export const selectDeviceMap = (state: NeoTalkStore): Map<string, Device> => {
 /**
  * Get count of online devices
  */
-export const selectOnlineDeviceCount = (state: NeoTalkStore): number =>
+export const selectOnlineDeviceCount = (state: NeoMindStore): number =>
   state.devices.filter((d) => d.status === 'online').length
 
 /**
  * Get count of offline devices
  */
-export const selectOfflineDeviceCount = (state: NeoTalkStore): number =>
+export const selectOfflineDeviceCount = (state: NeoMindStore): number =>
   state.devices.filter((d) => d.status === 'offline').length
 
 /**
  * Get total device count
  */
-export const selectTotalDeviceCount = (state: NeoTalkStore): number =>
+export const selectTotalDeviceCount = (state: NeoMindStore): number =>
   state.devices.length
 
 // ============================================================================
@@ -88,7 +88,7 @@ export const selectTotalDeviceCount = (state: NeoTalkStore): number =>
 /**
  * Get devices grouped by status
  */
-export const selectDevicesByStatus = (state: NeoTalkStore) => {
+export const selectDevicesByStatus = (state: NeoMindStore) => {
   const online: Device[] = []
   const offline: Device[] = []
   const unknown: Device[] = []
@@ -113,7 +113,7 @@ export const selectDevicesByStatus = (state: NeoTalkStore) => {
 /**
  * Get devices grouped by type
  */
-export const selectDevicesGroupedByType = (state: NeoTalkStore): Record<string, Device[]> => {
+export const selectDevicesGroupedByType = (state: NeoMindStore): Record<string, Device[]> => {
   const groups: Record<string, Device[]> = {}
 
   for (const device of state.devices) {
@@ -135,13 +135,13 @@ export const selectDevicesGroupedByType = (state: NeoTalkStore): Record<string, 
  * Shallow comparison selector for use with useStore
  * Prevents re-renders when device array reference hasn't changed
  */
-export const selectDevicesShallow = (state: NeoTalkStore) => state.devices
+export const selectDevicesShallow = (state: NeoMindStore) => state.devices
 
 /**
  * Selector for multiple device properties with shallow comparison
  * Only triggers re-render if any of these specific properties change
  */
-export const selectDevicesSummary = (state: NeoTalkStore) => ({
+export const selectDevicesSummary = (state: NeoMindStore) => ({
   total: state.devices.length,
   online: state.devices.filter((d) => d.status === 'online').length,
   offline: state.devices.filter((d) => d.status === 'offline').length,

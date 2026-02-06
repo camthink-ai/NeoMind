@@ -61,7 +61,7 @@ pub mod tool;
 pub mod simplified;
 
 // Re-exports commonly used types
-pub use error::{NeoTalkError, Result, ToolError};
+pub use error::{NeoMindError, Result, ToolError};
 pub use registry::{ToolCall, ToolRegistry, ToolRegistryBuilder, ToolResult, format_for_llm};
 pub use tool::{DynTool, Parameter, Tool, ToolDefinition, ToolExample, ToolOutput};
 pub use simplified::{ErrorMessages, Example, FriendlyError, LlmToolDefinition, SimplifiedConfig,

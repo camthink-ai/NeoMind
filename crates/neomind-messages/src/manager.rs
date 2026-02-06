@@ -191,9 +191,9 @@ impl MessageManager {
 
         // Publish MessageCreated event to EventBus if configured
         if let Some(event_bus) = self.event_bus.read().await.as_ref() {
-            use neomind_core::NeoTalkEvent;
+            use neomind_core::NeoMindEvent;
             let severity_str = format!("{:?}", severity).to_lowercase();
-            let _ = event_bus.publish(NeoTalkEvent::MessageCreated {
+            let _ = event_bus.publish(NeoMindEvent::MessageCreated {
                 message_id: id.to_string(),
                 title: message.title.clone(),
                 severity: severity_str,
@@ -318,8 +318,8 @@ impl MessageManager {
 
             // Publish event
             if let Some(event_bus) = self.event_bus.read().await.as_ref() {
-                use neomind_core::NeoTalkEvent;
-                let _ = event_bus.publish(NeoTalkEvent::MessageAcknowledged {
+                use neomind_core::NeoMindEvent;
+                let _ = event_bus.publish(NeoMindEvent::MessageAcknowledged {
                     message_id: id.to_string(),
                     acknowledged_by: "api".to_string(),
                     timestamp: chrono::Utc::now().timestamp(),
@@ -347,8 +347,8 @@ impl MessageManager {
 
             // Publish event
             if let Some(event_bus) = self.event_bus.read().await.as_ref() {
-                use neomind_core::NeoTalkEvent;
-                let _ = event_bus.publish(NeoTalkEvent::MessageResolved {
+                use neomind_core::NeoMindEvent;
+                let _ = event_bus.publish(NeoMindEvent::MessageResolved {
                     message_id: id.to_string(),
                     timestamp: chrono::Utc::now().timestamp(),
                 }).await;

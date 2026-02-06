@@ -1,4 +1,4 @@
-//! Testing utilities for NeoTalk
+//! Testing utilities for NeoMind
 //!
 //! This crate provides testing tools including:
 //! - Device simulator for generating IoT device data

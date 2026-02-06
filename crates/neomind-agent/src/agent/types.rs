@@ -236,8 +236,8 @@ fn default_keep_tool_results() -> usize {
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
-            name: "NeoTalk Agent".to_string(),
-            system_prompt: r#"你是NeoTalk智能物联网助手。
+            name: "NeoMind Agent".to_string(),
+            system_prompt: r#"你是NeoMind智能物联网助手。
 
 ## 重要原则：信息不足时先询问，危险操作前先确认
 
@@ -763,7 +763,7 @@ mod tests {
     #[test]
     fn test_agent_config_default() {
         let config = AgentConfig::default();
-        assert_eq!(config.name, "NeoTalk Agent");
+        assert_eq!(config.name, "NeoMind Agent");
         assert_eq!(config.model, "qwen2.5:3b");
         assert!(config.enable_tools);
         assert!(config.enable_memory);

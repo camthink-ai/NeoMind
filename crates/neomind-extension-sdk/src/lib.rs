@@ -1,6 +1,6 @@
-//! NeoTalk Plugin SDK
+//! NeoMind Plugin SDK
 //!
-//! This SDK provides tools and macros for building dynamic plugins for NeoTalk.
+//! This SDK provides tools and macros for building dynamic plugins for NeoMind.
 //!
 //! # Quick Start
 //!

@@ -1,6 +1,6 @@
 //! Edge AI Device Management Crate
 //!
-//! This crate provides device abstraction and management capabilities for the NeoTalk platform.
+//! This crate provides device abstraction and management capabilities for the NeoMind platform.
 //!
 //! ## Features
 //!

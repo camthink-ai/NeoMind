@@ -1,4 +1,4 @@
-//! System management tools for NeoTalk platform.
+//! System management tools for NeoMind platform.
 //!
 //! Provides tools for:
 //! - System status and resource monitoring
@@ -89,7 +89,7 @@ impl Tool for SystemInfoTool {
             example: Some(ToolExample {
                 arguments: serde_json::json!({"detailed": true}),
                 result: serde_json::json!({
-                    "system_name": "NeoTalk-Edge",
+                    "system_name": "NeoMind-Edge",
                     "uptime": 86400,
                     "cpu_usage": 25.5,
                     "memory_usage": {
@@ -143,7 +143,7 @@ impl Tool for SystemInfoTool {
         let disk_usage = get_disk_usage();
 
         let mut result = serde_json::json!({
-            "system_name": self.system_name.as_deref().unwrap_or("NeoTalk-Edge"),
+            "system_name": self.system_name.as_deref().unwrap_or("NeoMind-Edge"),
             "uptime": uptime,
             "cpu_usage": cpu_usage,
             "memory_usage": memory_usage,
@@ -241,8 +241,8 @@ impl Tool for SystemHelpTool {
                 }),
                 result: serde_json::json!({
                     "topic": "overview",
-                    "system_name": "NeoTalk",
-                    "description": "NeoTalk是一个智能物联网平台",
+                    "system_name": "NeoMind",
+                    "description": "NeoMind是一个智能物联网平台",
                     "features": [
                         {"name": "设备管理", "description": "连接和控制各类IoT设备"},
                         {"name": "自动化规则", "description": "创建自动化规则实现智能控制"},
@@ -297,7 +297,7 @@ impl Tool for SystemHelpTool {
         let topic = args["topic"].as_str().unwrap_or("overview");
         let detail = args["detail"].as_str();
 
-        let system_name = self.system_name.as_deref().unwrap_or("NeoTalk");
+        let system_name = self.system_name.as_deref().unwrap_or("NeoMind");
 
         let result = match topic {
             "overview" => self.get_overview(system_name),

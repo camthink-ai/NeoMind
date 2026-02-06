@@ -78,7 +78,7 @@ impl MqttMockDevice {
             "timestamp": chrono::Utc::now().timestamp()
         });
 
-        let topic = "neotalk/discovery/announce";
+        let topic = "neomind/discovery/announce";
         let payload: Vec<u8> = serde_json::to_vec(&announcement)?;
         self.client
             .publish(topic, QoS::AtLeastOnce, false, payload)

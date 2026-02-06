@@ -1,6 +1,6 @@
 //! Edge AI Memory Crate
 //!
-//! This crate provides tiered memory management for the NeoTalk platform.
+//! This crate provides tiered memory management for the NeoMind platform.
 //!
 //! ## Features
 //!
@@ -79,7 +79,7 @@ pub use semantic::{
     DEFAULT_HYBRID_ALPHA, DEFAULT_MAX_RESULTS, SearchConfig, SemanticSearch,
     SemanticSearchResult, SearchExecutor, SemanticDocument,
 };
-pub use error::{MemoryError, NeoTalkError, Result};
+pub use error::{MemoryError, NeoMindError, Result};
 pub use graph::{
     CentralityMetrics, Entity, EntityId, EntityType, GraphConfig, GraphPath, MemoryGraph,
     RelationId, RelationType, Relationship, TraversalResult,

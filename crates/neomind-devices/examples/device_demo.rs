@@ -17,7 +17,7 @@ use neomind_devices::mdl_format::{MetricDefinition, ParameterDefinition};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== NeoTalk Device Management Demo (New Architecture) ===\n");
+    println!("=== NeoMind Device Management Demo (New Architecture) ===\n");
 
     // Initialize core components
     let event_bus = EventBus::new();
@@ -92,16 +92,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             display_name: "开启".to_string(),
             payload_template: r#"{"state": "ON"}"#.to_string(),
             parameters: vec![],
+            fixed_values: Default::default(),
             samples: vec![],
             llm_hints: "打开继电器".to_string(),
+            parameter_groups: vec![],
         })
         .with_command(CommandDefinition {
             name: "turn_off".to_string(),
             display_name: "关闭".to_string(),
             payload_template: r#"{"state": "OFF"}"#.to_string(),
             parameters: vec![],
+            fixed_values: Default::default(),
             samples: vec![],
             llm_hints: "关闭继电器".to_string(),
+            parameter_groups: vec![],
         });
 
     device_service.register_template(relay_template).await?;

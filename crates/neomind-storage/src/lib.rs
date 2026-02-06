@@ -1,6 +1,6 @@
 //! Edge AI Storage Crate
 //!
-//! This crate provides storage capabilities for the NeoTalk platform.
+//! This crate provides storage capabilities for the NeoMind platform.
 //!
 //! ## Features
 //!

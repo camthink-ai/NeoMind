@@ -35,7 +35,7 @@ import type { DashboardState } from './slices/dashboardSlice'
 // Combined Store Type
 // ============================================================================
 
-export type NeoTalkStore = AuthSlice
+export type NeoMindStore = AuthSlice
   & SessionSlice
   & UISlice
   & AlertSlice
@@ -49,7 +49,7 @@ export type NeoTalkStore = AuthSlice
 // Create Store
 // ============================================================================
 
-export const useStore = create<NeoTalkStore>()(
+export const useStore = create<NeoMindStore>()(
   devtools(
     persist(
       (set, get, api) => ({
@@ -70,8 +70,8 @@ export const useStore = create<NeoTalkStore>()(
           messages: state.messages,
           sessionId: state.sessionId,
         }),
-        onRehydrateStorage: () => (state) => {
-          console.log('[Store] Rehydrating store, devices:', state?.devices?.length)
+        onRehydrateStorage: () => (_state) => {
+          // Store rehydrated
         },
       }
     ),
@@ -90,7 +90,7 @@ if (typeof window !== 'undefined' && import.meta.env.DEV) {
 // Re-export page titles
 // ============================================================================
 
-export { pageTitles, getPageTitle } from './types'
+export { getPageTitle } from './types'
 
 // ============================================================================
 // Global 401 Handler Registration

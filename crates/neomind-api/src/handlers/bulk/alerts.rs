@@ -4,7 +4,7 @@ use axum::{Json, extract::State};
 use serde_json::json;
 
 use neomind_messages::{Message, MessageSeverity};
-use neomind_core::event::NeoTalkEvent;
+use neomind_core::event::NeoMindEvent;
 
 use super::models::{
     BulkAcknowledgeAlertsRequest, BulkCreateAlertsRequest, BulkDeleteAlertsRequest,
@@ -149,7 +149,7 @@ pub async fn bulk_acknowledge_alerts_handler(
                     if let Some(event_bus) = &state.event_bus {
                         let _ = event_bus
                             .publish_with_source(
-                                NeoTalkEvent::MessageAcknowledged {
+                                NeoMindEvent::MessageAcknowledged {
                                     message_id: id_str.clone(),
                                     acknowledged_by: "api:bulk".to_string(),
                                     timestamp: chrono::Utc::now().timestamp(),

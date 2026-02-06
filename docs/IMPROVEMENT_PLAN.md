@@ -1,4 +1,4 @@
-# NeoTalk 改进优先级工作计划
+# NeoMind 改进优先级工作计划
 
 ## 文档信息
 
@@ -7,7 +7,7 @@
 | 创建日期 | 2026-01-30 |
 | 基准项目 | moltbot/moltbot |
 | 预计工期 | 8-9 周 |
-| 当前版本 | NeoTalk v0.x |
+| 当前版本 | NeoMind v0.x |
 
 ---
 
@@ -38,7 +38,7 @@
 
 ### 1.2 与 Moltbot 对比
 
-| 特性 | Moltbot | NeoTalk | 差距 |
+| 特性 | Moltbot | NeoMind | 差距 |
 |------|---------|---------|------|
 | **上下文压缩** | `reserveTokensFloor`, `maxHistoryShare`, `softThresholdTokens` | 无配置 | ❌ 无上下文管理策略 |
 | **记忆刷新** | `memoryFlush.prompt` 触发持久化 | 无自动刷新 | ❌ 中断后状态丢失 |

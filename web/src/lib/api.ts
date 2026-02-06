@@ -36,7 +36,7 @@ import type {
   ToolExecutionResult,
   SearchResult,
   SearchSuggestion,
-  Event as NeoTalkEvent,
+  Event as NeoMindEvent,
   ChatSession,
   SessionHistoryResponse,
   LlmBackendInstance,

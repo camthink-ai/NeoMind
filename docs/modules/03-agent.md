@@ -7,7 +7,7 @@
 
 ## 概述
 
-Agent模块实现了NeoTalk的核心AI代理，负责处理用户对话、调用工具、管理会话等。
+Agent模块实现了NeoMind的核心AI代理，负责处理用户对话、调用工具、管理会话等。
 
 ## 模块结构
 
@@ -517,7 +517,7 @@ pub fn get_default_config() -> AgentConfig {
 ## 错误处理
 
 ```rust
-pub enum NeoTalkError {
+pub enum NeoMindError {
     /// LLM错误
     Llm(LlmError),
 

@@ -1,16 +1,16 @@
-//! Event bus for NeoTalk event-driven architecture.
+//! Event bus for NeoMind event-driven architecture.
 //!
-//! The event bus is the central nervous system of NeoTalk. All components
+//! The event bus is the central nervous system of NeoMind. All components
 //! communicate through publishing and subscribing to events.
 
-use crate::event::{EventMetadata, NeoTalkEvent};
+use crate::event::{EventMetadata, NeoMindEvent};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
 /// Default channel capacity for the event bus.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1000;
 
-/// Event bus for NeoTalk.
+/// Event bus for NeoMind.
 ///
 /// The event bus uses a broadcast channel to distribute events to all
 /// subscribers. It supports:
@@ -20,7 +20,7 @@ pub const DEFAULT_CHANNEL_CAPACITY: usize = 1000;
 #[derive(Clone)]
 pub struct EventBus {
     /// Broadcast channel sender
-    tx: broadcast::Sender<(NeoTalkEvent, EventMetadata)>,
+    tx: broadcast::Sender<(NeoMindEvent, EventMetadata)>,
     /// Event bus name for identification
     name: String,
 }
@@ -65,14 +65,14 @@ impl EventBus {
     /// The event is sent to all subscribers. If there are no subscribers,
     /// the event is discarded. Returns `true` if there was at least one
     /// subscriber.
-    pub async fn publish(&self, event: NeoTalkEvent) -> bool {
+    pub async fn publish(&self, event: NeoMindEvent) -> bool {
         self.publish_with_source(event, "system").await
     }
 
     /// Publish an event with a custom source.
     pub async fn publish_with_source(
         &self,
-        event: NeoTalkEvent,
+        event: NeoMindEvent,
         source: impl Into<String>,
     ) -> bool {
         let metadata = EventMetadata::new(source);
@@ -82,7 +82,7 @@ impl EventBus {
     /// Publish an event with custom metadata.
     pub async fn publish_with_metadata(
         &self,
-        event: NeoTalkEvent,
+        event: NeoMindEvent,
         metadata: EventMetadata,
     ) -> bool {
         self.tx.send((event, metadata)).is_ok()
@@ -104,7 +104,7 @@ impl EventBus {
     /// Only matching events will be delivered through the returned receiver.
     pub fn subscribe_filtered<F>(&self, filter: F) -> FilteredReceiver<F>
     where
-        F: Fn(&NeoTalkEvent) -> bool + Send + 'static,
+        F: Fn(&NeoMindEvent) -> bool + Send + 'static,
     {
         let rx = self.tx.subscribe();
         FilteredReceiver::new(rx, filter)
@@ -126,14 +126,14 @@ impl Default for EventBus {
 
 /// Receiver for all events from the event bus.
 pub struct EventBusReceiver {
-    rx: broadcast::Receiver<(NeoTalkEvent, EventMetadata)>,
+    rx: broadcast::Receiver<(NeoMindEvent, EventMetadata)>,
 }
 
 impl EventBusReceiver {
     /// Receive the next event.
     ///
     /// Returns `None` if the event bus is closed.
-    pub async fn recv(&mut self) -> Option<(NeoTalkEvent, EventMetadata)> {
+    pub async fn recv(&mut self) -> Option<(NeoMindEvent, EventMetadata)> {
         match self.rx.recv().await {
             Ok(event) => Some(event),
             Err(broadcast::error::RecvError::Lagged(_)) => {
@@ -146,12 +146,12 @@ impl EventBusReceiver {
     }
 
     /// Try to receive an event without blocking.
-    pub fn try_recv(&mut self) -> Option<(NeoTalkEvent, EventMetadata)> {
+    pub fn try_recv(&mut self) -> Option<(NeoMindEvent, EventMetadata)> {
         self.rx.try_recv().ok()
     }
 
     /// Get the underlying broadcast receiver.
-    pub fn into_inner(self) -> broadcast::Receiver<(NeoTalkEvent, EventMetadata)> {
+    pub fn into_inner(self) -> broadcast::Receiver<(NeoMindEvent, EventMetadata)> {
         self.rx
     }
 }
@@ -159,24 +159,24 @@ impl EventBusReceiver {
 /// Receiver for filtered events from the event bus.
 pub struct FilteredReceiver<F>
 where
-    F: Fn(&NeoTalkEvent) -> bool + Send,
+    F: Fn(&NeoMindEvent) -> bool + Send,
 {
-    rx: broadcast::Receiver<(NeoTalkEvent, EventMetadata)>,
+    rx: broadcast::Receiver<(NeoMindEvent, EventMetadata)>,
     filter: F,
 }
 
 impl<F> FilteredReceiver<F>
 where
-    F: Fn(&NeoTalkEvent) -> bool + Send,
+    F: Fn(&NeoMindEvent) -> bool + Send,
 {
-    fn new(rx: broadcast::Receiver<(NeoTalkEvent, EventMetadata)>, filter: F) -> Self {
+    fn new(rx: broadcast::Receiver<(NeoMindEvent, EventMetadata)>, filter: F) -> Self {
         Self { rx, filter }
     }
 
     /// Receive the next event matching the filter.
     ///
     /// Returns `None` if the event bus is closed.
-    pub async fn recv(&mut self) -> Option<(NeoTalkEvent, EventMetadata)> {
+    pub async fn recv(&mut self) -> Option<(NeoMindEvent, EventMetadata)> {
         loop {
             match self.rx.recv().await {
                 Ok((event, meta)) => {
@@ -195,7 +195,7 @@ where
     }
 
     /// Try to receive a matching event without blocking.
-    pub fn try_recv(&mut self) -> Option<(NeoTalkEvent, EventMetadata)> {
+    pub fn try_recv(&mut self) -> Option<(NeoMindEvent, EventMetadata)> {
         while let Ok(result) = self.rx.try_recv() {
             let (event, meta) = result;
             if (self.filter)(&event) {
@@ -209,50 +209,50 @@ where
 
 /// Builder for creating filtered subscriptions.
 pub struct FilterBuilder {
-    tx: broadcast::Sender<(NeoTalkEvent, EventMetadata)>,
+    tx: broadcast::Sender<(NeoMindEvent, EventMetadata)>,
 }
 
 impl FilterBuilder {
     /// Subscribe to device events only.
-    pub fn device_events(&self) -> FilteredReceiver<fn(&NeoTalkEvent) -> bool> {
+    pub fn device_events(&self) -> FilteredReceiver<fn(&NeoMindEvent) -> bool> {
         let rx = self.tx.subscribe();
-        FilteredReceiver::new(rx, NeoTalkEvent::is_device_event)
+        FilteredReceiver::new(rx, NeoMindEvent::is_device_event)
     }
 
     /// Subscribe to rule events only.
-    pub fn rule_events(&self) -> FilteredReceiver<fn(&NeoTalkEvent) -> bool> {
+    pub fn rule_events(&self) -> FilteredReceiver<fn(&NeoMindEvent) -> bool> {
         let rx = self.tx.subscribe();
-        FilteredReceiver::new(rx, NeoTalkEvent::is_rule_event)
+        FilteredReceiver::new(rx, NeoMindEvent::is_rule_event)
     }
 
     /// Subscribe to workflow events only.
-    pub fn workflow_events(&self) -> FilteredReceiver<fn(&NeoTalkEvent) -> bool> {
+    pub fn workflow_events(&self) -> FilteredReceiver<fn(&NeoMindEvent) -> bool> {
         let rx = self.tx.subscribe();
-        FilteredReceiver::new(rx, NeoTalkEvent::is_workflow_event)
+        FilteredReceiver::new(rx, NeoMindEvent::is_workflow_event)
     }
 
     /// Subscribe to agent events only.
-    pub fn agent_events(&self) -> FilteredReceiver<fn(&NeoTalkEvent) -> bool> {
+    pub fn agent_events(&self) -> FilteredReceiver<fn(&NeoMindEvent) -> bool> {
         let rx = self.tx.subscribe();
-        FilteredReceiver::new(rx, NeoTalkEvent::is_agent_event)
+        FilteredReceiver::new(rx, NeoMindEvent::is_agent_event)
     }
 
     /// Subscribe to LLM events only.
-    pub fn llm_events(&self) -> FilteredReceiver<fn(&NeoTalkEvent) -> bool> {
+    pub fn llm_events(&self) -> FilteredReceiver<fn(&NeoMindEvent) -> bool> {
         let rx = self.tx.subscribe();
-        FilteredReceiver::new(rx, NeoTalkEvent::is_llm_event)
+        FilteredReceiver::new(rx, NeoMindEvent::is_llm_event)
     }
 
     /// Subscribe to alert events only.
-    pub fn alert_events(&self) -> FilteredReceiver<fn(&NeoTalkEvent) -> bool> {
+    pub fn alert_events(&self) -> FilteredReceiver<fn(&NeoMindEvent) -> bool> {
         let rx = self.tx.subscribe();
-        FilteredReceiver::new(rx, NeoTalkEvent::is_alert_event)
+        FilteredReceiver::new(rx, NeoMindEvent::is_alert_event)
     }
 
     /// Subscribe with a custom filter function.
     pub fn custom<F>(&self, filter: F) -> FilteredReceiver<F>
     where
-        F: Fn(&NeoTalkEvent) -> bool + Send + 'static,
+        F: Fn(&NeoMindEvent) -> bool + Send + 'static,
     {
         let rx = self.tx.subscribe();
         FilteredReceiver::new(rx, filter)
@@ -269,14 +269,14 @@ pub type SharedEventBus = Arc<EventBus>;
 /// Implementations can store events to disk, database, or external services.
 pub trait EventPersistence: Send + Sync {
     /// Store an event.
-    fn store(&self, event: &NeoTalkEvent, metadata: &EventMetadata) -> Result<(), PersistError>;
+    fn store(&self, event: &NeoMindEvent, metadata: &EventMetadata) -> Result<(), PersistError>;
 
     /// Query events by time range.
     fn query(
         &self,
         start: i64,
         end: i64,
-    ) -> Result<Vec<(NeoTalkEvent, EventMetadata)>, PersistError>;
+    ) -> Result<Vec<(NeoMindEvent, EventMetadata)>, PersistError>;
 }
 
 /// Error type for event persistence operations.
@@ -300,7 +300,7 @@ pub enum PersistError {
 pub struct NoOpPersistence;
 
 impl EventPersistence for NoOpPersistence {
-    fn store(&self, _event: &NeoTalkEvent, _metadata: &EventMetadata) -> Result<(), PersistError> {
+    fn store(&self, _event: &NeoMindEvent, _metadata: &EventMetadata) -> Result<(), PersistError> {
         Ok(())
     }
 
@@ -308,7 +308,7 @@ impl EventPersistence for NoOpPersistence {
         &self,
         _start: i64,
         _end: i64,
-    ) -> Result<Vec<(NeoTalkEvent, EventMetadata)>, PersistError> {
+    ) -> Result<Vec<(NeoMindEvent, EventMetadata)>, PersistError> {
         Ok(Vec::new())
     }
 }
@@ -323,7 +323,7 @@ mod tests {
         let bus = EventBus::new();
         let mut rx = bus.subscribe();
 
-        let event = NeoTalkEvent::DeviceOnline {
+        let event = NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
@@ -341,7 +341,7 @@ mod tests {
         let mut rx1 = bus.subscribe();
         let mut rx2 = bus.subscribe();
 
-        let event = NeoTalkEvent::DeviceOnline {
+        let event = NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
@@ -363,7 +363,7 @@ mod tests {
         let mut rx = bus.filter().device_events();
 
         // Publish a device event
-        bus.publish(NeoTalkEvent::DeviceOnline {
+        bus.publish(NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
@@ -371,7 +371,7 @@ mod tests {
         .await;
 
         // Publish a rule event (should be filtered out)
-        bus.publish(NeoTalkEvent::RuleTriggered {
+        bus.publish(NeoMindEvent::RuleTriggered {
             rule_id: "rule1".to_string(),
             rule_name: "Test Rule".to_string(),
             trigger_value: 42.0,
@@ -391,17 +391,17 @@ mod tests {
         let bus = EventBus::new();
         let mut rx = bus
             .filter()
-            .custom(|event| matches!(event, NeoTalkEvent::DeviceMetric { .. }));
+            .custom(|event| matches!(event, NeoMindEvent::DeviceMetric { .. }));
 
         // Publish various events
-        bus.publish(NeoTalkEvent::DeviceOnline {
+        bus.publish(NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
         })
         .await;
 
-        bus.publish(NeoTalkEvent::DeviceMetric {
+        bus.publish(NeoMindEvent::DeviceMetric {
             device_id: "test".to_string(),
             metric: "temp".to_string(),
             value: MetricValue::float(25.0),
@@ -412,7 +412,7 @@ mod tests {
 
         // Should only receive the metric event
         let received = rx.recv().await.unwrap();
-        assert!(matches!(received.0, NeoTalkEvent::DeviceMetric { .. }));
+        assert!(matches!(received.0, NeoMindEvent::DeviceMetric { .. }));
     }
 
     #[tokio::test]
@@ -421,7 +421,7 @@ mod tests {
         let mut rx = bus.subscribe();
 
         bus.publish_with_source(
-            NeoTalkEvent::DeviceOnline {
+            NeoMindEvent::DeviceOnline {
                 device_id: "test".to_string(),
                 device_type: "sensor".to_string(),
                 timestamp: 0,
@@ -441,7 +441,7 @@ mod tests {
 
         let actions = vec![ProposedAction::notify_user("Test notification")];
 
-        bus.publish(NeoTalkEvent::LlmDecisionProposed {
+        bus.publish(NeoMindEvent::LlmDecisionProposed {
             decision_id: "dec-1".to_string(),
             title: "Test Decision".to_string(),
             description: "Test description".to_string(),
@@ -476,7 +476,7 @@ mod tests {
     #[tokio::test]
     async fn test_no_op_persistence() {
         let persistence = NoOpPersistence;
-        let event = NeoTalkEvent::DeviceOnline {
+        let event = NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
@@ -499,14 +499,14 @@ mod tests {
         let mut alert_rx = bus.filter().alert_events();
 
         // Publish one of each type
-        bus.publish(NeoTalkEvent::DeviceOnline {
+        bus.publish(NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
         })
         .await;
 
-        bus.publish(NeoTalkEvent::RuleTriggered {
+        bus.publish(NeoMindEvent::RuleTriggered {
             rule_id: "rule1".to_string(),
             rule_name: "Test".to_string(),
             trigger_value: 1.0,
@@ -515,7 +515,7 @@ mod tests {
         })
         .await;
 
-        bus.publish(NeoTalkEvent::WorkflowTriggered {
+        bus.publish(NeoMindEvent::WorkflowTriggered {
             workflow_id: "wf1".to_string(),
             trigger_type: "manual".to_string(),
             trigger_data: None,
@@ -524,14 +524,14 @@ mod tests {
         })
         .await;
 
-        bus.publish(NeoTalkEvent::PeriodicReviewTriggered {
+        bus.publish(NeoMindEvent::PeriodicReviewTriggered {
             review_id: "rev1".to_string(),
             review_type: "hourly".to_string(),
             timestamp: 0,
         })
         .await;
 
-        bus.publish(NeoTalkEvent::AlertCreated {
+        bus.publish(NeoMindEvent::AlertCreated {
             alert_id: "alert1".to_string(),
             title: "Test Alert".to_string(),
             severity: "info".to_string(),
@@ -566,7 +566,7 @@ mod tests {
 
         tokio::spawn(async move {
             bus_clone
-                .publish(NeoTalkEvent::DeviceOnline {
+                .publish(NeoMindEvent::DeviceOnline {
                     device_id: "test".to_string(),
                     device_type: "sensor".to_string(),
                     timestamp: 0,
@@ -587,7 +587,7 @@ mod tests {
         assert!(rx.try_recv().is_none());
 
         // Publish an event
-        bus.publish(NeoTalkEvent::DeviceOnline {
+        bus.publish(NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
@@ -605,7 +605,7 @@ mod tests {
         let mut rx = bus.filter().device_events();
 
         // Publish non-matching event
-        bus.publish(NeoTalkEvent::RuleTriggered {
+        bus.publish(NeoMindEvent::RuleTriggered {
             rule_id: "rule1".to_string(),
             rule_name: "Test".to_string(),
             trigger_value: 1.0,
@@ -618,7 +618,7 @@ mod tests {
         assert!(rx.try_recv().is_none());
 
         // Publish matching event
-        bus.publish(NeoTalkEvent::DeviceOnline {
+        bus.publish(NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,

@@ -1,4 +1,4 @@
-//! Core business-scenario oriented tools for NeoTalk.
+//! Core business-scenario oriented tools for NeoMind.
 //!
 //! These tools are designed around user workflows rather than technical categorization:
 //! - Device discovery and exploration

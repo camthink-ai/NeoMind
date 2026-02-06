@@ -57,12 +57,6 @@ impl LlmBackendConfig {
         }
     }
 
-    /// Get the backend type (deprecated, use backend_id instead).
-    #[deprecated(note = "Use backend_id instead")]
-    pub fn backend_type(&self) -> String {
-        self.backend_id().as_str().to_string()
-    }
-
     /// Create a runtime from this configuration.
     pub async fn into_runtime(self) -> Result<Box<dyn LlmRuntime>, LlmError> {
         match self {
@@ -170,12 +164,6 @@ impl LlmConfig {
     /// Get the backend identifier.
     pub fn backend_id(&self) -> BackendId {
         self.backend.backend_id()
-    }
-
-    /// Get the backend type (deprecated, use backend_id instead).
-    #[deprecated(note = "Use backend_id instead")]
-    pub fn backend_type(&self) -> String {
-        self.backend.backend_id().as_str().to_string()
     }
 }
 

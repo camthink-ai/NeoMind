@@ -1,4 +1,4 @@
-//! Common macros for the NeoTalk project.
+//! Common macros for the NeoMind project.
 //!
 //! This module provides procedural and declarative macros to reduce code duplication.
 

@@ -6,7 +6,7 @@
 
 ## 概述
 
-Web 模块是 NeoTalk 的前端应用，支持 Web 浏览器和 Tauri 桌面应用（双模式）。基于 React 18 + TypeScript + Vite 构建，使用 Zustand 进行状态管理，Radix UI + Tailwind CSS 构建用户界面。
+Web 模块是 NeoMind 的前端应用，支持 Web 浏览器和 Tauri 桌面应用（双模式）。基于 React 18 + TypeScript + Vite 构建，使用 Zustand 进行状态管理，Radix UI + Tailwind CSS 构建用户界面。
 
 ## 模块结构
 
@@ -208,7 +208,7 @@ web/src/
 ### Store 结构
 
 ```typescript
-export type NeoTalkStore = AuthSlice
+export type NeoMindStore = AuthSlice
   & SessionSlice
   & UISlice
   & AlertSlice

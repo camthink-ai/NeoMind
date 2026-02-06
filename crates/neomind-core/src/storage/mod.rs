@@ -1,4 +1,4 @@
-//! Core storage abstractions for NeoTalk.
+//! Core storage abstractions for NeoMind.
 //!
 //! This module defines the foundational traits for storage backends.
 

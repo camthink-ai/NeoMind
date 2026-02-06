@@ -3,7 +3,7 @@
 use neomind_api::handlers::rules::*;
 use neomind_api::handlers::ServerState;
 use neomind_api::models::ErrorResponse;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::Json;
 use neomind_rules::{CompiledRule, RuleCondition, ComparisonOperator, RuleStatus};
 use serde_json::json;
@@ -52,10 +52,10 @@ mod tests {
     #[tokio::test]
     async fn test_update_rule_handler_invalid_id() {
         let state = create_test_server_state().await;
-        let req = UpdateRuleRequest {
-            name: Some("Updated Name".to_string()),
-            enabled: Some(true),
-        };
+        let req = json!({
+            "name": "Updated Name",
+            "enabled": true
+        });
         let result = update_rule_handler(
             State(state),
             Path("invalid_id".to_string()),
@@ -88,7 +88,11 @@ mod tests {
     #[tokio::test]
     async fn test_test_rule_handler_invalid_id() {
         let state = create_test_server_state().await;
-        let result = test_rule_handler(State(state), Path("invalid_id".to_string())).await;
+        let result = test_rule_handler(
+            State(state),
+            Path("invalid_id".to_string()),
+            Query(std::collections::HashMap::new()),
+        ).await;
         assert!(result.is_err());
     }
 

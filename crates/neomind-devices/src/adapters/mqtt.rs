@@ -1,4 +1,4 @@
-//! MQTT device adapter for NeoTalk event-driven architecture.
+//! MQTT device adapter for NeoMind event-driven architecture.
 //!
 //! This adapter connects to an MQTT broker, subscribes to device topics,
 //! and publishes device events to the event bus.
@@ -32,7 +32,7 @@ use crate::unified_extractor::UnifiedExtractor;
 use tracing::trace;
 use async_trait::async_trait;
 use neomind_core::EventBus;
-use neomind_core::NeoTalkEvent;
+use neomind_core::NeoMindEvent;
 use futures::{Stream, StreamExt};
 use serde::Deserialize;
 use serde_json::Value;
@@ -67,13 +67,13 @@ pub struct MqttAdapterConfig {
 impl MqttAdapterConfig {
     /// Create a new MQTT adapter configuration.
     pub fn new(name: impl Into<String>, broker: impl Into<String>) -> Self {
-        let mqtt_config = MqttConfig::new(broker, "neotalk");
+        let mqtt_config = MqttConfig::new(broker, "neomind");
         Self {
             name: name.into(),
             mqtt: mqtt_config,
             subscribe_topics: Vec::new(),
             discovery_topic: None,
-            discovery_prefix: "neotalk".to_string(),
+            discovery_prefix: "neomind".to_string(),
             auto_discovery: true,
             storage_dir: None,
         }
@@ -311,7 +311,7 @@ impl MqttAdapter {
         }
 
         // Build MQTT options
-        let client_id = format!("neotalk-{}-{}", broker_id, Uuid::new_v4());
+        let client_id = format!("neomind-{}-{}", broker_id, Uuid::new_v4());
         let mut mqttoptions = rumqttc::MqttOptions::new(&client_id, &broker_host, broker_port);
         mqttoptions.set_max_packet_size(10 * 1024 * 1024, 10 * 1024 * 1024);
         mqttoptions.set_keep_alive(Duration::from_secs(60));
@@ -737,7 +737,7 @@ impl MqttAdapter {
 
         // Publish to EventBus if available
         if let Some(bus) = &self.event_bus {
-            bus.publish(NeoTalkEvent::DeviceOnline {
+            bus.publish(NeoMindEvent::DeviceOnline {
                 device_id: device_id.clone(),
                 device_type: announcement.device_type,
                 timestamp: now.timestamp(),
@@ -758,7 +758,7 @@ impl MqttAdapter {
 
                 // Publish online event for new device
                 if let Some(bus) = &self.event_bus {
-                    bus.publish(NeoTalkEvent::DeviceOnline {
+                    bus.publish(NeoMindEvent::DeviceOnline {
                         device_id: device_id.clone(),
                         device_type: device_type.clone(),
                         timestamp: now.timestamp(),
@@ -1388,7 +1388,7 @@ impl MqttAdapter {
 
                                 // Publish DeviceOnline event for new devices
                                 if let Some(bus) = event_bus {
-                                    bus.publish(NeoTalkEvent::DeviceOnline {
+                                    bus.publish(NeoMindEvent::DeviceOnline {
                                         device_id: device_id.clone(),
                                         device_type: dt.to_string(),
                                         timestamp: now.timestamp(),
@@ -1455,7 +1455,7 @@ impl MqttAdapter {
                                     "Publishing DeviceOnline to EventBus: device_id={}, device_type={:?}",
                                     device_id, device_type
                                 );
-                                bus.publish(NeoTalkEvent::DeviceOnline {
+                                bus.publish(NeoMindEvent::DeviceOnline {
                                     device_id: device_id.clone(),
                                     device_type: device_type.unwrap_or_else(|| "unknown".to_string()),
                                     timestamp: now.timestamp(),
@@ -1623,7 +1623,7 @@ impl MqttAdapter {
                             // This matches the adapter_id used during registration
                             let adapter_id = config.name.clone();
 
-                            bus.publish(NeoTalkEvent::Custom {
+                            bus.publish(NeoMindEvent::Custom {
                                 event_type: "unknown_device_data".to_string(),
                                 data: serde_json::json!({
                                     "device_id": auto_device_id,
@@ -1756,8 +1756,8 @@ pub fn create_mqtt_adapter(
         while let Some(event) = rx.next().await {
             if let Some(device_id) = event.device_id() {
                 let source = format!("adapter:mqtt:{}", device_id);
-                let neotalk_event = event.clone().to_neotalk_event();
-                event_bus.publish_with_source(neotalk_event, source).await;
+                let neomind_event = event.clone().to_neomind_event();
+                event_bus.publish_with_source(neomind_event, source).await;
             }
         }
     });
@@ -1788,8 +1788,8 @@ pub fn create_mqtt_adapter_with_mapping(
         while let Some(event) = rx.next().await {
             if let Some(device_id) = event.device_id() {
                 let source = format!("adapter:mqtt:{}", device_id);
-                let neotalk_event = event.clone().to_neotalk_event();
-                event_bus.publish_with_source(neotalk_event, source).await;
+                let neomind_event = event.clone().to_neomind_event();
+                event_bus.publish_with_source(neomind_event, source).await;
             }
         }
     });

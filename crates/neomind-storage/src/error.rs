@@ -3,7 +3,7 @@
 use thiserror::Error;
 
 // Re-export the core error type
-pub use neomind_core::error::Error as NeoTalkError;
+pub use neomind_core::error::Error as NeoMindError;
 
 /// Result type for storage operations.
 pub type Result<T> = std::result::Result<T, Error>;
@@ -36,16 +36,16 @@ pub enum Error {
     InvalidInput(String),
 }
 
-// Convert to NeoTalkError
-impl From<Error> for NeoTalkError {
+// Convert to NeoMindError
+impl From<Error> for NeoMindError {
     fn from(e: Error) -> Self {
         match e {
-            Error::Io(e) => NeoTalkError::Storage(e.to_string()),
-            Error::Serialization(s) => NeoTalkError::Serialization(s),
-            Error::Storage(s) => NeoTalkError::Storage(s),
-            Error::InvalidDimension { .. } => NeoTalkError::Validation(e.to_string()),
-            Error::NotFound(s) => NeoTalkError::NotFound(s),
-            Error::InvalidInput(s) => NeoTalkError::Validation(s),
+            Error::Io(e) => NeoMindError::Storage(e.to_string()),
+            Error::Serialization(s) => NeoMindError::Serialization(s),
+            Error::Storage(s) => NeoMindError::Storage(s),
+            Error::InvalidDimension { .. } => NeoMindError::Validation(e.to_string()),
+            Error::NotFound(s) => NeoMindError::NotFound(s),
+            Error::InvalidInput(s) => NeoMindError::Validation(s),
         }
     }
 }

@@ -1,6 +1,6 @@
 //! AI Agent executor - runs agents and records decision processes.
 
-use neomind_core::{EventBus, MetricValue, NeoTalkEvent, message::{Content, ContentPart, Message, MessageRole}};
+use neomind_core::{EventBus, MetricValue, NeoMindEvent, message::{Content, ContentPart, Message, MessageRole}};
 use neomind_storage::{
     AgentMemory, AgentStore, AgentExecutionRecord, AiAgent, DataCollected,
     Decision, DecisionProcess, ExecutionResult as StorageExecutionResult, ExecutionStatus,
@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use futures::future::join_all;
 
 use crate::LlmBackend;
-use crate::error::{NeoTalkError, Result as AgentResult};
+use crate::error::{NeoMindError, Result as AgentResult};
 use crate::prompts::CONVERSATION_CONTEXT_ZH;
 
 /// Internal representation of image content for multimodal LLM messages.
@@ -803,7 +803,7 @@ impl AgentExecutor {
         details: Option<&str>,
     ) {
         if let Some(ref bus) = self.event_bus {
-            let _ = bus.publish(neomind_core::NeoTalkEvent::AgentProgress {
+            let _ = bus.publish(neomind_core::NeoMindEvent::AgentProgress {
                 agent_id: agent_id.to_string(),
                 execution_id: execution_id.to_string(),
                 stage: stage.to_string(),
@@ -824,7 +824,7 @@ impl AgentExecutor {
         description: &str,
     ) {
         if let Some(ref bus) = self.event_bus {
-            let _ = bus.publish(neomind_core::NeoTalkEvent::AgentThinking {
+            let _ = bus.publish(neomind_core::NeoMindEvent::AgentThinking {
                 agent_id: agent_id.to_string(),
                 execution_id: execution_id.to_string(),
                 step_number,
@@ -849,7 +849,7 @@ impl AgentExecutor {
     pub async fn get_llm_runtime_for_agent(
         &self,
         agent: &AiAgent,
-    ) -> Result<Option<Arc<dyn LlmRuntime + Send + Sync>>, NeoTalkError> {
+    ) -> Result<Option<Arc<dyn LlmRuntime + Send + Sync>>, NeoMindError> {
         // If agent has a specific backend ID, try to use it
         if let Some(ref backend_id) = agent.llm_backend_id
             && let Some(ref store) = self.llm_backend_store
@@ -1061,7 +1061,7 @@ Respond in JSON format:
                     "LLM intent parsing timed out after {}s",
                     LLM_TIMEOUT_SECS
                 );
-                return Err(NeoTalkError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
+                return Err(NeoMindError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
             }
         };
 
@@ -1084,9 +1084,9 @@ Respond in JSON format:
                 };
 
                 serde_json::from_str(json_str)
-                    .map_err(|_| NeoTalkError::Llm("Failed to parse LLM intent response".to_string()))
+                    .map_err(|_| NeoMindError::Llm("Failed to parse LLM intent response".to_string()))
             }
-            Err(_) => Err(NeoTalkError::Llm("LLM call failed".to_string())),
+            Err(_) => Err(NeoMindError::Llm("LLM call failed".to_string())),
         }
     }
 
@@ -1370,7 +1370,7 @@ Respond in JSON format:
         self.store
             .update_agent_status(&agent_id, neomind_storage::AgentStatus::Executing, None)
             .await
-            .map_err(|e| NeoTalkError::Storage(format!("Failed to update status: {}", e)))?;
+            .map_err(|e| NeoMindError::Storage(format!("Failed to update status: {}", e)))?;
 
         // Create execution context
         let context = ExecutionContext {
@@ -1389,7 +1389,7 @@ Respond in JSON format:
             "Emitting AgentExecutionStarted event"
         );
         if let Some(ref bus) = self.event_bus {
-            let _ = bus.publish(NeoTalkEvent::AgentExecutionStarted {
+            let _ = bus.publish(NeoMindEvent::AgentExecutionStarted {
                 agent_id: agent_id.clone(),
                 agent_name: agent_name.clone(),
                 execution_id: execution_id.clone(),
@@ -1474,7 +1474,7 @@ Respond in JSON format:
         self.store
             .save_execution_with_conversation(&record, Some(&agent_id), turn.as_ref())
             .await
-            .map_err(|e| NeoTalkError::Storage(format!("Failed to save execution: {}", e)))?;
+            .map_err(|e| NeoMindError::Storage(format!("Failed to save execution: {}", e)))?;
 
         tracing::debug!(
             agent_id = %agent_id,
@@ -1496,7 +1496,7 @@ Respond in JSON format:
         // Emit agent execution completed event
         let completion_timestamp = chrono::Utc::now().timestamp();
         if let Some(ref bus) = self.event_bus {
-            let _ = bus.publish(NeoTalkEvent::AgentExecutionCompleted {
+            let _ = bus.publish(NeoMindEvent::AgentExecutionCompleted {
                 agent_id: agent_id.clone(),
                 execution_id: execution_id.clone(),
                 success: record.status == ExecutionStatus::Completed,
@@ -1535,7 +1535,7 @@ Respond in JSON format:
         self.store
             .update_agent_status(&agent_id, neomind_storage::AgentStatus::Executing, None)
             .await
-            .map_err(|e| NeoTalkError::Storage(format!("Failed to update status: {}", e)))?;
+            .map_err(|e| NeoMindError::Storage(format!("Failed to update status: {}", e)))?;
 
         // Clone event data for later use (before moving)
         let event_device_id = event_data.device_id.clone();
@@ -1567,7 +1567,7 @@ Respond in JSON format:
             "Emitting AgentExecutionStarted event (event-triggered)"
         );
         if let Some(ref bus) = self.event_bus {
-            let _ = bus.publish(NeoTalkEvent::AgentExecutionStarted {
+            let _ = bus.publish(NeoMindEvent::AgentExecutionStarted {
                 agent_id: agent_id.clone(),
                 agent_name: agent_name.clone(),
                 execution_id: execution_id.clone(),
@@ -1653,7 +1653,7 @@ Respond in JSON format:
         self.store
             .save_execution_with_conversation(&record, Some(&agent_id), turn.as_ref())
             .await
-            .map_err(|e| NeoTalkError::Storage(format!("Failed to save execution: {}", e)))?;
+            .map_err(|e| NeoMindError::Storage(format!("Failed to save execution: {}", e)))?;
 
         // Reset agent status based on result
         let new_status = if record.status == ExecutionStatus::Completed {
@@ -1669,7 +1669,7 @@ Respond in JSON format:
         // Emit agent execution completed event
         let completion_timestamp = chrono::Utc::now().timestamp();
         if let Some(ref bus) = self.event_bus {
-            let _ = bus.publish(NeoTalkEvent::AgentExecutionCompleted {
+            let _ = bus.publish(NeoMindEvent::AgentExecutionCompleted {
                 agent_id: agent_id.clone(),
                 execution_id: execution_id.clone(),
                 success: record.status == ExecutionStatus::Completed,
@@ -1741,7 +1741,7 @@ Respond in JSON format:
         }
 
         if records.is_empty() && !errors.is_empty() {
-            return Err(NeoTalkError::Storage(format!(
+            return Err(NeoMindError::Storage(format!(
                 "All {} agents failed. First error: {}",
                 errors.len(),
                 errors[0]
@@ -1781,7 +1781,7 @@ Respond in JSON format:
         }
 
         Err(last_error.unwrap_or_else(|| {
-            NeoTalkError::Llm("Max retries exceeded".to_string())
+            NeoMindError::Llm("Max retries exceeded".to_string())
         }))
     }
 
@@ -1816,7 +1816,7 @@ Respond in JSON format:
         }
 
         Err(last_error.unwrap_or_else(|| {
-            NeoTalkError::Llm("Max retries exceeded".to_string())
+            NeoMindError::Llm("Max retries exceeded".to_string())
         }))
     }
 
@@ -1947,7 +1947,7 @@ Respond in JSON format:
         self.store
             .update_agent_memory(&agent.id, updated_memory.clone())
             .await
-            .map_err(|e| NeoTalkError::Storage(format!("Failed to update memory: {}", e)))?;
+            .map_err(|e| NeoMindError::Storage(format!("Failed to update memory: {}", e)))?;
 
         // Calculate confidence from reasoning
         let confidence = if reasoning_steps.is_empty() {
@@ -2136,7 +2136,7 @@ Respond in JSON format:
         self.store
             .update_agent_memory(&agent.id, updated_memory.clone())
             .await
-            .map_err(|e| NeoTalkError::Storage(format!("Failed to update memory: {}", e)))?;
+            .map_err(|e| NeoMindError::Storage(format!("Failed to update memory: {}", e)))?;
 
         // Calculate confidence from reasoning
         let confidence = if reasoning_steps.is_empty() {
@@ -2249,7 +2249,7 @@ Respond in JSON format:
         resources: Vec<AgentResource>,
         timestamp: i64,
     ) -> AgentResult<Vec<DataCollected>> {
-        let storage = self.time_series_storage.clone().ok_or(NeoTalkError::validation(
+        let storage = self.time_series_storage.clone().ok_or(NeoMindError::validation(
             "Time series storage not available".to_string()
         ))?;
 
@@ -2330,7 +2330,7 @@ Respond in JSON format:
                     Ok(result) => result,
                     Err(_) => {
                         tracing::warn!("Data collection query timed out after {}s", QUERY_TIMEOUT_SECS);
-                        Err(NeoTalkError::Llm(format!("Query timeout after {}s", QUERY_TIMEOUT_SECS)))
+                        Err(NeoMindError::Llm(format!("Query timeout after {}s", QUERY_TIMEOUT_SECS)))
                     }
                 }
             })
@@ -2363,7 +2363,7 @@ Respond in JSON format:
         let start_time = end_time - ((time_range_minutes * 60) as i64);
 
         let result = storage.query_range(device_id, metric_name, start_time, end_time).await
-            .map_err(|e| NeoTalkError::Storage(format!("Query failed: {}", e)))?;
+            .map_err(|e| NeoMindError::Storage(format!("Query failed: {}", e)))?;
 
         if result.points.is_empty() {
             return Ok(None);
@@ -2447,10 +2447,10 @@ Respond in JSON format:
         timestamp: i64,
     ) -> AgentResult<Vec<DataCollected>> {
         let device_service = self.device_service.as_ref()
-            .ok_or(NeoTalkError::validation("Device service not available".to_string()))?;
+            .ok_or(NeoMindError::validation("Device service not available".to_string()))?;
 
         let storage = self.time_series_storage.clone()
-            .ok_or(NeoTalkError::validation("Time series storage not available".to_string()))?;
+            .ok_or(NeoMindError::validation("Time series storage not available".to_string()))?;
 
         // Collect device info and metrics in parallel with timeout
         const QUERY_TIMEOUT_SECS: u64 = 10;
@@ -3143,7 +3143,7 @@ Respond in JSON format:
                     "LLM generation timed out after {}s",
                     LLM_TIMEOUT_SECS
                 );
-                return Err(NeoTalkError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
+                return Err(NeoMindError::Llm(format!("LLM timeout after {}s", LLM_TIMEOUT_SECS)));
             }
         };
 
@@ -3240,7 +3240,7 @@ Respond in JSON format:
                         if let Some(ref bus) = self.event_bus {
                             let event_timestamp = chrono::Utc::now().timestamp();
                             for step in &reasoning_steps {
-                                let _ = bus.publish(NeoTalkEvent::AgentThinking {
+                                let _ = bus.publish(NeoMindEvent::AgentThinking {
                                     agent_id: agent.id.clone(),
                                     execution_id: execution_id.to_string(),
                                     step_number: step.step_number,
@@ -3253,7 +3253,7 @@ Respond in JSON format:
 
                             // Emit AgentDecision events for each decision
                             for decision in &decisions {
-                                let _ = bus.publish(NeoTalkEvent::AgentDecision {
+                                let _ = bus.publish(NeoMindEvent::AgentDecision {
                                     agent_id: agent.id.clone(),
                                     execution_id: execution_id.to_string(),
                                     description: decision.description.clone(),
@@ -3531,7 +3531,7 @@ Respond in JSON format:
                     error_details = ?e,
                     "LLM generation failed - check LLM backend configuration and connectivity"
                 );
-                Err(NeoTalkError::Llm(format!("LLM generation failed: {}", e)))
+                Err(NeoMindError::Llm(format!("LLM generation failed: {}", e)))
             }
         }
     }
@@ -3941,7 +3941,7 @@ Respond in JSON format:
                 "MessageManager not available, using EventBus fallback"
             );
             if let Some(ref bus) = self.event_bus {
-                let _ = bus.publish(NeoTalkEvent::MessageCreated {
+                let _ = bus.publish(NeoMindEvent::MessageCreated {
                     message_id: uuid::Uuid::new_v4().to_string(),
                     title: format!("Agent Alert: {}", agent.name),
                     severity: "info".to_string(),
@@ -4164,7 +4164,7 @@ Respond in JSON format:
         let mut messages = Vec::new();
 
         // 1. Generic system prompt with conversation context
-        let role_prompt = "你是一个 NeoTalk 智能物联网系统的自动化助手。根据用户的指令分析数据、做出决策并执行相应操作。";
+        let role_prompt = "你是一个 NeoMind 智能物联网系统的自动化助手。根据用户的指令分析数据、做出决策并执行相应操作。";
 
         // Get current time context for temporal understanding
         let time_context = get_time_context();

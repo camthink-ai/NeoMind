@@ -21,7 +21,7 @@ curl -s -X POST "$BASE_URL/alerts" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "系统启动完成",
-    "message": "NeoTalk 系统已成功启动，所有服务正常运行",
+    "message": "NeoMind 系统已成功启动，所有服务正常运行",
     "severity": "info",
     "source": "system"
   }' | jq '.'

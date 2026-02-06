@@ -39,12 +39,12 @@ pub enum Error {
 
 /// Convenient type alias for API responses with consistent error format.
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct NeoTalkError {
+pub struct NeoMindError {
     pub code: String,
     pub message: String,
 }
 
-impl NeoTalkError {
+impl NeoMindError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             code: code.into(),
@@ -65,7 +65,7 @@ impl NeoTalkError {
     }
 }
 
-impl From<Error> for NeoTalkError {
+impl From<Error> for NeoMindError {
     fn from(err: Error) -> Self {
         match err {
             Error::NotFound(msg) => Self::not_found(msg),

@@ -1,4 +1,4 @@
-//! Webhook device adapter for NeoTalk event-driven architecture.
+//! Webhook device adapter for NeoMind event-driven architecture.
 //!
 //! This adapter receives device data via HTTP POST (webhook) from devices
 //! that actively push data instead of being polled.
@@ -306,9 +306,9 @@ impl WebhookAdapter {
 
                 // Publish device online event
                 if let Some(bus) = &self.event_bus {
-                    use neomind_core::NeoTalkEvent;
+                    use neomind_core::NeoMindEvent;
 
-                    bus.publish(NeoTalkEvent::DeviceOnline {
+                    bus.publish(NeoMindEvent::DeviceOnline {
                         device_id: device_id.clone(),
                         device_type: device_type.clone(),
                         timestamp,
@@ -351,7 +351,7 @@ impl WebhookAdapter {
         value: MetricValue,
         timestamp: i64,
     ) {
-        use neomind_core::NeoTalkEvent;
+        use neomind_core::NeoMindEvent;
 
         // Emit to device event channel
         let _ = self.event_tx.send(DeviceEvent::Metric {
@@ -401,7 +401,7 @@ impl WebhookAdapter {
                 MetricValue::Null => neomind_core::MetricValue::Json(serde_json::json!(null)),
             };
 
-            bus.publish(NeoTalkEvent::DeviceMetric {
+            bus.publish(NeoMindEvent::DeviceMetric {
                 device_id,
                 metric: metric_name,
                 value: core_value,

@@ -194,7 +194,7 @@ ALERTS_DATA = [
     # Info (信息)
     {
         "title": "系统启动完成",
-        "message": "NeoTalk 系统已成功启动，所有服务正常运行",
+        "message": "NeoMind 系统已成功启动，所有服务正常运行",
         "severity": "info",
         "source": "system"
     },

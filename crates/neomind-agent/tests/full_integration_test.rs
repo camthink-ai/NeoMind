@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use neomind_core::{EventBus, MetricValue, NeoTalkEvent, LlmRuntime, message::{Message, MessageRole, Content}};
+use neomind_core::{EventBus, MetricValue, NeoMindEvent, LlmRuntime, message::{Message, MessageRole, Content}};
 use neomind_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
     WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType, ResourceType, AgentResource,
@@ -97,7 +97,7 @@ impl FullTestContext {
         ).await?;
 
         // Also publish to event bus
-        let event = NeoTalkEvent::DeviceMetric {
+        let event = NeoMindEvent::DeviceMetric {
             device_id: device_id.to_string(),
             metric: metric.to_string(),
             value: MetricValue::Float(value),

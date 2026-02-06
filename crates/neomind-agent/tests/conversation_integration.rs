@@ -1,7 +1,7 @@
 //! AI Agent Conversation History Integration Test
 
 use std::sync::Arc;
-use neomind_core::{EventBus, message::{Message, MessageRole, Content}, MetricValue, NeoTalkEvent};
+use neomind_core::{EventBus, message::{Message, MessageRole, Content}, MetricValue, NeoMindEvent};
 use neomind_storage::{
     AgentStore, AgentSchedule, AgentResource, AgentStats, AgentStatus, AiAgent, AgentMemory,
     WorkingMemory, ShortTermMemory, LongTermMemory,

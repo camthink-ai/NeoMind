@@ -3,7 +3,7 @@
 //! This module provides a priority queue wrapper around the standard EventBus
 //! to ensure critical events are processed first during high load.
 
-use crate::event::{EventMetadata, NeoTalkEvent};
+use crate::event::{EventMetadata, NeoMindEvent};
 use crate::eventbus::EventBus;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -30,7 +30,7 @@ pub enum EventPriority {
 #[derive(Debug, Clone)]
 struct PrioritizedEvent {
     /// The event itself
-    event: NeoTalkEvent,
+    event: NeoMindEvent,
     /// Event metadata
     metadata: EventMetadata,
     /// Priority level (higher = more important)
@@ -102,7 +102,7 @@ impl PriorityEventBus {
     /// Publish an event with a specific priority.
     pub async fn publish_with_priority(
         &self,
-        event: NeoTalkEvent,
+        event: NeoMindEvent,
         priority: EventPriority,
     ) -> bool {
         let seq = {
@@ -144,12 +144,12 @@ impl PriorityEventBus {
     }
 
     /// Publish a critical event (highest priority).
-    pub async fn publish_critical(&self, event: NeoTalkEvent) -> bool {
+    pub async fn publish_critical(&self, event: NeoMindEvent) -> bool {
         self.publish_with_priority(event, EventPriority::Critical).await
     }
 
     /// Publish a high-priority event.
-    pub async fn publish_high(&self, event: NeoTalkEvent) -> bool {
+    pub async fn publish_high(&self, event: NeoMindEvent) -> bool {
         self.publish_with_priority(event, EventPriority::High).await
     }
 
@@ -249,33 +249,33 @@ impl EventProcessorHandle {
 }
 
 /// Helper to determine event priority based on event type.
-pub fn event_priority(event: &NeoTalkEvent) -> EventPriority {
+pub fn event_priority(event: &NeoMindEvent) -> EventPriority {
     match event {
         // Critical events - device failures, alerts, security issues
-        NeoTalkEvent::DeviceOffline { .. }
-        | NeoTalkEvent::AlertCreated { .. } => EventPriority::Critical,
+        NeoMindEvent::DeviceOffline { .. }
+        | NeoMindEvent::AlertCreated { .. } => EventPriority::Critical,
 
         // High priority - device online, rule triggered, workflow triggered
-        NeoTalkEvent::DeviceOnline { .. }
-        | NeoTalkEvent::RuleTriggered { .. }
-        | NeoTalkEvent::WorkflowTriggered { .. }
-        | NeoTalkEvent::DeviceCommandResult { success: false, .. } => EventPriority::High,
+        NeoMindEvent::DeviceOnline { .. }
+        | NeoMindEvent::RuleTriggered { .. }
+        | NeoMindEvent::WorkflowTriggered { .. }
+        | NeoMindEvent::DeviceCommandResult { success: false, .. } => EventPriority::High,
 
         // Normal priority - regular events
-        NeoTalkEvent::DeviceMetric { .. }
-        | NeoTalkEvent::RuleEvaluated { .. }
-        | NeoTalkEvent::WorkflowStepCompleted { .. }
-        | NeoTalkEvent::WorkflowCompleted { .. }
-        | NeoTalkEvent::DeviceCommandResult { success: true, .. } => EventPriority::Normal,
+        NeoMindEvent::DeviceMetric { .. }
+        | NeoMindEvent::RuleEvaluated { .. }
+        | NeoMindEvent::WorkflowStepCompleted { .. }
+        | NeoMindEvent::WorkflowCompleted { .. }
+        | NeoMindEvent::DeviceCommandResult { success: true, .. } => EventPriority::Normal,
 
         // Low priority - informational events
-        NeoTalkEvent::LlmDecisionProposed { .. }
-        | NeoTalkEvent::LlmDecisionExecuted { .. }
-        | NeoTalkEvent::PeriodicReviewTriggered { .. }
-        | NeoTalkEvent::RuleExecuted { .. }
-        | NeoTalkEvent::AgentExecutionCompleted { .. }
-        | NeoTalkEvent::UserMessage { .. }
-        | NeoTalkEvent::AgentThinking { .. } => EventPriority::Low,
+        NeoMindEvent::LlmDecisionProposed { .. }
+        | NeoMindEvent::LlmDecisionExecuted { .. }
+        | NeoMindEvent::PeriodicReviewTriggered { .. }
+        | NeoMindEvent::RuleExecuted { .. }
+        | NeoMindEvent::AgentExecutionCompleted { .. }
+        | NeoMindEvent::UserMessage { .. }
+        | NeoMindEvent::AgentThinking { .. } => EventPriority::Low,
 
         // Default to normal priority for all other events
         _ => EventPriority::Normal,
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn test_prioritized_event_ordering() {
         let e1 = PrioritizedEvent {
-            event: NeoTalkEvent::DeviceOnline {
+            event: NeoMindEvent::DeviceOnline {
                 device_id: "test".to_string(),
                 device_type: "sensor".to_string(),
                 timestamp: 0,
@@ -306,7 +306,7 @@ mod tests {
             sequence: 1,
         };
         let e2 = PrioritizedEvent {
-            event: NeoTalkEvent::DeviceOffline {
+            event: NeoMindEvent::DeviceOffline {
                 device_id: "test".to_string(),
                 reason: None,
                 timestamp: 0,

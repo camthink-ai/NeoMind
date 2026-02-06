@@ -1,7 +1,7 @@
 //! Error types for the rules crate.
 
 // Re-export the core error type
-pub use neomind_core::error::Error as NeoTalkError;
+pub use neomind_core::error::Error as NeoMindError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuleError {
@@ -27,19 +27,19 @@ pub enum RuleError {
 /// Result type for rule operations
 pub type Result<T> = std::result::Result<T, RuleError>;
 
-// Convert RuleError to NeoTalkError
-impl From<RuleError> for NeoTalkError {
+// Convert RuleError to NeoMindError
+impl From<RuleError> for NeoMindError {
     fn from(e: RuleError) -> Self {
         match e {
-            RuleError::Parse(s) => NeoTalkError::Parse {
+            RuleError::Parse(s) => NeoMindError::Parse {
                 location: "rules".to_string(),
                 message: s,
             },
-            RuleError::Validation(s) => NeoTalkError::Validation(s),
-            RuleError::Compilation(s) => NeoTalkError::Internal(s),
-            RuleError::Execution(s) => NeoTalkError::Internal(s),
-            RuleError::Io(e) => NeoTalkError::Storage(e.to_string()),
-            RuleError::Serialization(s) => NeoTalkError::Serialization(s),
+            RuleError::Validation(s) => NeoMindError::Validation(s),
+            RuleError::Compilation(s) => NeoMindError::Internal(s),
+            RuleError::Execution(s) => NeoMindError::Internal(s),
+            RuleError::Io(e) => NeoMindError::Storage(e.to_string()),
+            RuleError::Serialization(s) => NeoMindError::Serialization(s),
         }
     }
 }

@@ -1,7 +1,7 @@
 //! Tool execution with event integration.
 //!
 //! This module provides tool execution wrappers that integrate with
-//! the NeoTalk event bus for tracking tool calls, recording history,
+//! the NeoMind event bus for tracking tool calls, recording history,
 //! and handling errors.
 
 pub mod automation;

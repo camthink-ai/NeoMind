@@ -22,7 +22,7 @@ fn colors_enabled() -> bool {
             return false;
         }
         // Check if explicitly enabled
-        if std::env::var("NEOTALK_COLOR")
+        if std::env::var("NEOMIND_COLOR")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(false)
@@ -90,7 +90,7 @@ impl StartupLogger {
         println!(
             "{}{}{}",
             color("│ ", ANSI_CYAN),
-            color("NeoTalk Edge AI Agent", ANSI_BOLD),
+            color("NeoMind Edge AI Agent", ANSI_BOLD),
             color("                       │", ANSI_CYAN)
         );
         println!(

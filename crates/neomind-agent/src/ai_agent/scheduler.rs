@@ -86,7 +86,7 @@ pub struct AgentScheduler {
 
 impl AgentScheduler {
     /// Create a new scheduler.
-    pub async fn new(config: SchedulerConfig) -> Result<Self, crate::error::NeoTalkError> {
+    pub async fn new(config: SchedulerConfig) -> Result<Self, crate::error::NeoMindError> {
         // Parse default timezone
         let default_tz = if let Some(tz_str) = &config.default_timezone {
             match tz_str.parse::<Tz>() {
@@ -137,11 +137,11 @@ impl AgentScheduler {
     }
 
     /// Schedule an agent for execution.
-    pub async fn schedule_agent(&self, agent: AiAgent) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn schedule_agent(&self, agent: AiAgent) -> Result<(), crate::error::NeoMindError> {
         let (next_execution, cron_schedule) = self
             .calculate_next_execution(&agent.schedule)
             .await
-            .map_err(|e| crate::NeoTalkError::Config(format!("Schedule error: {}", e)))?;
+            .map_err(|e| crate::NeoMindError::Config(format!("Schedule error: {}", e)))?;
 
         let task = ScheduledTask {
             agent_id: agent.id.clone(),
@@ -168,7 +168,7 @@ impl AgentScheduler {
     }
 
     /// Unschedule an agent.
-    pub async fn unschedule_agent(&self, agent_id: &str) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn unschedule_agent(&self, agent_id: &str) -> Result<(), crate::error::NeoMindError> {
         let mut tasks = self.tasks.write().await;
         tasks.remove(agent_id);
         drop(tasks);
@@ -178,7 +178,7 @@ impl AgentScheduler {
     }
 
     /// Start the scheduler.
-    pub async fn start(&self, executor: Arc<AgentExecutor>) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn start(&self, executor: Arc<AgentExecutor>) -> Result<(), crate::error::NeoMindError> {
         let mut running = self.running.write().await;
         if *running {
             return Ok(());
@@ -319,7 +319,7 @@ impl AgentScheduler {
     }
 
     /// Stop the scheduler.
-    pub async fn stop(&self) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn stop(&self) -> Result<(), crate::error::NeoMindError> {
         let mut running = self.running.write().await;
         *running = false;
         drop(running);

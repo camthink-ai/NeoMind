@@ -1,7 +1,7 @@
-//! Extension system for NeoTalk.
+//! Extension system for NeoMind.
 //!
 //! Extensions are dynamically loaded modules (.so/.dylib/.dll/.wasm) that extend
-//! NeoTalk's capabilities. They are distinct from user configurations like
+//! NeoMind's capabilities. They are distinct from user configurations like
 //! LLM backends, device connections, or alert channels.
 //!
 //! # Architecture

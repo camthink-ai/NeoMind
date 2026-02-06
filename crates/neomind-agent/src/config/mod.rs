@@ -153,23 +153,23 @@ impl StreamingConfig {
     /// 从环境变量加载配置
     ///
     /// 支持的环境变量：
-    /// - `NEOTALK_STREAM_TIMEOUT`: 流式超时（秒）
-    /// - `NEOTALK_HEARTBEAT_INTERVAL`: 心跳间隔（秒）
-    /// - `NEOTALK_MAX_TOOL_ITERATIONS`: 最大工具迭代次数
+    /// - `NEOMIND_STREAM_TIMEOUT`: 流式超时（秒）
+    /// - `NEOMIND_HEARTBEAT_INTERVAL`: 心跳间隔（秒）
+    /// - `NEOMIND_MAX_TOOL_ITERATIONS`: 最大工具迭代次数
     pub fn from_env() -> Self {
         let mut config = Self::default();
 
-        if let Ok(timeout) = std::env::var("NEOTALK_STREAM_TIMEOUT")
+        if let Ok(timeout) = std::env::var("NEOMIND_STREAM_TIMEOUT")
             && let Ok(secs) = timeout.parse::<u64>() {
                 config.max_stream_duration_secs = secs;
             }
 
-        if let Ok(interval) = std::env::var("NEOTALK_HEARTBEAT_INTERVAL")
+        if let Ok(interval) = std::env::var("NEOMIND_HEARTBEAT_INTERVAL")
             && let Ok(secs) = interval.parse::<u64>() {
                 config.heartbeat_interval_secs = secs;
             }
 
-        if let Ok(iterations) = std::env::var("NEOTALK_MAX_TOOL_ITERATIONS")
+        if let Ok(iterations) = std::env::var("NEOMIND_MAX_TOOL_ITERATIONS")
             && let Ok(n) = iterations.parse::<usize>() {
                 config.max_tool_iterations = n;
             }

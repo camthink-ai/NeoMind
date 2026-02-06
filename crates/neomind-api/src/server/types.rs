@@ -452,7 +452,7 @@ impl ServerState {
             mqtt: neomind_devices::mqtt::MqttConfig {
                 broker: "localhost".to_string(),
                 port: 1883,
-                client_id: Some("neotalk-internal".to_string()),
+                client_id: Some("neomind-internal".to_string()),
                 username: None,
                 password: None,
                 keep_alive: 60,
@@ -601,7 +601,7 @@ impl ServerState {
             // AI Agent tools for Chat integration
             .with_agent_tools(self.agent_store.clone())
             // System help tool for onboarding
-            .with_system_help_tool_named("NeoTalk");
+            .with_system_help_tool_named("NeoMind");
 
         let tool_registry = Arc::new(builder.build());
         self.session_manager
@@ -680,12 +680,12 @@ impl ServerState {
         let rule_engine_for_update = rule_engine.clone();
 
         tokio::spawn(async move {
-            use neomind_core::{MetricValue, NeoTalkEvent};
+            use neomind_core::{MetricValue, NeoMindEvent};
 
             tracing::info!("Starting value provider update task for rule engine");
 
             while let Some((event, _metadata)) = rx.recv().await {
-                if let NeoTalkEvent::DeviceMetric {
+                if let NeoMindEvent::DeviceMetric {
                     device_id,
                     metric,
                     value,
@@ -846,7 +846,7 @@ impl ServerState {
 
             while let Some((event, _metadata)) = rx.recv().await {
                 // Check if this is an unknown device data event
-                if let neomind_core::NeoTalkEvent::Custom { event_type, data } = event
+                if let neomind_core::NeoMindEvent::Custom { event_type, data } = event
                     && event_type == "unknown_device_data" {
                         // Extract device_id and sample from the event data
                         if let Some(device_id) = data.get("device_id").and_then(|v| v.as_str())
@@ -1154,7 +1154,7 @@ impl ServerState {
 
             while let Some((event, _metadata)) = rx.recv().await {
                 // Check if any agent should be triggered by this event
-                if let neomind_core::NeoTalkEvent::DeviceMetric { device_id, metric, value, timestamp: _, quality: _ } = event {
+                if let neomind_core::NeoMindEvent::DeviceMetric { device_id, metric, value, timestamp: _, quality: _ } = event {
                     // Trigger agents that have this device/metric in their event filter
                     if let Err(e) = executor.check_and_trigger_event(device_id, &metric, &value).await {
                         tracing::debug!("No agent triggered for event: {}", e);

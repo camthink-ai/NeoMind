@@ -262,7 +262,7 @@ impl Connector for MqttConnector {
             .config
             .client_id
             .clone()
-            .unwrap_or_else(|| format!("neotalk_{}", uuid::Uuid::new_v4()));
+            .unwrap_or_else(|| format!("neomind_{}", uuid::Uuid::new_v4()));
 
         let mut opts = rumqttc::MqttOptions::new(client_id, &self.config.broker, self.config.port);
         opts.set_keep_alive(Duration::from_secs(self.config.keep_alive));

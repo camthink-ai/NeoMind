@@ -464,7 +464,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry() {
-        let sandbox = Arc::new(Sandbox::new(SandboxConfig::default()).unwrap());
+        let sandbox = Arc::new(
+            Sandbox::new(SandboxConfig::default())
+                .expect("Failed to create sandbox for test"),
+        );
         let registry = WasmLlmPluginRegistry::new(sandbox);
         assert_eq!(registry.list().await.len(), 0);
     }

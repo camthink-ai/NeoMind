@@ -143,7 +143,7 @@ impl Default for MqttAdapterConfig {
     fn default() -> Self {
         Self {
             broker_url: "tcp://localhost:1883".to_string(),
-            client_id: format!("neotalk_{}", uuid::Uuid::new_v4()),
+            client_id: format!("neomind_{}", uuid::Uuid::new_v4()),
             username: None,
             password: None,
             command_topic_template: "devices/{device_id}/commands".to_string(),
@@ -272,6 +272,8 @@ pub struct HttpAdapterConfig {
 impl Default for HttpAdapterConfig {
     fn default() -> Self {
         Self {
+            // Note: Default requires explicit configuration for production use.
+            // This localhost URL is only for local development/testing.
             base_url: "http://localhost:8080".to_string(),
             api_key_header: Some("X-API-Key".to_string()),
             api_key: None,

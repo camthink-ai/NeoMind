@@ -121,7 +121,7 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NeoTalk - Static Assets Not Available</title>
+    <title>NeoMind - Static Assets Not Available</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                max-width: 600px; margin: 100px auto; padding: 20px; line-height: 1.6; }
@@ -131,7 +131,7 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
     </style>
 </head>
 <body>
-    <h1>NeoTalk API Server</h1>
+    <h1>NeoMind API Server</h1>
     <div class="info">
         <p><strong>Static assets are not embedded.</strong></p>
         <p>To enable the web UI, rebuild with:</p>
@@ -156,7 +156,7 @@ pub async fn serve_index() -> impl IntoResponse {
                 .unwrap_or_else(|_| "<!DOCTYPE html><html><body>Error loading app</body></html>".to_string());
             ([(header::CONTENT_TYPE, "text/html")], html)
         })
-        .unwrap_or_else(|| ([(header::CONTENT_TYPE, "text/html")], "<!DOCTYPE html><html><body>NeoTalk UI not found. Please run: cd web && npm run build</body></html>"))
+        .unwrap_or_else(|| ([(header::CONTENT_TYPE, "text/html")], "<!DOCTYPE html><html><body>NeoMind UI not found. Please run: cd web && npm run build</body></html>"))
         .into_response()
 }
 
@@ -167,7 +167,7 @@ pub async fn serve_index() -> impl IntoResponse {
 <!DOCTYPE html>
 <html>
 <head>
-    <title>NeoTalk</title>
+    <title>NeoMind</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
                max-width: 600px; margin: 100px auto; padding: 20px; line-height: 1.6; }
@@ -177,7 +177,7 @@ pub async fn serve_index() -> impl IntoResponse {
     </style>
 </head>
 <body>
-    <h1>NeoTalk API Server</h1>
+    <h1>NeoMind API Server</h1>
     <div class="info">
         <p><strong>Static assets are not embedded.</strong></p>
         <p>To enable the web UI, rebuild with:</p>

@@ -1,11 +1,11 @@
 #!/bin/bash
-# Comprehensive Model Comparison Test for NeoTalk
+# Comprehensive Model Comparison Test for NeoMind
 
 set -e
 
 API_URL="http://127.0.0.1:3000"
-API_TOKEN="ntk_6a814fc1840f40e8b1d3edb74ed527c0"
-RESULTS_DIR="/tmp/neotalk_model_tests"
+API_TOKEN="nmk_6a814fc1840f40e8b1d3edb74ed527c0"
+RESULTS_DIR="/tmp/neomind_model_tests"
 mkdir -p "$RESULTS_DIR"
 
 log() { echo "[$(date '+%H:%M:%S')] $1"; }

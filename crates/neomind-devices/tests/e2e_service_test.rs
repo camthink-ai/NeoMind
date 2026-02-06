@@ -112,6 +112,10 @@ impl DeviceAdapter for TestAdapter {
     async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 #[test]
@@ -156,9 +160,16 @@ async fn test_e2e_device_registration_and_command() {
                 max: Some(3600.0),
                 default_value: None,
                 allowed_values: vec![],
+                required: true,
+                visible_when: None,
+                group: None,
+                help_text: String::new(),
+                validation: vec![],
             }],
+            fixed_values: Default::default(),
             samples: vec![],
             llm_hints: String::new(),
+            parameter_groups: vec![],
         });
 
     service.register_template(template.clone()).await.unwrap();

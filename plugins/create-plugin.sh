@@ -1,5 +1,5 @@
 #!/bin/bash
-# NeoTalk Plugin Scaffold Generator
+# NeoMind Plugin Scaffold Generator
 #
 # Usage: ./create-plugin.sh <plugin-name> <plugin-type>
 #
@@ -21,7 +21,7 @@ PLUGIN_DESCRIPTION=""
 
 # 打印帮助信息
 show_help() {
-    echo "NeoTalk Plugin Scaffold Generator"
+    echo "NeoMind Plugin Scaffold Generator"
     echo ""
     echo "Usage: $0 <plugin-name> [plugin-type] [options]"
     echo ""
@@ -40,7 +40,7 @@ show_help() {
     echo "Examples:"
     echo "  $0 my-greeting-tool"
     echo "  $0 my-storage-plugin storage_backend --author 'Your Name'"
-    echo "  $0 mqtt-bridge device_adapter --desc 'MQTT to NeoTalk bridge'"
+    echo "  $0 mqtt-bridge device_adapter --desc 'MQTT to NeoMind bridge'"
 }
 
 # 解析参数
@@ -103,10 +103,10 @@ fi
 PLUGIN_STRUCT_NAME="$(echo "$PLUGIN_NAME" | sed -r 's/(^|-)(\w)/\U\2/g')"
 PLUGIN_DISPLAY_NAME="$(echo "$PLUGIN_NAME" | sed 's/-/ /g' | sed -E 's/\b(.)/\u\1/g')"
 if [[ -z "$PLUGIN_AUTHOR" ]]; then
-    PLUGIN_AUTHOR="$(git config user.name 2>/dev/null || echo "NeoTalk Developer")"
+    PLUGIN_AUTHOR="$(git config user.name 2>/dev/null || echo "NeoMind Developer")"
 fi
 if [[ -z "$PLUGIN_DESCRIPTION" ]]; then
-    PLUGIN_DESCRIPTION="A $PLUGIN_TYPE plugin for NeoTalk"
+    PLUGIN_DESCRIPTION="A $PLUGIN_TYPE plugin for NeoMind"
 fi
 
 # 创建插件目录
@@ -122,7 +122,7 @@ if [[ -d "$PLUGIN_DIR" ]]; then
     rm -rf "$PLUGIN_DIR"
 fi
 
-echo -e "${GREEN}Creating NeoTalk plugin: $PLUGIN_NAME${NC}"
+echo -e "${GREEN}Creating NeoMind plugin: $PLUGIN_NAME${NC}"
 echo -e "  Type: $PLUGIN_TYPE"
 echo -e "  Struct: $PLUGIN_STRUCT_NAME"
 echo -e "  Author: $PLUGIN_AUTHOR"
@@ -166,11 +166,11 @@ EOF
 
 # 生成源代码
 cat > "$PLUGIN_DIR/src/lib.rs" << EOF
-//! $PLUGIN_DISPLAY_NAME for NeoTalk
+//! $PLUGIN_DISPLAY_NAME for NeoMind
 //!
 //! $PLUGIN_DESCRIPTION
 
-use edge_ai_core::plugin::native::{NEOTALK_PLUGIN_API_VERSION, NativePluginDescriptor};
+use edge_ai_core::plugin::native::{NEOMIND_PLUGIN_API_VERSION, NativePluginDescriptor};
 use edge_ai_core::plugin::{Plugin, PluginMetadata, PluginError};
 use serde_json::Value;
 
@@ -248,12 +248,12 @@ impl Plugin for $PLUGIN_STRUCT_NAME {
 // ============================================================================
 
 #[no_mangle]
-pub extern "C" fn neotalk_plugin_create() -> *mut $PLUGIN_STRUCT_NAME {
+pub extern "C" fn neomind_plugin_create() -> *mut $PLUGIN_STRUCT_NAME {
     Box::into_raw(Box::new($PLUGIN_STRUCT_NAME::new()))
 }
 
 #[no_mangle]
-pub extern "C" fn neotalk_plugin_destroy(plugin: *mut $PLUGIN_STRUCT_NAME) {
+pub extern "C" fn neomind_plugin_destroy(plugin: *mut $PLUGIN_STRUCT_NAME) {
     if !plugin.is_null() {
         unsafe { let _ = Box::from_raw(plugin); }
     }
@@ -270,8 +270,8 @@ const PLUGIN_DESC: &str = "$PLUGIN_DESCRIPTION\0";
 const REQUIRED_VERSION: &str = ">=0.1.0\0";
 
 #[no_mangle]
-pub static neotalk_plugin_descriptor: NativePluginDescriptor = NativePluginDescriptor {
-    api_version: NEOTALK_PLUGIN_API_VERSION,
+pub static neomind_plugin_descriptor: NativePluginDescriptor = NativePluginDescriptor {
+    api_version: NEOMIND_PLUGIN_API_VERSION,
     id: PLUGIN_ID.as_ptr(),
     id_len: PLUGIN_ID.len() - 1,
     name: PLUGIN_NAME.as_ptr(),
@@ -282,8 +282,8 @@ pub static neotalk_plugin_descriptor: NativePluginDescriptor = NativePluginDescr
     description_len: PLUGIN_DESC.len() - 1,
     required_version: REQUIRED_VERSION.as_ptr(),
     required_version_len: REQUIRED_VERSION.len() - 1,
-    create: neotalk_plugin_create as *const (),
-    destroy: neotalk_plugin_destroy as *const () -> *const (),
+    create: neomind_plugin_create as *const (),
+    destroy: neomind_plugin_destroy as *const () -> *const (),
 };
 
 // ============================================================================
@@ -329,7 +329,7 @@ cargo test
 
 ## Usage
 
-Load the plugin via NeoTalk API:
+Load the plugin via NeoMind API:
 
 \`\`\`bash
 curl -X POST http://localhost:3000/api/plugins \\\\

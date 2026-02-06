@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use super::staged::{IntentCategory, IntentClassifier};
 use super::tool_parser::parse_tool_calls;
 use super::types::{AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, ToolCall};
-use crate::error::{NeoTalkError, Result};
+use crate::error::{NeoMindError, Result};
 use crate::llm::LlmInterface;
 
 // Type aliases to reduce complexity
@@ -1242,7 +1242,7 @@ pub async fn process_stream_events_with_safeguards(
             .await
     };
 
-    let stream = stream_result.map_err(|e| NeoTalkError::Llm(e.to_string()))?;
+    let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
     Ok(Box::pin(async_stream::stream! {
         let mut stream = stream;
@@ -1855,7 +1855,7 @@ pub async fn process_stream_events_with_safeguards(
                 } else {
                     AgentMessage::assistant_with_tools(&response_to_save, tool_calls_with_results.clone())
                 };
-                eprintln!("[streaming] Saving initial assistant message with {} tool_calls", initial_msg.tool_calls.as_ref().map_or(0, |c| c.len()));
+                tracing::debug!("[streaming] Saving initial assistant message with {} tool_calls", initial_msg.tool_calls.as_ref().map_or(0, |c| c.len()));
                 internal_state.write().await.push_message(initial_msg);
 
                 // Add tool result messages to history
@@ -2131,7 +2131,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         .chat_stream_multimodal_with_history(multimodal_user_msg, &history_for_llm)
         .await;
 
-    let stream = stream_result.map_err(|e| NeoTalkError::Llm(e.to_string()))?;
+    let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
     // Check if images are present (before moving images)
     let has_images = !images.is_empty();
@@ -2728,7 +2728,7 @@ mod tests {
     async fn test_pure_content_stream() {
         let chunks: Vec<TestResult<(String, bool)>> = vec![
             Ok(("你好，我是".to_string(), false)),
-            Ok(("NeoTalk助手".to_string(), false)),
+            Ok(("NeoMind助手".to_string(), false)),
             Ok(("。".to_string(), false)),
         ];
 
@@ -2742,7 +2742,7 @@ mod tests {
             }
         }
 
-        assert_eq!(full_content, "你好，我是NeoTalk助手。");
+        assert_eq!(full_content, "你好，我是NeoMind助手。");
         println!("✓ Pure content stream test passed: {}", full_content);
     }
 

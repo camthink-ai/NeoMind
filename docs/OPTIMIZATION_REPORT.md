@@ -1,8 +1,8 @@
-# NeoTalk 性能优化报告
+# NeoMind 性能优化报告
 
 ## 执行摘要
 
-本报告记录了 NeoTalk 项目的性能优化实施情况。优化工作于 2026-01-31 开始执行，主要针对前端渲染性能、后端模块化、LLM 连接池和事件总线优先级队列等方面。
+本报告记录了 NeoMind 项目的性能优化实施情况。优化工作于 2026-01-31 开始执行，主要针对前端渲染性能、后端模块化、LLM 连接池和事件总线优先级队列等方面。
 
 ## 优化目标
 
@@ -248,4 +248,4 @@ pub struct PriorityEventBus {
 
 **报告日期**: 2026-01-31
 **报告人**: Claude Opus 4.5
-**项目**: NeoTalk - Edge AI Agent Platform
+**项目**: NeoMind - Edge AI Agent Platform

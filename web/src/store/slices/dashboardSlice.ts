@@ -174,7 +174,7 @@ export const createDashboardSlice: StateCreator<
   try {
     localStorage.removeItem('neomind_dashboards')
     localStorage.removeItem('neomind_current_dashboard_id')
-    console.log('[DashboardSlice] Cleared old localStorage dashboard data')
+    
   } catch (e) {
     // Ignore
   }
@@ -215,7 +215,7 @@ export const createDashboardSlice: StateCreator<
         const currentState = get()
         if (currentState._fetchId !== fetchId) {
           // A newer fetch request has been initiated, discard this result
-          console.log('[DashboardSlice] Discarding stale fetch result')
+          
           return
         }
 
@@ -252,7 +252,7 @@ export const createDashboardSlice: StateCreator<
           // Final check before updating state
           const finalState = get()
           if (finalState._fetchId !== fetchId) {
-            console.log('[DashboardSlice] Discarding stale fetch result (final check)')
+            
             return
           }
 
@@ -283,7 +283,7 @@ export const createDashboardSlice: StateCreator<
               currentDashboardId: dashboardToSet.id,
               currentDashboard: dashboardToSet,
             })
-            console.log('[DashboardSlice] Set current dashboard:', dashboardToSet.name, 'from', result.source)
+            
           }
         } else {
           // No data and no error - treat as empty
@@ -330,7 +330,7 @@ export const createDashboardSlice: StateCreator<
           const result = await storage.sync(localDashboard)
           if (result.data && result.data.id !== localDashboard.id) {
             // Server assigned a new ID - update state
-            console.log('[DashboardSlice] Dashboard ID changed from', localDashboard.id, 'to', result.data.id)
+            
             const { dashboards: currentDashboards } = get()
             const newDashboards = currentDashboards.map((d) =>
               d.id === localDashboard.id ? result.data : d
@@ -479,7 +479,7 @@ export const createDashboardSlice: StateCreator<
       storage.sync(updatedDashboard).then((result) => {
         if (result.data && result.data.id !== updatedDashboard.id) {
           // Server assigned a new ID - update state
-          console.log('[DashboardSlice] Dashboard ID changed from', updatedDashboard.id, 'to', result.data.id)
+          
           const { dashboards: currentDashboards, currentDashboardId: currId } = get()
           const newDashboards = currentDashboards.map((d) =>
             d.id === updatedDashboard.id ? result.data : d
@@ -531,7 +531,7 @@ export const createDashboardSlice: StateCreator<
         storage.sync(updatedDashboard).then((result) => {
           if (result.data && result.data.id !== updatedDashboard.id) {
             // Server assigned a new ID - update state
-            console.log('[DashboardSlice] Dashboard ID changed from', updatedDashboard.id, 'to', result.data.id)
+            
             const { dashboards: currentDashboards } = get()
             const newDashboards = currentDashboards.map((d) =>
               d.id === updatedDashboard.id ? result.data : d
@@ -577,7 +577,7 @@ export const createDashboardSlice: StateCreator<
       storage.sync(updatedDashboard).then((result) => {
         if (result.data && result.data.id !== updatedDashboard.id) {
           // Server assigned a new ID - update state
-          console.log('[DashboardSlice] Dashboard ID changed from', updatedDashboard.id, 'to', result.data.id)
+          
           const { dashboards: currentDashboards } = get()
           const newDashboards = currentDashboards.map((d) =>
             d.id === updatedDashboard.id ? result.data : d
@@ -628,7 +628,7 @@ export const createDashboardSlice: StateCreator<
       storage.sync(updatedDashboard).then((result) => {
         if (result.data && result.data.id !== updatedDashboard.id) {
           // Server assigned a new ID - update state
-          console.log('[DashboardSlice] Dashboard ID changed from', updatedDashboard.id, 'to', result.data.id)
+          
           const { dashboards: currentDashboards } = get()
           const newDashboards = currentDashboards.map((d) =>
             d.id === updatedDashboard.id ? result.data : d
@@ -679,7 +679,7 @@ export const createDashboardSlice: StateCreator<
       storage.sync(updatedDashboard).then((result) => {
         if (result.data && result.data.id !== updatedDashboard.id) {
           // Server assigned a new ID - update state
-          console.log('[DashboardSlice] Dashboard ID changed from', updatedDashboard.id, 'to', result.data.id)
+          
           const { dashboards: currentDashboards } = get()
           const newDashboards = currentDashboards.map((d) =>
             d.id === updatedDashboard.id ? result.data : d
@@ -774,7 +774,7 @@ export const createDashboardSlice: StateCreator<
       storage.sync(newDashboard).then((result) => {
         if (result.data && result.data.id !== newDashboard.id) {
           // Server assigned a new ID - update state
-          console.log('[DashboardSlice] Dashboard ID changed from', newDashboard.id, 'to', result.data.id)
+          
           const { dashboards: currentDashboards } = get()
           const newDashboards = currentDashboards.map((d) =>
             d.id === newDashboard.id ? result.data : d

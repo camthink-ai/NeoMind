@@ -1,11 +1,11 @@
 //! Edge AI Integrations Crate
 //!
-//! This crate provides a unified framework for integrating NeoTalk with external systems.
+//! This crate provides a unified framework for integrating NeoMind with external systems.
 //!
 //! ## Architecture
 //!
 //! ```text
-//! External System          Integration Framework          NeoTalk
+//! External System          Integration Framework          NeoMind
 //! ┌─────────────┐          ┌─────────────────────┐          ┌──────────┐
 //! │             │  Ingest  │                     │  Event   │          │
 //! │    MQTT     │──────────▶│  Integration        │──────────▶│ EventBus │

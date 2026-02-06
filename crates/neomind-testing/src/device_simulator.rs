@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
 
-use neomind_core::{MetricValue, NeoTalkEvent};
+use neomind_core::{MetricValue, NeoMindEvent};
 
 /// Device simulator that generates realistic telemetry data
 pub struct DeviceSimulator {
@@ -88,7 +88,7 @@ impl DeviceSimulator {
 
                         // Publish device metric events
                         for (metric_name, value) in telemetry.clone() {
-                            let event = NeoTalkEvent::DeviceMetric {
+                            let event = NeoMindEvent::DeviceMetric {
                                 device_id: device.id.clone(),
                                 metric: metric_name,
                                 value: MetricValue::Float(value),
@@ -126,7 +126,7 @@ impl DeviceSimulator {
         metric_name: &str,
         value: f64,
     ) -> anyhow::Result<()> {
-        let event = NeoTalkEvent::DeviceMetric {
+        let event = NeoMindEvent::DeviceMetric {
             device_id: device_id.to_string(),
             metric: metric_name.to_string(),
             value: MetricValue::Float(value),

@@ -5,7 +5,7 @@
  */
 
 import type { ChatSession } from '@/types'
-import type { NeoTalkStore } from '../'
+import type { NeoMindStore } from '../'
 
 // ============================================================================
 // Base Selectors
@@ -14,7 +14,7 @@ import type { NeoTalkStore } from '../'
 /**
  * Get all sessions
  */
-export const selectSessionsRaw = (state: NeoTalkStore): ChatSession[] => state.sessions
+export const selectSessionsRaw = (state: NeoMindStore): ChatSession[] => state.sessions
 
 // ============================================================================
 // Active Session Selectors
@@ -23,13 +23,13 @@ export const selectSessionsRaw = (state: NeoTalkStore): ChatSession[] => state.s
 /**
  * Get the currently active session
  */
-export const selectActiveSession = (state: NeoTalkStore): ChatSession | undefined =>
+export const selectActiveSession = (state: NeoMindStore): ChatSession | undefined =>
   state.sessions.find((s) => s.id === state.sessionId)
 
 /**
  * Get active session ID
  */
-export const selectActiveSessionId = (state: NeoTalkStore): string | null =>
+export const selectActiveSessionId = (state: NeoMindStore): string | null =>
   state.sessionId
 
 // ============================================================================
@@ -39,13 +39,13 @@ export const selectActiveSessionId = (state: NeoTalkStore): string | null =>
 /**
  * Get session by ID
  */
-export const selectSessionById = (state: NeoTalkStore, sessionId: string): ChatSession | undefined =>
+export const selectSessionById = (state: NeoMindStore, sessionId: string): ChatSession | undefined =>
   state.sessions.find((s) => s.id === sessionId)
 
 /**
  * Get sessions as a Map for O(1) lookups
  */
-export const selectSessionMap = (state: NeoTalkStore): Map<string, ChatSession> => {
+export const selectSessionMap = (state: NeoMindStore): Map<string, ChatSession> => {
   const map = new Map<string, ChatSession>()
   state.sessions.forEach(s => map.set(s.id, s))
   return map
@@ -58,7 +58,7 @@ export const selectSessionMap = (state: NeoTalkStore): Map<string, ChatSession> 
 /**
  * Get sessions sorted by last activity (most recent first)
  */
-export const selectSessionsByRecent = (state: NeoTalkStore): ChatSession[] => {
+export const selectSessionsByRecent = (state: NeoMindStore): ChatSession[] => {
   return [...state.sessions].sort((a, b) => {
     const aTime = a.updatedAt ?? a.createdAt
     const bTime = b.updatedAt ?? b.createdAt
@@ -69,14 +69,14 @@ export const selectSessionsByRecent = (state: NeoTalkStore): ChatSession[] => {
 /**
  * Get sessions sorted by creation date (newest first)
  */
-export const selectSessionsByNewest = (state: NeoTalkStore): ChatSession[] => {
+export const selectSessionsByNewest = (state: NeoMindStore): ChatSession[] => {
   return [...state.sessions].sort((a, b) => b.createdAt - a.createdAt)
 }
 
 /**
  * Get sessions sorted by name (alphabetical)
  */
-export const selectSessionsByName = (state: NeoTalkStore): ChatSession[] => {
+export const selectSessionsByName = (state: NeoMindStore): ChatSession[] => {
   return [...state.sessions].sort((a, b) =>
     (a.title ?? 'Untitled').localeCompare(b.title ?? 'Untitled')
   )
@@ -89,13 +89,13 @@ export const selectSessionsByName = (state: NeoTalkStore): ChatSession[] => {
 /**
  * Get session count
  */
-export const selectSessionCount = (state: NeoTalkStore): number =>
+export const selectSessionCount = (state: NeoMindStore): number =>
   state.sessions.length
 
 /**
  * Get sessions grouped by date (today, this week, this month, older)
  */
-export const selectSessionsGroupedByDate = (state: NeoTalkStore) => {
+export const selectSessionsGroupedByDate = (state: NeoMindStore) => {
   const now = Date.now()
   const today = now - (24 * 60 * 60 * 1000)
   const thisWeek = now - (7 * 24 * 60 * 60 * 1000)
@@ -127,7 +127,7 @@ export const selectSessionsGroupedByDate = (state: NeoTalkStore) => {
 /**
  * Get session summary statistics
  */
-export const selectSessionsSummary = (state: NeoTalkStore) => {
+export const selectSessionsSummary = (state: NeoMindStore) => {
   const totalMessages = state.sessions.reduce((sum, s) => sum + (s.messageCount ?? 0), 0)
   const avgMessagesPerSession = state.sessions.length > 0
     ? totalMessages / state.sessions.length
@@ -148,7 +148,7 @@ export const selectSessionsSummary = (state: NeoTalkStore) => {
 /**
  * Get sessions containing a search term in title or preview
  */
-export const selectSessionsBySearchTerm = (state: NeoTalkStore, searchTerm: string): ChatSession[] => {
+export const selectSessionsBySearchTerm = (state: NeoMindStore, searchTerm: string): ChatSession[] => {
   if (!searchTerm.trim()) {
     return state.sessions
   }
@@ -164,5 +164,5 @@ export const selectSessionsBySearchTerm = (state: NeoTalkStore, searchTerm: stri
 /**
  * Get sessions with message count filter
  */
-export const selectSessionsWithMessages = (state: NeoTalkStore, minMessages: number = 1): ChatSession[] =>
+export const selectSessionsWithMessages = (state: NeoMindStore, minMessages: number = 1): ChatSession[] =>
   state.sessions.filter((s) => (s.messageCount ?? 0) >= minMessages)

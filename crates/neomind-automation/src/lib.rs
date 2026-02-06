@@ -1,6 +1,6 @@
 //! Edge AI Unified Automation Crate
 //!
-//! This crate provides a unified abstraction for transforms and rules in the NeoTalk platform.
+//! This crate provides a unified abstraction for transforms and rules in the NeoMind platform.
 //!
 //! ## Features
 //!

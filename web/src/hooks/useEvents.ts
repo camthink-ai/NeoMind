@@ -73,8 +73,9 @@ export interface UseEventsResult {
 const DEFAULT_MAX_EVENTS = 100
 
 /**
- * useEvents - Hook for subscribing to real-time NeoTalk events
+ * useEvents - Hook for subscribing to real-time NeoMind events
  *
+
  * @example
  * ```tsx
  * function MyComponent() {

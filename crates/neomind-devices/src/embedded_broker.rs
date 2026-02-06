@@ -1,7 +1,7 @@
 //! Embedded MQTT Broker
 //!
 //! This module provides an embedded MQTT broker using rumqttd.
-//! The broker runs in the same process as NeoTalk, eliminating the need
+//! The broker runs in the same process as NeoMind, eliminating the need
 //! for an external MQTT broker installation.
 //!
 //! ## Configuration
@@ -37,7 +37,7 @@ pub enum EmbeddedBrokerError {
 
 /// Broker mode configuration (deprecated, kept for compatibility)
 ///
-/// Note: NeoTalk now always uses the embedded broker. External broker
+/// Note: NeoMind now always uses the embedded broker. External broker
 /// connections are managed via the data sources page (ExternalBroker).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -206,7 +206,7 @@ impl EmbeddedBroker {
         running.store(true, std::sync::atomic::Ordering::Relaxed);
 
         let _handle = thread::Builder::new()
-            .name("neotalk-broker".to_string())
+            .name("neomind-broker".to_string())
             .spawn(move || {
                 tracing::info!("Starting embedded MQTT broker on {}", addr);
 
@@ -239,7 +239,7 @@ impl EmbeddedBroker {
                 v4_config.insert(
                     "main".to_string(),
                     rumqttd::ServerSettings {
-                        name: "neotalk-broker".to_string(),
+                        name: "neomind-broker".to_string(),
                         listen: addr,
                         tls: None,
                         next_connection_delay_ms: 1,
@@ -343,7 +343,9 @@ mod tests {
             .with_port(1883)
             .with_listen("0.0.0.0");
 
-        let addr = config.socket_addr().unwrap();
+        let addr = config
+            .socket_addr()
+            .expect("Failed to get socket address from config");
         assert_eq!(addr.port(), 1883);
         assert_eq!(addr.ip(), std::net::Ipv4Addr::new(0, 0, 0, 0));
     }
@@ -355,8 +357,10 @@ mod tests {
 
     #[test]
     fn test_broker_mode_deserialize() {
-        let external: BrokerMode = serde_json::from_str("\"external\"").unwrap();
-        let embedded: BrokerMode = serde_json::from_str("\"embedded\"").unwrap();
+        let external: BrokerMode = serde_json::from_str("\"external\"")
+            .expect("Failed to deserialize external mode");
+        let embedded: BrokerMode = serde_json::from_str("\"embedded\"")
+            .expect("Failed to deserialize embedded mode");
 
         assert_eq!(external, BrokerMode::External);
         assert_eq!(embedded, BrokerMode::Embedded);

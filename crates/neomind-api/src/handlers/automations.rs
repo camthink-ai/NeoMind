@@ -860,9 +860,9 @@ pub async fn process_data_handler(
             if let Some(event_bus) = &state.event_bus {
                 for metric in &transform_result.metrics {
                     // Publish as a device metric event
-                    use neomind_core::NeoTalkEvent;
+                    use neomind_core::NeoMindEvent;
                     if let Ok(_event_json) = serde_json::to_value(metric) {
-                        let _ = event_bus.publish(NeoTalkEvent::DeviceMetric {
+                        let _ = event_bus.publish(NeoMindEvent::DeviceMetric {
                             device_id: metric.device_id.clone(),
                             metric: metric.metric.clone(),
                             value: neomind_core::MetricValue::Float(metric.value),

@@ -1,4 +1,4 @@
-// Integration Tests for NeoTalk
+// Integration Tests for NeoMind
 //
 // End-to-end tests for data flows:
 // - Device → Event → Rule → Action
@@ -22,7 +22,7 @@ use tokio::time::sleep;
 /// 3. Action is published to event bus
 #[tokio::test]
 async fn test_device_to_rule_action_flow() {
-    use neomind_core::event::{MetricValue, NeoTalkEvent};
+    use neomind_core::event::{MetricValue, NeoMindEvent};
     use neomind_core::eventbus::EventBus;
 
     // Create event bus
@@ -35,7 +35,7 @@ async fn test_device_to_rule_action_flow() {
     let mut action_rx = bus.filter().llm_events();
 
     // Publish a device metric event (temperature > 50)
-    bus.publish(NeoTalkEvent::DeviceMetric {
+    bus.publish(NeoMindEvent::DeviceMetric {
         device_id: "sensor_001".to_string(),
         metric: "temperature".to_string(),
         value: MetricValue::float(55.0),
@@ -62,7 +62,7 @@ async fn test_device_to_rule_action_flow() {
 /// 3. Tool executes device command
 #[tokio::test]
 async fn test_user_to_llm_to_device_flow() {
-    use neomind_core::event::NeoTalkEvent;
+    use neomind_core::event::NeoMindEvent;
     use neomind_core::eventbus::EventBus;
 
     let bus = EventBus::new();
@@ -70,15 +70,15 @@ async fn test_user_to_llm_to_device_flow() {
     // Subscribe to user messages
     let mut user_rx = bus
         .filter()
-        .custom(|e| matches!(e, NeoTalkEvent::UserMessage { .. }));
+        .custom(|e| matches!(e, NeoMindEvent::UserMessage { .. }));
 
     // Subscribe to tool execution events
     let mut tool_rx = bus
         .filter()
-        .custom(|e| matches!(e, NeoTalkEvent::ToolExecutionStart { .. }));
+        .custom(|e| matches!(e, NeoMindEvent::ToolExecutionStart { .. }));
 
     // Publish user message
-    bus.publish(NeoTalkEvent::UserMessage {
+    bus.publish(NeoMindEvent::UserMessage {
         content: "turn on the light".to_string(),
         session_id: "test_session".to_string(),
         timestamp: 0,
@@ -103,7 +103,7 @@ async fn test_user_to_llm_to_device_flow() {
 /// 4. Action is performed
 #[tokio::test]
 async fn test_device_to_workflow_action_flow() {
-    use neomind_core::event::{MetricValue, NeoTalkEvent};
+    use neomind_core::event::{MetricValue, NeoMindEvent};
     use neomind_core::eventbus::EventBus;
 
     let bus = EventBus::new();
@@ -112,7 +112,7 @@ async fn test_device_to_workflow_action_flow() {
     let mut wf_rx = bus.filter().workflow_events();
 
     // Publish device event that should trigger workflow
-    bus.publish(NeoTalkEvent::DeviceOnline {
+    bus.publish(NeoMindEvent::DeviceOnline {
         device_id: "sensor_001".to_string(),
         device_type: "motion_sensor".to_string(),
         timestamp: 0,
@@ -134,7 +134,7 @@ async fn test_device_to_workflow_action_flow() {
 /// 4. Decision is executed (if auto-approved)
 #[tokio::test]
 async fn test_llm_periodic_review_flow() {
-    use neomind_core::event::{NeoTalkEvent, ProposedAction};
+    use neomind_core::event::{NeoMindEvent, ProposedAction};
     use neomind_core::eventbus::EventBus;
 
     let bus = EventBus::new();
@@ -143,7 +143,7 @@ async fn test_llm_periodic_review_flow() {
     let mut llm_rx = bus.filter().llm_events();
 
     // Trigger periodic review
-    bus.publish(NeoTalkEvent::PeriodicReviewTriggered {
+    bus.publish(NeoMindEvent::PeriodicReviewTriggered {
         review_id: "review_hourly_001".to_string(),
         review_type: "hourly".to_string(),
         timestamp: 0,
@@ -153,7 +153,7 @@ async fn test_llm_periodic_review_flow() {
     // Simulate LLM proposing a decision
     let actions = vec![ProposedAction::notify_user("System is running optimally")];
 
-    bus.publish(NeoTalkEvent::LlmDecisionProposed {
+    bus.publish(NeoMindEvent::LlmDecisionProposed {
         decision_id: "decision_001".to_string(),
         title: "System Health Check".to_string(),
         description: "Routine hourly check passed".to_string(),
@@ -179,7 +179,7 @@ async fn test_llm_periodic_review_flow() {
 /// Verify that events are published with minimal latency
 #[tokio::test]
 async fn test_event_streaming_performance() {
-    use neomind_core::event::{MetricValue, NeoTalkEvent};
+    use neomind_core::event::{MetricValue, NeoMindEvent};
     use neomind_core::eventbus::EventBus;
     use std::time::Instant;
 
@@ -189,7 +189,7 @@ async fn test_event_streaming_performance() {
     // Measure time to publish and receive
     let start = Instant::now();
 
-    bus.publish(NeoTalkEvent::DeviceMetric {
+    bus.publish(NeoMindEvent::DeviceMetric {
         device_id: "test".to_string(),
         metric: "temp".to_string(),
         value: MetricValue::float(25.0),
@@ -216,7 +216,7 @@ async fn test_event_streaming_performance() {
 /// Verify broadcast functionality
 #[tokio::test]
 async fn test_broadcast_to_multiple_subscribers() {
-    use neomind_core::event::{MetricValue, NeoTalkEvent};
+    use neomind_core::event::{MetricValue, NeoMindEvent};
     use neomind_core::eventbus::EventBus;
 
     let bus = EventBus::new();
@@ -227,7 +227,7 @@ async fn test_broadcast_to_multiple_subscribers() {
     let mut rx3 = bus.subscribe();
 
     // Publish event
-    bus.publish(NeoTalkEvent::DeviceMetric {
+    bus.publish(NeoMindEvent::DeviceMetric {
         device_id: "test".to_string(),
         metric: "temp".to_string(),
         value: MetricValue::float(25.0),
@@ -253,7 +253,7 @@ async fn test_broadcast_to_multiple_subscribers() {
 /// Verify that filtered subscribers only receive matching events
 #[tokio::test]
 async fn test_filtered_subscriptions() {
-    use neomind_core::event::{MetricValue, NeoTalkEvent};
+    use neomind_core::event::{MetricValue, NeoMindEvent};
     use neomind_core::eventbus::EventBus;
 
     let bus = EventBus::new();
@@ -262,7 +262,7 @@ async fn test_filtered_subscriptions() {
     let mut rule_rx = bus.filter().rule_events();
 
     // Publish device event
-    bus.publish(NeoTalkEvent::DeviceMetric {
+    bus.publish(NeoMindEvent::DeviceMetric {
         device_id: "test".to_string(),
         metric: "temp".to_string(),
         value: MetricValue::float(25.0),
@@ -272,7 +272,7 @@ async fn test_filtered_subscriptions() {
     .await;
 
     // Publish rule event
-    bus.publish(NeoTalkEvent::RuleTriggered {
+    bus.publish(NeoMindEvent::RuleTriggered {
         rule_id: "rule1".to_string(),
         rule_name: "Test Rule".to_string(),
         trigger_value: 42.0,
@@ -297,7 +297,7 @@ async fn test_filtered_subscriptions() {
 /// Verify that event metadata (source, timestamp, etc.) is correctly attached
 #[tokio::test]
 async fn test_event_metadata_preserved() {
-    use neomind_core::event::{MetricValue, NeoTalkEvent};
+    use neomind_core::event::{MetricValue, NeoMindEvent};
     use neomind_core::eventbus::EventBus;
 
     let bus = EventBus::new();
@@ -305,7 +305,7 @@ async fn test_event_metadata_preserved() {
 
     // Publish event with source
     bus.publish_with_source(
-        NeoTalkEvent::DeviceMetric {
+        NeoMindEvent::DeviceMetric {
             device_id: "test".to_string(),
             metric: "temp".to_string(),
             value: MetricValue::float(25.0),

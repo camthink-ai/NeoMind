@@ -276,12 +276,10 @@ export function AgentEditorFullScreen({
             setScheduleType('event')
             // Parse event_filter to get event type and device
             const eventFilterStr = agent.schedule.event_filter
-            console.log('[AgentEditor] Loading event schedule, event_filter:', eventFilterStr)
-            if (eventFilterStr) {
+                        if (eventFilterStr) {
               try {
                 const eventFilter = JSON.parse(eventFilterStr)
-                console.log('[AgentEditor] Parsed eventFilter:', eventFilter)
-                // Map event_type to valid values
+                                // Map event_type to valid values
                 const validEventTypes = ['device.online', 'device.offline', 'device.metric', 'manual']
                 const eventTypeValue = eventFilter.event_type || 'manual'
                 if (validEventTypes.includes(eventTypeValue)) {
@@ -298,8 +296,7 @@ export function AgentEditorFullScreen({
               }
             } else {
               // No event_filter, set defaults
-              console.log('[AgentEditor] No event_filter found, using defaults')
-              setEventType('manual')
+                            setEventType('manual')
               setEventDeviceId('all')
             }
           } else {
@@ -334,8 +331,7 @@ export function AgentEditorFullScreen({
   // Load agent resources separately - this runs when devices are loaded
   useEffect(() => {
     if (open && agent?.resources && agent.resources.length > 0 && devices.length > 0) {
-      console.log('[AgentEditor] Loading resources with devices:', { resourceCount: agent.resources.length, deviceCount: devices.length })
-      const resourcesByDevice: Record<string, SelectedResource> = {}
+            const resourcesByDevice: Record<string, SelectedResource> = {}
       const configs: Record<string, DataCollectionConfig> = {}
       for (const resource of agent.resources) {
         const parts = resource.resource_id.split(':')
@@ -360,8 +356,7 @@ export function AgentEditorFullScreen({
 
         // Normalize resource_type to lowercase for comparison
         const resourceType = resource.resource_type?.toLowerCase()
-        console.log('[AgentEditor] Processing resource:', { resourceType, deviceId, resourceName })
-
+        
         if (resourceType === 'metric') {
           resourcesByDevice[deviceId].metrics.push({
             name: resourceName,
@@ -382,8 +377,7 @@ export function AgentEditorFullScreen({
           })
         }
       }
-      console.log('[AgentEditor] Loaded resources:', Object.values(resourcesByDevice))
-      setSelectedResources(Object.values(resourcesByDevice))
+            setSelectedResources(Object.values(resourcesByDevice))
       setMetricConfigs(configs)
       // Auto-select first device that has resources
       if (Object.keys(resourcesByDevice).length > 0) {

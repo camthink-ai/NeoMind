@@ -7,7 +7,7 @@
 
 ## 概述
 
-Integrations模块提供统一的框架，用于连接NeoTalk与外部系统（MQTT、HTTP、WebSocket等）。
+Integrations模块提供统一的框架，用于连接NeoMind与外部系统（MQTT、HTTP、WebSocket等）。
 
 ## 模块结构
 
@@ -179,14 +179,14 @@ pub struct ConnectionMetrics {
 
 ## Transformer
 
-数据转换器，用于在外部格式和NeoTalk格式之间转换。
+数据转换器，用于在外部格式和NeoMind格式之间转换。
 
 ```rust
 pub trait Transformer: Send + Sync {
-    /// 外部数据转NeoTalk事件
+    /// 外部数据转NeoMind事件
     fn to_event(&self, data: &[u8], ctx: &TransformationContext) -> Result<serde_json::Value>;
 
-    /// NeoTalk命令转外部格式
+    /// NeoMind命令转外部格式
     fn to_external(&self, command: &serde_json::Value, target_format: &str) -> Result<Vec<u8>>;
 
     /// 验证数据格式

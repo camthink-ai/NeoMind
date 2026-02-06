@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
-use neomind_core::event::NeoTalkEvent;
+use neomind_core::event::NeoMindEvent;
 use neomind_core::eventbus::EventBus;
 use neomind_tools::{ToolError, ToolOutput, ToolRegistry};
 
@@ -604,7 +604,7 @@ impl EventIntegratedToolRegistry {
 
     /// Publish tool execution start event.
     async fn publish_tool_start(&self, tool_name: &str, args: &Value, timestamp: i64) {
-        let event = NeoTalkEvent::ToolExecutionStart {
+        let event = NeoMindEvent::ToolExecutionStart {
             tool_name: tool_name.to_string(),
             arguments: args.clone(),
             session_id: None,
@@ -624,7 +624,7 @@ impl EventIntegratedToolRegistry {
         session_id: &str,
         timestamp: i64,
     ) {
-        let event = NeoTalkEvent::ToolExecutionStart {
+        let event = NeoMindEvent::ToolExecutionStart {
             tool_name: tool_name.to_string(),
             arguments: args.clone(),
             session_id: Some(session_id.to_string()),
@@ -645,7 +645,7 @@ impl EventIntegratedToolRegistry {
         duration_ms: u64,
         timestamp: i64,
     ) {
-        let event = NeoTalkEvent::ToolExecutionSuccess {
+        let event = NeoMindEvent::ToolExecutionSuccess {
             tool_name: tool_name.to_string(),
             arguments: args.clone(),
             result: result.clone(),
@@ -669,7 +669,7 @@ impl EventIntegratedToolRegistry {
         duration_ms: u64,
         timestamp: i64,
     ) {
-        let event = NeoTalkEvent::ToolExecutionSuccess {
+        let event = NeoMindEvent::ToolExecutionSuccess {
             tool_name: tool_name.to_string(),
             arguments: args.clone(),
             result: result.clone(),
@@ -692,7 +692,7 @@ impl EventIntegratedToolRegistry {
         duration_ms: u64,
         timestamp: i64,
     ) {
-        let event = NeoTalkEvent::ToolExecutionFailure {
+        let event = NeoMindEvent::ToolExecutionFailure {
             tool_name: tool_name.to_string(),
             arguments: args.clone(),
             error: error.to_string(),
@@ -717,7 +717,7 @@ impl EventIntegratedToolRegistry {
         duration_ms: u64,
         timestamp: i64,
     ) {
-        let event = NeoTalkEvent::ToolExecutionFailure {
+        let event = NeoMindEvent::ToolExecutionFailure {
             tool_name: tool_name.to_string(),
             arguments: args.clone(),
             error: error.to_string(),
@@ -773,17 +773,17 @@ impl ToolErrorExt for ToolError {
     }
 }
 
-// We need to add the tool execution events to NeoTalkEvent in core/src/event.rs
+// We need to add the tool execution events to NeoMindEvent in core/src/event.rs
 // For now, we'll define them here and they can be moved to core later
 
-/// Extension: Add tool execution events to NeoTalkEvent
+/// Extension: Add tool execution events to NeoMindEvent
 ///
-/// NOTE: These events should be added to the core NeoTalkEvent enum
+/// NOTE: These events should be added to the core NeoMindEvent enum
 /// For now, we use a wrapper that can publish to the event bus
 /// The actual event types would be:
 ///
 /// ```text
-/// // In NeoTalkEvent enum:
+/// // In NeoMindEvent enum:
 /// ToolExecutionStart {
 ///     tool_name: String,
 ///     arguments: Value,

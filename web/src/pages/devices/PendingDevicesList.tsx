@@ -209,7 +209,6 @@ export function PendingDevicesList({ onRefresh }: PendingDevicesListProps) {
     // Fetch suggested types
     try {
       const response = await api.suggestDeviceTypes(draft.device_id)
-      console.log('Suggested types response:', response)
       setSuggestedTypes(response.suggestions || [])
       // Auto-select exact match if found
       if (response.exact_match) {

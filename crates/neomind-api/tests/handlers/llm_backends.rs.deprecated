@@ -83,9 +83,7 @@ mod tests {
             api_key: None,
             temperature: 0.7,
             top_p: 0.9,
-            max_tokens: 4096,
             thinking_enabled: true,
-            capabilities: None,
         };
         let result = create_backend_handler(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -104,9 +102,7 @@ mod tests {
             api_key: None,
             temperature: 0.7,
             top_p: 0.9,
-            max_tokens: 4096,
             thinking_enabled: true,
-            capabilities: None,
         };
         let result = create_backend_handler(State(state), Json(req)).await;
         assert!(result.is_ok());

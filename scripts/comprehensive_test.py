@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NeoTalk Comprehensive Business Scenario Test"""
+"""NeoMind Comprehensive Business Scenario Test"""
 import json
 import time
 import requests
@@ -7,8 +7,8 @@ import subprocess
 from pathlib import Path
 
 API_URL = "http://127.0.0.1:3000"
-TOKEN = "ntk_6a814fc1840f40e8b1d3edb74ed527c0"
-RESULTS_DIR = Path("/tmp/neotalk_comprehensive_test")
+TOKEN = "nmk_6a814fc1840f40e8b1d3edb74ed527c0"
+RESULTS_DIR = Path("/tmp/neomind_comprehensive_test")
 RESULTS_DIR.mkdir(exist_ok=True)
 
 def log(msg):

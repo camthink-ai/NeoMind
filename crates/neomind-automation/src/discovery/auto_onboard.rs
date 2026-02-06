@@ -1127,7 +1127,7 @@ impl AutoOnboardManager {
         if let Ok(event_json) = serde_json::to_value(&event) {
             // Publish to event bus as a custom event
             // This will be forwarded to WebSocket clients
-            let event = neomind_core::NeoTalkEvent::Custom {
+            let event = neomind_core::NeoMindEvent::Custom {
                 event_type: "auto_onboard".to_string(),
                 data: event_json,
             };

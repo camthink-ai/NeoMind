@@ -1,7 +1,7 @@
 //! Extension type definitions.
 //!
 //! Extensions are dynamically loaded modules (.so/.dylib/.dll/.wasm) that extend
-//! NeoTalk's capabilities. They are distinct from user configurations like
+//! NeoMind's capabilities. They are distinct from user configurations like
 //! LLM backends, device connections, or alert channels.
 
 use serde::{Deserialize, Serialize};
@@ -174,8 +174,8 @@ pub struct ExtensionMetadata {
     pub license: Option<String>,
     /// File path of the extension
     pub file_path: Option<PathBuf>,
-    /// Required NeoTalk version
-    pub required_neotalk_version: Option<semver::Version>,
+    /// Required NeoMind version
+    pub required_neomind_version: Option<semver::Version>,
 }
 
 impl ExtensionMetadata {
@@ -196,7 +196,7 @@ impl ExtensionMetadata {
             homepage: None,
             license: None,
             file_path: None,
-            required_neotalk_version: None,
+            required_neomind_version: None,
         }
     }
 

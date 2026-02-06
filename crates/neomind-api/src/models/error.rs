@@ -138,8 +138,8 @@ impl From<std::io::Error> for ErrorResponse {
     }
 }
 
-impl From<neomind_agent::NeoTalkError> for ErrorResponse {
-    fn from(e: neomind_agent::NeoTalkError) -> Self {
+impl From<neomind_agent::NeoMindError> for ErrorResponse {
+    fn from(e: neomind_agent::NeoMindError) -> Self {
         Self::internal(format!("Agent error: {}", e))
     }
 }

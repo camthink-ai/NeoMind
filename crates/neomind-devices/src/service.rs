@@ -341,28 +341,28 @@ impl DeviceService {
         tokio::spawn(async move {
             let event_bus_for_publish = event_bus.clone();
             // Filter for device-related events
-            let filter = |event: &neomind_core::NeoTalkEvent| -> bool {
+            let filter = |event: &neomind_core::NeoMindEvent| -> bool {
                 matches!(
                     event,
-                    neomind_core::NeoTalkEvent::DeviceOnline { .. }
-                        | neomind_core::NeoTalkEvent::DeviceOffline { .. }
-                        | neomind_core::NeoTalkEvent::DeviceMetric { .. }
+                    neomind_core::NeoMindEvent::DeviceOnline { .. }
+                        | neomind_core::NeoMindEvent::DeviceOffline { .. }
+                        | neomind_core::NeoMindEvent::DeviceMetric { .. }
                 )
             };
             let mut rx = event_bus.subscribe_filtered(filter);
             while let Some((event, _)) = rx.recv().await {
                 match event {
-                    neomind_core::NeoTalkEvent::DeviceOnline { device_id, .. } => {
+                    neomind_core::NeoMindEvent::DeviceOnline { device_id, .. } => {
                         let mut status = device_status.write().await;
                         let entry = status.entry(device_id.clone()).or_default();
                         entry.update(ConnectionStatus::Connected);
                     }
-                    neomind_core::NeoTalkEvent::DeviceOffline { device_id, .. } => {
+                    neomind_core::NeoMindEvent::DeviceOffline { device_id, .. } => {
                         let mut status = device_status.write().await;
                         let entry = status.entry(device_id.clone()).or_default();
                         entry.update(ConnectionStatus::Disconnected);
                     }
-                    neomind_core::NeoTalkEvent::DeviceMetric {
+                    neomind_core::NeoMindEvent::DeviceMetric {
                         device_id,
                         metric,
                         value,
@@ -381,7 +381,7 @@ impl DeviceService {
                             // Publish DeviceOnline event so frontend can refresh
                             let device_type = "_unknown".to_string(); // Will be looked up by frontend
                             event_bus_for_publish.publish(
-                                neomind_core::NeoTalkEvent::DeviceOnline {
+                                neomind_core::NeoMindEvent::DeviceOnline {
                                     device_id: device_id.clone(),
                                     device_type,
                                     timestamp: chrono::Utc::now().timestamp(),
@@ -500,7 +500,7 @@ impl DeviceService {
 
                     // Publish offline event with reason
                     let _ = event_bus.publish(
-                        neomind_core::NeoTalkEvent::DeviceOffline {
+                        neomind_core::NeoMindEvent::DeviceOffline {
                             device_id: device_id.clone(),
                             reason: Some(format!("Heartbeat timeout: no activity for {} seconds", elapsed)),
                             timestamp: now,
@@ -714,7 +714,7 @@ impl DeviceService {
         tokio::spawn({
             let event_bus = self.event_bus.clone();
             async move {
-                let _ = event_bus.publish(neomind_core::NeoTalkEvent::Custom {
+                let _ = event_bus.publish(neomind_core::NeoMindEvent::Custom {
                     event_type: "DeviceTypeRegistered".to_string(),
                     data: serde_json::json!({
                         "device_type": device_type,
@@ -746,7 +746,7 @@ impl DeviceService {
             let event_bus = self.event_bus.clone();
             let device_type = device_type.to_string();
             async move {
-                let _ = event_bus.publish(neomind_core::NeoTalkEvent::Custom {
+                let _ = event_bus.publish(neomind_core::NeoMindEvent::Custom {
                     event_type: "DeviceTypeUnregistered".to_string(),
                     data: serde_json::json!({
                         "device_type": device_type,
@@ -811,7 +811,7 @@ impl DeviceService {
         tokio::spawn({
             let event_bus = self.event_bus.clone();
             async move {
-                let _ = event_bus.publish(neomind_core::NeoTalkEvent::Custom {
+                let _ = event_bus.publish(neomind_core::NeoMindEvent::Custom {
                     event_type: "DeviceRegistered".to_string(),
                     data: serde_json::json!({
                         "device_id": device_id,
@@ -904,7 +904,7 @@ impl DeviceService {
             let event_bus = self.event_bus.clone();
             let device_id = device_id.to_string();
             async move {
-                let _ = event_bus.publish(neomind_core::NeoTalkEvent::Custom {
+                let _ = event_bus.publish(neomind_core::NeoMindEvent::Custom {
                     event_type: "DeviceUnregistered".to_string(),
                     data: serde_json::json!({
                         "device_id": device_id,

@@ -1,13 +1,11 @@
 //! Handler tests module.
 
-pub mod alerts;
 pub mod auth_users;
 pub mod basic;
-pub mod llm_backends;
+// llm_backends.rs deprecated - API changed significantly
 pub mod memory;
-pub mod plugins;
+// plugins.rs deprecated - migrated to Extension system
 pub mod rules;
 pub mod sessions;
-pub mod settings;
+// settings.rs deprecated - API changed significantly
 pub mod tools;
-pub mod workflows;

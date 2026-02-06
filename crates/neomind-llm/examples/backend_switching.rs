@@ -12,7 +12,7 @@ use neomind_llm::backends::OllamaConfig;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== NeoTalk LLM Backend Switching Example ===\n");
+    println!("=== NeoMind LLM Backend Switching Example ===\n");
 
     // Example 1: Create Ollama config directly
     #[cfg(feature = "cloud")]
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             generation: neomind_llm::config::GenerationParams::default(),
         };
 
-        println!("   Backend type: {:?}\n", ollama_config.backend_type());
+        println!("   Backend ID: {:?}\n", ollama_config.backend_id());
     }
 
     #[cfg(not(feature = "cloud"))]
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match LlmConfig::from_env() {
         Ok(config) => {
-            println!("   Loaded config: {:?} backend\n", config.backend_type());
+            println!("   Loaded config: {:?} backend\n", config.backend_id());
         }
         Err(e) => {
             println!("   Failed to load from env: {}\n", e);

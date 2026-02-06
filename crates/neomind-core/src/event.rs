@@ -1,4 +1,4 @@
-//! Unified event types for NeoTalk event-driven architecture.
+//! Unified event types for NeoMind event-driven architecture.
 //!
 //! This module defines all events that flow through the event bus.
 //! All components communicate via these events for loose coupling.
@@ -6,14 +6,14 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Unified event type for NeoTalk.
+/// Unified event type for NeoMind.
 ///
 /// All system events are represented by this enum. Components publish
 /// events to the event bus and subscribe to specific event types they
 /// care about.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum NeoTalkEvent {
+pub enum NeoMindEvent {
     // ========== Device Events ==========
     /// Device came online
     DeviceOnline {
@@ -309,7 +309,7 @@ pub enum NeoTalkEvent {
     },
 }
 
-impl NeoTalkEvent {
+impl NeoMindEvent {
     /// Get the event type name as a string.
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -476,7 +476,7 @@ impl NeoTalkEvent {
     }
 }
 
-impl fmt::Display for NeoTalkEvent {
+impl fmt::Display for NeoMindEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.type_name())
     }
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_event_type_name() {
-        let event = NeoTalkEvent::DeviceOnline {
+        let event = NeoMindEvent::DeviceOnline {
             device_id: "test".to_string(),
             device_type: "sensor".to_string(),
             timestamp: 0,
@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn test_event_is_device_event() {
-        let event = NeoTalkEvent::DeviceMetric {
+        let event = NeoMindEvent::DeviceMetric {
             device_id: "test".to_string(),
             metric: "temp".to_string(),
             value: MetricValue::float(25.0),
@@ -786,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_event_serialization() {
-        let event = NeoTalkEvent::DeviceMetric {
+        let event = NeoMindEvent::DeviceMetric {
             device_id: "sensor1".to_string(),
             metric: "temperature".to_string(),
             value: MetricValue::float(23.5),
@@ -795,7 +795,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&event).unwrap();
-        let parsed: NeoTalkEvent = serde_json::from_str(&json).unwrap();
+        let parsed: NeoMindEvent = serde_json::from_str(&json).unwrap();
 
         assert!(parsed.is_device_event());
     }
@@ -804,7 +804,7 @@ mod tests {
     fn test_llm_decision_event() {
         let actions = vec![ProposedAction::notify_user("Test notification")];
 
-        let event = NeoTalkEvent::LlmDecisionProposed {
+        let event = NeoMindEvent::LlmDecisionProposed {
             decision_id: "dec-1".to_string(),
             title: "Test Decision".to_string(),
             description: "Test description".to_string(),

@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use neomind_core::{EventBus, MetricValue, NeoTalkEvent};
+use neomind_core::{EventBus, MetricValue, NeoMindEvent};
 use neomind_storage::{
     AgentStore, AgentSchedule, AgentStats, AgentStatus, AiAgent, AgentMemory,
     WorkingMemory, ShortTermMemory, LongTermMemory, ScheduleType,
@@ -285,7 +285,7 @@ impl LoadTestContext {
             let metrics = device.generate_metrics();
 
             for (metric_name, value) in metrics {
-                let event = NeoTalkEvent::DeviceMetric {
+                let event = NeoMindEvent::DeviceMetric {
                     device_id: device.id.clone(),
                     metric: metric_name,
                     value: MetricValue::Float(value),

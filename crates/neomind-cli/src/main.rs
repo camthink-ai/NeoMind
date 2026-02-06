@@ -1,4 +1,4 @@
-//! Command-line interface for Edge AI Agent.
+//! Command-line interface for NeoMind Edge AI Agent.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use neomind_core::config::{
     endpoints, env_vars, models, normalize_ollama_endpoint, normalize_openai_endpoint,
 };
 
-/// Edge AI Agent - Run LLMs on edge devices.
+/// NeoMind Edge AI Agent - Run LLMs on edge devices.
 #[derive(Parser, Debug)]
 #[command(name = "edge-ai")]
 #[command(author, version, about, long_about = None)]
@@ -125,7 +125,7 @@ async fn main() -> Result<()> {
     };
 
     // Check if JSON logging is requested (for production/container environments)
-    let json_logging = std::env::var("NEOTALK_LOG_JSON")
+    let json_logging = std::env::var("NEOMIND_LOG_JSON")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(false);
@@ -215,8 +215,8 @@ fn load_llm_backend_from_env() -> Result<LlmBackend> {
 
 /// Run a single prompt.
 async fn run_prompt(prompt: &str) -> Result<()> {
-    println!("Edge AI Agent - Prompt Mode");
-    println!("============================\n");
+    println!("NeoMind Edge AI - Prompt Mode");
+    println!("==============================\n");
     println!("Prompt: {}", prompt);
     println!("\nGenerating response...\n");
 
@@ -250,8 +250,8 @@ async fn run_prompt(prompt: &str) -> Result<()> {
 
 /// Run interactive chat mode.
 async fn run_chat(session_id: Option<String>) -> Result<()> {
-    println!("Edge AI Agent - Chat Mode");
-    println!("=========================\n");
+    println!("NeoMind Edge AI - Chat Mode");
+    println!("===========================\n");
 
     // Create session manager
     let session_manager = SessionManager::new()
@@ -684,8 +684,8 @@ async fn show_plugin_info(path: &PathBuf) -> Result<()> {
                     println!("License:         {}", license);
                 }
 
-                if let Some(req_version) = &metadata.required_neotalk_version {
-                    println!("Required:        NeoTalk {}", req_version);
+                if let Some(req_version) = &metadata.required_neomind_version {
+                    println!("Required:        NeoMind {}", req_version);
                 }
             }
             Err(e) => {

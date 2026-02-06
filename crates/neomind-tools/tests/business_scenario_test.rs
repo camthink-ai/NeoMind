@@ -462,7 +462,7 @@ async fn scenario_9_temperature_trend_analysis() {
 async fn print_scenario_summary() {
     println!("\n");
     println!("═══════════════════════════════════════════════════════════");
-    println!("              NeoTalk 核心工具业务场景测试集");
+    println!("              NeoMind 核心工具业务场景测试集");
     println!("═══════════════════════════════════════════════════════════");
     println!("\n已实现的核心工具:");
     println!("  1. device.discover  - 设备发现和探索");

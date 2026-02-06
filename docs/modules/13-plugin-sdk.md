@@ -1,13 +1,13 @@
 # Plugin SDK 模块
 
-**包名**: `neotalk_plugin_sdk`
+**包名**: `neomind_plugin_sdk`
 **版本**: 0.1.0
 **完成度**: 60%
 **用途**: 动态插件SDK
 
 ## 概述
 
-Plugin SDK提供了开发NeoTalk动态插件所需的宏、类型和工具。
+Plugin SDK提供了开发NeoMind动态插件所需的宏、类型和工具。
 
 ## 模块结构
 
@@ -38,8 +38,8 @@ pub struct PluginDescriptor {
     /// 插件类型
     pub plugin_type: PluginType,
 
-    /// NeoTalk版本要求
-    pub required_neotalk_version: Option<String>,
+    /// NeoMind版本要求
+    pub required_neomind_version: Option<String>,
 
     /// 能力标志
     pub capabilities: Vec<PluginCapability>,
@@ -137,9 +137,9 @@ export_plugin!(
 ```
 
 生成的符号：
-- `neotalk_plugin_descriptor` - 插件描述符（静态）
-- `neotalk_plugin_create` - 创建插件实例
-- `neotalk_plugin_destroy` - 销毁插件实例
+- `neomind_plugin_descriptor` - 插件描述符（静态）
+- `neomind_plugin_create` - 创建插件实例
+- `neomind_plugin_destroy` - 销毁插件实例
 
 ### plugin_impl! - 实现插件
 
@@ -202,14 +202,14 @@ pub struct CPluginDescriptor {
 ```rust
 /// 创建插件实例
 #[no_mangle]
-pub extern "C" fn neotalk_plugin_create(
+pub extern "C" fn neomind_plugin_create(
     config_json: *const u8,
     config_len: usize,
 ) -> *mut ();
 
 /// 销毁插件实例
 #[no_mangle]
-pub extern "C" fn neotalk_plugin_destroy(instance: *mut ());
+pub extern "C" fn neomind_plugin_destroy(instance: *mut ());
 ```
 
 ## 插件生命周期
@@ -283,7 +283,7 @@ GET    /api/extensions/types               # 扩展类型
 ### 最小插件
 
 ```rust
-use neotalk_plugin_sdk::prelude::*;
+use neomind_plugin_sdk::prelude::*;
 
 struct MyPlugin {
     name: String,
@@ -295,7 +295,7 @@ export_plugin!(MyPlugin, "hello", "1.0.0", PluginType::Tool);
 ### 带功能的插件
 
 ```rust
-use neotalk_plugin_sdk::prelude::*;
+use neomind_plugin_sdk::prelude::*;
 use serde_json::json;
 
 struct CalculatorPlugin;

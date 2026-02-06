@@ -2,10 +2,10 @@
 
 ## Overview
 
-A flexible widget-based dashboard for NeoTalk with **two layers of components**:
+A flexible widget-based dashboard for NeoMind with **two layers of components**:
 
 1. **Generic IoT Components** - Data-agnostic building blocks for any use case
-2. **Business Components** - Pre-configured components for NeoTalk entities (Agent, Device, Rule, etc.)
+2. **Business Components** - Pre-configured components for NeoMind entities (Agent, Device, Rule, etc.)
 
 ## Design Principles
 
@@ -92,9 +92,9 @@ Alert and status display.
 
 ---
 
-## Business Components - NeoTalk Specific
+## Business Components - NeoMind Specific
 
-Pre-configured components for NeoTalk entities. These are built on top of generic components with preset data sources and styling.
+Pre-configured components for NeoMind entities. These are built on top of generic components with preset data sources and styling.
 
 ### 🤖 AI Agent Components (Core Feature)
 
@@ -499,7 +499,7 @@ interface RuleTriggerLogConfig {
 | Show agent status | Business | Pre-configured, one-click setup |
 | Show device temperature | Generic or Business | Generic for custom format, Business for quick setup |
 | Custom data display | Generic | Flexibility to show any data |
-| Monitor system entities | Business | Optimized for NeoTalk entities |
+| Monitor system entities | Business | Optimized for NeoMind entities |
 | Build custom views | Generic | Mix and match for unique needs |
 
 ### Component Library UI
@@ -727,7 +727,7 @@ interface ButtonConfig {
 
 ## Data Source Templates
 
-Pre-configured data sources for common NeoTalk entities:
+Pre-configured data sources for common NeoMind entities:
 
 ```typescript
 const DataSourceTemplates = {
@@ -1119,7 +1119,7 @@ web/src/
 │       │   │       ├── BadgeCounter.tsx      # Number badge
 │       │   │       └── StatusPanel.tsx       # Status overview
 │       │
-│       │   └── business/             # NeoTalk business components (pre-configured)
+│       │   └── business/             # NeoMind business components (pre-configured)
 │       │       ├── agents/              # ⭐ AI Agent components
 │       │       │   ├── AgentStatusCard.tsx     # Agent overview with execute button
 │       │       │   ├── AgentActivityList.tsx   # Recent executions
@@ -1614,7 +1614,7 @@ export const ComponentRegistry = {
   // ... more generic components
 }
 
-// Business components (NeoTalk specific)
+// Business components (NeoMind specific)
 export const BusinessComponentRegistry = {
   // AI Agents ⭐ (highlighted as core feature)
   'agent-status-card': {

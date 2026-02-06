@@ -5,7 +5,7 @@
  */
 
 import type { Alert } from '@/types'
-import type { NeoTalkStore } from '../'
+import type { NeoMindStore } from '../'
 
 // Helper to extract timestamp number from Alert
 const getAlertTimestamp = (alert: Alert): number => {
@@ -30,7 +30,7 @@ const getAlertTimestamp = (alert: Alert): number => {
 /**
  * Get all alerts
  */
-export const selectAlertsRaw = (state: NeoTalkStore): Alert[] => state.alerts
+export const selectAlertsRaw = (state: NeoMindStore): Alert[] => state.alerts
 
 // ============================================================================
 // Status-Based Selectors
@@ -39,25 +39,25 @@ export const selectAlertsRaw = (state: NeoTalkStore): Alert[] => state.alerts
 /**
  * Get unacknowledged alerts
  */
-export const selectUnacknowledgedAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectUnacknowledgedAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => !a.acknowledged)
 
 /**
  * Get acknowledged alerts
  */
-export const selectAcknowledgedAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectAcknowledgedAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => a.acknowledged)
 
 /**
  * Get active (unresolved) alerts
  */
-export const selectActiveAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectActiveAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => a.status !== 'resolved')
 
 /**
  * Get resolved alerts
  */
-export const selectResolvedAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectResolvedAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => a.status === 'resolved')
 
 // ============================================================================
@@ -67,25 +67,25 @@ export const selectResolvedAlerts = (state: NeoTalkStore): Alert[] =>
 /**
  * Get critical alerts (highest priority)
  */
-export const selectCriticalAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectCriticalAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => a.severity === 'critical')
 
 /**
  * Get warning alerts
  */
-export const selectWarningAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectWarningAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => a.severity === 'warning')
 
 /**
  * Get info alerts
  */
-export const selectInfoAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectInfoAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => a.severity === 'info')
 
 /**
  * Get alerts by severity
  */
-export const selectAlertsBySeverity = (state: NeoTalkStore, severity: string): Alert[] =>
+export const selectAlertsBySeverity = (state: NeoMindStore, severity: string): Alert[] =>
   state.alerts.filter((a) => a.severity === severity)
 
 // ============================================================================
@@ -95,19 +95,19 @@ export const selectAlertsBySeverity = (state: NeoTalkStore, severity: string): A
 /**
  * Get unacknowledged critical alerts (highest priority for attention)
  */
-export const selectUnacknowledgedCriticalAlerts = (state: NeoTalkStore): Alert[] =>
+export const selectUnacknowledgedCriticalAlerts = (state: NeoMindStore): Alert[] =>
   state.alerts.filter((a) => !a.acknowledged && a.severity === 'critical')
 
 /**
  * Get unacknowledged alerts by severity
  */
-export const selectUnacknowledgedBySeverity = (state: NeoTalkStore, severity: string): Alert[] =>
+export const selectUnacknowledgedBySeverity = (state: NeoMindStore, severity: string): Alert[] =>
   state.alerts.filter((a) => !a.acknowledged && a.severity === severity)
 
 /**
  * Get active alerts by severity
  */
-export const selectActiveBySeverity = (state: NeoTalkStore, severity: string): Alert[] =>
+export const selectActiveBySeverity = (state: NeoMindStore, severity: string): Alert[] =>
   state.alerts.filter((a) => a.status !== 'resolved' && a.severity === severity)
 
 // ============================================================================
@@ -117,31 +117,31 @@ export const selectActiveBySeverity = (state: NeoTalkStore, severity: string): A
 /**
  * Get count of unacknowledged alerts
  */
-export const selectUnacknowledgedAlertCount = (state: NeoTalkStore): number =>
+export const selectUnacknowledgedAlertCount = (state: NeoMindStore): number =>
   state.alerts.filter((a) => !a.acknowledged).length
 
 /**
  * Get count of critical alerts
  */
-export const selectCriticalAlertCount = (state: NeoTalkStore): number =>
+export const selectCriticalAlertCount = (state: NeoMindStore): number =>
   state.alerts.filter((a) => a.severity === 'critical').length
 
 /**
  * Get count of active alerts
  */
-export const selectActiveAlertCount = (state: NeoTalkStore): number =>
+export const selectActiveAlertCount = (state: NeoMindStore): number =>
   state.alerts.filter((a) => a.status !== 'resolved').length
 
 /**
  * Get total alert count
  */
-export const selectTotalAlertCount = (state: NeoTalkStore): number =>
+export const selectTotalAlertCount = (state: NeoMindStore): number =>
   state.alerts.length
 
 /**
  * Get alert summary by severity
  */
-export const selectAlertSummaryBySeverity = (state: NeoTalkStore) => {
+export const selectAlertSummaryBySeverity = (state: NeoMindStore) => {
   const summary = {
     critical: 0,
     warning: 0,
@@ -165,7 +165,7 @@ export const selectAlertSummaryBySeverity = (state: NeoTalkStore) => {
 /**
  * Get alert summary by status and severity
  */
-export const selectAlertFullSummary = (state: NeoTalkStore) => {
+export const selectAlertFullSummary = (state: NeoMindStore) => {
   const unacknowledged = {
     critical: 0,
     warning: 0,
@@ -220,7 +220,7 @@ export const selectAlertFullSummary = (state: NeoTalkStore) => {
 /**
  * Get alerts sorted by severity (critical first)
  */
-export const selectAlertsBySeverityPriority = (state: NeoTalkStore): Alert[] => {
+export const selectAlertsBySeverityPriority = (state: NeoMindStore): Alert[] => {
   const severityOrder = { critical: 0, warning: 1, info: 2, emergency: -1 }
 
   return [...state.alerts].sort((a, b) => {
@@ -237,13 +237,13 @@ export const selectAlertsBySeverityPriority = (state: NeoTalkStore): Alert[] => 
 /**
  * Get alerts sorted by timestamp (newest first)
  */
-export const selectAlertsByNewest = (state: NeoTalkStore): Alert[] =>
+export const selectAlertsByNewest = (state: NeoMindStore): Alert[] =>
   [...state.alerts].sort((a, b) => getAlertTimestamp(b) - getAlertTimestamp(a))
 
 /**
  * Get alerts sorted by timestamp (oldest first)
  */
-export const selectAlertsByOldest = (state: NeoTalkStore): Alert[] =>
+export const selectAlertsByOldest = (state: NeoMindStore): Alert[] =>
   [...state.alerts].sort((a, b) => getAlertTimestamp(a) - getAlertTimestamp(b))
 
 // ============================================================================
@@ -253,7 +253,7 @@ export const selectAlertsByOldest = (state: NeoTalkStore): Alert[] =>
 /**
  * Get alerts as a Map for O(1) lookups by ID
  */
-export const selectAlertMap = (state: NeoTalkStore): Map<string, Alert> => {
+export const selectAlertMap = (state: NeoMindStore): Map<string, Alert> => {
   const map = new Map<string, Alert>()
   state.alerts.forEach(a => map.set(a.id, a))
   return map
@@ -262,5 +262,5 @@ export const selectAlertMap = (state: NeoTalkStore): Map<string, Alert> => {
 /**
  * Get alert by ID using the map
  */
-export const selectAlertById = (_state: NeoTalkStore, alertId: string, alertMap: Map<string, Alert>): Alert | undefined =>
+export const selectAlertById = (_state: NeoMindStore, alertId: string, alertMap: Map<string, Alert>): Alert | undefined =>
   alertMap.get(alertId)

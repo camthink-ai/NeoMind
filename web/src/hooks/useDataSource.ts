@@ -12,7 +12,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import type { DataSourceOrList, DataSource, TelemetryAggregate } from '@/types/dashboard'
 import { normalizeDataSource } from '@/types/dashboard'
 import type { Device } from '@/types'
-import type { NeoTalkStore } from '@/store'
+import type { NeoMindStore } from '@/store'
 import { useEvents } from '@/hooks/useEvents'
 import { useStore } from '@/store'
 import { toNumberArray, isEmpty, isValidNumber } from '@/design-system/utils/format'
@@ -856,7 +856,7 @@ export function useDataSource<T = unknown>(
   const initialSystemFetchDoneRef = useRef(false)
 
   // Zustand subscribe only passes (state), not (state, prevState). Keep previous state for comparison.
-  const prevStoreStateRef = useRef<{ devices: NeoTalkStore['devices'] } | null>(null)
+  const prevStoreStateRef = useRef<{ devices: NeoMindStore['devices'] } | null>(null)
 
   // Track processed event IDs to prevent duplicate processing
   const processedEventsRef = useRef<Set<string>>(new Set())
@@ -1169,7 +1169,7 @@ export function useDataSource<T = unknown>(
 
     let unsubscribed = false
     // Zustand subscribe only passes (state); we keep prev state in a ref for comparison
-    const unsubscribe = useStore.subscribe((state: NeoTalkStore) => {
+    const unsubscribe = useStore.subscribe((state: NeoMindStore) => {
       if (unsubscribed) return
 
       const prev = prevStoreStateRef.current

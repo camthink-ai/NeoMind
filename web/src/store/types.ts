@@ -170,20 +170,3 @@ export function getPageTitle(page: PageName, t: (key: string) => string): string
   return titles[page] || page
 }
 
-/**
- * @deprecated Use getPageTitle(page, t) instead for internationalization support.
- * This constant is kept for backward compatibility but will be removed in future versions.
- */
-export const pageTitles: Record<PageName, string> = {
-  dashboard: '对话',
-  'visual-dashboard': '可视化仪表板',
-  devices: '设备',
-  alerts: '告警',
-  automation: '自动化',
-  commands: '命令',
-  decisions: 'AI决策',
-  plugins: '插件',
-  settings: '设置',
-  events: '事件中心',
-  agents: 'AI 智能体',
-}

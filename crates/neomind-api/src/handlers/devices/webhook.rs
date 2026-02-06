@@ -237,10 +237,10 @@ async fn publish_metric_event(
     timestamp: i64,
     quality: Option<f32>,
 ) {
-    use neomind_core::NeoTalkEvent;
+    use neomind_core::NeoMindEvent;
     use neomind_devices::mdl::MetricValue as DevicesMetricValue;
 
-    let event = NeoTalkEvent::DeviceMetric {
+    let event = NeoMindEvent::DeviceMetric {
         device_id: device_id.to_string(),
         metric: metric.to_string(),
         value: value.clone(),
@@ -293,7 +293,7 @@ async fn process_device_transforms(
     raw_data: &Value,
     _timestamp: i64,
 ) {
-    use neomind_core::NeoTalkEvent;
+    use neomind_core::NeoMindEvent;
 
     let Some(transform_engine) = &state.transform_engine else {
         debug!("TransformEngine not available, skipping transform processing");
@@ -343,7 +343,7 @@ async fn process_device_transforms(
                 for metric in &transform_result.metrics {
                     if let Some(ref event_bus) = state.event_bus {
                         event_bus
-                            .publish(NeoTalkEvent::DeviceMetric {
+                            .publish(NeoMindEvent::DeviceMetric {
                                 device_id: metric.device_id.clone(),
                                 metric: metric.metric.clone(),
                                 value: neomind_core::event::MetricValue::Float(metric.value),
@@ -518,7 +518,7 @@ pub async fn get_webhook_url_handler(
     }
 
     // Get server URL from config or use default
-    let server_url = std::env::var("NEOTALK_SERVER_URL")
+    let server_url = std::env::var("NEOMIND_SERVER_URL")
         .unwrap_or_else(|_| "http://localhost:3000".to_string());
 
     ok(serde_json::json!({

@@ -5,7 +5,7 @@
 
 use crate::dsl::{RuleAction, RuleError};
 use crate::engine::{CompiledRule, RuleExecutionResult, RuleId, ValueProvider};
-use neomind_core::{EventBus, MetricValue as CoreMetricValue, NeoTalkEvent};
+use neomind_core::{EventBus, MetricValue as CoreMetricValue, NeoMindEvent};
 use neomind_devices::{DeviceService, MetricValue as DeviceMetricValue};
 use std::any::Any;
 use std::collections::HashMap;
@@ -564,7 +564,7 @@ impl DeviceActionExecutor {
                             // Publish success event
                             let _ = self
                                 .event_bus
-                                .publish(NeoTalkEvent::DeviceCommandResult {
+                                .publish(NeoMindEvent::DeviceCommandResult {
                                     device_id: target.to_string(),
                                     command: command.clone(),
                                     success: true,
@@ -592,7 +592,7 @@ impl DeviceActionExecutor {
                             // Publish failure event
                             let _ = self
                                 .event_bus
-                                .publish(NeoTalkEvent::DeviceCommandResult {
+                                .publish(NeoMindEvent::DeviceCommandResult {
                                     device_id: target.to_string(),
                                     command: command.clone(),
                                     success: false,
@@ -652,7 +652,7 @@ impl DeviceActionExecutor {
                 // Publish alert event
                 let _ = self
                     .event_bus
-                    .publish(NeoTalkEvent::AlertCreated {
+                    .publish(NeoMindEvent::AlertCreated {
                         alert_id: uuid::Uuid::new_v4().to_string(),
                         title: "Rule Notification".to_string(),
                         severity: "info".to_string(),
@@ -866,7 +866,7 @@ impl DeviceIntegratedRuleEngine {
         // Publish rule executed event
         let _ = self
             .event_bus
-            .publish(NeoTalkEvent::RuleExecuted {
+            .publish(NeoMindEvent::RuleExecuted {
                 rule_id: rule.id.to_string(),
                 rule_name: rule.name.clone(),
                 success: result.success,

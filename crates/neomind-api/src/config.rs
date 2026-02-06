@@ -1,4 +1,4 @@
-//! Unified configuration loading for NeoTalk web server.
+//! Unified configuration loading for NeoMind web server.
 //!
 //! Supports multiple configuration sources with priority:
 //! 1. **redb database** (persistent settings from Web UI - highest priority)

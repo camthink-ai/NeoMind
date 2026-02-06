@@ -1,4 +1,4 @@
-//! Message system for NeoTalk.
+//! Message system for NeoMind.
 //!
 //! Messages are notifications that can be alerts, system messages,
 //! or business events.

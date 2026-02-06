@@ -1,7 +1,7 @@
 //! Error types for the tools crate.
 
 // Re-export the core error type
-pub use neomind_core::error::Error as NeoTalkError;
+pub use neomind_core::error::Error as NeoMindError;
 
 /// Tool error types.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -38,17 +38,17 @@ pub enum ToolError {
 /// Result type for tool operations.
 pub type Result<T> = std::result::Result<T, ToolError>;
 
-// Convert ToolError to NeoTalkError
-impl From<ToolError> for NeoTalkError {
+// Convert ToolError to NeoMindError
+impl From<ToolError> for NeoMindError {
     fn from(e: ToolError) -> Self {
         match e {
-            ToolError::NotFound(s) => NeoTalkError::NotFound(s),
-            ToolError::InvalidArguments(s) => NeoTalkError::Validation(s),
-            ToolError::Execution(s) => NeoTalkError::Tool(s),
-            ToolError::Serialization(s) => NeoTalkError::Serialization(s),
-            ToolError::PermissionDenied(s) => NeoTalkError::Unauthorized(s),
-            ToolError::Timeout => NeoTalkError::Timeout("Tool operation timed out".to_string()),
-            ToolError::Canceled => NeoTalkError::Internal("Operation canceled".to_string()),
+            ToolError::NotFound(s) => NeoMindError::NotFound(s),
+            ToolError::InvalidArguments(s) => NeoMindError::Validation(s),
+            ToolError::Execution(s) => NeoMindError::Tool(s),
+            ToolError::Serialization(s) => NeoMindError::Serialization(s),
+            ToolError::PermissionDenied(s) => NeoMindError::Unauthorized(s),
+            ToolError::Timeout => NeoMindError::Timeout("Tool operation timed out".to_string()),
+            ToolError::Canceled => NeoMindError::Internal("Operation canceled".to_string()),
         }
     }
 }
@@ -80,11 +80,11 @@ mod tests {
     #[test]
     fn test_tool_error_to_neo_talk_error() {
         let tool_err = ToolError::NotFound("my_tool".to_string());
-        let neo_err: NeoTalkError = tool_err.into();
-        assert!(matches!(neo_err, NeoTalkError::NotFound(_)));
+        let neo_err: NeoMindError = tool_err.into();
+        assert!(matches!(neo_err, NeoMindError::NotFound(_)));
 
         let args_err = ToolError::InvalidArguments("bad args".to_string());
-        let neo_err: NeoTalkError = args_err.into();
-        assert!(matches!(neo_err, NeoTalkError::Validation(_)));
+        let neo_err: NeoMindError = args_err.into();
+        assert!(matches!(neo_err, NeoMindError::Validation(_)));
     }
 }

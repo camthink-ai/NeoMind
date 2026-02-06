@@ -14,7 +14,7 @@ use tracing::warn;
 // Import Engine trait for base64 operations
 use base64::Engine;
 
-const ENCRYPTION_KEY_ENV: &str = "NEOTALK_ENCRYPTION_KEY";
+const ENCRYPTION_KEY_ENV: &str = "NEOMIND_ENCRYPTION_KEY";
 const DEFAULT_ITERATIONS: u32 = 100_000;
 
 /// Error type for cryptographic operations.
@@ -62,7 +62,7 @@ impl CryptoService {
 
     /// Create a CryptoService from environment variable.
     ///
-    /// Looks for `NEOTALK_ENCRYPTION_KEY` environment variable.
+    /// Looks for `NEOMIND_ENCRYPTION_KEY` environment variable.
     /// If not found, generates a random key (WARNING: not persistent across restarts).
     pub fn from_env_or_generate() -> Self {
         if let Ok(key_str) = env::var(ENCRYPTION_KEY_ENV) {
@@ -99,7 +99,7 @@ impl CryptoService {
         }
 
         // Use PBKDF2 to derive a key from shorter input
-        let salt = b"NeoTalk-API-Key-Salt-2024";
+        let salt = b"NeoMind-API-Key-Salt-2024";
         let mut key = [0u8; 32];
         pbkdf2::pbkdf2_hmac::<Sha256>(input, salt, DEFAULT_ITERATIONS, &mut key);
         key
@@ -166,7 +166,7 @@ impl CryptoService {
         use sha2::Digest;
         let mut hasher = sha2::Sha256::new();
         hasher.update(api_key.as_bytes());
-        hasher.update(b"NeoTalk-API-Key-v1");
+        hasher.update(b"NeoMind-API-Key-v1");
         format!("{:x}", hasher.finalize())
     }
 }
@@ -198,9 +198,9 @@ mod tests {
     fn test_hash_api_key() {
         let crypto =
             CryptoService::new(b"this_is_a_32_byte_master_key_for_testing_purposes").unwrap();
-        let key1 = "ntk_1234567890abcdef";
-        let key2 = "ntk_1234567890abcdef";
-        let key3 = "ntk_different_key";
+        let key1 = "nmk_1234567890abcdef";
+        let key2 = "nmk_1234567890abcdef";
+        let key3 = "nmk_different_key";
 
         assert_eq!(crypto.hash_api_key(key1), crypto.hash_api_key(key2));
         assert_ne!(crypto.hash_api_key(key1), crypto.hash_api_key(key3));

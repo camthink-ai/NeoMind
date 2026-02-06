@@ -112,7 +112,7 @@ pub struct AgentExecutionSummary {
 
 impl AiAgentManager {
     /// Create a new AI Agent manager.
-    pub async fn new(config: AgentExecutorConfig) -> Result<Arc<Self>, crate::error::NeoTalkError> {
+    pub async fn new(config: AgentExecutorConfig) -> Result<Arc<Self>, crate::error::NeoMindError> {
         let executor = Arc::new(AgentExecutor::new(config.clone()).await?);
         let scheduler = Arc::new(AgentScheduler::new(SchedulerConfig::default()).await?);
 
@@ -127,7 +127,7 @@ impl AiAgentManager {
     pub async fn create_agent(
         &self,
         request: CreateAgentRequest,
-    ) -> Result<String, crate::error::NeoTalkError> {
+    ) -> Result<String, crate::error::NeoMindError> {
         // Parse user intent
         let intent = self.executor.parse_intent(&request.user_prompt).await?;
 
@@ -173,7 +173,7 @@ impl AiAgentManager {
     pub async fn execute_agent_now(
         &self,
         agent_id: &str,
-    ) -> Result<AgentExecutionSummary, crate::error::NeoTalkError> {
+    ) -> Result<AgentExecutionSummary, crate::error::NeoMindError> {
         let start_time = std::time::Instant::now();
         let timestamp = chrono::Utc::now().timestamp();
 
@@ -183,7 +183,7 @@ impl AiAgentManager {
             .store()
             .get_agent(agent_id)
             .await?
-            .ok_or_else(|| crate::NeoTalkError::NotFound(format!("Agent: {}", agent_id)))?;
+            .ok_or_else(|| crate::NeoMindError::NotFound(format!("Agent: {}", agent_id)))?;
 
         // Update status to executing
         self.executor
@@ -240,7 +240,7 @@ impl AiAgentManager {
     }
 
     /// Get an agent by ID.
-    pub async fn get_agent(&self, id: &str) -> Result<Option<AiAgent>, crate::error::NeoTalkError> {
+    pub async fn get_agent(&self, id: &str) -> Result<Option<AiAgent>, crate::error::NeoMindError> {
         Ok(self.executor.store().get_agent(id).await?)
     }
 
@@ -248,7 +248,7 @@ impl AiAgentManager {
     pub async fn list_agents(
         &self,
         filter: neomind_storage::AgentFilter,
-    ) -> Result<Vec<AiAgent>, crate::error::NeoTalkError> {
+    ) -> Result<Vec<AiAgent>, crate::error::NeoMindError> {
         Ok(self.executor.store().query_agents(filter).await?)
     }
 
@@ -257,7 +257,7 @@ impl AiAgentManager {
         &self,
         agent_id: &str,
         limit: usize,
-    ) -> Result<Vec<AgentExecutionRecord>, crate::error::NeoTalkError> {
+    ) -> Result<Vec<AgentExecutionRecord>, crate::error::NeoMindError> {
         Ok(self
             .executor
             .store()
@@ -270,7 +270,7 @@ impl AiAgentManager {
         &self,
         id: &str,
         status: AgentStatus,
-    ) -> Result<(), crate::error::NeoTalkError> {
+    ) -> Result<(), crate::error::NeoMindError> {
         Ok(self
             .executor
             .store()
@@ -279,7 +279,7 @@ impl AiAgentManager {
     }
 
     /// Delete an agent.
-    pub async fn delete_agent(&self, id: &str) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn delete_agent(&self, id: &str) -> Result<(), crate::error::NeoMindError> {
         // Unschedule first
         self.scheduler.unschedule_agent(id).await?;
 
@@ -288,7 +288,7 @@ impl AiAgentManager {
     }
 
     /// Start the scheduler for periodic execution.
-    pub async fn start(&self) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn start(&self) -> Result<(), crate::error::NeoMindError> {
         let mut running = self.running.write().await;
         if *running {
             return Ok(());
@@ -304,7 +304,7 @@ impl AiAgentManager {
     }
 
     /// Stop the scheduler.
-    pub async fn stop(&self) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn stop(&self) -> Result<(), crate::error::NeoMindError> {
         let mut running = self.running.write().await;
         *running = false;
         drop(running);
@@ -326,11 +326,11 @@ impl AiAgentManager {
     }
 
     /// Set the global default timezone for the scheduler.
-    pub async fn set_global_timezone(&self, timezone: String) -> Result<(), crate::error::NeoTalkError> {
+    pub async fn set_global_timezone(&self, timezone: String) -> Result<(), crate::error::NeoMindError> {
         self.scheduler
             .set_default_timezone(timezone)
             .await
-            .map_err(|e| crate::NeoTalkError::Config(format!("Failed to set timezone: {}", e)))
+            .map_err(|e| crate::NeoMindError::Config(format!("Failed to set timezone: {}", e)))
     }
 
     /// Get the current global default timezone.

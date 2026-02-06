@@ -1,15 +1,15 @@
-//! Core integration abstractions for NeoTalk.
+//! Core integration abstractions for NeoMind.
 //!
 //! This module defines the foundational traits for external system integrations.
 //!
-//! Integrations are responsible for connecting NeoTalk to external systems
+//! Integrations are responsible for connecting NeoMind to external systems
 //! (MQTT brokers, HTTP APIs, etc.) and translating
-//! data bidirectionally between external formats and NeoTalk's internal format.
+//! data bidirectionally between external formats and NeoMind's internal format.
 //!
 //! ## Architecture
 //!
 //! ```text
-//! External System          Integration Framework          NeoTalk
+//! External System          Integration Framework          NeoMind
 //! ┌─────────────┐          ┌─────────────────────┐          ┌──────────┐
 //! │             │  Ingest  │                     │  Event   │          │
 //! │   MQTT/HTTP │──────────▶│  Integration        │──────────▶│ EventBus │

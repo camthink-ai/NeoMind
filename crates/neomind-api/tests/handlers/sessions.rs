@@ -109,6 +109,8 @@ mod tests {
         let req = ChatRequest {
             message: "Hello".to_string(),
             session_id: None,
+            images: None,
+            backend_id: None,
         };
         let result = chat_handler(State(state), Path("nonexistent_session".to_string()), Json(req)).await;
         assert!(result.is_err());
@@ -128,6 +130,8 @@ mod tests {
         let req = ChatRequest {
             message: "Hello".to_string(),
             session_id: None,
+            images: None,
+            backend_id: None,
         };
         let result = chat_handler(State(state), Path(session_id.clone()), Json(req)).await;
         // Either Ok with timeout message or Err with something other than NOT_FOUND
@@ -181,9 +185,14 @@ mod tests {
         let req = ChatRequest {
             message: "Test message".to_string(),
             session_id: Some("session123".to_string()),
+            images: None,
+            backend_id: None,
         };
         assert_eq!(req.message, "Test message");
         assert_eq!(req.session_id.unwrap(), "session123");
+        // Also test the new fields
+        assert!(req.images.is_none());
+        assert!(req.backend_id.is_none());
     }
 
     #[tokio::test]

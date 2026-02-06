@@ -1,4 +1,4 @@
-//! HTTP device adapter for NeoTalk event-driven architecture.
+//! HTTP device adapter for NeoMind event-driven architecture.
 //!
 //! This adapter polls HTTP endpoints for device telemetry and sends commands
 //! via HTTP requests. It's useful for REST APIs, IoT services, and webhooks.
@@ -422,8 +422,8 @@ impl HttpAdapter {
 
                                 // Publish to event bus
                                 if let Some(eb) = &event_bus {
-                                    let neotalk_event = event.clone().to_neotalk_event();
-                                    eb.publish(neotalk_event).await;
+                                    let neomind_event = event.clone().to_neomind_event();
+                                    eb.publish(neomind_event).await;
                                 }
 
                                 // Write to telemetry storage if available

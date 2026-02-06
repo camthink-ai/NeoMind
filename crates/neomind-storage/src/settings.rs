@@ -219,7 +219,7 @@ impl LlmSettings {
 
 /// MQTT settings persisted to database.
 ///
-/// Note: NeoTalk now uses an embedded MQTT broker by default.
+/// Note: NeoMind now uses an embedded MQTT broker by default.
 /// External broker connections are managed via the data sources page (ExternalBroker).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MqttSettings {
