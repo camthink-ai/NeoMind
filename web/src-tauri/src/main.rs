@@ -228,14 +228,23 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Failed to build Tauri application")
         .run(|app_handle, event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Reopen { .. } = event {
-                show_main_window(app_handle);
+            match event {
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => {
+                    show_main_window(app_handle);
+                }
+                // Handle exit request from OS (taskbar right-click, Alt+F4, etc.)
+                tauri::RunEvent::ExitRequested { .. } => {
+                    // Perform clean shutdown before exiting
+                    clean_shutdown(app_handle);
+                    // Allow the exit to proceed
+                }
+                // Cleanup before app is destroyed
+                tauri::RunEvent::Destroy => {
+                    clean_shutdown(app_handle);
+                }
+                _ => {}
             }
-            #[cfg(not(target_os = "macos"))]
-            let _ = event;
-            #[cfg(not(target_os = "macos"))]
-            let _ = app_handle;
         });
 }
 
@@ -268,9 +277,9 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                 #[cfg(target_os = "windows")]
                 {
                     // On Windows, close button should quit the app
-                    // Properly shutdown server before exiting
-                    clean_shutdown(&app_handle);
-                    api.close();
+                    // Use exit(0) to trigger proper ExitRequested event
+                    api.prevent_close();  // Let Tauri handle the exit
+                    app_handle.exit(0);
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
