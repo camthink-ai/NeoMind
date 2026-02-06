@@ -1,6 +1,6 @@
 # API 模块
 
-**包名**: `edge_ai_api`
+**包名**: `neomind-api`
 **版本**: 0.1.0
 **完成度**: 90%
 **用途**: REST/WebSocket API服务器
@@ -492,13 +492,13 @@ pub fn swagger_ui() -> Router {
 
 ```bash
 # 默认配置
-cargo run -p edge_ai_api
+cargo run -p neomind-api
 
 # 自定义配置
-cargo run -p edge_ai_api -- --config config.toml
+cargo run -p neomind-api -- --config config.toml
 
 # 指定端口
-SERVER_PORT=8080 cargo run -p edge_ai_api
+SERVER_PORT=8080 cargo run -p neomind-api
 ```
 
 ### 环境变量

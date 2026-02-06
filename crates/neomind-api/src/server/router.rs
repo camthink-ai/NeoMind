@@ -21,7 +21,7 @@ pub async fn create_router() -> Router {
 pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
         agents, automations, auth as auth_handlers, auth_users, basic, bulk, commands, config,
-        dashboards, devices, events, extensions, llm_backends, memory, message_channels, messages, mqtt, plugins, rules,
+        dashboards, devices, events, extensions, llm_backends, memory, message_channels, messages, mqtt, rules,
         search, sessions, settings, setup, stats, suggestions, test_data, tools,
     };
 
@@ -51,8 +51,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/llm-backends/stats", get(llm_backends::get_backend_stats_handler))
         // Ollama models API (public - fetch available models with capabilities)
         .route("/api/llm-backends/ollama/models", get(llm_backends::list_ollama_models_handler))
-        // Device Adapter Types (public - read-only metadata)
-        .route("/api/device-adapters/types", get(plugins::list_adapter_types_handler))
         // Messages Channel Types API (public - read-only metadata)
         .route("/api/messages/channels/types", get(message_channels::list_channel_types_handler))
         .route("/api/messages/channels/types/:type/schema", get(message_channels::get_channel_type_schema_handler))
@@ -66,18 +64,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/extensions/:id", get(extensions::get_extension_handler))
         .route("/api/extensions/:id/health", get(extensions::extension_health_handler))
         .route("/api/extensions/:id/stats", get(extensions::get_extension_stats_handler))
-        // Plugins API (deprecated - use Extensions API for dynamic extensions)
-        .route("/api/plugins", get(plugins::list_plugins_handler))
-        .route("/api/plugins/:id", get(plugins::get_plugin_handler))
-        .route("/api/plugins/:id/config", get(plugins::get_plugin_config_handler))
-        .route("/api/plugins/:id/health", get(plugins::plugin_health_handler))
-        .route("/api/plugins/:id/stats", get(plugins::get_plugin_stats_handler))
-        .route("/api/plugins/types", get(plugins::get_plugin_types_handler))
-        .route("/api/plugins/type/:type", get(plugins::list_plugins_by_type_handler))
-        // Device Adapter Plugins (public - read-only)
-        .route("/api/plugins/device-adapters", get(plugins::list_device_adapter_plugins_handler))
-        .route("/api/plugins/device-adapters/stats", get(plugins::get_device_adapter_stats_handler))
-        .route("/api/plugins/:id/devices", get(plugins::get_adapter_devices_handler))
         // Test data generation (public - for development)
         .route("/api/test-data/alerts", post(test_data::generate_test_alerts_handler))
         .route("/api/test-data/all", post(test_data::generate_test_data_handler))
@@ -564,18 +550,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/extensions/:id/start", post(extensions::start_extension_handler))
         .route("/api/extensions/:id/stop", post(extensions::stop_extension_handler))
         .route("/api/extensions/:id/command", post(extensions::execute_extension_command_handler))
-        // Plugins API (write operations - deprecated, use Extensions API)
-        .route("/api/plugins", post(plugins::register_plugin_handler))
-        .route("/api/plugins/:id", delete(plugins::unregister_plugin_handler))
-        .route("/api/plugins/:id/enable", post(plugins::enable_plugin_handler))
-        .route("/api/plugins/:id/disable", post(plugins::disable_plugin_handler))
-        .route("/api/plugins/:id/start", post(plugins::start_plugin_handler))
-        .route("/api/plugins/:id/stop", post(plugins::stop_plugin_handler))
-        .route("/api/plugins/:id/config", put(plugins::update_plugin_config_handler))
-        .route("/api/plugins/:id/command", post(plugins::execute_plugin_command_handler))
-        .route("/api/plugins/discover", post(plugins::discover_plugins_handler))
-        // Device Adapter Plugin Endpoints (write operations - protected)
-        .route("/api/plugins/device-adapters", post(plugins::register_device_adapter_handler))
         // LLM Backends API (write operations - protected)
         .route("/api/llm-backends", post(llm_backends::create_backend_handler))
         .route("/api/llm-backends/:id", put(llm_backends::update_backend_handler))

@@ -1,6 +1,6 @@
 # Memory 模块
 
-**包名**: `edge_ai_memory`
+**包名**: `neomind-memory`
 **版本**: 0.1.0
 **完成度**: 85%
 **用途**: 三层内存系统（短期/中期/长期）
@@ -512,7 +512,7 @@ POST   /api/memory/consolidate/:session_id   # 整合到中期
 ## 使用示例
 
 ```rust
-use edge_ai_memory::{TieredMemory, KnowledgeEntry, KnowledgeCategory};
+use neomind-memory::{TieredMemory, KnowledgeEntry, KnowledgeCategory};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

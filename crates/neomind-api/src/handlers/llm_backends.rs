@@ -547,7 +547,7 @@ pub async fn activate_backend_handler(
 
     // Update all existing sessions to use the new backend
     state
-        .session_manager
+        .agents.session_manager
         .set_llm_backend(backend.clone())
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;

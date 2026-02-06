@@ -227,7 +227,7 @@ impl From<&CompiledRule> for RuleDetailDto {
 pub async fn list_rules_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let rules = state.rule_engine.list_rules().await;
+    let rules = state.automation.rule_engine.list_rules().await;
     let dtos: Vec<RuleDto> = rules
         .into_iter()
         .map(|r| {
@@ -263,13 +263,13 @@ pub async fn get_rule_handler(
         .map_err(|_| ErrorResponse::bad_request(format!("Invalid rule ID: {}", id)))?;
 
     let rule = state
-        .rule_engine
+        .automation.rule_engine
         .get_rule(&rule_id)
         .await
         .ok_or_else(|| ErrorResponse::not_found("Rule"))?;
 
     let dto = RuleDetailDto::from(&rule);
-    let history = state.rule_engine.get_rule_history(&rule_id).await;
+    let history = state.automation.rule_engine.get_rule_history(&rule_id).await;
 
     ok(json!({
         "rule": dto,
@@ -327,13 +327,13 @@ pub async fn update_rule_handler(
 
         // Add the rule (this replaces the old one with same ID)
         state
-            .rule_engine
+            .automation.rule_engine
             .add_rule(rule.clone())
             .await
             .map_err(|e| ErrorResponse::internal(format!("Failed to update rule: {}", e)))?;
 
         // Persist to store
-        if let Some(ref store) = state.rule_store
+        if let Some(ref store) = state.automation.rule_store
             && let Err(e) = store.save(&rule) {
                 tracing::warn!("Failed to save rule to store: {}", e);
             }
@@ -346,7 +346,7 @@ pub async fn update_rule_handler(
 
     // Get the current rule for simple updates (no DSL provided)
     let mut rule = state
-        .rule_engine
+        .automation.rule_engine
         .get_rule(&rule_id)
         .await
         .ok_or_else(|| ErrorResponse::not_found("Rule"))?;
@@ -374,13 +374,13 @@ pub async fn update_rule_handler(
 
     // Re-add the rule (this updates it)
     state
-        .rule_engine
+        .automation.rule_engine
         .add_rule(rule.clone())
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to update rule: {}", e)))?;
 
     // Also update in persistent store
-    if let Some(ref store) = state.rule_store {
+    if let Some(ref store) = state.automation.rule_store {
         if let Err(e) = store.save(&rule) {
             tracing::warn!("Failed to update rule in store: {}", e);
             // Don't fail the request if persistence fails
@@ -406,7 +406,7 @@ pub async fn delete_rule_handler(
         .map_err(|_| ErrorResponse::bad_request(format!("Invalid rule ID: {}", id)))?;
 
     let removed = state
-        .rule_engine
+        .automation.rule_engine
         .remove_rule(&rule_id)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to delete rule: {}", e)))?;
@@ -416,7 +416,7 @@ pub async fn delete_rule_handler(
     }
 
     // Also remove from persistent store
-    if let Some(ref store) = state.rule_store {
+    if let Some(ref store) = state.automation.rule_store {
         if let Err(e) = store.delete(&rule_id) {
             tracing::warn!("Failed to delete rule from store: {}", e);
             // Don't fail the request if persistence fails
@@ -444,21 +444,21 @@ pub async fn set_rule_status_handler(
 
     if req.enabled {
         state
-            .rule_engine
+            .automation.rule_engine
             .resume_rule(&rule_id)
             .await
             .map_err(|e| ErrorResponse::internal(format!("Failed to enable rule: {}", e)))?;
     } else {
         state
-            .rule_engine
+            .automation.rule_engine
             .pause_rule(&rule_id)
             .await
             .map_err(|e| ErrorResponse::internal(format!("Failed to disable rule: {}", e)))?;
     }
 
     // Also update in persistent store
-    if let Some(ref store) = state.rule_store
-        && let Some(rule) = state.rule_engine.get_rule(&rule_id).await {
+    if let Some(ref store) = state.automation.rule_store
+        && let Some(rule) = state.automation.rule_engine.get_rule(&rule_id).await {
             if let Err(e) = store.save(&rule) {
                 tracing::warn!("Failed to update rule status in store: {}", e);
                 // Don't fail the request if persistence fails
@@ -488,7 +488,7 @@ pub async fn test_rule_handler(
 
     // Get the rule
     let rule = state
-        .rule_engine
+        .automation.rule_engine
         .get_rule(&rule_id)
         .await
         .ok_or_else(|| ErrorResponse::not_found("Rule"))?;
@@ -538,7 +538,7 @@ pub async fn test_rule_handler(
         resolved.clone()
     } else {
         // Try to find device by name in the device registry
-        match state.device_service.get_device_by_name(&dsl_device_id).await {
+        match state.devices.service.get_device_by_name(&dsl_device_id).await {
             Some(device) => {
                 tracing::debug!(
                     dsl_device_name = %dsl_device_id,
@@ -565,7 +565,7 @@ pub async fn test_rule_handler(
     );
 
     // Get current value for the rule engine
-    let current_value = state.rule_engine.get_value(&device_id, &metric);
+    let current_value = state.automation.rule_engine.get_value(&device_id, &metric);
 
     // Try to get historical data from time series storage as fallback
     // The metric in the rule might be "battery" but the storage key could be "values.battery"
@@ -583,7 +583,7 @@ pub async fn test_rule_handler(
 
     for metric_variant in &metric_variants {
         tracing::debug!("Trying to query time series for {}/{}", device_id, metric_variant);
-        let result = state.time_series_storage
+        let result = state.devices.telemetry
             .latest(&device_id, metric_variant)
             .await;
 
@@ -625,7 +625,7 @@ pub async fn test_rule_handler(
             rule_name = %rule.name,
             "Executing rule actions via test endpoint"
         );
-        Some(state.rule_engine.execute_rule(&rule_id).await)
+        Some(state.automation.rule_engine.execute_rule(&rule_id).await)
     } else {
         None
     };
@@ -679,14 +679,14 @@ pub async fn create_rule_handler(
 
     // Add the rule to the engine
     state
-        .rule_engine
+        .automation.rule_engine
         .add_rule(rule.clone())
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to create rule: {}", e)))?;
     let rule_id = rule.id.clone();
 
     // Persist rule to store if available
-    if let Some(ref store) = state.rule_store {
+    if let Some(ref store) = state.automation.rule_store {
         match store.save(&rule) {
             Ok(()) => tracing::debug!("Saved rule {} to persistent store", rule_id),
             Err(e) => tracing::warn!("Failed to save rule to store: {}", e),
@@ -710,12 +710,12 @@ pub async fn get_rule_history_handler(
 
     // Check if rule exists
     let _rule = state
-        .rule_engine
+        .automation.rule_engine
         .get_rule(&rule_id)
         .await
         .ok_or_else(|| ErrorResponse::not_found("Rule"))?;
 
-    let history = state.rule_engine.get_rule_history(&rule_id).await;
+    let history = state.automation.rule_engine.get_rule_history(&rule_id).await;
 
     ok(json!({
         "rule_id": id,
@@ -730,7 +730,7 @@ pub async fn export_rules_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
     // Get all rules
-    let rules = state.rule_engine.list_rules().await;
+    let rules = state.automation.rule_engine.list_rules().await;
 
     // Build export structure
     let export = json!({
@@ -764,7 +764,7 @@ pub async fn import_rules_handler(
         let dsl = serde_json::to_string_pretty(rule_value)
             .map_err(|e| ErrorResponse::bad_request(format!("Invalid rule format: {}", e)))?;
 
-        match state.rule_engine.add_rule_from_dsl(&dsl).await {
+        match state.automation.rule_engine.add_rule_from_dsl(&dsl).await {
             Ok(_) => imported += 1,
             Err(e) => {
                 let name = rule_value
@@ -798,10 +798,10 @@ pub async fn get_resources_handler(
     let mut devices = Vec::new();
 
     // Get all devices with their templates
-    let all_devices = state.device_service.list_devices().await;
+    let all_devices = state.devices.service.list_devices().await;
     for device in all_devices {
         // Try to get the template for this device type
-        let template = state.device_service.get_template(&device.device_type).await;
+        let template = state.devices.service.get_template(&device.device_type).await;
 
         let (metrics, commands) = if let Some(tpl) = template {
             // Convert from DeviceTypeTemplate (MDL definition)
@@ -852,7 +852,7 @@ pub async fn get_resources_handler(
         };
 
         // Check device online status
-        let status = state.device_service.get_device_connection_status(&device.device_id).await;
+        let status = state.devices.service.get_device_connection_status(&device.device_id).await;
         let online = matches!(status, ConnectionStatus::Connected);
 
         devices.push(DeviceInfo {
@@ -964,7 +964,7 @@ pub async fn validate_rule_handler(
     // Add devices
     use neomind_rules::{DeviceInfo, MetricInfo, MetricDataType};
 
-    let all_devices = state.device_service.list_devices().await;
+    let all_devices = state.devices.service.list_devices().await;
     for device in all_devices {
         let mut metrics = Vec::new();
         match device.device_type.as_str() {

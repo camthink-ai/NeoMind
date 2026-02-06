@@ -139,7 +139,7 @@ fn get_time_context() -> String {
 
 /// Get device count from the system
 async fn get_device_count(state: &ServerState) -> usize {
-    let registry = state.device_service.get_registry().await;
+    let registry = state.devices.service.get_registry().await;
     registry.list_devices().await.len()
 }
 
@@ -219,7 +219,7 @@ async fn generate_time_based_suggestions(state: &ServerState, time_context: &str
 async fn generate_device_based_suggestions(state: &ServerState) -> Vec<SuggestionItem> {
     let mut suggestions = Vec::new();
 
-    let registry = state.device_service.get_registry().await;
+    let registry = state.devices.service.get_registry().await;
     let devices = registry.list_devices().await;
 
     if devices.is_empty() {
@@ -286,7 +286,7 @@ async fn generate_device_based_suggestions(state: &ServerState) -> Vec<Suggestio
 
         let status_futures: Vec<_> = device_ids.into_iter()
             .map(|device_id| {
-                let service = state.device_service.clone();
+                let service = state.devices.service.clone();
                 async move {
                     tokio::time::timeout(
                         std::time::Duration::from_millis(100),
@@ -320,7 +320,7 @@ async fn generate_recent_operation_suggestions(state: &ServerState) -> Vec<Sugge
     let mut suggestions = Vec::new();
 
     // Get recent sessions with info
-    let sessions = state.session_manager.list_sessions_with_info().await;
+    let sessions = state.agents.session_manager.list_sessions_with_info().await;
 
     if sessions.is_empty() {
         // New user: suggest getting started
@@ -372,7 +372,7 @@ async fn generate_recent_operation_suggestions(state: &ServerState) -> Vec<Sugge
 async fn generate_pattern_based_suggestions(state: &ServerState) -> Vec<SuggestionItem> {
     let mut pattern_suggestions = Vec::new();
 
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
     let agents = match store.query_agents(AgentFilter::default()).await {
         Ok(a) => a,
         Err(_) => return pattern_suggestions,

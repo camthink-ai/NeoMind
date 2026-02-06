@@ -1,6 +1,6 @@
 # Storage 模块
 
-**包名**: `edge_ai_storage`
+**包名**: `neomind-storage`
 **版本**: 0.1.0
 **完成度**: 95%
 **用途**: 持久化存储层
@@ -464,7 +464,7 @@ pub async fn migrate_from_sled(sled_path: &Path, redb_path: &Path) -> Result<()>
 ## 使用示例
 
 ```rust
-use edge_ai_storage::{TimeSeriesStore, DataPoint};
+use neomind-storage::{TimeSeriesStore, DataPoint};
 
 // 创建时序存储
 let store = TimeSeriesStore::persistent("./data/telemetry.redb")?;

@@ -103,7 +103,7 @@ replace_in_files "${OLD_CRATE_NAME}::" "${NEW_CRATE_NAME}::" "*.rs"
 
 # Special handling for edge_ai:: references (core module)
 replace_in_files "use edge_ai::" "use neomind::" "*.rs"
-replace_in_files "edge_ai::" "neomind::" "*.rs"
+replace_in_files "neomind"::" "neomind::" "*.rs"
 
 echo ""
 echo -e "${GREEN}Step 5: Updating documentation...${NC}"
@@ -112,12 +112,12 @@ replace_in_files "NeoMind" "NeoMind" "*.md"
 
 echo ""
 echo -e "${GREEN}Step 6: Updating config files...${NC}"
-replace_in_files "edge_ai" "neomind" "*.toml"
+replace_in_files "neomind"" "neomind" "*.toml"
 replace_in_files "neomind" "neomind" "*.toml"
 
 echo ""
 echo -e "${GREEN}Step 7: Checking for remaining references...${NC}"
-REMAINING=$(grep -r "edge_ai\|neomind" --include="*.rs" --include="*.toml" . 2>/dev/null | grep -v "Binary file" | wc -l | tr -d ' ')
+REMAINING=$(grep -r "neomind"\|neomind" --include="*.rs" --include="*.toml" . 2>/dev/null | grep -v "Binary file" | wc -l | tr -d ' ')
 echo "Remaining references to edge_ai or neomind: $REMAINING"
 
 echo ""

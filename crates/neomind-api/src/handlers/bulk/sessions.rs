@@ -19,7 +19,7 @@ pub async fn bulk_delete_sessions_handler(
     let mut failed = 0;
 
     for (index, id) in req.session_ids.into_iter().enumerate() {
-        match state.session_manager.remove_session(&id).await {
+        match state.agents.session_manager.remove_session(&id).await {
             Ok(_) => {
                 results.push(BulkOperationResult {
                     index,

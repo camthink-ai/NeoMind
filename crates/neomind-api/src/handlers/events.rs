@@ -148,12 +148,12 @@ pub async fn event_stream_handler(
     // Validate JWT token - must be provided
     let token = params.token.as_ref().ok_or(StatusCode::UNAUTHORIZED)?;
     state
-        .auth_user_state
+        .auth.user_state
         .validate_token(token)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     // Get the event bus from the server state
-    let event_bus = state.event_bus.as_ref().ok_or(StatusCode::NOT_FOUND)?;
+    let event_bus = state.core.event_bus.as_ref().ok_or(StatusCode::NOT_FOUND)?;
 
     // Create a receiver for events
     let rx = create_filtered_receiver(event_bus, &params.category);
@@ -236,7 +236,7 @@ pub async fn event_websocket_handler(
     ws: WebSocketUpgrade,
     Query(params): Query<EventStreamParams>,
 ) -> axum::response::Response {
-    let event_bus = match state.event_bus.as_ref() {
+    let event_bus = match state.core.event_bus.as_ref() {
         Some(bus) => bus.clone(),
         None => {
             return ws.on_upgrade(|mut socket| async move {
@@ -257,7 +257,7 @@ pub async fn event_websocket_handler(
 
         let mut rx = create_filtered_receiver(&event_bus, &params.category);
         let mut authenticated = false;
-        let auth_user_state = state.auth_user_state.clone();
+        let auth_user_state = state.auth.user_state.clone();
 
         // First, wait for authentication message
         while let Some(msg) = socket.recv().await {

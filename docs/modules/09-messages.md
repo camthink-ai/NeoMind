@@ -1,6 +1,6 @@
 # Messages 模块
 
-**包名**: `edge_ai_messages`
+**包名**: `neomind-messages`
 **版本**: 0.1.0
 **完成度**: 70%
 **用途**: 消息通知系统
@@ -382,7 +382,7 @@ email = ["lettre"]
 ### 创建消息
 
 ```rust
-use edge_ai_messages::{Message, MessageType, MessageSeverity, Notifier};
+use neomind-messages::{Message, MessageType, MessageSeverity, Notifier};
 
 let message = Message {
     id: "msg_001".to_string(),
@@ -406,7 +406,7 @@ notifier.notify(message).await?;
 ### 注册通道
 
 ```rust
-use edge_ai_messages::{WebhookChannel, AlertChannel};
+use neomind-messages::{WebhookChannel, AlertChannel};
 
 let webhook = WebhookChannel::new(
     "alerts_webhook",

@@ -1,6 +1,6 @@
 # Devices 模块
 
-**包名**: `edge_ai_devices`
+**包名**: `neomind-devices`
 **版本**: 0.1.0
 **完成度**: 85%
 **用途**: 设备管理与协议适配
@@ -455,7 +455,7 @@ DELETE /api/devices/pending/:id/dismiss       # 忽略设备
 ### 注册设备类型
 
 ```rust
-use edge_ai_devices::{DeviceTypeTemplate, MetricDefinition, MetricDataType};
+use neomind-devices::{DeviceTypeTemplate, MetricDefinition, MetricDataType};
 
 let template = DeviceTypeTemplate::new("dht22_sensor", "DHT22温湿度传感器")
     .with_description("基于DHT22的温湿度传感器")
@@ -477,7 +477,7 @@ service.register_template(template).await?;
 ### 添加设备
 
 ```rust
-use edge_ai_devices::{DeviceConfig, ConnectionConfig};
+use neomind-devices::{DeviceConfig, ConnectionConfig};
 
 let device = DeviceConfig {
     device_id: "greenhouse_temp_1".to_string(),

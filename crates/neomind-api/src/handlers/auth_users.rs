@@ -18,7 +18,7 @@ pub async fn login_handler(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AuthError> {
     let response = state
-        .auth_user_state
+        .auth.user_state
         .login(&req.username, &req.password)
         .await?;
     Ok(Json(response))
@@ -32,7 +32,7 @@ pub async fn register_handler(
 ) -> Result<(StatusCode, Json<serde_json::Value>), AuthError> {
     let role = req.role.unwrap_or(UserRole::User);
     let (user, token) = state
-        .auth_user_state
+        .auth.user_state
         .register(&req.username, &req.password, role)
         .await?;
     let response = serde_json::json!({
@@ -74,7 +74,7 @@ pub async fn change_password_handler(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<serde_json::Value>, AuthError> {
     state
-        .auth_user_state
+        .auth.user_state
         .change_password(&user.username, &req.old_password, &req.new_password)
         .await?;
     Ok(Json(
@@ -92,7 +92,7 @@ pub async fn list_users_handler(
         return Err(AuthError::InvalidInput("Admin access required".into()));
     }
 
-    let users = state.auth_user_state.list_users().await;
+    let users = state.auth.user_state.list_users().await;
     Ok(Json(serde_json::json!({"users": users})))
 }
 
@@ -110,7 +110,7 @@ pub async fn create_user_handler(
     let role = req.role.unwrap_or(UserRole::User);
     let role_str = role.as_str(); // Store role string before moving role
     let (user, _token) = state
-        .auth_user_state
+        .auth.user_state
         .register(&req.username, &req.password, role)
         .await?;
 
@@ -142,7 +142,7 @@ pub async fn delete_user_handler(
         ));
     }
 
-    state.auth_user_state.delete_user(&username).await?;
+    state.auth.user_state.delete_user(&username).await?;
 
     tracing::info!(
         admin = %admin_user.username,

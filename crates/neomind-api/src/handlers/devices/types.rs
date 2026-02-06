@@ -32,7 +32,7 @@ use crate::models::ErrorResponse;
 pub async fn list_device_types_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let templates = state.device_service.list_templates().await;
+    let templates = state.devices.service.list_templates().await;
     let dtos: Vec<DeviceTypeDto> = templates
         .into_iter()
         .map(|t| {
@@ -95,7 +95,7 @@ pub async fn get_device_type_handler(
     Path(device_type): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
     let template = state
-        .device_service
+        .devices.service
         .get_template(&device_type)
         .await
         .ok_or_else(|| ErrorResponse::not_found("DeviceType"))?;
@@ -128,7 +128,7 @@ pub async fn register_device_type_handler(
 ) -> HandlerResult<serde_json::Value> {
     // Register the template directly (already in simplified format)
     state
-        .device_service
+        .devices.service
         .register_template(template)
         .await
         .map_err(|e| {
@@ -148,7 +148,7 @@ pub async fn delete_device_type_handler(
     Path(device_type): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
     state
-        .device_service
+        .devices.service
         .unregister_template(&device_type)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to delete device type: {}", e)))?;

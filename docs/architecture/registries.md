@@ -1,11 +1,23 @@
 # Registry 职责划分
 
-> NeoMind v0.4.2
-> 创建时间: 2025-02-05
+> NeoMind v0.5.0
+> 更新时间: 2025-02-06
 
 ## 总览
 
 NeoMind 使用多个 Registry 来管理不同类型的服务和组件。每个 Registry 有明确的职责边界。
+
+---
+
+## 📊 Registry 矩阵
+
+| Registry | 外部API | 持久化 | 动态加载 | 主要用途 |
+|----------|---------|--------|----------|----------|
+| ExtensionRegistry | ✅ | ✅ | ✅ | 第三方扩展 |
+| LlmBackendRegistry | ✅ | ✅ | ❌ | LLM 后端 |
+| ToolRegistry | ✅ | ❌ | ✅ | Agent 工具 |
+| DeviceRegistry | ✅ | ✅ | ❌ | 设备管理 |
+| WasmLlmPluginRegistry | ❌ | ❌ | ✅ | WASM 沙箱 |
 
 ---
 
@@ -127,19 +139,12 @@ let device = registry.get_device("device_id").await?;
 
 ---
 
-### UnifiedPluginRegistry (crate: neomind-core)
+## 已废弃的 Registry
 
-**用途**: 动态插件管理（内部使用）
-
-**类型**: 运行时加载
-
-**职责**:
-- 管理插件生命周期
-- 支持 WASM 和 Native 插件
-- 提供 ABI 版本检查
-- 处理插件依赖关系
-
-**注意**: 此 Registry 主要被 `neomind-devices` 的插件适配器使用
+| Registry | 状态 | 替代方案 |
+|----------|------|---------|
+| `UnifiedPluginRegistry` | ❌ 已废弃 | `ExtensionRegistry` |
+| `DeviceAdapterPluginRegistry` | ❌ 已废弃 | 内置适配器 + Extension |
 
 ---
 

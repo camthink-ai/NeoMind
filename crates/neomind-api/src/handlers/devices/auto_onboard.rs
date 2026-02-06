@@ -94,7 +94,7 @@ async fn get_auto_onboard_manager(state: &ServerState) -> Arc<AutoOnboardManager
 
     // Create the manager
     let llm = create_default_llm_runtime();
-    let event_bus = state.event_bus.as_ref().unwrap().clone();
+    let event_bus = state.core.event_bus.as_ref().unwrap().clone();
     let manager = Arc::new(AutoOnboardManager::new(llm, event_bus));
 
     // Store in state
@@ -164,7 +164,7 @@ pub async fn approve_draft_device(
     Json(request): Json<Option<ApproveDraftDeviceRequest>>,
 ) -> HandlerResult<ApproveDraftResponse> {
     let manager = get_auto_onboard_manager(&state).await;
-    let device_service = state.device_service.clone();
+    let device_service = state.devices.service.clone();
 
     // Get the draft
     let draft = manager
@@ -534,7 +534,7 @@ pub async fn suggest_device_types(
     Path(device_id): Path<String>,
 ) -> HandlerResult<SuggestedTypesResponse> {
     let manager = get_auto_onboard_manager(&state).await;
-    let device_service = state.device_service.clone();
+    let device_service = state.devices.service.clone();
 
     // Get the draft
     let draft = manager

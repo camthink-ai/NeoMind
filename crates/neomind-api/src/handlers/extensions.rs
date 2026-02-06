@@ -97,7 +97,7 @@ pub async fn list_extensions_handler(
     State(state): State<ServerState>,
     Query(query): Query<ListExtensionsQuery>,
 ) -> HandlerResult<Vec<ExtensionDto>> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     let mut extensions: Vec<ExtensionDto> = registry
         .list()
@@ -135,7 +135,7 @@ pub async fn get_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<ExtensionDto> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     let info = registry
         .get_info(&id)
@@ -161,7 +161,7 @@ pub async fn get_extension_stats_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<ExtensionStatsDto> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     let info = registry
         .get_info(&id)
@@ -215,7 +215,7 @@ pub async fn list_extension_types_handler() -> HandlerResult<Vec<ExtensionTypeDt
 pub async fn discover_extensions_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Vec<serde_json::Value>> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     let discovered = registry.discover().await;
 
@@ -241,7 +241,7 @@ pub async fn register_extension_handler(
     State(state): State<ServerState>,
     Json(req): Json<RegisterExtensionRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     let path = PathBuf::from(&req.file_path);
 
@@ -273,7 +273,7 @@ pub async fn unregister_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     // Check if extension exists
     if !registry.contains(&id).await {
@@ -283,7 +283,7 @@ pub async fn unregister_extension_handler(
     drop(registry);
 
     // Unregister (need write lock)
-    let registry = state.extension_registry.write().await;
+    let registry = state.core.extension_registry.write().await;
     registry
         .unregister(&id)
         .await
@@ -301,7 +301,7 @@ pub async fn start_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     registry
         .start(&id)
@@ -320,7 +320,7 @@ pub async fn stop_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     registry
         .stop(&id)
@@ -339,7 +339,7 @@ pub async fn extension_health_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     let healthy = registry
         .health_check(&id)
@@ -359,7 +359,7 @@ pub async fn execute_extension_command_handler(
     Path(id): Path<String>,
     Json(req): Json<ExecuteCommandRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.extension_registry.read().await;
+    let registry = state.core.extension_registry.read().await;
 
     let result = registry
         .execute_command(&id, &req.command, &req.args)

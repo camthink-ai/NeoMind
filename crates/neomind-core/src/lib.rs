@@ -16,6 +16,7 @@ pub mod macros;
 pub mod message;
 // Plugin system has been migrated to Extension system
 // Use neomind_core::extension instead
+pub mod registry;
 pub mod session;
 pub mod storage;
 pub mod tools;
@@ -81,6 +82,9 @@ pub mod prelude {
         DynExtension, Extension, ExtensionError, ExtensionMetadata, ExtensionRegistry,
         ExtensionState, ExtensionStats, ExtensionType,
     };
+
+    // Registry system
+    pub use crate::registry::{Registry, RegistryError};
 
     // Integration system
     pub use crate::integration::{

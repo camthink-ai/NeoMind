@@ -43,7 +43,7 @@ pub async fn bulk_create_alerts_handler(
 
         let message = Message::alert(severity, item.title, item.message, source);
 
-        match state.message_manager.create_message(message).await {
+        match state.core.message_manager.create_message(message).await {
             Ok(msg) => {
                 results.push(BulkOperationResult {
                     index,
@@ -88,7 +88,7 @@ pub async fn bulk_resolve_alerts_handler(
 
     for (index, id_str) in req.alert_ids.into_iter().enumerate() {
         match MessageId::from_string(&id_str) {
-            Ok(msg_id) => match state.message_manager.resolve(&msg_id).await {
+            Ok(msg_id) => match state.core.message_manager.resolve(&msg_id).await {
                 Ok(_) => {
                     results.push(BulkOperationResult {
                         index,
@@ -143,10 +143,10 @@ pub async fn bulk_acknowledge_alerts_handler(
 
     for (index, id_str) in req.alert_ids.into_iter().enumerate() {
         match MessageId::from_string(&id_str) {
-            Ok(msg_id) => match state.message_manager.acknowledge(&msg_id).await {
+            Ok(msg_id) => match state.core.message_manager.acknowledge(&msg_id).await {
                 Ok(_) => {
                     // Publish MessageAcknowledged event
-                    if let Some(event_bus) = &state.event_bus {
+                    if let Some(event_bus) = &state.core.event_bus {
                         let _ = event_bus
                             .publish_with_source(
                                 NeoMindEvent::MessageAcknowledged {
@@ -212,7 +212,7 @@ pub async fn bulk_delete_alerts_handler(
 
     for (index, id_str) in req.alert_ids.into_iter().enumerate() {
         match MessageId::from_string(&id_str) {
-            Ok(msg_id) => match state.message_manager.delete(&msg_id).await {
+            Ok(msg_id) => match state.core.message_manager.delete(&msg_id).await {
                 Ok(_) => {
                     results.push(BulkOperationResult {
                         index,

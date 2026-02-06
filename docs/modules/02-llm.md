@@ -1,6 +1,6 @@
 # LLM 模块
 
-**包名**: `edge_ai_llm`
+**包名**: `neomind-llm`
 **版本**: 0.1.0
 **完成度**: 90%
 **用途**: 提供多后端LLM支持
@@ -164,7 +164,7 @@ pub struct BackendTypeDefinition {
 ### 创建Ollama后端
 
 ```rust
-use edge_ai_llm::{OllamaConfig, OllamaRuntime, create_backend};
+use neomind-llm::{OllamaConfig, OllamaRuntime, create_backend};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -192,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### 创建云端后端
 
 ```rust
-use edge_ai_llm::{CloudConfig, CloudProvider, CloudRuntime};
+use neomind-llm::{CloudConfig, CloudProvider, CloudRuntime};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -213,8 +213,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### 生成文本
 
 ```rust
-use edge_ai_core::llm::backend::{LlmInput, LlmRuntime, GenerationParams};
-use edge_ai_core::Message;
+use neomind-core::llm::backend::{LlmInput, LlmRuntime, GenerationParams};
+use neomind-core::Message;
 
 async fn generate(runtime: &dyn LlmRuntime, prompt: &str) -> Result<String> {
     let input = LlmInput {

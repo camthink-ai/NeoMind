@@ -671,7 +671,7 @@ pub async fn jwt_auth_middleware(
         .ok_or_else(|| AuthError::InvalidToken("Invalid Authorization format".into()))?;
 
     // Validate token using auth_user_state from ServerState
-    let session_info = state.auth_user_state.validate_token(token)?;
+    let session_info = state.auth.user_state.validate_token(token)?;
 
     // Store user info in request extensions
     req.extensions_mut().insert(session_info);
@@ -688,7 +688,7 @@ pub async fn optional_jwt_auth_middleware(
 ) -> Response {
     if let Some(auth_header) = headers.get("authorization").and_then(|v| v.to_str().ok())
         && let Some(token) = auth_header.strip_prefix("Bearer ")
-            && let Ok(session_info) = state.auth_user_state.validate_token(token) {
+            && let Ok(session_info) = state.auth.user_state.validate_token(token) {
                 req.extensions_mut().insert(session_info);
             }
 

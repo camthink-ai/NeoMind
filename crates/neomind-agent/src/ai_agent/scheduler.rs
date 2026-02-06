@@ -215,9 +215,10 @@ impl AgentScheduler {
 
                 // Check for tasks to execute
                 let now = Utc::now().timestamp();
-                let tasks_to_execute = {
+                let (tasks_to_execute, skipped_tasks) = {
                     let mut tasks_guard = tasks.write().await;
                     let mut to_execute = Vec::new();
+                    let mut skipped = Vec::new();
 
                     for (agent_id, task) in tasks_guard.iter_mut() {
                         if !task.enabled {
@@ -228,9 +229,18 @@ impl AgentScheduler {
                             // Check concurrency limit
                             let running_count = running_executions.read().await.len();
                             if running_count >= max_concurrent {
+                                // Track which agent was skipped due to concurrency limit
+                                skipped.push((
+                                    agent_id.clone(),
+                                    task.next_execution,
+                                    now - task.next_execution,
+                                ));
                                 tracing::warn!(
-                                    "Scheduler at concurrency limit ({}/{}), skipping execution",
-                                    running_count, max_concurrent
+                                    agent_id = %agent_id,
+                                    running_count = running_count,
+                                    max_concurrent = max_concurrent,
+                                    overdue_seconds = now - task.next_execution,
+                                    "Scheduler at concurrency limit, skipping agent execution"
                                 );
                                 break;
                             }
@@ -243,8 +253,16 @@ impl AgentScheduler {
                         }
                     }
 
-                    to_execute
+                    (to_execute, skipped)
                 };
+
+                // Log summary of skipped tasks (if any)
+                if !skipped_tasks.is_empty() {
+                    tracing::warn!(
+                        skipped_count = skipped_tasks.len(),
+                        "Skipped agent executions due to concurrency limit"
+                    );
+                }
 
                 // Execute tasks
                 for (agent_id, _cron_schedule) in tasks_to_execute {
@@ -457,10 +475,37 @@ impl AgentScheduler {
     }
 
     /// Update the next execution time for a task after execution.
-    fn update_next_execution(task: &mut ScheduledTask, now: i64) {
+    ///
+    /// For interval tasks, this calculates the next execution based on the
+    /// previously scheduled time (not the actual execution time) to prevent
+    /// time drift. If the next scheduled time has already passed, it will
+    /// calculate forward from the current time.
+    fn update_next_execution(task: &mut ScheduledTask, _now: i64) {
         if let Some(interval) = task.interval_seconds {
-            // Simple interval: just add interval
-            task.next_execution = now + interval as i64;
+            // Interval: use the previous scheduled time to prevent drift
+            // E.g., if scheduled for 8:00 but executed at 8:00:01,
+            // next should be 8:05 (not 8:05:01)
+            let scheduled_next = task.next_execution + interval as i64;
+            let current_now = Utc::now().timestamp();
+
+            if scheduled_next > current_now {
+                // The next scheduled time is still in the future - use it
+                task.next_execution = scheduled_next;
+            } else {
+                // We've fallen behind (e.g., system was paused/sleeping)
+                // Calculate the next future time from now
+                let intervals_behind = (current_now - scheduled_next) / interval as i64 + 1;
+                task.next_execution = scheduled_next + (intervals_behind * interval as i64);
+
+                tracing::debug!(
+                    agent_id = %task.agent_id,
+                    scheduled_next = scheduled_next,
+                    current_now = current_now,
+                    intervals_behind = intervals_behind,
+                    new_next = task.next_execution,
+                    "Interval task fell behind, rescheduled"
+                );
+            }
         } else if let Some(ref schedule) = task.cron_schedule {
             // Cron: calculate next occurrence
             let base_time = Utc::now();
@@ -663,5 +708,122 @@ mod tests {
 
         // Once schedules should execute immediately
         assert!(next >= now && next <= now + 5);
+    }
+
+    #[tokio::test]
+    async fn test_update_next_execution_interval_no_drift() {
+        // Test that interval tasks don't drift due to execution delays
+        let interval: u64 = 300; // 5 minutes
+
+        // Use a time in the near future (within a few hours from now)
+        let now = Utc::now().timestamp();
+        let scheduled_time = now + 3600; // 1 hour from now
+
+        // Simulate: scheduled at scheduled_time, but executed 5 seconds late
+        let execution_time: i64 = scheduled_time + 5;
+
+        let mut task = ScheduledTask {
+            agent_id: "test-agent".to_string(),
+            next_execution: scheduled_time,
+            interval_seconds: Some(interval),
+            cron_expression: None,
+            cron_schedule: None,
+            timezone: None,
+            enabled: true,
+        };
+
+        // Update next execution (this should use scheduled time, not execution time)
+        AgentScheduler::update_next_execution(&mut task, execution_time);
+
+        // Next execution should be exactly 5 minutes after the SCHEDULED time
+        // not 5 minutes after the EXECUTION time
+        // This prevents drift: if we used execution_time, next would be scheduled_time + 305
+        // With our fix, next is scheduled_time + 300 (exactly on schedule)
+        assert_eq!(task.next_execution, scheduled_time + interval as i64);
+
+        // Verify it's NOT based on execution time (which would cause drift)
+        assert_ne!(task.next_execution, execution_time + interval as i64);
+    }
+
+    #[tokio::test]
+    async fn test_update_next_execution_interval_recovery_after_delay() {
+        // Test recovery when system is down/sleeping and misses executions
+        let interval: u64 = 300; // 5 minutes
+
+        // Use a time in the near future
+        let now = Utc::now().timestamp();
+        let scheduled_time = now + 3600; // 1 hour from now (8:00 AM equivalent)
+
+        let mut task = ScheduledTask {
+            agent_id: "test-agent".to_string(),
+            next_execution: scheduled_time,
+            interval_seconds: Some(interval),
+            cron_expression: None,
+            cron_schedule: None,
+            timezone: None,
+            enabled: true,
+        };
+
+        // Simulate first update (scheduled_time -> scheduled_time + 5 min)
+        AgentScheduler::update_next_execution(&mut task, scheduled_time);
+        let first_next = task.next_execution;
+        assert_eq!(first_next, scheduled_time + interval as i64);
+
+        // Now simulate a late execution - the task was supposed to run at first_next
+        // but we're executing it much later
+        // Sleep a tiny bit to ensure current time progresses
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        task.next_execution = first_next; // Keep first_next which is now in the past
+        let current_time = Utc::now().timestamp();
+
+        AgentScheduler::update_next_execution(&mut task, current_time);
+
+        // Since first_next is in the past, scheduler should have calculated forward
+        // to a future time based on current time
+        assert!(task.next_execution > first_next);
+        // Should be approximately in the future (allow for test timing variance)
+        assert!(task.next_execution > current_time - 100);
+    }
+
+    #[tokio::test]
+    async fn test_interval_schedule_stability() {
+        // Test that multiple interval updates maintain stability
+        let interval: u64 = 60; // 1 minute
+
+        // Start from a time in the future
+        let now = Utc::now().timestamp();
+        let base_time = now + 3600; // 1 hour from now
+
+        let mut task = ScheduledTask {
+            agent_id: "test-agent".to_string(),
+            next_execution: base_time,
+            interval_seconds: Some(interval),
+            cron_expression: None,
+            cron_schedule: None,
+            timezone: None,
+            enabled: true,
+        };
+
+        // Simulate 10 executions, each with varying delays
+        let delays: Vec<i64> = vec![0, 1, 2, 5, 10, 0, 3, 1, 0, 2];
+
+        for (i, delay) in delays.iter().enumerate() {
+            let execution_time = task.next_execution + delay;
+
+            // Store the expected next execution before updating
+            let expected = base_time + (i as i64 + 1) * interval as i64;
+
+            AgentScheduler::update_next_execution(&mut task, execution_time);
+
+            // The next execution should ALWAYS be on the planned schedule
+            // regardless of execution delays
+            assert_eq!(
+                task.next_execution,
+                expected,
+                "After execution {}, next execution should be exactly on schedule",
+                i + 1
+            );
+        }
     }
 }

@@ -200,7 +200,7 @@ pub async fn export_config_handler(
     }
 
     // Export devices using DeviceService
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
     if !configs.is_empty() {
         export.devices = Some(DevicesExport {
             devices: configs
@@ -216,7 +216,7 @@ pub async fn export_config_handler(
     }
 
     // Export rules if available
-    let rules = state.rule_engine.list_rules().await;
+    let rules = state.automation.rule_engine.list_rules().await;
     if !rules.is_empty() {
         export.rules = Some(RulesExport {
             rules: rules
@@ -401,7 +401,7 @@ async fn import_llm_settings(
     };
 
     state
-        .session_manager
+        .agents.session_manager
         .set_llm_backend(backend)
         .await
         .map_err(|e| e.to_string())?;

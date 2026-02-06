@@ -3,10 +3,8 @@
 use std::pin::Pin;
 use std::sync::Arc;
 use futures::Stream;
-use tokio::sync::broadcast;
 
 use neomind_agent::SessionManager;
-use neomind_messages::MessageManager;
 use neomind_commands::{CommandManager, CommandQueue, CommandStateStore};
 use neomind_core::{EventBus, extension::ExtensionRegistry};
 use neomind_devices::adapter::AdapterResult;
@@ -17,11 +15,15 @@ use neomind_storage::llm_backends::LlmBackendStore;
 
 use neomind_automation::{AutoOnboardManager, store::SharedAutomationStore, intent::IntentAnalyzer, transform::TransformEngine};
 use neomind_memory::TieredMemory;
+use neomind_messages::MessageManager;
 
-use crate::auth::AuthState;
+use crate::auth::AuthState as ApiKeyAuthState;
 use crate::auth_users::AuthUserState;
 use crate::config::LlmSettingsRequest;
 use crate::rate_limit::{RateLimitConfig, RateLimiter};
+use crate::server::state::{
+    AuthState, AgentState, AgentManager, AutomationState, CoreState, DeviceState,
+};
 
 #[cfg(feature = "embedded-broker")]
 use neomind_devices::EmbeddedBroker;
@@ -29,84 +31,153 @@ use neomind_devices::EmbeddedBroker;
 /// Maximum request body size (10 MB)
 pub const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024;
 
-/// Device status update for WebSocket broadcast.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct DeviceStatusUpdate {
-    /// Update type
-    pub update_type: String,
-    /// Device ID
-    pub device_id: String,
-    /// Device status (online/offline/etc)
-    pub status: Option<String>,
-    /// Last seen timestamp
-    pub last_seen: Option<i64>,
-}
-
-/// AI Agent manager for user-defined automation agents.
-pub type AgentManager = Arc<neomind_agent::ai_agent::AiAgentManager>;
-
 /// Server state shared across all handlers.
+///
+/// Organized into logical sub-states for better maintainability.
 #[derive(Clone)]
 pub struct ServerState {
-    /// Session manager.
-    pub session_manager: Arc<SessionManager>,
-    /// Time series storage for device metrics.
-    pub time_series_storage: Arc<TimeSeriesStorage>,
-    /// Rule engine.
-    pub rule_engine: Arc<RuleEngine>,
-    /// Rule store for persistent rule storage.
-    pub rule_store: Option<Arc<RuleStore>>,
-    /// Message manager for unified messages/notifications system.
-    pub message_manager: Arc<MessageManager>,
-    /// Automation store for unified automations.
-    pub automation_store: Option<Arc<SharedAutomationStore>>,
-    /// Intent analyzer for automation type recommendations.
-    pub intent_analyzer: Option<Arc<IntentAnalyzer>>,
-    /// Transform engine for data processing.
-    pub transform_engine: Option<Arc<TransformEngine>>,
-    /// Embedded broker (only used in embedded mode)
-    #[cfg(feature = "embedded-broker")]
-    pub embedded_broker: Option<Arc<EmbeddedBroker>>,
-    /// Device status broadcast sender
-    pub device_update_tx: broadcast::Sender<DeviceStatusUpdate>,
-    /// Event bus for system-wide event distribution.
-    pub event_bus: Option<Arc<EventBus>>,
-    /// Command manager for command history and retry.
-    pub command_manager: Option<Arc<CommandManager>>,
-    /// Authentication state for API key validation.
-    pub auth_state: Arc<AuthState>,
-    /// User authentication state for JWT token validation.
-    pub auth_user_state: Arc<AuthUserState>,
+    /// Core system services (EventBus, CommandManager, MessageManager, Extensions)
+    pub core: CoreState,
+
+    /// Device management (Registry, Service, Telemetry, Broker)
+    pub devices: DeviceState,
+
+    /// Automation and rules (RuleEngine, Stores, IntentAnalyzer, TransformEngine)
+    pub automation: AutomationState,
+
+    /// AI Agents and sessions (SessionManager, Memory, Store, Manager)
+    pub agents: AgentState,
+
+    /// Authentication (API keys and JWT)
+    pub auth: AuthState,
+
     /// Response cache for API endpoints.
     pub response_cache: Arc<crate::cache::ResponseCache>,
+
     /// Rate limiter for API request throttling.
     pub rate_limiter: Arc<RateLimiter>,
-    /// Extension registry for managing dynamically loaded extensions (.so/.wasm).
-    pub extension_registry: Arc<tokio::sync::RwLock<ExtensionRegistry>>,
-    /// Device registry for templates and configurations (new architecture)
-    pub device_registry: Arc<DeviceRegistry>,
-    /// Device service for unified device operations (new architecture)
-    pub device_service: Arc<DeviceService>,
-    /// Auto-onboarding manager for zero-config device discovery (lazy-initialized)
+
+    /// Auto-onboarding manager for zero-config device discovery (lazy-initialized).
     pub auto_onboard_manager: Arc<tokio::sync::RwLock<Option<Arc<AutoOnboardManager>>>>,
-    /// Rule history store for statistics.
-    pub rule_history_store: Option<Arc<neomind_storage::business::RuleHistoryStore>>,
-    /// Tiered memory system for conversation history and knowledge.
-    pub memory: Arc<tokio::sync::RwLock<TieredMemory>>,
-    /// AI Agent store for user-defined automation agents.
-    pub agent_store: Arc<neomind_storage::AgentStore>,
-    /// AI Agent manager for executing user-defined agents (lazy-initialized).
-    pub agent_manager: Arc<tokio::sync::RwLock<Option<AgentManager>>>,
-    /// Server start timestamp.
-    pub started_at: i64,
+
     /// Dashboard store for visual dashboard persistence.
     pub dashboard_store: Arc<DashboardStore>,
+
+    /// Server start timestamp.
+    pub started_at: i64,
+
     /// Flag to track if agent events have been initialized (prevents duplicate subscribers).
     agent_events_initialized: Arc<std::sync::atomic::AtomicBool>,
+
     /// Flag to track if rule engine events have been initialized (prevents duplicate subscribers).
     rule_engine_events_initialized: Arc<std::sync::atomic::AtomicBool>,
+
     /// Cached rule engine event service instance (prevents duplicate instances).
     rule_engine_event_service: Arc<tokio::sync::Mutex<Option<crate::event_services::RuleEngineEventService>>>,
+}
+
+// Backward compatibility: Provide direct field access as before
+impl ServerState {
+    /// Get session manager (backward compatibility).
+    pub fn session_manager(&self) -> Arc<SessionManager> {
+        self.agents.session_manager.clone()
+    }
+
+    /// Get time series storage (backward compatibility).
+    pub fn time_series_storage(&self) -> Arc<TimeSeriesStorage> {
+        self.devices.telemetry.clone()
+    }
+
+    /// Get rule engine (backward compatibility).
+    pub fn rule_engine(&self) -> Arc<RuleEngine> {
+        self.automation.rule_engine.clone()
+    }
+
+    /// Get rule store (backward compatibility).
+    pub fn rule_store(&self) -> Option<Arc<RuleStore>> {
+        self.automation.rule_store.clone()
+    }
+
+    /// Get message manager (backward compatibility).
+    pub fn message_manager(&self) -> Arc<MessageManager> {
+        self.core.message_manager.clone()
+    }
+
+    /// Get automation store (backward compatibility).
+    pub fn automation_store(&self) -> Option<Arc<SharedAutomationStore>> {
+        self.automation.automation_store.clone()
+    }
+
+    /// Get intent analyzer (backward compatibility).
+    pub fn intent_analyzer(&self) -> Option<Arc<IntentAnalyzer>> {
+        self.automation.intent_analyzer.clone()
+    }
+
+    /// Get transform engine (backward compatibility).
+    pub fn transform_engine(&self) -> Option<Arc<TransformEngine>> {
+        self.automation.transform_engine.clone()
+    }
+
+    /// Get embedded broker (backward compatibility).
+    #[cfg(feature = "embedded-broker")]
+    pub fn embedded_broker(&self) -> Option<Arc<EmbeddedBroker>> {
+        self.devices.embedded_broker.clone()
+    }
+
+    /// Get event bus (backward compatibility).
+    pub fn event_bus(&self) -> Option<Arc<EventBus>> {
+        self.core.event_bus.clone()
+    }
+
+    /// Get command manager (backward compatibility).
+    pub fn command_manager(&self) -> Option<Arc<CommandManager>> {
+        self.core.command_manager.clone()
+    }
+
+    /// Get API key auth state (backward compatibility).
+    pub fn auth_state(&self) -> Arc<ApiKeyAuthState> {
+        self.auth.api_key_state.clone()
+    }
+
+    /// Get user auth state (backward compatibility).
+    pub fn auth_user_state(&self) -> Arc<AuthUserState> {
+        self.auth.user_state.clone()
+    }
+
+    /// Get extension registry (backward compatibility).
+    pub fn extension_registry(&self) -> Arc<tokio::sync::RwLock<ExtensionRegistry>> {
+        self.core.extension_registry.clone()
+    }
+
+    /// Get device registry (backward compatibility).
+    pub fn device_registry(&self) -> Arc<DeviceRegistry> {
+        self.devices.registry.clone()
+    }
+
+    /// Get device service (backward compatibility).
+    pub fn device_service(&self) -> Arc<DeviceService> {
+        self.devices.service.clone()
+    }
+
+    /// Get rule history store (backward compatibility).
+    pub fn rule_history_store(&self) -> Option<Arc<neomind_storage::business::RuleHistoryStore>> {
+        self.automation.rule_history_store.clone()
+    }
+
+    /// Get memory (backward compatibility).
+    pub fn memory(&self) -> Arc<tokio::sync::RwLock<TieredMemory>> {
+        self.agents.memory.clone()
+    }
+
+    /// Get agent store (backward compatibility).
+    pub fn agent_store(&self) -> Arc<neomind_storage::AgentStore> {
+        self.agents.agent_store.clone()
+    }
+
+    /// Get agent manager (backward compatibility).
+    pub fn agent_manager(&self) -> Arc<tokio::sync::RwLock<Option<AgentManager>>> {
+        self.agents.agent_manager.clone()
+    }
 }
 
 impl ServerState {
@@ -116,26 +187,45 @@ impl ServerState {
         let started_at = chrono::Utc::now().timestamp();
         let value_provider = Arc::new(InMemoryValueProvider::new());
 
-        // Use persistent SessionManager for session recovery after restart
-        // Sessions are stored in data/sessions.redb and restored on startup
-        let session_manager = SessionManager::new().unwrap_or_else(|e| {
-            tracing::warn!(category = "storage", error = %e, "Failed to create persistent SessionManager, using in-memory");
-            SessionManager::memory()
-        });
-
-        // Create event bus FIRST (needed for adapters to publish events)
-        let event_bus = Arc::new(EventBus::new());
-
-        // Create device status broadcast channel
-        let _device_update_tx: broadcast::Sender<DeviceStatusUpdate> = broadcast::channel(100).0;
-
         // Ensure data directory exists
         if let Err(e) = std::fs::create_dir_all("data") {
             tracing::warn!(category = "storage", error = %e, "Failed to create data directory");
         }
 
+        // ========== Build CORE STATE ==========
+        // Create event bus FIRST (needed for adapters to publish events)
+        let event_bus = Some(Arc::new(EventBus::new()));
+
+        // Create command manager
+        let command_queue = Arc::new(CommandQueue::new(1000));
+        let command_state = Arc::new(CommandStateStore::new(10000));
+        let command_manager = Some(Arc::new(CommandManager::new(command_queue, command_state)));
+
+        // Create message manager with persistent storage
+        let message_manager = match MessageManager::with_storage("data/messages.redb") {
+            Ok(manager) => {
+                tracing::info!("Message store initialized at data/messages.redb");
+                Arc::new(manager)
+            }
+            Err(e) => {
+                tracing::warn!(category = "storage", error = %e, "Failed to open message store, using in-memory");
+                Arc::new(MessageManager::new())
+            }
+        };
+        message_manager.register_default_channels().await;
+
+        // Create extension registry
+        let extension_registry = Arc::new(tokio::sync::RwLock::new(ExtensionRegistry::new()));
+
+        let core = CoreState::new(
+            event_bus.clone(),
+            command_manager,
+            message_manager.clone(),
+            extension_registry,
+        );
+
+        // ========== Build DEVICE STATE ==========
         // Create device registry with persistent storage
-        // Device types and configurations are stored in data/devices.redb
         let device_registry = match DeviceRegistry::with_persistence("data/devices.redb").await {
             Ok(registry) => {
                 tracing::info!("Device registry initialized with persistent storage at data/devices.redb");
@@ -147,8 +237,7 @@ impl ServerState {
             }
         };
 
-        // Use the SAME time series storage path (data/telemetry.redb)
-        // This ensures telemetry data written by adapters is readable by the API
+        // Create time series storage
         let telemetry_path = std::path::Path::new("data").join("telemetry.redb");
         let time_series_storage = Arc::new(match TimeSeriesStorage::open(&telemetry_path) {
             Ok(storage) => {
@@ -167,37 +256,80 @@ impl ServerState {
             }
         });
 
-
-        // Create device status broadcast channel
-        let device_update_tx: broadcast::Sender<DeviceStatusUpdate> = broadcast::channel(100).0;
-
-        // Create command manager
-        let command_queue = Arc::new(CommandQueue::new(1000));
-        let command_state = Arc::new(CommandStateStore::new(10000));
-        let command_manager = Arc::new(CommandManager::new(command_queue, command_state));
-
-        // Load rate limit configuration
-        let rate_limit_config = RateLimitConfig::default();
-        let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
-
-        // Create extension registry for dynamically loaded extensions (.so/.wasm)
-        let extension_registry = Arc::new(tokio::sync::RwLock::new(
-            ExtensionRegistry::new(),
-        ));
-
-        // Create device service (new architecture)
+        // Create device service
+        let event_bus_for_service = (**event_bus.as_ref().unwrap()).clone();
         let device_service = Arc::new(DeviceService::new(
             device_registry.clone(),
-            (*event_bus).clone(),
+            event_bus_for_service,
         ));
+        device_service.set_telemetry_storage(time_series_storage.clone()).await;
 
-        // Set telemetry storage for device service (synchronously)
-        device_service
-            .set_telemetry_storage(time_series_storage.clone())
-            .await;
+        // Create device status broadcast channel
+        let device_update_tx: tokio::sync::broadcast::Sender<super::state::DeviceStatusUpdate> =
+            tokio::sync::broadcast::channel(100).0;
+
+        let devices = DeviceState::new(
+            device_registry,
+            device_service,
+            time_series_storage,
+            device_update_tx,
+        );
+
+        // ========== Build AUTOMATION STATE ==========
+        let rule_engine = Arc::new(RuleEngine::new(value_provider.clone()));
+
+        // Wire rule engine to message manager
+        rule_engine.set_message_manager(core.message_manager.clone()).await;
+
+        // Wire rule engine to device service
+        let event_bus_for_action = (**event_bus.as_ref().unwrap()).clone();
+        let device_service_for_action = devices.service.clone();
+        let device_action_executor = Arc::new(DeviceActionExecutor::with_device_service(
+            event_bus_for_action,
+            device_service_for_action,
+        ));
+        rule_engine.set_device_action_executor(device_action_executor).await;
+
+        // Wire event bus to message manager
+        if let Some(ref bus) = event_bus {
+            core.message_manager.set_event_bus(bus.clone()).await;
+        }
+
+        // Create rule store
+        let rule_store = match RuleStore::open("data/rules.redb") {
+            Ok(store) => {
+                tracing::info!("Rule store initialized at data/rules.redb");
+                Some(store)
+            }
+            Err(e) => {
+                tracing::warn!(category = "storage", error = %e, "Failed to open rule store, rules will not be persisted");
+                None
+            }
+        };
+
+        // Load rules from store into rule engine
+        if let Some(ref store) = rule_store {
+            match store.list_all() {
+                Ok(rules) => {
+                    let rule_count = rules.len();
+                    tracing::info!("Loading {} rules from persistent store", rule_count);
+                    for rule in rules {
+                        if let Err(e) = rule_engine.add_rule(rule.clone()).await {
+                            tracing::warn!("Failed to load rule {}: {}", rule.id, e);
+                        } else {
+                            tracing::debug!("Loaded rule: {} ({})", rule.name, rule.id);
+                        }
+                    }
+                    tracing::info!("Successfully loaded {} rules from persistent store", rule_count);
+                }
+                Err(e) => {
+                    tracing::warn!(category = "storage", error = %e, "Failed to load rules from store");
+                }
+            }
+        }
 
         // Create automation store
-        let automation_store: Option<Arc<SharedAutomationStore>> = match SharedAutomationStore::open("data/automations.redb").await {
+        let automation_store = match SharedAutomationStore::open("data/automations.redb").await {
             Ok(store) => {
                 tracing::info!("Automation store initialized at data/automations.redb");
                 Some(Arc::new(store))
@@ -217,19 +349,43 @@ impl ServerState {
             }
         };
 
-        // Create intent analyzer (will use LLM backend when available)
-        let intent_analyzer: Option<Arc<IntentAnalyzer>> = None; // TODO: Initialize with LLM backend
-
-        // Create transform engine for data processing
-        let transform_engine: Option<Arc<TransformEngine>> = Some(Arc::new(TransformEngine::new()));
+        // Create transform engine
+        let transform_engine = Some(Arc::new(TransformEngine::new()));
         tracing::info!("Transform engine initialized");
 
-        // Create auto-onboarding manager for zero-config device discovery
-        // Note: Will be lazy-initialized when first accessed
-        let auto_onboard_manager: Arc<tokio::sync::RwLock<Option<Arc<AutoOnboardManager>>>> =
-            Arc::new(tokio::sync::RwLock::new(None));
+        // Create rule history store
+        let rule_history_store = match neomind_storage::business::RuleHistoryStore::open("data/rule_history.redb") {
+            Ok(store) => {
+                tracing::info!("Rule history store initialized at data/rule_history.redb");
+                Some(Arc::new(store))
+            }
+            Err(e) => {
+                tracing::warn!(category = "storage", error = %e, "Failed to open rule history store, statistics will be limited");
+                None
+            }
+        };
 
-        // Create AI Agent store for user-defined automation agents
+        let automation = AutomationState::new(
+            rule_engine,
+            rule_store,
+            automation_store,
+            None, // intent_analyzer - TODO: Initialize with LLM backend
+            transform_engine,
+            rule_history_store,
+        );
+
+        // ========== Build AGENT STATE ==========
+        // Create session manager
+        let session_manager = SessionManager::new().unwrap_or_else(|e| {
+            tracing::warn!(category = "storage", error = %e, "Failed to create persistent SessionManager, using in-memory");
+            SessionManager::memory()
+        });
+
+        // Create tiered memory
+        let memory_config = crate::config::get_memory_config();
+        let memory = Arc::new(tokio::sync::RwLock::new(TieredMemory::with_config(memory_config)));
+
+        // Create agent store
         let agent_store = match neomind_storage::AgentStore::open("data/agents.redb") {
             Ok(store) => {
                 tracing::info!("AI Agent store initialized at data/agents.redb");
@@ -237,135 +393,58 @@ impl ServerState {
             }
             Err(e) => {
                 tracing::warn!(category = "storage", error = %e, "Failed to open agent store, using in-memory");
-                neomind_storage::AgentStore::memory()
-                    .unwrap_or_else(|e| {
-                        tracing::error!(category = "storage", error = %e, "Failed to create in-memory agent store");
-                        std::process::exit(1);
-                    })
+                neomind_storage::AgentStore::memory().unwrap_or_else(|e| {
+                    tracing::error!(category = "storage", error = %e, "Failed to create in-memory agent store");
+                    std::process::exit(1);
+                })
             }
         };
 
-        // Create message manager with persistent storage
-        let message_manager = match MessageManager::with_storage("data/messages.redb") {
-            Ok(manager) => {
-                tracing::info!("Message store initialized at data/messages.redb");
-                Arc::new(manager)
-            }
-            Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open message store, using in-memory");
-                Arc::new(MessageManager::new())
-            }
+        let agents = AgentState::new(
+            Arc::new(session_manager),
+            memory,
+            agent_store,
+            Arc::new(tokio::sync::RwLock::new(None)),
+        );
+
+        // ========== Build AUTH STATE ==========
+        let auth = AuthState {
+            api_key_state: Arc::new(ApiKeyAuthState::new()),
+            user_state: Arc::new(AuthUserState::new()),
         };
-        // Register default channels
-        message_manager.register_default_channels().await;
 
-        let rule_engine = Arc::new(RuleEngine::new(value_provider));
-        // Wire rule engine to message manager for CreateAlert actions
-        rule_engine.set_message_manager(message_manager.clone()).await;
-        // Wire rule engine to device service for Execute actions
-        let device_action_executor = Arc::new(DeviceActionExecutor::with_device_service(
-            (*event_bus).clone(),
-            device_service.clone()
-        ));
-        rule_engine.set_device_action_executor(device_action_executor.clone()).await;
-        // Wire event bus to message manager for MessageCreated events
-        message_manager.set_event_bus(event_bus.clone()).await;
+        // ========== Cross-cutting services ==========
+        let rate_limit_config = RateLimitConfig::default();
+        let rate_limiter = Arc::new(RateLimiter::with_config(rate_limit_config));
+        let response_cache = Arc::new(crate::cache::ResponseCache::with_default_ttl());
 
-        // Create rule store for persistent rule storage
-        let rule_store = match RuleStore::open("data/rules.redb") {
+        let auto_onboard_manager = Arc::new(tokio::sync::RwLock::new(None));
+
+        let dashboard_store = match DashboardStore::open("data/dashboards.redb") {
             Ok(store) => {
-                tracing::info!("Rule store initialized at data/rules.redb");
-                Some(store)
+                tracing::info!("Dashboard store initialized at data/dashboards.redb");
+                store
             }
             Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open rule store, rules will not be persisted");
-                None
+                tracing::warn!(category = "storage", error = %e, "Failed to open dashboard store, using in-memory");
+                DashboardStore::memory().unwrap_or_else(|e| {
+                    tracing::error!(category = "storage", error = %e, "Failed to create in-memory dashboard store");
+                    std::process::exit(1);
+                })
             }
         };
-
-        // Load rules from store into rule engine
-        if let Some(ref store) = rule_store {
-            match store.list_all() {
-                Ok(rules) => {
-                    let rule_count = rules.len();
-                    tracing::info!("Loading {} rules from persistent store", rule_count);
-                    for rule in rules {
-                        // Re-add rule to engine
-                        if let Err(e) = rule_engine.add_rule(rule.clone()).await {
-                            tracing::warn!("Failed to load rule {}: {}", rule.id, e);
-                        } else {
-                            tracing::debug!("Loaded rule: {} ({})", rule.name, rule.id);
-                        }
-                    }
-                    tracing::info!("Successfully loaded {} rules from persistent store", rule_count);
-                }
-                Err(e) => {
-                    tracing::warn!(category = "storage", error = %e, "Failed to load rules from store");
-                }
-            }
-        }
 
         Self {
-            session_manager: Arc::new(session_manager),
-            time_series_storage,
-            rule_engine,
-            rule_store,
-            message_manager,
-            automation_store,
-            intent_analyzer,
-            transform_engine,
-            #[cfg(feature = "embedded-broker")]
-            embedded_broker: None,
-            device_update_tx,
-            event_bus: Some(event_bus),
-            command_manager: Some(command_manager),
-            auth_state: Arc::new(AuthState::new()),
-            auth_user_state: Arc::new(AuthUserState::new()),
-            response_cache: Arc::new(crate::cache::ResponseCache::with_default_ttl()),
+            core,
+            devices,
+            automation,
+            agents,
+            auth,
+            response_cache,
             rate_limiter,
-            extension_registry,
-            device_registry,
-            device_service,
             auto_onboard_manager,
-            rule_history_store: {
-                use neomind_storage::business::RuleHistoryStore;
-                match RuleHistoryStore::open("data/rule_history.redb") {
-                    Ok(store) => {
-                        tracing::info!("Rule history store initialized at data/rule_history.redb");
-                        Some(Arc::new(store))
-                    }
-                    Err(e) => {
-                        tracing::warn!(category = "storage", error = %e, "Failed to open rule history store, statistics will be limited");
-                        None
-                    }
-                }
-            },
-            // Initialize tiered memory with configuration from config.toml
-            memory: {
-                let memory_config = crate::config::get_memory_config();
-                Arc::new(tokio::sync::RwLock::new(TieredMemory::with_config(memory_config)))
-            },
-            agent_store,
-            // AI Agent manager - lazy initialized, will be started when server is fully ready
-            agent_manager: Arc::new(tokio::sync::RwLock::new(None)),
-            // Dashboard store for visual dashboards
-            dashboard_store: {
-                match DashboardStore::open("data/dashboards.redb") {
-                    Ok(store) => {
-                        tracing::info!("Dashboard store initialized at data/dashboards.redb");
-                        store
-                    }
-                    Err(e) => {
-                        tracing::warn!(category = "storage", error = %e, "Failed to open dashboard store, using in-memory");
-                        DashboardStore::memory().unwrap_or_else(|e| {
-                            tracing::error!(category = "storage", error = %e, "Failed to create in-memory dashboard store");
-                            std::process::exit(1);
-                        })
-                    }
-                }
-            },
+            dashboard_store,
             started_at,
-            // Initialization flags to prevent duplicate event subscribers
             agent_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_event_service: Arc::new(tokio::sync::Mutex::new(None)),
@@ -387,7 +466,7 @@ impl ServerState {
     pub async fn init_llm(&self) {
         // First try to load from config file
         if let Some(backend) = crate::config::load_llm_config() {
-            match self.session_manager.set_llm_backend(backend).await {
+            match self.agents.session_manager.set_llm_backend(backend).await {
                 Ok(_) => {
                     tracing::info!(
                         category = "ai",
@@ -403,7 +482,7 @@ impl ServerState {
 
         // Fallback: try to load from LlmBackendInstanceManager (database-stored backends)
         match self
-            .session_manager
+            .agents.session_manager
             .configure_llm_from_instance_manager()
             .await
         {
@@ -426,7 +505,7 @@ impl ServerState {
         use neomind_devices::adapters::{create_adapter, mqtt::MqttAdapterConfig};
 
         // Start device service to listen for EventBus events
-        self.device_service.start().await;
+        self.devices.service.start().await;
 
         #[cfg(feature = "embedded-broker")]
         {
@@ -469,7 +548,7 @@ impl ServerState {
         };
 
         // Create the MQTT adapter
-        let Some(event_bus) = self.event_bus.as_ref() else {
+        let Some(event_bus) = self.core.event_bus.as_ref() else {
             tracing::error!("EventBus not initialized, cannot create MQTT adapter");
             return;
         };
@@ -489,16 +568,16 @@ impl ServerState {
         match mqtt_adapter_result {
             Ok(mqtt_adapter) => {
                 // Set telemetry storage for the MQTT adapter so it can write metrics
-                mqtt_adapter.set_telemetry_storage(self.time_series_storage.clone());
+                mqtt_adapter.set_telemetry_storage(self.devices.telemetry.clone());
 
                 // Try to set the shared device registry on the MQTT adapter
                 // This allows the adapter to look up devices by custom telemetry topics
                 if let Some(mqtt) = mqtt_adapter.as_any().downcast_ref::<neomind_devices::adapters::mqtt::MqttAdapter>() {
-                    mqtt.set_shared_device_registry(self.device_service.get_registry().await).await;
+                    mqtt.set_shared_device_registry(self.devices.service.get_registry().await).await;
                 }
 
                 // Register adapter with device service
-                self.device_service
+                self.devices.service
                     .register_adapter("internal-mqtt".to_string(), mqtt_adapter.clone())
                     .await;
 
@@ -547,13 +626,13 @@ impl ServerState {
 
         tracing::info!("Found {} external MQTT broker(s), attempting to reconnect...", brokers.len());
 
-        let Some(event_bus) = self.event_bus.as_ref() else {
+        let Some(event_bus) = self.core.event_bus.as_ref() else {
             tracing::warn!("EventBus not initialized, cannot reconnect external brokers");
             return;
         };
 
         let context = ExternalBrokerContext {
-            device_service: self.device_service.clone(),
+            device_service: self.devices.service.clone(),
             event_bus: event_bus.clone(),
         };
 
@@ -590,21 +669,21 @@ impl ServerState {
         // Build tool registry with real implementations that connect to actual services
         let builder = ToolRegistryBuilder::new()
             // Real implementations
-            .with_query_data_tool(self.time_series_storage.clone())
-            .with_get_device_data_tool(self.device_service.clone(), self.time_series_storage.clone())
-            .with_control_device_tool(self.device_service.clone())
-            .with_list_devices_tool(self.device_service.clone())
-            .with_device_analyze_tool(self.device_service.clone(), self.time_series_storage.clone())
-            .with_create_rule_tool(self.rule_engine.clone())
-            .with_list_rules_tool(self.rule_engine.clone())
-            .with_delete_rule_tool(self.rule_engine.clone())
+            .with_query_data_tool(self.devices.telemetry.clone())
+            .with_get_device_data_tool(self.devices.service.clone(), self.devices.telemetry.clone())
+            .with_control_device_tool(self.devices.service.clone())
+            .with_list_devices_tool(self.devices.service.clone())
+            .with_device_analyze_tool(self.devices.service.clone(), self.devices.telemetry.clone())
+            .with_create_rule_tool(self.automation.rule_engine.clone())
+            .with_list_rules_tool(self.automation.rule_engine.clone())
+            .with_delete_rule_tool(self.automation.rule_engine.clone())
             // AI Agent tools for Chat integration
-            .with_agent_tools(self.agent_store.clone())
+            .with_agent_tools(self.agents.agent_store.clone())
             // System help tool for onboarding
             .with_system_help_tool_named("NeoMind");
 
         let tool_registry = Arc::new(builder.build());
-        self.session_manager
+        self.agents.session_manager
             .set_tool_registry(tool_registry.clone())
             .await;
         tracing::info!(
@@ -633,10 +712,10 @@ impl ServerState {
         tracing::info!("Initializing rule engine event service...");
         tracing::info!(
             "event_bus available: {}, rule_engine available: true",
-            self.event_bus.is_some()
+            self.core.event_bus.is_some()
         );
 
-        let (event_bus, rule_engine) = match (&self.event_bus, &self.rule_engine) {
+        let (event_bus, rule_engine) = match (&self.core.event_bus, &self.automation.rule_engine) {
             (Some(bus), engine) => (bus, engine),
             _ => {
                 tracing::warn!("Rule engine events not started: event_bus or rule_engine not available");
@@ -766,7 +845,7 @@ impl ServerState {
     /// and routes them to the auto-onboarding manager for processing.
     pub async fn init_auto_onboarding_events(&self) {
         // Ensure we have event_bus
-        let event_bus = match &self.event_bus {
+        let event_bus = match &self.core.event_bus {
             Some(bus) => bus.clone(),
             _ => {
                 tracing::warn!("Auto-onboarding events not started: event_bus not available");
@@ -838,7 +917,7 @@ impl ServerState {
 
         let manager = auto_onboard_manager.clone();
         let event_bus_clone = event_bus.clone();
-        let device_service_clone = self.device_service.clone();
+        let device_service_clone = self.devices.service.clone();
 
         tokio::spawn(async move {
             let mut rx = event_bus_clone.subscribe();
@@ -939,9 +1018,9 @@ impl ServerState {
         use crate::event_services::TransformEventService;
 
         let (event_bus, transform_engine, automation_store) = match (
-            &self.event_bus,
-            &self.transform_engine,
-            &self.automation_store,
+            &self.core.event_bus,
+            &self.automation.transform_engine,
+            &self.automation.automation_store,
         ) {
             (Some(bus), Some(engine), Some(store)) => (bus.clone(), engine.clone(), store.clone()),
             _ => {
@@ -954,8 +1033,8 @@ impl ServerState {
             event_bus,
             transform_engine,
             automation_store,
-            self.time_series_storage.clone(),
-            self.device_registry.clone(),
+            self.devices.telemetry.clone(),
+            self.devices.registry.clone(),
         );
 
         let running = service.start();
@@ -971,14 +1050,14 @@ impl ServerState {
 
     /// Get or initialize the AI Agent manager.
     pub async fn get_or_init_agent_manager(&self) -> Result<AgentManager, crate::models::ErrorResponse> {
-        let mgr_guard = self.agent_manager.read().await;
+        let mgr_guard = self.agents.agent_manager.read().await;
         if let Some(mgr) = mgr_guard.as_ref() {
             return Ok(mgr.clone());
         }
         drop(mgr_guard);
 
         // Initialize the manager
-        let mut mgr_guard = self.agent_manager.write().await;
+        let mut mgr_guard = self.agents.agent_manager.write().await;
         if let Some(mgr) = mgr_guard.as_ref() {
             return Ok(mgr.clone());
         }
@@ -993,7 +1072,7 @@ impl ServerState {
         };
 
         // Get LLM runtime from SessionManager if available
-        let llm_runtime = if let Ok(Some(backend)) = self.session_manager.get_llm_backend().await {
+        let llm_runtime = if let Ok(Some(backend)) = self.agents.session_manager.get_llm_backend().await {
             use neomind_agent::LlmBackend;
             use neomind_llm::{OllamaConfig, OllamaRuntime, CloudConfig, CloudRuntime};
             use neomind_core::llm::backend::LlmRuntime;
@@ -1049,11 +1128,11 @@ impl ServerState {
         };
 
         let executor_config = neomind_agent::ai_agent::AgentExecutorConfig {
-            store: self.agent_store.clone(),
+            store: self.agents.agent_store.clone(),
             time_series_storage: time_series_store,
-            device_service: Some(self.device_service.clone()),
-            event_bus: self.event_bus.clone(),
-            message_manager: Some(self.message_manager.clone()),
+            device_service: Some(self.devices.service.clone()),
+            event_bus: self.core.event_bus.clone(),
+            message_manager: Some(self.core.message_manager.clone()),
             llm_runtime,
             llm_backend_store,
         };
@@ -1100,7 +1179,7 @@ impl ServerState {
             }
         };
 
-        let event_bus = match &self.event_bus {
+        let event_bus = match &self.core.event_bus {
             Some(bus) => bus.clone(),
             _ => {
                 tracing::warn!("Agent event listener not started: event_bus not available");

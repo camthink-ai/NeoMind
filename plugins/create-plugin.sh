@@ -170,8 +170,8 @@ cat > "$PLUGIN_DIR/src/lib.rs" << EOF
 //!
 //! $PLUGIN_DESCRIPTION
 
-use edge_ai_core::plugin::native::{NEOMIND_PLUGIN_API_VERSION, NativePluginDescriptor};
-use edge_ai_core::plugin::{Plugin, PluginMetadata, PluginError};
+use neomind-core::plugin::native::{NEOMIND_PLUGIN_API_VERSION, NativePluginDescriptor};
+use neomind-core::plugin::{Plugin, PluginMetadata, PluginError};
 use serde_json::Value;
 
 /// $PLUGIN_DISPLAY_NAME plugin
@@ -234,7 +234,7 @@ impl Plugin for $PLUGIN_STRUCT_NAME {
         &METADATA
     }
 
-    fn initialize(&mut self, config: &Value) -> edge_ai_core::plugin::Result<()> {
+    fn initialize(&mut self, config: &Value) -> neomind-core::plugin::Result<()> {
         Self::initialize(self, config)
     }
 

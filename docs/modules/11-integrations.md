@@ -1,6 +1,6 @@
 # Integrations 模块
 
-**包名**: `edge_ai_integrations`
+**包名**: `neomind-integrations`
 **版本**: 0.1.0
 **完成度**: 65%
 **用途**: 外部系统集成框架

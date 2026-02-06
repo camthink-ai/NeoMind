@@ -19,7 +19,6 @@ pub mod extensions;
 pub mod llm_backends;
 pub mod memory;
 pub mod mqtt;
-pub mod plugins;
 pub mod rules;
 pub mod search;
 pub mod sessions;
@@ -66,14 +65,6 @@ pub use commands::{
 };
 // Stats API
 pub use stats::{get_device_stats_handler, get_rule_stats_handler, get_system_stats_handler};
-// Plugins API (deprecated, use Extensions API for dynamic extensions)
-pub use plugins::{
-    disable_plugin_handler, discover_plugins_handler, enable_plugin_handler,
-    execute_plugin_command_handler, get_plugin_config_handler, get_plugin_handler,
-    get_plugin_stats_handler, get_plugin_types_handler, list_plugins_by_type_handler,
-    list_plugins_handler, plugin_health_handler, register_plugin_handler, start_plugin_handler,
-    stop_plugin_handler, unregister_plugin_handler, update_plugin_config_handler,
-};
 // Extensions API (new)
 pub use extensions::{
     discover_extensions_handler, execute_extension_command_handler, extension_health_handler,

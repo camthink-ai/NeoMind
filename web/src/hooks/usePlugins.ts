@@ -1,22 +1,23 @@
 /**
  * Unified Plugin Hook
  *
- * Provides a unified interface for managing all plugin types:
- * - Dynamic plugins (loaded from .so/.dylib/.dll files)
- * - Native/built-in plugins
- * - LLM backends
- * - Device adapters
- * - Tool plugins
+ * Provides a unified interface for managing extensions:
+ * - Dynamic extensions (loaded from .so/.dylib/.dll files)
+ * - LLM provider extensions
+ * - Device protocol extensions
+ * - Tool extensions
  *
- * Integrates with the plugin store and provides helper functions
+ * Integrates with the extension store and provides helper functions
  * for working with the UnifiedPluginCard component.
+ *
+ * Note: Device adapters (MQTT, HTTP, Webhook) are now built-in and managed
+ * via the devices API, not as dynamic plugins.
  */
 
 import { useCallback, useMemo } from 'react'
 import { useStore } from '@/store'
 import type {
   Plugin,
-  AdapterPluginDto,
   PluginStatsDto,
   ExtensionStatsDto,
 } from '@/types'
@@ -58,9 +59,6 @@ export interface UsePluginsReturn {
   configure: (id: string, config: Record<string, unknown>) => Promise<boolean>
   test: (id: string) => Promise<boolean>
   discover: () => Promise<{ discovered: number; message: string }>
-
-  // Device adapters
-  getAdapterDevices: (pluginId: string) => Promise<unknown[]>
 }
 
 // ============================================================================
@@ -245,7 +243,6 @@ function extensionStatsToPluginStats(extensionStats?: ExtensionStatsDto): Plugin
     avg_response_time_ms: 0, // Extension stats don't track this
     last_start_time: undefined,
     last_stop_time: undefined,
-    device_count: undefined,
   }
 }
 
@@ -303,54 +300,10 @@ function toUnifiedPluginData(plugin: Plugin): UnifiedPluginData {
       name: plugin.name,
       enabled: plugin.enabled,
     },
-    deviceCount: plugin.device_count,
-    connected: plugin.running,
+    deviceCount: undefined,
+    connected: plugin.enabled,
     version: plugin.version,
     author: plugin.author,
-  }
-}
-
-/**
- * Convert device adapter to UnifiedPluginData
- */
-function toAdapterPluginData(adapter: AdapterPluginDto, deviceCount: number = 0): UnifiedPluginData {
-  const schema: PluginUISchema = {
-    id: adapter.id,
-    type: 'device_adapter',
-    category: 'devices',
-    name: adapter.name,
-    description: `${adapter.adapter_type.toUpperCase()} device adapter`,
-    version: adapter.version,
-    icon: adapter.adapter_type === 'mqtt' ? 'Server' : 'Wifi',
-    canAddMultiple: true,
-    builtin: false,
-    fields: {
-      name: COMMON_FIELDS.name,
-      enabled: COMMON_FIELDS.enabled,
-      auto_start: COMMON_FIELDS.autoStart,
-    },
-    groups: {},
-  }
-
-  const state: PluginStatus['state'] = adapter.running ? 'running' : 'stopped'
-
-  const status: PluginStatus = {
-    state,
-    enabled: adapter.enabled,
-    health: adapter.running ? 'healthy' : 'healthy',
-  }
-
-  return {
-    id: adapter.id,
-    schema,
-    status,
-    config: {
-      name: adapter.name,
-      enabled: adapter.enabled,
-    },
-    deviceCount,
-    connected: adapter.running,
-    version: adapter.version,
   }
 }
 
@@ -364,15 +317,12 @@ export function usePlugins(): UsePluginsReturn {
     extensionsLoading,
     discovering,
     extensionStats,
-    deviceAdapters,
     fetchExtensions,
     startExtension,
     stopExtension,
     unregisterExtension,
     executeExtensionCommand,
     discoverExtensions,
-    fetchDeviceAdapters,
-    getAdapterDevices,
   } = useStore()
 
   // Map extension type to plugin category
@@ -383,19 +333,16 @@ export function usePlugins(): UsePluginsReturn {
     return 'notify' // Default to notify for other types
   }
 
-  // Refresh all plugin data
+  // Refresh all extension data
   const refresh = useCallback(async () => {
-    await Promise.all([
-      fetchExtensions(),
-      fetchDeviceAdapters(),
-    ])
-  }, [fetchExtensions, fetchDeviceAdapters])
+    await fetchExtensions()
+  }, [fetchExtensions])
 
-  // Convert all plugins to unified format
+  // Convert all extensions to unified format
   const unifiedPlugins = useMemo(() => {
     const result: UnifiedPluginData[] = []
 
-    // Add regular extensions as plugins
+    // Add extensions as plugins
     for (const extension of extensions) {
       // Convert Extension to Plugin format for compatibility
       const stats = extensionStatsToPluginStats(extensionStats[extension.id])
@@ -405,7 +352,6 @@ export function usePlugins(): UsePluginsReturn {
         plugin_type: extension.extension_type,
         state: extension.state,
         enabled: extension.state === 'Running',
-        running: extension.state === 'Running',
         version: extension.version,
         description: extension.description || '',
         author: extension.author,
@@ -424,17 +370,8 @@ export function usePlugins(): UsePluginsReturn {
       result.push(toUnifiedPluginData(plugin))
     }
 
-    // Add device adapters that aren't already in the extensions list
-    const extensionIds = new Set(extensions.map(e => e.id))
-    for (const adapter of deviceAdapters) {
-      if (!extensionIds.has(adapter.id)) {
-        const deviceCount = adapter.device_count ?? 0
-        result.push(toAdapterPluginData(adapter, deviceCount))
-      }
-    }
-
     return result
-  }, [extensions, deviceAdapters, extensionStats])
+  }, [extensions, extensionStats])
 
   // Filter by category
   const filterByCategory = useCallback((category: PluginCategory) => {
@@ -517,11 +454,6 @@ export function usePlugins(): UsePluginsReturn {
     }
   }, [discoverExtensions])
 
-  // Get adapter devices
-  const getAdapterDevicesCallback = useCallback(async (pluginId: string) => {
-    return await getAdapterDevices(pluginId)
-  }, [getAdapterDevices])
-
   // Convert extension stats to plugin stats for return type
   const convertedStats: Record<string, PluginStatsDto> = useMemo(() => {
     const result: Record<string, PluginStatsDto> = {}
@@ -554,7 +486,6 @@ export function usePlugins(): UsePluginsReturn {
     configure,
     test,
     discover,
-    getAdapterDevices: getAdapterDevicesCallback,
   }
 }
 

@@ -830,13 +830,13 @@ export interface Event {
 
 // ========== Plugins Types ==========
 //
-// DEPRECATED: Old Plugin system has been migrated to Extension system.
+// NOTE: The Plugin system has been migrated to the Extension system.
 // See Extension Types below for the new API.
-// Legacy plugin types are kept for backward compatibility with device adapters
-// which still use /api/plugins/device-adapters endpoints.
+// The Plugin interface is kept for internal use in the usePlugins hook
+// to provide a unified format for displaying extensions.
 
 /**
- * Plugin type enumeration - DEPRECATED, kept for device adapter compatibility
+ * Plugin type enumeration
  */
 export enum PluginTypeEnum {
   LlmBackend = 'llm_backend',
@@ -852,7 +852,7 @@ export enum PluginTypeEnum {
 }
 
 /**
- * Plugin state enumeration - DEPRECATED
+ * Plugin state enumeration
  */
 export enum PluginStateEnum {
   Loaded = 'Loaded',
@@ -864,9 +864,10 @@ export enum PluginStateEnum {
 }
 
 /**
- * Plugin DTO - DEPRECATED, use Extension instead
+ * Plugin DTO - Internal interface for unified plugin representation
  *
- * Only device adapters still use this interface.
+ * This is used internally by the usePlugins hook to convert extensions
+ * to a unified format for display purposes.
  */
 export interface Plugin {
   id: string
@@ -882,13 +883,10 @@ export interface Plugin {
   stats: PluginStatsDto
   loaded_at: string
   path?: string
-  adapter_type?: 'mqtt' | 'http' | 'custom'
-  device_count?: number
-  running?: boolean
 }
 
 /**
- * Plugin statistics DTO - DEPRECATED
+ * Plugin statistics DTO
  */
 export interface PluginStatsDto {
   start_count: number
@@ -898,7 +896,6 @@ export interface PluginStatsDto {
   avg_response_time_ms: number
   last_start_time?: string
   last_stop_time?: string
-  device_count?: number
 }
 
 // ========== Extension Types ==========
@@ -999,50 +996,6 @@ export interface ExtensionRegistrationResponse {
 export interface ExtensionHealthResponse {
   extension_id: string
   healthy: boolean
-}
-
-// ========== Device Adapter Plugin Types ==========
-
-export interface AdapterPluginDto {
-  id: string
-  name: string
-  adapter_type: 'mqtt' | 'http' | 'custom'
-  enabled: boolean
-  running: boolean
-  device_count: number
-  state: string
-  version: string
-  uptime_secs?: number
-  last_activity: number
-}
-
-export interface AdapterDeviceDto {
-  id: string
-  name?: string
-  device_type: string
-  status: string
-  last_seen: number
-}
-
-export interface AdapterDevicesResponse {
-  plugin_id: string
-  plugin_name: string
-  devices: AdapterDeviceDto[]
-  count: number
-}
-
-export interface DeviceAdapterPluginsResponse {
-  total_adapters: number
-  running_adapters: number
-  total_devices: number
-  adapters: AdapterPluginDto[]
-}
-
-export interface DeviceAdapterStats {
-  total_adapters: number
-  running_adapters: number
-  total_devices: number
-  adapters: AdapterPluginDto[]
 }
 
 // ========== Extended Device Types ==========
@@ -1241,38 +1194,6 @@ export interface VisibilityRule {
   condition: 'equals' | 'not_equals' | 'contains' | 'empty' | 'not_empty'
   value?: unknown
   then_show: string[]
-}
-
-// ========== Device Adapter Plugin Types ==========
-//
-// Must match backend AdapterPluginDto (crates/api/src/handlers/plugins.rs:563-585)
-
-export type DeviceAdapterType = 'mqtt' | 'http' | 'custom'
-
-/**
- * Adapter plugin DTO - matches backend AdapterPluginDto exactly
- *
- * Backend: crates/api/src/handlers/plugins.rs:563-585
- */
-export interface AdapterPluginDto {
-  id: string
-  name: string
-  adapter_type: DeviceAdapterType  // 'mqtt', 'http', 'custom'
-  enabled: boolean
-  running: boolean
-  device_count: number
-  state: string
-  version: string
-  uptime_secs?: number
-  last_activity: number
-}
-
-/**
- * Device adapter plugin with optional config (for UI)
- */
-export interface DeviceAdapterPlugin extends AdapterPluginDto {
-  config?: Record<string, unknown>
-  config_schema?: PluginConfigSchema
 }
 
 // ========== Unified Automation Types ==========

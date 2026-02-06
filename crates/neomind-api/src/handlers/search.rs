@@ -160,7 +160,7 @@ pub async fn search_suggestions_handler(
     let mut suggestions = Vec::new();
 
     // Device name suggestions using DeviceService
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
     for config in configs {
         if config.device_id.to_lowercase().contains(&query)
             || config.name.to_lowercase().contains(&query)
@@ -183,7 +183,7 @@ pub async fn search_suggestions_handler(
 }
 
 async fn search_devices(state: &ServerState, query: &str, limit: usize) -> Vec<SearchResultItem> {
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
     let mut results = Vec::new();
 
     for config in configs {
@@ -226,7 +226,7 @@ async fn search_devices(state: &ServerState, query: &str, limit: usize) -> Vec<S
 }
 
 async fn search_sessions(state: &ServerState, query: &str, limit: usize) -> Vec<SearchResultItem> {
-    let sessions = state.session_manager.list_sessions().await;
+    let sessions = state.agents.session_manager.list_sessions().await;
     let mut results = Vec::new();
 
     for session_id in sessions.into_iter().take(limit) {
@@ -248,7 +248,7 @@ async fn search_sessions(state: &ServerState, query: &str, limit: usize) -> Vec<
 }
 
 async fn search_rules(state: &ServerState, query: &str, limit: usize) -> Vec<SearchResultItem> {
-    let rules = state.rule_engine.list_rules().await;
+    let rules = state.automation.rule_engine.list_rules().await;
     let mut results = Vec::new();
 
     for rule in rules.into_iter().take(limit) {
@@ -286,7 +286,7 @@ async fn search_rules(state: &ServerState, query: &str, limit: usize) -> Vec<Sea
 }
 
 async fn search_messages(state: &ServerState, query: &str, limit: usize) -> Vec<SearchResultItem> {
-    let messages = state.message_manager.list_messages().await;
+    let messages = state.core.message_manager.list_messages().await;
     let mut results = Vec::new();
 
     for msg in messages.into_iter().take(limit) {

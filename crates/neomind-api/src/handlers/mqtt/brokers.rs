@@ -360,11 +360,11 @@ pub async fn create_broker_handler(
     let mut connected = false;
     let mut connection_error: Option<String> = None;
     if broker.enabled {
-        let event_bus = state.event_bus.as_ref()
+        let event_bus = state.core.event_bus.as_ref()
             .ok_or_else(|| ErrorResponse::internal("EventBus not initialized".to_string()))?;
 
         let context = ExternalBrokerContext {
-            device_service: state.device_service.clone(),
+            device_service: state.devices.service.clone(),
             event_bus: event_bus.clone(),
         };
 
@@ -466,13 +466,13 @@ pub async fn update_broker_handler(
         let adapter_id = format!("external-{}", id);
 
         // First, stop the existing adapter if it's running
-        let _ = state.device_service.stop_adapter(&adapter_id).await;
+        let _ = state.devices.service.stop_adapter(&adapter_id).await;
 
-        let event_bus = state.event_bus.as_ref()
+        let event_bus = state.core.event_bus.as_ref()
             .ok_or_else(|| ErrorResponse::internal("EventBus not initialized".to_string()))?;
 
         let context = ExternalBrokerContext {
-            device_service: state.device_service.clone(),
+            device_service: state.devices.service.clone(),
             event_bus: event_bus.clone(),
         };
 
@@ -517,7 +517,7 @@ pub async fn delete_broker_handler(
 
     // First, stop the MQTT adapter if it's running
     let adapter_id = format!("external-{}", id);
-    let _ = state.device_service.stop_adapter(&adapter_id).await;
+    let _ = state.devices.service.stop_adapter(&adapter_id).await;
     tracing::info!(category = "mqtt", broker_id = %id, "Stopped MQTT adapter for external broker");
 
     // Then delete from storage

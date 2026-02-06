@@ -1,6 +1,6 @@
 # Rules 模块
 
-**包名**: `edge_ai_rules`
+**包名**: `neomind-rules`
 **版本**: 0.1.0
 **完成度**: 75%
 **用途**: DSL规则引擎
@@ -410,7 +410,7 @@ POST   /api/rules/from-nl                   # 从自然语言生成规则
 ### 创建规则
 
 ```rust
-use edge_ai_rules::{Rule, Trigger, Condition, Action, ComparisonOperator};
+use neomind-rules::{Rule, Trigger, Condition, Action, ComparisonOperator};
 
 let rule = Rule {
     id: "temp_alert".to_string(),
@@ -443,7 +443,7 @@ let rule = Rule {
 ### DSL解析
 
 ```rust
-use edge_ai_rules::RuleParser;
+use neomind-rules::RuleParser;
 
 let parser = RuleParser::new();
 

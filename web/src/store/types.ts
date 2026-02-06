@@ -16,7 +16,6 @@ import type {
   CommandHistoryResponse,
   ChatSession,
   UserInfo,
-  AdapterPluginDto,
 } from '@/types'
 
 // ============================================================================
@@ -56,10 +55,6 @@ export interface DeviceState {
   discoveredDevices: DiscoveredDevice[]
   devicesLoading: boolean
   deviceTypesLoading: boolean
-
-  // Device Adapters
-  deviceAdapters: AdapterPluginDto[]
-  deviceAdaptersLoading: boolean
 
   // Dialog states
   addDeviceDialogOpen: boolean

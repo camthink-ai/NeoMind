@@ -43,7 +43,7 @@ pub async fn cleanup_resources(state: &ServerState) {
     tracing::info!("Cleaning up resources...");
 
     // 1. Stop MQTT adapter through DeviceService (with timeout)
-    let device_service = state.device_service.clone();
+    let device_service = state.devices.service.clone();
     let mqtt_task = tokio::spawn(async move {
         if let Some(adapter) = device_service.get_adapter("internal-mqtt").await
             && let Err(e) = adapter.stop().await {
@@ -54,7 +54,7 @@ pub async fn cleanup_resources(state: &ServerState) {
 
     // 2. Note embedded broker status (feature-gated)
     #[cfg(feature = "embedded-broker")]
-    if let Some(broker) = &state.embedded_broker
+    if let Some(broker) = &state.devices.embedded_broker
         && broker.is_running() {
             tracing::info!("Embedded MQTT broker was running");
             // Note: EmbeddedBroker doesn't have a stop method,
@@ -68,7 +68,7 @@ pub async fn cleanup_resources(state: &ServerState) {
     // The redb database handles this via Drop
 
     // 4. Log session counts
-    let sessions = state.session_manager.list_sessions().await;
+    let sessions = state.agents.session_manager.list_sessions().await;
     tracing::info!("Shutdown complete. Active sessions: {}", sessions.len());
 
     // 5. Log uptime

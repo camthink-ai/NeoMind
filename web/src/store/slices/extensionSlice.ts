@@ -6,7 +6,7 @@
  * Matches backend API: crates/api/src/handlers/extensions.rs
  *
  * This replaces the legacy plugin system for dynamically loaded code modules.
- * Device adapter management still uses the /api/plugins/device-adapters endpoints.
+ * Device adapters are built-in (mqtt, http, webhook) and managed via the devices API.
  */
 
 import type { StateCreator } from 'zustand'
@@ -22,19 +22,12 @@ export interface ExtensionState {
   discovering: boolean
   extensionStats: Record<string, ExtensionStatsDto>
   extensionTypes: ExtensionTypeDto[]
-  // Device adapter plugin state (still using legacy API)
-  deviceAdapters: any[]
-  deviceAdaptersLoading: boolean
-  adapterDialogOpen: boolean
-  selectedAdapterDevices: any[]
-  selectedAdapterDevicesLoading: boolean
 }
 
 export interface ExtensionSlice extends ExtensionState {
   // Dialog actions
   setSelectedExtension: (extension: Extension | null) => void
   setExtensionDialogOpen: (open: boolean) => void
-  setAdapterDialogOpen: (open: boolean) => void
 
   // Extension actions
   fetchExtensions: (params?: { extension_type?: string; state?: string }) => Promise<void>
@@ -48,18 +41,6 @@ export interface ExtensionSlice extends ExtensionState {
   discoverExtensions: () => Promise<{ discovered: number; results: ExtensionDiscoveryResult[] }>
   fetchExtensionTypes: () => Promise<void>
   executeExtensionCommand: (id: string, command: string, args?: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; message?: string }>
-
-  // Device adapter actions (legacy API, still functional)
-  fetchDeviceAdapters: () => Promise<void>
-  registerDeviceAdapter: (adapter: {
-    id: string
-    name: string
-    adapter_type: string
-    config?: Record<string, unknown>
-    auto_start?: boolean
-  }) => Promise<boolean>
-  getAdapterDevices: (pluginId: string) => Promise<any[]>
-  getDeviceAdapterStats: () => Promise<{ total_adapters: number; running_adapters: number; total_devices: number } | null>
 }
 
 export const createExtensionSlice: StateCreator<
@@ -76,17 +57,10 @@ export const createExtensionSlice: StateCreator<
   discovering: false,
   extensionStats: {},
   extensionTypes: [],
-  // Device adapter state (legacy API)
-  deviceAdapters: [],
-  deviceAdaptersLoading: false,
-  adapterDialogOpen: false,
-  selectedAdapterDevices: [],
-  selectedAdapterDevicesLoading: false,
 
   // Dialog actions
   setSelectedExtension: (extension) => set({ selectedExtension: extension }),
   setExtensionDialogOpen: (open) => set({ extensionDialogOpen: open }),
-  setAdapterDialogOpen: (open) => set({ adapterDialogOpen: open }),
 
   // ========== Extension Actions ==========
 
@@ -253,69 +227,6 @@ export const createExtensionSlice: StateCreator<
     } catch (error) {
       logError(error, { operation: 'Execute extension command' })
       return { success: false, message: 'Command execution failed' }
-    }
-  },
-
-  // ========== Device Adapter Actions (Legacy API) ==========
-
-  // Fetch all device adapters
-  // Backend: GET /api/plugins/device-adapters -> DeviceAdapterPluginsResponse
-  fetchDeviceAdapters: async () => {
-    set({ deviceAdaptersLoading: true })
-    try {
-      const response = await api.listDeviceAdapters()
-      set({ deviceAdapters: response.adapters || [] })
-    } catch (error) {
-      // Device adapter registry might not be initialized
-      set({ deviceAdapters: [] })
-    } finally {
-      set({ deviceAdaptersLoading: false })
-    }
-  },
-
-  // Register a new device adapter
-  // Backend: POST /api/plugins/device-adapters -> { message, plugin_id }
-  registerDeviceAdapter: async (adapter) => {
-    try {
-      await api.registerDeviceAdapter(adapter)
-      await get().fetchDeviceAdapters()
-      return true
-    } catch (error) {
-      logError(error, { operation: 'Register device adapter' })
-      return false
-    }
-  },
-
-  // Get devices managed by an adapter
-  // Backend: GET /api/plugins/:id/devices -> { plugin_id, devices, count }
-  getAdapterDevices: async (pluginId) => {
-    set({ selectedAdapterDevicesLoading: true })
-    try {
-      const response = await api.getAdapterDevices(pluginId)
-      set({ selectedAdapterDevices: response.devices || [] })
-      return response.devices || []
-    } catch (error) {
-      logError(error, { operation: 'Fetch adapter devices' })
-      set({ selectedAdapterDevices: [] })
-      return []
-    } finally {
-      set({ selectedAdapterDevicesLoading: false })
-    }
-  },
-
-  // Get device adapter statistics
-  // Backend: GET /api/plugins/device-adapters/stats -> DeviceAdapterStats
-  getDeviceAdapterStats: async () => {
-    try {
-      const response = await api.getDeviceAdapterStats()
-      return {
-        total_adapters: response.total_adapters,
-        running_adapters: response.running_adapters,
-        total_devices: response.total_devices,
-      }
-    } catch (error) {
-      logError(error, { operation: 'Fetch device adapter stats' })
-      return null
     }
   },
 })

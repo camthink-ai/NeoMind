@@ -78,7 +78,7 @@ pub async fn webhook_handler(
     // Get source from query params, default to "webhook"
     let source = params.get("source").cloned().unwrap_or_else(|| "webhook".to_string());
     // Check if device exists
-    let device_opt = state.device_service.get_device(&device_id).await;
+    let device_opt = state.devices.service.get_device(&device_id).await;
 
     let device = match device_opt {
         Some(d) => d,
@@ -101,7 +101,7 @@ pub async fn webhook_handler(
                     .with_timeout_secs(120);
                 let runtime = OllamaRuntime::new(llm)
                     .map_err(|e| ErrorResponse::internal(format!("Failed to create LLM runtime: {}", e)))?;
-                let event_bus = state.event_bus.as_ref()
+                let event_bus = state.core.event_bus.as_ref()
                     .ok_or_else(|| ErrorResponse::internal("EventBus not available"))?
                     .clone();
                 let mgr = neomind_automation::AutoOnboardManager::new(
@@ -248,7 +248,7 @@ async fn publish_metric_event(
         quality,
     };
 
-    if let Some(ref event_bus) = state.event_bus {
+    if let Some(ref event_bus) = state.core.event_bus {
         event_bus.publish(event).await;
     }
 
@@ -279,7 +279,7 @@ async fn publish_metric_event(
     };
 
     let data_point = DataPoint::new(timestamp, devices_metric_value);
-    let _ = state.time_series_storage.write(device_id, metric, data_point).await;
+    let _ = state.devices.telemetry.write(device_id, metric, data_point).await;
 }
 
 /// Process device data through TransformEngine to generate virtual metrics
@@ -295,12 +295,12 @@ async fn process_device_transforms(
 ) {
     use neomind_core::NeoMindEvent;
 
-    let Some(transform_engine) = &state.transform_engine else {
+    let Some(transform_engine) = &state.automation.transform_engine else {
         debug!("TransformEngine not available, skipping transform processing");
         return;
     };
 
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         debug!("Automation store not available, skipping transform processing");
         return;
     };
@@ -341,7 +341,7 @@ async fn process_device_transforms(
 
                 // Publish each virtual metric
                 for metric in &transform_result.metrics {
-                    if let Some(ref event_bus) = state.event_bus {
+                    if let Some(ref event_bus) = state.core.event_bus {
                         event_bus
                             .publish(NeoMindEvent::DeviceMetric {
                                 device_id: metric.device_id.clone(),
@@ -357,7 +357,7 @@ async fn process_device_transforms(
                     let data_point =
                         DataPoint::new(metric.timestamp, neomind_devices::mdl::MetricValue::Float(metric.value));
                     let _ = state
-                        .time_series_storage
+                        .devices.telemetry
                         .write(&metric.device_id, &metric.metric, data_point)
                         .await;
                 }
@@ -390,7 +390,7 @@ pub async fn webhook_generic_handler(
     let source = params.get("source").cloned().unwrap_or_else(|| "webhook".to_string());
 
     // Check if device exists
-    let device_opt = state.device_service.get_device(&device_id).await;
+    let device_opt = state.devices.service.get_device(&device_id).await;
 
     let device = match device_opt {
         Some(d) => d,
@@ -413,7 +413,7 @@ pub async fn webhook_generic_handler(
                     .with_timeout_secs(120);
                 let runtime = OllamaRuntime::new(llm)
                     .map_err(|e| ErrorResponse::internal(format!("Failed to create LLM runtime: {}", e)))?;
-                let event_bus = state.event_bus.as_ref()
+                let event_bus = state.core.event_bus.as_ref()
                     .ok_or_else(|| ErrorResponse::internal("EventBus not available"))?
                     .clone();
                 let mgr = neomind_automation::AutoOnboardManager::new(
@@ -508,7 +508,7 @@ pub async fn get_webhook_url_handler(
     Path(device_id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
     // Verify device exists
-    let device_opt = state.device_service.get_device(&device_id).await;
+    let device_opt = state.devices.service.get_device(&device_id).await;
 
     if device_opt.is_none() {
         return Err(ErrorResponse::not_found(format!(

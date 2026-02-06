@@ -1,6 +1,6 @@
 # Automation 模块
 
-**包名**: `edge_ai_automation`
+**包名**: `neomind-automation`
 **版本**: 0.1.0
 **完成度**: 75%
 **用途**: 数据转换、自动化和意图分析
@@ -390,7 +390,7 @@ DELETE /api/devices/pending/:id/dismiss      # 忽略设备
 ### 创建数据转换
 
 ```rust
-use edge_ai_automation::{TransformAutomation, TransformOperation, TransformScope};
+use neomind-automation::{TransformAutomation, TransformOperation, TransformScope};
 
 let transform = TransformAutomation::new(
     "avg_temperature",
@@ -426,7 +426,7 @@ let transform = TransformAutomation::new(
 ### 自然语言生成规则
 
 ```rust
-use edge_ai_automation::Nl2Automation;
+use neomind-automation::Nl2Automation;
 
 let nl2auto = Nl2Automation::new(llm);
 
@@ -443,7 +443,7 @@ let suggested = nl2auto.generate(
 ### 阈值推荐
 
 ```rust
-use edge_ai_automation::{ThresholdRecommender, ThresholdIntent};
+use neomind-automation::{ThresholdRecommender, ThresholdIntent};
 
 let recommender = ThresholdRecommender::new(100);
 

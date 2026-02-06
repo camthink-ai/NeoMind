@@ -80,7 +80,7 @@ pub struct LlmConfigRequest {
 pub async fn setup_status_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<SetupStatusResponse>, ErrorResponse> {
-    let users = state.auth_user_state.list_users().await;
+    let users = state.auth.user_state.list_users().await;
     let setup_required = users.is_empty();
 
     Ok(Json(SetupStatusResponse {
@@ -99,7 +99,7 @@ pub async fn initialize_admin_handler(
     Json(req): Json<InitializeAdminRequest>,
 ) -> Result<Json<InitializeAdminResponse>, ErrorResponse> {
     // Validate that this is truly first-time setup
-    let users = state.auth_user_state.list_users().await;
+    let users = state.auth.user_state.list_users().await;
     if !users.is_empty() {
         return Err(ErrorResponse {
             status: StatusCode::FORBIDDEN,
@@ -143,7 +143,7 @@ pub async fn initialize_admin_handler(
 
     // Create admin user
     let (user_info, token) = state
-        .auth_user_state
+        .auth.user_state
         .register(&req.username, &req.password, UserRole::Admin)
         .await
         .map_err(|e| ErrorResponse {
@@ -179,7 +179,7 @@ pub async fn complete_setup_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<serde_json::Value>, ErrorResponse> {
     // Verify that at least one user exists
-    let users = state.auth_user_state.list_users().await;
+    let users = state.auth.user_state.list_users().await;
     if users.is_empty() {
         return Err(ErrorResponse {
             status: StatusCode::BAD_REQUEST,

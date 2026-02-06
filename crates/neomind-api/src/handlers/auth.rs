@@ -100,11 +100,11 @@ pub async fn list_keys_handler(
 ) -> Result<Json<KeyListResponse>, AuthError> {
     // Validate API key
     let api_key = extract_api_key(&headers)?;
-    if !state.auth_state.validate_key(&api_key) {
+    if !state.auth.api_key_state.validate_key(&api_key) {
         return Err(AuthError::unauthorized("Invalid API key"));
     }
 
-    let keys = state.auth_state.list_keys().await;
+    let keys = state.auth.api_key_state.list_keys().await;
     let items: Vec<KeyListItem> = keys.into_iter().map(Into::into).collect();
 
     Ok(Json(KeyListResponse { keys: items }))
@@ -118,7 +118,7 @@ pub async fn create_key_handler(
 ) -> Result<Json<CreateKeyResponse>, AuthError> {
     // Validate API key
     let api_key = extract_api_key(&headers)?;
-    if !state.auth_state.validate_key(&api_key) {
+    if !state.auth.api_key_state.validate_key(&api_key) {
         return Err(AuthError::unauthorized("Invalid API key"));
     }
 
@@ -128,7 +128,7 @@ pub async fn create_key_handler(
         req.permissions
     };
 
-    let (key, info) = state.auth_state.create_key(req.name, permissions).await;
+    let (key, info) = state.auth.api_key_state.create_key(req.name, permissions).await;
 
     Ok(Json(CreateKeyResponse { api_key: key, info }))
 }
@@ -141,18 +141,18 @@ pub async fn delete_key_handler(
 ) -> Result<ApiResponse, AuthError> {
     // Validate API key
     let api_key = extract_api_key(&headers)?;
-    if !state.auth_state.validate_key(&api_key) {
+    if !state.auth.api_key_state.validate_key(&api_key) {
         return Err(AuthError::unauthorized("Invalid API key"));
     }
     // Find the key by ID and delete it
-    let keys = state.auth_state.list_keys().await;
+    let keys = state.auth.api_key_state.list_keys().await;
     let key_to_delete = keys
         .iter()
         .find(|(_, info)| info.id == id)
         .map(|(k, _)| k.clone());
 
     if let Some(key) = key_to_delete {
-        if state.auth_state.delete_key(&key).await {
+        if state.auth.api_key_state.delete_key(&key).await {
             Ok(ApiResponse {
                 message: format!("API key {} deleted", id),
                 success: true,
@@ -173,7 +173,7 @@ pub async fn delete_key_handler(
 
 /// Get authentication status (public endpoint - no auth required).
 pub async fn auth_status_handler(State(state): State<ServerState>) -> Json<AuthStatusResponse> {
-    let keys = state.auth_state.list_keys().await;
+    let keys = state.auth.api_key_state.list_keys().await;
     let key_count = keys.len();
 
     Json(AuthStatusResponse {

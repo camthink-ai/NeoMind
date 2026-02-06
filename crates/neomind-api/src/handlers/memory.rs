@@ -183,7 +183,7 @@ fn default_category() -> String {
 /// Note: This function is kept for backwards compatibility but handlers
 /// should prefer using State(state).memory directly for proper configuration.
 fn get_global_memory(state: &ServerState) -> Arc<tokio::sync::RwLock<TieredMemory>> {
-    state.memory.clone()
+    state.agents.memory.clone()
 }
 
 /// Get memory statistics.

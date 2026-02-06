@@ -22,7 +22,7 @@ pub async fn bulk_delete_device_types_handler(
     let mut failed = 0;
 
     for (index, type_id) in req.type_ids.into_iter().enumerate() {
-        match state.device_service.unregister_template(&type_id).await {
+        match state.devices.service.unregister_template(&type_id).await {
             Ok(_) => {
                 results.push(BulkOperationResult {
                     index,
@@ -66,7 +66,7 @@ pub async fn bulk_delete_devices_handler(
     let mut failed = 0;
 
     for (index, device_id) in req.device_ids.into_iter().enumerate() {
-        match state.device_service.unregister_device(&device_id).await {
+        match state.devices.service.unregister_device(&device_id).await {
             Ok(_) => {
                 results.push(BulkOperationResult {
                     index,
@@ -78,7 +78,7 @@ pub async fn bulk_delete_devices_handler(
             }
             Err(_) => {
                 // Check if device exists
-                let device_exists = state.device_service.get_device(&device_id).await.is_some();
+                let device_exists = state.devices.service.get_device(&device_id).await.is_some();
 
                 if !device_exists {
                     results.push(BulkOperationResult {
@@ -181,7 +181,7 @@ pub async fn bulk_device_command_handler(
 
     for (index, device_id) in req.device_ids.into_iter().enumerate() {
         match state
-            .device_service
+            .devices.service
             .send_command(&device_id, &req.command, json_params.clone())
             .await
         {
@@ -196,7 +196,7 @@ pub async fn bulk_device_command_handler(
             }
             Err(_) => {
                 // Check if device exists
-                let device_exists = state.device_service.get_device(&device_id).await.is_some();
+                let device_exists = state.devices.service.get_device(&device_id).await.is_some();
 
                 if !device_exists {
                     results.push(BulkOperationResult {

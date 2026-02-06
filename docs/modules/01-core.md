@@ -1,6 +1,6 @@
 # Core 模块
 
-**包名**: `edge_ai-core`
+**包名**: `neomind-core`
 **版本**: 0.1.0
 **完成度**: 90%
 **用途**: 定义整个项目的核心trait和类型
@@ -329,8 +329,8 @@ pub fn endpoints() -> HashMap<String, String> {
 ### 创建EventBus
 
 ```rust
-use edge_ai_core::EventBus;
-use edge_ai_core::NeoMindEvent;
+use neomind-core::EventBus;
+use neomind-core::NeoMindEvent;
 
 #[tokio::main]
 async fn main() {
@@ -360,7 +360,7 @@ async fn main() {
 ### 使用LlmRuntime trait
 
 ```rust
-use edge_ai_core::llm::backend::{LlmRuntime, LlmInput, GenerationParams};
+use neomind-core::llm::backend::{LlmRuntime, LlmInput, GenerationParams};
 
 async fn call_llm(runtime: &dyn LlmRuntime, prompt: &str) -> Result<String> {
     let input = LlmInput {
@@ -406,7 +406,7 @@ pub enum Error {
 ## 依赖关系
 
 ```
-Core (edge_ai-core)
+Core (neomind-core)
     │
     ├── 无外部依赖（仅定义trait）
     │

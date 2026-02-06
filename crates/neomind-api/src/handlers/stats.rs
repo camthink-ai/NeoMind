@@ -138,12 +138,12 @@ pub async fn get_system_stats_handler(
         .timestamp();
 
     // Get device stats using DeviceService
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
     // Get current metrics to count devices with metrics
     let mut devices_with_metrics = 0;
     for config in &configs {
         if let Ok(metrics) = state
-            .device_service
+            .devices.service
             .get_current_metrics(&config.device_id)
             .await
             && !metrics.is_empty() {
@@ -153,8 +153,8 @@ pub async fn get_system_stats_handler(
 
     // Get online/offline device counts from connection status tracking
     use neomind_devices::adapter::ConnectionStatus;
-    let online_devices = state.device_service.get_devices_by_status(ConnectionStatus::Connected).await.len();
-    let offline_devices = state.device_service.get_devices_by_status(ConnectionStatus::Disconnected).await.len();
+    let online_devices = state.devices.service.get_devices_by_status(ConnectionStatus::Connected).await.len();
+    let offline_devices = state.devices.service.get_devices_by_status(ConnectionStatus::Disconnected).await.len();
 
     let device_stats = DeviceStats {
         total_devices: configs.len(),
@@ -164,8 +164,8 @@ pub async fn get_system_stats_handler(
     };
 
     // Get rule stats
-    let rules = state.rule_engine.list_rules().await;
-    let triggered_today = if let Some(store) = &state.rule_history_store {
+    let rules = state.automation.rule_engine.list_rules().await;
+    let triggered_today = if let Some(store) = &state.automation.rule_history_store {
         store.count_since(start_of_today).unwrap_or(0) as usize
     } else {
         0
@@ -184,7 +184,7 @@ pub async fn get_system_stats_handler(
     };
 
     // Get alert stats (using message manager)
-    let all_messages = state.message_manager.list_messages().await;
+    let all_messages = state.core.message_manager.list_messages().await;
     let active_messages: Vec<_> = all_messages
         .into_iter()
         .filter(|m| matches!(m.status, neomind_messages::MessageStatus::Active))
@@ -211,7 +211,7 @@ pub async fn get_system_stats_handler(
     };
 
     // Get command stats
-    let command_stats = if let Some(manager) = &state.command_manager {
+    let command_stats = if let Some(manager) = &state.core.command_manager {
         let state_stats = manager.state.stats().await;
         let total_commands = state_stats.total_count;
         let failed_commands = state_stats
@@ -445,20 +445,20 @@ fn detect_gpus() -> Vec<GpuInfo> {
 pub async fn get_device_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
 
     let mut devices_with_stats = Vec::new();
     for config in configs {
         // Get metrics count for this device
         let metrics_count = state
-            .device_service
+            .devices.service
             .get_current_metrics(&config.device_id)
             .await
             .map(|m| m.len())
             .unwrap_or(0);
 
         // Get actual connection status from DeviceService
-        let device_status = state.device_service.get_device_status(&config.device_id).await;
+        let device_status = state.devices.service.get_device_status(&config.device_id).await;
         let is_online = device_status.is_connected();
 
         devices_with_stats.push(json!({
@@ -492,7 +492,7 @@ pub async fn get_device_stats_handler(
 pub async fn get_rule_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let rules = state.rule_engine.list_rules().await;
+    let rules = state.automation.rule_engine.list_rules().await;
 
     let enabled_count = rules
         .iter()

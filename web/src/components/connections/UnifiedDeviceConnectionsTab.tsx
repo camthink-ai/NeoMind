@@ -37,10 +37,11 @@ import {
 } from '@/components/ui/dialog'
 import { EmptyState, LoadingState } from '@/components/shared'
 import { cn } from '@/lib/utils'
-import { api, fetchAPI } from '@/lib/api'
+import { api } from '@/lib/api'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
 import type { PluginConfigSchema, AdapterType } from '@/types'
 import { useToast } from '@/hooks/use-toast'
+import { ADAPTER_TYPES } from '@/constants/deviceAdapters'
 
 // Icon mapping for adapter types
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -187,8 +188,8 @@ export function UnifiedDeviceConnectionsTab() {
   const [view, setView] = useState<View>('list')
   const [loading, setLoading] = useState(true)
 
-  // Dynamically loaded adapter types
-  const [adapterTypes, setAdapterTypes] = useState<AdapterType[]>([])
+  // Use hardcoded adapter types instead of fetching from API
+  const adapterTypes = ADAPTER_TYPES
 
   // Data states
   const [mqttStatus, setMqttStatus] = useState<any>(null)
@@ -208,7 +209,7 @@ export function UnifiedDeviceConnectionsTab() {
 
   const [selectedType, setSelectedType] = useState<UnifiedPluginType | null>(null)
 
-  // Load all data (adapter types + connection data) in one go
+  // Load connection data on mount
   useEffect(() => {
     loadData()
   }, [])
@@ -216,10 +217,6 @@ export function UnifiedDeviceConnectionsTab() {
   const loadData = async () => {
     setLoading(true)
     try {
-      // Load adapter types first
-      const typesResponse = await fetchAPI<{ types: AdapterType[]; count: number }>('/device-adapters/types', { skipAuth: true })
-      setAdapterTypes(typesResponse.types || [])
-
       // Load connection data in parallel
       const [mqttResult, brokersResult, devicesResult] = await Promise.allSettled([
         api.getMqttStatus(),
@@ -240,7 +237,6 @@ export function UnifiedDeviceConnectionsTab() {
       }
     } catch (error) {
       handleError(error, { operation: 'Load device connections data', showToast: false })
-      setAdapterTypes([])
       setMqttStatus(null)
       setExternalBrokers([])
       setDevices([])

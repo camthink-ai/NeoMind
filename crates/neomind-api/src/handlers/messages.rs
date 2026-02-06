@@ -24,7 +24,7 @@ use crate::models::ErrorResponse;
 pub async fn list_messages_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let messages = state.message_manager.list_messages().await;
+    let messages = state.core.message_manager.list_messages().await;
     ok(json!({
         "messages": messages,
         "count": messages.len(),
@@ -83,7 +83,7 @@ pub async fn create_message_handler(
     }
 
     let created = state
-        .message_manager
+        .core.message_manager
         .create_message(msg)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -107,7 +107,7 @@ pub async fn get_message_handler(
     );
 
     let message = state
-        .message_manager
+        .core.message_manager
         .get_message(&msg_id)
         .await
         .ok_or_else(|| ErrorResponse::not_found("Message not found"))?;
@@ -127,7 +127,7 @@ pub async fn delete_message_handler(
     );
 
     state
-        .message_manager
+        .core.message_manager
         .delete(&msg_id)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -150,7 +150,7 @@ pub async fn acknowledge_message_handler(
     );
 
     state
-        .message_manager
+        .core.message_manager
         .acknowledge(&msg_id)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -173,7 +173,7 @@ pub async fn resolve_message_handler(
     );
 
     state
-        .message_manager
+        .core.message_manager
         .resolve(&msg_id)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -196,7 +196,7 @@ pub async fn archive_message_handler(
     );
 
     state
-        .message_manager
+        .core.message_manager
         .archive(&msg_id)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -212,7 +212,7 @@ pub async fn archive_message_handler(
 pub async fn message_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let stats = state.message_manager.get_stats().await;
+    let stats = state.core.message_manager.get_stats().await;
     ok(json!(stats))
 }
 
@@ -237,7 +237,7 @@ pub async fn bulk_acknowledge_handler(
     }
 
     let count = state
-        .message_manager
+        .core.message_manager
         .acknowledge_multiple(&ids)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -263,7 +263,7 @@ pub async fn bulk_resolve_handler(
     }
 
     let count = state
-        .message_manager
+        .core.message_manager
         .resolve_multiple(&ids)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -289,7 +289,7 @@ pub async fn bulk_delete_handler(
     }
 
     let count = state
-        .message_manager
+        .core.message_manager
         .delete_multiple(&ids)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;
@@ -311,7 +311,7 @@ pub async fn cleanup_handler(
     Json(req): Json<CleanupRequest>,
 ) -> HandlerResult<serde_json::Value> {
     let count = state
-        .message_manager
+        .core.message_manager
         .cleanup_old(req.older_than_days as i64)
         .await
         .map_err(|e| ErrorResponse::internal(e.to_string()))?;

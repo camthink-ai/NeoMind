@@ -24,7 +24,7 @@ pub async fn read_metric_handler(
 ) -> HandlerResult<serde_json::Value> {
     // Get current metrics for the device
     let current_values = state
-        .device_service
+        .devices.service
         .get_current_metrics(&device_id)
         .await
         .map_err(|e| ErrorResponse::bad_request(format!("Failed to read metric: {:?}", e)))?;
@@ -53,7 +53,7 @@ pub async fn query_metric_handler(
 
     // Use DeviceService to query telemetry
     let points = state
-        .device_service
+        .devices.service
         .query_telemetry(&device_id, &metric, Some(start), Some(end))
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to query metric: {:?}", e)))?;
@@ -93,7 +93,7 @@ pub async fn aggregate_metric_handler(
     // Use time_series_storage directly for aggregation
     // TODO: Add aggregate method to DeviceService
     let aggregated = state
-        .time_series_storage
+        .devices.telemetry
         .aggregate(&device_id, &metric, start, end)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to aggregate metric: {:?}", e)))?;
@@ -122,7 +122,7 @@ pub async fn send_command_handler(
 ) -> HandlerResult<serde_json::Value> {
     // Use DeviceService.send_command which accepts HashMap<String, serde_json::Value>
     state
-        .device_service
+        .devices.service
         .send_command(&device_id, &command, req.params)
         .await
         .map_err(|e| ErrorResponse::bad_request(format!("Failed to send command: {:?}", e)))?;

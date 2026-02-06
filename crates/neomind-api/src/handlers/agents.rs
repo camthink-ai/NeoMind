@@ -626,7 +626,7 @@ fn format_datetime(ts: i64) -> String {
 pub async fn list_agents(
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
     let agents = store.query_agents(AgentFilter::default()).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to query agents: {}", e)))?;
 
@@ -643,7 +643,7 @@ pub async fn get_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
     let agent = store.get_agent(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
         .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
@@ -747,7 +747,7 @@ pub async fn create_agent(
     };
 
     // Save to storage
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
     store.save_agent(&agent).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to save agent: {}", e)))?;
 
@@ -766,7 +766,7 @@ pub async fn update_agent(
     Path(id): Path<String>,
     Json(request): Json<UpdateAgentRequest>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     // Get existing agent
     let mut agent = store.get_agent(&id).await
@@ -921,7 +921,7 @@ pub async fn delete_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     // Check if agent exists
     let _agent = store.get_agent(&id).await
@@ -977,7 +977,7 @@ pub async fn get_agent_executions(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     // Check if agent exists
     let _agent = store.get_agent(&id).await
@@ -1002,7 +1002,7 @@ pub async fn get_execution(
     State(state): State<ServerState>,
     Path((id, execution_id)): Path<(String, String)>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     // Get execution
     let executions = store.get_agent_executions(&id, 100).await
@@ -1034,7 +1034,7 @@ pub async fn set_agent_status(
         _ => return Err(ErrorResponse::bad_request(format!("Invalid status: {}", status_str))),
     };
 
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
     store.update_agent_status(&id, new_status, None).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to update status: {}", e)))?;
 
@@ -1051,7 +1051,7 @@ pub async fn get_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     let agent = store.get_agent(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
@@ -1121,7 +1121,7 @@ pub async fn clear_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     // Check if agent exists
     let mut agent = store.get_agent(&id).await
@@ -1147,7 +1147,7 @@ pub async fn get_agent_stats(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     let agent = store.get_agent(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
@@ -1203,7 +1203,7 @@ pub async fn add_user_message(
     Path(id): Path<String>,
     Json(request): Json<AddUserMessageRequest>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     let message = store.add_user_message(&id, request.content, request.message_type).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to add message: {}", e)))?;
@@ -1220,7 +1220,7 @@ pub async fn get_user_messages(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     let messages = store.get_user_messages(&id, Some(50)).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get messages: {}", e)))?;
@@ -1235,7 +1235,7 @@ pub async fn delete_user_message(
     State(state): State<ServerState>,
     Path((id, message_id)): Path<(String, String)>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     let deleted = store.delete_user_message(&id, &message_id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to delete message: {}", e)))?;
@@ -1256,7 +1256,7 @@ pub async fn clear_user_messages(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agent_store;
+    let store = &state.agents.agent_store;
 
     let count = store.clear_user_messages(&id).await
         .map_err(|e| ErrorResponse::internal(format!("Failed to clear messages: {}", e)))?;

@@ -104,7 +104,7 @@ impl From<&neomind_commands::command::CommandResult> for CommandResultDto {
 /// Get command manager from server state.
 fn get_command_manager(state: &ServerState) -> Result<Arc<CommandManager>, ErrorResponse> {
     state
-        .command_manager
+        .core.command_manager
         .as_ref()
         .cloned()
         .ok_or_else(|| ErrorResponse::service_unavailable("Command manager not initialized"))

@@ -52,7 +52,7 @@ pub struct ChannelListResponse {
 pub async fn list_channels_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.message_manager.channels().await;
+    let registry = state.core.message_manager.channels().await;
     let registry_guard = registry.read().await;
     let channels = registry_guard.list_info().await;
     let stats = registry_guard.get_stats().await;
@@ -70,7 +70,7 @@ pub async fn get_channel_handler(
     State(state): State<ServerState>,
     Path(name): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.message_manager.channels().await;
+    let registry = state.core.message_manager.channels().await;
     let registry_guard = registry.read().await;
     let info = registry_guard
         .get_info(&name)
@@ -122,7 +122,7 @@ pub async fn create_channel_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateChannelRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.message_manager.channels().await;
+    let registry = state.core.message_manager.channels().await;
 
     // Check if channel already exists
     {
@@ -196,7 +196,7 @@ pub async fn delete_channel_handler(
     State(state): State<ServerState>,
     Path(name): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.message_manager.channels().await;
+    let registry = state.core.message_manager.channels().await;
     let registry_guard = registry.write().await;
 
     let removed = registry_guard.unregister(&name).await;
@@ -218,7 +218,7 @@ pub async fn test_channel_handler(
     State(state): State<ServerState>,
     Path(name): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.message_manager.channels().await;
+    let registry = state.core.message_manager.channels().await;
     let registry_guard = registry.read().await;
 
     let result = registry_guard
@@ -234,7 +234,7 @@ pub async fn test_channel_handler(
 pub async fn get_channel_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = state.message_manager.channels().await;
+    let registry = state.core.message_manager.channels().await;
     let registry_guard = registry.read().await;
     let stats = registry_guard.get_stats().await;
 

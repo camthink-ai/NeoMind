@@ -24,7 +24,7 @@ pub async fn generate_test_alerts_handler(
     let mut created = 0;
 
     for message in messages {
-        match state.message_manager.create_message(message).await {
+        match state.core.message_manager.create_message(message).await {
             Ok(_) => created += 1,
             Err(_) => {}, // Ignore duplicates
         }
@@ -43,7 +43,7 @@ pub async fn generate_test_events_handler(
     let events = generate_test_events();
     let mut published = 0;
 
-    if let Some(event_bus) = &state.event_bus {
+    if let Some(event_bus) = &state.core.event_bus {
         for event in events {
             event_bus.publish(event).await;
             published += 1;
@@ -69,13 +69,13 @@ pub async fn generate_test_data_handler(
     // Create messages
     let messages = generate_test_messages();
     for message in messages {
-        if state.message_manager.create_message(message).await.is_ok() {
+        if state.core.message_manager.create_message(message).await.is_ok() {
             summary.messages_created += 1;
         }
     }
 
     // Publish events
-    if let Some(event_bus) = &state.event_bus {
+    if let Some(event_bus) = &state.core.event_bus {
         let events = generate_test_events();
         for event in events {
             event_bus.publish(event).await;

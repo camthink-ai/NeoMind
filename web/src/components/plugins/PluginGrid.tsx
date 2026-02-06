@@ -85,7 +85,7 @@ export function PluginGrid({
     for (const [cat, catPlugins] of Object.entries(pluginsByCategory)) {
       result[cat] = {
         total: catPlugins.length,
-        running: catPlugins.filter((p) => p.running || p.state === "Running").length,
+        running: catPlugins.filter((p) => p.state === "Running").length,
       }
     }
     return result
@@ -159,18 +159,18 @@ export function PluginGrid({
                   description={plugin.description}
                   type={plugin.plugin_type}
                   enabled={plugin.enabled}
-                  running={plugin.running || plugin.state === "Running"}
+                  running={plugin.state === "Running"}
                   version={plugin.version}
-                  deviceCount={plugin.device_count}
+                  deviceCount={undefined}
                   stats={plugin.stats}
-                  badge={plugin.adapter_type?.toUpperCase()}
+                  badge={undefined}
                   onToggle={onToggle}
                   onStart={onStart}
                   onStop={onStop}
                   onConfigure={onConfigure}
                   onDelete={onDelete}
                   onRefresh={onRefresh}
-                  onViewDevices={plugin.device_count !== undefined ? onViewDevices : undefined}
+                  onViewDevices={undefined}
                 />
               ))}
             </div>

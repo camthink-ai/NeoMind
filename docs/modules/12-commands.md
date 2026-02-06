@@ -1,6 +1,6 @@
 # Commands 模块
 
-**包名**: `edge_ai_commands`
+**包名**: `neomind-commands`
 **版本**: 0.1.0
 **完成度**: 70%
 **用途**: 设备命令队列和下行适配
@@ -283,7 +283,7 @@ POST   /api/commands/cleanup               # 清理历史
 ### 发送命令
 
 ```rust
-use edge_ai_commands::{CommandQueue, DeviceCommand, CommandStatus};
+use neomind-commands::{CommandQueue, DeviceCommand, CommandStatus};
 
 let command = DeviceCommand {
     id: "cmd_001".to_string(),
@@ -304,7 +304,7 @@ queue.enqueue(command).await?;
 ### 注册适配器
 
 ```rust
-use edge_ai_commands::{MqttDownlinkAdapter, MqttAdapterConfig, DownlinkAdapter};
+use neomind-commands::{MqttDownlinkAdapter, MqttAdapterConfig, DownlinkAdapter};
 
 let config = MqttAdapterConfig {
     id: "main_mqtt".to_string(),

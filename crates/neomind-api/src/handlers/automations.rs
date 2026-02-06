@@ -180,7 +180,7 @@ pub async fn list_automations_handler(
     Query(filter): Query<AutomationFilter>,
     State(state): State<ServerState>,
 ) -> HandlerResult<AutomationListResponse> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return ok(AutomationListResponse {
             automations: Vec::new(),
             count: 0,
@@ -244,7 +244,7 @@ pub async fn get_automation_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -273,7 +273,7 @@ pub async fn create_automation_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateAutomationRequest>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -326,7 +326,7 @@ pub async fn update_automation_handler(
     State(state): State<ServerState>,
     Json(req): Json<UpdateAutomationRequest>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -392,7 +392,7 @@ pub async fn delete_automation_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -419,7 +419,7 @@ pub async fn set_automation_status_handler(
     State(state): State<ServerState>,
     Json(req): Json<SetAutomationStatusRequest>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -466,7 +466,7 @@ pub async fn analyze_intent_handler(
     Json(req): Json<AnalyzeIntentRequest>,
 ) -> HandlerResult<IntentResult> {
     // Use intent analyzer if available, otherwise use heuristic analysis
-    let result = if let Some(analyzer) = &state.intent_analyzer {
+    let result = if let Some(analyzer) = &state.automation.intent_analyzer {
         match analyzer.analyze(&req.description).await {
             Ok(result) => result,
             Err(e) => {
@@ -574,7 +574,7 @@ pub async fn get_conversion_info_handler(
     Path(id): Path<String>,
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -607,7 +607,7 @@ pub async fn convert_automation_handler(
     State(state): State<ServerState>,
     Json(req): Json<ConvertAutomationRequest>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -677,7 +677,7 @@ pub async fn get_automations_executions_handler(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -706,7 +706,7 @@ pub async fn get_automations_executions_handler(
 pub async fn list_templates_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return ok(json!({
             "templates": [],
             "count": 0,
@@ -732,7 +732,7 @@ pub async fn list_templates_handler(
 pub async fn export_automations_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return ok(json!({
             "automations": [],
             "count": 0,
@@ -760,7 +760,7 @@ pub async fn import_automations_handler(
     State(state): State<ServerState>,
     Json(data): Json<Value>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -815,11 +815,11 @@ pub async fn process_data_handler(
     State(state): State<ServerState>,
     Json(req): Json<ProcessDataRequest>,
 ) -> HandlerResult<Value> {
-    let Some(transform_engine) = &state.transform_engine else {
+    let Some(transform_engine) = &state.automation.transform_engine else {
         return Err(ErrorResponse::service_unavailable("Transform engine not available"));
     };
 
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -857,7 +857,7 @@ pub async fn process_data_handler(
             );
 
             // Publish transformed metrics to event bus
-            if let Some(event_bus) = &state.event_bus {
+            if let Some(event_bus) = &state.core.event_bus {
                 for metric in &transform_result.metrics {
                     // Publish as a device metric event
                     use neomind_core::NeoMindEvent;
@@ -895,11 +895,11 @@ pub async fn test_transform_handler(
     State(state): State<ServerState>,
     Json(req): Json<ProcessDataRequest>,
 ) -> HandlerResult<Value> {
-    let Some(transform_engine) = &state.transform_engine else {
+    let Some(transform_engine) = &state.automation.transform_engine else {
         return Err(ErrorResponse::service_unavailable("Transform engine not available"));
     };
 
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return Err(ErrorResponse::service_unavailable("Automation store not available"));
     };
 
@@ -952,7 +952,7 @@ pub async fn test_transform_handler(
 pub async fn list_transforms_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return ok(json!({
             "transforms": [],
             "count": 0,
@@ -986,7 +986,7 @@ pub async fn list_transforms_handler(
 pub async fn list_virtual_metrics_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<Value> {
-    let Some(store) = &state.automation_store else {
+    let Some(store) = &state.automation.automation_store else {
         return ok(json!({
             "metrics": [],
             "count": 0,

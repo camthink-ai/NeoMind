@@ -466,7 +466,7 @@ pub async fn hybrid_auth_middleware(
     if let Some(auth_header) = headers.get("authorization").and_then(|v| v.to_str().ok())
         && let Some(token) = auth_header.strip_prefix("Bearer ") {
             // Try JWT authentication first
-            match state.auth_user_state.validate_token(token) {
+            match state.auth.user_state.validate_token(token) {
                 Ok(session_info) => {
                     // JWT token is valid, store session info and proceed
                     req.extensions_mut().insert(session_info);
@@ -491,7 +491,7 @@ pub async fn hybrid_auth_middleware(
         });
 
     if let Some(key) = api_key
-        && state.auth_state.validate_key(key) {
+        && state.auth.api_key_state.validate_key(key) {
             req.extensions_mut()
                 .insert(ValidatedApiKey(key.to_string()));
             return Ok(next.run(req).await);

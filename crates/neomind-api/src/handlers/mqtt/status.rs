@@ -67,7 +67,7 @@ pub async fn get_mqtt_status_handler(
     use neomind_devices::adapter::ConnectionStatus;
 
     // Get connection status from the MQTT adapter
-    let connected = if let Some(adapter) = state.device_service.get_adapter("internal-mqtt").await {
+    let connected = if let Some(adapter) = state.devices.service.get_adapter("internal-mqtt").await {
         matches!(adapter.connection_status(), ConnectionStatus::Connected)
     } else {
         false
@@ -91,7 +91,7 @@ pub async fn get_mqtt_status_handler(
     let server_ip = get_server_ip();
 
     // Count devices using DeviceService
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
     let devices_count = configs.len();
     let subscriptions_count = devices_count;
 

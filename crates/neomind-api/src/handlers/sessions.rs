@@ -44,7 +44,7 @@ async fn process_stream_to_channel(
     let user_message_for_memory = user_message.clone();
 
     // P0.3: Create pending stream state for recovery
-    let session_store = state.session_manager.session_store();
+    let session_store = state.agents.session_manager.session_store();
     let mut pending_state = PendingStreamState::new(session_id.clone(), user_message);
     let _ = session_store.save_pending_stream(&pending_state);
 
@@ -170,7 +170,7 @@ async fn process_stream_to_channel(
 
                             let consolidate_result = tokio::time::timeout(
                                 consolidate_timeout,
-                                state_clone.memory.write().await.consolidate(&session_id_clone)
+                                state_clone.agents.memory.write().await.consolidate(&session_id_clone)
                             ).await;
 
                             match consolidate_result {
@@ -188,7 +188,7 @@ async fn process_stream_to_channel(
 
                                     let add_result = tokio::time::timeout(
                                         Duration::from_secs(2),
-                                        state_clone.memory.write().await.add_conversation(
+                                        state_clone.agents.memory.write().await.add_conversation(
                                             &session_id_clone,
                                             &user_message_clone,
                                             &response_with_thinking,
@@ -325,7 +325,7 @@ async fn process_stream_to_channel(
     }
 
     // Persist history after stream completes
-    if let Err(e) = state.session_manager.persist_history(&session_id).await {
+    if let Err(e) = state.agents.session_manager.persist_history(&session_id).await {
         tracing::warn!(category = "session", error = %e, "Failed to persist history");
     }
 }
@@ -351,7 +351,7 @@ pub async fn create_session_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     let session_id = state
-        .session_manager
+        .agents.session_manager
         .create_session()
         .await
         .map_err(|e| ErrorResponse::with_message(e.to_string()))?;
@@ -389,7 +389,7 @@ pub async fn list_sessions_handler(
         page_size: query.page_size.clamp(1, 100),
     };
 
-    let all_sessions = state.session_manager.list_sessions_with_info().await;
+    let all_sessions = state.agents.session_manager.list_sessions_with_info().await;
     let total_count = all_sessions.len() as u32;
 
     // Calculate pagination
@@ -413,7 +413,7 @@ pub async fn get_session_handler(
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     let agent = state
-        .session_manager
+        .agents.session_manager
         .get_session(&id)
         .await
         .map_err(|_| ErrorResponse::not_found("Session"))?;
@@ -430,7 +430,7 @@ pub async fn get_session_history_handler(
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     let history = state
-        .session_manager
+        .agents.session_manager
         .get_history(&id)
         .await
         .map_err(|_| ErrorResponse::not_found("Session"))?;
@@ -447,7 +447,7 @@ pub async fn delete_session_handler(
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     state
-        .session_manager
+        .agents.session_manager
         .remove_session(&id)
         .await
         .map_err(|e| {
@@ -471,7 +471,7 @@ pub async fn get_pending_stream_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
-    let session_store = state.session_manager.session_store();
+    let session_store = state.agents.session_manager.session_store();
 
     match session_store.get_pending_stream(&id) {
         Ok(Some(pending)) => {
@@ -503,7 +503,7 @@ pub async fn clear_pending_stream_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
-    let session_store = state.session_manager.session_store();
+    let session_store = state.agents.session_manager.session_store();
 
     session_store
         .delete_pending_stream(&id)
@@ -529,7 +529,7 @@ pub async fn update_session_handler(
     Json(req): Json<UpdateSessionRequest>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
     state
-        .session_manager
+        .agents.session_manager
         .update_session_title(&id, req.title)
         .await
         .map_err(|e| ErrorResponse::with_message(e.to_string()))?;
@@ -545,7 +545,7 @@ pub async fn update_session_handler(
 pub async fn cleanup_sessions_handler(
     State(state): State<ServerState>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
-    let cleaned_count = state.session_manager.cleanup_invalid_sessions().await;
+    let cleaned_count = state.agents.session_manager.cleanup_invalid_sessions().await;
 
     Ok(Json(ApiResponse::success(json!({
         "cleaned": cleaned_count,
@@ -568,7 +568,7 @@ pub async fn chat_handler(
     // due to the model's repetitive thinking generation, especially with longer context
     let response = match timeout(
         Duration::from_secs(120),
-        state.session_manager.process_message(&id, &req.message),
+        state.agents.session_manager.process_message(&id, &req.message),
     )
     .await
     {
@@ -605,7 +605,7 @@ pub async fn ws_chat_handler(
 ) -> axum::response::Response {
     // Extract and validate JWT token
     let session_info = match params.get("token") {
-        Some(token) => match state.auth_user_state.validate_token(token) {
+        Some(token) => match state.auth.user_state.validate_token(token) {
             Ok(info) => {
                 tracing::info!(
                     username = %info.username,
@@ -659,7 +659,7 @@ async fn handle_ws_socket(
     let current_session_id = Arc::new(tokio::sync::RwLock::new(session_id.clone()));
 
     // Subscribe to device status updates
-    let mut device_update_rx = state.device_update_tx.subscribe();
+    let mut device_update_rx = state.devices.update_tx.subscribe();
 
     // Heartbeat interval
     let mut heartbeat_interval =
@@ -717,7 +717,7 @@ async fn handle_ws_socket(
 
                                         // Check if we need to switch sessions
                                         let needs_switch = if let Some(req_id) = &requested_session_id {
-                                            req_id != current && state.session_manager.get_session(req_id).await.is_ok()
+                                            req_id != current && state.agents.session_manager.get_session(req_id).await.is_ok()
                                         } else {
                                             false
                                         };
@@ -750,7 +750,7 @@ async fn handle_ws_socket(
                                         } else if !has_valid_session {
                                             // Create new session - drop read lock before write
                                             drop(current_guard);
-                                            let new_id = state.session_manager.create_session().await
+                                            let new_id = state.agents.session_manager.create_session().await
                                                 .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
 
                                             let mut write_guard = current_session_id.write().await;
@@ -807,7 +807,7 @@ async fn handle_ws_socket(
                                         let task_state = state.clone();
 
                                         // Use streaming for multimodal messages
-                                        match task_state.session_manager.process_message_multimodal_with_backend_stream(
+                                        match task_state.agents.session_manager.process_message_multimodal_with_backend_stream(
                                             &task_session_id,
                                             &chat_req.message,
                                             images.clone(),
@@ -826,7 +826,7 @@ async fn handle_ws_socket(
                                             }
                                             Err(_e) => {
                                                 // Fallback to non-streaming on error
-                                                let response = match task_state.session_manager.process_message_multimodal_with_backend(
+                                                let response = match task_state.agents.session_manager.process_message_multimodal_with_backend(
                                                     &task_session_id,
                                                     &chat_req.message,
                                                     images,
@@ -852,7 +852,7 @@ async fn handle_ws_socket(
                                         }
                                     } else {
                                         // Regular text-only message - use streaming
-                                        match state.session_manager.process_message_events_with_backend(&session_id, &chat_req.message, backend_id).await {
+                                        match state.agents.session_manager.process_message_events_with_backend(&session_id, &chat_req.message, backend_id).await {
                                             Ok(stream) => {
                                                 // Clone the channel sender and session ID for the spawned task
                                                 let task_tx = stream_tx.clone();
@@ -867,7 +867,7 @@ async fn handle_ws_socket(
                                             Err(_e) => {
                                                 // Fallback to non-streaming on error
                                                 let backend_id = chat_req.backend_id.as_deref();
-                                                let response = match state.session_manager.process_message_with_backend(&session_id, &chat_req.message, backend_id).await {
+                                                let response = match state.agents.session_manager.process_message_with_backend(&session_id, &chat_req.message, backend_id).await {
                                                     Ok(resp) => json!({
                                                         "type": "response",
                                                         "content": resp.message.content,
@@ -982,7 +982,7 @@ async fn handle_ws_socket(
 
     // Cleanup: persist session history AFTER loop ends (when connection closes)
     if let Some(session_id) = current_session_id.read().await.as_ref()
-        && let Err(e) = state.session_manager.persist_history(session_id).await {
+        && let Err(e) = state.agents.session_manager.persist_history(session_id).await {
             tracing::warn!(category = "session", error = %e, "Failed to persist history on disconnect");
         }
 }

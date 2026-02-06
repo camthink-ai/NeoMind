@@ -67,7 +67,7 @@ pub async fn liveness_handler() -> Json<serde_json::Value> {
 /// Readiness probe - check if dependencies are ready.
 pub async fn readiness_handler(State(state): State<ServerState>) -> Json<ReadinessStatus> {
     // Check if session manager is working (just check if we can access it)
-    let _sessions = state.session_manager.list_sessions().await;
+    let _sessions = state.agents.session_manager.list_sessions().await;
 
     // Check if LLM might be configured (best effort check)
     let llm = true; // We can't easily check this without making a call

@@ -22,8 +22,6 @@ import type {
   MemoryEntry,
   Plugin,
   PluginStatsDto,
-  AdapterPluginDto,
-  AdapterDeviceDto,
   Extension,
   ExtensionStatsDto,
   ExtensionTypeDto,
@@ -767,11 +765,6 @@ export const api = {
       method: 'POST',
     }),
 
-  // ========== Device Adapters Types API ==========
-  // Available adapter types (mqtt, http, webhook, etc.) - similar to LLM backend types
-  listAdapterTypes: () =>
-    fetchAPI<{ types: AdapterType[]; count: number }>('/device-adapters/types'),
-
   // Sessions
   // Note: Backend returns paginated response with data as array (auto-unwrapped by fetchAPI)
   listSessions: (page = 1, pageSize = 20) =>
@@ -1137,31 +1130,6 @@ export const api = {
 
   getPluginTypesSummary: () =>
     fetchAPI<{ types: Record<string, number>; total: number }>('/plugins/types'),
-
-  // ========== Device Adapter Plugins API ==========
-  // Matches backend: crates/api/src/handlers/plugins.rs:632-756
-
-  listDeviceAdapters: () =>
-    fetchAPI<{ total_adapters: number; running_adapters: number; total_devices: number; adapters: AdapterPluginDto[] }>('/plugins/device-adapters'),
-
-  registerDeviceAdapter: (adapter: {
-    id: string
-    name: string
-    adapter_type: string
-    config?: Record<string, unknown>
-    auto_start?: boolean
-    enabled?: boolean
-  }) =>
-    fetchAPI<{ message: string; plugin_id: string }>('/plugins/device-adapters', {
-      method: 'POST',
-      body: JSON.stringify(adapter),
-    }),
-
-  getDeviceAdapterStats: () =>
-    fetchAPI<{ total_adapters: number; running_adapters: number; total_devices: number; adapters: AdapterPluginDto[] }>('/plugins/device-adapters/stats'),
-
-  getAdapterDevices: (pluginId: string) =>
-    fetchAPI<{ plugin_id: string; devices: AdapterDeviceDto[]; count: number }>(`/plugins/${pluginId}/devices`),
 
   // ========== Extensions API ==========
   // Matches backend: crates/api/src/handlers/extensions.rs

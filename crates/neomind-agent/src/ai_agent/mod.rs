@@ -288,6 +288,9 @@ impl AiAgentManager {
     }
 
     /// Start the scheduler for periodic execution.
+    ///
+    /// This will reload all active agents from storage and reschedule them,
+    /// ensuring that scheduled tasks continue after server restarts.
     pub async fn start(&self) -> Result<(), crate::error::NeoMindError> {
         let mut running = self.running.write().await;
         if *running {
@@ -296,10 +299,72 @@ impl AiAgentManager {
         *running = true;
         drop(running);
 
+        // Reload and reschedule all active agents from storage
+        // This ensures scheduled tasks continue after server restarts
+        self.reload_active_agents().await?;
+
         // Start the scheduler
         self.scheduler.start(self.executor.clone()).await?;
 
         tracing::info!("AiAgentManager started");
+        Ok(())
+    }
+
+    /// Reload all active agents from storage and reschedule them.
+    ///
+    /// This is called on startup to restore scheduled tasks after a restart.
+    /// Only agents with Active status and non-Event schedule types are rescheduled.
+    async fn reload_active_agents(&self) -> Result<(), crate::error::NeoMindError> {
+        use neomind_storage::{AgentFilter, AgentStatus, ScheduleType};
+
+        let agents = self.list_agents(AgentFilter {
+            status: Some(AgentStatus::Active),
+            ..Default::default()
+        }).await?;
+
+        let mut scheduled_count = 0;
+        let mut skipped_count = 0;
+
+        for agent in agents {
+            // Skip event-triggered agents (they don't need scheduling)
+            if agent.schedule.schedule_type == ScheduleType::Event {
+                skipped_count += 1;
+                continue;
+            }
+
+            let agent_id = agent.id.clone();
+            let agent_name = agent.name.clone();
+            let schedule_type = agent.schedule.schedule_type.clone();
+
+            match self.scheduler.schedule_agent(agent).await {
+                Ok(()) => {
+                    scheduled_count += 1;
+                    tracing::debug!(
+                        agent_id = %agent_id,
+                        name = %agent_name,
+                        schedule_type = ?schedule_type,
+                        "Rescheduled active agent after startup"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        agent_id = %agent_id,
+                        name = %agent_name,
+                        error = %e,
+                        "Failed to reschedule active agent"
+                    );
+                }
+            }
+        }
+
+        if scheduled_count > 0 || skipped_count > 0 {
+            tracing::info!(
+                scheduled = scheduled_count,
+                skipped = skipped_count,
+                "Reloaded active agents after startup"
+            );
+        }
+
         Ok(())
     }
 

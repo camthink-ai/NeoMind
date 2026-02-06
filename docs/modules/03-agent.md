@@ -1,6 +1,6 @@
 # Agent 模块
 
-**包名**: `edge_ai_agent`
+**包名**: `neomind-agent`
 **版本**: 0.1.0
 **完成度**: 85%
 **用途**: AI会话代理，集成LLM、内存和工具
@@ -377,7 +377,7 @@ pub struct AutonomousConfig {
 ### 基本对话
 
 ```rust
-use edge_ai_agent::{SessionManager, AgentConfig};
+use neomind-agent::{SessionManager, AgentConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -402,8 +402,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### 带工具的对话
 
 ```rust
-use edge_ai_agent::{SessionManager, ToolRegistryBuilder};
-use edge_ai_tools::{QueryDataTool, ControlDeviceTool};
+use neomind-agent::{SessionManager, ToolRegistryBuilder};
+use neomind-tools::{QueryDataTool, ControlDeviceTool};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -438,7 +438,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use futures::StreamExt;
-use edge_ai_agent::{SessionManager, StreamingConfig};
+use neomind-agent::{SessionManager, StreamingConfig};
 
 async fn chat_stream(
     manager: &SessionManager,

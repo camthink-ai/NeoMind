@@ -21,7 +21,7 @@ pub async fn list_subscriptions_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
     // Use new DeviceService to get devices
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
 
     // Build subscriptions list
     let mut subscriptions = vec![
@@ -95,14 +95,14 @@ pub async fn subscribe_device_handler(
     Path(device_id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
     // Validate the device exists using DeviceService
-    let device_opt = state.device_service.get_device(&device_id).await;
+    let device_opt = state.devices.service.get_device(&device_id).await;
     let device = device_opt.ok_or_else(|| {
         ErrorResponse::not_found(format!("Device not found: {}", device_id))
     })?;
 
     // Get the adapter for this device and subscribe
     if let Some(ref adapter_id) = device.adapter_id
-        && let Some(adapter) = state.device_service.get_adapter(adapter_id).await {
+        && let Some(adapter) = state.devices.service.get_adapter(adapter_id).await {
             adapter
                 .subscribe_device(&device_id)
                 .await
@@ -123,7 +123,7 @@ pub async fn unsubscribe_device_handler(
     Path(device_id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
     // Validate the device exists using DeviceService
-    let configs = state.device_service.list_devices().await;
+    let configs = state.devices.service.list_devices().await;
     let device_exists = configs.iter().any(|d| d.device_id == device_id);
 
     if !device_exists {

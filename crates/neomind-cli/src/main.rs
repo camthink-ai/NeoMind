@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
 
     // Build the env filter for log level control
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new("edge_ai=info")
+        tracing_subscriber::EnvFilter::new("neomind=info")
             .add_directive(tracing::Level::INFO.into())
             .add_directive(tracing::Level::WARN.into())
     });

@@ -1,6 +1,6 @@
 # Tools 模块
 
-**包名**: `edge_ai_tools`
+**包名**: `neomind-tools`
 **版本**: 0.1.0
 **完成度**: 80%
 **用途**: AI函数调用工具
@@ -469,7 +469,7 @@ GET    /api/tools/metrics                   # 工具执行统计
 ### 创建工具注册表
 
 ```rust
-use edge_ai_tools::{ToolRegistryBuilder, QueryDataTool, ControlDeviceTool};
+use neomind-tools::{ToolRegistryBuilder, QueryDataTool, ControlDeviceTool};
 use std::sync::Arc;
 
 let registry = ToolRegistryBuilder::new()
@@ -482,7 +482,7 @@ let registry = ToolRegistryBuilder::new()
 ### 执行工具
 
 ```rust
-use edge_ai_tools::ToolRegistry;
+use neomind-tools::ToolRegistry;
 
 let result = registry.execute(
     "query_data",

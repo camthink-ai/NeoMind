@@ -13,17 +13,12 @@ import type {
   Device,
   DeviceType,
   DiscoveredDevice,
-  AdapterPluginDto,
   AddDeviceRequest,
 } from '@/types'
 import { api } from '@/lib/api'
 import { logError } from '@/lib/errors'
 
 export interface DeviceSlice extends DeviceState, TelemetryState {
-  // Device Adapter State
-  deviceAdapters: AdapterPluginDto[]
-  deviceAdaptersLoading: boolean
-
   // Actions
   setSelectedDevice: (device: Device | null) => void
   setSelectedDeviceId: (id: string | null) => void
@@ -54,9 +49,6 @@ export interface DeviceSlice extends DeviceState, TelemetryState {
   fetchDevicesCurrentBatch: (deviceIds: string[]) => Promise<void>  // Batch fetch for dashboard
   fetchCommandHistory: (deviceId: string, limit?: number) => Promise<void>
 
-  // Device Adapter Actions
-  fetchDeviceAdapters: () => Promise<void>
-
   // Device status update from events
   updateDeviceStatus: (deviceId: string, status: 'online' | 'offline') => void
   // Update device metric from real-time events
@@ -83,10 +75,6 @@ export const createDeviceSlice: StateCreator<
   addDeviceDialogOpen: false,
   addDeviceTypeDialogOpen: false,
   deviceDetailsDialogOpen: false,
-
-  // Device Adapters state
-  deviceAdapters: [],
-  deviceAdaptersLoading: false,
 
   // Telemetry state
   telemetryData: null,
@@ -406,23 +394,6 @@ export const createDeviceSlice: StateCreator<
         return
       }
       logError(error, { operation: 'Fetch devices current batch' })
-    }
-  },
-
-  // Device Adapters
-  fetchDeviceAdapters: async () => {
-    set({ deviceAdaptersLoading: true })
-    try {
-      const data = await api.listDeviceAdapters()
-      set({ deviceAdapters: data.adapters || [] })
-    } catch (error) {
-      if ((error as Error).message === 'UNAUTHORIZED') {
-        // Will be handled by auth slice
-      }
-      logError(error, { operation: 'Fetch device adapters' })
-      set({ deviceAdapters: [] })
-    } finally {
-      set({ deviceAdaptersLoading: false })
     }
   },
 

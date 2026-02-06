@@ -6,12 +6,14 @@
 pub mod assets;
 pub mod middleware;
 pub mod router;
+pub mod state;
 pub mod types;
 
 // Re-export commonly used types
 pub use middleware::rate_limit_middleware;
 pub use router::{create_router, create_router_with_state};
-pub use types::{DeviceStatusUpdate, MAX_REQUEST_BODY_SIZE, ServerState};
+pub use state::DeviceStatusUpdate;
+pub use types::{MAX_REQUEST_BODY_SIZE, ServerState};
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -85,7 +87,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
         let mut interval = tokio::time::interval(Duration::from_secs(300));
         loop {
             interval.tick().await;
-            let session_store = state_for_cleanup_task.session_manager.session_store();
+            let session_store = state_for_cleanup_task.agents.session_manager.session_store();
             match session_store.cleanup_stale_pending_streams() {
                 Ok(count) => {
                     if count > 0 {

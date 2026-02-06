@@ -42,7 +42,7 @@ pub async fn get_device_telemetry_handler(
     let aggregate = params.get("aggregate").cloned();
 
     // Query device with template once to avoid duplicate database calls
-    let device_with_template = state.device_service.get_device_with_template(&device_id).await;
+    let device_with_template = state.devices.service.get_device_with_template(&device_id).await;
 
     // Get device template to find available metrics
     // Also include virtual metrics (metrics in storage but not in template)
@@ -57,7 +57,7 @@ pub async fn get_device_telemetry_handler(
         Ok((_, template)) => {
             if template.metrics.is_empty() {
                 // Device has no defined metrics - query actual metrics from storage
-                match state.time_series_storage.list_metrics(&device_id).await {
+                match state.devices.telemetry.list_metrics(&device_id).await {
                     Ok(metrics) if !metrics.is_empty() => metrics,
                     _ => vec!["_raw".to_string()],
                 }
@@ -69,7 +69,7 @@ pub async fn get_device_telemetry_handler(
                 let transform_namespaces = ["transform.", "virtual.", "computed.", "derived.", "aggregated."];
 
                 // Add only Transform-generated virtual metrics from storage (exclude auto-extracted)
-                if let Ok(storage_metrics) = state.time_series_storage.list_metrics(&device_id).await {
+                if let Ok(storage_metrics) = state.devices.telemetry.list_metrics(&device_id).await {
                     for metric in storage_metrics {
                         // Skip template metrics and _raw
                         if metric == "_raw" || template_metric_names.contains(&metric) || all_metrics.contains(&metric) {
@@ -88,7 +88,7 @@ pub async fn get_device_telemetry_handler(
         }
         Err(_) => {
             // Device not found - try to query actual metrics from storage
-            match state.time_series_storage.list_metrics(&device_id).await {
+            match state.devices.telemetry.list_metrics(&device_id).await {
                 Ok(metrics) if !metrics.is_empty() => metrics,
                 _ => vec!["_raw".to_string()],
             }
@@ -120,7 +120,7 @@ pub async fn get_device_telemetry_handler(
             Some(_agg_type) => {
                 // Aggregated query - aggregate function returns AggregatedData directly
                 match state
-                    .time_series_storage
+                    .devices.telemetry
                     .aggregate(&device_id, metric_name, start, end)
                     .await
                 {
@@ -141,7 +141,7 @@ pub async fn get_device_telemetry_handler(
                 // Raw query - use DeviceService first; fallback to time_series_storage when
                 // device is not in registry (e.g. auto-discovered) or query_telemetry fails
                 match state
-                    .device_service
+                    .devices.service
                     .query_telemetry(&device_id, metric_name, Some(start), Some(end))
                     .await
                 {
@@ -164,7 +164,7 @@ pub async fn get_device_telemetry_handler(
                         // Fallback: query time_series_storage directly so historical data
                         // is available even when device is not in registry
                         match state
-                            .time_series_storage
+                            .devices.telemetry
                             .query(&device_id, metric_name, start, end)
                             .await
                         {
@@ -225,14 +225,14 @@ pub async fn get_device_telemetry_summary_handler(
     // Get device template to find available metrics
     // Also include virtual metrics from transforms
     let (mut template_metrics, use_raw): (Vec<String>, bool) = match state
-        .device_service
+        .devices.service
         .get_device_with_template(&device_id)
         .await
     {
         Ok((_, template)) => {
             if template.metrics.is_empty() {
                 // Device has no defined metrics - query actual metrics from storage
-                match state.time_series_storage.list_metrics(&device_id).await {
+                match state.devices.telemetry.list_metrics(&device_id).await {
                     Ok(metrics) if !metrics.is_empty() => (metrics, true),
                     _ => (vec!["_raw".to_string()], true),
                 }
@@ -242,7 +242,7 @@ pub async fn get_device_telemetry_summary_handler(
         }
         Err(_) => {
             // Device not found - try actual metrics from storage
-            match state.time_series_storage.list_metrics(&device_id).await {
+            match state.devices.telemetry.list_metrics(&device_id).await {
                 Ok(metrics) if !metrics.is_empty() => (metrics, true),
                 _ => (vec!["_raw".to_string()], true),
             }
@@ -257,7 +257,7 @@ pub async fn get_device_telemetry_summary_handler(
     // Transform-generated metric namespaces (with dot notation)
     let transform_namespaces = ["transform.", "virtual.", "computed.", "derived.", "aggregated."];
 
-    if let Ok(all_storage_metrics) = state.time_series_storage.list_metrics(&device_id).await {
+    if let Ok(all_storage_metrics) = state.devices.telemetry.list_metrics(&device_id).await {
         // Get template metric names for comparison
         let template_metric_names: std::collections::HashSet<String> = template_metrics
             .iter()
@@ -306,7 +306,7 @@ pub async fn get_device_telemetry_summary_handler(
         }
     } else {
         // Template mode - add template metrics
-        if let Ok((_, template)) = state.device_service.get_device_with_template(&device_id).await {
+        if let Ok((_, template)) = state.devices.service.get_device_with_template(&device_id).await {
             for m in &template.metrics {
                 let data_type_str = match m.data_type {
                     neomind_devices::mdl::MetricDataType::Integer => "integer".to_string(),
@@ -344,13 +344,13 @@ pub async fn get_device_telemetry_summary_handler(
     for (metric_name, (display_name, unit, data_type, is_virtual)) in metric_info.iter() {
         // Get aggregated statistics - aggregate() returns AggregatedData directly
         if let Ok(agg) = state
-            .time_series_storage
+            .devices.telemetry
             .aggregate(&device_id, metric_name, start, end)
             .await
         {
             // Get latest value
             let latest = state
-                .time_series_storage
+                .devices.telemetry
                 .latest(&device_id, metric_name)
                 .await
                 .ok()
@@ -373,7 +373,7 @@ pub async fn get_device_telemetry_summary_handler(
             );
         } else {
             // Try to get current value from DeviceService
-            if let Ok(current_values) = state.device_service.get_current_metrics(&device_id).await
+            if let Ok(current_values) = state.devices.service.get_current_metrics(&device_id).await
                 && let Some(val) = current_values.get(metric_name) {
                     summary_data.insert(
                         metric_name.to_string(),
@@ -452,7 +452,7 @@ pub async fn get_device_command_history_handler(
 
     // Get command history from DeviceService
     let commands = state
-        .device_service
+        .devices.service
         .get_command_history(&device_id, Some(limit))
         .await;
 
@@ -498,7 +498,7 @@ pub async fn list_device_metrics_debug_handler(
 ) -> HandlerResult<serde_json::Value> {
     // Query all metrics for this device from storage
     let metrics = state
-        .time_series_storage
+        .devices.telemetry
         .list_metrics(&device_id)
         .await
         .unwrap_or_default();
@@ -507,7 +507,7 @@ pub async fn list_device_metrics_debug_handler(
     let mut metric_info = serde_json::Map::new();
     for metric in &metrics {
         if let Ok(Some(point)) = state
-            .time_series_storage
+            .devices.telemetry
             .latest(&device_id, metric)
             .await
         {
@@ -553,7 +553,7 @@ pub async fn analyze_metric_timestamps_handler(
         m.clone()
     } else {
         // Try to guess the metric name
-        match state.time_series_storage.list_metrics(&device_id).await {
+        match state.devices.telemetry.list_metrics(&device_id).await {
             Ok(m) if !m.is_empty() => m[0].clone(),
             _ => "_raw".to_string(),
         }
@@ -567,7 +567,7 @@ pub async fn analyze_metric_timestamps_handler(
     let end = now + 60; // 1 minute in future
 
     let points = state
-        .time_series_storage
+        .devices.telemetry
         .query(&device_id, &metric, start, end)
         .await
         .unwrap_or_default();
