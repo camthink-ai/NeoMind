@@ -55,21 +55,7 @@ impl Tool for SystemInfoTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取系统状态和资源使用信息。
-
-## 使用场景
-- 查看系统运行状态
-- 监控CPU和内存使用情况
-- 检查服务运行状态
-- 获取系统版本和配置信息
-
-## 返回信息
-- system_name: 系统名称
-- uptime: 系统运行时间（秒）
-- cpu_usage: CPU使用率（0-100）
-- memory_usage: 内存使用情况
-- disk_usage: 磁盘使用情况
-- service_status: 各服务运行状态"#
+        "获取系统状态和资源使用信息。支持detailed参数查看各服务健康状态。"
     }
 
     fn parameters(&self) -> Value {
@@ -202,22 +188,7 @@ impl Tool for SystemHelpTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取系统帮助信息和功能介绍。
-
-## 使用场景
-- 新用户了解系统功能
-- 查看系统支持的操作
-- 获取快速入门指南
-- 了解可用功能的说明
-
-## 帮助主题
-- overview: 系统概览和主要功能
-- devices: 设备管理相关功能
-- automation: 自动化规则功能
-- agents: AI Agent功能
-- alerts: 告警功能
-- getting_started: 快速入门指南
-- examples: 使用示例"#
+        "获取系统帮助和功能介绍。支持topic：overview（概览）、devices（设备）、automation（自动化）、agents（智能体）、alerts（告警）、getting_started（入门）。"
     }
 
     fn parameters(&self) -> Value {
@@ -629,20 +600,7 @@ impl Tool for SystemConfigTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取或设置系统配置。
-
-## 使用场景
-- 查看当前系统配置
-- 修改系统参数设置
-- 更新LLM配置
-- 更新MQTT配置
-- 修改日志级别
-
-## 操作类型
-- get: 获取配置值
-- set: 设置配置值
-- list: 列出所有配置
-- reset: 重置为默认值"#
+        "获取或设置系统配置。支持operation：get（获取）、set（设置）、list（列表）、reset（重置）。"
     }
 
     fn parameters(&self) -> Value {
@@ -800,24 +758,7 @@ impl Tool for ServiceRestartTool {
     }
 
     fn description(&self) -> &str {
-        r#"重启系统服务。
-
-## 使用场景
-- 重启设备服务以应用新配置
-- 重启规则引擎以加载新规则
-- 重启数据转换引擎
-- 服务异常后重启恢复
-
-## 可重启的服务
-- device_service: 设备管理服务
-- rule_engine: 规则引擎
-- transform_engine: 数据转换引擎
-- alert_service: 告警服务
-
-## 注意事项
-- 重启服务会暂时中断其功能
-- 服务重启通常需要几秒钟
-- 建议在非高峰期执行"#
+        "重启系统服务。支持device_service、rule_engine、transform_engine、alert_service。"
     }
 
     fn parameters(&self) -> Value {
@@ -958,19 +899,7 @@ impl Tool for CreateAlertTool {
     }
 
     fn description(&self) -> &str {
-        r#"创建一个新的告警。
-
-## 使用场景
-- 规则触发时创建告警
-- 设备故障通知
-- 系统异常告警
-- 自定义提醒通知
-
-## 告警级别
-- info: 信息提示
-- warning: 警告
-- error: 错误
-- critical: 严重错误"#
+        "创建告警。支持severity：info、warning、error、critical。"
     }
 
     fn parameters(&self) -> Value {
@@ -1106,18 +1035,7 @@ impl Tool for ListAlertsTool {
     }
 
     fn description(&self) -> &str {
-        r#"列出系统中的告警。
-
-## 使用场景
-- 查看所有活跃告警
-- 按严重级别过滤告警
-- 查看告警历史
-- 检查告警处理状态
-
-## 过滤选项
-- severity: 按严重级别过滤
-- acknowledged: 是否只显示未确认的告警
-- limit: 限制返回数量"#
+        "列出告警。支持按severity（info/warning/error/critical）和acknowledged状态筛选。"
     }
 
     fn parameters(&self) -> Value {
@@ -1261,13 +1179,7 @@ impl Tool for AcknowledgeAlertTool {
     }
 
     fn description(&self) -> &str {
-        r#"确认一个告警，表示已处理。
-
-## 使用场景
-- 标记告警为已处理
-- 记录告警处理人
-- 关闭活跃告警
-- 告警生命周期管理"#
+        "确认告警为已处理。"
     }
 
     fn parameters(&self) -> Value {
@@ -1404,19 +1316,7 @@ impl Tool for ExportToCsvTool {
     }
 
     fn description(&self) -> &str {
-        r#"导出数据为CSV格式。
-
-## 使用场景
-- 导出设备历史数据
-- 生成数据分析报告
-- 导出规则执行记录
-- 批量数据导出
-
-## 支持的数据类型
-- device_data: 设备遥测数据
-- rule_history: 规则执行历史
-- alerts: 告警记录
-- events: 事件日志"#
+        "导出数据为CSV格式。支持data_type：device_data、rule_history、alerts、events。"
     }
 
     fn parameters(&self) -> Value {
@@ -1535,19 +1435,7 @@ impl Tool for ExportToJsonTool {
     }
 
     fn description(&self) -> &str {
-        r#"导出数据为JSON格式。
-
-## 使用场景
-- 导出结构化数据
-- API数据交换
-- 数据备份
-- 与其他系统集成
-
-## 支持的数据类型
-- device_data: 设备遥测数据
-- rules: 所有规则定义
-- alerts: 告警记录
-- system_config: 系统配置"#
+        "导出数据为JSON格式。支持data_type：device_data、rules、alerts、system_config。"
     }
 
     fn parameters(&self) -> Value {
@@ -1675,19 +1563,7 @@ impl Tool for GenerateReportTool {
     }
 
     fn description(&self) -> &str {
-        r#"生成数据分析报告。
-
-## 使用场景
-- 生成设备运行报告
-- 统计规则执行情况
-- 汇总系统状态
-- 生成时间段总结
-
-## 报告类型
-- daily: 日报
-- weekly: 周报
-- monthly: 月报
-- custom: 自定义时间段"#
+        "生成数据分析报告。支持report_type：daily（日报）、weekly（周报）、monthly（月报）、custom（自定义）。"
     }
 
     fn parameters(&self) -> Value {

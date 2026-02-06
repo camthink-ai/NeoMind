@@ -43,30 +43,7 @@ impl Tool for ListAgentsTool {
     }
 
     fn description(&self) -> &str {
-        r#"列出系统中的所有AI Agent及其状态。
-
-## 使用场景
-- 查看所有Agent的运行状态
-- 按状态过滤Agent（active/paused/error/executing）
-- 按调度类型过滤Agent（event/cron/interval/once）
-- 获取Agent的基本信息
-- 了解Agent的调度配置
-
-## 返回信息
-- agent_id: Agent唯一标识符
-- name: Agent名称
-- description: Agent描述
-- status: 状态（active=运行中, paused=已暂停, stopped=已停止, error=错误, executing=执行中）
-- schedule_type: 调度类型（event=事件触发, cron=Cron表达式, interval=固定间隔, once=一次性）
-- last_execution_at: 最后执行时间
-- stats: 执行统计信息
-
-## 状态说明
-- active: Agent正在运行并按计划执行
-- paused: Agent已被用户暂停
-- stopped: Agent已停止
-- error: Agent执行出错
-- executing: Agent正在执行任务"#
+        "列出所有AI Agent及其状态。支持按status（active/paused/stopped/error/executing）和schedule_type（event/cron/interval/once）筛选。"
     }
 
     fn parameters(&self) -> Value {
@@ -220,24 +197,7 @@ impl Tool for GetAgentTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取指定AI Agent的详细信息和执行历史。
-
-## 使用场景
-- 用户询问"Agent最近执行了什么任务"时必须调用此工具
-- 用户询问"Agent执行结果是什么"时必须调用此工具
-- 查看Agent的完整配置
-- 了解Agent的监控目标和资源
-- 检查Agent的执行统计和历史
-
-## 返回信息
-- 基本信息：ID、名称、描述、状态
-- 执行统计：**总执行次数、成功/失败次数、平均耗时、最后执行时间**
-- 用户意图：原始prompt和AI解析结果
-- 资源配置：监控的设备、指标、命令
-- 调度配置：调度类型、Cron表达式、间隔等
-
-## 关键
-当用户询问Agent的执行情况、任务、结果时，**必须调用此工具获取真实数据，不要编造答案**"#
+        "获取指定AI Agent的详细信息。返回配置、执行统计、用户意图、资源和调度信息。查询Agent执行情况时必须使用此工具。"
     }
 
     fn parameters(&self) -> Value {
@@ -382,31 +342,7 @@ impl Tool for ExecuteAgentTool {
     }
 
     fn description(&self) -> &str {
-        r#"手动触发执行一个AI Agent。
-
-## 使用场景
-- 立即触发Agent执行（不等待调度）
-- 测试Agent的执行逻辑
-- 手动触发事件式Agent
-- 强制执行暂停状态的Agent
-
-## 执行流程
-1. 获取Agent的最新配置
-2. 收集相关数据
-3. 调用LLM进行决策
-4. 执行相应的动作
-5. 保存执行结果和记忆
-
-## 返回信息
-- execution_id: 本次执行的唯一ID
-- status: 执行状态（running/completed/failed）
-- result: 执行结果摘要
-- duration_ms: 执行耗时
-
-## 注意事项
-- 执行是异步的，会立即返回execution_id
-- 可以通过get_agent查看执行历史
-- 暂停的Agent也可以被手动执行"#
+        "手动触发执行AI Agent。支持force参数强制执行暂停状态的Agent。"
     }
 
     fn parameters(&self) -> Value {
@@ -521,29 +457,7 @@ impl Tool for ControlAgentTool {
     }
 
     fn description(&self) -> &str {
-        r#"控制AI Agent的状态：暂停、恢复、删除。
-
-## 使用场景
-- 暂停不再需要的Agent（pause）
-- 恢复暂停的Agent（resume）
-- 删除不再使用的Agent（delete）
-- 临时禁用某个Agent
-
-## 操作类型
-- pause: 暂停Agent，停止自动执行
-- resume: 恢复Agent，重新开始自动执行
-- delete: 永久删除Agent
-
-## 返回信息
-- agent_id: 受影响的Agent ID
-- action: 执行的操作
-- status: 操作结果状态
-- message: 操作结果消息
-
-## 注意事项
-- 删除操作不可逆，请谨慎操作
-- 暂停的Agent仍可手动执行
-- 恢复Agent会立即开始按计划执行"#
+        "控制AI Agent状态：pause（暂停）、resume（恢复）、delete（删除）。删除操作不可撤销。"
     }
 
     fn parameters(&self) -> Value {
@@ -686,33 +600,7 @@ impl Tool for CreateAgentTool {
     }
 
     fn description(&self) -> &str {
-        r#"通过自然语言描述创建一个新的AI Agent。
-
-## Agent 类型
-1. **监控型 (monitor)**: 持续监控设备数据，检测异常并告警
-2. **执行型 (executor)**: 根据条件自动执行设备控制
-3. **分析型 (analyst)**: 分析历史数据，生成洞察报告
-
-## 创建方式
-用自然语言描述Agent功能，应包含：
-- **目标设备**: 哪个设备（设备名称或ID）
-- **监控指标**: 哪些数据（温度、湿度、电池等）
-- **触发条件**: 什么情况下触发（温度>30度、电量<20%等）
-- **执行动作**: 要做什么（发送告警、执行命令、生成报告）
-- **执行频率**: 多久检查一次（每5分钟、每天早上8点等）
-
-## 示例描述
-- "监控ne101设备，每5分钟检查温度，超过30度发送告警"
-- "每天早上8点分析所有NE101的电池状态，低于20%告警"
-- "当湿度低于30%时，自动打开加湿器"
-
-## 建议
-创建前先使用 list_devices 查看可用设备，使用 get_device_data 了解设备支持的指标。
-
-## 返回信息
-- agent_id: 新创建的Agent ID
-- name: Agent名称
-- status: 创建状态"#
+        "通过自然语言创建AI Agent。描述应包含：目标设备、监控指标、触发条件、执行动作、执行频率。例如：监控ne101，每5分钟检查温度，超过30度告警。"
     }
 
     fn parameters(&self) -> Value {
@@ -860,33 +748,7 @@ impl Tool for AgentMemoryTool {
     }
 
     fn description(&self) -> &str {
-        r#"查询AI Agent的记忆和学习内容。
-
-## 使用场景
-- 查看Agent学习到的模式
-- 了解Agent的决策历史
-- 查看Agent的记忆状态变量
-- 分析Agent的对话历史
-- 检查Agent的基线数据
-
-## 查询类型
-- patterns: 查看学习到的模式
-- state: 查看状态变量
-- history: 查看执行历史/对话
-- baselines: 查看基线数据
-- all: 查看所有记忆内容
-
-## 返回信息
-- patterns: 学习到的模式列表
-- state_variables: 状态变量及其值
-- conversation_history: 最近的对话历史
-- baselines: 各指标的基线值
-- trend_data: 趋势数据点
-
-## 注意事项
-- 记忆内容会随着Agent执行不断更新
-- 历史对话有最大长度限制
-- 旧的模式可能会被新学习到的模式替换"#
+        "查询Agent记忆和学习内容。支持query_type：patterns（模式）、state（状态变量）、history（历史）、baselines（基线）、all（全部）。"
     }
 
     fn parameters(&self) -> Value {
@@ -1066,28 +928,7 @@ impl Tool for GetAgentExecutionsTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取指定AI Agent的执行历史记录列表。
-
-## 使用场景
-- 查看Agent的执行历史
-- 分析Agent的执行趋势
-- 检查Agent的执行成功/失败情况
-- 了解Agent每次执行的耗时
-- 追踪Agent的触发类型（定时/事件/手动）
-
-## 返回信息
-- executions: 执行记录列表
-  - execution_id: 执行ID
-  - timestamp: 执行时间
-  - trigger_type: 触发类型（schedule/event/manual）
-  - status: 执行状态（running/completed/failed/partial）
-  - duration_ms: 执行耗时
-  - conclusion: 执行结论摘要
-- count: 总执行数量
-- summary: 执行统计摘要
-
-## 建议
-使用此工具后，可以使用 get_agent_execution_detail 查看具体某次执行的详细信息。"#
+        "获取Agent执行历史列表。返回执行ID、时间、触发类型、状态、耗时和结论。支持按status筛选和分页。"
     }
 
     fn parameters(&self) -> Value {
@@ -1267,32 +1108,7 @@ impl Tool for GetAgentExecutionDetailTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取单次Agent执行的详细信息，包括完整的决策过程和推理步骤。
-
-## 使用场景
-- 查看某次执行的完整决策过程
-- 了解Agent的推理步骤和逻辑
-- 分析Agent为什么做出某个决策
-- 调试Agent的执行问题
-- 查看执行过程中收集的数据
-
-## 返回信息
-- 基本信息：执行ID、时间、触发类型、状态、耗时
-- 决策过程：
-  - situation_analysis: 情况分析
-  - data_collected: 收集的数据
-  - reasoning_steps: 推理步骤列表
-  - decisions: 做出的决策
-  - conclusion: 结论
-  - confidence: 置信度
-- 执行结果：
-  - actions_executed: 执行的动作
-  - report: 生成的报告
-  - summary: 执行摘要
-- 错误信息：如果执行失败
-
-## 建议
-先使用 get_agent_executions 获取执行列表，然后使用此工具查看某次执行的详情。"#
+        "获取单次Agent执行的详细信息，包括决策过程、推理步骤、数据和结果。建议先用get_agent_executions获取列表。"
     }
 
     fn parameters(&self) -> Value {
@@ -1468,34 +1284,7 @@ impl Tool for GetAgentConversationTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取AI Agent的对话历史记录，包括用户交互消息。
-
-## 使用场景
-- 查看Agent与用户的交互历史
-- 了解Agent收到的用户指令
-- 分析Agent的响应内容
-- 追踪Agent的对话上下文
-
-## 返回信息
-- conversation_turns: 对话轮次列表
-  - execution_id: 关联的执行ID
-  - timestamp: 时间戳
-  - trigger_type: 触发类型
-  - success: 是否成功
-  - duration_ms: 执行耗时
-  - user_input: 用户输入（如果有）
-  - agent_response: Agent响应（如果有）
-- user_messages: 用户消息列表
-  - message_id: 消息ID
-  - timestamp: 时间戳
-  - content: 消息内容
-  - message_type: 消息类型
-- count: 对话轮次数量
-
-## 注意事项
-- 对话历史按时间倒序返回
-- 用户消息和Agent响应可能为空（自动执行的情况）
-- 使用limit参数控制返回数量"#
+        "获取Agent对话历史，包括用户交互消息和对话轮次。支持limit参数控制返回数量。"
     }
 
     fn parameters(&self) -> Value {

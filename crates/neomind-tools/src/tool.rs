@@ -270,11 +270,13 @@ pub trait Tool: Send + Sync {
 pub type DynTool = Arc<dyn Tool>;
 
 /// Helper function to create a JSON object schema for parameters.
+/// Includes strict mode (additionalProperties: false) to prevent invalid parameters.
 pub fn object_schema(properties: Value, required: Vec<String>) -> Value {
     serde_json::json!({
         "type": "object",
         "properties": properties,
-        "required": required
+        "required": required,
+        "additionalProperties": false
     })
 }
 

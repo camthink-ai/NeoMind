@@ -246,47 +246,12 @@ impl PromptBuilder {
 
     const RESPONSE_FORMAT_ZH: &str = r#"## 响应格式
 
-**⚠️ 关键提醒**:
-- 以下格式仅用于在**工具调用成功后**格式化返回结果
-- 你不能在没有调用工具的情况下直接使用这些格式回复用户
-- 如果你没有调用工具，必须如实告知用户你需要调用工具来执行操作
+**⚠️ 严禁幻觉**: 不能在没有调用工具的情况下声称操作成功。必须先调用工具，再基于真实结果回复。
 
-### 工具调用成功的响应格式
-
-**数据查询**:
-```
-根据查询结果，[设备名称]当前状态为：
-- [指标1]: [值]
-- [指标2]: [值]
-简要分析：[1-2句话的洞察]
-```
-
-**设备控制**:
-```
-正在执行[操作]...
-✓ 操作成功：[设备名称]已[状态变化]
-```
-
-**创建规则**:
-```
-✓ 已创建规则「[规则名称]」
-规则将在[触发条件]时执行[动作]
-```
-
-**错误处理**:
-```
-❌ 操作失败：[具体错误原因]
-建议：[解决方法]
-```
-
-### 未调用工具时的正确回复
-
-如果用户要求创建规则、控制设备等操作，但你还没有调用工具，应该回复：
-```
-我需要调用工具来执行这个操作。让我先为您创建规则...
-```
-
-或者直接调用工具，不要额外解释。"#;
+**数据查询**: 基于工具结果，简洁呈现数据和关键洞察
+**设备控制**: ✓ 操作成功 + 设备名称和状态变化
+**创建规则**: ✓ 已创建「规则名」+ 触发条件和动作
+**错误**: ❌ 操作失败 + 具体原因和建议"#;
 
     const THINKING_GUIDELINES_ZH: &str = r#"## 思考模式指南
 
@@ -443,47 +408,12 @@ generate report and identify devices with battery below 20%
 
     const RESPONSE_FORMAT_EN: &str = r#"## Response Format
 
-**⚠️ Critical Reminder**:
-- The formats below are ONLY for formatting results AFTER a successful tool call
-- You must NEVER use these formats to reply to users without calling tools first
-- If you haven't called a tool, honestly tell the user you need to call a tool to perform the operation
+**⚠️ No Hallucination**: Never claim operation success without calling tools. Always call tools first, then respond based on actual results.
 
-### Response Format After Successful Tool Calls
-
-**Data Query**:
-```
-Based on query results, [Device Name] current status:
-- [Metric 1]: [Value]
-- [Metric 2]: [Value]
-Analysis: [1-2 sentence insight]
-```
-
-**Device Control**:
-```
-Executing [operation]...
-✓ Success: [Device Name] has [state change]
-```
-
-**Create Rule**:
-```
-✓ Created rule "[Rule Name]"
-The rule will [action] when [trigger condition]
-```
-
-**Error Handling**:
-```
-❌ Operation failed: [Specific error]
-Suggestion: [Solution]
-```
-
-### Correct Response Without Tool Calls
-
-If user asks to create rules, control devices, etc., but you haven't called a tool yet:
-```
-I need to call a tool to execute this operation. Let me create the rule for you...
-```
-
-Or simply call the tool directly without extra explanation. "#;
+**Data Query**: Present data and key insights concisely based on tool results
+**Device Control**: ✓ Success + device name and state change
+**Create Rule**: ✓ Created "Rule Name" + trigger condition and action
+**Error**: ❌ Operation failed + specific error and suggestion"#;
 
     const THINKING_GUIDELINES_EN: &str = r#"## Thinking Mode Guidelines
 
@@ -628,7 +558,7 @@ The thinking process should be **internal reasoning** - don't over-explain basic
     fn intent_addon_zh(intent: &str) -> String {
         match intent {
             "device" => "\n\n## 当前任务：设备管理\n专注处理设备相关的查询和控制操作。".to_string(),
-            "data" => "\n\n## 当前任务：数据查询\n专注处理数据查询和分析。".to_string(),
+            "data" => "\n\n## 当前任务：数据查询和分析\n**必须调用工具**：当用户询问历史数据、趋势分析、数据变化时，必须调用 `query_data` 工具。\n\n**禁止直接回答**：不要自己编造数据或说「让我分析」，必须先调用工具获取真实数据。".to_string(),
             "rule" => "\n\n## 当前任务：规则管理\n专注处理自动化规则的创建和修改。".to_string(),
             "workflow" => "\n\n## 当前任务：工作流管理\n专注处理工作流的触发和监控。".to_string(),
             "alert" => "\n\n## 当前任务：告警管理\n专注处理告警查询、确认和状态更新。".to_string(),
@@ -641,7 +571,7 @@ The thinking process should be **internal reasoning** - don't over-explain basic
     fn intent_addon_en(intent: &str) -> String {
         match intent {
             "device" => "\n\n## Current Task: Device Management\nFocus on device queries and control operations.".to_string(),
-            "data" => "\n\n## Current Task: Data Query\nFocus on data queries and analysis.".to_string(),
+            "data" => "\n\n## Current Task: Data Query and Analysis\n**MUST CALL TOOLS**: When user asks for historical data, trend analysis, or data changes, you MUST call `query_data` tool.\n\n**DO NOT make up answers**: Don't fabricate data or say \"let me analyze\" - call the tool first to get real data.".to_string(),
             "rule" => "\n\n## Current Task: Rule Management\nFocus on creating and modifying automation rules.".to_string(),
             "workflow" => "\n\n## Current Task: Workflow Management\nFocus on triggering and monitoring workflows.".to_string(),
             "alert" => "\n\n## Current Task: Alert Management\nFocus on alert queries, acknowledgment, and status updates.".to_string(),

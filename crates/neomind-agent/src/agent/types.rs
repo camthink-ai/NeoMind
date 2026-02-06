@@ -613,8 +613,6 @@ pub struct AgentInternalState {
     pub memory: Vec<AgentMessage>,
     /// Recent assistant response hashes (for cross-turn repetition detection)
     pub recent_response_hashes: Vec<u64>,
-    /// Active task ID for multi-turn orchestration
-    pub active_task_id: Option<String>,
 }
 
 impl AgentInternalState {
@@ -627,7 +625,6 @@ impl AgentInternalState {
             session,
             memory: Vec::new(),
             recent_response_hashes: Vec::new(),
-            active_task_id: None,
         }
     }
 

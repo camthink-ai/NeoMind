@@ -222,8 +222,6 @@ pub struct Agent {
     conversation_context: Arc<tokio::sync::RwLock<ConversationContext>>,
     /// Smart followup manager - intelligent question generation when input is incomplete
     smart_followup: Arc<tokio::sync::RwLock<SmartFollowUpManager>>,
-    /// Task orchestrator - multi-turn dialogue for complex automation creation
-    task_orchestrator: Option<Arc<crate::task_orchestrator::TaskOrchestrator>>,
     /// Context selector - intelligent context selection based on intent analysis
     context_selector: Arc<tokio::sync::RwLock<crate::context_selector::ContextSelector>>,
     /// Last injected context summary hash (for deduplication)
@@ -277,7 +275,6 @@ impl Agent {
             semantic_mapper,
             conversation_context: Arc::new(tokio::sync::RwLock::new(ConversationContext::new())),
             smart_followup,
-            task_orchestrator: None,  // Optional, can be set later
             context_selector: Arc::new(tokio::sync::RwLock::new(crate::context_selector::ContextSelector::new())),
             last_injected_context_hash: Arc::new(tokio::sync::RwLock::new(0)),
         }
@@ -620,37 +617,6 @@ impl Agent {
         followup.refresh_devices().await;
     }
 
-    // === TASK ORCHESTRATOR METHODS ===
-
-    /// Set the task orchestrator for multi-turn dialogue support.
-    pub fn set_task_orchestrator(&mut self, orchestrator: Arc<crate::task_orchestrator::TaskOrchestrator>) {
-        self.task_orchestrator = Some(orchestrator);
-    }
-
-    /// Check if there's an active task orchestration for this session.
-    pub async fn has_active_task(&self) -> bool {
-        let state = self.internal_state.read().await;
-        state.active_task_id.is_some()
-    }
-
-    /// Get the current active task ID.
-    pub async fn get_active_task_id(&self) -> Option<String> {
-        let state = self.internal_state.read().await;
-        state.active_task_id.clone()
-    }
-
-    /// Cancel the current active task.
-    pub async fn cancel_active_task(&self) -> Result<()> {
-        let mut state = self.internal_state.write().await;
-        if let Some(task_id) = state.active_task_id.take() {
-            if let Some(orchestrator) = &self.task_orchestrator {
-                // Ignore errors during cancellation (task might already be gone)
-                let _ = orchestrator.cancel_task(&task_id).await;
-            }
-        }
-        Ok(())
-    }
-
     // === CONTEXT SELECTOR METHODS ===
 
     /// Get the context selector reference.
@@ -913,78 +879,15 @@ impl Agent {
             });
         }
 
-        // === TASK ORCHESTRATION: Multi-turn dialogue for complex automation creation ===
-        // Check if we should route to task orchestrator
-        if let Some(orchestrator) = &self.task_orchestrator {
-            // Get current active task ID
-            let active_task_id = {
-                let state = self.internal_state.read().await;
-                state.active_task_id.clone()
-            };
-
-            if let Some(task_id) = active_task_id {
-                // Continue existing task
-                match orchestrator.continue_task(&task_id, user_message).await {
-                    Ok(task_response) => {
-                        // Save messages
-                        let user_msg = AgentMessage::user(user_message);
-                        let response_msg = AgentMessage::assistant(&task_response.message);
-
-                        self.internal_state.write().await.push_message(user_msg);
-                        self.internal_state.write().await.push_message(response_msg.clone());
-
-                        // Update active task ID
-                        if task_response.completed {
-                            self.internal_state.write().await.active_task_id = None;
-                        }
-
-                        return Ok(AgentResponse {
-                            message: response_msg,
-                            tool_calls: vec![],
-                            memory_context_used: true,
-                            tools_used: vec![],
-                            processing_time_ms: start.elapsed().as_millis() as u64,
-                        });
-                    }
-                    Err(_) => {
-                        // Task failed or not found, clear and continue to normal processing
-                        self.internal_state.write().await.active_task_id = None;
-                    }
-                }
-            } else {
-                // Check if this is a complex automation creation request
-                let should_start_task = self.should_start_task_orchestration(user_message).await;
-
-                if should_start_task {
-                    match orchestrator.start_task(user_message, &self.session_id).await {
-                        Ok(task_response) => {
-                            // Save messages
-                            let user_msg = AgentMessage::user(user_message);
-                            let response_msg = AgentMessage::assistant(&task_response.message);
-
-                            self.internal_state.write().await.push_message(user_msg);
-                            self.internal_state.write().await.push_message(response_msg.clone());
-
-                            // Store active task ID if this is a multi-turn task
-                            if !task_response.completed && task_response.needs_input {
-                                self.internal_state.write().await.active_task_id = Some(task_response.task_id.clone());
-                            }
-
-                            return Ok(AgentResponse {
-                                message: response_msg,
-                                tool_calls: vec![],
-                                memory_context_used: true,
-                                tools_used: vec![],
-                                processing_time_ms: start.elapsed().as_millis() as u64,
-                            });
-                        }
-                        Err(_) => {
-                            // Task orchestration failed, continue to normal processing
-                        }
-                    }
-                }
-            }
-        }
+        // === INTENT ANALYSIS: Use ContextSelector to analyze user intent ===
+        let (intent_analysis, _context_bundle) = self.analyze_intent(user_message).await;
+        tracing::info!(
+            intent = ?intent_analysis.intent_type,
+            confidence = intent_analysis.confidence,
+            entities = intent_analysis.entities.len(),
+            scope = ?intent_analysis.context_scope,
+            "Intent analysis completed"
+        );
 
         // === PROCEED WITH NORMAL PROCESSING ===
         // === CONVERSATION CONTEXT: Enhance input with context ===
@@ -1689,6 +1592,152 @@ END"#)
         crate::tools::resolve_tool_name(simplified_name)
     }
 
+    /// Sanitize tool output for LLM consumption.
+    ///
+    /// If the output is too large (e.g., base64 images, large files),
+    /// intelligently truncates while preserving useful structure.
+    ///
+    /// ## Strategy
+    /// - **Small outputs** (<10KB): Return as-is
+    /// - **Base64 strings**: Replace with metadata only (LLM can't use them)
+    /// - **Large strings**: Truncate with preview
+    /// - **Arrays**: Keep first N items + count of remaining
+    /// - **Objects**: Keep small fields, truncate large fields
+    ///
+    /// This preserves data structure while avoiding token waste on unusable data.
+    fn sanitize_tool_output_for_llm(
+        &self,
+        tool_name: &str,
+        data: &serde_json::Value,
+    ) -> String {
+        const MAX_SIZE: usize = 10_240; // 10KB
+        const MAX_PREVIEW_ITEMS: usize = 5; // Keep first 5 array items
+        const MAX_STRING_PREVIEW: usize = 500; // 500 chars for string preview
+
+        // Recursively truncate value to fit within MAX_SIZE
+        let truncated = self.truncate_value(data, MAX_SIZE, MAX_PREVIEW_ITEMS, MAX_STRING_PREVIEW);
+
+        let result = serde_json::to_string(&truncated).unwrap_or_else(|_| "null".to_string());
+        let original_size = serde_json::to_string(data).unwrap_or_default().len();
+
+        // Log if truncation occurred
+        if result.len() != original_size {
+            tracing::warn!(
+                session_id = %self.session_id,
+                tool = %tool_name,
+                original_bytes = original_size,
+                truncated_bytes = result.len(),
+                "Tool output truncated for LLM"
+            );
+        }
+
+        result
+    }
+
+    /// Recursively truncate a JSON value to fit within size constraints.
+    ///
+    /// This preserves data structure while trimming large content.
+    fn truncate_value(
+        &self,
+        value: &serde_json::Value,
+        max_size: usize,
+        max_items: usize,
+        max_string: usize,
+    ) -> serde_json::Value {
+        match value {
+            // Base64 detection: long string with only base64 chars
+            serde_json::Value::String(s) if s.len() > 500 && self.is_likely_base64(s) => {
+                // Replace base64 with metadata
+                serde_json::json!({
+                    "_truncated": true,
+                    "_type": "base64_data",
+                    "size_bytes": s.len()
+                })
+            }
+
+            // Regular long string - truncate with preview
+            serde_json::Value::String(s) if s.len() > max_string => {
+                let preview: String = s.chars().take(max_string).collect();
+                serde_json::json!({
+                    "_truncated": true,
+                    "_original_length": s.len(),
+                    "preview": format!("{}...", preview)
+                })
+            }
+
+            // Array - keep first N items + count
+            serde_json::Value::Array(arr) => {
+                if arr.len() <= max_items {
+                    // Check each element recursively
+                    let truncated: Vec<serde_json::Value> = arr.iter()
+                        .map(|v| self.truncate_value(v, max_size / arr.len().max(1), max_items, max_string))
+                        .collect();
+                    serde_json::Value::Array(truncated)
+                } else {
+                    let kept: Vec<serde_json::Value> = arr.iter()
+                        .take(max_items)
+                        .map(|v| self.truncate_value(v, max_size / max_items, max_items, max_string))
+                        .collect();
+
+                    serde_json::json!({
+                        "_truncated": true,
+                        "_total_count": arr.len(),
+                        "_showing_first": max_items,
+                        "items": kept
+                    })
+                }
+            }
+
+            // Object - process each field, truncate large ones
+            serde_json::Value::Object(obj) => {
+                let mut result = serde_json::Map::new();
+
+                for (key, val) in obj.iter() {
+                    // Skip known large fields (like full data content)
+                    if matches!(key.as_str(), "data" | "content" | "base64" | "image")
+                        && serde_json::to_string(val).unwrap_or_default().len() > 1000
+                    {
+                        result.insert(
+                            format!("_{}_truncated", key),
+                            serde_json::json!({
+                                "_size_bytes": serde_json::to_string(val).unwrap_or_default().len(),
+                                "_note": "Large data omitted"
+                            })
+                        );
+                        continue;
+                    }
+
+                    let truncated = self.truncate_value(val, max_size / obj.len().max(1), max_items, max_string);
+                    result.insert(key.clone(), truncated);
+
+                    // Early exit if we're getting too big
+                    if serde_json::to_string(&result).unwrap_or_default().len() > max_size {
+                        break;
+                    }
+                }
+
+                if !result.is_empty() {
+                    serde_json::Value::Object(result)
+                } else {
+                    serde_json::json!({"_truncated": true, "_note": "All fields were too large"})
+                }
+            }
+
+            // Other types pass through
+            _ => value.clone(),
+        }
+    }
+
+    /// Check if a string is likely base64 encoded data.
+    fn is_likely_base64(&self, s: &str) -> bool {
+        // Base64 contains only these chars
+        let base64_chars = s.chars().take(1000).all(|c| {
+            c.is_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r'
+        });
+        // Must be reasonably long and look like base64
+        base64_chars && s.len() > 100
+    }
+
     /// Execute a tool with retry logic.
     ///
     /// Retries up to 2 times for transient errors (network issues, timeouts).
@@ -1764,8 +1813,8 @@ END"#)
                         "Tool executed successfully"
                     );
 
-                    return Ok(serde_json::to_string_pretty(&output.data)
-                        .unwrap_or_else(|_| "Success".to_string()));
+                    // Sanitize output to avoid sending large data (base64, files, etc.) to LLM
+                    return Ok(self.sanitize_tool_output_for_llm(&real_tool_name, &output.data));
                 }
                 Err(e) => {
                     let last_error = e.to_string();
@@ -1922,31 +1971,6 @@ END"#)
     ) -> Result<Pin<Box<dyn Stream<Item = String> + Send>>> {
         let event_stream = self.process_stream_events(user_message).await?;
         Ok(events_to_string_stream(event_stream))
-    }
-
-    // === TASK ORCHESTRATION HELPER METHODS ===
-
-    /// Determine if the input should trigger task orchestration for multi-turn dialogue.
-    /// This detects complex automation creation requests that benefit from step-by-step guidance.
-    async fn should_start_task_orchestration(&self, input: &str) -> bool {
-        let input_lower = input.to_lowercase();
-
-        // Keywords that indicate complex automation creation
-        let complex_automation_keywords = [
-            "创建自动化", "create automation",
-            "新建规则", "new rule",
-            "设置规则", "setup rule",
-            "配置自动化", "configure automation",
-            "帮我建", "help me create",
-        ];
-
-        // Check if input contains complex automation keywords
-        let has_complex_keyword = complex_automation_keywords.iter()
-            .any(|keyword| input_lower.contains(keyword));
-
-        // Only trigger if input is relatively short (suggesting incomplete info)
-        // and contains complex creation keywords
-        has_complex_keyword && input.len() < 100
     }
 }
 

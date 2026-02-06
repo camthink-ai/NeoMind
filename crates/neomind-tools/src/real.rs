@@ -80,26 +80,7 @@ impl Tool for QueryDataTool {
     }
 
     fn description(&self) -> &str {
-        r#"查询设备的历史时间序列数据。
-
-## 使用场景
-- 用户询问"今天/最近/过去X小时/天的数据"时必须调用此工具并指定时间范围
-- 分析数据变化趋势（上升、下降、波动）
-- 查询传感器的历史数据（如温度、湿度、压力等）
-- 获取设备的实时数据点
-- 生成数据报告
-
-## 重要：时间范围使用
-- **分析今天数据**: start_time设为今天0点，end_time设为当前时间
-- **分析最近X小时**: start_time = 当前时间 - X*3600，end_time = 当前时间
-- **对比变化**: 必须查询多个时间点的数据，不能只查当前值
-- 时间戳使用Unix时间戳（秒），可以用当前时间减去秒数得到起点
-
-## 注意事项
-- device_id 必须是系统中已注册的设备ID
-- metric 名称通常是：temperature（温度）、humidity（湿度）、battery（电池）等
-- 不指定时间范围时默认返回最近24小时的数据
-- 返回数据按时间戳升序排列"#
+        "查询设备的历史时间序列数据。支持指定时间范围分析数据趋势。时间参数支持Unix时间戳（秒）或ISO 8601格式字符串。"
     }
 
     fn parameters(&self) -> Value {
@@ -292,24 +273,7 @@ impl Tool for ControlDeviceTool {
     }
 
     fn description(&self) -> &str {
-        r#"向设备发送控制命令。
-
-## 使用场景
-- 开关设备控制（打开/关闭）
-- 设置设备参数值
-- 触发设备动作
-- 修改设备工作模式
-
-## 常用命令
-- turn_on: 打开设备
-- turn_off: 关闭设备
-- set_value: 设置数值参数（需通过parameters传递value）
-- toggle: 切换设备状态
-
-## 注意事项
-- 执行控制命令前应先确认设备在线状态
-- 部分命令需要额外的参数（如set_value需要value参数）
-- 控制命令执行是异步的，实际生效可能有延迟"#
+        "向设备发送控制命令。支持turn_on（打开）、turn_off（关闭）、set_value（设置值）、toggle（切换）等命令。"
     }
 
     fn parameters(&self) -> Value {
@@ -536,25 +500,7 @@ impl Tool for ListDevicesTool {
     }
 
     fn description(&self) -> &str {
-        r#"列出系统中所有已注册的设备。
-
-## 使用场景
-- 查看所有可用设备列表
-- 按设备类型筛选设备
-- 获取设备基本信息（ID、名称、类型）
-- 检查设备在线状态
-
-## 返回信息
-- 设备ID：唯一标识符
-- 设备名称：人类可读的名称
-- 设备类型：sensor（传感器）、actuator（执行器）等
-- 设备状态：online（在线）、offline（离线）
-
-## 设备类型
-- sensor: 传感器设备（温度、湿度、压力等）
-- actuator: 执行器设备（开关、阀门、电机等）
-- controller: 控制器设备
-- gateway: 网关设备"#
+        "列出系统中所有已注册的设备。支持按类型筛选（sensor、actuator、controller、gateway）。"
     }
 
     fn parameters(&self) -> Value {
@@ -635,15 +581,24 @@ impl Tool for ListDevicesTool {
             configs
         };
 
-        // Convert to simpler format
+        // Get all device statuses at once to avoid N queries
+        let statuses = self.service.get_all_device_statuses().await;
+
+        // Convert to simpler format with real status
         let device_list: Vec<Value> = filtered
             .iter()
             .map(|d| {
+                // Get actual status from DeviceService
+                let status = statuses
+                    .get(&d.device_id)
+                    .map(|s| s.status.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+
                 serde_json::json!({
                     "id": d.device_id,
                     "name": d.name,
                     "type": d.device_type,
-                    "status": "unknown" // DeviceService doesn't track status yet
+                    "status": status
                 })
             })
             .collect();
@@ -674,38 +629,7 @@ impl Tool for CreateRuleTool {
     }
 
     fn description(&self) -> &str {
-        r#"创建一个新的自动化规则。
-
-## DSL 语法格式（多行格式，每部分单独一行）
-RULE "规则名称"
-WHEN sensor.temperature > 50
-FOR 5 minutes
-DO NOTIFY "温度过高"
-END
-
-## 重要：DSL必须多行格式！
-- RULE "名称" （第一行）
-- WHEN 条件 （第二行）
-- FOR 持续时间 （可选，第三行）
-- DO 动作 （第四行）
-- END （最后一行）
-
-## 条件示例
-- sensor.temperature > 50: 温度大于50
-- device.humidity < 30: 湿度小于30
-- sensor.value == 1: 值等于1
-
-## 动作类型（每个动作一行）
-- NOTIFY "消息": 发送通知
-- EXECUTE device.command(param=value): 执行设备命令
-- LOG info: 记录日志
-
-## 完整示例
-RULE "高温告警"
-WHEN sensor.temperature > 35
-FOR 5 minutes
-DO NOTIFY "温度过高"
-END"#
+        "创建自动化规则。DSL格式：RULE \"名称\" WHEN 条件 FOR 持续时间 DO 动作 END。条件如sensor.temperature>50，动作如NOTIFY \"消息\"。"
     }
 
     fn parameters(&self) -> Value {
@@ -803,19 +727,7 @@ impl Tool for ListRulesTool {
     }
 
     fn description(&self) -> &str {
-        r#"列出系统中所有自动化规则。
-
-## 使用场景
-- 查看所有已创建的规则
-- 检查规则的启用状态
-- 查看规则的触发次数统计
-- 管理和监控自动化规则
-
-## 返回信息
-- 规则ID：唯一标识符
-- 规则名称：人类可读的名称
-- 启用状态：是否正在运行
-- 触发次数：规则被执行的次数统计"#
+        "列出系统中所有自动化规则，包括规则ID、名称、启用状态和触发次数统计。"
     }
 
     fn parameters(&self) -> Value {
@@ -906,17 +818,7 @@ impl Tool for DeleteRuleTool {
     }
 
     fn description(&self) -> &str {
-        r#"删除指定的自动化规则。
-
-## 使用场景
-- 删除不再需要的规则
-- 清理测试或临时规则
-- 规则管理维护
-
-## 重要提示
-- 删除操作不可撤销
-- 删除前建议使用 list_rules 查看规则列表
-- 需要提供规则的完整ID"#
+        "删除指定的自动化规则。删除操作不可撤销，建议先用list_rules查看规则列表。"
     }
 
     fn parameters(&self) -> Value {
@@ -1031,25 +933,7 @@ impl Tool for QueryRuleHistoryTool {
     }
 
     fn description(&self) -> &str {
-        r#"查询自动化规则的执行历史记录。
-
-## 使用场景
-- 查看规则的触发历史
-- 分析规则执行成功率
-- 排查规则执行失败原因
-- 统计规则执行频率
-
-## 返回信息
-- 规则ID和名称
-- 执行时间戳
-- 执行是否成功
-- 执行的动作数量
-- 错误信息（如果失败）
-- 执行耗时（毫秒）
-
-## 筛选选项
-- rule_id: 指定规则ID筛选
-- limit: 限制返回条数，默认10条"#
+        "查询自动化规则的执行历史记录。支持按规则ID筛选，默认返回最近10条记录。"
     }
 
     fn parameters(&self) -> Value {
@@ -1203,24 +1087,7 @@ impl Tool for GetDeviceDataTool {
     }
 
     fn description(&self) -> &str {
-        r#"获取设备的所有当前数据（简化版查询）。
-
-## 使用场景
-- 查看设备的实时数据
-- 获取设备所有指标的当前值
-- 不需要知道具体指标名称，一次获取所有数据
-- 快速了解设备状态
-
-## 返回信息
-- 设备ID和名称
-- 所有可用的指标及其当前值
-- 每个指标的数据类型和单位
-- 数据时间戳
-
-## 注意事项
-- 此工具返回所有指标的当前值，不需要指定具体指标名称
-- 如果设备离线或没有数据，会返回相应提示
-- 数据来自最新的遥测记录"#
+        "获取设备的所有当前数据（简化版）。不需要指定指标名称，返回所有可用指标的当前值、单位和时间戳。"
     }
 
     fn parameters(&self) -> Value {
@@ -1467,25 +1334,7 @@ impl Tool for DeviceAnalyzeTool {
     }
 
     fn description(&self) -> &str {
-        r#"分析设备数据，发现趋势、异常和模式。
-
-## 使用场景
-- 分析温度/湿度等数据的变化趋势
-- 检测数据中的异常点
-- 生成数据统计摘要
-
-## 分析类型（可选）
-- trend: 趋势分析 - 识别上升/下降趋势
-- anomaly: 异常检测 - 发现异常数据点
-- summary: 数据摘要 - 统计信息
-
-## 参数说明
-- device_id: 设备ID（必需）
-- analysis_type: 分析类型（可选，默认summary）
-
-## 示例
-- 分析温度传感器的趋势
-- 检测设备数据的异常"#
+        "分析设备数据，发现趋势、异常和模式。支持trend（趋势）、anomaly（异常检测）、summary（统计摘要）三种分析类型。"
     }
 
     fn parameters(&self) -> Value {

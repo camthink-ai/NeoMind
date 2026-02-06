@@ -445,14 +445,15 @@ impl SessionManager {
 
         // Use tool registry if set, otherwise create default mock tools
         let tool_registry = self.tool_registry.read().await.clone();
-        let agent = if let Some(tools) = tool_registry {
-            Arc::new(Agent::with_tools(
+
+        let mut agent = if let Some(tools) = tool_registry {
+            Agent::with_tools(
                 self.default_config.clone(),
                 session_id.clone(),
                 tools,
-            ))
+            )
         } else {
-            Arc::new(Agent::new(self.default_config.clone(), session_id.clone()))
+            Agent::new(self.default_config.clone(), session_id.clone())
         };
 
         // Configure LLM if a default backend is set
@@ -460,6 +461,8 @@ impl SessionManager {
         if let Some(backend) = llm_backend {
             let _ = agent.configure_llm(backend).await;
         }
+
+        let agent = Arc::new(agent);
 
         self.sessions
             .write()
@@ -503,17 +506,18 @@ impl SessionManager {
 
         // Use tool registry if set, otherwise create default agent
         let tool_registry = self.tool_registry.read().await.clone();
-        let agent = if let Some(tools) = tool_registry {
-            Arc::new(Agent::with_tools(
+
+        let mut agent = if let Some(tools) = tool_registry {
+            Agent::with_tools(
                 self.default_config.clone(),
                 session_id.to_string(),
                 tools,
-            ))
+            )
         } else {
-            Arc::new(Agent::new(
+            Agent::new(
                 self.default_config.clone(),
                 session_id.to_string(),
-            ))
+            )
         };
 
         // Configure LLM if a default backend is set
@@ -521,6 +525,8 @@ impl SessionManager {
         if let Some(backend) = llm_backend {
             let _ = agent.configure_llm(backend).await;
         }
+
+        let agent = Arc::new(agent);
 
         // Load message history from database
         let history = self.load_history(session_id)?;

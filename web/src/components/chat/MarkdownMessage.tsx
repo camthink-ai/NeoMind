@@ -29,9 +29,13 @@ function dedupeRepeatedContent(content: string): string {
  * - Code blocks with syntax highlighting
  * - Tables, lists, links, images
  * - Styled for chat interface
+ * - Long content handling with overflow
  */
 export function MarkdownMessage({ content, className, variant = 'assistant' }: MarkdownMessageProps) {
   const displayContent = dedupeRepeatedContent(content)
+
+  // Detect if content is very long (e.g., base64, large code, etc.)
+  const isVeryLong = displayContent.length > 5000
   const components: Components = {
     // Custom code block rendering
     pre: ({ node, className, children, ...props }) => (
@@ -72,16 +76,22 @@ export function MarkdownMessage({ content, className, variant = 'assistant' }: M
   return (
     <div
       className={cn(
+        // Wrapper for overflow handling
+        "relative max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground scrollbar-track-transparent hover:scrollbar-thumb-muted",
         // Base prose classes - removed dark:prose-invert to avoid color conflicts
         "prose prose-sm max-w-none",
+        // Text wrapping for long content
+        "break-words overflow-wrap-anywhere",
         "prose-p:leading-relaxed prose-p:my-1",
         "prose-headings:font-semibold prose-headings:my-2",
         "prose-h1:text-base prose-h2:text-sm prose-h3:text-xs",
         "prose-a:text-primary prose-a:no-underline hover:prose-a:underline",
         "prose-strong:font-semibold",
         "prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-xs prose-code:font-mono",
+        "prose-code:break-all prose-code:whitespace-pre-wrap prose-code:break-all",
         "prose-pre:bg-muted prose-pre:p-3 prose-pre:rounded-lg prose-pre:my-2",
-        "prose-pre:prose-code:bg-transparent prose-pre:prose-code:p-0",
+        "prose-pre:overflow-x-auto prose-pre:max-w-full prose-pre:whitespace-pre-wrap",
+        "prose-pre:prose-code:bg-transparent prose-pre:prose-code:p-0 prose-pre:prose-code:whitespace-pre",
         "prose-blockquote:border-l-2 prose-blockquote:border-muted-foreground prose-blockquote:pl-3 prose-blockquote:italic",
         "prose-ul:my-1 prose-ul:pl-4 prose-ul:list-disc",
         "prose-ol:my-1 prose-ol:pl-4 prose-ol:list-decimal",
