@@ -449,9 +449,11 @@ async fn test_conversation_history_under_load() -> anyhow::Result<()> {
 
     let elapsed = start.elapsed();
 
-    // Verify all history was saved
+    // Verify history was saved (capped at MAX_CONVERSATION_TURNS)
     let agent = ctx.store.get_agent(&agent_id).await?.unwrap();
-    assert_eq!(agent.conversation_history.len(), execution_count);
+    let expected_history = execution_count.min(20); // MAX_CONVERSATION_TURNS = 20
+    assert_eq!(agent.conversation_history.len(), expected_history,
+        "History should be capped at MAX_CONVERSATION_TURNS (20)");
 
     // Verify conversation history order
     for i in 1..agent.conversation_history.len() {
@@ -461,7 +463,7 @@ async fn test_conversation_history_under_load() -> anyhow::Result<()> {
 
     println!("\n结果:");
     println!("  总执行: {}", execution_count);
-    println!("  历史记录: {}", agent.conversation_history.len());
+    println!("  历史记录: {} (capped at 20)", agent.conversation_history.len());
     println!("  总耗时: {:?}", elapsed);
     println!("  平均每次: {:?}", elapsed / execution_count as u32);
 

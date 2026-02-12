@@ -10,8 +10,13 @@
 mod integration_tests {
     use neomind_core::extension::{
         loader::NativeExtensionLoader,
-        system::{ExtensionError, ParamMetricValue},
+        Extension, ExtensionError, ExtensionMetricValue, ParamMetricValue,
     };
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    type ExtensionRef = Arc<RwLock<dyn Extension>>;
+    type ExtensionResult<T> = std::result::Result<T, ExtensionError>;
 
     /// Helper to get the path to a built extension
     fn get_extension_path(name: &str) -> std::path::PathBuf {
@@ -354,14 +359,17 @@ mod integration_tests {
 mod event_publishing_tests {
     use super::*;
     use neomind_core::EventBus;
-    use neomind_core::event::NeoMindEvent;
-    use neomind_core::extension::{DynExtension, Extension};
+    use neomind_core::extension::{DynExtension, Extension, ExtensionError, ExtensionMetricValue, ParamMetricValue};
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::RwLock;
     use tokio::time::sleep;
 
+    type ExtensionResult<T> = std::result::Result<T, ExtensionError>;
+
     /// Helper to build and load a test extension
-    async fn build_and_load_test_extension() -> Result<Arc<tokio::sync::RwLock<neomind_core::extension::DynExtension>>, Box<dyn std::error::Error>> {
-        let extension_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    async fn build_and_load_test_extension() -> Result<DynExtension, Box<dyn std::error::Error>> {
+        let mut extension_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         extension_dir.push("..");
         extension_dir.push("..");
         extension_dir.push("..");
@@ -404,19 +412,18 @@ mod event_publishing_tests {
     #[ignore = "requires test extension to be built"]
     async fn test_command_publishes_extension_output_event() {
         // Skip if extension not built
-        let extension: Extension = match build_and_load_test_extension().await {
+        let extension: DynExtension = match build_and_load_test_extension().await {
             Ok(ext) => ext,
             Err(_) => return,
         };
 
         // Create event bus to receive events
         let event_bus = EventBus::new();
-        let mut receiver = event_bus.receiver().clone();
+        let mut receiver = event_bus.subscribe();
 
         // Start background task to process events
-        let event_bus_clone = event_bus.clone();
         tokio::spawn(async move {
-            while let Ok(event) = receiver.recv().await {
+            while let Some((event, _meta)) = receiver.recv().await {
                 println!("[TEST] Received event: {}", event.type_name());
             }
         });
@@ -426,7 +433,7 @@ mod event_publishing_tests {
 
         // Execute increment command
         let ext_guard = extension.read().await;
-        let result = ext_guard.execute_command(
+        let result: ExtensionResult<serde_json::Value> = ext_guard.execute_command(
             "increment",
             &serde_json::json!({}),
         ).await;
@@ -434,20 +441,20 @@ mod event_publishing_tests {
         // Verify command succeeded
         assert!(result.is_ok(), "Command execution failed: {:?}", result);
 
-        let counter_value_before = result.unwrap().get("counter").and_then(|v| v.as_i64()).unwrap_or(0);
+        let counter_value_before = result.unwrap().get("counter").and_then(|v: &serde_json::Value| v.as_i64()).unwrap_or(0);
 
         // Give time for event to be published
         sleep(Duration::from_millis(200)).await;
 
         // Now query the extension to see the current counter value
         // This simulates what the dashboard would do
-        let current_value = ext_guard.produce_metrics().await.unwrap();
+        let current_value = ext_guard.produce_metrics().unwrap();
         assert!(!current_value.is_empty(), "No metrics produced");
 
         let counter_value_after = current_value.iter()
             .find(|m| m.name == "counter")
             .and_then(|m| match &m.value {
-                neomind_core::extension::ParamMetricValue::Integer(v) => Some(v),
+                ParamMetricValue::Integer(v) => Some(v),
                 _ => None,
             })
             .map(|v| v);
@@ -458,25 +465,25 @@ mod event_publishing_tests {
         let after_value = counter_value_after.unwrap();
 
         // The counter should have been incremented
-        assert_eq!(after_value, counter_value_before + 1,
+        assert_eq!(*after_value, counter_value_before + 1,
             "Counter was not incremented: before={}, after={}", counter_value_before, after_value);
 
         // Clean up
+        drop(ext_guard);
         drop(extension);
-        drop(receiver);
     }
 
     #[tokio::test]
     #[ignore = "requires test extension to be built"]
     async fn test_command_event_has_correct_fields() {
-        let extension = match build_and_load_test_extension().await {
+        let extension: DynExtension = match build_and_load_test_extension().await {
             Ok(ext) => ext,
             Err(_) => return,
         };
 
         // Execute get_counter command
         let ext_guard = extension.read().await;
-        let result = ext_guard.execute_command(
+        let result: ExtensionResult<serde_json::Value> = ext_guard.execute_command(
             "get_counter",
             &serde_json::json!({}),
         ).await;
@@ -494,27 +501,31 @@ mod event_publishing_tests {
     #[tokio::test]
     #[ignore = "requires test extension to be built"]
     async fn test_reset_command_works() {
-        let extension = match build_and_load_test_extension().await {
+        let extension: DynExtension = match build_and_load_test_extension().await {
             Ok(ext) => ext,
             Err(_) => return,
         };
 
         // Execute reset_counter command
-        let result = extension.read().await.execute_command(
+        let ext_guard = extension.read().await;
+        let result: ExtensionResult<serde_json::Value> = ext_guard.execute_command(
             "reset_counter",
             &serde_json::json!({}),
         ).await;
 
         assert!(result.is_ok(), "reset_counter failed");
+        drop(ext_guard);
 
         // Verify counter is reset to 0
         let ext_guard = extension.read().await;
-        let metrics = ext_guard.produce_metrics().await.unwrap();
+        let metrics: Vec<ExtensionMetricValue> = ext_guard.produce_metrics().unwrap();
+        drop(ext_guard);
+
         let counter_metric = metrics.iter().find(|m| m.name == "counter").unwrap();
 
         match &counter_metric.value {
-            neomind_core::extension::ParamMetricValue::Integer(v) => {
-                assert_eq!(v, 0, "Counter was not reset to 0");
+            ParamMetricValue::Integer(v) => {
+                assert_eq!(*v, 0, "Counter was not reset to 0");
             }
             _ => panic!("Counter value is not an integer"),
         }

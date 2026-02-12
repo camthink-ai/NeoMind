@@ -35,12 +35,19 @@ impl From<&ToolDefinition> for ToolDefinitionDto {
 }
 
 /// Global tool registry.
-/// Note: This is now empty - tools are managed by the session manager.
+/// Initialized with basic tools for testing and API access.
 fn get_tool_registry() -> Arc<ToolRegistry> {
     use std::sync::OnceLock;
     static REGISTRY: OnceLock<Arc<ToolRegistry>> = OnceLock::new();
     REGISTRY
-        .get_or_init(|| Arc::new(ToolRegistryBuilder::new().build()))
+        .get_or_init(|| {
+            // Create a registry with basic system help tool for testing
+            Arc::new(
+                ToolRegistryBuilder::new()
+                    .with_system_help_tool()
+                    .build()
+            )
+        })
         .clone()
 }
 

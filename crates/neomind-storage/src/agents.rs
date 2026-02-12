@@ -1281,6 +1281,12 @@ impl AgentStore {
 
         // Optionally update conversation history in the same transaction
         if let (Some(agent_id), Some(turn)) = (agent_id, conversation_turn) {
+            tracing::debug!(
+                agent_id = %agent_id,
+                execution_id = %execution.id,
+                turn_execution_id = %turn.execution_id,
+                "Updating conversation history for agent"
+            );
             // Get current agent state using the write transaction (it can also read)
             let mut agent = {
                 let table = write_txn.open_table(AGENTS_TABLE)?;
@@ -1297,13 +1303,24 @@ impl AgentStore {
             };
 
             // Update conversation history
+            let old_len = agent.conversation_history.len();
             agent.conversation_history.push(turn.clone());
+            tracing::debug!("[DEBUG] Conversation history: old_len={}, new_len={}",
+                old_len, agent.conversation_history.len());
+
+            tracing::debug!(
+                agent_id = %agent_id,
+                old_history_len = old_len,
+                new_history_len = agent.conversation_history.len(),
+                "Conversation history updated"
+            );
 
             // Trim history to prevent unbounded growth
+            // Keep the most recent MAX_CONVERSATION_TURNS entries
             if agent.conversation_history.len() > Self::MAX_CONVERSATION_TURNS {
                 let removed_count = agent.conversation_history.len() - Self::MAX_CONVERSATION_TURNS;
-                agent.conversation_history = agent.conversation_history
-                    .split_off(Self::MAX_CONVERSATION_TURNS);
+                // Remove the oldest entries (from the beginning) to keep the most recent ones
+                agent.conversation_history.drain(0..removed_count);
 
                 tracing::debug!(
                     agent_id = %agent_id,
@@ -1322,6 +1339,13 @@ impl AgentStore {
                     .map_err(|e| Error::Serialization(e.to_string()))?;
                 table.insert(agent_id, value.as_slice())?;
             }
+        } else {
+            tracing::warn!(
+                execution_id = %execution.id,
+                agent_id = ?agent_id,
+                has_turn = conversation_turn.is_some(),
+                "Skipping conversation history update - agent_id or turn is None"
+            );
         }
 
         write_txn.commit()?;
@@ -1496,10 +1520,11 @@ impl AgentStore {
         agent.conversation_history.push(turn.clone());
 
         // Trim history to prevent unbounded growth
+        // Keep the most recent MAX_CONVERSATION_TURNS entries
         if agent.conversation_history.len() > Self::MAX_CONVERSATION_TURNS {
             let removed_count = agent.conversation_history.len() - Self::MAX_CONVERSATION_TURNS;
-            agent.conversation_history = agent.conversation_history
-                .split_off(Self::MAX_CONVERSATION_TURNS);
+            // Remove the oldest entries (from the beginning) to keep the most recent ones
+            agent.conversation_history.drain(0..removed_count);
 
             tracing::debug!(
                 agent_id = %agent_id,
@@ -1763,6 +1788,8 @@ mod tests {
             user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
             error_message: None,
         };
 
@@ -1802,6 +1829,8 @@ mod tests {
             user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
             error_message: None,
         };
 
@@ -1874,6 +1903,8 @@ mod tests {
             user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
             error_message: None,
         };
 
@@ -1933,6 +1964,8 @@ mod tests {
             user_messages: vec![],
             conversation_summary: None,
             context_window_size: 10,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
             error_message: None,
         };
 

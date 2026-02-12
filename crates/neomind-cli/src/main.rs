@@ -1,4 +1,4 @@
-//! Command-line interface for NeoMind Edge AI Agent.
+//! Command-line interface for NeoMind.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -10,9 +10,9 @@ use neomind_core::config::{
     endpoints, env_vars, models, normalize_ollama_endpoint, normalize_openai_endpoint,
 };
 
-/// NeoMind Edge AI Agent - Run LLMs on edge devices.
+/// NeoMind AI Agent - Run LLMs on edge devices.
 #[derive(Parser, Debug)]
-#[command(name = "edge-ai")]
+#[command(name = "neomind")]
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Action to perform.
@@ -759,7 +759,7 @@ async fn show_plugin_info(path: &PathBuf) -> Result<()> {
                 eprintln!("Make sure:");
                 println!("  1. The extension file is valid");
                 println!("  2. A sidecar .json file exists with extension metadata");
-                println!("  3. Run: edge-ai plugin validate {}", path.display());
+                println!("  3. Run: neomind plugin validate {}", path.display());
             }
         }
     } else {
@@ -769,7 +769,7 @@ async fn show_plugin_info(path: &PathBuf) -> Result<()> {
         println!();
         println!("Note: Detailed metadata extraction for native extensions");
         println!("      requires loading the extension library.");
-        println!("      Use: edge-ai plugin validate {}", path.display());
+        println!("      Use: neomind plugin validate {}", path.display());
     }
 
     Ok(())

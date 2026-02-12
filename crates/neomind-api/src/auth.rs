@@ -92,6 +92,21 @@ impl AuthState {
         }
     }
 
+    /// Create a new auth state for testing.
+    ///
+    /// This creates an in-memory auth state without any API keys,
+    /// suitable for parallel test execution.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn new_for_testing() -> Self {
+        let crypto = Arc::new(CryptoService::from_env_or_generate());
+
+        Self {
+            api_keys: Arc::new(RwLock::new(HashMap::new())),
+            db_path: ":memory:",
+            crypto,
+        }
+    }
+
     /// Load API keys from redb database.
     fn load_from_db(
         path: &str,

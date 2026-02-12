@@ -361,6 +361,8 @@ async fn test_llm_vs_mock_comparison() -> anyhow::Result<()> {
         user_messages: vec![],
         conversation_summary: None,
         context_window_size: 10,
+        enable_tool_chaining: false,
+        max_chain_depth: 3,
     };
 
     ctx.store.save_agent(&agent).await.ok();

@@ -1633,7 +1633,23 @@ Respond in JSON format:
         };
 
         // Save execution record and conversation turn in a single transaction
+        tracing::debug!(
+            agent_id = %agent_id,
+            execution_id = %execution_id,
+            has_decision_process = decision_process_for_turn.is_some(),
+            success = success,
+            "Creating conversation turn"
+        );
+
         let turn = decision_process_for_turn.as_ref().map(|dp| {
+            tracing::debug!(
+                agent_id = %agent_id,
+                execution_id = %execution_id,
+                data_collected_count = dp.data_collected.len(),
+                reasoning_steps_count = dp.reasoning_steps.len(),
+                decisions_count = dp.decisions.len(),
+                "Creating conversation turn from decision process"
+            );
             self.create_conversation_turn(
                 execution_id.clone(),
                 "manual".to_string(),
@@ -1644,6 +1660,13 @@ Respond in JSON format:
                 success,
             )
         });
+
+        tracing::debug!(
+            agent_id = %agent_id,
+            execution_id = %execution_id,
+            turn_created = turn.is_some(),
+            "About to save execution with conversation"
+        );
 
         self.store
             .save_execution_with_conversation(&record, Some(&agent_id), turn.as_ref())
@@ -2840,6 +2863,12 @@ Respond in JSON format:
         resources: Vec<AgentResource>,
         timestamp: i64,
     ) -> AgentResult<Vec<DataCollected>> {
+        // If no resources, return empty data without requiring storage
+        if resources.is_empty() {
+            tracing::debug!("No metric resources to collect, returning empty data");
+            return Ok(vec![]);
+        }
+
         let storage = self.time_series_storage.clone().ok_or(NeoMindError::validation(
             "Time series storage not available".to_string()
         ))?;
@@ -3058,6 +3087,12 @@ Respond in JSON format:
         device_ids: Vec<String>,
         timestamp: i64,
     ) -> AgentResult<Vec<DataCollected>> {
+        // If no device IDs, return empty data without requiring services
+        if device_ids.is_empty() {
+            tracing::debug!("No device resources to collect, returning empty data");
+            return Ok(vec![]);
+        }
+
         let device_service = self.device_service.as_ref()
             .ok_or(NeoMindError::validation("Device service not available".to_string()))?;
 
@@ -6024,17 +6059,21 @@ fn extract_conditions(text: &str) -> Vec<String> {
     // Look for patterns like "大于30", "小于50", "超过", "低于"
     if (text.contains("大于") || text.contains("超过"))
         && let Some(start) = text.find("大于").or_else(|| text.find("超过")) {
-            let end = start + 2;
-            if end + 10 <= text.len() {
-                conditions.push(text[start..end + 10].to_string());
+            // Use character-based slicing to handle multi-byte UTF-8 characters
+            let start_char = text[..start].chars().count();
+            let remaining: String = text.chars().skip(start_char).take(12).collect();
+            if !remaining.is_empty() {
+                conditions.push(remaining);
             }
         }
 
     if (text.contains("小于") || text.contains("低于"))
         && let Some(start) = text.find("小于").or_else(|| text.find("低于")) {
-            let end = start + 2;
-            if end + 10 <= text.len() {
-                conditions.push(text[start..end + 10].to_string());
+            // Use character-based slicing to handle multi-byte UTF-8 characters
+            let start_char = text[..start].chars().count();
+            let remaining: String = text.chars().skip(start_char).take(12).collect();
+            if !remaining.is_empty() {
+                conditions.push(remaining);
             }
         }
 

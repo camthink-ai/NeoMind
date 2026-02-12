@@ -72,7 +72,7 @@ fn dht22_sensor() -> DeviceTypeDefinition {
                             "name": "interval",
                             "display_name": "间隔时间",
                             "data_type": "integer",
-                            "default_value": {"Integer": 60},
+                            "default_value": 60,
                             "min": 10.0,
                             "max": 3600.0,
                             "unit": "秒"
@@ -137,7 +137,7 @@ fn relay_module() -> DeviceTypeDefinition {
                             "name": "channel",
                             "display_name": "通道号",
                             "data_type": "integer",
-                            "default_value": {"Integer": 1},
+                            "default_value": 1,
                             "min": 1.0,
                             "max": 8.0
                         }
@@ -151,7 +151,7 @@ fn relay_module() -> DeviceTypeDefinition {
                             "name": "channel",
                             "display_name": "通道号",
                             "data_type": "integer",
-                            "default_value": {"Integer": 1},
+                            "default_value": 1,
                             "min": 1.0,
                             "max": 8.0
                         }
@@ -165,7 +165,7 @@ fn relay_module() -> DeviceTypeDefinition {
                             "name": "channel",
                             "display_name": "通道号",
                             "data_type": "integer",
-                            "default_value": {"Integer": 1},
+                            "default_value": 1,
                             "min": 1.0,
                             "max": 8.0
                         }
@@ -179,7 +179,7 @@ fn relay_module() -> DeviceTypeDefinition {
                             "name": "channel",
                             "display_name": "通道号",
                             "data_type": "integer",
-                            "default_value": {"Integer": 1},
+                            "default_value": 1,
                             "min": 1.0,
                             "max": 8.0
                         },
@@ -187,7 +187,7 @@ fn relay_module() -> DeviceTypeDefinition {
                             "name": "duration",
                             "display_name": "脉冲时长",
                             "data_type": "integer",
-                            "default_value": {"Integer": 500},
+                            "default_value": 500,
                             "min": 50.0,
                             "max": 5000.0,
                             "unit": "毫秒"
@@ -284,7 +284,7 @@ fn energy_meter() -> DeviceTypeDefinition {
                             "name": "type",
                             "display_name": "告警类型",
                             "data_type": "string",
-                            "default_value": {"String": "overload"},
+                            "default_value": "overload",
                             "allowed_values": [
                                 {"String": "overload"},
                                 {"String": "overvoltage"},
@@ -402,7 +402,7 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                             "name": "interval",
                             "display_name": "间隔时间",
                             "data_type": "integer",
-                            "default_value": {"Integer": 60},
+                            "default_value": 60,
                             "min": 10.0,
                             "max": 600.0,
                             "unit": "秒"
@@ -417,7 +417,7 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                             "name": "sensor",
                             "display_name": "传感器类型",
                             "data_type": "string",
-                            "default_value": {"String": "all"},
+                            "default_value": "all",
                             "allowed_values": [
                                 {"String": "all"},
                                 {"String": "pm2_5"},
@@ -492,7 +492,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                             "name": "format",
                             "display_name": "图片格式",
                             "data_type": "string",
-                            "default_value": {"String": "jpeg"},
+                            "default_value": "jpeg",
                             "allowed_values": [
                                 {"String": "jpeg"},
                                 {"String": "png"},
@@ -503,7 +503,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                             "name": "quality",
                             "display_name": "图片质量",
                             "data_type": "integer",
-                            "default_value": {"Integer": 85},
+                            "default_value": 85,
                             "min": 1.0,
                             "max": 100.0
                         }
@@ -517,7 +517,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                             "name": "width",
                             "display_name": "宽度",
                             "data_type": "integer",
-                            "default_value": {"Integer": 1920},
+                            "default_value": 1920,
                             "min": 320.0,
                             "max": 7680.0
                         },
@@ -525,7 +525,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                             "name": "height",
                             "display_name": "高度",
                             "data_type": "integer",
-                            "default_value": {"Integer": 1080},
+                            "default_value": 1080,
                             "min": 240.0,
                             "max": 4320.0
                         }
@@ -539,13 +539,13 @@ fn ip_camera() -> DeviceTypeDefinition {
                             "name": "enabled",
                             "display_name": "启用",
                             "data_type": "boolean",
-                            "default_value": {"Boolean": true}
+                            "default_value": true
                         },
                         {
                             "name": "sensitivity",
                             "display_name": "灵敏度",
                             "data_type": "integer",
-                            "default_value": {"Integer": 50},
+                            "default_value": 50,
                             "min": 0.0,
                             "max": 100.0
                         }
@@ -559,7 +559,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                             "name": "format",
                             "display_name": "流格式",
                             "data_type": "string",
-                            "default_value": {"String": "h264"},
+                            "default_value": "h264",
                             "allowed_values": [
                                 {"String": "h264"},
                                 {"String": "mjpeg"}
@@ -657,7 +657,7 @@ fn image_sensor() -> DeviceTypeDefinition {
                             "name": "interval",
                             "display_name": "间隔时间",
                             "data_type": "integer",
-                            "default_value": {"Integer": 300},
+                            "default_value": 300,
                             "min": 10.0,
                             "max": 3600.0,
                             "unit": "秒"
@@ -672,7 +672,7 @@ fn image_sensor() -> DeviceTypeDefinition {
                             "name": "width",
                             "display_name": "宽度",
                             "data_type": "integer",
-                            "default_value": {"Integer": 640},
+                            "default_value": 640,
                             "min": 160.0,
                             "max": 3840.0
                         },
@@ -680,7 +680,7 @@ fn image_sensor() -> DeviceTypeDefinition {
                             "name": "height",
                             "display_name": "高度",
                             "data_type": "integer",
-                            "default_value": {"Integer": 480},
+                            "default_value": 480,
                             "min": 120.0,
                             "max": 2160.0
                         }
@@ -694,7 +694,7 @@ fn image_sensor() -> DeviceTypeDefinition {
                             "name": "format",
                             "display_name": "图片格式",
                             "data_type": "string",
-                            "default_value": {"String": "png"},
+                            "default_value": "png",
                             "allowed_values": [
                                 {"String": "png"},
                                 {"String": "jpeg"},
@@ -706,7 +706,7 @@ fn image_sensor() -> DeviceTypeDefinition {
                             "name": "quality",
                             "display_name": "质量",
                             "data_type": "integer",
-                            "default_value": {"Integer": 90},
+                            "default_value": 90,
                             "min": 1.0,
                             "max": 100.0
                         }

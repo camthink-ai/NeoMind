@@ -8,7 +8,7 @@
 #   1. Install Ollama: curl -fsSL https://ollama.com/install.sh | sh
 #   2. Pull model: ollama pull qwen3-vl:2b
 #   3. Copy this file: cp config.minimal.toml config.toml
-#   4. Start server: cargo run -p edge-ai-api
+#   4. Start server: cargo run -p neomind-api
 #   5. Open: http://localhost:9375
 #
 # For full configuration options, see CLAUDE.md

@@ -440,11 +440,18 @@ pub async fn get_session_history_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, ErrorResponse> {
+    // First check if session exists (get_history returns empty for NotFound)
+    let _agent = state
+        .agents.session_manager
+        .get_session(&id)
+        .await
+        .map_err(|_| ErrorResponse::not_found("Session"))?;
+
     let history = state
         .agents.session_manager
         .get_history(&id)
         .await
-        .map_err(|_| ErrorResponse::not_found("Session"))?;
+        .map_err(|e| ErrorResponse::internal(format!("Failed to get history: {}", e)))?;
 
     Ok(Json(ApiResponse::success(json!({
         "messages": history,
@@ -584,7 +591,14 @@ pub async fn chat_handler(
     .await
     {
         Ok(Ok(resp)) => resp,
-        Ok(Err(e)) => return Err(ErrorResponse::with_message(e.to_string())),
+        Ok(Err(e)) => {
+            // Check if it's a NotFound error and return 404
+            let err_msg = e.to_string();
+            if err_msg.contains("Not found") || err_msg.contains("Session:") {
+                return Err(ErrorResponse::not_found("Session"));
+            }
+            return Err(ErrorResponse::with_message(err_msg));
+        },
         Err(_) => {
             // Timeout - return an error response instead of hanging
             return Ok(Json(ChatResponse {

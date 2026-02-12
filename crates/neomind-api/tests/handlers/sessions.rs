@@ -79,6 +79,7 @@ mod tests {
         let result = delete_session_handler(State(state), Path("nonexistent_session".to_string())).await;
         assert!(result.is_err());
         let err = result.unwrap_err();
+        // Handler returns NOT_FOUND for sessions that don't exist
         assert_eq!(err.status, axum::http::StatusCode::NOT_FOUND);
     }
 

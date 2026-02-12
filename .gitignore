@@ -6,6 +6,12 @@
 target/
 Cargo.lock
 
+# Extension binaries (compiled libraries)
+extensions/*.dylib
+extensions/*.so
+extensions/*.dll
+extensions/*.wasm
+
 # =============================================================================
 # Runtime Data
 # =============================================================================

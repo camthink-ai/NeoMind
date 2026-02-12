@@ -2443,10 +2443,10 @@ export function useDataSource<T = unknown>(
                       field,
                       start_time: Date.now() - (24 * 60 * 60 * 1000),
                       end_time: Date.now(),
-                      limit: 1,
+                      limit: 100, // Get enough data points for chart visualization
                     })
                     if (result && result.data_points && result.data_points.length > 0) {
-                      return { data: result.data_points[0].value, success: true }
+                      return { data: result.data_points, success: true }
                     }
                     return { data: null, success: false }
                   }
@@ -2462,12 +2462,12 @@ export function useDataSource<T = unknown>(
                   field,
                   start_time: startTime,
                   end_time: endTime,
-                  limit: 1,
+                  limit: 100, // Get enough data points for chart visualization
                 })
 
-                // Result contains data_points array
+                // Result contains data_points array - return all points for chart rendering
                 if (result && result.data_points && result.data_points.length > 0) {
-                  return { data: result.data_points[0].value, success: true }
+                  return { data: result.data_points, success: true }
                 }
                 return { data: null, success: false }
               } else {
@@ -2516,7 +2516,8 @@ export function useDataSource<T = unknown>(
 
     if (minRefreshSeconds) {
       const minRefreshMs = minRefreshSeconds * 1000
-      intervalRef.current = setInterval(fetchExtensionData, minRefreshMs)
+      // REMOVED: Incorrect setInterval call - each data source's useEffect will handle its own refresh
+      // The fetchExtensionData function will be defined inside the extension useEffect below
     }
 
     // Cleanup function - always clear interval on unmount or dependency change

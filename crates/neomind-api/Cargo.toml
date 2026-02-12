@@ -3,12 +3,17 @@ name = "neomind-api"
 version.workspace = true
 edition.workspace = true
 
+[dev-dependencies]
+# Enable testing feature when running tests
+neomind-api = { path = ".", features = ["testing"] }
+
 [features]
 default = ["embedded-broker", "webhook", "email"]
 embedded-broker = []
 webhook = []
 email = []
 static = ["rust-embed"]
+testing = []  # Enable test-only APIs for parallel test execution
 
 [dependencies]
 neomind-core = { path = "../neomind-core" }

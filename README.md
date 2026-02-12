@@ -8,8 +8,9 @@
 
 NeoMind is a Rust-based edge AI platform that enables autonomous device management and automated decision-making through Large Language Models (LLMs).
 
-[![Build Release](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
-[![License: MIT OR Apache-2.0](https://img.googleapis.com/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![Build Status](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache-2.0-blue.svg)](LICENSE)
+[![Version: 0.5.8](https://img.shields.io/badge/v-0.5.8-information.svg)](https://github.com/camthink-ai/NeoMind/releases)
 
 ## Features
 
@@ -17,11 +18,13 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 - **Interactive Chat**: Natural language interface for querying and controlling devices
 - **AI Agents**: Autonomous agents with tool calling capabilities for automation
 - **Tool Calling**: Execute real system actions through LLM function calling
+- **Multi-Backend Support**: Ollama, OpenAI, Anthropic, Google, xAI
 
 ### 🔌 Modular Device Integration
-- **MQTT Protocol**: Primary device integration with auto-discovery
+- **MQTT Protocol**: Primary device integration with embedded broker
 - **Device Discovery**: Automatic device detection and type registration
-- **Hot-Plug**: Runtime adapter loading/unloading via plugin system
+- **HTTP/Webhook**: Flexible device adapter options
+- **Auto-Onboarding**: AI-assisted device registration from data samples
 
 ### ⚡ Event-Driven Architecture
 - **Real-time Response**: Device changes automatically trigger rules and automations
@@ -33,6 +36,12 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 - **State Storage**: Device states, automation execution records
 - **LLM Memory**: Three-tier memory (short/mid/long-term)
 - **Vector Search**: Semantic search across devices and rules
+
+### 🧩 Unified Extension System (V2)
+- **Dynamic Loading**: Runtime extension loading/unloading
+- **Native & WASM**: Support for .so/.dylib/.dll and .wasm extensions
+- **Device-Standard**: Extensions use same type system as devices
+- **Sandbox**: Secure execution environment for extensions
 
 ### 🖥️ Desktop Application
 - **Cross-Platform**: macOS, Windows, Linux native apps
@@ -46,9 +55,10 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 
 Download the latest release for your platform from [Releases](https://github.com/camthink-ai/NeoMind/releases/latest).
 
-On first launch, the setup wizard will guide you through:
+On first launch, a setup wizard will guide you through:
 1. Creating an admin account
 2. Configuring LLM backend (Ollama recommended for edge deployment)
+3. Connecting to your MQTT broker or discovering devices
 
 ### Development Mode
 
@@ -56,7 +66,7 @@ On first launch, the setup wizard will guide you through:
 
 - Rust 1.85+
 - Node.js 20+
-- Ollama (local LLM) or OpenAI API
+- Ollama (local LLM) or OpenAI API key
 
 #### 1. Install Ollama
 
@@ -71,9 +81,15 @@ ollama pull qwen3-vl:2b
 #### 2. Start Backend
 
 ```bash
+# Clone repository
+git clone https://github.com/camthink-ai/NeoMind.git
+cd NeoMind
+
 # Build and run API server
-cargo run -p edge-ai-api
+cargo run -p neomind-api
 ```
+
+The server will start on `http://localhost:9375` by default.
 
 #### 3. Start Frontend
 
@@ -83,9 +99,7 @@ npm install
 npm run dev
 ```
 
-#### 4. Access Web UI
-
-Open http://localhost:5173 in your browser
+Open `http://localhost:5173` in your browser.
 
 ### Build Desktop App
 
@@ -102,8 +116,7 @@ The installer will be in `web/src-tauri/target/release/bundle/`
 | File | Description |
 |------|-------------|
 | `config.minimal.toml` | Minimal config for quick start |
-| `config.full.toml` | Complete config with all options |
-| `config.example.toml` | Standard configuration template |
+| `config.toml` | Full configuration (created from minimal) |
 
 ### LLM Backend Support
 
@@ -127,10 +140,10 @@ The installer will be in `web/src-tauri/target/release/bundle/`
 ┌─────────────────────────────────────────────────────────────┐
 │                      API Gateway                             │
 │                    Axum Web Server                           │
-└──┬──────────────┬──────────────┬───────────────────────────┘
+└───────────┬───────────────┬───────────────┬───────────────┘
    │              │              │
    ▼              ▼              ▼
-Automation      Devices      Messages
+Automation      Devices      Messages    Extensions
    │              │              │
    └──────────────┴──────────────┘
                   │ Subscribe to all events
@@ -142,6 +155,9 @@ Automation      Devices      Messages
 │  │  Interface  │  │  Calling    │  │  System     │        │
 │  └─────────────┘  └─────────────┘  └─────────────┘        │
 └─────────────────────────────────────────────────────────────┘
+                  │
+                  ▼
+             Time-Series Storage
 ```
 
 ## Project Structure
@@ -155,7 +171,6 @@ neomind/
 │   ├── agent/         # AI Agent with tool calling
 │   ├── automation/    # Unified automation system (rules + transforms)
 │   ├── devices/       # Device management (MQTT)
-│   ├── rules/         # Rule engine and DSL parser
 │   ├── storage/       # Storage system (redb)
 │   ├── memory/        # Three-tier LLM memory
 │   ├── messages/      # Unified messaging and notification
@@ -163,8 +178,8 @@ neomind/
 │   ├── commands/      # Command queue with retry
 │   ├── integrations/  # External system integrations
 │   ├── sandbox/       # WASM sandbox for secure execution
+│   ├── extension-sdk/  # SDK for building extensions
 │   ├── cli/           # Command-line interface
-│   ├── plugin-sdk/    # SDK for building plugins
 │   └── testing/       # Testing utilities
 ├── web/               # React frontend + Tauri desktop app
 │   ├── src/           # TypeScript source
@@ -209,11 +224,68 @@ neomind/
 | **Memory** | `/api/memory/*` (memory operations) |
 | **Tools** | `/api/tools`, `/api/tools/:name/execute` |
 | **Messages** | `/api/messages`, `/api/messages/:id`, `/api/messages/channels` |
-| **Extensions** | `/api/extensions` (dynamic plugins) |
+| **Extensions** | `/api/extensions` (dynamic extensions) |
 | **Events** | `/api/events/stream` (SSE), `/api/events/ws` (WebSocket) |
 | **Stats** | `/api/stats/system`, `/api/stats/devices`, `/api/stats/rules` |
 | **Dashboards** | `/api/dashboards`, `/api/dashboards/:id`, `/api/dashboards/templates` |
 | **Search** | `/api/search` |
+
+## Extension Development
+
+Create dynamic extensions for NeoMind using the Extension SDK:
+
+```rust
+use neomind_extension_sdk::prelude::*;
+
+struct MyExtension;
+
+declare_extension!(
+    MyExtension,
+    metadata: ExtensionMetadata {
+        name: "my.extension".to_string(),
+        version: "1.0.0".to_string(),
+        author: "Your Name".to_string(),
+        description: "My extension".to_string(),
+    },
+);
+
+impl Extension for MyExtension {
+    fn metrics(&self) -> &[MetricDefinition] {
+        &[
+            MetricDefinition {
+                name: "temperature".to_string(),
+                display_name: "Temperature".to_string(),
+                data_type: MetricDataType::Float,
+                unit: "°C".to_string(),
+                min: Some(-50.0),
+                max: Some(50.0),
+                required: true,
+            },
+        ]
+    }
+
+    fn commands(&self) -> &[ExtensionCommand] {
+        &[
+            ExtensionCommand {
+                name: "refresh".to_string(),
+                display_name: "Refresh".to_string(),
+                payload_template: "{}".to_string(),
+                parameters: vec![],
+                fixed_values: serde_json::Map::new(),
+                llm_hints: "Force refresh".to_string(),
+                parameter_groups: vec![],
+            },
+        ]
+    }
+}
+```
+
+See [Extension Development Guide](docs/guides/16-extension-dev.md) for details.
+
+## Related Projects
+
+- **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** - Official extension marketplace and development guides
+- **[NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)** - Device type definitions for supported hardware
 
 ## Usage Examples
 
@@ -235,6 +307,73 @@ LLM: I've created a rule for you:
      Confirm?
 ```
 
+### Natural Language to Automation
+
+```
+User: Turn on the AC when living room temperature exceeds 30 degrees
+     ↓
+[Intent Recognition → Device Matching → Action Generation → Rule Creation]
+     ↓
+Executable automation rule
+```
+
+## Data Directory
+
+Desktop app stores data in platform-specific locations:
+
+| Platform | Data Directory |
+|----------|---------------|
+| macOS | `~/Library/Application Support/NeoMind/data/` |
+| Windows | `%APPDATA%/NeoMind/data/` |
+| Linux | `~/.config/NeoMind/data/` |
+
+Key database files:
+- `telemetry.redb` - Unified time-series storage (device + extension metrics)
+- `sessions.redb` - Chat history and sessions
+- `devices.redb` - Device registry
+- `extensions.redb` - Extension registry (V2)
+- `automations.redb` - Automation definitions
+- `agents.redb` - Agent execution records
+
+## Development Commands
+
+```bash
+# Build workspace
+cargo build
+
+# Build with release optimizations
+cargo build --release
+
+# Run tests
+cargo test
+
+# Run tests for specific crate
+cargo test -p neomind-agent
+cargo test -p neomind-llm
+cargo test -p neomind-core
+cargo test -p neomind-api
+
+# Check compilation without building
+cargo check
+
+# Format code
+cargo fmt
+
+# Lint
+cargo clippy
+
+# Run API server (default port: 9375)
+cargo run -p neomind-api
+
+# Run with custom config
+cargo run -p neomind-api -- --config path/to/config.toml
+```
+
+## Documentation
+
+- **[User Guide](CLAUDE.md)** - Development and architecture documentation
+- **[Extension Development](docs/guides/16-extension-dev.md)** - Build your first extension
+- **[Module Guides](docs/guides/)** - Detailed module documentation
 
 ## Core Concepts
 
@@ -265,62 +404,6 @@ DO
   device("ac").power_on()
   device("ac").set_temperature(26)
 END
-```
-
-### Natural Language to Automation
-
-Convert natural language to executable automation:
-
-```
-"Turn on the AC when living room temperature exceeds 30 degrees"
-    ↓
-[Intent Recognition → Device Matching → Action Generation → Rule Creation]
-    ↓
-Executable automation rule
-```
-
-## Data Directory
-
-Desktop app stores data in platform-specific locations:
-
-| Platform | Data Directory |
-|----------|---------------|
-| macOS | `~/Library/Application Support/neomind/data/` |
-| Windows | `%APPDATA%/neomind/data/` |
-| Linux | `~/.config/neomind/data/` |
-
-## Development Commands
-
-```bash
-# Build the workspace
-cargo build
-
-# Build with release optimizations
-cargo build --release
-
-# Run tests
-cargo test
-
-# Run tests for specific crate
-cargo test -p neomind-agent
-cargo test -p neomind-llm
-cargo test -p neomind-core
-cargo test -p neomind-api
-
-# Check compilation without building
-cargo check
-
-# Format code
-cargo fmt
-
-# Lint
-cargo clippy
-
-# Run the API server (default port: 9375)
-cargo run -p edge-ai-api
-
-# Run with custom config
-cargo run -p edge-ai-api -- --config path/to/config.toml
 ```
 
 ## Contributing

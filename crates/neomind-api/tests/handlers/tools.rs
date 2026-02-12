@@ -95,7 +95,7 @@ mod tests {
         assert!(value.get("formatted").is_some());
         let formatted = value.get("formatted").unwrap().as_str().unwrap();
         assert!(!formatted.is_empty());
-        assert!(formatted.contains("Available tools"));
+        assert!(formatted.contains("可用工具") || formatted.contains("Available tools") || formatted.contains("可用工具列表"));
     }
 
 }

@@ -80,7 +80,7 @@ fn test_parse_simple_condition() {
     let rule = parse_rule(dsl);
 
     match &rule.condition {
-        RuleCondition::Simple {
+        RuleCondition::Device {
             device_id,
             metric,
             operator,
@@ -108,7 +108,7 @@ fn test_parse_range_condition() {
     let rule = parse_rule(dsl);
 
     match &rule.condition {
-        RuleCondition::Range {
+        RuleCondition::DeviceRange {
             device_id,
             metric,
             min,
@@ -409,7 +409,7 @@ fn test_comparison_operators() {
         let rule = parse_rule(dsl);
 
         match &rule.condition {
-            RuleCondition::Simple { operator, .. } => {
+            RuleCondition::Device { operator, .. } => {
                 assert_eq!(*operator, expected_op, "Failed for operator: {}", op_str);
             }
             _ => panic!("Expected Simple condition for operator: {}", op_str),

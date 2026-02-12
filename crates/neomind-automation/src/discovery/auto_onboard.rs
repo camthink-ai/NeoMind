@@ -1487,7 +1487,7 @@ mod tests {
 
     fn create_test_manager() -> AutoOnboardManager {
         use neomind_core::{EventBus, LlmRuntime};
-        use futures::Stream;
+        use std::pin::Pin;
 
         // Create a simple test helper - the manager only needs the reference
         // for infer_category which is a pure function

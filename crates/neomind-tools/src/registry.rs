@@ -622,6 +622,7 @@ pub fn format_for_llm(definitions: &[ToolDefinition]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Tool;
     use async_trait::async_trait;
     use serde_json::Value;
     use neomind_core::tools::{ToolCategory, ToolRelationships, ToolDefinition};

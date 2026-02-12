@@ -14,7 +14,7 @@
 //! ## Example
 //!
 //! ```rust,no_run
-//! use neomind_agent::context::health::{ContextHealth, calculate_health};
+//! use neomind_agent::context::{ContextHealth, calculate_health};
 //! use neomind_agent::AgentMessage;
 //!
 //! # fn example(messages: Vec<AgentMessage>) {

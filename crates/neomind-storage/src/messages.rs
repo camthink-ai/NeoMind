@@ -114,11 +114,7 @@ pub struct MessageStore {
 impl MessageStore {
     /// Open a message store at the given path.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        let path = path.as_ref();
-        std::fs::create_dir_all(path)?;
-
-        let db_path = path.join("messages.redb");
-        let db = Database::create(db_path)
+        let db = Database::create(path)
             .map_err(|e| Error::Storage(format!("Failed to open message database: {}", e)))?;
 
         // Create tables

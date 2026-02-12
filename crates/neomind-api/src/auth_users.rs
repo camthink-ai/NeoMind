@@ -185,6 +185,11 @@ impl AuthUserState {
     /// Note: This no longer creates a default admin user automatically.
     /// The setup wizard should be used to create the first admin account.
     pub fn new() -> Self {
+        // Check if running in test mode
+        if std::env::var("NEOMIND_TEST_MODE").is_ok() {
+            return Self::new_with_memory_store();
+        }
+
         let db_path = "data/users.redb";
         let jwt_secret = std::env::var("NEOMIND_JWT_SECRET").unwrap_or_else(|_| {
             // Generate a random secret (warning: changes on restart!)
@@ -234,6 +239,22 @@ impl AuthUserState {
         }
     }
 
+    /// Create a new auth state with in-memory storage (for testing).
+    ///
+    /// This version uses a placeholder database path and doesn't persist to disk.
+    /// All user data is lost when the state is dropped.
+    pub fn new_with_memory_store() -> Self {
+        let jwt_secret = "test_jwt_secret_for_testing_only".to_string();
+
+        Self {
+            users: Arc::new(RwLock::new(HashMap::new())),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            db_path: ":memory:",  // Placeholder, won't be used
+            jwt_secret,
+            session_duration: 7 * 24 * 60 * 60,
+        }
+    }
+
     /// Load users from database.
     /// Returns empty HashMap if database doesn't exist yet (first run).
     fn load_users_from_db(path: &str) -> Result<HashMap<String, User>, Box<dyn std::error::Error>> {
@@ -270,6 +291,11 @@ impl AuthUserState {
     /// Save user to database synchronously.
     /// This ensures data is persisted before returning.
     fn save_user_to_db(path: &str, user: &User) -> Result<(), Box<dyn std::error::Error>> {
+        // Skip database operations for in-memory storage
+        if path == ":memory:" {
+            return Ok(());
+        }
+
         let username = user.username.clone();
         let user_bytes = bincode::serialize(user)?;
 

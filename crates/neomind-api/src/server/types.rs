@@ -489,6 +489,152 @@ impl ServerState {
         }
     }
 
+    /// Create a new server state for testing.
+    ///
+    /// This creates a minimal ServerState with all in-memory storage,
+    /// suitable for parallel test execution without shared state.
+    ///
+    /// # Test Isolation
+    /// Each call creates a completely isolated instance with:
+    /// - In-memory user storage (no database)
+    /// - In-memory device registry
+    /// - In-memory time-series storage
+    /// - In-memory session manager
+    /// - Fresh event bus and message manager
+    /// - No API key generation
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn new_for_testing() -> Self {
+        let started_at = chrono::Utc::now().timestamp();
+
+        // Create unified value provider
+        let value_provider = Arc::new(UnifiedValueProvider::new().with_ttl(5000));
+
+        // ========== Build CORE STATE ==========
+        let event_bus = Some(Arc::new(EventBus::new()));
+        let command_queue = Arc::new(CommandQueue::new(1000));
+        let command_state = Arc::new(CommandStateStore::new(10000));
+        let command_manager = Some(Arc::new(CommandManager::new(command_queue, command_state)));
+
+        // In-memory message manager
+        let message_manager = Arc::new(MessageManager::new());
+        message_manager.register_default_channels().await;
+
+        let core = CoreState::new(
+            event_bus.clone(),
+            command_manager,
+            message_manager.clone(),
+        );
+
+        // ========== Build DEVICE STATE ==========
+        // In-memory device registry
+        let device_registry = Arc::new(DeviceRegistry::new());
+        let time_series_storage = Arc::new(TimeSeriesStorage::memory().unwrap());
+
+        let event_bus_for_service = (**event_bus.as_ref().unwrap()).clone();
+        let device_service = Arc::new(DeviceService::new(
+            device_registry.clone(),
+            event_bus_for_service,
+        ));
+        device_service.set_telemetry_storage(time_series_storage.clone()).await;
+
+        let device_update_tx: tokio::sync::broadcast::Sender<super::state::DeviceStatusUpdate> =
+            tokio::sync::broadcast::channel(100).0;
+
+        let devices = DeviceState::new(
+            device_registry,
+            device_service,
+            time_series_storage.clone(),
+            device_update_tx,
+        );
+
+        // ========== Build EXTENSION STATE ==========
+        let extension_registry = Arc::new(ExtensionRegistry::new());
+        let extension_metrics_storage = Arc::new(ExtensionMetricsStorage::with_shared_storage(time_series_storage.clone()));
+        let extensions = ExtensionState::new(
+            extension_registry,
+            extension_metrics_storage,
+        );
+
+        // ========== Build AUTOMATION STATE ==========
+        let rule_engine = Arc::new(RuleEngine::new(value_provider.clone()));
+        rule_engine.set_message_manager(core.message_manager.clone()).await;
+
+        let event_bus_for_action = (**event_bus.as_ref().unwrap()).clone();
+        let device_service_for_action = devices.service.clone();
+        let device_action_executor = Arc::new(DeviceActionExecutor::with_device_service(
+            event_bus_for_action,
+            device_service_for_action,
+        ));
+        rule_engine.set_device_action_executor(device_action_executor).await;
+
+        let extension_registry_adapter = Arc::new(ExtensionRegistryAdapter::new(extensions.registry.clone()));
+        let extension_action_executor = Arc::new(ExtensionActionExecutor::new(extension_registry_adapter));
+        rule_engine.set_extension_action_executor(extension_action_executor).await;
+
+        if let Some(ref bus) = event_bus {
+            core.message_manager.set_event_bus(bus.clone()).await;
+        }
+
+        // In-memory stores
+        let automation_store = Some(Arc::new(SharedAutomationStore::memory().unwrap()));
+        let transform_engine = Some(Arc::new(
+            TransformEngine::with_extension_registry(extensions.registry.clone())
+        ));
+        let rule_history_store = None; // Skip for tests
+
+        let automation = AutomationState::new(
+            rule_engine,
+            None, // rule_store - skip for tests
+            automation_store,
+            None, // intent_analyzer
+            transform_engine,
+            rule_history_store,
+        );
+
+        // ========== Build AGENT STATE ==========
+        let session_manager = SessionManager::memory();
+        let memory_config = crate::config::get_memory_config();
+        let memory = Arc::new(tokio::sync::RwLock::new(TieredMemory::with_config(memory_config)));
+        let agent_store = neomind_storage::AgentStore::memory().unwrap();
+
+        let agents = AgentState::new(
+            Arc::new(session_manager),
+            memory,
+            agent_store,
+            Arc::new(tokio::sync::RwLock::new(None)),
+        );
+
+        // ========== Build AUTH STATE ==========
+        // Use in-memory storage for tests - no API key generation
+        let auth = AuthState {
+            api_key_state: Arc::new(crate::auth::AuthState::new_for_testing()),
+            user_state: Arc::new(AuthUserState::new_with_memory_store()),
+        };
+
+        // ========== Cross-cutting services ==========
+        let rate_limiter = Arc::new(RateLimiter::with_config(RateLimitConfig::default()));
+        let response_cache = Arc::new(crate::cache::ResponseCache::with_default_ttl());
+        let auto_onboard_manager = Arc::new(tokio::sync::RwLock::new(None));
+        let dashboard_store = DashboardStore::memory().unwrap();
+
+        Self {
+            core,
+            devices,
+            extensions,
+            automation,
+            agents,
+            auth,
+            response_cache,
+            rate_limiter,
+            auto_onboard_manager,
+            dashboard_store,
+            started_at,
+            agent_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            rule_engine_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            rule_engine_event_service: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
     /// Initialize device type storage.
     pub async fn init_device_storage(&self) {
         if let Err(e) = tokio::fs::create_dir_all("data").await {

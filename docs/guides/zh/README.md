@@ -5,7 +5,7 @@
 ## 目录结构
 
 ```
-docs/modules/
+docs/guides/zh/
 ├── README.md                 # 本文件
 ├── 01-core.md                # 核心模块 (trait定义、EventBus等)
 ├── 02-llm.md                 # LLM后端模块
@@ -19,9 +19,10 @@ docs/modules/
 ├── 10-storage.md             # 存储层模块
 ├── 11-integrations.md        # 集成模块
 ├── 12-commands.md            # 命令队列模块
-├── 13-plugin-sdk.md          # 插件SDK模块
+├── 13-extension-sdk.md        # Extension SDK 模块
 ├── 14-api.md                 # REST API模块
-└── 15-web.md                 # 前端模块
+├── 15-web.md                 # 前端模块
+└── 16-extension-dev.md        # 扩展开发指南（新增）
 ```
 
 ## 模块依赖关系
@@ -82,21 +83,22 @@ graph TB
 
 | 模块 | 完成度 | 用途 |
 |------|--------|------|
-| [Core](01-core.md) | 90% | 核心trait定义、事件总线、DataSourceId |
-| [LLM](02-llm.md) | 90% | 多后端LLM支持 |
-| [Agent](03-agent.md) | 90% | AI会话代理、扩展指标采集 |
-| [Devices](04-devices.md) | 85% | 设备管理与适配器 |
-| [Automation](05-automation.md) | 75% | 数据转换与自动化 |
-| [Rules](06-rules.md) | 75% | DSL规则引擎 |
-| [Tools](07-tools.md) | 80% | 函数调用工具 |
-| [Memory](08-memory.md) | 85% | 三层内存系统 |
-| [Messages](09-messages.md) | 70% | 消息通知 |
-| [Storage](10-storage.md) | 95% | 持久化存储、统一时序数据库 |
-| [Integrations](11-integrations.md) | 65% | 外部系统集成 |
-| [Commands](12-commands.md) | 70% | 设备命令队列 |
-| [Plugin SDK](13-plugin-sdk.md) | 60% | 动态插件SDK（已迁移到Extension） |
-| [API](14-api.md) | 90% | REST/WebSocket API、扩展指标 |
-| [Web](15-web.md) | 80% | React前端、Zustand状态管理 |
+| [Core](./01-core.md) | 90% | 核心trait定义、事件总线、DataSourceId |
+| [LLM](./02-llm.md) | 90% | 多后端LLM支持 |
+| [Agent](./03-agent.md) | 90% | AI会话代理、扩展指标采集 |
+| [Devices](./04-devices.md) | 85% | 设备管理与适配器 |
+| [Automation](./05-automation.md) | 75% | 数据转换与自动化 |
+| [Rules](./06-rules.md) | 75% | DSL规则引擎 |
+| [Tools](./07-tools.md) | 80% | 函数调用工具 |
+| [Memory](./08-memory.md) | 85% | 三层内存系统 |
+| [Messages](./09-messages.md) | 70% | 消息通知 |
+| [Storage](./10-storage.md) | 95% | 持久化存储、统一时序数据库 |
+| [Integrations](./11-integrations.md) | 65% | 外部系统集成 |
+| [Commands](./12-commands.md) | 70% | 设备命令队列 |
+| [Extension SDK](./13-extension-sdk.md) | 85% | 扩展SDK（V2统一系统） |
+| [API](./14-api.md) | 90% | REST/WebSocket API、扩展指标 |
+| [Web](./15-web.md) | 80% | React前端、Zustand状态管理 |
+| [Extension Dev](./16-extension-dev.md) | 新增 | 扩展开发教程 |
 
 ## 技术栈
 
