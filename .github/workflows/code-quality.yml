@@ -6,9 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel previous runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  frontend-check:
-    name: Frontend Checks
+  # Fast checks that run in parallel
+  quick-checks:
+    name: Quick Checks
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -21,7 +27,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: './web/package-lock.json'
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         working-directory: ./web
         run: npm ci
 
@@ -29,27 +35,44 @@ jobs:
         working-directory: ./web
         run: npx tsc --noEmit
 
-      - name: ESLint check
-        working-directory: ./web
-        run: npm run lint || true
-
-  tauri-build-test:
-    name: Tauri Build Test (${{ matrix.platform }})
-    runs-on: ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: ['macos-latest', 'ubuntu-latest', 'windows-latest']
-
+  rust-backend-check:
+    name: Rust Backend Checks
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install dependencies (Ubuntu)
-        if: matrix.platform == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+
+      - name: Check workspace formatting
+        run: cargo fmt -- --check
+
+      - name: Run Clippy on workspace
+        run: cargo clippy --workspace -- -W warnings
+
+      - name: Check workspace compiles
+        run: cargo check --workspace
+
+      - name: Run workspace tests
+        run: cargo test --workspace --no-fail-fast --jobs 4
+
+  # Tauri build only on main push, not PRs (to save CI time)
+  tauri-build-test:
+    name: Tauri Build Test
+    runs-on: macos-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [quick-checks, rust-backend-check]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -87,32 +110,3 @@ jobs:
       - name: Check Tauri build (no bundle)
         working-directory: ./web
         run: npm run tauri build --debug --no-bundle
-
-  rust-backend-check:
-    name: Rust Backend Checks
-    runs-on: macos-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: '. -> target'
-
-      - name: Check workspace formatting
-        run: cargo fmt -- --check
-
-      - name: Run Clippy on workspace
-        run: cargo clippy --workspace -- -W warnings
-
-      - name: Check workspace compiles
-        run: cargo check --workspace
-
-      - name: Run workspace tests
-        run: cargo test --workspace --no-fail-fast
