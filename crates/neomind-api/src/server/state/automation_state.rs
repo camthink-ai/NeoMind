@@ -12,7 +12,7 @@ use std::sync::Arc;
 use neomind_automation::{
     intent::IntentAnalyzer, store::SharedAutomationStore, transform::TransformEngine,
 };
-use neomind_rules::{RuleEngine, store::RuleStore};
+use neomind_rules::{store::RuleStore, RuleEngine};
 use neomind_storage::business::RuleHistoryStore;
 
 /// Automation and rules state.

@@ -283,8 +283,8 @@ pub async fn load_llm_settings_from_db() -> Result<Option<LlmSettings>, Box<dyn 
 }
 
 /// Get the settings store (for advanced usage).
-pub fn open_settings_store()
--> Result<Arc<neomind_storage::SettingsStore>, Box<dyn std::error::Error>> {
+pub fn open_settings_store(
+) -> Result<Arc<neomind_storage::SettingsStore>, Box<dyn std::error::Error>> {
     get_settings_store()
 }
 

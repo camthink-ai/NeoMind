@@ -455,7 +455,7 @@ impl Validate for TimeRangeQuery {
 pub fn validation_middleware(
     max_size: usize,
 ) -> impl Fn(Request, Next) -> std::pin::Pin<Box<dyn std::future::Future<Output = Response> + Send>>
-+ Clone {
+       + Clone {
     move |req: Request, next: Next| {
         Box::pin(async move {
             // Check Content-Length header

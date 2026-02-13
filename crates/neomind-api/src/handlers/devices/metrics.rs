@@ -1,18 +1,18 @@
 //! Device metric queries and commands.
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 
 use neomind_devices::MetricValue;
 
 use super::models::{SendCommandRequest, TimeRangeQuery};
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

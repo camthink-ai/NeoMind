@@ -467,9 +467,8 @@ pub async fn log_audit(entry: AuditEntry) {
 pub fn audit_middleware() -> impl Fn(
     axum::extract::Request,
     axum::middleware::Next,
-) -> std::pin::Pin<
-    Box<dyn std::future::Future<Output = axum::response::Response> + Send>,
-> + Clone {
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = axum::response::Response> + Send>>
+       + Clone {
     move |mut req: axum::extract::Request, next: axum::middleware::Next| {
         Box::pin(async move {
             let method = req.method().to_string();

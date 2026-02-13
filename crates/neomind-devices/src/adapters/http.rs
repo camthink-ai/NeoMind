@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tokio::time::Instant;
 use tracing::{info, warn};
 
@@ -440,13 +440,14 @@ impl HttpAdapter {
                                         timestamp,
                                     } = event
                                     {
-                                    use crate::telemetry::DataPoint;
-                                    let data_point = DataPoint {
-                                        timestamp,
-                                        value: value.clone(),
-                                        quality: None,
-                                    };
-                                    let _ = storage.write(&device_id, &metric, data_point).await;
+                                        use crate::telemetry::DataPoint;
+                                        let data_point = DataPoint {
+                                            timestamp,
+                                            value: value.clone(),
+                                            quality: None,
+                                        };
+                                        let _ =
+                                            storage.write(&device_id, &metric, data_point).await;
                                     }
                                 }
                             }

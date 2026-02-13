@@ -2,8 +2,8 @@
 
 use neomind_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
 use neomind_core::{
-    EventBus, MetricValue, NeoMindEvent,
     message::{Content, Message, MessageRole},
+    EventBus, MetricValue, NeoMindEvent,
 };
 use neomind_storage::{
     AgentMemory, AgentResource, AgentSchedule, AgentStats, AgentStatus, AgentStore, AiAgent,

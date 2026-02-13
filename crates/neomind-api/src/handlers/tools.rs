@@ -1,8 +1,8 @@
 //! Tools management handlers.
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -11,8 +11,8 @@ use std::sync::Arc;
 use neomind_tools::{ToolDefinition, ToolRegistry, ToolRegistryBuilder};
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

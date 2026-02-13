@@ -417,15 +417,15 @@ impl RuleValidator {
         // Validate threshold against metric constraints
         if let (Some(min), Some(max)) = (metric_info.min_value, metric_info.max_value) {
             if *threshold < min || *threshold > max {
-            issues.push(ValidationIssue {
-                code: "THRESHOLD_OUT_OF_RANGE".to_string(),
-                message: format!(
-                    "Threshold {} is outside valid range [{}, {}]",
-                    threshold, min, max
-                ),
-                field: Some("condition.threshold".to_string()),
-                severity: ValidationSeverity::Warning,
-            });
+                issues.push(ValidationIssue {
+                    code: "THRESHOLD_OUT_OF_RANGE".to_string(),
+                    message: format!(
+                        "Threshold {} is outside valid range [{}, {}]",
+                        threshold, min, max
+                    ),
+                    field: Some("condition.threshold".to_string()),
+                    severity: ValidationSeverity::Warning,
+                });
             }
         }
 

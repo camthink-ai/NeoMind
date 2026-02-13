@@ -125,12 +125,12 @@ impl super::ChannelFactory for WebhookChannelFactory {
 
         let mut channel = WebhookChannel::new(name, url.to_string());
 
-        if let Some(headers) = config.get("headers")
-            && let Some(obj) = headers.as_object()
-        {
-            for (key, value) in obj {
-                if let Some(str_val) = value.as_str() {
-                    channel = channel.with_header(key.clone(), str_val.to_string());
+        if let Some(headers) = config.get("headers") {
+            if let Some(obj) = headers.as_object() {
+                for (key, value) in obj {
+                    if let Some(str_val) = value.as_str() {
+                        channel = channel.with_header(key.clone(), str_val.to_string());
+                    }
                 }
             }
         }

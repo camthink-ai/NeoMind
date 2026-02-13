@@ -690,12 +690,10 @@ mod tests {
         assert_eq!(id.field_path, "get_current_weather.temperature_c");
 
         // Invalid format - wrong prefix
-        assert!(
-            DataSourceId::parse_extension_command(
-                "device:weather:get_current_weather:temperature_c"
-            )
-            .is_none()
-        );
+        assert!(DataSourceId::parse_extension_command(
+            "device:weather:get_current_weather:temperature_c"
+        )
+        .is_none());
 
         // Invalid format - wrong part count
         assert!(
@@ -704,12 +702,10 @@ mod tests {
         );
 
         // Invalid format - too many parts
-        assert!(
-            DataSourceId::parse_extension_command(
-                "extension:weather:get_current_weather:temperature_c:extra"
-            )
-            .is_none()
-        );
+        assert!(DataSourceId::parse_extension_command(
+            "extension:weather:get_current_weather:temperature_c:extra"
+        )
+        .is_none());
     }
 
     #[test]

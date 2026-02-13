@@ -261,12 +261,10 @@ impl MessageStore {
                 .get(msg.id.as_str())
                 .map_err(|e| Error::Storage(format!("Failed to read message: {}", e)))?;
             match result {
-                Some(v) => {
-                    serde_json::from_str::<StoredMessage>(v.value())
-                        .ok()
-                        .map(|m| m.is_active())
-                        .unwrap_or(false)
-                }
+                Some(v) => serde_json::from_str::<StoredMessage>(v.value())
+                    .ok()
+                    .map(|m| m.is_active())
+                    .unwrap_or(false),
                 None => false,
             }
         };

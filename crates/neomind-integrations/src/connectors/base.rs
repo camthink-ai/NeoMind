@@ -2,7 +2,7 @@
 //!
 //! Provides a foundation for building stream-based connectors.
 
-use futures::{SinkExt, Stream, StreamExt, channel::mpsc};
+use futures::{channel::mpsc, SinkExt, Stream, StreamExt};
 use neomind_core::integration::connector::{
     BaseConnector as CoreBaseConnector, Connector, ConnectorError, Result,
 };

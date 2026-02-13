@@ -15,16 +15,16 @@ use serde_json::Value;
 use super::error::Result;
 use super::error::ToolError;
 use super::tool::{
-    Tool, ToolDefinition, ToolOutput, boolean_property, number_property, object_schema,
-    string_property,
+    boolean_property, number_property, object_schema, string_property, Tool, ToolDefinition,
+    ToolOutput,
 };
 use neomind_core::tools::{ToolCategory, ToolExample, ToolRelationships, UsageScenario};
 
-use neomind_storage::AgentStore;
 use neomind_storage::agents::{
     AgentFilter, AgentResource, AgentStatus, IntentType, LearnedPattern, ParsedIntent,
     ResourceType, ScheduleType,
 };
+use neomind_storage::AgentStore;
 
 // Optional dependency for device resolution
 use neomind_devices::DeviceService;

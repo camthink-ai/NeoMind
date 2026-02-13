@@ -7,8 +7,6 @@
 // ============================================================================
 
 pub use super::system::{
-    // ABI version (V2)
-    ABI_VERSION,
     // C-compatible metadata (V2)
     CExtensionMetadata,
     // Dynamic extension type (V2)
@@ -33,6 +31,8 @@ pub use super::system::{
     Result,
     // Tool descriptor (V2)
     ToolDescriptor,
+    // ABI version (V2)
+    ABI_VERSION,
 };
 
 // ============================================================================

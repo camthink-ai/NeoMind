@@ -699,10 +699,10 @@ impl MdlRegistry {
             ) {
                 if let (Some(min), Some(max)) = (metric.min, metric.max) {
                     if min > max {
-                return Err(DeviceError::InvalidParameter(format!(
-                    "metric '{}': min ({}) cannot be greater than max ({})",
-                    metric.name, min, max
-                )));
+                        return Err(DeviceError::InvalidParameter(format!(
+                            "metric '{}': min ({}) cannot be greater than max ({})",
+                            metric.name, min, max
+                        )));
                     }
                 }
             }
@@ -765,7 +765,7 @@ impl MdlRegistry {
                 // Validate default value type matches data_type
                 if let Some(default_value) = &param.default_value {
                     if !self.validate_metric_value_type(default_value, &param.data_type) {
-                    return Err(DeviceError::InvalidParameter(format!(
+                        return Err(DeviceError::InvalidParameter(format!(
                         "command '{}', parameter '{}': default value type does not match data_type",
                         command.name, param.name
                     )));

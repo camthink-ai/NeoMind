@@ -1,10 +1,10 @@
 //! AI Agents handlers for user-defined automation agents.
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use neomind_llm::instance_manager::get_instance_manager;
 use neomind_storage::{
@@ -13,8 +13,8 @@ use neomind_storage::{
 };
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 
@@ -1602,12 +1602,10 @@ pub async fn get_user_messages(
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get messages: {}", e)))?;
 
-    ok(json!(
-        messages
-            .into_iter()
-            .map(UserMessageDto::from)
-            .collect::<Vec<_>>()
-    ))
+    ok(json!(messages
+        .into_iter()
+        .map(UserMessageDto::from)
+        .collect::<Vec<_>>()))
 }
 
 /// Delete a specific user message.

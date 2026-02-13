@@ -446,12 +446,10 @@ mod tests {
 
         let result = tool.execute(args).await.unwrap();
         assert!(result.success);
-        assert!(
-            result.data["formatted"]
-                .as_str()
-                .unwrap()
-                .contains("客厅灯")
-        );
+        assert!(result.data["formatted"]
+            .as_str()
+            .unwrap()
+            .contains("客厅灯"));
     }
 
     #[tokio::test]

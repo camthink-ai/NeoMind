@@ -63,10 +63,10 @@ pub mod tool;
 
 // Re-exports commonly used types
 pub use error::{NeoMindError, Result, ToolError};
-pub use registry::{ToolCall, ToolRegistry, ToolRegistryBuilder, ToolResult, format_for_llm};
+pub use registry::{format_for_llm, ToolCall, ToolRegistry, ToolRegistryBuilder, ToolResult};
 pub use simplified::{
-    ErrorMessages, Example, FriendlyError, LlmToolDefinition, SimplifiedConfig,
-    format_tools_as_json, format_tools_for_llm, get_simplified_tools,
+    format_tools_as_json, format_tools_for_llm, get_simplified_tools, ErrorMessages, Example,
+    FriendlyError, LlmToolDefinition, SimplifiedConfig,
 };
 pub use tool::{DynTool, Parameter, Tool, ToolDefinition, ToolExample, ToolOutput};
 
@@ -77,9 +77,9 @@ pub type ToolCallList = Vec<ToolCall>;
 
 // Re-exports from core (backward compatibility)
 pub use neomind_core::tools::{
+    array_property, boolean_property, number_property, object_schema, property, string_property,
     Parameter as CoreParameter, Tool as CoreTool, ToolDefinition as CoreToolDefinition,
-    ToolError as CoreToolError, ToolFactory, ToolOutput as CoreToolOutput, array_property,
-    boolean_property, number_property, object_schema, property, string_property,
+    ToolError as CoreToolError, ToolFactory, ToolOutput as CoreToolOutput,
 };
 
 // ============================================================================

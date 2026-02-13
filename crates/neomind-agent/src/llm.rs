@@ -4,17 +4,17 @@
 //! and integration with the LlmBackendInstanceManager for dynamic backend switching.
 
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::Stream;
 use tokio::sync::RwLock;
 
 use neomind_core::{
-    Message,
     config::agent_env_vars,
     llm::backend::{LlmInput, LlmRuntime},
+    Message,
 };
 
 // Import intent classifier for staged processing
@@ -26,7 +26,7 @@ use crate::error::Result as AgentResult;
 
 /// Re-export the instance manager types for convenience
 pub use neomind_llm::instance_manager::{
-    BackendTypeDefinition, LlmBackendInstanceManager, get_instance_manager,
+    get_instance_manager, BackendTypeDefinition, LlmBackendInstanceManager,
 };
 
 /// Default concurrent LLM request limit.

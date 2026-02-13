@@ -3,7 +3,7 @@
 //! This module provides functionality to detect and query model capabilities,
 //! including support for streaming, function calling, vision, audio, reasoning, etc.
 
-use crate::llm::models::{ModelCapabilities, get_model_info};
+use crate::llm::models::{get_model_info, ModelCapabilities};
 
 /// Result of capability detection.
 #[derive(Debug, Clone, PartialEq, Eq)]

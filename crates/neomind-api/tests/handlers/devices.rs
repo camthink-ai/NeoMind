@@ -1,11 +1,11 @@
 //! Tests for device management handlers.
 
 use axum::extract::{Path, Query, State};
-use neomind_api::handlers::ServerState;
 use neomind_api::handlers::devices::models::{
     AddDeviceRequest, BatchCurrentValuesRequest, PaginationQuery, TimeRangeQuery,
     UpdateDeviceRequest,
 };
+use neomind_api::handlers::ServerState;
 use serde_json::json;
 use uuid::Uuid;
 

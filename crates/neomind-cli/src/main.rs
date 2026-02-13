@@ -480,7 +480,7 @@ async fn run_server(host: String, port: u16) -> Result<()> {
 
 /// Run plugin management commands.
 async fn run_plugin_cmd(cmd: PluginCommand) -> Result<()> {
-    use neomind_core::extension::{WasmExtensionLoader, loader::native::NativeExtensionLoader};
+    use neomind_core::extension::{loader::native::NativeExtensionLoader, WasmExtensionLoader};
 
     match cmd {
         PluginCommand::Validate { path, verbose } => {

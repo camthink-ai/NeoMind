@@ -6,7 +6,7 @@ use crate::mdl::{MetricDataType, MetricValue};
 use crate::protocol::mapping::{
     Address, MappingConfig, MappingError, MappingResult, ProtocolMapping,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use std::collections::HashMap;
 
 /// MQTT protocol mapping configuration.

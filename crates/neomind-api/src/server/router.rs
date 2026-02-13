@@ -1,14 +1,14 @@
 //! Application router configuration.
 
 use axum::{
-    Router,
     routing::{delete, get, post, put},
+    Router,
 };
 
 use super::assets;
 use super::middleware::rate_limit_middleware;
-use super::types::MAX_REQUEST_BODY_SIZE;
 use super::types::ServerState;
+use super::types::MAX_REQUEST_BODY_SIZE;
 use crate::auth::hybrid_auth_middleware;
 use crate::auth_users::jwt_auth_middleware;
 

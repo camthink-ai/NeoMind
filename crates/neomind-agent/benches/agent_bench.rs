@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo bench -p edge-ai-agent
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use neomind_agent::agent::AgentMessage;
 use tokio::runtime::Runtime;
 

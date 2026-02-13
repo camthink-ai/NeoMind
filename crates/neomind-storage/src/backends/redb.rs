@@ -241,7 +241,8 @@ impl StorageBackend for RedbBackend {
             let mut t = txn
                 .open_table(UNIFIED_TABLE)
                 .map_err(|e| StorageError::Backend(e.to_string()))?;
-            let result = t.remove(&*namespaced)
+            let result = t
+                .remove(&*namespaced)
                 .map_err(|e| StorageError::Backend(e.to_string()))?
                 .is_some();
             result

@@ -8,8 +8,8 @@
 //! - Error handling
 
 use neomind_tools::ToolCall;
-use neomind_tools::{Tool, ToolOutput, ToolRegistry, ToolRegistryBuilder};
 use neomind_tools::{number_property, object_schema, string_property};
+use neomind_tools::{Tool, ToolOutput, ToolRegistry, ToolRegistryBuilder};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -292,12 +292,10 @@ async fn test_tool_execution_with_complex_args() {
     assert!(result.is_ok());
     let output = result.unwrap();
     assert!(output.success);
-    assert!(
-        output.data["result"]
-            .as_str()
-            .unwrap()
-            .contains("test with spaces")
-    );
+    assert!(output.data["result"]
+        .as_str()
+        .unwrap()
+        .contains("test with spaces"));
 }
 
 #[tokio::test]

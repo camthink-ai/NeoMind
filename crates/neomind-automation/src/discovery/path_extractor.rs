@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::discovery::types::*;
-use neomind_core::{GenerationParams, LlmRuntime, Message, llm::backend::LlmInput};
+use neomind_core::{llm::backend::LlmInput, GenerationParams, LlmRuntime, Message};
 
 /// Extracts data paths from device samples
 pub struct DataPathExtractor {

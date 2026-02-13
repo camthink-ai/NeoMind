@@ -47,7 +47,7 @@ use super::error::Result;
 use super::llm::{ChatConfig, LlmInterface};
 use super::tools::mapper::map_tool_parameters;
 use crate::context::ResourceIndex;
-use neomind_core::{Message, config::agent_env_vars, llm::backend::LlmRuntime};
+use neomind_core::{config::agent_env_vars, llm::backend::LlmRuntime, Message};
 use neomind_llm::{CloudConfig, CloudRuntime, OllamaConfig, OllamaRuntime};
 
 // Type aliases to reduce complexity
@@ -68,7 +68,7 @@ pub use crate::context_selector::{
 pub use conversation_context::{
     ConversationContext, ConversationTopic, EntityReference, EntityType,
 };
-pub use fallback::{FallbackRule, default_fallback_rules, process_fallback};
+pub use fallback::{default_fallback_rules, process_fallback, FallbackRule};
 pub use formatter::{format_summary, format_tool_result};
 pub use semantic_mapper::{
     DeviceMapping, MappingStats, RuleMapping, SemanticMapping, SemanticMatchType,
@@ -79,9 +79,9 @@ pub use smart_followup::{
     FollowUpType, SmartFollowUpManager,
 };
 pub use streaming::{
-    StreamSafeguards, events_to_string_stream, process_multimodal_stream_events,
+    events_to_string_stream, process_multimodal_stream_events,
     process_multimodal_stream_events_with_safeguards, process_stream_events,
-    process_stream_events_with_safeguards,
+    process_stream_events_with_safeguards, StreamSafeguards,
 };
 pub use types::{
     AgentConfig, AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage, AgentResponse,
@@ -3331,10 +3331,8 @@ mod tests {
     async fn test_custom_fallback_rules() {
         // Test custom rules with mock greet tool
         // Note: Use a keyword that doesn't match fast-path greetings
-        let custom_rules = vec![
-            FallbackRule::new(vec!["greet", "greeting"], "greet")
-                .with_response_template("Greeting from fallback!"),
-        ];
+        let custom_rules = vec![FallbackRule::new(vec!["greet", "greeting"], "greet")
+            .with_response_template("Greeting from fallback!")];
         let agent = create_test_agent_with_mocks("test_session".to_string())
             .with_fallback_rules(custom_rules);
 

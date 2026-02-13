@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::ServerState;
-use crate::models::{ErrorResponse, common::ApiResponse};
+use crate::models::{common::ApiResponse, ErrorResponse};
 
 /// Exported configuration bundle.
 #[derive(Debug, Clone, Serialize, Deserialize)]

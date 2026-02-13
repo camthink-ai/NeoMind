@@ -5,8 +5,8 @@
 use neomind_agent::ai_agent::{AgentExecutor, AgentExecutorConfig};
 use neomind_core::llm::backend::{GenerationParams, LlmInput};
 use neomind_core::{
-    EventBus, LlmRuntime, MetricValue, NeoMindEvent,
     message::{Content, Message, MessageRole},
+    EventBus, LlmRuntime, MetricValue, NeoMindEvent,
 };
 use neomind_llm::backends::ollama::{OllamaConfig, OllamaRuntime};
 use neomind_storage::{

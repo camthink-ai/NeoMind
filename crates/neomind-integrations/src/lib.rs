@@ -47,6 +47,17 @@ pub mod registry;
 
 // Re-exports from core
 pub use neomind_core::integration::{
+    // Connector exports
+    connector::{
+        BaseConnector, ConnectionMetrics, Connector, ConnectorConfig, ConnectorError, DynConnector,
+        Result as ConnectorResult,
+    },
+    // Transformer exports
+    transformer::{
+        BaseTransformer, ConversionFunction, DynTransformer, EntityMapping, MappingConfig,
+        Result as TransformerResult, TransformType, TransformationContext, TransformationError,
+        Transformer, UnitConversion, ValueTransform,
+    },
     DiscoveredInfo,
     DynIntegration,
     Integration,
@@ -59,17 +70,6 @@ pub use neomind_core::integration::{
     IntegrationState,
     IntegrationType,
     Result as IntegrationResult,
-    // Connector exports
-    connector::{
-        BaseConnector, ConnectionMetrics, Connector, ConnectorConfig, ConnectorError, DynConnector,
-        Result as ConnectorResult,
-    },
-    // Transformer exports
-    transformer::{
-        BaseTransformer, ConversionFunction, DynTransformer, EntityMapping, MappingConfig,
-        Result as TransformerResult, TransformType, TransformationContext, TransformationError,
-        Transformer, UnitConversion, ValueTransform,
-    },
 };
 
 // Re-exports from registry

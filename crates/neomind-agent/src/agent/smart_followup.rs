@@ -745,12 +745,10 @@ mod tests {
         let analysis = manager.analyze_input("查询客厅温度", &ctx);
 
         assert!(!analysis.detected_intents.is_empty());
-        assert!(
-            analysis
-                .detected_intents
-                .iter()
-                .any(|i| i.description.contains("查询"))
-        );
+        assert!(analysis
+            .detected_intents
+            .iter()
+            .any(|i| i.description.contains("查询")));
     }
 
     #[test]

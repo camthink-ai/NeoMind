@@ -6,8 +6,8 @@ use serde_json::json;
 use super::models::ExternalBrokerConnectionDto;
 use super::models::MqttStatusDto;
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

@@ -1,13 +1,13 @@
 //! Tests for auth_users handlers.
 
-use axum::Json;
 use axum::extract::{Extension, Path, State};
 use axum::http::StatusCode;
+use axum::Json;
 use neomind_api::auth_users::{
     ChangePasswordRequest, LoginRequest, RegisterRequest, SessionInfo, UserRole,
 };
-use neomind_api::handlers::ServerState;
 use neomind_api::handlers::auth_users::*;
+use neomind_api::handlers::ServerState;
 
 async fn create_test_server_state() -> ServerState {
     crate::common::create_test_server_state().await

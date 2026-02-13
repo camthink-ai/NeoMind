@@ -68,8 +68,8 @@
 use async_trait::async_trait;
 use futures::Stream;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Result type for connector operations.
 pub type Result<T> = std::result::Result<T, ConnectorError>;

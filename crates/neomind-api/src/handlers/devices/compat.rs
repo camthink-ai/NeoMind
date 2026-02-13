@@ -5,9 +5,9 @@
 //! - New format: DeviceConfig, DeviceTypeTemplate with direct metrics/commands
 
 use neomind_devices::{
-    ConnectionConfig, DeviceConfig, DeviceTypeTemplate,
     mdl::ConnectionStatus as MdlConnectionStatus,
     mdl_format::{DeviceInstance, DeviceTypeDefinition, DownlinkConfig, UplinkConfig},
+    ConnectionConfig, DeviceConfig, DeviceTypeTemplate,
 };
 use std::collections::HashMap;
 

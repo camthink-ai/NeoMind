@@ -17,17 +17,17 @@
 #[cfg(feature = "mqtt")]
 pub mod mqtt;
 #[cfg(feature = "mqtt")]
-pub use mqtt::{MqttAdapter, MqttAdapterConfig, create_mqtt_adapter};
+pub use mqtt::{create_mqtt_adapter, MqttAdapter, MqttAdapterConfig};
 
 // HTTP adapter (feature-gated)
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]
-pub use http::{HttpAdapter, HttpAdapterConfig, HttpDeviceConfig, create_http_adapter};
+pub use http::{create_http_adapter, HttpAdapter, HttpAdapterConfig, HttpDeviceConfig};
 
 // Webhook adapter (always available)
 pub mod webhook;
-pub use webhook::{WebhookAdapter, WebhookAdapterConfig, WebhookPayload, create_webhook_adapter};
+pub use webhook::{create_webhook_adapter, WebhookAdapter, WebhookAdapterConfig, WebhookPayload};
 
 use crate::adapter::{AdapterResult, DeviceAdapter};
 use neomind_core::EventBus;

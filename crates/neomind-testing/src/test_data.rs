@@ -4,9 +4,9 @@
 //! for AI Agent testing scenarios.
 
 use chrono::{Datelike, Timelike, Utc};
+use rand::rngs::StdRng;
 use rand::Rng;
 use rand::SeedableRng;
-use rand::rngs::StdRng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

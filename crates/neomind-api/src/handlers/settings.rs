@@ -1,12 +1,12 @@
 //! LLM generation handler for one-shot LLM requests.
 //! Used for features like AI-assisted MDL generation.
 
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use serde_json::json;
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 
@@ -25,8 +25,8 @@ pub async fn llm_generate_handler(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_agent::LlmBackend;
     use neomind_core::{
-        Message,
         llm::backend::{GenerationParams, LlmInput, LlmRuntime},
+        Message,
     };
 
     // Load current LLM backend configuration

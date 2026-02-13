@@ -9,8 +9,8 @@
 #[cfg(test)]
 mod integration_tests {
     use neomind_core::extension::{
-        Extension, ExtensionError, ExtensionMetricValue, ParamMetricValue,
-        loader::NativeExtensionLoader,
+        loader::NativeExtensionLoader, Extension, ExtensionError, ExtensionMetricValue,
+        ParamMetricValue,
     };
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -369,10 +369,10 @@ mod integration_tests {
 #[cfg(test)]
 mod event_publishing_tests {
     use super::*;
-    use neomind_core::EventBus;
     use neomind_core::extension::{
         DynExtension, Extension, ExtensionError, ExtensionMetricValue, ParamMetricValue,
     };
+    use neomind_core::EventBus;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::RwLock;

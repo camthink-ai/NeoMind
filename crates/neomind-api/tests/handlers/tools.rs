@@ -1,9 +1,9 @@
 //! Tests for tools handlers.
 
-use axum::Json;
 use axum::extract::State;
-use neomind_api::handlers::ServerState;
+use axum::Json;
 use neomind_api::handlers::tools::*;
+use neomind_api::handlers::ServerState;
 
 async fn create_test_server_state() -> ServerState {
     crate::common::create_test_server_state().await

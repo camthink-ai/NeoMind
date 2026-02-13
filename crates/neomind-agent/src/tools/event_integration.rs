@@ -807,8 +807,8 @@ impl ToolErrorExt for ToolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neomind_tools::ToolRegistryBuilder;
     use neomind_tools::tool::{Tool, ToolCategory, ToolOutput};
+    use neomind_tools::ToolRegistryBuilder;
     use std::sync::Arc;
 
     /// Simple mock tool for testing

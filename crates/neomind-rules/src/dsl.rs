@@ -739,24 +739,24 @@ impl RuleDslParser {
         // Handle parenthesized expressions
         if input.starts_with('(') {
             if let Some(close_pos) = Self::find_matching_paren(input, 0) {
-            let inner = &input[1..close_pos];
-            let rest = input[close_pos + 1..].trim();
+                let inner = &input[1..close_pos];
+                let rest = input[close_pos + 1..].trim();
 
-            // Check for AND/OR after the parenthesized expression
-            if rest.to_uppercase().starts_with("AND ") {
-                let left = Self::parse_condition(inner)?;
-                let right_str = rest[3..].trim(); // Skip "AND"
-                let right = Self::parse_condition(right_str)?;
-                return Ok(RuleCondition::And(vec![left, right]));
-            } else if rest.to_uppercase().starts_with("OR ") {
-                let left = Self::parse_condition(inner)?;
-                let right_str = rest[2..].trim(); // Skip "OR"
-                let right = Self::parse_condition(right_str)?;
-                return Ok(RuleCondition::Or(vec![left, right]));
-            } else {
-                // Just a parenthesized condition
-                return Self::parse_condition(inner);
-            }
+                // Check for AND/OR after the parenthesized expression
+                if rest.to_uppercase().starts_with("AND ") {
+                    let left = Self::parse_condition(inner)?;
+                    let right_str = rest[3..].trim(); // Skip "AND"
+                    let right = Self::parse_condition(right_str)?;
+                    return Ok(RuleCondition::And(vec![left, right]));
+                } else if rest.to_uppercase().starts_with("OR ") {
+                    let left = Self::parse_condition(inner)?;
+                    let right_str = rest[2..].trim(); // Skip "OR"
+                    let right = Self::parse_condition(right_str)?;
+                    return Ok(RuleCondition::Or(vec![left, right]));
+                } else {
+                    // Just a parenthesized condition
+                    return Self::parse_condition(inner);
+                }
             }
         }
 

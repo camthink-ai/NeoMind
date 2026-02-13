@@ -8,8 +8,8 @@ use neomind_core::event::{MetricValue, NeoMindEvent};
 use neomind_messages::{Message, MessageSeverity};
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 
 #[derive(Debug, serde::Serialize)]

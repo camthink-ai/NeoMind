@@ -333,26 +333,27 @@ impl MqttDeviceManager {
                 // Load the latest value for each metric defined in the device type
                 if let Some(ts) = &ts_storage {
                     if let Some(dt) = self.mdl_registry.get(&device_type).await {
-                    let mut restored_values = std::collections::HashMap::new();
-                    for metric in &dt.uplink.metrics {
-                        if let Ok(Some(latest)) = ts.latest(&device_id, &metric.name).await {
-                            let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
-                                latest.timestamp,
-                                0,
-                            )
-                            .unwrap_or_else(chrono::Utc::now);
-                            restored_values.insert(metric.name.clone(), (latest.value, timestamp));
+                        let mut restored_values = std::collections::HashMap::new();
+                        for metric in &dt.uplink.metrics {
+                            if let Ok(Some(latest)) = ts.latest(&device_id, &metric.name).await {
+                                let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                                    latest.timestamp,
+                                    0,
+                                )
+                                .unwrap_or_else(chrono::Utc::now);
+                                restored_values
+                                    .insert(metric.name.clone(), (latest.value, timestamp));
+                            }
                         }
-                    }
-                    let restored_count = restored_values.len();
-                    updated_instance.current_values = restored_values;
-                    if restored_count > 0 {
-                        tracing::info!(
-                            "Restored {} current values for device {}",
-                            restored_count,
-                            device_id
-                        );
-                    }
+                        let restored_count = restored_values.len();
+                        updated_instance.current_values = restored_values;
+                        if restored_count > 0 {
+                            tracing::info!(
+                                "Restored {} current values for device {}",
+                                restored_count,
+                                device_id
+                            );
+                        }
                     }
                 }
 
@@ -705,73 +706,75 @@ impl MqttDeviceManager {
 
             if let Some(device_type_name) = device_type_name {
                 if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(payload) {
-                // Process device data inline
-                let now = chrono::Utc::now();
+                    // Process device data inline
+                    let now = chrono::Utc::now();
 
-                // Update metric cache
-                if let Some(obj) = json_value.as_object() {
-                    let mut cache = metric_cache.write().await;
-                    for (key, value) in obj {
-                        let metric_value = match value {
-                            serde_json::Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    MetricValue::Integer(i)
-                                } else if let Some(f) = n.as_f64() {
-                                    MetricValue::Float(f)
-                                } else {
-                                    MetricValue::Null
-                                }
-                            }
-                            serde_json::Value::String(s) => MetricValue::String(s.clone()),
-                            serde_json::Value::Bool(b) => MetricValue::Boolean(*b),
-                            _ => MetricValue::Null,
-                        };
-                        cache
-                            .entry(device_id.clone())
-                            .or_insert_with(HashMap::new)
-                            .insert(key.clone(), (metric_value, now));
-                    }
-                }
-
-                // Publish event
-                if let Some(bus) = event_bus {
-                    use neomind_core::MetricValue as CoreMetricValue;
-
+                    // Update metric cache
                     if let Some(obj) = json_value.as_object() {
+                        let mut cache = metric_cache.write().await;
                         for (key, value) in obj {
-                            let core_value = match value {
+                            let metric_value = match value {
                                 serde_json::Value::Number(n) => {
                                     if let Some(i) = n.as_i64() {
-                                        CoreMetricValue::Integer(i)
+                                        MetricValue::Integer(i)
                                     } else if let Some(f) = n.as_f64() {
-                                        CoreMetricValue::Float(f)
+                                        MetricValue::Float(f)
                                     } else {
-                                        CoreMetricValue::String("null".to_string())
+                                        MetricValue::Null
                                     }
                                 }
-                                serde_json::Value::String(s) => CoreMetricValue::String(s.clone()),
-                                serde_json::Value::Bool(b) => CoreMetricValue::Boolean(*b),
-                                _ => CoreMetricValue::String("null".to_string()),
+                                serde_json::Value::String(s) => MetricValue::String(s.clone()),
+                                serde_json::Value::Bool(b) => MetricValue::Boolean(*b),
+                                _ => MetricValue::Null,
                             };
-                            let _ = bus
-                                .publish(neomind_core::NeoMindEvent::DeviceMetric {
-                                    device_id: device_id.clone(),
-                                    metric: key.clone(),
-                                    value: core_value,
-                                    timestamp: now.timestamp(),
-                                    quality: None,
-                                })
-                                .await;
+                            cache
+                                .entry(device_id.clone())
+                                .or_insert_with(HashMap::new)
+                                .insert(key.clone(), (metric_value, now));
                         }
                     }
 
-                    let _ = bus
-                        .publish(neomind_core::NeoMindEvent::DeviceOnline {
-                            device_id: device_id.clone(),
-                            device_type: device_type_name.clone(),
-                            timestamp: now.timestamp(),
-                        })
-                        .await;
+                    // Publish event
+                    if let Some(bus) = event_bus {
+                        use neomind_core::MetricValue as CoreMetricValue;
+
+                        if let Some(obj) = json_value.as_object() {
+                            for (key, value) in obj {
+                                let core_value = match value {
+                                    serde_json::Value::Number(n) => {
+                                        if let Some(i) = n.as_i64() {
+                                            CoreMetricValue::Integer(i)
+                                        } else if let Some(f) = n.as_f64() {
+                                            CoreMetricValue::Float(f)
+                                        } else {
+                                            CoreMetricValue::String("null".to_string())
+                                        }
+                                    }
+                                    serde_json::Value::String(s) => {
+                                        CoreMetricValue::String(s.clone())
+                                    }
+                                    serde_json::Value::Bool(b) => CoreMetricValue::Boolean(*b),
+                                    _ => CoreMetricValue::String("null".to_string()),
+                                };
+                                let _ = bus
+                                    .publish(neomind_core::NeoMindEvent::DeviceMetric {
+                                        device_id: device_id.clone(),
+                                        metric: key.clone(),
+                                        value: core_value,
+                                        timestamp: now.timestamp(),
+                                        quality: None,
+                                    })
+                                    .await;
+                            }
+                        }
+
+                        let _ = bus
+                            .publish(neomind_core::NeoMindEvent::DeviceOnline {
+                                device_id: device_id.clone(),
+                                device_type: device_type_name.clone(),
+                                timestamp: now.timestamp(),
+                            })
+                            .await;
                     }
                 }
 
@@ -781,80 +784,83 @@ impl MqttDeviceManager {
 
         // Case 2: Check device registry for custom telemetry topics (auto-onboarding)
         if let Some(registry) = device_registry {
-            if let Some((device_id, config)) = registry.find_device_by_telemetry_topic(topic).await {
+            if let Some((device_id, config)) = registry.find_device_by_telemetry_topic(topic).await
+            {
                 if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(payload) {
-            // Process device data inline
-            let now = chrono::Utc::now();
+                    // Process device data inline
+                    let now = chrono::Utc::now();
 
-            // Update metric cache
-            if let Some(obj) = json_value.as_object() {
-                let mut cache = metric_cache.write().await;
-                for (key, value) in obj {
-                    let metric_value = match value {
-                        serde_json::Value::Number(n) => {
-                            if let Some(i) = n.as_i64() {
-                                MetricValue::Integer(i)
-                            } else if let Some(f) = n.as_f64() {
-                                MetricValue::Float(f)
-                            } else {
-                                MetricValue::Null
+                    // Update metric cache
+                    if let Some(obj) = json_value.as_object() {
+                        let mut cache = metric_cache.write().await;
+                        for (key, value) in obj {
+                            let metric_value = match value {
+                                serde_json::Value::Number(n) => {
+                                    if let Some(i) = n.as_i64() {
+                                        MetricValue::Integer(i)
+                                    } else if let Some(f) = n.as_f64() {
+                                        MetricValue::Float(f)
+                                    } else {
+                                        MetricValue::Null
+                                    }
+                                }
+                                serde_json::Value::String(s) => MetricValue::String(s.clone()),
+                                serde_json::Value::Bool(b) => MetricValue::Boolean(*b),
+                                _ => MetricValue::Null,
+                            };
+                            cache
+                                .entry(device_id.clone())
+                                .or_insert_with(HashMap::new)
+                                .insert(key.clone(), (metric_value, now));
+                        }
+                    }
+
+                    // Publish event
+                    if let Some(bus) = event_bus {
+                        use neomind_core::MetricValue as CoreMetricValue;
+
+                        if let Some(obj) = json_value.as_object() {
+                            for (key, value) in obj {
+                                let core_value = match value {
+                                    serde_json::Value::Number(n) => {
+                                        if let Some(i) = n.as_i64() {
+                                            CoreMetricValue::Integer(i)
+                                        } else if let Some(f) = n.as_f64() {
+                                            CoreMetricValue::Float(f)
+                                        } else {
+                                            CoreMetricValue::String("null".to_string())
+                                        }
+                                    }
+                                    serde_json::Value::String(s) => {
+                                        CoreMetricValue::String(s.clone())
+                                    }
+                                    serde_json::Value::Bool(b) => CoreMetricValue::Boolean(*b),
+                                    _ => CoreMetricValue::String("null".to_string()),
+                                };
+                                let _ = bus
+                                    .publish(neomind_core::NeoMindEvent::DeviceMetric {
+                                        device_id: device_id.clone(),
+                                        metric: key.clone(),
+                                        value: core_value,
+                                        timestamp: now.timestamp(),
+                                        quality: None,
+                                    })
+                                    .await;
                             }
                         }
-                        serde_json::Value::String(s) => MetricValue::String(s.clone()),
-                        serde_json::Value::Bool(b) => MetricValue::Boolean(*b),
-                        _ => MetricValue::Null,
-                    };
-                    cache
-                        .entry(device_id.clone())
-                        .or_insert_with(HashMap::new)
-                        .insert(key.clone(), (metric_value, now));
-                }
-            }
 
-            // Publish event
-            if let Some(bus) = event_bus {
-                use neomind_core::MetricValue as CoreMetricValue;
-
-                if let Some(obj) = json_value.as_object() {
-                    for (key, value) in obj {
-                        let core_value = match value {
-                            serde_json::Value::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    CoreMetricValue::Integer(i)
-                                } else if let Some(f) = n.as_f64() {
-                                    CoreMetricValue::Float(f)
-                                } else {
-                                    CoreMetricValue::String("null".to_string())
-                                }
-                            }
-                            serde_json::Value::String(s) => CoreMetricValue::String(s.clone()),
-                            serde_json::Value::Bool(b) => CoreMetricValue::Boolean(*b),
-                            _ => CoreMetricValue::String("null".to_string()),
-                        };
                         let _ = bus
-                            .publish(neomind_core::NeoMindEvent::DeviceMetric {
+                            .publish(neomind_core::NeoMindEvent::DeviceOnline {
                                 device_id: device_id.clone(),
-                                metric: key.clone(),
-                                value: core_value,
+                                device_type: config.device_type.clone(),
                                 timestamp: now.timestamp(),
-                                quality: None,
                             })
                             .await;
                     }
+
+                    return true;
                 }
-
-                let _ = bus
-                    .publish(neomind_core::NeoMindEvent::DeviceOnline {
-                        device_id: device_id.clone(),
-                        device_type: config.device_type.clone(),
-                        timestamp: now.timestamp(),
-                    })
-                    .await;
             }
-
-                return true;
-            }
-        }
         }
 
         // Case 3: Fall back to standard topic format: device/{device_type}/{device_id}/uplink
@@ -1267,18 +1273,18 @@ impl MqttDeviceManager {
                 if is_new_device {
                     if let Some(store) = storage.read().await.as_ref() {
                         if let Some(device) = devices.read().await.get(&device_id).cloned() {
-                        if let Err(e) = store.save_device_instance(&device).await {
-                            tracing::warn!(
-                                "Failed to persist auto-registered device {}: {}",
-                                device_id,
-                                e
-                            );
-                        } else {
-                            tracing::info!(
-                                "Persisted auto-registered device {} to storage",
-                                device_id
-                            );
-                        }
+                            if let Err(e) = store.save_device_instance(&device).await {
+                                tracing::warn!(
+                                    "Failed to persist auto-registered device {}: {}",
+                                    device_id,
+                                    e
+                                );
+                            } else {
+                                tracing::info!(
+                                    "Persisted auto-registered device {} to storage",
+                                    device_id
+                                );
+                            }
                         }
                     }
 

@@ -97,12 +97,11 @@ impl MultimodalStore {
         {
             let singleton = MULTIMODAL_STORE_SINGLETON.lock().unwrap();
             if let Some(store) = singleton.as_ref() {
-                if store.db_path == db_path_str
-            {
-                return Ok(store.clone());
+                if store.db_path == db_path_str {
+                    return Ok(store.clone());
+                }
             }
         }
-    }
 
         // Create new store and save to singleton
         let db_path_ref = db_path.as_ref();

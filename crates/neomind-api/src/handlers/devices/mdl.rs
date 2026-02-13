@@ -1,6 +1,6 @@
 //! MDL (Message Definition Language) generation handlers.
 
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use std::collections::BTreeMap;
 
 use neomind_devices::{
@@ -13,8 +13,8 @@ use neomind_devices::{
 
 use super::models::GenerateMdlRequest;
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

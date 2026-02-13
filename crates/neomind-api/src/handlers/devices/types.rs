@@ -4,8 +4,8 @@ use neomind_automation::device_type_generator::{DeviceTypeGenerator, GenerationC
 use neomind_automation::discovery::DeviceSample;
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -14,15 +14,15 @@ use std::sync::Arc;
 use neomind_core::llm::backend::LlmRuntime;
 use neomind_devices::registry::DeviceTypeTemplate;
 use neomind_llm::backends::openai::{CloudConfig, CloudProvider, CloudRuntime};
-use neomind_llm::{OllamaConfig, OllamaRuntime, instance_manager::get_instance_manager};
+use neomind_llm::{instance_manager::get_instance_manager, OllamaConfig, OllamaRuntime};
 use neomind_storage::{LlmBackendInstance, LlmBackendType};
 
 use super::models::{
     CommandDefinitionDto, DeviceTypeDto, MetricDefinitionDto, ParameterDefinitionDto,
 };
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

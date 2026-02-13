@@ -11,7 +11,7 @@ use chrono::Utc;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, settings::LlmBackendType};
+use crate::{settings::LlmBackendType, Error};
 
 // LLM backend instances table: key = instance_id, value = LlmBackendInstance (serialized)
 const LLM_BACKENDS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("llm_backends");
@@ -680,8 +680,7 @@ impl LlmBackendStore {
         }
 
         if let Some(active_id) = data.get("active_id").and_then(|v| v.as_str()) {
-            if self.load_instance(active_id)?.is_some()
-            {
+            if self.load_instance(active_id)?.is_some() {
                 self.set_active_backend(active_id)?;
             }
         }

@@ -1,6 +1,6 @@
 //! Basic handlers - health check and system status.
 
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use serde::Serialize;
 use serde_json::json;
 

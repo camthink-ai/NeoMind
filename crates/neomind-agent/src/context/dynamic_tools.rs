@@ -610,7 +610,11 @@ trait IfEmpty {
 impl IfEmpty for String {
     type Item = String;
     fn if_empty(self, default: Self::Item) -> Self::Item {
-        if self.is_empty() { default } else { self }
+        if self.is_empty() {
+            default
+        } else {
+            self
+        }
     }
 }
 

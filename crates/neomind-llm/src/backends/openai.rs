@@ -609,12 +609,15 @@ impl LlmRuntime for CloudRuntime {
                                         continue;
                                     }
                                     if let Some(json) = line.strip_prefix("data: ") {
-                                        if let Ok(evt) = serde_json::from_str::<StreamChunkEvent>(json) {
+                                        if let Ok(evt) =
+                                            serde_json::from_str::<StreamChunkEvent>(json)
+                                        {
                                             if let Some(choice) = evt.choices.first() {
-                                        let delta = &choice.delta.content;
-                                        if !delta.is_empty() {
-                                            let _ = tx.send(Ok((delta.clone(), false))).await;
-                                        }
+                                                let delta = &choice.delta.content;
+                                                if !delta.is_empty() {
+                                                    let _ =
+                                                        tx.send(Ok((delta.clone(), false))).await;
+                                                }
                                             }
                                         }
                                     }

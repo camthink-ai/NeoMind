@@ -4,21 +4,21 @@
 //! allowing them to be managed through a single interface.
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use neomind_automation::{
-    Automation, AutomationConverter, AutomationType, IntentResult, transform::JsTransformExecutor,
+    transform::JsTransformExecutor, Automation, AutomationConverter, AutomationType, IntentResult,
 };
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

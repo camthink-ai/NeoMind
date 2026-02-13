@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, interval};
+use tokio::time::{interval, Duration};
 
 use neomind_core::{MetricValue, NeoMindEvent};
 
@@ -328,7 +328,11 @@ impl SimulatedDevice {
         for (metric, base_value) in &self.base_values {
             let value = if *metric == "state" || *metric == "motion" || *metric == "open" {
                 // Binary values
-                if rng.gen_bool(0.1) { 1.0 } else { 0.0 }
+                if rng.gen_bool(0.1) {
+                    1.0
+                } else {
+                    0.0
+                }
             } else {
                 // Continuous values with variance
                 let noise = (rand::random::<f64>() - 0.5) * 2.0 * self.variance;

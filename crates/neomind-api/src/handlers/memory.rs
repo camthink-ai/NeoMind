@@ -1,8 +1,8 @@
 //! Memory system handlers.
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -13,8 +13,8 @@ use neomind_memory::{
 };
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

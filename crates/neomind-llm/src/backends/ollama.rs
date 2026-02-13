@@ -240,7 +240,8 @@ impl OllamaRuntime {
             if let Some(required) = tool.parameters.get("required") {
                 if let Some(arr) = required.as_array() {
                     if !arr.is_empty() {
-                        let required_names: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+                        let required_names: Vec<&str> =
+                            arr.iter().filter_map(|v| v.as_str()).collect();
                         result.push_str(&format!("Required: {}\n", required_names.join(", ")));
                     }
                 }
@@ -1126,14 +1127,16 @@ impl LlmRuntime for OllamaRuntime {
 
                                                 // Check if thinking has gone on too long
                                                 if let Some(start) = thinking_start_time {
-                                                    if start.elapsed() > stream_config.max_thinking_time() {
-                                                    tracing::warn!(
+                                                    if start.elapsed()
+                                                        > stream_config.max_thinking_time()
+                                                    {
+                                                        tracing::warn!(
                                                         "[ollama.rs] Thinking timeout ({:?} elapsed, {} chars). Skipping remaining thinking, waiting for content.",
                                                         start.elapsed(),
                                                         thinking_chars
                                                     );
-                                                    // Skip future thinking chunks but continue stream for content
-                                                    skip_remaining_thinking = true;
+                                                        // Skip future thinking chunks but continue stream for content
+                                                        skip_remaining_thinking = true;
                                                     }
                                                 }
 

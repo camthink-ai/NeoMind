@@ -27,16 +27,16 @@ pub mod virtual_metric;
 
 pub use auto_onboard::{AutoOnboardManager, RegistrationResult, TypeSignature};
 pub use hex_analyzer::{
-    HexAnalyzer, HexInfo, HexProbability, MetricInterpretation, SuggestedType,
-    compute_stats as hex_compute_stats, hex_to_bytes, is_hex_string,
+    compute_stats as hex_compute_stats, hex_to_bytes, is_hex_string, HexAnalyzer, HexInfo,
+    HexProbability, MetricInterpretation, SuggestedType,
 };
 pub use path_extractor::DataPathExtractor;
 pub use semantic_inference::{MetricEnhancement, SemanticInference};
 pub use statistics_analyzer::{
-    StatisticsAnalyzer, StatisticsResult, ValuePattern, ValueStatistics, compute_quick_stats,
+    compute_quick_stats, StatisticsAnalyzer, StatisticsResult, ValuePattern, ValueStatistics,
 };
 pub use structure_analyzer::{
-    InferredType, PathInfo, StructureAnalyzer, StructureResult, extract_field_name, normalize_path,
+    extract_field_name, normalize_path, InferredType, PathInfo, StructureAnalyzer, StructureResult,
 };
 pub use types::*;
 pub use virtual_metric::{

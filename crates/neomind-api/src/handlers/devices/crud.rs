@@ -1,8 +1,8 @@
 //! Device CRUD operations.
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -13,8 +13,8 @@ use super::models::{
     UpdateDeviceRequest,
 };
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 use neomind_devices::{

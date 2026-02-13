@@ -22,8 +22,8 @@ use tokio::sync::RwLock;
 use crate::error::Result as ToolResult;
 use crate::error::ToolError;
 use crate::tool::{
-    Tool, ToolOutput, array_property, boolean_property, number_property, object_schema,
-    string_property,
+    array_property, boolean_property, number_property, object_schema, string_property, Tool,
+    ToolOutput,
 };
 use neomind_core::tools::{ToolCategory, ToolRelationships, UsageScenario};
 
@@ -1974,13 +1974,11 @@ mod tests {
         let data = &result.data;
         assert_eq!(data["rule"]["condition"]["threshold"], 30.0);
         assert_eq!(data["rule"]["condition"]["for_duration"], 300); // 5 minutes in seconds
-        assert!(
-            data["rule"]["actions"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|a| a["action_type"] == "execute")
-        );
+        assert!(data["rule"]["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a["action_type"] == "execute"));
     }
 
     #[tokio::test]

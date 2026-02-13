@@ -9,9 +9,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use super::bm25::{BM25Index, extract_text_for_bm25};
+use super::bm25::{extract_text_for_bm25, BM25Index};
 use super::embeddings::{
-    EmbeddingConfig, EmbeddingModel, SimpleEmbedding, cosine_similarity, create_embedding_model,
+    cosine_similarity, create_embedding_model, EmbeddingConfig, EmbeddingModel, SimpleEmbedding,
 };
 use super::error::Result;
 

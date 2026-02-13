@@ -44,7 +44,7 @@
 
 use crate::bm25::BM25Index;
 use crate::embeddings::{
-    EmbeddingConfig, EmbeddingModel, EmbeddingProvider, create_embedding_model,
+    create_embedding_model, EmbeddingConfig, EmbeddingModel, EmbeddingProvider,
 };
 use crate::error::{MemoryError, Result};
 use serde::{Deserialize, Serialize};

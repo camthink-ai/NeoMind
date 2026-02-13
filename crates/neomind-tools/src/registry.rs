@@ -652,8 +652,12 @@ pub fn format_for_llm(definitions: &[ToolDefinition]) -> String {
                 if let Some(required) = def.parameters.get("required") {
                     if let Some(arr) = required.as_array() {
                         if !arr.is_empty() {
-                            let required_names: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
-                            result.push_str(&format!("**必需参数**: {}\n", required_names.join(", ")));
+                            let required_names: Vec<&str> =
+                                arr.iter().filter_map(|v| v.as_str()).collect();
+                            result.push_str(&format!(
+                                "**必需参数**: {}\n",
+                                required_names.join(", ")
+                            ));
                         }
                     }
                 }

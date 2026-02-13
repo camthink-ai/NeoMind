@@ -1,11 +1,11 @@
 //! Rules engine handlers.
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use chrono;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use neomind_devices::MetricDataType as DeviceMetricDataType;
 use neomind_rules::dsl::{AlertSeverity, HttpMethod};
@@ -15,8 +15,8 @@ use neomind_rules::{
 };
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

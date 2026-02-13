@@ -2527,14 +2527,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     "image/png"
                 } else if image_data.contains("data:image/jpeg") {
                     "image/jpeg"
-            } else if image_data.contains("data:image/webp") {
-                "image/webp"
-            } else if image_data.contains("data:image/gif") {
-                "image/gif"
-            } else {
-                "image/png"
-            };
-            parts.push(ContentPart::image_base64(base64_part, mime_type));
+                } else if image_data.contains("data:image/webp") {
+                    "image/webp"
+                } else if image_data.contains("data:image/gif") {
+                    "image/gif"
+                } else {
+                    "image/png"
+                };
+                parts.push(ContentPart::image_base64(base64_part, mime_type));
             }
         }
     }

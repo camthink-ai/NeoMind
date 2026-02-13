@@ -1,15 +1,15 @@
 //! MQTT subscription management handlers.
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use serde_json::json;
 
 use super::models::MqttSubscriptionDto;
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

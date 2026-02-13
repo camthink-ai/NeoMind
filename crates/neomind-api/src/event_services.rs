@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use neomind_automation::{Automation, TransformEngine, store::SharedAutomationStore};
+use neomind_automation::{store::SharedAutomationStore, Automation, TransformEngine};
 use neomind_core::eventbus::EventBus;
 use neomind_core::{MetricValue, NeoMindEvent};
 use neomind_devices::DeviceRegistry;

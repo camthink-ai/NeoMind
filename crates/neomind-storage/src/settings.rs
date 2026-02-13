@@ -424,7 +424,11 @@ impl ExternalBroker {
 
     /// Get the default port for the broker (MQTT or MQTTS).
     pub fn default_port_for_tls(tls: bool) -> u16 {
-        if tls { 8883 } else { 1883 }
+        if tls {
+            8883
+        } else {
+            1883
+        }
     }
 
     /// Check if authentication is configured.

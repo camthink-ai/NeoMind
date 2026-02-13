@@ -5,6 +5,6 @@
 pub mod connection_state;
 
 pub use connection_state::{
-    ConnectionMetadata, ConnectionState, ConnectionStateRef, HeartbeatState,
-    create_connection_metadata,
+    create_connection_metadata, ConnectionMetadata, ConnectionState, ConnectionStateRef,
+    HeartbeatState,
 };

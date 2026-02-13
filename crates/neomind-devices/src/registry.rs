@@ -1086,25 +1086,25 @@ impl DeviceRegistry {
         // Update type index if type changed
         if let Some(old_type) = old_device_type {
             if old_type != new_device_type {
-            // Remove from old type index
-            {
-                let mut type_index = self.type_index.write().await;
-                if let Some(device_ids) = type_index.get_mut(&old_type) {
-                    device_ids.retain(|id| id != device_id);
-                    if device_ids.is_empty() {
-                        type_index.remove(&old_type);
+                // Remove from old type index
+                {
+                    let mut type_index = self.type_index.write().await;
+                    if let Some(device_ids) = type_index.get_mut(&old_type) {
+                        device_ids.retain(|id| id != device_id);
+                        if device_ids.is_empty() {
+                            type_index.remove(&old_type);
+                        }
                     }
                 }
-            }
 
-            // Add to new type index
-            {
-                let mut type_index = self.type_index.write().await;
-                type_index
-                    .entry(new_device_type)
-                    .or_insert_with(Vec::new)
-                    .push(device_id.to_string());
-            }
+                // Add to new type index
+                {
+                    let mut type_index = self.type_index.write().await;
+                    type_index
+                        .entry(new_device_type)
+                        .or_insert_with(Vec::new)
+                        .push(device_id.to_string());
+                }
             }
         }
 

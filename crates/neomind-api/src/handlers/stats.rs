@@ -1,8 +1,8 @@
 //! Statistics API handlers.
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use axum::extract::State;
 use serde_json::json;
@@ -394,9 +394,7 @@ fn detect_gpus() -> Vec<GpuInfo> {
     }
 
     // Try to detect Apple Silicon GPUs
-    if std::env::consts::OS == "macos"
-        && std::env::consts::ARCH == "aarch64"
-    {
+    if std::env::consts::OS == "macos" && std::env::consts::ARCH == "aarch64" {
         if let Ok(output) = std::process::Command::new("system_profiler")
             .arg("SPDisplaysDataType")
             .arg("-json")

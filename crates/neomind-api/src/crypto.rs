@@ -4,8 +4,8 @@
 //! The encryption key is derived from a master secret using PBKDF2.
 
 use aes_gcm::{
-    Aes256Gcm, Nonce,
     aead::{Aead, AeadCore, KeyInit, OsRng},
+    Aes256Gcm, Nonce,
 };
 use sha2::Sha256;
 use std::env;

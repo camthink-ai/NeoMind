@@ -10,8 +10,8 @@
 //! GET    /api/messages/channels/types/:type/schema - Channel schema
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 
@@ -24,8 +24,8 @@ use neomind_messages::WebhookChannelFactory;
 use neomind_messages::EmailChannelFactory;
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 
 // Import json macro for handler responses

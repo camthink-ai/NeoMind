@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::extension::system::{ABI_VERSION, CExtensionMetadata, DynExtension, Extension};
+use crate::extension::system::{CExtensionMetadata, DynExtension, Extension, ABI_VERSION};
 use crate::extension::types::{ExtensionError, ExtensionMetadata, Result};
 use tracing::debug;
 

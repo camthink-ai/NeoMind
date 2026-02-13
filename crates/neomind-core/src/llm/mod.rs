@@ -15,17 +15,17 @@ pub use backend::{
     LlmInput, LlmOutput, LlmRuntime, StreamChunk, TokenUsage,
 };
 pub use capability::{
-    CapabilityDetectionResult, CapabilityDetector, get_max_context, model_supports,
+    get_max_context, model_supports, CapabilityDetectionResult, CapabilityDetector,
 };
 pub use compaction::{
-    CompactionConfig, CompactionResult, MessagePriority, compact_messages, estimate_tokens,
+    compact_messages, estimate_tokens, CompactionConfig, CompactionResult, MessagePriority,
 };
 pub use memory_consolidation::{
     ConsolidatedMessage, ConsolidationResult, MemoryConfig, MemoryConsolidator,
 };
 pub use modality::{ImageContent, ImageInput, ModalityContent};
 pub use models::*;
-pub use token_counter::{CounterMode, EncodingType, TokenCounter, count_tokens, heuristic_count};
+pub use token_counter::{count_tokens, heuristic_count, CounterMode, EncodingType, TokenCounter};
 
 use std::pin::Pin;
 use std::time::Duration;

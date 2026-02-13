@@ -247,12 +247,12 @@ impl super::ChannelFactory for EmailChannelFactory {
             from_address,
         );
 
-        if let Some(recipients) = config.get("recipients")
-            && let Some(arr) = recipients.as_array()
-        {
-            for addr in arr {
-                if let Some(str_addr) = addr.as_str() {
-                    channel = channel.add_recipient(str_addr.to_string());
+        if let Some(recipients) = config.get("recipients") {
+            if let Some(arr) = recipients.as_array() {
+                for addr in arr {
+                    if let Some(str_addr) = addr.as_str() {
+                        channel = channel.add_recipient(str_addr.to_string());
+                    }
                 }
             }
         }

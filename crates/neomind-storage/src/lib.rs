@@ -104,18 +104,18 @@ pub use messages::{MessageStats, MessageStore, StoredMessage};
 
 pub use settings::{
     ConfigChangeEntry,
-    // Timezone settings
-    DEFAULT_GLOBAL_TIMEZONE,
     ExternalBroker,
-    KEY_GLOBAL_TIMEZONE,
-    KEY_LLM_CONFIG,
-    KEY_MQTT_CONFIG,
     LlmBackendType,
     LlmSettings,
     MqttSettings,
     SecurityLevel,
     SecurityWarning,
     SettingsStore,
+    // Timezone settings
+    DEFAULT_GLOBAL_TIMEZONE,
+    KEY_GLOBAL_TIMEZONE,
+    KEY_LLM_CONFIG,
+    KEY_MQTT_CONFIG,
 };
 
 pub use llm_backends::{
@@ -192,15 +192,15 @@ pub use device_registry::{
 };
 
 pub use dashboards::{
-    ComponentPosition, Dashboard, DashboardLayout, DashboardStore, DashboardTemplate,
-    LayoutBreakpoints, RequiredResources, RowsValue, default_templates,
+    default_templates, ComponentPosition, Dashboard, DashboardLayout, DashboardStore,
+    DashboardTemplate, LayoutBreakpoints, RequiredResources, RowsValue,
 };
 
 // Re-exports from core (backward compatibility)
 pub use neomind_core::storage::{StorageBackend, StorageError, StorageFactory};
 
 // Backends module exports
-pub use backends::{RedbBackend, RedbBackendConfig, available_backends, create_backend};
+pub use backends::{available_backends, create_backend, RedbBackend, RedbBackendConfig};
 
 // Singleton module exports
 pub use singleton::{cache_size, clear_cache, close_db, get_or_open_db, is_cached};

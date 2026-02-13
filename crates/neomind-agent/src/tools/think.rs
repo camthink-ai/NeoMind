@@ -200,12 +200,10 @@ mod tests {
             result.data["thought"],
             "I need to analyze this request before taking action."
         );
-        assert!(
-            result.data["formatted"]
-                .as_str()
-                .unwrap()
-                .contains("Thinking")
-        );
+        assert!(result.data["formatted"]
+            .as_str()
+            .unwrap()
+            .contains("Thinking"));
     }
 
     #[tokio::test]

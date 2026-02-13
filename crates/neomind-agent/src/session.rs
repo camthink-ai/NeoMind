@@ -16,7 +16,7 @@ use super::error::{NeoMindError, Result};
 
 // Re-export instance manager for convenience
 pub use neomind_llm::instance_manager::{
-    BackendTypeDefinition, LlmBackendInstanceManager, get_instance_manager,
+    get_instance_manager, BackendTypeDefinition, LlmBackendInstanceManager,
 };
 
 use neomind_storage::LlmBackendInstance;

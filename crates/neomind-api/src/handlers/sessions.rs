@@ -384,7 +384,7 @@ async fn process_stream_to_channel(
     }
 }
 use crate::models::{
-    ChatRequest, ChatResponse, ErrorResponse, common::ApiResponse, pagination::Pagination,
+    common::ApiResponse, pagination::Pagination, ChatRequest, ChatResponse, ErrorResponse,
 };
 
 use super::ServerState;
@@ -627,7 +627,7 @@ pub async fn chat_handler(
     Path(id): Path<String>,
     Json(req): Json<ChatRequest>,
 ) -> Result<Json<ChatResponse>, ErrorResponse> {
-    use tokio::time::{Duration, timeout};
+    use tokio::time::{timeout, Duration};
 
     println!(
         "[chat_handler] Received request for session {}, message: {}",

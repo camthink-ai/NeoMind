@@ -605,45 +605,44 @@ impl DeviceRegistryStore {
 
             // Update type index if type changed
             if let Some(old_type) = old_device_type {
-                if old_type != new_device_type
-                {
-                let mut index_table = write_txn.open_table(TYPE_INDEX_TABLE)?;
+                if old_type != new_device_type {
+                    let mut index_table = write_txn.open_table(TYPE_INDEX_TABLE)?;
 
-                // Remove from old type
-                let old_type_key = old_type.as_str();
-                let old_device_ids: Vec<String> = match index_table.get(old_type_key)? {
-                    Some(value) => value
-                        .value()
-                        .split(',')
-                        .filter(|s| !s.is_empty() && *s != device_id)
-                        .map(String::from)
-                        .collect(),
-                    None => Vec::new(),
-                };
+                    // Remove from old type
+                    let old_type_key = old_type.as_str();
+                    let old_device_ids: Vec<String> = match index_table.get(old_type_key)? {
+                        Some(value) => value
+                            .value()
+                            .split(',')
+                            .filter(|s| !s.is_empty() && *s != device_id)
+                            .map(String::from)
+                            .collect(),
+                        None => Vec::new(),
+                    };
 
-                if old_device_ids.is_empty() {
-                    index_table.remove(old_type_key)?;
-                } else {
-                    index_table.insert(old_type_key, old_device_ids.join(",").as_str())?;
-                }
+                    if old_device_ids.is_empty() {
+                        index_table.remove(old_type_key)?;
+                    } else {
+                        index_table.insert(old_type_key, old_device_ids.join(",").as_str())?;
+                    }
 
-                // Add to new type
-                let key = new_device_type.as_str();
-                let mut device_ids: Vec<String> = match index_table.get(key)? {
-                    Some(value) => value
-                        .value()
-                        .split(',')
-                        .filter(|s| !s.is_empty())
-                        .map(String::from)
-                        .collect(),
-                    None => Vec::new(),
-                };
+                    // Add to new type
+                    let key = new_device_type.as_str();
+                    let mut device_ids: Vec<String> = match index_table.get(key)? {
+                        Some(value) => value
+                            .value()
+                            .split(',')
+                            .filter(|s| !s.is_empty())
+                            .map(String::from)
+                            .collect(),
+                        None => Vec::new(),
+                    };
 
-                if !device_ids.contains(&device_id.to_string()) {
-                    device_ids.push(device_id.to_string());
-                }
+                    if !device_ids.contains(&device_id.to_string()) {
+                        device_ids.push(device_id.to_string());
+                    }
 
-                index_table.insert(key, device_ids.join(",").as_str())?;
+                    index_table.insert(key, device_ids.join(",").as_str())?;
                 }
             }
         }

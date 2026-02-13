@@ -27,7 +27,7 @@ use crate::message::{Content, ContentPart, Message, MessageRole};
 use once_cell::sync::Lazy;
 
 #[cfg(feature = "tiktoken")]
-use tiktoken_rs::{CoreBPE, cl100k_base, p50k_base};
+use tiktoken_rs::{cl100k_base, p50k_base, CoreBPE};
 
 /// Mode for token counting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

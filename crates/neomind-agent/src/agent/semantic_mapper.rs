@@ -1114,11 +1114,9 @@ mod tests {
     #[test]
     fn test_translate_term() {
         let translations = SemanticToolMapper::translate_term("客厅灯");
-        assert!(
-            translations
-                .iter()
-                .any(|t| t.contains("living") || t.contains("light"))
-        );
+        assert!(translations
+            .iter()
+            .any(|t| t.contains("living") || t.contains("light")));
 
         let translations = SemanticToolMapper::translate_term("bedroom");
         assert!(translations.iter().any(|t| t.contains("卧室")));
@@ -1213,21 +1211,17 @@ mod tests {
         let combinations = SemanticToolMapper::decompose_compound_reference("走廊灯");
         assert!(!combinations.is_empty());
         // Should contain ("走廊", "灯") or similar
-        assert!(
-            combinations
-                .iter()
-                .any(|(l, d)| l.contains("走廊") || d.contains("灯"))
-        );
+        assert!(combinations
+            .iter()
+            .any(|(l, d)| l.contains("走廊") || d.contains("灯")));
 
         // Test English compound phrase decomposition
         let combinations = SemanticToolMapper::decompose_compound_reference("living room light");
         assert!(!combinations.is_empty());
         // Should contain location and device type
-        assert!(
-            combinations
-                .iter()
-                .any(|(l, d)| l.contains("living") || d.contains("light"))
-        );
+        assert!(combinations
+            .iter()
+            .any(|(l, d)| l.contains("living") || d.contains("light")));
     }
 
     #[test]

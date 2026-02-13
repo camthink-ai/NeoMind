@@ -14,7 +14,7 @@ pub mod types;
 pub use middleware::rate_limit_middleware;
 pub use router::{create_router, create_router_with_state};
 pub use state::DeviceStatusUpdate;
-pub use types::{MAX_REQUEST_BODY_SIZE, ServerState};
+pub use types::{ServerState, MAX_REQUEST_BODY_SIZE};
 
 use std::net::SocketAddr;
 use std::time::Duration;

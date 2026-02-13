@@ -1,13 +1,13 @@
 //! Device telemetry and command history handlers.
 
 use axum::extract::{Path, Query, State};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use std::collections::HashMap;
 
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 
 /// Get device telemetry data (time series).
@@ -435,23 +435,24 @@ pub async fn get_device_telemetry_summary_handler(
             );
         } else {
             // Try to get current value from DeviceService
-            if let Ok(current_values) = state.devices.service.get_current_metrics(&device_id).await {
+            if let Ok(current_values) = state.devices.service.get_current_metrics(&device_id).await
+            {
                 if let Some(val) = current_values.get(metric_name) {
                     summary_data.insert(
-                    metric_name.to_string(),
-                    json!({
-                        "display_name": display_name,
-                        "unit": unit,
-                        "data_type": data_type,
-                        "is_virtual": is_virtual,
-                        "current": metric_value_to_json(val),
-                        "current_timestamp": chrono::Utc::now().timestamp(),
-                        "avg": null,
-                        "min": null,
-                        "max": null,
-                        "count": 0,
-                    }),
-                );
+                        metric_name.to_string(),
+                        json!({
+                            "display_name": display_name,
+                            "unit": unit,
+                            "data_type": data_type,
+                            "is_virtual": is_virtual,
+                            "current": metric_value_to_json(val),
+                            "current_timestamp": chrono::Utc::now().timestamp(),
+                            "avg": null,
+                            "min": null,
+                            "max": null,
+                            "count": 0,
+                        }),
+                    );
                 }
             }
         }

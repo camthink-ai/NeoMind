@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use neomind_devices::mdl_format::DeviceTypeDefinition;
-use neomind_rules::{RuleEngine, dsl::RuleCondition};
+use neomind_rules::{dsl::RuleCondition, RuleEngine};
 
 // Import configuration for default max_tokens
 use neomind_core::config::agent_env_vars;

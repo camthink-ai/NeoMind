@@ -11,9 +11,9 @@ use serde_json::Value;
 
 use neomind_devices::{builtin_types, mdl_format::DeviceTypeDefinition};
 use neomind_tools::{
-    Tool, ToolError, ToolOutput,
     error::Result as ToolResult,
     tool::{object_schema, string_property},
+    Tool, ToolError, ToolOutput,
 };
 
 /// ListDeviceTypes tool - queries all available device types.

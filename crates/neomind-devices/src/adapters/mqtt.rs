@@ -30,7 +30,7 @@ use crate::telemetry::TimeSeriesStorage;
 use crate::unified_extractor::UnifiedExtractor;
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use futures::{Stream, StreamExt};
 use neomind_core::EventBus;
 use neomind_core::NeoMindEvent;
@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tracing::trace;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -570,7 +570,11 @@ impl MqttAdapter {
             }
         }
 
-        if matches { device_id } else { None }
+        if matches {
+            device_id
+        } else {
+            None
+        }
     }
 
     /// Extract metric name from topic.
@@ -919,7 +923,8 @@ impl MqttAdapter {
             Ok(_) => {
                 trace!(
                     "Sent metric event to channel: {}/{}",
-                    device_id, metric_name
+                    device_id,
+                    metric_name
                 );
             }
             Err(_e) => {
@@ -1517,63 +1522,64 @@ impl MqttAdapter {
                     let device_id_for_fallback = extract_device_id_from_topic(&topic, config);
                     if let Some(device_id) = device_id_for_fallback {
                         if let Ok(value) = MqttAdapter::default_parse_value(&payload) {
-                        let metric_name = extract_metric_name_from_topic(&topic)
-                            .unwrap_or_else(|| "value".to_string());
+                            let metric_name = extract_metric_name_from_topic(&topic)
+                                .unwrap_or_else(|| "value".to_string());
 
-                        // Update metric cache
-                        {
-                            let mut cache = metric_cache.write().await;
-                            cache
-                                .entry(device_id.clone())
-                                .or_default()
-                                .insert(metric_name.clone(), (value.clone(), now));
-                        }
+                            // Update metric cache
+                            {
+                                let mut cache = metric_cache.write().await;
+                                cache
+                                    .entry(device_id.clone())
+                                    .or_default()
+                                    .insert(metric_name.clone(), (value.clone(), now));
+                            }
 
-                        // Store in telemetry storage
-                        if let Some(storage) = telemetry_storage.read().await.as_ref() {
-                            let data_point = crate::telemetry::DataPoint {
-                                timestamp: now.timestamp(),
+                            // Store in telemetry storage
+                            if let Some(storage) = telemetry_storage.read().await.as_ref() {
+                                let data_point = crate::telemetry::DataPoint {
+                                    timestamp: now.timestamp(),
+                                    value: value.clone(),
+                                    quality: None,
+                                };
+                                let _ = storage.write(&device_id, &metric_name, data_point).await;
+                            }
+
+                            // Emit event to device event channel - event forwarding task will publish to EventBus
+                            if let Err(e) = event_tx.send(DeviceEvent::Metric {
+                                device_id: device_id.clone(),
+                                metric: metric_name.clone(),
                                 value: value.clone(),
-                                quality: None,
-                            };
-                            let _ = storage.write(&device_id, &metric_name, data_point).await;
-                        }
+                                timestamp: now.timestamp(),
+                            }) {
+                                error!(
+                                    "Failed to send metric event to channel: {}/{} - {}",
+                                    device_id, metric_name, e
+                                );
+                            }
 
-                        // Emit event to device event channel - event forwarding task will publish to EventBus
-                        if let Err(e) = event_tx.send(DeviceEvent::Metric {
-                            device_id: device_id.clone(),
-                            metric: metric_name.clone(),
-                            value: value.clone(),
-                            timestamp: now.timestamp(),
-                        }) {
-                            error!(
-                                "Failed to send metric event to channel: {}/{} - {}",
-                                device_id, metric_name, e
-                            );
-                        }
+                            // Note: Do NOT publish DeviceMetric to EventBus here - the event forwarding task
+                            // in create_mqtt_adapter handles all EventBus publishing to avoid duplicates
 
-                        // Note: Do NOT publish DeviceMetric to EventBus here - the event forwarding task
-                        // in create_mqtt_adapter handles all EventBus publishing to avoid duplicates
-
-                        // Publish device online event - extract device_type from topic if available
-                        // This is NOT duplicated by the forwarding task
-                        if let Some(bus) = event_bus {
-                            let device_type = extract_device_type_from_topic(&topic);
-                            info!(
+                            // Publish device online event - extract device_type from topic if available
+                            // This is NOT duplicated by the forwarding task
+                            if let Some(bus) = event_bus {
+                                let device_type = extract_device_type_from_topic(&topic);
+                                info!(
                                 "Publishing DeviceOnline to EventBus: device_id={}, device_type={:?}",
                                 device_id, device_type
                             );
-                            bus.publish(NeoMindEvent::DeviceOnline {
-                                device_id: device_id.clone(),
-                                device_type: device_type.unwrap_or_else(|| "unknown".to_string()),
-                                timestamp: now.timestamp(),
-                            })
-                            .await;
-                        } else {
-                            warn!(
+                                bus.publish(NeoMindEvent::DeviceOnline {
+                                    device_id: device_id.clone(),
+                                    device_type: device_type
+                                        .unwrap_or_else(|| "unknown".to_string()),
+                                    timestamp: now.timestamp(),
+                                })
+                                .await;
+                            } else {
+                                warn!(
                                 "EventBus is None in handle_mqtt_notification - cannot publish DeviceOnline"
                             );
-                        }
+                            }
                         }
                     } // Close: if let Some(device_id)
                 } // Close: if is_standard_uplink
@@ -1866,7 +1872,11 @@ fn match_topic_pattern_helper(topic: &str, pattern: &str) -> Option<String> {
         }
     }
 
-    if matches { device_id } else { None }
+    if matches {
+        device_id
+    } else {
+        None
+    }
 }
 
 /// Helper function to extract metric name from topic.

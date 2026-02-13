@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
 
 /// Webhook device adapter configuration.
@@ -229,13 +229,13 @@ impl WebhookAdapter {
         // Check IP whitelist (if configured)
         if !self.config.allowed_ips.is_empty() {
             if let Some(ip) = remote_ip {
-            let ip_str = ip.to_string();
-            if !self.config.allowed_ips.contains(&ip_str) {
-                return Err(AdapterError::Connection(format!(
-                    "IP {} not in whitelist",
-                    ip_str
-                )));
-            }
+                let ip_str = ip.to_string();
+                if !self.config.allowed_ips.contains(&ip_str) {
+                    return Err(AdapterError::Connection(format!(
+                        "IP {} not in whitelist",
+                        ip_str
+                    )));
+                }
             }
         }
 

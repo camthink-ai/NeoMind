@@ -1,6 +1,6 @@
 //! Bulk message operations (migrated from alerts to messages).
 
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use serde_json::json;
 
 use neomind_core::event::NeoMindEvent;
@@ -11,8 +11,8 @@ use super::models::{
     BulkOperationResult, BulkResolveAlertsRequest,
 };
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 
 /// Bulk create messages (alerts endpoint redirected to messages).

@@ -9,17 +9,17 @@
 //! - extension_type field removed from metadata
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 
-use crate::handlers::common::{HandlerResult, ok};
+use crate::handlers::common::{ok, HandlerResult};
 use crate::handlers::devices::models::TimeRangeQuery;
 use crate::models::error::ErrorResponse;
 use crate::server::ServerState;
@@ -651,7 +651,7 @@ async fn publish_extension_metrics(
     extension_id: &str,
     result: &serde_json::Value,
 ) {
-    use neomind_core::{MetricValue as CoreMetricValue, event::NeoMindEvent};
+    use neomind_core::{event::NeoMindEvent, MetricValue as CoreMetricValue};
 
     // Get event bus if available
     let event_bus = match &state.core.event_bus {

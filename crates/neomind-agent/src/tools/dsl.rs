@@ -11,13 +11,13 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use neomind_rules::{
-    CompiledRule, HistoryFilter, RuleEngine, RuleHistoryStorage, RuleId, RuleStatus,
     dsl::{ComparisonOperator, RuleAction, RuleCondition},
+    CompiledRule, HistoryFilter, RuleEngine, RuleHistoryStorage, RuleId, RuleStatus,
 };
 use neomind_tools::{
-    Tool, ToolError, ToolOutput,
     error::Result as ToolResult,
     tool::{boolean_property, number_property, object_schema, string_property},
+    Tool, ToolError, ToolOutput,
 };
 
 /// ListRules tool - queries all rules with filtering.

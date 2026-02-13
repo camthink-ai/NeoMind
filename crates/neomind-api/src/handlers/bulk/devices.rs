@@ -1,6 +1,6 @@
 //! Bulk device operations.
 
-use axum::{Json, extract::State};
+use axum::{extract::State, Json};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -8,7 +8,7 @@ use neomind_devices::MetricValue;
 
 use super::models::{BulkDeleteDeviceTypesRequest, BulkOperationResult};
 use crate::handlers::common::HandlerResult;
-use crate::handlers::{ServerState, common::ok};
+use crate::handlers::{common::ok, ServerState};
 
 /// Bulk delete device types.
 ///

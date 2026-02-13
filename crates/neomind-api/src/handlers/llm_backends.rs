@@ -3,21 +3,21 @@
 //! This module provides REST API endpoints for managing multiple LLM backend instances.
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 
 use neomind_llm::instance_manager::{
-    BackendTypeDefinition, LlmBackendInstanceManager, get_instance_manager,
+    get_instance_manager, BackendTypeDefinition, LlmBackendInstanceManager,
 };
 use neomind_storage::{BackendCapabilities, LlmBackendInstance, LlmBackendStore, LlmBackendType};
 

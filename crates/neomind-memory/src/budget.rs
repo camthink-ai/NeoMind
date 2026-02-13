@@ -447,18 +447,14 @@ mod tests {
         let allocation = budget.allocate_messages(messages, &counter, PriorityFilter::None);
 
         // Critical and high priority should be included
-        assert!(
-            allocation
-                .messages
-                .iter()
-                .any(|m| m.priority == Priority::Critical)
-        );
-        assert!(
-            allocation
-                .messages
-                .iter()
-                .any(|m| m.priority == Priority::High)
-        );
+        assert!(allocation
+            .messages
+            .iter()
+            .any(|m| m.priority == Priority::Critical));
+        assert!(allocation
+            .messages
+            .iter()
+            .any(|m| m.priority == Priority::High));
 
         // Low relevance (below 0.15) should be filtered out
         assert!(!allocation.messages.iter().any(|m| m.score < 0.15));

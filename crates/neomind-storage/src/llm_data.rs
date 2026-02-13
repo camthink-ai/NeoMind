@@ -456,25 +456,25 @@ impl LongTermMemoryStore {
             // Update indexes
             if let Some(data) = memory_data {
                 if let Ok(memory) = serde_json::from_slice::<MemoryEntry>(&data) {
-                // Update type index
-                let mut type_index = self.type_index.write().await;
-                if let Some(count) = type_index.get_mut(&memory.memory_type) {
-                    *count = count.saturating_sub(1);
-                    if *count == 0 {
-                        type_index.remove(&memory.memory_type);
-                    }
-                }
-
-                // Update keyword index
-                let mut keyword_index = self.keyword_index.write().await;
-                for keyword in &memory.keywords {
-                    if let Some(ids) = keyword_index.get_mut(keyword) {
-                        ids.remove(&id.to_string());
-                        if ids.is_empty() {
-                            keyword_index.remove(keyword);
+                    // Update type index
+                    let mut type_index = self.type_index.write().await;
+                    if let Some(count) = type_index.get_mut(&memory.memory_type) {
+                        *count = count.saturating_sub(1);
+                        if *count == 0 {
+                            type_index.remove(&memory.memory_type);
                         }
                     }
-                }
+
+                    // Update keyword index
+                    let mut keyword_index = self.keyword_index.write().await;
+                    for keyword in &memory.keywords {
+                        if let Some(ids) = keyword_index.get_mut(keyword) {
+                            ids.remove(&id.to_string());
+                            if ids.is_empty() {
+                                keyword_index.remove(keyword);
+                            }
+                        }
+                    }
                 }
             }
         }

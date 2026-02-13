@@ -9,16 +9,16 @@
 //! GET    /api/messages/stats        - Message statistics
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use serde::Deserialize;
 
 use neomind_messages::{Message, MessageId, MessageSeverity};
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 
 // Import json macro for handler responses

@@ -40,16 +40,16 @@ pub use event::{EventMetadata, MetricValue, NeoMindEvent, ProposedAction};
 
 // Event bus exports
 pub use eventbus::{
-    DEFAULT_CHANNEL_CAPACITY, EventBus, EventBusReceiver, FilterBuilder, FilteredReceiver,
-    NoOpPersistence, PersistError, SharedEventBus,
+    EventBus, EventBusReceiver, FilterBuilder, FilteredReceiver, NoOpPersistence, PersistError,
+    SharedEventBus, DEFAULT_CHANNEL_CAPACITY,
 };
 
 /// Re-exports commonly used types.
 pub mod prelude {
     // Configuration
     pub use crate::config::{
-        LlmProvider, endpoints, env_vars, models, normalize_ollama_endpoint,
-        normalize_openai_endpoint,
+        endpoints, env_vars, models, normalize_ollama_endpoint, normalize_openai_endpoint,
+        LlmProvider,
     };
 
     // Error handling
@@ -114,6 +114,17 @@ pub mod prelude {
 
     // Integration system
     pub use crate::integration::{
+        // Connector exports
+        connector::{
+            BaseConnector, ConnectionMetrics, Connector, ConnectorConfig, ConnectorError,
+            DynConnector, Result as ConnectorResult,
+        },
+        // Transformer exports
+        transformer::{
+            BaseTransformer, ConversionFunction, DynTransformer, EntityMapping, MappingConfig,
+            Result as TransformerResult, TransformType, TransformationContext, TransformationError,
+            Transformer, UnitConversion, ValueTransform,
+        },
         DiscoveredInfo,
         DynIntegration,
         Integration,
@@ -126,16 +137,5 @@ pub mod prelude {
         IntegrationState,
         IntegrationType,
         Result as IntegrationResult,
-        // Connector exports
-        connector::{
-            BaseConnector, ConnectionMetrics, Connector, ConnectorConfig, ConnectorError,
-            DynConnector, Result as ConnectorResult,
-        },
-        // Transformer exports
-        transformer::{
-            BaseTransformer, ConversionFunction, DynTransformer, EntityMapping, MappingConfig,
-            Result as TransformerResult, TransformType, TransformationContext, TransformationError,
-            Transformer, UnitConversion, ValueTransform,
-        },
     };
 }

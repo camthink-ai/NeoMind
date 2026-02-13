@@ -1,8 +1,8 @@
 //! Tests for basic handlers.
 
 use axum::extract::State;
-use neomind_api::handlers::ServerState;
 use neomind_api::handlers::basic::*;
+use neomind_api::handlers::ServerState;
 
 async fn create_test_server_state() -> ServerState {
     crate::common::create_test_server_state().await

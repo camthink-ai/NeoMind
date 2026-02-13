@@ -167,7 +167,9 @@ impl UnifiedExtractor {
                 for metric_def in &template.metrics {
                     trace!(
                         "Attempting to extract metric '{}' (path: {}) for device '{}'",
-                        metric_def.name, metric_def.name, device_id
+                        metric_def.name,
+                        metric_def.name,
+                        device_id
                     );
                     match self.extract_by_path(raw_data, &metric_def.name, 0) {
                         Ok(Some(value)) => {
@@ -304,37 +306,37 @@ impl UnifiedExtractor {
             // Handle array notation [index]
             if let Some(bracket_start) = part.find('[') {
                 if let Some(bracket_end) = part.find(']') {
-                let key = &part[0..bracket_start];
-                let index_str = &part[bracket_start + 1..bracket_end];
+                    let key = &part[0..bracket_start];
+                    let index_str = &part[bracket_start + 1..bracket_end];
 
-                // First navigate to the key
-                if !key.is_empty() {
+                    // First navigate to the key
+                    if !key.is_empty() {
+                        match current {
+                            Value::Object(map) => {
+                                current = map.get(key).ok_or_else(|| {
+                                    format!("Key '{}' not found at part {}", key, i)
+                                })?;
+                            }
+                            _ => return Ok(None),
+                        }
+                    }
+
+                    // Then access the array index
+                    let index: usize = index_str
+                        .parse()
+                        .map_err(|_| format!("Invalid array index: {}", index_str))?;
+
                     match current {
-                        Value::Object(map) => {
-                            current = map
-                                .get(key)
-                                .ok_or_else(|| format!("Key '{}' not found at part {}", key, i))?;
+                        Value::Array(arr) => {
+                            // Return None for out of bounds instead of error
+                            current = match arr.get(index) {
+                                Some(v) => v,
+                                None => return Ok(None),
+                            };
                         }
                         _ => return Ok(None),
                     }
-                }
-
-                // Then access the array index
-                let index: usize = index_str
-                    .parse()
-                    .map_err(|_| format!("Invalid array index: {}", index_str))?;
-
-                match current {
-                    Value::Array(arr) => {
-                        // Return None for out of bounds instead of error
-                        current = match arr.get(index) {
-                            Some(v) => v,
-                            None => return Ok(None),
-                        };
-                    }
-                    _ => return Ok(None),
-                }
-                continue;
+                    continue;
                 }
             }
 
@@ -387,7 +389,8 @@ impl UnifiedExtractor {
         if depth > self.config.max_depth {
             trace!(
                 "Max depth {} reached for device '{}' in auto-extract",
-                self.config.max_depth, device_id
+                self.config.max_depth,
+                device_id
             );
             return;
         }
@@ -467,7 +470,8 @@ impl UnifiedExtractor {
                         // Empty object - skip
                         trace!(
                             "Skipping empty object '{}' for device '{}' (auto-extract)",
-                            current_path, device_id
+                            current_path,
+                            device_id
                         );
                     }
                 } else if let Value::Array(arr) = value {

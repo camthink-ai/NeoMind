@@ -11,7 +11,7 @@ use uuid::Uuid;
 // Custom serialization module for binary data as base64
 mod metric_value_serde {
     use super::*;
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
 
     pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
     where

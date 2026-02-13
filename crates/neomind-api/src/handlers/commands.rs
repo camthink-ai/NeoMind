@@ -1,13 +1,13 @@
 //! Command history API handlers.
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use neomind_commands::CommandManager;
 use serde::{Deserialize, Serialize};

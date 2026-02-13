@@ -310,11 +310,9 @@ fn test_unified_path_extraction_edge_cases() {
     );
 
     // Array out of bounds
-    assert!(
-        extractor
-            .extract_by_path(&json!({"arr": [1, 2]}), "arr[5]", 0)
-            .is_ok()
-    ); // Returns Ok(None), not an error
+    assert!(extractor
+        .extract_by_path(&json!({"arr": [1, 2]}), "arr[5]", 0)
+        .is_ok()); // Returns Ok(None), not an error
 }
 
 #[tokio::test]

@@ -12,7 +12,7 @@ use crate::discovery::{
     DataType, HexAnalyzer, InferredType, StatisticsAnalyzer, StructureAnalyzer, ValuePattern,
     ValueRange, ValueStatistics,
 };
-use neomind_core::{GenerationParams, LlmRuntime, Message, llm::backend::LlmInput};
+use neomind_core::{llm::backend::LlmInput, GenerationParams, LlmRuntime, Message};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -599,7 +599,11 @@ impl SemanticInference {
             // Handle edge cases: "$.key", "$. key", etc.
             let field_name = if parent_path.starts_with("$.") {
                 let rest = parent_path[2..].trim_start();
-                if rest.is_empty() { &parent_path } else { rest }
+                if rest.is_empty() {
+                    &parent_path
+                } else {
+                    rest
+                }
             } else {
                 &parent_path
             };
@@ -1222,7 +1226,11 @@ impl SemanticInference {
         // Strip $. prefix with whitespace handling
         let path = if path.starts_with("$.") {
             let rest = path[2..].trim_start();
-            if rest.is_empty() { path } else { rest }
+            if rest.is_empty() {
+                path
+            } else {
+                rest
+            }
         } else {
             path
         };

@@ -6,9 +6,9 @@
 //! - Approving/rejecting draft devices
 //! - Managing auto-onboarding configuration
 
-use neomind_automation::SemanticType;
 use neomind_automation::discovery::auto_onboard::AutoOnboardConfig;
 use neomind_automation::discovery::types::DataType;
+use neomind_automation::SemanticType;
 use neomind_automation::{AutoOnboardManager, DiscoveredMetric};
 use neomind_core::llm::backend::LlmRuntime;
 use neomind_devices::{
@@ -17,12 +17,12 @@ use neomind_devices::{
 };
 use neomind_llm::backends::{OllamaConfig, OllamaRuntime};
 
-use crate::handlers::common::{HandlerResult, ok};
+use crate::handlers::common::{ok, HandlerResult};
 use crate::models::ErrorResponse;
 use crate::server::types::ServerState;
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use futures::Stream;
 use serde::{Deserialize, Serialize};

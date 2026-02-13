@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tracing::{debug, info, warn};
 
-use neomind_core::{MetricValue as CoreMetricValue, datasource::DataSourceId, event::NeoMindEvent};
+use neomind_core::{datasource::DataSourceId, event::NeoMindEvent, MetricValue as CoreMetricValue};
 
 use base64;
 

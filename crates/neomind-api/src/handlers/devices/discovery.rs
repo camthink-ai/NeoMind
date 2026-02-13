@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use neomind_devices::discovery::DeviceDiscovery;
 
 use super::models::{DiscoveredDeviceDto, DiscoveryRequest};
-use crate::handlers::common::{HandlerResult, ok};
+use crate::handlers::common::{ok, HandlerResult};
 use crate::models::ErrorResponse;
 
 /// Discover devices by scanning a host.

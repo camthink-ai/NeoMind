@@ -19,7 +19,7 @@ pub use business_context::{BusinessContext, ContextRelevance, ContextScope};
 pub use device_registry::{DeviceAlias, DeviceCapability, DeviceLocation, DeviceRegistry};
 pub use dynamic_tools::DynamicToolGenerator;
 pub use health::{
-    ContextHealth, HealthCheckConfig, HealthStatus, calculate_health, calculate_health_with_config,
+    calculate_health, calculate_health_with_config, ContextHealth, HealthCheckConfig, HealthStatus,
 };
 pub use meta_tools::{MetaTool, MetaToolRegistry, SearchContext};
 pub use resource_index::{

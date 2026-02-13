@@ -1,5 +1,5 @@
 //! Simple standalone test for EventBus functionality
-use neomind_core::{EventBus, MetricValue, event::NeoMindEvent};
+use neomind_core::{event::NeoMindEvent, EventBus, MetricValue};
 
 #[tokio::main]
 async fn main() {

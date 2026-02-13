@@ -3,8 +3,8 @@
 use futures::future::join_all;
 use neomind_core::llm::backend::LlmRuntime;
 use neomind_core::{
-    EventBus, MetricValue, NeoMindEvent,
     message::{Content, ContentPart, Message, MessageRole},
+    EventBus, MetricValue, NeoMindEvent,
 };
 use neomind_devices::DeviceService;
 use neomind_llm::{CloudConfig, CloudRuntime, OllamaConfig, OllamaRuntime};
@@ -1042,214 +1042,213 @@ impl AgentExecutor {
                     let endpoint = backend.endpoint.clone().unwrap_or_default();
                     let model = backend.model.clone();
                     let cache_key = Self::build_runtime_cache_key(
-                format!("{:?}", backend.backend_type).as_str(),
-                endpoint.as_str(),
-                model.as_str(),
-            );
+                        format!("{:?}", backend.backend_type).as_str(),
+                        endpoint.as_str(),
+                        model.as_str(),
+                    );
 
-            // Check cache first
-            {
-                let cache = self.llm_runtime_cache.read().await;
-                if let Some(runtime) = cache.get(&cache_key) {
+                    // Check cache first
+                    {
+                        let cache = self.llm_runtime_cache.read().await;
+                        if let Some(runtime) = cache.get(&cache_key) {
+                            tracing::debug!(
+                                agent_id = %agent.id,
+                                backend = %backend_id,
+                                "LLM runtime cache hit"
+                            );
+                            return Ok(Some(runtime.clone()));
+                        }
+                    }
+
+                    // Cache miss - create new runtime
                     tracing::debug!(
                         agent_id = %agent.id,
                         backend = %backend_id,
-                        "LLM runtime cache hit"
+                        "LLM runtime cache miss, creating new runtime"
                     );
-                    return Ok(Some(runtime.clone()));
-                }
-            }
 
-            // Cache miss - create new runtime
-            tracing::debug!(
-                agent_id = %agent.id,
-                backend = %backend_id,
-                "LLM runtime cache miss, creating new runtime"
-            );
+                    let runtime = match backend.backend_type {
+                        LlmBackendType::Ollama => {
+                            let endpoint = backend
+                                .endpoint
+                                .clone()
+                                .unwrap_or_else(|| "http://localhost:11434".to_string());
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("OLLAMA_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(120);
+                            OllamaRuntime::new(
+                                OllamaConfig::new(&model)
+                                    .with_endpoint(&endpoint)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::OpenAi => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let endpoint = backend
+                                .endpoint
+                                .clone()
+                                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("OPENAI_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::custom(&api_key, &endpoint)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::Anthropic => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let _endpoint = backend
+                                .endpoint
+                                .clone()
+                                .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("ANTHROPIC_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::anthropic(&api_key)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::Google => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let _endpoint = backend.endpoint.clone().unwrap_or_else(|| {
+                                "https://generativelanguage.googleapis.com/v1beta".to_string()
+                            });
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("GOOGLE_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::google(&api_key)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::XAi => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let _endpoint = backend
+                                .endpoint
+                                .clone()
+                                .unwrap_or_else(|| "https://api.x.ai/v1".to_string());
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("XAI_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::grok(&api_key)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::Qwen => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let endpoint = backend.endpoint.clone().unwrap_or_else(|| {
+                                "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()
+                            });
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("QWEN_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::custom(&api_key, &endpoint)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::DeepSeek => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let endpoint = backend
+                                .endpoint
+                                .clone()
+                                .unwrap_or_else(|| "https://api.deepseek.com".to_string());
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("DEEPSEEK_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::custom(&api_key, &endpoint)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::GLM => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let endpoint = backend.endpoint.clone().unwrap_or_else(|| {
+                                "https://open.bigmodel.cn/api/paas/v4".to_string()
+                            });
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("GLM_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::custom(&api_key, &endpoint)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                        LlmBackendType::MiniMax => {
+                            let api_key = backend.api_key.clone().unwrap_or_default();
+                            let endpoint = backend
+                                .endpoint
+                                .clone()
+                                .unwrap_or_else(|| "https://api.minimax.chat/v1".to_string());
+                            let model = backend.model.clone();
+                            let timeout = std::env::var("MINIMAX_TIMEOUT_SECS")
+                                .ok()
+                                .and_then(|s| s.parse().ok())
+                                .unwrap_or(60);
+                            CloudRuntime::new(
+                                CloudConfig::custom(&api_key, &endpoint)
+                                    .with_model(&model)
+                                    .with_timeout_secs(timeout),
+                            )
+                            .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
+                        }
+                    };
 
-            let runtime = match backend.backend_type {
-                LlmBackendType::Ollama => {
-                    let endpoint = backend
-                        .endpoint
-                        .clone()
-                        .unwrap_or_else(|| "http://localhost:11434".to_string());
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("OLLAMA_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(120);
-                    OllamaRuntime::new(
-                        OllamaConfig::new(&model)
-                            .with_endpoint(&endpoint)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::OpenAi => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let endpoint = backend
-                        .endpoint
-                        .clone()
-                        .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("OPENAI_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::custom(&api_key, &endpoint)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::Anthropic => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let _endpoint = backend
-                        .endpoint
-                        .clone()
-                        .unwrap_or_else(|| "https://api.anthropic.com/v1".to_string());
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("ANTHROPIC_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::anthropic(&api_key)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::Google => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let _endpoint = backend.endpoint.clone().unwrap_or_else(|| {
-                        "https://generativelanguage.googleapis.com/v1beta".to_string()
-                    });
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("GOOGLE_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::google(&api_key)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::XAi => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let _endpoint = backend
-                        .endpoint
-                        .clone()
-                        .unwrap_or_else(|| "https://api.x.ai/v1".to_string());
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("XAI_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::grok(&api_key)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::Qwen => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let endpoint = backend.endpoint.clone().unwrap_or_else(|| {
-                        "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string()
-                    });
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("QWEN_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::custom(&api_key, &endpoint)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::DeepSeek => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let endpoint = backend
-                        .endpoint
-                        .clone()
-                        .unwrap_or_else(|| "https://api.deepseek.com".to_string());
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("DEEPSEEK_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::custom(&api_key, &endpoint)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::GLM => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let endpoint = backend
-                        .endpoint
-                        .clone()
-                        .unwrap_or_else(|| "https://open.bigmodel.cn/api/paas/v4".to_string());
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("GLM_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::custom(&api_key, &endpoint)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-                LlmBackendType::MiniMax => {
-                    let api_key = backend.api_key.clone().unwrap_or_default();
-                    let endpoint = backend
-                        .endpoint
-                        .clone()
-                        .unwrap_or_else(|| "https://api.minimax.chat/v1".to_string());
-                    let model = backend.model.clone();
-                    let timeout = std::env::var("MINIMAX_TIMEOUT_SECS")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(60);
-                    CloudRuntime::new(
-                        CloudConfig::custom(&api_key, &endpoint)
-                            .with_model(&model)
-                            .with_timeout_secs(timeout),
-                    )
-                    .map(|rt| Arc::new(rt) as Arc<dyn LlmRuntime + Send + Sync>)
-                }
-            };
-
-            match runtime {
-                Ok(rt) => {
-                    // Store in cache
-                    let mut cache = self.llm_runtime_cache.write().await;
-                    cache.insert(cache_key, rt.clone());
-                    tracing::info!(
-                        agent_id = %agent.id,
-                        backend = %backend_id,
-                        "LLM runtime created and cached"
-                    );
-                    return Ok(Some(rt));
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        agent_id = %agent.id,
-                        backend_type = ?backend.backend_type,
-                        error = %e,
-                        "Failed to create LLM runtime for agent '{}'", agent.name
-                    );
-                }
-            }
+                    match runtime {
+                        Ok(rt) => {
+                            // Store in cache
+                            let mut cache = self.llm_runtime_cache.write().await;
+                            cache.insert(cache_key, rt.clone());
+                            tracing::info!(
+                                agent_id = %agent.id,
+                                backend = %backend_id,
+                                "LLM runtime created and cached"
+                            );
+                            return Ok(Some(rt));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                agent_id = %agent.id,
+                                backend_type = ?backend.backend_type,
+                                error = %e,
+                                "Failed to create LLM runtime for agent '{}'", agent.name
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -3557,38 +3556,38 @@ Respond in JSON format:
                                 extract_image_data(&latest.value);
 
                             let values_json = serde_json::json!({
-                            "value": latest.value,
-                            "timestamp": latest.timestamp,
-                            "points_count": result.points.len(),
-                            "_is_image": true,
-                            "image_url": image_url,
-                            "image_base64": image_base64,
-                            "image_mime_type": image_mime,
-                        });
+                                "value": latest.value,
+                                "timestamp": latest.timestamp,
+                                "points_count": result.points.len(),
+                                "_is_image": true,
+                                "image_url": image_url,
+                                "image_base64": image_base64,
+                                "image_mime_type": image_mime,
+                            });
 
-                        data.push(DataCollected {
-                            source: format!("{}:{}", device_id, metric_name),
-                            data_type: metric_name.clone(),
-                            values: values_json,
-                            timestamp,
-                        });
+                            data.push(DataCollected {
+                                source: format!("{}:{}", device_id, metric_name),
+                                data_type: metric_name.clone(),
+                                values: values_json,
+                                timestamp,
+                            });
 
-                        image_found = true;
+                            image_found = true;
                         } else {
-                        // Regular metric - add latest value
-                        let values_json = serde_json::json!({
-                            "value": latest.value,
-                            "timestamp": latest.timestamp,
-                            "points_count": result.points.len(),
-                        });
+                            // Regular metric - add latest value
+                            let values_json = serde_json::json!({
+                                "value": latest.value,
+                                "timestamp": latest.timestamp,
+                                "points_count": result.points.len(),
+                            });
 
-                        data.push(DataCollected {
-                            source: format!("{}:{}", device_id, metric_name),
-                            data_type: metric_name.clone(),
-                            values: values_json,
-                            timestamp,
-                        });
-                    }
+                            data.push(DataCollected {
+                                source: format!("{}:{}", device_id, metric_name),
+                                data_type: metric_name.clone(),
+                                values: values_json,
+                                timestamp,
+                            });
+                        }
 
                         tracing::debug!(
                             device_id = %device_id,
@@ -4456,21 +4455,21 @@ Respond in JSON format:
                                 extract_image_data(&latest.value);
 
                             // Use URL if available, otherwise base64
-                        if let Some(url) = image_url {
-                            image_parts.push((
-                                d.source.clone(),
-                                d.data_type.clone(),
-                                ImageContent::Url(url),
-                            ));
-                        } else if let Some(base64) = image_base64 {
-                            let mime = image_mime.as_deref().unwrap_or("image/jpeg");
-                            image_parts.push((
-                                d.source.clone(),
-                                d.data_type.clone(),
-                                ImageContent::Base64(base64, mime.to_string()),
-                            ));
+                            if let Some(url) = image_url {
+                                image_parts.push((
+                                    d.source.clone(),
+                                    d.data_type.clone(),
+                                    ImageContent::Url(url),
+                                ));
+                            } else if let Some(base64) = image_base64 {
+                                let mime = image_mime.as_deref().unwrap_or("image/jpeg");
+                                image_parts.push((
+                                    d.source.clone(),
+                                    d.data_type.clone(),
+                                    ImageContent::Base64(base64, mime.to_string()),
+                                ));
+                            }
                         }
-                    }
                     }
                 }
             }
@@ -4560,29 +4559,29 @@ Respond in JSON format:
             {
                 if !analyses.is_empty() {
                     let summary: Vec<_> = analyses
-                    .iter()
-                    .take(1) // Reduced to 1 for small models
-                    .filter_map(|a| {
-                        a.get("analysis").and_then(|an| an.as_str()).map(|txt| {
-                            let conclusion =
-                                a.get("conclusion").and_then(|c| c.as_str()).unwrap_or("");
-                            if !conclusion.is_empty() {
-                                format!("- 分析: {} | 结论: {}", txt, conclusion)
-                            } else {
-                                format!("- 分析: {}", txt)
-                            }
+                        .iter()
+                        .take(1) // Reduced to 1 for small models
+                        .filter_map(|a| {
+                            a.get("analysis").and_then(|an| an.as_str()).map(|txt| {
+                                let conclusion =
+                                    a.get("conclusion").and_then(|c| c.as_str()).unwrap_or("");
+                                if !conclusion.is_empty() {
+                                    format!("- 分析: {} | 结论: {}", txt, conclusion)
+                                } else {
+                                    format!("- 分析: {}", txt)
+                                }
+                            })
                         })
-                    })
-                    .collect();
+                        .collect();
 
-                if !summary.is_empty() {
-                    history_parts.push(format!(
-                        "\n## 历史分析 (最近{}次)\n{}",
-                        summary.len(),
-                        summary.join("\n")
-                    ));
+                    if !summary.is_empty() {
+                        history_parts.push(format!(
+                            "\n## 历史分析 (最近{}次)\n{}",
+                            summary.len(),
+                            summary.join("\n")
+                        ));
+                    }
                 }
-            }
             }
 
             // === SEMANTIC PATTERNS (Long-term memory) ===
@@ -5134,124 +5133,125 @@ Respond in JSON format:
                         if let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) {
                             if let Some(obj) = value.as_object() {
                                 let situation_analysis: String = obj
-                                .get("situation_analysis")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let conclusion: String = obj
-                                .get("conclusion")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let mut reasoning_steps = Vec::new();
-                            if let Some(arr) = obj.get("reasoning_steps").and_then(|v| v.as_array())
-                            {
-                                for (i, item) in arr.iter().enumerate() {
-                                    let step_num = (i + 1) as u32;
-                                    let description: String = item
-                                        .get("description")
-                                        .and_then(|v| v.as_str())
-                                        .or_else(|| item.get("output").and_then(|v| v.as_str()))
-                                        .unwrap_or("")
-                                        .to_string();
-                                    if description.is_empty() {
-                                        continue;
-                                    }
-                                    let confidence = item
-                                        .get("confidence")
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or(0.8)
-                                        as f32;
-                                    reasoning_steps.push(neomind_storage::ReasoningStep {
-                                        step_number: step_num,
-                                        description,
-                                        step_type: "llm_analysis".to_string(),
-                                        input: Some(text_data_summary.join("\n")),
-                                        output: situation_analysis.clone(),
-                                        confidence,
-                                    });
-                                }
-                            }
-                            let mut decisions = Vec::new();
-                            if let Some(arr) = obj.get("decisions").and_then(|v| v.as_array()) {
-                                for item in arr {
-                                    let decision_type = item
-                                        .get("decision_type")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("analysis")
-                                        .to_string();
-                                    let description = item
-                                        .get("description")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let action = item
-                                        .get("action")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("review")
-                                        .to_string();
-                                    let rationale = item
-                                        .get("rationale")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    decisions.push(neomind_storage::Decision {
-                                        decision_type,
-                                        description,
-                                        action,
-                                        rationale,
-                                        expected_outcome: conclusion.clone(),
-                                    });
-                                }
-                            }
-                            if !situation_analysis.is_empty() || !conclusion.is_empty() {
-                                tracing::info!(
-                                    agent_id = %agent.id,
-                                    "Extracted decision process from JSON via lenient parsing"
-                                );
-                                return Ok((
-                                    if situation_analysis.is_empty() {
-                                        conclusion.chars().take(500).collect::<String>()
-                                    } else {
-                                        situation_analysis.clone()
-                                    },
-                                    if reasoning_steps.is_empty() {
-                                        vec![neomind_storage::ReasoningStep {
-                                            step_number: 1,
-                                            description: "LLM analysis completed".to_string(),
+                                    .get("situation_analysis")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let conclusion: String = obj
+                                    .get("conclusion")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let mut reasoning_steps = Vec::new();
+                                if let Some(arr) =
+                                    obj.get("reasoning_steps").and_then(|v| v.as_array())
+                                {
+                                    for (i, item) in arr.iter().enumerate() {
+                                        let step_num = (i + 1) as u32;
+                                        let description: String = item
+                                            .get("description")
+                                            .and_then(|v| v.as_str())
+                                            .or_else(|| item.get("output").and_then(|v| v.as_str()))
+                                            .unwrap_or("")
+                                            .to_string();
+                                        if description.is_empty() {
+                                            continue;
+                                        }
+                                        let confidence = item
+                                            .get("confidence")
+                                            .and_then(|v| v.as_f64())
+                                            .unwrap_or(0.8)
+                                            as f32;
+                                        reasoning_steps.push(neomind_storage::ReasoningStep {
+                                            step_number: step_num,
+                                            description,
                                             step_type: "llm_analysis".to_string(),
-                                            input: Some(format!("{} data sources", data.len())),
+                                            input: Some(text_data_summary.join("\n")),
                                             output: situation_analysis.clone(),
-                                            confidence: 0.7,
-                                        }]
-                                    } else {
-                                        reasoning_steps
-                                    },
-                                    if decisions.is_empty() {
-                                        vec![neomind_storage::Decision {
-                                            decision_type: "analysis".to_string(),
-                                            description: "See situation analysis for details"
-                                                .to_string(),
-                                            action: "review".to_string(),
-                                            rationale: "LLM provided structured analysis"
-                                                .to_string(),
+                                            confidence,
+                                        });
+                                    }
+                                }
+                                let mut decisions = Vec::new();
+                                if let Some(arr) = obj.get("decisions").and_then(|v| v.as_array()) {
+                                    for item in arr {
+                                        let decision_type = item
+                                            .get("decision_type")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("analysis")
+                                            .to_string();
+                                        let description = item
+                                            .get("description")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let action = item
+                                            .get("action")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("review")
+                                            .to_string();
+                                        let rationale = item
+                                            .get("rationale")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        decisions.push(neomind_storage::Decision {
+                                            decision_type,
+                                            description,
+                                            action,
+                                            rationale,
                                             expected_outcome: conclusion.clone(),
-                                        }]
-                                    } else {
-                                        decisions
-                                    },
-                                    if conclusion.is_empty() {
-                                        "分析完成。".to_string()
-                                    } else {
-                                        conclusion
-                                    },
-                                ));
-                            } else {
-                                // Both situation_analysis and conclusion are empty, fall through to final fallback
-                                tracing::debug!("JSON was valid but contained no useful data, falling back to raw text");
+                                        });
+                                    }
+                                }
+                                if !situation_analysis.is_empty() || !conclusion.is_empty() {
+                                    tracing::info!(
+                                        agent_id = %agent.id,
+                                        "Extracted decision process from JSON via lenient parsing"
+                                    );
+                                    return Ok((
+                                        if situation_analysis.is_empty() {
+                                            conclusion.chars().take(500).collect::<String>()
+                                        } else {
+                                            situation_analysis.clone()
+                                        },
+                                        if reasoning_steps.is_empty() {
+                                            vec![neomind_storage::ReasoningStep {
+                                                step_number: 1,
+                                                description: "LLM analysis completed".to_string(),
+                                                step_type: "llm_analysis".to_string(),
+                                                input: Some(format!("{} data sources", data.len())),
+                                                output: situation_analysis.clone(),
+                                                confidence: 0.7,
+                                            }]
+                                        } else {
+                                            reasoning_steps
+                                        },
+                                        if decisions.is_empty() {
+                                            vec![neomind_storage::Decision {
+                                                decision_type: "analysis".to_string(),
+                                                description: "See situation analysis for details"
+                                                    .to_string(),
+                                                action: "review".to_string(),
+                                                rationale: "LLM provided structured analysis"
+                                                    .to_string(),
+                                                expected_outcome: conclusion.clone(),
+                                            }]
+                                        } else {
+                                            decisions
+                                        },
+                                        if conclusion.is_empty() {
+                                            "分析完成。".to_string()
+                                        } else {
+                                            conclusion
+                                        },
+                                    ));
+                                } else {
+                                    // Both situation_analysis and conclusion are empty, fall through to final fallback
+                                    tracing::debug!("JSON was valid but contained no useful data, falling back to raw text");
+                                }
                             }
-                        }
-                        }  // Close if let Ok(value)
+                        } // Close if let Ok(value)
 
                         // Final fallback: use raw text - show actual content, not placeholder
                         let raw_text = output.text.trim();
@@ -6147,20 +6147,20 @@ Respond in JSON format:
             ) {
                 let content = self.generate_report_content(agent, data).await?;
 
-            return Ok(Some(GeneratedReport {
-                report_type: "summary".to_string(),
-                content,
-                data_summary: data
-                    .iter()
-                    .map(|d| neomind_storage::DataSummary {
-                        source: d.source.clone(),
-                        metric: d.data_type.clone(),
-                        count: 1,
-                        statistics: d.values.clone(),
-                    })
-                    .collect(),
-                generated_at: chrono::Utc::now().timestamp(),
-            }));
+                return Ok(Some(GeneratedReport {
+                    report_type: "summary".to_string(),
+                    content,
+                    data_summary: data
+                        .iter()
+                        .map(|d| neomind_storage::DataSummary {
+                            source: d.source.clone(),
+                            metric: d.data_type.clone(),
+                            count: 1,
+                            statistics: d.values.clone(),
+                        })
+                        .collect(),
+                    generated_at: chrono::Utc::now().timestamp(),
+                }));
             }
         }
 
@@ -6286,7 +6286,8 @@ Respond in JSON format:
                     });
 
                     if memory.trend_data.len() > 1000 {
-                        memory.trend_data = memory.trend_data.split_off(memory.trend_data.len() - 1000);
+                        memory.trend_data =
+                            memory.trend_data.split_off(memory.trend_data.len() - 1000);
                     }
 
                     // Update baseline using exponential moving average

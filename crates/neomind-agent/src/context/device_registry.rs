@@ -441,11 +441,9 @@ mod tests {
 
         let living_room = registry.list_by_location("客厅").await;
         assert!(!living_room.is_empty());
-        assert!(
-            living_room
-                .iter()
-                .all(|d| d.location == Some("客厅".to_string()))
-        );
+        assert!(living_room
+            .iter()
+            .all(|d| d.location == Some("客厅".to_string())));
     }
 
     #[tokio::test]

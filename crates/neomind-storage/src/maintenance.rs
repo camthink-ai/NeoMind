@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-use crate::Result;
 use crate::backend::UnifiedStorage;
+use crate::Result;
 
 /// Maintenance task configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

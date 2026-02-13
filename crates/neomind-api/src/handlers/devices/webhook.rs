@@ -6,15 +6,15 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
     extract::{Path, Query, State},
+    Json,
 };
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
 use crate::handlers::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 

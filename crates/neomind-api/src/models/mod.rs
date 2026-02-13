@@ -9,8 +9,8 @@ pub mod pagination;
 pub use common::{ApiError, ApiResponse, ErrorCode, ResponseMeta, ToApiResponse};
 pub use error::{ApiResult, ErrorResponse};
 pub use pagination::{
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, PaginatedResponse, Pagination, PaginationMeta,
-    PaginationParams, paginated,
+    paginated, PaginatedResponse, Pagination, PaginationMeta, PaginationParams, DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
 };
 
 // ============================================================================

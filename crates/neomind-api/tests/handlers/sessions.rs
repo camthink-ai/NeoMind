@@ -1,9 +1,9 @@
 //! Tests for sessions handlers.
 
-use axum::Json;
 use axum::extract::{Path, Query, State};
-use neomind_api::handlers::ServerState;
+use axum::Json;
 use neomind_api::handlers::sessions::*;
+use neomind_api::handlers::ServerState;
 use neomind_api::models::ChatRequest;
 use std::collections::HashMap;
 

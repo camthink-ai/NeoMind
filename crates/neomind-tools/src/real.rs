@@ -3,13 +3,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::Value;
 
 use super::error::Result;
 use super::error::ToolError;
 use super::tool::{
-    Tool, ToolDefinition, ToolOutput, number_property, object_schema, string_property,
+    number_property, object_schema, string_property, Tool, ToolDefinition, ToolOutput,
 };
 use neomind_core::tools::{ToolExample, ToolRelationships, UsageScenario};
 

@@ -8,7 +8,7 @@ use crate::dsl::{RuleAction, RuleError};
 use crate::engine::{CompiledRule, RuleExecutionResult, RuleId, ValueProvider};
 use crate::extension_integration::ExtensionRegistry;
 use neomind_core::{
-    EventBus, MetricValue as CoreMetricValue, NeoMindEvent, datasource::DataSourceId,
+    datasource::DataSourceId, EventBus, MetricValue as CoreMetricValue, NeoMindEvent,
 };
 use neomind_devices::{DeviceService, MetricValue as DeviceMetricValue};
 use serde::{Deserialize, Serialize};

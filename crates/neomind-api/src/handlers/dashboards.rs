@@ -3,20 +3,20 @@
 //! Provides API endpoints for managing visual dashboards with components.
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use super::{
+    common::{ok, HandlerResult},
     ServerState,
-    common::{HandlerResult, ok},
 };
 use crate::models::ErrorResponse;
 use neomind_storage::dashboards::{
-    Dashboard as StoredDashboard, DashboardComponent as StoredComponent,
-    DashboardLayout as StoredLayout, DashboardTemplate as StoredTemplate, default_templates,
+    default_templates, Dashboard as StoredDashboard, DashboardComponent as StoredComponent,
+    DashboardLayout as StoredLayout, DashboardTemplate as StoredTemplate,
 };
 
 // ============================================================================

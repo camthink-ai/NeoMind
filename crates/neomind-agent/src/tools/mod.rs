@@ -39,4 +39,4 @@ pub use tool_search::{ToolSearchResult, ToolSearchTool};
 
 pub use think::{ThinkStorage, ThinkTool, ThoughtRecord};
 
-pub use mapper::{ToolNameMapper, get_mapper, map_tool_parameters, resolve_tool_name};
+pub use mapper::{get_mapper, map_tool_parameters, resolve_tool_name, ToolNameMapper};

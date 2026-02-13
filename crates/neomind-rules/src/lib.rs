@@ -60,9 +60,9 @@ pub use engine::{
 };
 pub use error::{NeoMindError, RuleError};
 pub use extension_integration::{
-    ConditionOperator as ExtensionConditionOperator, ExecutionResult, ExtensionActionExecutor,
-    ExtensionCommandAction, ExtensionCondition, ExtensionRegistry, ExtensionValueProvider,
-    try_parse_extension_action,
+    try_parse_extension_action, ConditionOperator as ExtensionConditionOperator, ExecutionResult,
+    ExtensionActionExecutor, ExtensionCommandAction, ExtensionCondition, ExtensionRegistry,
+    ExtensionValueProvider,
 };
 pub use unified_provider::{
     CacheStats, DeviceStorageLike, ExtensionMetricsStorageAdapter, ExtensionStorageLike,

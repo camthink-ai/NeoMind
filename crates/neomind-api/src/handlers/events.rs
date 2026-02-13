@@ -5,16 +5,16 @@
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
     http::StatusCode,
-    response::{Sse, sse::Event},
+    response::{sse::Event, Sse},
 };
 use futures::stream::Stream;
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::handlers::ServerState;
-use neomind_core::NeoMindEvent;
 use neomind_core::event::EventMetadata;
 use neomind_core::eventbus::{EventBus, EventBusReceiver, FilteredReceiver};
+use neomind_core::NeoMindEvent;
 
 /// Wrapper for either filtered or unfiltered event receiver.
 enum EventBusReceiverWrapper {

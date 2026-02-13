@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, interval};
+use tokio::time::{interval, Duration};
 
 /// Scheduler configuration.
 #[derive(Debug, Clone)]

@@ -27,7 +27,7 @@ pub mod types;
 // Core extension types defined in the SDK
 pub use types::{
     ChannelDescriptor, Extension, ExtensionCapabilityDescriptor, ExtensionCapabilityType,
-    ExtensionError, ExtensionMetadata, MetricDescriptor, NEO_EXT_ABI_VERSION, ToolDescriptor,
+    ExtensionError, ExtensionMetadata, MetricDescriptor, ToolDescriptor, NEO_EXT_ABI_VERSION,
 };
 
 // Legacy plugin types (for backward compatibility)
@@ -51,7 +51,7 @@ pub mod prelude {
     // New extension types
     pub use crate::types::{
         ChannelDescriptor, Extension, ExtensionCapabilityDescriptor, ExtensionCapabilityType,
-        ExtensionError, ExtensionMetadata, MetricDescriptor, NEO_EXT_ABI_VERSION, ToolDescriptor,
+        ExtensionError, ExtensionMetadata, MetricDescriptor, ToolDescriptor, NEO_EXT_ABI_VERSION,
     };
     pub use serde_json::Value;
 

@@ -49,16 +49,16 @@ pub mod translation;
 
 // Re-export commonly used types
 pub use agent::{
-    Agent, AgentConfig, AgentEvent, AgentMessage, AgentResponse, FallbackRule, LlmBackend,
-    SessionState, ToolCall, default_fallback_rules, process_fallback,
+    default_fallback_rules, process_fallback, Agent, AgentConfig, AgentEvent, AgentMessage,
+    AgentResponse, FallbackRule, LlmBackend, SessionState, ToolCall,
 };
 pub use ai_agent::IntentParser;
-pub use config::{StreamingConfig, get_default_config, set_default_config};
+pub use config::{get_default_config, set_default_config, StreamingConfig};
 pub use error::{NeoMindError, Result};
 pub use session::SessionManager;
 pub use tools::{
-    EventIntegratedToolRegistry, ToolExecutionHistory, ToolExecutionRecord, ToolExecutionStats,
-    ToolNameMapper, resolve_tool_name as map_tool_name,
+    resolve_tool_name as map_tool_name, EventIntegratedToolRegistry, ToolExecutionHistory,
+    ToolExecutionRecord, ToolExecutionStats, ToolNameMapper,
 };
 
 /// Version information

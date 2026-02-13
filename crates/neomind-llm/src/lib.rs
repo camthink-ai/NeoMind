@@ -45,7 +45,7 @@ pub use backend_plugin::{BackendRegistry, DynBackendPlugin, LlmBackendPlugin};
 
 // Instance manager
 pub use instance_manager::{
-    BackendTypeDefinition, LlmBackendInstanceManager, get_instance_manager,
+    get_instance_manager, BackendTypeDefinition, LlmBackendInstanceManager,
 };
 
 #[cfg(feature = "cloud")]

@@ -16,8 +16,8 @@ pub mod module;
 
 pub use host_api::{HostApi, HostApiResponse};
 pub use llm_plugin::{
-    LlmPluginInput, LlmPluginMessage, LlmPluginOutput, LlmPluginParams, WasmLlmPlugin,
-    WasmLlmPluginConfig, WasmLlmPluginRegistry, load_plugins_from_dir,
+    load_plugins_from_dir, LlmPluginInput, LlmPluginMessage, LlmPluginOutput, LlmPluginParams,
+    WasmLlmPlugin, WasmLlmPluginConfig, WasmLlmPluginRegistry,
 };
 pub use module::{SandboxModule, SandboxModuleConfig};
 

@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use crate::{
-    Error,
     vector::{Embedding, VectorDocument, VectorStore},
+    Error,
 };
 
 /// Knowledge entry type.

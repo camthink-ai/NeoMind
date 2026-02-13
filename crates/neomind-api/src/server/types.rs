@@ -6,19 +6,19 @@ use std::sync::Arc;
 
 use neomind_agent::SessionManager;
 use neomind_commands::{CommandManager, CommandQueue, CommandStateStore};
-use neomind_core::{EventBus, extension::ExtensionRegistry};
+use neomind_core::{extension::ExtensionRegistry, EventBus};
 use neomind_devices::adapter::AdapterResult;
 use neomind_devices::{DeviceRegistry, DeviceService, TimeSeriesStorage};
 use neomind_rules::{
-    RuleEngine, UnifiedValueProvider, device_integration::DeviceActionExecutor,
-    extension_integration::ExtensionActionExecutor, store::RuleStore,
+    device_integration::DeviceActionExecutor, extension_integration::ExtensionActionExecutor,
+    store::RuleStore, RuleEngine, UnifiedValueProvider,
 };
 use neomind_storage::dashboards::DashboardStore;
 use neomind_storage::llm_backends::LlmBackendStore;
 
 use neomind_automation::{
-    AutoOnboardManager, intent::IntentAnalyzer, store::SharedAutomationStore,
-    transform::TransformEngine,
+    intent::IntentAnalyzer, store::SharedAutomationStore, transform::TransformEngine,
+    AutoOnboardManager,
 };
 use neomind_memory::TieredMemory;
 use neomind_messages::MessageManager;
@@ -843,7 +843,7 @@ impl ServerState {
 
     /// Reconnect to all enabled external MQTT brokers on startup
     async fn reconnect_external_mqtt_brokers(&self) {
-        use crate::handlers::mqtt::brokers::{ExternalBrokerContext, create_and_connect_broker};
+        use crate::handlers::mqtt::brokers::{create_and_connect_broker, ExternalBrokerContext};
 
         let store = match crate::config::open_settings_store() {
             Ok(s) => s,
@@ -1147,7 +1147,7 @@ impl ServerState {
                 mgr.clone()
             } else {
                 drop(mgr_guard); // Release read lock before acquiring write lock
-                // Create manager if it doesn't exist
+                                 // Create manager if it doesn't exist
                 let mut mgr_guard = self.auto_onboard_manager.write().await;
                 if let Some(mgr) = mgr_guard.as_ref() {
                     mgr.clone()

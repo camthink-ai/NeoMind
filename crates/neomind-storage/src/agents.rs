@@ -1311,9 +1311,7 @@ impl AgentStore {
                             .map_err(|e| Error::Serialization(e.to_string()))?;
                         Ok(a)
                     }
-                    None => {
-                        Err(Error::NotFound(format!("Agent {} not found", agent_id)))
-                    }
+                    None => Err(Error::NotFound(format!("Agent {} not found", agent_id))),
                 };
                 result?
             };

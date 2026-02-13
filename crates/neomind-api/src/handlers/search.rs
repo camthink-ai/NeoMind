@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use super::ServerState;
-use crate::models::{ErrorResponse, common::ApiResponse};
+use crate::models::{common::ApiResponse, ErrorResponse};
 
 /// Search query parameters.
 #[derive(Debug, Deserialize)]

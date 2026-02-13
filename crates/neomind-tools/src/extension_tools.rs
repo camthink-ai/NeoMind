@@ -4,7 +4,7 @@
 //! automatically generating tools from extension command descriptors.
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
 

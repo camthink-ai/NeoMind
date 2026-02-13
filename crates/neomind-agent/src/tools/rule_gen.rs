@@ -11,13 +11,13 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use neomind_rules::{
-    RuleEngine, RuleId,
     dsl::{ParsedRule, RuleCondition, RuleDslParser, RuleError},
+    RuleEngine, RuleId,
 };
 use neomind_tools::{
-    Tool, ToolError, ToolOutput,
     error::Result as ToolResult,
     tool::{array_property, boolean_property, object_schema, string_property},
+    Tool, ToolError, ToolOutput,
 };
 
 /// GenerateRuleDsl tool - converts natural language to rule DSL.

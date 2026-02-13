@@ -1,8 +1,8 @@
 //! External MQTT broker management handlers.
 
 use axum::{
-    Json,
     extract::{Path, State},
+    Json,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use neomind_devices::adapters::{create_adapter, mqtt::MqttAdapterConfig};
 use neomind_storage::{ExternalBroker, SecurityLevel};
 
 use crate::config;
-use crate::handlers::common::{HandlerResult, ok};
+use crate::handlers::common::{ok, HandlerResult};
 use crate::models::ErrorResponse;
 use crate::server::types::ServerState;
 

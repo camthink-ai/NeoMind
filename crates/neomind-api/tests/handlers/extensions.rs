@@ -1,7 +1,7 @@
 //! Tests for extension system handlers.
 
-use neomind_api::handlers::ServerState;
 use neomind_api::handlers::extensions::*;
+use neomind_api::handlers::ServerState;
 use serde_json::json;
 
 #[cfg(test)]

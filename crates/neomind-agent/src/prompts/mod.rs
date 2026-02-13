@@ -8,8 +8,8 @@ pub mod builder;
 
 // Re-export commonly used types
 pub use builder::{
-    CONVERSATION_CONTEXT_EN, CONVERSATION_CONTEXT_ZH, CURRENT_TIME_PLACEHOLDER,
-    LOCAL_TIME_PLACEHOLDER, PromptBuilder, TIMEZONE_PLACEHOLDER, get_role_system_prompt,
+    get_role_system_prompt, PromptBuilder, CONVERSATION_CONTEXT_EN, CONVERSATION_CONTEXT_ZH,
+    CURRENT_TIME_PLACEHOLDER, LOCAL_TIME_PLACEHOLDER, TIMEZONE_PLACEHOLDER,
 };
 
 #[cfg(test)]

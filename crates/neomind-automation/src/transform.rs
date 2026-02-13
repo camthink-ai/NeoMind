@@ -101,7 +101,7 @@ impl JsTransformExecutor {
         extension_registry: Option<&Arc<ExtensionRegistry>>,
     ) -> Result<Vec<TransformedMetric>> {
         use boa_engine::{
-            JsValue, Source, context::Context, js_string, object::FunctionObjectBuilder,
+            context::Context, js_string, object::FunctionObjectBuilder, JsValue, Source,
         };
 
         // Create Boa context
@@ -923,21 +923,21 @@ impl TransformEngine {
                 // Pass extension registry to JS executor for extensions.invoke() support
                 let ext_ref = self.extension_registry.as_ref();
                 match self.js_executor.execute(
-                js_code,
-                raw_data,
-                &actual_prefix,
-                device_id,
-                timestamp,
-                ext_ref,
-            ) {
-                Ok(js_metrics) => {
-                    metrics.extend(js_metrics);
+                    js_code,
+                    raw_data,
+                    &actual_prefix,
+                    device_id,
+                    timestamp,
+                    ext_ref,
+                ) {
+                    Ok(js_metrics) => {
+                        metrics.extend(js_metrics);
+                    }
+                    Err(e) => {
+                        warnings.push(format!("JS execution failed: {}", e));
+                    }
                 }
-                Err(e) => {
-                    warnings.push(format!("JS execution failed: {}", e));
-                }
-            }
-            return Ok(TransformResult { metrics, warnings });
+                return Ok(TransformResult { metrics, warnings });
             }
         }
 

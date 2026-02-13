@@ -169,19 +169,19 @@ impl MessageManager {
         let mut send_results = Vec::new();
 
         for channel_name in &channel_names {
-            if let Some(channel) = channels.get(channel_name).await
-                && channel.is_enabled()
-            {
-                match channel.send(&message).await {
-                    Ok(()) => send_results.push((channel_name.clone(), Ok(()))),
-                    Err(e) => {
-                        // Log channel failure but don't fail the entire operation
-                        tracing::warn!(
-                            "Failed to send message through channel '{}': {}",
-                            channel_name,
-                            e
-                        );
-                        send_results.push((channel_name.clone(), Err(e)));
+            if let Some(channel) = channels.get(channel_name).await {
+                if channel.is_enabled() {
+                    match channel.send(&message).await {
+                        Ok(()) => send_results.push((channel_name.clone(), Ok(()))),
+                        Err(e) => {
+                            // Log channel failure but don't fail the entire operation
+                            tracing::warn!(
+                                "Failed to send message through channel '{}': {}",
+                                channel_name,
+                                e
+                            );
+                            send_results.push((channel_name.clone(), Err(e)));
+                        }
                     }
                 }
             }

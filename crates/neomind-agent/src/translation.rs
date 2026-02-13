@@ -959,7 +959,11 @@ impl NlToDslConverter {
             confidence += 0.2;
         }
 
-        if confidence > 1.0 { 1.0 } else { confidence }
+        if confidence > 1.0 {
+            1.0
+        } else {
+            confidence
+        }
     }
 }
 
@@ -1017,8 +1021,8 @@ pub enum ConversionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use neomind_devices::MetricDataType;
     use neomind_devices::mdl_format::MetricDefinition;
+    use neomind_devices::MetricDataType;
     use neomind_rules::dsl::RuleDslParser;
     use std::collections::HashMap;
 

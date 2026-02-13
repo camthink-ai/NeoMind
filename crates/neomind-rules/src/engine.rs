@@ -18,7 +18,7 @@ use uuid::Uuid;
 use super::dependencies::DependencyManager;
 use super::device_integration::DeviceActionExecutor;
 use super::dsl::{ParsedRule, RuleAction, RuleCondition, RuleError};
-use super::extension_integration::{ExtensionActionExecutor, try_parse_extension_action};
+use super::extension_integration::{try_parse_extension_action, ExtensionActionExecutor};
 
 /// Optional message manager for creating messages from rule actions.
 /// Wrapped in Option to allow RuleEngine to function without it.

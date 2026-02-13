@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::time::{Duration, interval};
+use tokio::time::{interval, Duration};
 
 use super::adapter::{ConnectionStatus, DeviceAdapter};
 use super::mdl::{DeviceError, MetricValue};
@@ -1271,24 +1271,29 @@ impl DeviceService {
             // Use telemetry_storage to list all metrics for this device
             if let Some(storage) = self.telemetry_storage.read().await.as_ref() {
                 if let Ok(all_metrics) = storage.list_metrics(device_id).await {
-                for metric_name in all_metrics {
-                    if !metric_name.is_empty() {
-                        // Query latest value for this metric
-                        match self
-                            .query_telemetry(device_id, &metric_name, Some(now - 3600), Some(now))
-                            .await
-                        {
-                            Ok(points) => {
-                                if let Some((_, value)) = points.last() {
-                                    result.insert(metric_name.clone(), value.clone());
+                    for metric_name in all_metrics {
+                        if !metric_name.is_empty() {
+                            // Query latest value for this metric
+                            match self
+                                .query_telemetry(
+                                    device_id,
+                                    &metric_name,
+                                    Some(now - 3600),
+                                    Some(now),
+                                )
+                                .await
+                            {
+                                Ok(points) => {
+                                    if let Some((_, value)) = points.last() {
+                                        result.insert(metric_name.clone(), value.clone());
+                                    }
                                 }
-                            }
-                            Err(_) => {
-                                // Metric not available yet, skip
+                                Err(_) => {
+                                    // Metric not available yet, skip
+                                }
                             }
                         }
                     }
-                }
                 }
             }
         }
@@ -1425,14 +1430,14 @@ impl DeviceService {
                     .iter_mut()
                     .find(|r| r.command_id == command_id)
                 {
-                record.status = status;
-                record.result = result;
-                record.error = error;
-                if is_terminal {
-                    record.completed_at = Some(chrono::Utc::now().timestamp());
-                }
-                // Clone for storage after updating
-                record_for_storage = Some(record.clone());
+                    record.status = status;
+                    record.result = result;
+                    record.error = error;
+                    if is_terminal {
+                        record.completed_at = Some(chrono::Utc::now().timestamp());
+                    }
+                    // Clone for storage after updating
+                    record_for_storage = Some(record.clone());
                 }
             }
         }
