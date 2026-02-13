@@ -216,8 +216,8 @@ impl JsTransformExecutor {
                                         let cmd_str = after_open[cmd_start..cd].to_string();
 
                                         // Try to parse params (object or null)
-                                        let params_val = {
-                                            // Skip whitespace and commas
+                                        #[allow(clippy::never_loop)]
+                                        let params_val = loop {
                                             while parse_pos < after_open.len()
                                                 && after_open
                                                     .chars()
@@ -229,64 +229,61 @@ impl JsTransformExecutor {
                                                 parse_pos += 1;
                                             }
 
-                                            // If we've reached the end, return empty object
                                             if parse_pos >= after_open.len() {
-                                                serde_json::json!({})
-                                            } else {
-                                                let next_char = after_open.chars().nth(parse_pos);
-                                                if next_char == Some('{') {
-                                                    // Find matching closing brace
-                                                    let mut brace_count = 1;
-                                                    parse_pos += 1;
-                                                    let params_start = parse_pos;
+                                                break serde_json::json!({});
+                                            }
 
-                                                    while parse_pos < after_open.len()
-                                                        && brace_count > 0
-                                                    {
-                                                        if after_open.chars().nth(parse_pos)
-                                                            == Some('{')
-                                                        {
-                                                            brace_count += 1;
-                                                        } else if after_open.chars().nth(parse_pos)
-                                                            == Some('}')
-                                                        {
-                                                            brace_count -= 1;
-                                                        }
-                                                        parse_pos += 1;
-                                                    }
+                                            let next_char = after_open.chars().nth(parse_pos);
+                                            if next_char == Some('{') {
+                                                // Find matching closing brace
+                                                let mut brace_count = 1;
+                                                parse_pos += 1;
+                                                let params_start = parse_pos;
 
-                                                    let params_str =
-                                                        after_open[params_start..parse_pos - 1].trim();
-                                                    if let Ok(v) = serde_json::from_str(params_str) {
-                                                        v
-                                                    } else {
-                                                        serde_json::json!({})
-                                                    }
-                                                } else if next_char == Some('\'')
-                                                    || next_char == Some('"')
+                                                while parse_pos < after_open.len()
+                                                    && brace_count > 0
                                                 {
-                                                    // String parameter - could be nested JSON
-                                                    let quote = next_char.unwrap();
-                                                    parse_pos += 1;
-                                                    let str_start = parse_pos;
-
-                                                    while parse_pos < after_open.len()
-                                                        && after_open.chars().nth(parse_pos)
-                                                            != Some(quote)
+                                                    if after_open.chars().nth(parse_pos)
+                                                        == Some('{')
                                                     {
-                                                        parse_pos += 1;
+                                                        brace_count += 1;
+                                                    } else if after_open.chars().nth(parse_pos)
+                                                        == Some('}')
+                                                    {
+                                                        brace_count -= 1;
                                                     }
-
-                                                    if let Ok(s) = serde_json::from_str::<Value>(
-                                                        &after_open[str_start..parse_pos],
-                                                    ) {
-                                                        s
-                                                    } else {
-                                                        serde_json::json!({})
-                                                    }
-                                                } else {
-                                                    serde_json::json!({})
+                                                    parse_pos += 1;
                                                 }
+
+                                                let params_str =
+                                                    after_open[params_start..parse_pos - 1].trim();
+                                                if let Ok(v) = serde_json::from_str(params_str) {
+                                                    break v;
+                                                }
+                                                break serde_json::json!({});
+                                            } else if next_char == Some('\'')
+                                                || next_char == Some('"')
+                                            {
+                                                // String parameter - could be nested JSON
+                                                let quote = next_char.unwrap();
+                                                parse_pos += 1;
+                                                let str_start = parse_pos;
+
+                                                while parse_pos < after_open.len()
+                                                    && after_open.chars().nth(parse_pos)
+                                                        != Some(quote)
+                                                {
+                                                    parse_pos += 1;
+                                                }
+
+                                                if let Ok(s) = serde_json::from_str::<Value>(
+                                                    &after_open[str_start..parse_pos],
+                                                ) {
+                                                    break s;
+                                                }
+                                                break serde_json::json!({});
+                                            } else {
+                                                break serde_json::json!({});
                                             }
                                         };
 
