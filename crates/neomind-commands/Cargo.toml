@@ -1,7 +1,7 @@
 [package]
 name = "neomind-commands"
 version.workspace = true
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }

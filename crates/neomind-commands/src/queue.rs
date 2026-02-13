@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{RwLock, Semaphore, mpsc};
+use tokio::sync::{mpsc, RwLock, Semaphore};
 
 use crate::command::{CommandId, CommandPriority, CommandRequest, CommandSource};
 

@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{broadcast, RwLock};
 
 use crate::ack::AckStatus;
 use crate::command::{CommandId, CommandPriority, CommandResult, CommandStatus};
@@ -133,22 +133,22 @@ impl EventFilter {
 
     /// Check if an event matches this filter.
     pub fn matches(&self, event: &CommandEvent) -> bool {
-        if let Some(ref device_id) = self.device_id
-            && &event.device_id != device_id
-        {
-            return false;
+        if let Some(ref device_id) = self.device_id {
+            if &event.device_id != device_id {
+                return false;
+            }
         }
 
-        if let Some(ref status) = self.status
-            && event.current_status != *status
-        {
-            return false;
+        if let Some(ref status) = self.status {
+            if event.current_status != *status {
+                return false;
+            }
         }
 
-        if let Some(ref event_types) = self.event_types
-            && !event_types.contains(&event.event_type)
-        {
-            return false;
+        if let Some(ref event_types) = self.event_types {
+            if !event_types.contains(&event.event_type) {
+                return false;
+            }
         }
 
         true
