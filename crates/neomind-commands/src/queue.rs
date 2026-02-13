@@ -15,7 +15,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, Semaphore, mpsc};
 
-use crate::command::{CommandId, CommandRequest, CommandPriority, CommandSource};
+use crate::command::{CommandId, CommandPriority, CommandRequest, CommandSource};
 
 /// Queue statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,10 +248,14 @@ pub enum QueueError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::{CommandPriority, CommandSource, CommandRequest};
+    use crate::command::{CommandPriority, CommandRequest, CommandSource};
 
     /// Helper to create a test command.
-    fn make_command(device_id: &str, command_name: &str, priority: CommandPriority) -> CommandRequest {
+    fn make_command(
+        device_id: &str,
+        command_name: &str,
+        priority: CommandPriority,
+    ) -> CommandRequest {
         let source = CommandSource::System {
             reason: "test".to_string(),
         };
@@ -333,8 +337,14 @@ mod tests {
     async fn test_queue_clear() {
         let queue = CommandQueue::new(100);
 
-        queue.enqueue(make_command("device1", "cmd1", CommandPriority::Normal)).await.unwrap();
-        queue.enqueue(make_command("device2", "cmd2", CommandPriority::High)).await.unwrap();
+        queue
+            .enqueue(make_command("device1", "cmd1", CommandPriority::Normal))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_command("device2", "cmd2", CommandPriority::High))
+            .await
+            .unwrap();
         assert_eq!(queue.len().await, 2);
 
         queue.clear().await;
@@ -346,18 +356,44 @@ mod tests {
     async fn test_queue_stats() {
         let queue = CommandQueue::new(100);
 
-        queue.enqueue(make_command("device1", "low", CommandPriority::Low)).await.unwrap();
-        queue.enqueue(make_command("device2", "normal", CommandPriority::Normal)).await.unwrap();
-        queue.enqueue(make_command("device3", "high", CommandPriority::High)).await.unwrap();
-        queue.enqueue(make_command("device4", "critical", CommandPriority::Critical)).await.unwrap();
-        queue.enqueue(make_command("device5", "emergency", CommandPriority::Emergency)).await.unwrap();
+        queue
+            .enqueue(make_command("device1", "low", CommandPriority::Low))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_command("device2", "normal", CommandPriority::Normal))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_command("device3", "high", CommandPriority::High))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_command(
+                "device4",
+                "critical",
+                CommandPriority::Critical,
+            ))
+            .await
+            .unwrap();
+        queue
+            .enqueue(make_command(
+                "device5",
+                "emergency",
+                CommandPriority::Emergency,
+            ))
+            .await
+            .unwrap();
 
         let stats: QueueStats = queue.stats().await;
 
         assert_eq!(stats.total_count, 5);
 
-        let priority_counts: std::collections::HashMap<&str, usize> =
-            stats.by_priority.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+        let priority_counts: std::collections::HashMap<&str, usize> = stats
+            .by_priority
+            .iter()
+            .map(|(k, v)| (k.as_str(), *v))
+            .collect();
 
         assert_eq!(*priority_counts.get("low").unwrap_or(&0), 1);
         assert_eq!(*priority_counts.get("normal").unwrap_or(&0), 1);
@@ -426,8 +462,11 @@ mod tests {
         assert_eq!(stats.total_count, 5);
 
         // Verify each priority has one item
-        let priority_map: std::collections::HashMap<_, _> =
-            stats.by_priority.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let priority_map: std::collections::HashMap<_, _> = stats
+            .by_priority
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
 
         for priority in priorities {
             let name = format!("{}", priority).to_lowercase();

@@ -262,10 +262,6 @@ async fn test_state_store_get_retryable() {
     assert_eq!(retryable[0].id, id1);
 }
 
-
-
-
-
 #[tokio::test]
 async fn test_state_store_cleanup_old() {
     let store = CommandStateStore::new(100);
@@ -282,7 +278,7 @@ async fn test_state_store_cleanup_old() {
         .unwrap();
     let old_result = CommandResult::success("Done");
     store.set_result(&old_id, old_result).await.unwrap();
-    
+
     // Wait for command to expire (completed_at is set to now(), need >67 seconds for cleanup with 2s buffer)
     tokio::time::sleep(tokio::time::Duration::from_secs(68)).await;
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
@@ -300,10 +296,14 @@ async fn test_state_store_cleanup_old() {
 
     // Old command should be gone
     let result = store.get(&old_id).await;
-    assert!(matches!(result, Err(StateError::NotFound(_))), "Expected old command to be removed");
+    assert!(
+        matches!(result, Err(StateError::NotFound(_))),
+        "Expected old command to be removed"
+    );
 
     // Recent command should still exist
-    assert!(store.get(&recent_cmd.id).await.is_ok(), "Expected recent command to still exist");
+    assert!(
+        store.get(&recent_cmd.id).await.is_ok(),
+        "Expected recent command to still exist"
+    );
 }
-
-
