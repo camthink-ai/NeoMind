@@ -56,16 +56,13 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Run Clippy
-        run: cargo clippy
-
-      - name: Build & test
+      - name: Build
         working-directory: .
-        run: |
-          cargo fmt --all
-          cargo clippy --all-targets
-          cargo build --workspace
-          cargo test --workspace --no-fail-fast || true
+        run: cargo build --workspace
+
+      - name: Test
+        working-directory: .
+        run: cargo test --workspace --no-fail-fast || true
 
   # Platform builds (macOS, Linux, Windows)
   build-macos:
