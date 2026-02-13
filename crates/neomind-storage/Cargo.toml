@@ -37,3 +37,7 @@ settings = []
 
 # All features
 all = ["redb", "memory", "settings"]
+
+[lints.clippy]
+# Temporarily suppress clippy warnings for neomind-storage
+type_complexity = "allow"
