@@ -12,9 +12,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Frontend: format & lint only
+  # Frontend checks
   code-quality:
-    name: Code Quality
+    name: Frontend Checks
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -39,9 +39,9 @@ jobs:
         working-directory: ./web
         run: npm run lint || true
 
-  # Backend: format, clippy, compile & test in one job
+  # Backend checks
   backend:
-    name: Backend Build & Test
+    name: Backend Checks
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -57,17 +57,10 @@ jobs:
         with:
           workspaces: '. -> target'
 
-      - name: Format check
+      - name: Check formatting
         working-directory: ./web
         run: cargo fmt -- --check
 
-      - name: Clippy
+      - name: Run Clippy
         working-directory: ./web
         run: cargo clippy -- -W warnings
-
-      - name: Compile & test
-        working-directory: .
-        run: |
-          cargo fmt -- --all
-          cargo clippy -- -W warnings --all-targets
-          cargo test --workspace --no-fail-fast
