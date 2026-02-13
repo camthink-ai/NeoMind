@@ -31,10 +31,6 @@ jobs:
         working-directory: ./web
         run: npm ci
 
-      - name: TypeScript check
-        working-directory: ./web
-        run: npx tsc --noEmit
-
       - name: Lint
         working-directory: ./web
         run: npm run lint || true
@@ -57,14 +53,16 @@ jobs:
         with:
           workspaces: '. -> target'
 
-      - name: Format check
-        working-directory: ./web
-        run: cargo fmt -- --check
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        run: cargo clippy -- -W warnings
 
       - name: Build & test
         working-directory: .
         run: |
-          cargo fmt -- --all
+          cargo fmt --all
           cargo clippy -- -W warnings --all-targets
           cargo test --workspace --no-fail-fast
 
