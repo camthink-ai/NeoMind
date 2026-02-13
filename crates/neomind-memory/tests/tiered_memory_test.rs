@@ -180,23 +180,19 @@ async fn test_query_all_with_methods() {
     memory.add_message("assistant", "Go to settings.").unwrap();
 
     // Semantic search
-    let semantic_results = memory
+    let _semantic_results = memory
         .query_all_with_method("wireless internet connection", 5, SearchMethod::Semantic)
         .await;
-    // Short-term should have the messages
-    assert!(semantic_results.short_term.len() >= 0);
 
     // BM25 search
-    let bm25_results = memory
+    let _bm25_results = memory
         .query_all_with_method("WiFi settings", 5, SearchMethod::BM25)
         .await;
-    assert!(bm25_results.short_term.len() >= 0);
 
     // Hybrid search
-    let hybrid_results = memory
+    let _hybrid_results = memory
         .query_all_with_method("connect to network", 5, SearchMethod::Hybrid)
         .await;
-    assert!(hybrid_results.short_term.len() >= 0);
 }
 
 #[tokio::test]
