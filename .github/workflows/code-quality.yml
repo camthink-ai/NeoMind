@@ -62,7 +62,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-          toolchain: 1.83.0
+          toolchain: 1.85.0
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -100,7 +100,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-          toolchain: 1.83.0
+          toolchain: 1.85.0
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
