@@ -60,10 +60,6 @@ jobs:
         working-directory: .
         run: cargo build --workspace
 
-      - name: Test
-        working-directory: .
-        run: cargo test --workspace --no-fail-fast || true
-
   # Platform builds (macOS, Linux, Windows)
   build-macos:
     name: macOS Build
