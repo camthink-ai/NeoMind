@@ -180,10 +180,10 @@ impl TokenBudget {
             .into_iter()
             .filter(|m| {
                 // Apply priority filter
-                if let PriorityFilter::MinPriority(min_prio) = filter
-                    && m.priority < min_prio
-                {
-                    return false;
+                if let PriorityFilter::MinPriority(min_prio) = filter {
+                    if m.priority < min_prio {
+                        return false;
+                    }
                 }
                 // Filter out low relevance
                 m.score >= 0.15

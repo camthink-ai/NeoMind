@@ -283,14 +283,14 @@ impl DeviceStateStore {
         // Check cache first
         {
             let cache = self.cache.read().await;
-            if let Some(entry) = cache.get(device_id)
-                && entry.cached_at.elapsed() < self.cache_ttl
-            {
-                // Clone state before dropping cache
-                let state = entry.state.clone();
-                drop(cache);
-                self.update_access_count(device_id).await;
-                return Ok(state);
+            if let Some(entry) = cache.get(device_id) {
+                if entry.cached_at.elapsed() < self.cache_ttl {
+                    // Clone state before dropping cache
+                    let state = entry.state.clone();
+                    drop(cache);
+                    self.update_access_count(device_id).await;
+                    return Ok(state);
+                }
             }
         }
 
@@ -570,13 +570,13 @@ impl DeviceStateStore {
     ) {
         // Update type index
         let mut type_index = self.type_index.write().await;
-        if let Some(old_type) = old_type
-            && old_type != state.device_type
-        {
-            type_index
-                .entry(old_type.to_string())
-                .or_insert_with(HashSet::new)
-                .remove(device_id);
+        if let Some(old_type) = old_type {
+            if old_type != state.device_type {
+                type_index
+                    .entry(old_type.to_string())
+                    .or_insert_with(HashSet::new)
+                    .remove(device_id);
+            }
         }
         type_index
             .entry(state.device_type.clone())
@@ -630,28 +630,28 @@ impl DeviceFilter {
             return false;
         }
 
-        if let Some(online) = self.online
-            && state.online != online
-        {
-            return false;
+        if let Some(online) = self.online {
+            if state.online != online {
+                return false;
+            }
         }
 
-        if let Some(min_last_seen) = self.min_last_seen
-            && state.last_seen < min_last_seen
-        {
-            return false;
+        if let Some(min_last_seen) = self.min_last_seen {
+            if state.last_seen < min_last_seen {
+                return false;
+            }
         }
 
-        if let Some(max_last_seen) = self.max_last_seen
-            && state.last_seen > max_last_seen
-        {
-            return false;
+        if let Some(max_last_seen) = self.max_last_seen {
+            if state.last_seen > max_last_seen {
+                return false;
+            }
         }
 
-        if let Some(metric_name) = &self.has_metric
-            && !state.metrics.contains_key(metric_name)
-        {
-            return false;
+        if let Some(metric_name) = &self.has_metric {
+            if !state.metrics.contains_key(metric_name) {
+                return false;
+            }
         }
 
         true

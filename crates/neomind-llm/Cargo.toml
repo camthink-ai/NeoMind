@@ -45,5 +45,3 @@ dead_code = "allow"
 type_complexity = "allow"
 while_let_loop = "allow"
 vec_init_then_push = "allow"
-futures = { workspace = true }
-

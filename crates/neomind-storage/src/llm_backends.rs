@@ -449,10 +449,10 @@ impl LlmBackendStore {
         // Check if we already have a store for this path
         {
             let singleton = LLM_BACKEND_STORE_SINGLETON.lock().unwrap();
-            if let Some(store) = singleton.as_ref()
-                && store.path == path_str
-            {
-                return Ok(store.clone());
+            if let Some(store) = singleton.as_ref() {
+                if store.path == path_str {
+                    return Ok(store.clone());
+                }
             }
         }
 
@@ -541,12 +541,12 @@ impl LlmBackendStore {
     /// Delete an LLM backend instance
     pub fn delete_instance(&self, id: &str) -> Result<bool, Error> {
         // Check if it's the active backend
-        if let Ok(Some(active_id)) = self.get_active_backend_id()
-            && active_id == id
-        {
-            return Err(Error::InvalidInput(
-                "Cannot delete the active backend".to_string(),
-            ));
+        if let Ok(Some(active_id)) = self.get_active_backend_id() {
+            if active_id == id {
+                return Err(Error::InvalidInput(
+                    "Cannot delete the active backend".to_string(),
+                ));
+            }
         }
 
         let write_txn = self.db.begin_write()?;

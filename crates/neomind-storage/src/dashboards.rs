@@ -230,10 +230,10 @@ impl DashboardStore {
                     "Failed to acquire dashboard store lock".to_string(),
                 ));
             };
-            if let Some(store) = singleton.as_ref()
-                && store.path == path_str
-            {
-                return Ok(store.clone());
+            if let Some(store) = singleton.as_ref() {
+                if store.path == path_str {
+                    return Ok(store.clone());
+                }
             }
         }
 

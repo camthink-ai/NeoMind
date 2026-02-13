@@ -352,21 +352,21 @@ pub trait Tool: Send + Sync {
     /// Validate arguments before execution.
     fn validate_args(&self, args: &Value) -> Result<()> {
         let params = self.parameters();
-        if let Some(obj) = params.as_object()
-            && let Some(required) = obj.get("required").and_then(|r| r.as_array())
-        {
-            let args_obj = args
-                .as_object()
-                .ok_or_else(|| ToolError::InvalidArguments("Expected object".to_string()))?;
+        if let Some(obj) = params.as_object() {
+            if let Some(required) = obj.get("required").and_then(|r| r.as_array()) {
+                let args_obj = args
+                    .as_object()
+                    .ok_or_else(|| ToolError::InvalidArguments("Expected object".to_string()))?;
 
-            for req in required {
-                if let Some(req_str) = req.as_str()
-                    && !args_obj.contains_key(req_str)
-                {
-                    return Err(ToolError::InvalidArguments(format!(
-                        "Missing required parameter: {}",
-                        req_str
-                    )));
+                for req in required {
+                    if let Some(req_str) = req.as_str() {
+                        if !args_obj.contains_key(req_str) {
+                            return Err(ToolError::InvalidArguments(format!(
+                                "Missing required parameter: {}",
+                                req_str
+                            )));
+                        }
+                    }
                 }
             }
         }

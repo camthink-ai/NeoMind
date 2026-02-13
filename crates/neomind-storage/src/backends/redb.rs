@@ -112,10 +112,10 @@ impl RedbBackend {
             (db, Some(temp_path))
         } else {
             let path_ref = Path::new(path);
-            if config.create_dirs
-                && let Some(parent) = path_ref.parent()
-            {
-                std::fs::create_dir_all(parent).map_err(StorageError::Io)?;
+            if config.create_dirs {
+                if let Some(parent) = path_ref.parent() {
+                    std::fs::create_dir_all(parent).map_err(StorageError::Io)?;
+                }
             }
 
             let db = if path_ref.exists() {
@@ -194,10 +194,10 @@ impl StorageBackend for RedbBackend {
         let namespaced = make_key(table, key);
 
         // Try cache first - use write lock since get() updates LRU position
-        if let Ok(mut cache) = self.cache.write()
-            && let Some(cached) = cache.get(&namespaced)
-        {
-            return Ok(Some(cached.clone()));
+        if let Ok(mut cache) = self.cache.write() {
+            if let Some(cached) = cache.get(&namespaced) {
+                return Ok(Some(cached.clone()));
+            }
         }
 
         // Cache miss - read from database

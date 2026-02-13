@@ -220,10 +220,10 @@ impl LlmKnowledgeBase {
         for result in raw_results {
             if let Some(entry) = entries.get(&result.id) {
                 // Filter by type if specified
-                if let Some(ref ft) = filter_type
-                    && &entry.entry_type != ft
-                {
-                    continue;
+                if let Some(ref ft) = filter_type {
+                    if &entry.entry_type != ft {
+                        continue;
+                    }
                 }
 
                 results.push(KnowledgeSearchResult {

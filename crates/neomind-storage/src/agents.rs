@@ -1474,28 +1474,28 @@ impl AgentStore {
 
     /// Check if an agent matches the given filter.
     fn matches_agent_filter(&self, agent: &AiAgent, filter: &AgentFilter) -> bool {
-        if let Some(status) = filter.status
-            && agent.status != status
-        {
-            return false;
+        if let Some(status) = filter.status {
+            if agent.status != status {
+                return false;
+            }
         }
 
-        if let Some(schedule_type) = &filter.schedule_type
-            && agent.schedule.schedule_type != *schedule_type
-        {
-            return false;
+        if let Some(schedule_type) = &filter.schedule_type {
+            if agent.schedule.schedule_type != *schedule_type {
+                return false;
+            }
         }
 
-        if let Some(start_time) = filter.start_time
-            && agent.created_at < start_time
-        {
-            return false;
+        if let Some(start_time) = filter.start_time {
+            if agent.created_at < start_time {
+                return false;
+            }
         }
 
-        if let Some(end_time) = filter.end_time
-            && agent.created_at > end_time
-        {
-            return false;
+        if let Some(end_time) = filter.end_time {
+            if agent.created_at > end_time {
+                return false;
+            }
         }
 
         true
@@ -1507,28 +1507,28 @@ impl AgentStore {
         execution: &AgentExecutionRecord,
         filter: &ExecutionFilter,
     ) -> bool {
-        if let Some(agent_id) = &filter.agent_id
-            && &execution.agent_id != agent_id
-        {
-            return false;
+        if let Some(agent_id) = &filter.agent_id {
+            if &execution.agent_id != agent_id {
+                return false;
+            }
         }
 
-        if let Some(status) = filter.status
-            && execution.status != status
-        {
-            return false;
+        if let Some(status) = filter.status {
+            if execution.status != status {
+                return false;
+            }
         }
 
-        if let Some(start_time) = filter.start_time
-            && execution.timestamp < start_time
-        {
-            return false;
+        if let Some(start_time) = filter.start_time {
+            if execution.timestamp < start_time {
+                return false;
+            }
         }
 
-        if let Some(end_time) = filter.end_time
-            && execution.timestamp > end_time
-        {
-            return false;
+        if let Some(end_time) = filter.end_time {
+            if execution.timestamp > end_time {
+                return false;
+            }
         }
 
         true

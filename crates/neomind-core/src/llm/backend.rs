@@ -187,19 +187,19 @@ impl LlmInput {
 
     /// Add multimodal content to user message.
     pub fn with_image(mut self, _image: ImageContent) -> Self {
-        if let Some(msg) = self.messages.last_mut()
-            && msg.role == MessageRole::User
-        {
-            // Convert to multimodal content
-            let text = msg.text();
-            msg.content = crate::message::Content::text(format!(
-                "{} <image>",
-                if text.is_empty() {
-                    "Describe this image."
-                } else {
-                    &text
-                }
-            ));
+        if let Some(msg) = self.messages.last_mut() {
+            if msg.role == MessageRole::User {
+                // Convert to multimodal content
+                let text = msg.text();
+                msg.content = crate::message::Content::text(format!(
+                    "{} <image>",
+                    if text.is_empty() {
+                        "Describe this image."
+                    } else {
+                        &text
+                    }
+                ));
+            }
         }
         self
     }
@@ -557,11 +557,12 @@ impl BackendRegistry {
             if req.function_calling && !caps.function_calling {
                 return Ok(false);
             }
-            if let Some(min_context) = req.min_context
-                && let Some(max_context) = caps.max_context
-                && max_context < min_context
-            {
-                return Ok(false);
+            if let Some(min_context) = req.min_context {
+                if let Some(max_context) = caps.max_context {
+                    if max_context < min_context {
+                        return Ok(false);
+                    }
+                }
             }
 
             Ok(true)
