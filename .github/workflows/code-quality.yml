@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Fast checks that run in parallel
+  # Fast checks that run in parallel first
   quick-checks:
     name: Quick Checks
     runs-on: macos-latest
@@ -64,9 +64,9 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace --no-fail-fast --jobs 4
 
-  # Tauri build only on main push, not PRs (to save CI time)
-  tauri-build-test:
-    name: Tauri Build Test
+  # Platform-specific builds (only on main push, after checks pass)
+  tauri-build-macos:
+    name: macOS Build
     runs-on: macos-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [quick-checks, rust-backend-check]
@@ -83,8 +83,6 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -95,18 +93,93 @@ jobs:
         working-directory: ./web
         run: npm ci
 
-      - name: Rust format check
-        working-directory: ./web/src-tauri
-        run: cargo fmt -- --check
-
-      - name: Rust clippy
-        working-directory: ./web/src-tauri
-        run: cargo clippy -- -W warnings
-
-      - name: Build frontend
+      - name: Build and bundle
         working-directory: ./web
-        run: npm run build
+        run: npm run tauri build
 
-      - name: Check Tauri build (no bundle)
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: web/src-tauri/target/release/bundle/dmg/*.dmg
+
+  tauri-build-linux:
+    name: Linux Build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [quick-checks, rust-backend-check]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: './web/package-lock.json'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './web/src-tauri -> target'
+
+      - name: Install frontend dependencies
         working-directory: ./web
-        run: npm run tauri build --debug --no-bundle
+        run: npm ci
+
+      - name: Build and bundle
+        working-directory: ./web
+        run: npm run tauri build
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: web/src-tauri/target/release/bundle/appimage/*.AppImage
+
+  tauri-build-windows:
+    name: Windows Build
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [quick-checks, rust-backend-check]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: './web/package-lock.json'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './web/src-tauri -> target'
+
+      - name: Install frontend dependencies
+        working-directory: ./web
+        run: npm ci
+
+      - name: Build and bundle
+        working-directory: ./web
+        run: npm run tauri build
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: web/src-tauri/target/release/bundle/msi/*.msi
