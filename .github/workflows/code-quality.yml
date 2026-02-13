@@ -63,7 +63,7 @@ jobs:
         working-directory: .
         run: |
           cargo fmt --all
-          cargo clippy -- -W warnings --all-targets
+          cargo clippy --all-targets -- -W warnings
           cargo test --workspace --no-fail-fast
 
   # Platform builds (macOS, Linux, Windows)
