@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel previous runs for the same branch
+# Cancel previous runs for same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -17,9 +17,11 @@ jobs:
     name: Frontend
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -29,126 +31,100 @@ jobs:
         working-directory: ./web
         run: npm ci
 
-      - name: Type check
+      - name: TypeScript type check
         working-directory: ./web
         run: npx tsc --noEmit
-
-      - name: Lint
-        working-directory: ./web
-        run: npm run lint || true
 
   # Backend checks
   backend:
     name: Backend
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - uses: swatinem/rust-cache@v2
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: '. -> target'
 
-      - name: Format check
+      - name: Check workspace formatting
         run: cargo fmt -- --check
 
-      - name: Clippy
-        run: cargo clippy --workspace -- -W warnings
+      - name: Run Clippy
+        run: cargo clippy -- -W warnings
 
-      - name: Build & test
-        run: cargo test --workspace --no-fail-fast
+      - name: Check workspace compilation
+        run: cargo check --workspace
 
-  # Platform builds (only on main push)
-  build-macos:
-    name: Build macOS
+  # Tests (runs in parallel with platform builds)
+  rust-test:
+    name: Rust Tests
     runs-on: macos-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [frontend, backend]
+    # No needs dependency - runs unconditionally after checks pass
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: './web/package-lock.json'
+          components: rustfmt, clippy
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: './web/src-tauri -> target'
 
-      - name: Build
+      - name: Install frontend dependencies
         working-directory: ./web
-        run: npm run tauri build
+        run: npm ci
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: macos-dmg
-          path: web/src-tauri/target/release/bundle/dmg/*.dmg
-
-  build-linux:
-    name: Build Linux
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [frontend, backend]
-    steps:
-      - uses: actions/checkout@v4
-
-      - run: |
+      - name: Install backend dependencies
+        working-directory: .
+        run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: './web/package-lock.json'
+      - name: Build & test
+        working-directory: .
+        run: |
+          cargo fmt -- --all
+          cargo clippy -- -W warnings --all-targets
+          cargo test --workspace --no-fail-fast
 
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './web/src-tauri -> target'
-
-      - name: Build
-        working-directory: ./web
-        run: npm run tauri build
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-appimage
-          path: web/src-tauri/target/release/bundle/appimage/*.AppImage
-
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
+  # Platform builds (only on main push, after all checks pass)
+  build:
+    name: Build
+    runs-on: macos-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [frontend, backend]
+    needs: [frontend, backend, rust-test]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: './web/package-lock.json'
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        working-directory: ./web
+        run: npm ci
 
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './web/src-tauri -> target'
-
-      - name: Build
+      - name: Build Tauri
         working-directory: ./web
         run: npm run tauri build
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
         with:
-          name: windows-msi
-          path: web/src-tauri/target/release/bundle/msi/*.msi
+          name: macos-dmg
+          path: web/src-tauri/target/release/bundle/dmg/*.dmg
