@@ -125,7 +125,7 @@ impl HexAnalyzer {
             Value::Number(n) => {
                 if let Some(i) = n.as_i64() {
                     // Check if it looks like a hex number (negative could be two's complement)
-                    if i >= 0 && i > 255 {
+                    if i > 255 {
                         format!("{:X}", i)
                     } else {
                         return HexInfo {
