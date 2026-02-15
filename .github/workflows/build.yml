@@ -165,7 +165,7 @@ jobs:
             artifacts/**/*.exe
             artifacts/**/*.AppImage
             artifacts/**/*.deb
-            artifacts/**/*.tar.gz
+            artifacts/neomind-server-*.tar.gz
           draft: false
           prerelease: false
           generate_release_notes: true
