@@ -10,6 +10,7 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 
 [![Build Status](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache-2.0-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-camthink--ai-neomind-blue.svg)](https://github.com/camthink-ai/NeoMind/pkgs/container/neomind/)
 [![Version: 0.5.8](https://img.shields.io/badge/v-0.5.8-information.svg)](https://github.com/camthink-ai/NeoMind/releases)
 
 ## Features
@@ -49,18 +50,82 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 - **System Tray**: Background operation with quick access
 - **Auto-Update**: Built-in update notifications
 
+---
+
 ## Quick Start
 
-### Desktop App (Recommended)
+Choose your deployment method:
+
+### 📱 Desktop App (Recommended for End Users)
 
 Download the latest release for your platform from [Releases](https://github.com/camthink-ai/NeoMind/releases/latest).
+
+**Supported Platforms:**
+- macOS (Apple Silicon + Intel) - `.dmg`
+- Windows - `.msi` / `.exe`
+- Linux - `.AppImage` / `.deb`
 
 On first launch, a setup wizard will guide you through:
 1. Creating an admin account
 2. Configuring LLM backend (Ollama recommended for edge deployment)
 3. Connecting to your MQTT broker or discovering devices
 
-### Development Mode
+### 🐳 Docker Deployment (Recommended for Servers)
+
+**Using Docker Compose:**
+
+```bash
+# Clone repository
+git clone https://github.com/camthink-ai/NeoMind.git
+cd NeoMind
+
+# Start with docker-compose
+docker compose up -d
+
+# View logs
+docker compose logs -f neomind
+```
+
+**Using Docker directly:**
+
+```bash
+# Pull image
+docker pull camthink-ai/neomind:latest
+
+# Run server
+docker run -d \
+  --name neomind \
+  -p 9375:9375 \
+  -v neomind-data:/data \
+  camthink-ai/neomind:latest
+```
+
+The API will be available at `http://localhost:9375`
+
+### 🖥️ Server Binary Deployment (Linux)
+
+**One-line installation:**
+
+```bash
+curl -fsSL https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/install.sh | bash
+```
+
+**Manual installation:**
+
+```bash
+# Download binary
+wget https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-amd64.tar.gz
+tar xzf neomind-server-linux-amd64.tar.gz
+sudo install -m 755 neomind-api /usr/local/bin/
+
+# Create systemd service
+sudo cp scripts/neomind.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable neomind
+sudo systemctl start neomind
+```
+
+### 💻 Development Mode
 
 #### Prerequisites
 
@@ -101,7 +166,7 @@ npm run dev
 
 Open `http://localhost:5173` in your browser.
 
-### Build Desktop App
+#### 4. Build Desktop App
 
 ```bash
 cd web
@@ -110,6 +175,23 @@ npm run tauri:build
 ```
 
 The installer will be in `web/src-tauri/target/release/bundle/`
+
+---
+
+## Deployment Options
+
+| Method | Use Case | Link |
+|--------|----------|------|
+| **Desktop App** | End-user desktop application | [Download](https://github.com/camthink-ai/NeoMind/releases/latest) |
+| **Docker** | Containerized deployment | `docker pull camthink-ai/neomind:latest` |
+| **Server Binary** | Standalone server deployment | [Linux amd64](https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-amd64.tar.gz) / [ARM64](https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-arm64.tar.gz) |
+
+**Docker Tags:**
+- `camthink-ai/neomind:latest` - Latest stable release
+- `camthink-ai/neomind:0.5.8` - Version-specific
+- `camthink-ai/neomind:0.5` - Minor version
+
+---
 
 ## Configuration
 
@@ -127,6 +209,17 @@ The installer will be in `web/src-tauri/target/release/bundle/`
 | Anthropic | `anthropic` | `https://api.anthropic.com/v1` |
 | Google | `google` | `https://generativelanguage.googleapis.com/v1beta` |
 | xAI | `xai` | `https://api.x.ai/v1` |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RUST_LOG` | `info` | Log level (trace, debug, info, warn, error) |
+| `NEOMIND_DATA_DIR` | `/var/lib/neomind` | Data directory |
+| `NEOMIND_BIND_ADDR` | `0.0.0.0:9375` | Bind address |
+| `SERVER_PORT` | `9375` | API server port |
+
+---
 
 ## Architecture
 
@@ -160,6 +253,8 @@ Automation      Devices      Messages    Extensions
              Time-Series Storage
 ```
 
+---
+
 ## Project Structure
 
 ```
@@ -184,14 +279,21 @@ neomind/
 ├── web/               # React frontend + Tauri desktop app
 │   ├── src/           # TypeScript source
 │   └── src-tauri/     # Rust backend for desktop
+├── scripts/           # Deployment scripts
+│   ├── install.sh     # Server installation script
+│   └── neomind.service # systemd service file
 ├── docs/              # Documentation
+├── Dockerfile         # Docker build
+├── docker-compose.yml # Docker Compose configuration
 └── config.*.toml      # Configuration files
 ```
+
+---
 
 ## Tech Stack
 
 ### Backend
-- **Language**: Rust 2024
+- **Language**: Rust 1.85+
 - **Async Runtime**: Tokio
 - **Web Framework**: Axum
 - **Storage**: redb (embedded key-value database)
@@ -204,6 +306,8 @@ neomind/
 - **UI**: Tailwind CSS + Radix UI
 - **Desktop**: Tauri 2.x
 - **State**: Zustand
+
+---
 
 ## API Endpoints
 
@@ -229,6 +333,10 @@ neomind/
 | **Stats** | `/api/stats/system`, `/api/stats/devices`, `/api/stats/rules` |
 | **Dashboards** | `/api/dashboards`, `/api/dashboards/:id`, `/api/dashboards/templates` |
 | **Search** | `/api/search` |
+
+Full API documentation available at `/api/docs` when server is running.
+
+---
 
 ## Extension Development
 
@@ -282,10 +390,7 @@ impl Extension for MyExtension {
 
 See [Extension Development Guide](docs/guides/16-extension-dev.md) for details.
 
-## Related Projects
-
-- **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** - Official extension marketplace and development guides
-- **[NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)** - Device type definitions for supported hardware
+---
 
 ## Usage Examples
 
@@ -317,23 +422,7 @@ User: Turn on the AC when living room temperature exceeds 30 degrees
 Executable automation rule
 ```
 
-## Data Directory
-
-Desktop app stores data in platform-specific locations:
-
-| Platform | Data Directory |
-|----------|---------------|
-| macOS | `~/Library/Application Support/NeoMind/data/` |
-| Windows | `%APPDATA%/NeoMind/data/` |
-| Linux | `~/.config/NeoMind/data/` |
-
-Key database files:
-- `telemetry.redb` - Unified time-series storage (device + extension metrics)
-- `sessions.redb` - Chat history and sessions
-- `devices.redb` - Device registry
-- `extensions.redb` - Extension registry (V2)
-- `automations.redb` - Automation definitions
-- `agents.redb` - Agent execution records
+---
 
 ## Development Commands
 
@@ -369,11 +458,54 @@ cargo run -p neomind-api
 cargo run -p neomind-api -- --config path/to/config.toml
 ```
 
+---
+
+## Data Directory
+
+Desktop app stores data in platform-specific locations:
+
+| Platform | Data Directory |
+|----------|---------------|
+| macOS | `~/Library/Application Support/NeoMind/data/` |
+| Windows | `%APPDATA%/NeoMind/data/` |
+| Linux | `~/.config/NeoMind/data/` |
+
+Key database files:
+- `telemetry.redb` - Unified time-series storage (device + extension metrics)
+- `sessions.redb` - Chat history and sessions
+- `devices.redb` - Device registry
+- `extensions.redb` - Extension registry (V2)
+- `automations.redb` - Automation definitions
+- `agents.redb` - Agent execution records
+
+---
+
+## Monitoring
+
+**Health Check:**
+```bash
+curl http://localhost:9375/api/health
+```
+
+**Status:**
+```bash
+curl http://localhost:9375/api/health/status
+```
+
+**Docker Health:**
+```bash
+docker exec neomind wget -q -O- http://localhost:9375/api/health
+```
+
+---
+
 ## Documentation
 
-- **[User Guide](CLAUDE.md)** - Development and architecture documentation
+- **[Development Guide](CLAUDE.md)** - Development and architecture documentation
 - **[Extension Development](docs/guides/16-extension-dev.md)** - Build your first extension
 - **[Module Guides](docs/guides/)** - Detailed module documentation
+
+---
 
 ## Core Concepts
 
@@ -406,9 +538,13 @@ DO
 END
 ```
 
+---
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
+
+---
 
 ## License
 
