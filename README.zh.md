@@ -81,7 +81,7 @@ curl -fsSL https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/insta
 # 下载二进制文件
 wget https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-amd64.tar.gz
 tar xzf neomind-server-linux-amd64.tar.gz
-sudo install -m 755 neomind-api /usr/local/bin/
+sudo install -m 755 neomind /usr/local/bin/
 
 # 创建 systemd 服务
 sudo cp scripts/neomind.service /etc/systemd/system/
@@ -116,7 +116,7 @@ git clone https://github.com/camthink-ai/NeoMind.git
 cd NeoMind
 
 # 构建并运行 API 服务器
-cargo run -p neomind-api
+cargo run -p neomind
 ```
 
 服务器默认在 `http://localhost:9375` 上启动。
@@ -409,7 +409,7 @@ cargo test
 cargo test -p neomind-agent
 cargo test -p neomind-llm
 cargo test -p neomind-core
-cargo test -p neomind-api
+cargo test -p neomind
 
 # 检查编译（不构建）
 cargo check
@@ -421,10 +421,10 @@ cargo fmt
 cargo clippy
 
 # 运行 API 服务器（默认端口：9375）
-cargo run -p neomind-api
+cargo run -p neomind
 
 # 使用自定义配置运行
-cargo run -p neomind-api -- --config path/to/config.toml
+cargo run -p neomind -- --config path/to/config.toml
 ```
 
 ## 文档

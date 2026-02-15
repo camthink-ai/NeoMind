@@ -83,7 +83,7 @@ curl -fsSL https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/insta
 # Download binary
 wget https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-amd64.tar.gz
 tar xzf neomind-server-linux-amd64.tar.gz
-sudo install -m 755 neomind-api /usr/local/bin/
+sudo install -m 755 neomind /usr/local/bin/
 
 # Create systemd service
 sudo cp scripts/neomind.service /etc/systemd/system/
@@ -118,7 +118,7 @@ git clone https://github.com/camthink-ai/NeoMind.git
 cd NeoMind
 
 # Build and run API server
-cargo run -p neomind-api
+cargo run -p neomind
 ```
 
 The server will start on `http://localhost:9375` by default.
@@ -399,7 +399,7 @@ cargo test
 cargo test -p neomind-agent
 cargo test -p neomind-llm
 cargo test -p neomind-core
-cargo test -p neomind-api
+cargo test -p neomind
 
 # Check compilation without building
 cargo check
@@ -411,10 +411,10 @@ cargo fmt
 cargo clippy
 
 # Run API server (default port: 9375)
-cargo run -p neomind-api
+cargo run -p neomind
 
 # Run with custom config
-cargo run -p neomind-api -- --config path/to/config.toml
+cargo run -p neomind -- --config path/to/config.toml
 ```
 
 ---

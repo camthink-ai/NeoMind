@@ -13,7 +13,7 @@ NC='\033[0m' # No Color
 # Configuration
 VERSION="${VERSION:-0.5.8}"
 REPO="camthink-ai/NeoMind"
-BINARY_NAME="neomind-api"
+BINARY_NAME="neomind"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 DATA_DIR="${DATA_DIR:-/var/lib/neomind}"
 SERVICE_NAME="neomind"
@@ -83,9 +83,9 @@ tar xzf neomind.tar.gz
 
 # Install binary
 echo "Installing binary to ${INSTALL_DIR}..."
-sudo install -m 755 "${BINARY_NAME}" "${INSTALL_DIR}/neomind-api" || {
+sudo install -m 755 "${BINARY_NAME}" "${INSTALL_DIR}/neomind" || {
     echo -e "${YELLOW}Could not install to ${INSTALL_DIR}, trying /usr/bin${NC}"
-    sudo install -m 755 "${BINARY_NAME}" /usr/bin/neomind-api
+    sudo install -m 755 "${BINARY_NAME}" /usr/bin/neomind
 }
 
 # Cleanup
@@ -103,7 +103,7 @@ Type=simple
 User=neomind
 Group=neomind
 WorkingDirectory=${DATA_DIR}
-ExecStart=${INSTALL_DIR}/neomind-api
+ExecStart=${INSTALL_DIR}/neomind
 Restart=always
 RestartSec=5
 Environment=RUST_LOG=info

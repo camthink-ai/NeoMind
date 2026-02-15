@@ -13,7 +13,7 @@ Group=neomind
 WorkingDirectory=/var/lib/neomind
 
 # Executables
-ExecStart=/usr/local/bin/neomind-api
+ExecStart=/usr/local/bin/neomind
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Auto-restart
