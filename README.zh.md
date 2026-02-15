@@ -10,6 +10,7 @@ NeoMind 是一个基于 Rust 的边缘 AI 平台，通过大语言模型（LLM�
 
 [![构建状态](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
 [![许可证: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT%20OR%20Apache-2.0-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/docker-camthink--ai-neomind-blue.svg)](https://github.com/camthink-ai/NeoMind/pkgs/container/neomind/)
 [![版本: 0.5.8](https://img.shields.io/badge/v-0.5.8-information.svg)](https://github.com/camthink-ai/NeoMind/releases)
 
 ## 核心特性
@@ -51,16 +52,78 @@ NeoMind 是一个基于 Rust 的边缘 AI 平台，通过大语言模型（LLM�
 
 ## 快速开始
 
-### 桌面应用（推荐）
+选择您的部署方式：
+
+### 📱 桌面应用（推荐给终端用户）
 
 从[发布页面](https://github.com/camthink-ai/NeoMind/releases/latest)下载适合您平台的最新版本。
+
+**支持平台：**
+- macOS (Apple Silicon + Intel) - `.dmg`
+- Windows - `.msi` / `.exe`
+- Linux - `.AppImage` / `.deb`
 
 首次启动时，设置向导将引导您完成：
 1. 创建管理员账户
 2. 配置 LLM 后端（推荐使用 Ollama 进行边缘部署）
 3. 连接到您的 MQTT 代理或发现设备
 
-### 开发模式
+### 🐳 Docker 部署（推荐给服务器）
+
+**使用 Docker Compose：**
+
+```bash
+# 克隆仓库
+git clone https://github.com/camthink-ai/NeoMind.git
+cd NeoMind
+
+# 启动服务
+docker compose up -d
+
+# 查看日志
+docker compose logs -f neomind
+```
+
+**直接使用 Docker：**
+
+```bash
+# 拉取镜像
+docker pull camthink-ai/neomind:latest
+
+# 运行服务器
+docker run -d \
+  --name neomind \
+  -p 9375:9375 \
+  -v neomind-data:/data \
+  camthink-ai/neomind:latest
+```
+
+API 将在 `http://localhost:9375` 提供服务
+
+### 🖥️ 服务器二进制部署（Linux）
+
+**一键安装：**
+
+```bash
+curl -fsSL https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/install.sh | bash
+```
+
+**手动安装：**
+
+```bash
+# 下载二进制文件
+wget https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-amd64.tar.gz
+tar xzf neomind-server-linux-amd64.tar.gz
+sudo install -m 755 neomind-api /usr/local/bin/
+
+# 创建 systemd 服务
+sudo cp scripts/neomind.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable neomind
+sudo systemctl start neomind
+```
+
+### 💻 开发模式
 
 #### 环境要求
 
@@ -110,6 +173,23 @@ npm run tauri:build
 ```
 
 安装程序将在 `web/src-tauri/target/release/bundle/` 目录中。
+
+---
+
+## 部署选项
+
+| 方式 | 适用场景 | 链接 |
+|--------|----------|------|
+| **桌面应用** | 终端用户桌面应用 | [下载](https://github.com/camthink-ai/NeoMind/releases/latest) |
+| **Docker** | 容器化部署 | `docker pull camthink-ai/neomind:latest` |
+| **服务器二进制** | 独立服务器部署 | [Linux amd64](https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-amd64.tar.gz) / [ARM64](https://github.com/camthink-ai/NeoMind/releases/download/v0.5.8/neomind-server-linux-arm64.tar.gz) |
+
+**Docker 标签：**
+- `camthink-ai/neomind:latest` - 最新稳定版
+- `camthink-ai/neomind:0.5.8` - 指定版本
+- `camthink-ai/neomind:0.5` - 次版本
+
+---
 
 ## 配置文件
 
@@ -184,14 +264,19 @@ neomind/
 ├── web/               # React 前端 + Tauri 桌面应用
 │   ├── src/           # TypeScript 源码
 │   └── src-tauri/     # 桌面应用 Rust 后端
+├── scripts/           # 部署脚本
+│   ├── install.sh     # 服务器安装脚本
+│   └── neomind.service # systemd 服务文件
 ├── docs/              # 文档
+├── Dockerfile         # Docker 构建
+├── docker-compose.yml # Docker Compose 配置
 └── config.*.toml      # 配置文件
 ```
 
 ## 技术栈
 
 ### 后端
-- **语言**: Rust 2024
+- **语言**: Rust 1.85+
 - **异步运行时**: Tokio
 - **Web 框架**: Axum
 - **存储**: redb（嵌入式键值数据库）
@@ -334,6 +419,25 @@ LLM: 好的，我创建了一条规则：
 - `extensions.redb` - 扩展注册表（V2）
 - `automations.redb` - 自动化定义
 - `agents.redb` - 智能体执行记录
+
+---
+
+## 监控
+
+**健康检查：**
+```bash
+curl http://localhost:9375/api/health
+```
+
+**状态：**
+```bash
+curl http://localhost:9375/api/health/status
+```
+
+**Docker 健康检查：**
+```bash
+docker exec neomind wget -q -O- http://localhost:9375/api/health
+```
 
 ## 开发命令
 
