@@ -279,6 +279,11 @@ impl CloudRuntime {
     pub fn new(config: CloudConfig) -> Result<Self, LlmError> {
         let http_client = Client::builder()
             .timeout(config.timeout())
+            .pool_max_idle_per_host(10) // Performance: Keep 10 idle connections for concurrent requests
+            .pool_idle_timeout(Duration::from_secs(120)) // Close after 120s idle
+            .connect_timeout(Duration::from_secs(10)) // Cloud services: 10s connection timeout
+            .http2_keep_alive_interval(Duration::from_secs(30)) // Keep HTTP/2 alive
+            .http2_keep_alive_timeout(Duration::from_secs(10)) // Keep-alive timeout
             .build()
             .map_err(|e| LlmError::Network(e.to_string()))?;
 

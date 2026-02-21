@@ -121,14 +121,14 @@ impl OllamaRuntime {
         );
 
         // Configure HTTP client with connection pooling for better performance
-        // - pool_max_idle_per_host: Keep up to 5 idle connections ready for reuse
-        // - pool_idle_timeout: Close idle connections after 90 seconds
+        // - pool_max_idle_per_host: Keep up to 10 idle connections ready for reuse (increased from 5)
+        // - pool_idle_timeout: Close idle connections after 120 seconds (increased from 90s)
         // - connect_timeout: Fail fast if server doesn't respond within 5 seconds
         // - http2_prior_knowledge: Skip ALPN negotiation for local Ollama
         let client = Client::builder()
             .timeout(config.timeout())
-            .pool_max_idle_per_host(5) // Keep 5 idle connections
-            .pool_idle_timeout(Duration::from_secs(90)) // Close after 90s idle
+            .pool_max_idle_per_host(10) // Increased: Keep 10 idle connections for concurrent requests
+            .pool_idle_timeout(Duration::from_secs(120)) // Increased: Close after 120s idle
             .connect_timeout(Duration::from_secs(5)) // Fast connection fail
             .http2_keep_alive_interval(Duration::from_secs(30)) // Keep HTTP/2 alive
             .http2_keep_alive_timeout(Duration::from_secs(10)) // Keep-alive timeout

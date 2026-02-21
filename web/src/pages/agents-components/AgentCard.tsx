@@ -231,9 +231,9 @@ export function AgentCard({
       )}
 
       {/* Footer: Last Execution + Toggle */}
-      <div className="flex items-center justify-between pt-2 border-t border-border/50">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Clock className="h-4 w-4" />
+      <div className="flex items-center justify-between pt-1.5 border-t border-border/50">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Clock className="h-3.5 w-3.5" />
           <span className="truncate max-w-[120px]">
             {agent.last_execution_at ? formatTimestamp(agent.last_execution_at, false) : t('agents:card.neverExecuted')}
           </span>

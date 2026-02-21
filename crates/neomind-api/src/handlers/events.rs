@@ -1,6 +1,9 @@
 //! Event stream API handlers.
 //!
 //! Provides real-time event streaming via SSE and WebSocket.
+//!
+//! Performance optimization: Batches multiple events into single WebSocket message
+//! to reduce network overhead in high-frequency scenarios.
 
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
@@ -10,11 +13,39 @@ use axum::{
 use futures::stream::Stream;
 use serde::Deserialize;
 use serde_json::Value;
+use std::time::Duration;
 
 use crate::handlers::ServerState;
 use neomind_core::event::EventMetadata;
 use neomind_core::eventbus::{EventBus, EventBusReceiver, FilteredReceiver};
 use neomind_core::NeoMindEvent;
+
+/// Batch configuration for WebSocket event streaming.
+/// Reduces network overhead by sending multiple events in a single message.
+struct BatchConfig {
+    /// Maximum number of events to batch before sending
+    batch_size: usize,
+    /// Maximum time to wait before sending a partial batch
+    max_delay: Duration,
+    /// Events that should bypass batching (sent immediately)
+    immediate_events: &'static [&'static str],
+}
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 10,
+            max_delay: Duration::from_millis(50),
+            immediate_events: &[
+                "AgentExecutionCompleted",
+                "AgentExecutionFailed",
+                "AlertCreated",
+                "WorkflowCompleted",
+                "WorkflowFailed",
+            ],
+        }
+    }
+}
 
 /// Wrapper for either filtered or unfiltered event receiver.
 enum EventBusReceiverWrapper {
@@ -373,34 +404,104 @@ pub async fn event_websocket_handler(
         }
 
         // Send events to the authenticated WebSocket client
-        while let Some((event, metadata)) = rx.recv().await {
-            // Apply event type filter
-            if !params.event_type.is_empty() {
-                let event_type = event.type_name().to_string();
-                if !params.event_type.contains(&event_type) {
-                    continue;
+        // Performance optimization: Batch events to reduce network overhead
+        let config = BatchConfig::default();
+        let mut event_buffer: Vec<Value> = Vec::with_capacity(config.batch_size);
+        let mut last_flush = tokio::time::Instant::now();
+
+        // Create a ticker for periodic flushing
+        let mut flush_interval = tokio::time::interval(config.max_delay);
+
+        loop {
+            tokio::select! {
+                // Receive new events
+                recv_result = rx.recv() => {
+                    match recv_result {
+                        Some((event, metadata)) => {
+                            // Apply event type filter
+                            if !params.event_type.is_empty() {
+                                let event_type = event.type_name().to_string();
+                                if !params.event_type.contains(&event_type) {
+                                    continue;
+                                }
+                            }
+
+                            let event_type = event.type_name();
+                            let payload = serde_json::json!({
+                                "id": metadata.event_id,
+                                "type": event_type,
+                                "timestamp": event.timestamp(),
+                                "source": metadata.source,
+                                "data": extract_event_data(&event),
+                            });
+
+                            // Check if this event should be sent immediately
+                            let should_send_immediately = config.immediate_events.contains(&event_type);
+
+                            if should_send_immediately {
+                                // Flush any buffered events first
+                                if !event_buffer.is_empty() {
+                                    let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
+                                    if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                        let _ = socket.send(Message::Text(json)).await;
+                                    }
+                                    event_buffer.clear();
+                                }
+
+                                // Send immediate event
+                                let msg = match serde_json::to_string(&payload) {
+                                    Ok(json) => Message::Text(json),
+                                    Err(e) => {
+                                        tracing::warn!(error = %e, "Failed to serialize event for WebSocket");
+                                        continue;
+                                    }
+                                };
+
+                                if socket.send(msg).await.is_err() {
+                                    break;
+                                }
+                            } else {
+                                // Add to buffer for batching
+                                event_buffer.push(payload);
+
+                                // Check if buffer is full
+                                if event_buffer.len() >= config.batch_size {
+                                    let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
+                                    if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                        if socket.send(Message::Text(json)).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    event_buffer.clear();
+                                    last_flush = tokio::time::Instant::now();
+                                }
+                            }
+                        }
+                        None => {
+                            // Channel closed, flush remaining events and exit
+                            if !event_buffer.is_empty() {
+                                let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
+                                if let Ok(json) = serde_json::to_string(&batch_msg) {
+                                    let _ = socket.send(Message::Text(json)).await;
+                                }
+                            }
+                            break;
+                        }
+                    }
                 }
-            }
-
-            let event_type = event.type_name();
-            let payload = serde_json::json!({
-                "id": metadata.event_id,
-                "type": event_type,
-                "timestamp": event.timestamp(),
-                "source": metadata.source,
-                "data": extract_event_data(&event),
-            });
-
-            let msg = match serde_json::to_string(&payload) {
-                Ok(json) => Message::Text(json),
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to serialize event for WebSocket");
-                    continue;
+                // Periodic flush of buffered events
+                _ = flush_interval.tick() => {
+                    if !event_buffer.is_empty() && last_flush.elapsed() >= config.max_delay {
+                        let batch_msg = serde_json::json!({ "batch": true, "events": event_buffer });
+                        if let Ok(json) = serde_json::to_string(&batch_msg) {
+                            if socket.send(Message::Text(json)).await.is_err() {
+                                break;
+                            }
+                        }
+                        event_buffer.clear();
+                        last_flush = tokio::time::Instant::now();
+                    }
                 }
-            };
-
-            if socket.send(msg).await.is_err() {
-                break;
             }
         }
 

@@ -263,23 +263,37 @@ impl TieredMemory {
 
     /// Query all memory layers.
     pub async fn query_all(&self, query: &str, top_k: usize) -> MemoryQueryResult {
-        // Short-term: filter by keyword match
-        let short_term: Vec<MemoryMessage> = self
-            .short_term
-            .get_messages()
-            .into_iter()
-            .filter(|m| m.content.to_lowercase().contains(&query.to_lowercase()))
-            .collect();
+        // Cache the lowercase query to avoid repeated allocations
+        let query_lower = query.to_lowercase();
 
-        // Mid-term: use configured search method (hybrid or semantic)
-        let mid_term = if self.config.use_hybrid_search {
-            self.search_mid_term_hybrid(query, top_k).await
-        } else {
-            self.search_mid_term_semantic(query, top_k).await
+        // Performance optimization: query all layers in parallel
+        // Short-term is CPU-bound (filtering), mid-term and long-term are I/O-bound
+        let short_term_future = {
+            let query_lower = query_lower.clone();
+            let messages = self.short_term.get_messages();
+            tokio::task::spawn_blocking(move || {
+                messages
+                    .into_iter()
+                    .filter(|m| m.content.to_lowercase().contains(&query_lower))
+                    .collect()
+            })
         };
 
-        // Long-term: keyword search
-        let long_term = self.long_term.search(query).await;
+        let mid_term_future = async {
+            if self.config.use_hybrid_search {
+                self.search_mid_term_hybrid(query, top_k).await
+            } else {
+                self.search_mid_term_semantic(query, top_k).await
+            }
+        };
+
+        let long_term_future = self.long_term.search(query);
+
+        // Run all queries in parallel and wait for completion
+        let (short_term_result, mid_term, long_term) =
+            tokio::join!(short_term_future, mid_term_future, long_term_future);
+
+        let short_term = short_term_result.unwrap_or_default();
 
         MemoryQueryResult {
             short_term,
@@ -295,23 +309,36 @@ impl TieredMemory {
         top_k: usize,
         search_method: SearchMethod,
     ) -> MemoryQueryResult {
-        // Short-term: filter by keyword match
-        let short_term: Vec<MemoryMessage> = self
-            .short_term
-            .get_messages()
-            .into_iter()
-            .filter(|m| m.content.to_lowercase().contains(&query.to_lowercase()))
-            .collect();
+        // Cache the lowercase query to avoid repeated allocations
+        let query_lower = query.to_lowercase();
 
-        // Mid-term: use specified search method
-        let mid_term = match search_method {
-            SearchMethod::Hybrid => self.search_mid_term_hybrid(query, top_k).await,
-            SearchMethod::Semantic => self.search_mid_term_semantic(query, top_k).await,
-            SearchMethod::BM25 => self.search_mid_term_bm25(query, top_k).await,
+        // Performance optimization: query all layers in parallel
+        let short_term_future = {
+            let query_lower = query_lower.clone();
+            let messages = self.short_term.get_messages();
+            tokio::task::spawn_blocking(move || {
+                messages
+                    .into_iter()
+                    .filter(|m| m.content.to_lowercase().contains(&query_lower))
+                    .collect()
+            })
         };
 
-        // Long-term: keyword search
-        let long_term = self.long_term.search(query).await;
+        let mid_term_future = async {
+            match search_method {
+                SearchMethod::Hybrid => self.search_mid_term_hybrid(query, top_k).await,
+                SearchMethod::Semantic => self.search_mid_term_semantic(query, top_k).await,
+                SearchMethod::BM25 => self.search_mid_term_bm25(query, top_k).await,
+            }
+        };
+
+        let long_term_future = self.long_term.search(query);
+
+        // Run all queries in parallel and wait for completion
+        let (short_term_result, mid_term, long_term) =
+            tokio::join!(short_term_future, mid_term_future, long_term_future);
+
+        let short_term = short_term_result.unwrap_or_default();
 
         MemoryQueryResult {
             short_term,

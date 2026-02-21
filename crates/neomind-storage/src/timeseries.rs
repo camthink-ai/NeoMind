@@ -676,6 +676,133 @@ impl TimeSeriesStore {
         })
     }
 
+    /// Query multiple metrics for a device in a single transaction.
+    /// Performance optimization: reduces transaction overhead when querying multiple metrics.
+    ///
+    /// # Arguments
+    /// * `device_id` - The device ID
+    /// * `metrics` - Slice of metric names to query
+    /// * `start` - Start timestamp (inclusive)
+    /// * `end` - End timestamp (inclusive)
+    ///
+    /// # Returns
+    /// A map of metric name to TimeSeriesResult
+    pub async fn query_range_batch(
+        &self,
+        device_id: &str,
+        metrics: &[&str],
+        start: i64,
+        end: i64,
+    ) -> Result<std::collections::HashMap<String, TimeSeriesResult>, Error> {
+        if metrics.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let read_txn = self.db.begin_read()?;
+
+        // Handle case where table doesn't exist yet
+        let table = match read_txn.open_table(TIMESERIES_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                tracing::debug!(
+                    "query_range_batch: table 'timeseries' does not exist yet, returning empty results for device_id={}, metrics={:?}",
+                    device_id,
+                    metrics
+                );
+                // Return empty results for all metrics
+                let mut results = std::collections::HashMap::new();
+                for &metric in metrics {
+                    results.insert(
+                        metric.to_string(),
+                        TimeSeriesResult {
+                            device_id: device_id.to_string(),
+                            metric: metric.to_string(),
+                            points: Vec::new(),
+                            total_count: None,
+                        },
+                    );
+                }
+                return Ok(results);
+            }
+            Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
+        };
+
+        let mut results = std::collections::HashMap::new();
+
+        // Query all metrics in a single transaction
+        for &metric in metrics {
+            let start_key = (device_id, metric, start);
+            let end_key = (device_id, metric, end);
+
+            let mut points = Vec::new();
+
+            // Use ? operator to handle range() error, but we're in a loop so we need to handle it differently
+            let range = match table.range(start_key..=end_key) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        "query_range_batch: failed to create range for metric {}: {}",
+                        metric,
+                        e
+                    );
+                    continue;
+                }
+            };
+
+            for result in range {
+                match result {
+                    Ok((key, value)) => {
+                        let (_did, _met, ts) = key.value();
+                        tracing::trace!(
+                            "query_range_batch: found metric={}, key_ts={}, value_len={}",
+                            metric,
+                            ts,
+                            value.value().len()
+                        );
+                        match serde_json::from_slice(value.value()) {
+                            Ok(point) => points.push(point),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "query_range_batch: failed to deserialize data point: {}",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "query_range_batch: error iterating range for metric {}: {}",
+                            metric,
+                            e
+                        );
+                        break;
+                    }
+                }
+            }
+
+            results.insert(
+                metric.to_string(),
+                TimeSeriesResult {
+                    device_id: device_id.to_string(),
+                    metric: metric.to_string(),
+                    points,
+                    total_count: None,
+                },
+            );
+        }
+
+        tracing::debug!(
+            "query_range_batch: device_id={}, metrics={:?}, start={}, end={}, returned results for {} metrics",
+            device_id,
+            metrics,
+            start,
+            end,
+            results.len()
+        );
+
+        Ok(results)
+    }
+
     /// Query the latest data point.
     pub async fn query_latest(
         &self,

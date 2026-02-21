@@ -354,6 +354,19 @@ a {
   * {
     @apply border-border;
   }
+
+  /* Exception: Switch component - no border */
+  [role="switch"] {
+    border: none !important;
+  }
+
+  /* Exception: Tabs component - no border */
+  [role="tablist"],
+  [role="tab"],
+  [role="tabpanel"] {
+    border: none !important;
+  }
+
   body {
     @apply bg-background text-foreground font-sans antialiased;
   }
@@ -382,6 +395,20 @@ a {
   button:where([class*="h-7"], [class*="h-8"], [class*="h-9"]) {
     min-height: auto;
     min-width: auto;
+  }
+
+  /* Exception: Switch component - keep original size */
+  [role="switch"] {
+    min-height: auto !important;
+    min-width: auto !important;
+  }
+
+  /* Exception: Tabs component - keep original size */
+  [role="tablist"],
+  [role="tab"],
+  [role="tabpanel"] {
+    min-height: auto !important;
+    min-width: auto !important;
   }
 
   /* Scrollbar styles */
