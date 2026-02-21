@@ -212,6 +212,15 @@
     "addComponentsHint": "Click the + button to add components",
     "enterEditModeHint": "Click Edit Layout to add components"
   },
+  "mobileEditBar": {
+    "component": "Component",
+    "settings": "Settings",
+    "copy": "Copy",
+    "delete": "Delete",
+    "confirm": "Confirm",
+    "edit": "Edit",
+    "selectedCount": "{{count}} selected"
+  },
   "componentPreview": {
     "title": "Preview",
     "noDataSource": "No data source",

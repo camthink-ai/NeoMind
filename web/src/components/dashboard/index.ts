@@ -16,6 +16,9 @@ export { DashboardGrid } from './DashboardGrid'
 export { DashboardListSidebar } from './DashboardListSidebar'
 export type { DashboardListSidebarProps } from './DashboardListSidebar'
 
+// Mobile components
+export { MobileEditBar, CompactMobileEditBar, FloatingEditButton } from './MobileEditBar'
+
 // Generic components - Indicators
 export { ValueCard } from './generic/ValueCard'
 export { LEDIndicator, type LEDState } from './generic/LEDIndicator'

@@ -3,6 +3,7 @@
  *
  * Provides a drag-and-drop grid layout using react-grid-layout v2.
  * Supports responsive layouts and edit mode with visual feedback.
+ * Now with touch support for mobile devices.
  *
  * Layout Tracking Strategy:
  * - During drag/resize: track positions in ref without re-rendering
@@ -15,10 +16,17 @@ import { ReactElement } from 'react'
 import { ResponsiveGridLayout } from 'react-grid-layout'
 import { cn } from '@/lib/utils'
 import { responsiveCols } from '@/design-system/tokens/size'
+import { useIsMobile } from '@/hooks/useMobile'
 
 // Import styles
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
+
+// Check if device supports touch
+const isTouchDevice = () => {
+  if (typeof window === 'undefined') return false
+  return 'ontouchstart' in window || navigator.maxTouchPoints > 0
+}
 
 export interface DashboardGridProps {
   // Components to render
@@ -56,6 +64,8 @@ export function DashboardGrid({
 }: DashboardGridProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
+  const isMobile = useIsMobile()
+  const touchEnabled = isTouchDevice()
 
   // Track layout positions from parent (props) - this is our "source of truth"
   // We ONLY update this from props, never from drag/resize
@@ -267,6 +277,31 @@ export function DashboardGrid({
           transition: transform 200ms ease;
         }
 
+        /* Touch-friendly touch-action */
+        ${touchEnabled ? `
+        .react-grid-item {
+          touch-action: none;
+        }
+
+        .react-grid-item > * {
+          touch-action: pan-y pinch-zoom;
+        }
+
+        .react-grid-layout.edit-mode .react-grid-item {
+          touch-action: none;
+        }
+
+        .react-grid-layout:not(.edit-mode) .react-grid-item {
+          touch-action: pan-y pan-x pinch-zoom;
+        }
+
+        /* Mobile edit button - ensure it's clickable */
+        .react-grid-item button[style*="touch-action: manipulation"] {
+          touch-action: manipulation !important;
+          pointer-events: auto !important;
+        }
+        ` : ''}
+
         /* Dashboard item fills the grid cell allocated by react-grid-layout */
         .dashboard-item {
           width: 100%;
@@ -309,14 +344,30 @@ export function DashboardGrid({
         /* Resize handle - visible only in edit mode */
         .react-resizable-handle {
           position: absolute;
-          width: 14px;
-          height: 14px;
+          width: ${isMobile ? '32px' : '14px'};
+          height: ${isMobile ? '32px' : '14px'};
           bottom: 0;
           right: 0;
           background: transparent;
           cursor: se-resize;
           z-index: 10;
         }
+
+        ${isMobile ? `
+        .react-resizable-handle {
+          width: 44px;
+          height: 44px;
+        }
+
+        .react-resizable-handle::after {
+          width: 20px;
+          height: 20px;
+          right: 8px;
+          bottom: 8px;
+          border-right-width: 3px;
+          border-bottom-width: 3px;
+        }
+        ` : ''}
 
         .react-resizable-handle::after {
           content: '';
@@ -370,6 +421,8 @@ export function DashboardGrid({
           onDragStop={handleDragStop}
           onResizeStart={handleResizeStart}
           onResizeStop={handleResizeStop}
+          isDraggable={editMode}
+          isResizable={editMode}
         >
           {components.map((component) => (
             <div key={component.id} className="dashboard-item h-full">

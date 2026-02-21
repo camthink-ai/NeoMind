@@ -176,6 +176,15 @@
     "commandInterfaceDesc": "点击打开命令对话框并发送指令。支持设备指令和扩展指令。",
     "commandButtonHint": "配置命令数据源。点击按钮会打开对话框发送命令。"
   },
+  "mobileEditBar": {
+    "component": "组件",
+    "settings": "设置",
+    "copy": "复制",
+    "delete": "删除",
+    "confirm": "确认",
+    "edit": "编辑",
+    "selectedCount": "已选择 {{count}} 个"
+  },
   "commandButton": {
     "defaultLabel": "命令按钮",
     "deviceCommand": "设备指令",

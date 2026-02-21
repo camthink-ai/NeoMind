@@ -656,7 +656,7 @@ export const createDashboardSlice: StateCreator<
         id: generateId(),
         position: {
           ...original.position,
-          x: original.position.x + original.position.w,
+          y: original.position.y + original.position.h,
         },
       } as DashboardComponent
 

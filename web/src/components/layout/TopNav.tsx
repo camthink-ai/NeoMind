@@ -211,9 +211,8 @@ export function TopNav() {
                       <SheetClose asChild key={item.id}>
                         <Link
                           to={item.path}
-                          onClick={handleNavClick}
                           className={cn(
-                            "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-colors",
+                            "flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all active:scale-95 active:bg-muted",
                             isActive
                               ? "bg-foreground text-background"
                               : "text-muted-foreground hover:text-foreground hover:bg-muted/50"

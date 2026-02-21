@@ -1,13 +1,14 @@
 /**
  * SessionSidebar - Responsive session management panel
  * - Desktop (lg+): Fixed sidebar on left, collapsible
- * - Mobile: Slide-out drawer
+ * - Mobile: Slide-out drawer (rendered via Portal to avoid stacking context issues)
  */
 
 import { useState, useEffect, useRef } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
+import { createPortal } from "react-dom"
 import type { ChatSession } from "@/types"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
@@ -378,13 +379,13 @@ export function SessionSidebar({
     )
   }
 
-  // Mobile mode: drawer
-  return (
+  // Mobile mode: drawer - use Portal to render at document root for proper z-index stacking
+  return createPortal(
     <>
       {/* Backdrop */}
       {open && (
         <div
-          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 transition-opacity lg:hidden"
+          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-[60] transition-opacity lg:hidden"
           onClick={onClose}
         />
       )}
@@ -392,7 +393,7 @@ export function SessionSidebar({
       {/* Sidebar */}
       <div
         className={cn(
-          "fixed top-0 left-0 h-full w-72 z-50 lg:hidden",
+          "fixed top-0 left-0 h-full w-72 z-[70] lg:hidden",
           "bg-background shadow-xl flex flex-col",
           "transform transition-transform duration-300 ease-out",
           open ? "translate-x-0" : "-translate-x-full"
@@ -400,6 +401,7 @@ export function SessionSidebar({
       >
         <SidebarContent />
       </div>
-    </>
+    </>,
+    document.body
   )
 }

@@ -869,3 +869,61 @@ a {
   animation: message-fade-in 0.2s ease-out;
 }
 
+/* ============================================================================
+ * Dashboard Mobile Touch Optimizations
+ * ============================================================================ */
+
+/* Touch-friendly dashboard grid items */
+@media (hover: none) and (pointer: coarse) {
+  /* Make grid items respond to touch properly */
+  .react-grid-layout .react-grid-item {
+    touch-action: pan-y pan-x pinch-zoom;
+  }
+
+  /* In edit mode, disable default touch to allow drag */
+  .react-grid-layout.edit-mode .react-grid-item {
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Larger resize handle for touch */
+  .react-resizable-handle {
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+
+  /* Dashboard component buttons - larger touch targets */
+  .react-grid-layout.edit-mode .react-grid-item button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Prevent zoom on double tap for dashboard controls */
+  .dashboard-grid button,
+  .dashboard-grid [role="button"] {
+    touch-action: manipulation;
+  }
+}
+
+/* Mobile edit bar - ensure proper z-index and touch handling */
+.mobile-edit-bar {
+  position: fixed;
+  z-index: 9999;
+  touch-action: manipulation;
+}
+
+/* Mobile edit bar buttons */
+.mobile-edit-bar button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Selected component indicator on mobile */
+@media (hover: none) and (pointer: coarse) {
+  .react-grid-layout.edit-mode .react-grid-item.selected {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 2px;
+  }
+}
+

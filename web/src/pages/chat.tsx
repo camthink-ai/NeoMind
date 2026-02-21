@@ -641,7 +641,7 @@ export function ChatPage() {
   }
 
   return (
-    <div className="fixed inset-0 flex flex-row overflow-hidden z-0" style={{paddingTop: 'var(--chat-content-padding-top, 6.5rem)'}}>
+    <div className="fixed inset-0 flex flex-row overflow-hidden pt-[calc(6.5rem+env(safe-area-inset-top,0px))] lg:pt-[calc(4rem+env(safe-area-inset-top,0px))]">
       {/* Pending stream recovery dialog */}
       {pendingStream?.hasPending && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">

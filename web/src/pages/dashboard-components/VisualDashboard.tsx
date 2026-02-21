@@ -11,6 +11,7 @@ import { useStore } from '@/store'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { logError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
+import { useIsMobile, useTouchHover } from '@/hooks/useMobile'
 import {
   LayoutDashboard,
   Plus,
@@ -175,6 +176,7 @@ import {
   type LayerBindingType,
 } from '@/components/dashboard'
 import { DashboardListSidebar } from '@/components/dashboard/DashboardListSidebar'
+import { MobileEditBar } from '@/components/dashboard/MobileEditBar'
 import type { DashboardComponent, DataSourceOrList, DataSource, GenericComponent } from '@/types/dashboard'
 import type { Device, AiAgent } from '@/types'
 import { COMPONENT_SIZE_CONSTRAINTS } from '@/types/dashboard'
@@ -869,6 +871,9 @@ interface ComponentWrapperProps {
   onOpenConfig: (componentId: string) => void
   onRemove: (componentId: string) => void
   onDuplicate: (componentId: string) => void
+  onSelect?: (component: DashboardComponent | null) => void
+  selectedComponentId?: string | null
+  isMobile?: boolean
 }
 
 // Memoize ComponentWrapper to prevent unnecessary re-renders
@@ -880,8 +885,16 @@ const ComponentWrapper = memo(function ComponentWrapper({
   onOpenConfig,
   onRemove,
   onDuplicate,
+  onSelect,
+  selectedComponentId,
+  isMobile = false,
 }: ComponentWrapperProps) {
   const [isHovered, setIsHovered] = useState(false)
+
+  // Use touch hover hook for desktop hover effects
+  const { isHovered: isTouchHovered, hoverProps } = useTouchHover({
+    enabled: editMode && !isMobile,
+  })
 
   // Memoize event handlers to prevent creating new functions on each render
   const handleMouseEnter = useCallback(() => setIsHovered(true), [])
@@ -890,45 +903,75 @@ const ComponentWrapper = memo(function ComponentWrapper({
   const handleRemoveClick = useCallback(() => onRemove(component.id), [component.id, onRemove])
   const handleDuplicateClick = useCallback(() => onDuplicate(component.id), [component.id, onDuplicate])
 
+  // Mobile: tap edit button to show edit bar
+  const handleEditButtonClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (isMobile && editMode && onSelect) {
+      onSelect(component)
+    }
+  }, [isMobile, editMode, onSelect, component])
+
+  const shouldShowActions = editMode && (isHovered || isTouchHovered) && !isMobile
+
   return (
     <div
-      className="relative h-full"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      className={cn(
+        'relative h-full transition-all duration-200'
+      )}
+      {...(!isMobile ? hoverProps : {})}
     >
       {/* Component content */}
       <div className="h-full w-full flex flex-col">
         {children}
       </div>
 
-      {/* Edit mode overlay */}
-      {editMode && (isHovered || window.matchMedia('(hover: none)').matches) && (
+      {/* Desktop edit mode overlay */}
+      {shouldShowActions && (
         <div className="absolute top-2 right-2 z-10 flex gap-1">
           <Button
             variant="secondary"
             size="icon"
-            className="h-7 w-7 bg-background/90 backdrop-blur"
+            className="h-9 w-9 bg-background/90 backdrop-blur"
             onClick={handleConfigClick}
           >
-            <Settings2 className="h-3.5 w-3.5" />
+            <Settings2 className="h-4 w-4" />
           </Button>
           <Button
             variant="secondary"
             size="icon"
-            className="h-7 w-7 bg-background/90 backdrop-blur"
+            className="h-9 w-9 bg-background/90 backdrop-blur"
             onClick={handleDuplicateClick}
           >
-            <Copy className="h-3.5 w-3.5" />
+            <Copy className="h-4 w-4" />
           </Button>
           <Button
             variant="secondary"
             size="icon"
-            className="h-7 w-7 bg-background/90 backdrop-blur hover:bg-destructive hover:text-destructive-foreground transition-colors"
+            className="h-9 w-9 bg-background/90 backdrop-blur hover:bg-destructive hover:text-destructive-foreground transition-colors"
             onClick={handleRemoveClick}
           >
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
+      )}
+
+      {/* Mobile edit button - top right corner */}
+      {isMobile && editMode && (
+        <button
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            handleEditButtonClick(e)
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault()
+            handleEditButtonClick(e as any)
+          }}
+          className="absolute top-2 right-2 z-50 flex items-center justify-center min-w-[44px] min-h-[44px] rounded-xl bg-background/90 backdrop-blur text-muted-foreground border border-border/50 shadow-sm transition-all duration-200 active:scale-95 cursor-pointer select-none"
+          style={{ touchAction: 'manipulation' }}
+        >
+          <Settings2 className="w-5 h-5" />
+        </button>
       )}
     </div>
   )
@@ -974,6 +1017,12 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   const [configOpen, setConfigOpen] = useState(false)
   const [selectedComponent, setSelectedComponent] = useState<DashboardComponent | null>(null)
 
+  // Mobile editing state
+  const isMobile = useIsMobile()
+  const isDesktop = !isMobile
+  const [mobileSelectedId, setMobileSelectedId] = useState<string | null>(null)
+  const [mobileEditBarOpen, setMobileEditBarOpen] = useState(false)
+
   // Map editor dialog state
   const [mapEditorOpen, setMapEditorOpen] = useState(false)
   const [mapEditorBindings, setMapEditorBindings] = useState<MapBinding[]>([])
@@ -989,10 +1038,12 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   // Fullscreen state
   const [isFullscreen, setIsFullscreen] = useState(false)
 
-  // Persist sidebar state to localStorage
+  // Persist sidebar state to localStorage (default to closed on mobile, open on desktop)
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = localStorage.getItem('neomind_dashboard_sidebar_open')
-    return saved !== 'false' // Default to true
+    if (saved !== null) return saved !== 'false'
+    // No saved value - default based on device type
+    return window.innerWidth >= 1024 // Default to closed on mobile/tablet, open on desktop
   })
 
   // Update localStorage when sidebar state changes
@@ -1571,13 +1622,21 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
             onOpenConfig={handleOpenConfig}
             onRemove={removeComponent}
             onDuplicate={duplicateComponent}
+            onSelect={isMobile ? (comp) => {
+              if (comp) {
+                setMobileSelectedId(comp.id)
+                setMobileEditBarOpen(true)
+              }
+            } : undefined}
+            selectedComponentId={mobileSelectedId}
+            isMobile={isMobile}
           >
             {renderDashboardComponent(component, devices, editMode)}
           </ComponentWrapper>
         ),
       }
     }) ?? []
-  }, [componentsStableKey, editMode, configVersion, devices.length, currentDashboard])
+  }, [componentsStableKey, editMode, configVersion, devices.length, currentDashboard, isMobile, handleOpenConfig])
 
   // Track initial config load to avoid unnecessary updates
   const initialConfigRef = useRef<any>(null)
@@ -4508,6 +4567,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           onDelete={handleDashboardDelete}
           open={sidebarOpen}
           onOpenChange={handleSidebarOpenChange}
+          isDesktop={isDesktop}
         />
       )}
 
@@ -4523,7 +4583,11 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => handleSidebarOpenChange(!sidebarOpen)}
+                onClick={() => isMobile ? handleSidebarOpenChange(true) : handleSidebarOpenChange(!sidebarOpen)}
+                className={cn(
+                  "active:scale-95",
+                  !isDesktop && sidebarOpen && "bg-muted"
+                )}
               >
                 <PanelsTopLeft className="h-5 w-5" />
               </Button>
@@ -4571,7 +4635,24 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     <span className="sm:hidden">{t('visualDashboard.add')}</span>
                   </Button>
                 </SheetTrigger>
-                <SheetContent side="right" className="w-80 sm:w-96 overflow-y-auto">
+                <SheetContent
+                  side="right"
+                  className="w-80 sm:w-96 overflow-y-auto"
+                  onClick={(e) => {
+                    // Handle component button clicks via event delegation
+                    const target = e.target as HTMLElement
+                    const button = target.closest('[data-component-item]')
+                    if (button) {
+                      const componentId = button.getAttribute('data-component-item')
+                      if (componentId) {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        console.log('Adding component via delegation:', componentId)
+                        handleAddComponent(componentId)
+                      }
+                    }
+                  }}
+                >
                   <SheetTitle>{t('visualDashboard.componentLibrary')}</SheetTitle>
                   <div className="mt-4 space-y-6 pb-6">
                     {getComponentLibrary(t).map((category) => (
@@ -4584,19 +4665,18 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                           {category.items.map((item) => {
                             const Icon = item.icon
                             return (
-                              <Button
+                              <button
                                 key={item.id}
-                                variant="outline"
-                                size="sm"
-                                className="h-auto w-full flex-col items-start p-3 text-left overflow-hidden"
-                                onClick={() => handleAddComponent(item.id)}
+                                type="button"
+                                data-component-item={item.id}
+                                className="h-auto w-full flex flex-col items-start p-3 text-left overflow-hidden rounded-lg border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors min-h-[88px] cursor-pointer active:scale-[0.98] transition-transform"
                               >
                                 <Icon className="h-4 w-4 mb-2 text-muted-foreground shrink-0" />
                                 <span className="text-xs font-medium w-full text-left">{item.name}</span>
                                 <p className="text-xs text-muted-foreground mt-1 w-full text-left line-clamp-2 leading-snug break-words">
                                   {item.description}
                                 </p>
-                              </Button>
+                              </button>
                             )
                           })}
                         </div>
@@ -4698,6 +4778,39 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         backgroundImage={componentConfig.backgroundImage as string}
         onSave={handleLayerEditorSave}
       />
+
+      {/* Mobile Edit Bar */}
+      {isMobile && mobileEditBarOpen && mobileSelectedId && (
+        <MobileEditBar
+          isOpen={mobileEditBarOpen}
+          onClose={() => {
+            setMobileEditBarOpen(false)
+            setMobileSelectedId(null)
+          }}
+          onSettings={() => {
+            const comp = currentDashboard?.components.find(c => c.id === mobileSelectedId)
+            if (comp) {
+              handleOpenConfig(comp.id)
+              setMobileEditBarOpen(false)
+            }
+          }}
+          onCopy={() => {
+            if (mobileSelectedId) {
+              duplicateComponent(mobileSelectedId)
+              setMobileEditBarOpen(false)
+              setMobileSelectedId(null)
+            }
+          }}
+          onDelete={() => {
+            if (mobileSelectedId) {
+              removeComponent(mobileSelectedId)
+              setMobileEditBarOpen(false)
+              setMobileSelectedId(null)
+            }
+          }}
+          componentName={currentDashboard?.components.find(c => c.id === mobileSelectedId)?.title}
+        />
+      )}
     </div>
   )
 })
