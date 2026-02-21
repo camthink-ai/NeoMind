@@ -182,10 +182,26 @@ export class EventsWebSocket {
   private authenticated = false  // Track if authentication succeeded
   private authFailed = false  // Track if auth failed to prevent reconnection loops
 
+  // Performance optimization: event batching
+  private pendingEvents: NeoMindEvent[] = []
+  private rafId: number | null = null
+  private onlineHandler: (() => void) | null = null
+
   constructor(config?: EventsConfig) {
     this.config = config || {}
     if (this.config.maxReconnectAttempts !== undefined) {
       this.maxReconnectAttempts = this.config.maxReconnectAttempts
+    }
+
+    // Performance optimization: listen for network state to trigger immediate reconnect
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      this.onlineHandler = () => {
+        if (!this.isConnected() && !this.isConnecting) {
+          this.reconnectAttempts = 0  // Reset backoff on network recovery
+          this.connect()
+        }
+      }
+      window.addEventListener('online', this.onlineHandler)
     }
   }
 
@@ -469,6 +485,18 @@ export class EventsWebSocket {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
     }
+    // Cancel pending RAF
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId)
+      this.rafId = null
+    }
+    // Clear pending events
+    this.pendingEvents = []
+    // Remove network listener
+    if (this.onlineHandler && typeof window !== 'undefined') {
+      window.removeEventListener('online', this.onlineHandler)
+      this.onlineHandler = null
+    }
     // Close WebSocket
     if (this.ws) {
       this.ws.close()
@@ -548,26 +576,49 @@ export class EventsWebSocket {
   }
 
   private notifyEvent(event: NeoMindEvent) {
-    // Notify type-specific handlers
-    const typeHandlers = this.eventHandlers.get(event.type as EventType)
-    if (typeHandlers) {
-      typeHandlers.forEach(handler => {
-        try {
-          handler(event)
-        } catch {
-          // Silent error handling
+    // Performance optimization: batch events using requestAnimationFrame
+    // This reduces UI jank by processing all events in a single frame
+
+    // Handle batched events from server (performance optimization)
+    if ((event as any).batch === true && (event as any).events) {
+      // Server sent a batch of events
+      const batchedEvents = (event as any).events as NeoMindEvent[]
+      this.pendingEvents.push(...batchedEvents)
+    } else {
+      // Single event
+      this.pendingEvents.push(event)
+    }
+
+    if (this.rafId === null) {
+      this.rafId = requestAnimationFrame(() => {
+        this.rafId = null
+        const events = this.pendingEvents.splice(0) // Clear and get all pending events
+
+        // Process all batched events
+        for (const event of events) {
+          // Notify type-specific handlers
+          const typeHandlers = this.eventHandlers.get(event.type as EventType)
+          if (typeHandlers) {
+            typeHandlers.forEach(handler => {
+              try {
+                handler(event)
+              } catch {
+                // Silent error handling
+              }
+            })
+          }
+
+          // Notify generic handlers
+          this.genericHandlers.forEach(handler => {
+            try {
+              handler(event)
+            } catch {
+              // Silent error handling
+            }
+          })
         }
       })
     }
-
-    // Notify generic handlers
-    this.genericHandlers.forEach(handler => {
-      try {
-        handler(event)
-      } catch {
-        // Silent error handling
-      }
-    })
   }
 
   private notifyConnection(connected: boolean) {

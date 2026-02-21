@@ -135,7 +135,7 @@ export function TopNav() {
 
   return (
     <TooltipProvider delayDuration={500}>
-      <nav className="h-16 bg-background/95 backdrop-blur flex items-center px-4 sm:px-6 shadow-sm z-50 relative">
+      <nav className="fixed top-0 left-0 right-0 min-h-16 bg-background/95 backdrop-blur flex items-center px-4 sm:px-6 shadow-sm z-50" style={{paddingTop: 'env(safe-area-inset-top, 0px)'}}>
         {/* Logo - vertically centered in nav */}
         <Link to="/chat" className="flex shrink-0 items-center justify-center mr-4 md:mr-6">
           <BrandLogoWithName />
@@ -184,6 +184,7 @@ export function TopNav() {
                 variant="ghost"
                 size="icon"
                 className="w-10 h-10 rounded-lg"
+                aria-label="Open navigation menu"
               >
                 <Menu className="h-5 w-5" />
               </Button>

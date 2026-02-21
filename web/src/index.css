@@ -2,16 +2,151 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================================
+ * MOBILE-FIRST OPTIMIZATIONS
+ * ============================================================================ */
+
 /* Height chain for flex layout - body/root fill viewport */
-html,
+html {
+  height: 100%;
+}
+
 body,
 #root {
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* iOS safe area support for iPhone X+ notches (2025 spec with fallbacks) */
+@supports (padding: env(safe-area-inset-top)) {
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  /* Safe top with minimal fallback for chat components */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 12px);
+  }
+  /* TopNav height including safe area */
+  --topnav-height: calc(4rem + env(safe-area-inset-top, 0px));
+  /* Chat page top padding: TopNav + Mobile Header + safe area */
+  --chat-content-padding-top: calc(6.5rem + env(safe-area-inset-top, 0px));
+}
+@supports (padding: env(safe-area-inset-bottom)) {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* Safe bottom with minimal fallback for chat input */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 12px);
+  }
+}
+@supports (padding: env(safe-area-inset-left)) {
+  .safe-left {
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+}
+@supports (padding: env(safe-area-inset-right)) {
+  .safe-right {
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+}
+@supports (padding: env(safe-area-inset-top)) or (padding: env(safe-area-inset-bottom)) or
+           (padding: env(safe-area-inset-left)) or (padding: env(safe-area-inset-right)) {
+  .safe-all {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+}
+
+/* ============================================================================
+ * VISUAL VIEWPORT - Mobile keyboard handling (2025)
+ * ============================================================================ */
+
+/* CSS variables for keyboard tracking */
+:root {
+  --keyboard-height: 0px;
+  --initial-viewport-height: 100dvh;
+  --mobile-header-height: calc(2.5rem + env(safe-area-inset-top, 0px));
+  --chat-page-height: 100dvh;
+}
+
+/* Dynamic viewport height - primary approach (2025 best practice) */
+.viewport-full {
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Minimum height that adapts */
+.min-viewport-full {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Elements that adjust when keyboard is open */
+.keyboard-aware {
+  padding-bottom: var(--keyboard-height, 0px);
+}
+
+/* Force viewport reset after keyboard dismiss */
+@supports (height: 100dvh) {
+  body {
+    min-height: 100dvh;
+  }
+
+  /* Prevent body from shrinking when keyboard is open */
+  body.keyboard-open {
+    min-height: 100dvh;
+    height: var(--initial-viewport-height, 100dvh);
+    overflow: hidden;
+  }
 }
 
 /* iOS touch scrolling for overflow-y-auto containers */
 .touch-scroll {
   -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent tap highlight on mobile - applied to all elements */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Disable callout on interactive elements */
+button,
+a,
+.clickable,
+[role="button"] {
+  -webkit-touch-callout: none;
+}
+
+/* Allow callout on selectable elements and prevent iOS auto-zoom */
+input,
+textarea,
+[contenteditable] {
+  -webkit-touch-callout: default;
+  /* Prevent iOS auto-zoom: font-size must be >= 16px */
+  font-size: 16px !important;
+}
+
+/* Optimize touch interactions for buttons - prevent accidental zoom on double tap */
+button,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* Preserve default touch actions for links and scrollable areas */
+a {
+  touch-action: auto;
+}
+
+/* Ensure scrolling areas work properly on iOS */
+.scrollable,
+.overflow-y-auto,
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  touch-action: auto;
 }
 
 @layer base {
@@ -231,6 +366,25 @@ body,
 
 /* Custom scrollbar */
 @layer components {
+  /* ============================================================================
+   * MOBILE TOUCH TARGET OPTIMIZATIONS
+   * ============================================================================ */
+
+  /* Ensure minimum touch target size (44x44px per iOS/Android guidelines) */
+  button,
+  .clickable,
+  [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Exception: Small icon buttons - add padding instead of forcing size */
+  button:where([class*="h-7"], [class*="h-8"], [class*="h-9"]) {
+    min-height: auto;
+    min-width: auto;
+  }
+
+  /* Scrollbar styles */
   * {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;

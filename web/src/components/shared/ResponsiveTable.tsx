@@ -153,11 +153,12 @@ export function ResponsiveTable({
                     {visibleActions && visibleActions.length > 0 && (
                       <td className="px-4 py-3.5 align-middle">
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenuTrigger asChild>
                             <Button
                               variant="ghost"
                               size="icon"
-                              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity data-[state=open]:opacity-100"
+                              className="h-9 w-9 opacity-0 group-hover:opacity-100 transition-opacity data-[state=open]:opacity-100"
+                              aria-label="Actions"
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
@@ -222,18 +223,19 @@ export function ResponsiveTable({
               )}
             >
               {/* Card Header - First column as title */}
-              <div className="bg-muted/40 px-4 py-3.5 border-b border-border/60">
+              <div className="bg-muted/30 px-4 py-3 border-b border-border/60 rounded-t-xl">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-2 min-w-0 flex-1">
                     {renderCell(columns[0].key, rowData)}
                   </div>
                   {visibleActions && visibleActions.length > 0 && (
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                      <DropdownMenuTrigger asChild>
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 shrink-0 hover:bg-muted-foreground/10"
+                          className="h-9 w-9 shrink-0 hover:bg-muted-foreground/10"
+                          aria-label="Actions"
                         >
                           <MoreVertical className="h-4 w-4" />
                         </Button>
@@ -263,7 +265,7 @@ export function ResponsiveTable({
               </div>
 
               {/* Card Body - Other columns as key-value pairs */}
-              <div className="p-4 space-y-3.5">
+              <div className="p-3 sm:p-4 space-y-2 sm:space-y-2.5">
                 {columns.slice(1).map((column) => {
                   const cellContent = renderCell(column.key, rowData)
                   // Skip if content is empty
@@ -272,11 +274,11 @@ export function ResponsiveTable({
                   }
 
                   return (
-                    <div key={column.key} className="flex items-start gap-3">
-                      <span className="text-xs text-muted-foreground shrink-0 w-28 pt-0.5 font-medium">
+                    <div key={column.key} className="flex items-start gap-2 sm:gap-3 py-0.5">
+                      <span className="text-xs text-muted-foreground shrink-0 w-24 sm:w-28 pt-0.5 font-medium">
                         {renderColumnLabel(column.label)}
                       </span>
-                      <div className="text-sm flex-1 text-left">
+                      <div className="text-sm flex-1 text-left min-w-0 break-words">
                         {cellContent}
                       </div>
                     </div>
@@ -307,9 +309,9 @@ export interface MobileCardProps {
 
 export function MobileCard({ title, subtitle, icon, actions, children, className, onClick }: MobileCardProps) {
   return (
-    <Card className={cn('overflow-hidden border-border/60 shadow-sm', onClick && 'cursor-pointer active:scale-[0.99] transition-all', className)}>
+    <Card className={cn('overflow-hidden border-border/60 rounded-xl shadow-sm', onClick && 'cursor-pointer active:scale-[0.99] transition-all', className)}>
       {/* Card Header */}
-      <div className="bg-muted/40 px-4 py-3.5 border-b border-border/60">
+      <div className="bg-muted/30 px-4 py-3 border-b border-border/60 rounded-t-xl">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             {icon && <div className="shrink-0">{icon}</div>}
@@ -323,7 +325,7 @@ export function MobileCard({ title, subtitle, icon, actions, children, className
       </div>
 
       {/* Card Body */}
-      <div className="p-4">
+      <div className="p-3 sm:p-4">
         {children}
       </div>
     </Card>

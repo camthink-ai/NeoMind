@@ -3,7 +3,7 @@
  * A simplified, chat-centric UI with minimal navigation
  */
 
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useReducer } from "react"
 import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
@@ -23,6 +23,7 @@ import { SessionDrawer } from "../session/SessionDrawer"
 import { InputSuggestions } from "./InputSuggestions"
 import { MergedMessageList } from "./MergedMessageList"
 import { StreamProgress } from "./StreamProgress"
+import { forceViewportReset } from "@/hooks/useVisualViewport"
 import {
   Menu,
   Send,
@@ -48,6 +49,146 @@ interface ChatContainerProps {
   className?: string
 }
 
+// Performance optimization: useReducer to batch stream state updates
+// This prevents multiple re-renders during streaming response
+interface StreamState {
+  isStreaming: boolean
+  streamingContent: string
+  streamingThinking: string
+  streamingToolCalls: any[]
+  streamProgress: StreamProgressType
+  currentPlanStep: string
+}
+
+type StreamAction =
+  | { type: 'START_STREAM' }
+  | { type: 'THINKING'; content: string }
+  | { type: 'CONTENT'; content: string }
+  | { type: 'TOOL_START'; tool: string; arguments?: any }
+  | { type: 'TOOL_END'; tool: string; result: any }
+  | { type: 'PROGRESS'; progress: Partial<StreamProgressType> }
+  | { type: 'PLAN'; step: string }
+  | { type: 'WARNING'; message: string }
+  | { type: 'END_STREAM' }
+  | { type: 'ERROR' }
+  | { type: 'RESET' }
+
+const initialStreamState: StreamState = {
+  isStreaming: false,
+  streamingContent: "",
+  streamingThinking: "",
+  streamingToolCalls: [],
+  streamProgress: {
+    elapsed: 0,
+    stage: 'thinking',
+    warnings: [],
+    remainingTime: 300
+  },
+  currentPlanStep: ""
+}
+
+function streamReducer(state: StreamState, action: StreamAction): StreamState {
+  switch (action.type) {
+    case 'START_STREAM':
+      return { ...state, isStreaming: true }
+
+    case 'THINKING':
+      return {
+        ...state,
+        isStreaming: true,
+        streamingThinking: state.streamingThinking + action.content,
+        streamProgress: {
+          ...state.streamProgress,
+          stage: 'thinking',
+          elapsed: Math.floor((Date.now() - Date.now()) / 1000) // Simplified
+        }
+      }
+
+    case 'CONTENT':
+      return {
+        ...state,
+        isStreaming: true,
+        streamingContent: state.streamingContent + action.content,
+        streamProgress: {
+          ...state.streamProgress,
+          stage: 'generating',
+        }
+      }
+
+    case 'TOOL_START':
+      return {
+        ...state,
+        isStreaming: true,
+        streamingToolCalls: [
+          ...state.streamingToolCalls,
+          {
+            id: crypto.randomUUID(),
+            name: action.tool,
+            arguments: action.arguments,
+            result: null
+          }
+        ],
+        streamProgress: {
+          ...state.streamProgress,
+          stage: 'tool_execution',
+        }
+      }
+
+    case 'TOOL_END':
+      return {
+        ...state,
+        streamingToolCalls: state.streamingToolCalls.map(tc =>
+          tc.name === action.tool
+            ? { ...tc, result: action.result }
+            : tc
+        )
+      }
+
+    case 'PROGRESS':
+      return {
+        ...state,
+        streamProgress: {
+          ...state.streamProgress,
+          ...action.progress,
+          warnings: action.progress.warnings ?? state.streamProgress.warnings
+        }
+      }
+
+    case 'PLAN':
+      return {
+        ...state,
+        currentPlanStep: action.step
+      }
+
+    case 'WARNING':
+      return {
+        ...state,
+        streamProgress: {
+          ...state.streamProgress,
+          warnings: [...state.streamProgress.warnings, action.message]
+        }
+      }
+
+    case 'END_STREAM':
+      return {
+        ...initialStreamState,
+        isStreaming: false
+      }
+
+    case 'ERROR':
+      return {
+        ...initialStreamState,
+        isStreaming: false
+      }
+
+    case 'RESET':
+      return initialStreamState
+
+    default:
+      return state
+  }
+}
+
 export function ChatContainer({ className = "" }: ChatContainerProps) {
   const { t } = useTranslation("chat")
   const navigate = useNavigate()
@@ -70,12 +211,11 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
     storeRef.current = useStore()
   }, [])
 
+  // Performance optimization: useReducer for stream state to batch updates
+  const [streamState, dispatch] = useReducer(streamReducer, initialStreamState)
+
   // Local state
   const [input, setInput] = useState("")
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [streamingContent, setStreamingContent] = useState("")
-  const [streamingThinking, setStreamingThinking] = useState("")
-  const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(false)
 
@@ -84,23 +224,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
   // Track the ID of the last completed assistant message for tool call result updates
   const [lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null)
 
-  // Stream progress state (P0.1: Progress tracking)
-  const [streamProgress, setStreamProgress] = useState<StreamProgressType>({
-    elapsed: 0,
-    stage: 'thinking',
-    warnings: [],
-    remainingTime: 300
-  })
-
-  // Current execution plan step from Plan events
-  const [currentPlanStep, setCurrentPlanStep] = useState<string>("")
-
-  // Refs
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-  const streamingContentRef = useRef("")
-  const streamingThinkingRef = useRef("")
-  const streamingToolCallsRef = useRef<any[]>([])
+  // Refs for tracking stream content during reducer updates
   const streamStartRef = useRef<number>(Date.now())
   const isStreamingRef = useRef(false)
   const messagesRef = useRef<Message[]>([])  // Store latest messages for WebSocket handlers
@@ -110,176 +234,130 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [])
 
+  // Ref for messages end and input
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+
   useEffect(() => {
     scrollToBottom()
-  }, [messages, streamingContent, scrollToBottom])
+  }, [messages, streamState.streamingContent, scrollToBottom])
 
   // Sync isStreaming ref with state
   useEffect(() => {
-    isStreamingRef.current = isStreaming
-  }, [isStreaming])
+    isStreamingRef.current = streamState.isStreaming
+  }, [streamState.isStreaming])
 
   // Sync messages to ref for WebSocket handlers (prevents re-subscription on every message)
   useEffect(() => {
     messagesRef.current = messages
   }, [messages])
 
-  // Handle WebSocket events
+  // Handle WebSocket events - optimized with useReducer for batched state updates
   useEffect(() => {
+    // Track stream content for final message assembly
+    let streamingContentAccumulator = ""
+    let streamingThinkingAccumulator = ""
+    let streamingToolCallsAccumulator: any[] = []
+
     const handleMessage = (data: ServerMessage) => {
       switch (data.type) {
         case "Thinking":
-          setIsStreaming(true)
-          streamingThinkingRef.current += (data.content || "")
-          setStreamingThinking(streamingThinkingRef.current)
-          // Update progress stage
-          setStreamProgress(prev => ({
-            ...prev,
-            stage: 'thinking',
-            elapsed: Math.floor((Date.now() - streamStartRef.current) / 1000)
-          }))
+          streamingThinkingAccumulator += (data.content || "")
+          dispatch({ type: 'THINKING', content: data.content || "" })
           break
 
         case "Content":
-          setIsStreaming(true)
-          streamingContentRef.current += (data.content || "")
-          setStreamingContent(streamingContentRef.current)
-          // Update progress stage
-          setStreamProgress(prev => ({
-            ...prev,
-            stage: 'generating',
-            elapsed: Math.floor((Date.now() - streamStartRef.current) / 1000)
-          }))
+          streamingContentAccumulator += (data.content || "")
+          dispatch({ type: 'CONTENT', content: data.content || "" })
           break
 
-        case "ToolCallStart": {
-          const toolCall = {
+        case "ToolCallStart":
+          dispatch({ type: 'TOOL_START', tool: data.tool, arguments: data.arguments })
+          // Track locally for message assembly
+          streamingToolCallsAccumulator.push({
             id: crypto.randomUUID(),
             name: data.tool,
             arguments: data.arguments,
             result: null
-          }
-          streamingToolCallsRef.current.push(toolCall)
-          setStreamingToolCalls([...streamingToolCallsRef.current])
-          // Update progress stage
-          setStreamProgress(prev => ({
-            ...prev,
-            stage: 'tool_execution',
-            elapsed: Math.floor((Date.now() - streamStartRef.current) / 1000)
-          }))
-          break
-        }
-
-        case "ToolCallEnd": {
-          setStreamingToolCalls(prev => {
-            const updated = prev.map(tc =>
-              tc.name === data.tool
-                ? { ...tc, result: data.result }
-                : tc
-            )
-            // Also update the ref for consistency
-            streamingToolCallsRef.current = updated
-
-            // If not streaming (stream ended before tool execution),
-            // update the saved assistant message's tool_calls
-            if (!isStreamingRef.current && lastAssistantMessageId) {
-              const lastMessage = messagesRef.current.find(m => m.id === lastAssistantMessageId)
-              if (lastMessage && lastMessage.role === "assistant" && lastMessage.tool_calls) {
-                const updatedToolCalls = lastMessage.tool_calls.map(tc =>
-                  tc.name === data.tool
-                    ? { ...tc, result: data.result }
-                    : tc
-                )
-                // Update the message in store
-                addMessage({
-                  ...lastMessage,
-                  tool_calls: updatedToolCalls
-                })
-              }
-            }
-
-            return updated
           })
           break
-        }
 
-        // P0.1: Handle progress events from backend
-        case "Progress": {
-          setStreamProgress({
-            elapsed: data.elapsed,
-            stage: data.stage,
-            warnings: streamProgress.warnings,
-            remainingTime: data.remainingTime ?? 300
+        case "ToolCallEnd":
+          // Update local tracking
+          streamingToolCallsAccumulator = streamingToolCallsAccumulator.map(tc =>
+            tc.name === data.tool ? { ...tc, result: data.result } : tc
+          )
+          dispatch({ type: 'TOOL_END', tool: data.tool, result: data.result })
+
+          // If not streaming (stream ended before tool execution),
+          // update the saved assistant message's tool_calls
+          if (!isStreamingRef.current && lastAssistantMessageId) {
+            const lastMessage = messagesRef.current.find(m => m.id === lastAssistantMessageId)
+            if (lastMessage && lastMessage.role === "assistant" && lastMessage.tool_calls) {
+              const updatedToolCalls = lastMessage.tool_calls.map(tc =>
+                tc.name === data.tool ? { ...tc, result: data.result } : tc
+              )
+              addMessage({
+                ...lastMessage,
+                tool_calls: updatedToolCalls
+              })
+            }
+          }
+          break
+
+        case "Progress":
+          dispatch({
+            type: 'PROGRESS',
+            progress: {
+              elapsed: data.elapsed,
+              stage: data.stage,
+              remainingTime: data.remainingTime ?? 300
+            }
           })
           // Update plan step from progress message if available
           if (data.message) {
-            setCurrentPlanStep(data.message)
+            dispatch({ type: 'PLAN', step: data.message })
           }
           break
-        }
 
-        // Handle Plan events - shows execution step
-        case "Plan": {
-          setCurrentPlanStep(data.step)
+        case "Plan":
+          dispatch({ type: 'PLAN', step: data.step })
           break
-        }
 
-        // P0.1: Handle warning events
-        case "Warning": {
-          setStreamProgress(prev => ({
-            ...prev,
-            warnings: [...prev.warnings, data.message],
-            elapsed: data.elapsed ?? prev.elapsed,
-            remainingTime: data.remainingTime ?? prev.remainingTime
-          }))
+        case "Warning":
+          dispatch({ type: 'WARNING', message: data.message })
           break
-        }
 
         case "end":
           // Save the complete message using the ID generated at stream start
-          if (streamingContentRef.current || streamingThinkingRef.current || streamingToolCallsRef.current.length > 0) {
-            // Use the message ID generated at stream start (not a new random UUID)
-            // This ensures the same message is not added multiple times
+          if (streamingContentAccumulator || streamingThinkingAccumulator || streamingToolCallsAccumulator.length > 0) {
             const messageId = currentStreamMessageId || crypto.randomUUID()
             const completeMessage: Message = {
               id: messageId,
               role: "assistant",
-              content: streamingContentRef.current,
-              timestamp: Math.floor(Date.now() / 1000), // Use seconds (matches backend)
-              thinking: streamingThinkingRef.current || undefined,
-              tool_calls: streamingToolCallsRef.current.length > 0 ? streamingToolCallsRef.current : undefined,
+              content: streamingContentAccumulator,
+              timestamp: Math.floor(Date.now() / 1000),
+              thinking: streamingThinkingAccumulator || undefined,
+              tool_calls: streamingToolCallsAccumulator.length > 0 ? streamingToolCallsAccumulator : undefined,
             }
             addMessage(completeMessage)
-            // Track this message for potential tool call result updates
             setLastAssistantMessageId(messageId)
           }
-          // Reset streaming state
-          setIsStreaming(false)
-          setStreamingContent("")
-          setStreamingThinking("")
-          setStreamingToolCalls([])
-          streamingContentRef.current = ""
-          streamingThinkingRef.current = ""
-          streamingToolCallsRef.current = []
-          setCurrentStreamMessageId(null)  // Reset for next stream
-          // Reset progress state
-          setStreamProgress({
-            elapsed: 0,
-            stage: 'thinking',
-            warnings: [],
-            remainingTime: 300
-          })
-          setCurrentPlanStep("")
+          // Reset local accumulators
+          streamingContentAccumulator = ""
+          streamingThinkingAccumulator = ""
+          streamingToolCallsAccumulator = []
+          setCurrentStreamMessageId(null)
+          dispatch({ type: 'END_STREAM' })
           break
 
         case "Error":
-          setIsStreaming(false)
+          dispatch({ type: 'ERROR' })
           break
 
         case "session_created":
         case "session_switched":
           if (data.sessionId) {
-            // Use storeRef to avoid dependency on switchSession function
             storeRef.current.switchSession(data.sessionId)
           }
           break
@@ -289,7 +367,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
     // ws.onMessage returns an unsubscribe function - we MUST call it in cleanup
     const unsubscribe = ws.onMessage(handleMessage)
     return () => { void unsubscribe() }
-  }, [lastAssistantMessageId])  // Stable dependencies only - storeRef avoids needing addMessage/switchSession
+  }, [lastAssistantMessageId, currentStreamMessageId])  // Stable dependencies only
 
   // Initialize session if none exists
   useEffect(() => {
@@ -305,7 +383,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
   // Send message
   const handleSend = async () => {
     const trimmedInput = input.trim()
-    if (!trimmedInput || isStreaming) return
+    if (!trimmedInput || streamState.isStreaming) return
 
     // Add user message directly to current session
     // Backend handles session continuity - no need to create new session
@@ -327,17 +405,10 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
     }
 
     // Start streaming - generate message ID once for the entire stream
-    setIsStreaming(true)
+    dispatch({ type: 'START_STREAM' })
     const newMessageId = crypto.randomUUID()
     setCurrentStreamMessageId(newMessageId)
     streamStartRef.current = Date.now()  // Reset stream start time
-    // Reset progress state
-    setStreamProgress({
-      elapsed: 0,
-      stage: 'thinking',
-      warnings: [],
-      remainingTime: 300
-    })
     // Reset last assistant message ID (new response incoming)
     setLastAssistantMessageId(null)
 
@@ -375,6 +446,14 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
     }
   }
 
+  // Handle tap outside to dismiss keyboard (mobile)
+  const handleBackdropClick = () => {
+    forceViewportReset()
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  }
+
   // Get user initials
   const getUserInitials = (username: string) => {
     return username.slice(0, 2).toUpperCase()
@@ -385,9 +464,9 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
   const filteredMessages = filterPartialMessages(messages)
 
   return (
-    <div className={`flex flex-col h-screen bg-[var(--background)] ${className}`}>
+    <div className={`flex flex-col h-full bg-[var(--background)] ${className}`}>
       {/* Header */}
-      <header className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] bg-[var(--card)]">
+      <header className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)] bg-[var(--card)] flex-shrink-0">
         <div className="flex items-center gap-3">
           {/* Session history trigger */}
           <Button
@@ -395,6 +474,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
             size="icon"
             onClick={() => setSessionDrawerOpen(true)}
             className="rounded-full"
+            aria-label="Open chat history"
           >
             <Menu className="h-5 w-5" />
           </Button>
@@ -420,10 +500,17 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
       </header>
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div
+        className="flex-1 overflow-y-auto px-4 py-6 min-h-0"
+        onClick={(e) => {
+          // If clicking outside interactive elements, dismiss keyboard
+          if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+          handleBackdropClick()
+        }}
+      >
         <div className="max-w-3xl mx-auto space-y-6">
           {/* Welcome message if no messages */}
-          {filteredMessages.length === 0 && !isStreaming && (
+          {filteredMessages.length === 0 && !streamState.isStreaming && (
             <div className="text-center py-16">
               <img src="/logo-square.png" alt="NeoMind" className="w-16 h-16 rounded-2xl mx-auto mb-6" />
               <h2 className="text-2xl font-semibold mb-2 text-[var(--foreground)]">
@@ -453,20 +540,20 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
           {/* Messages - with automatic merging at render time */}
           <MergedMessageList
             messages={filteredMessages}
-            isStreaming={isStreaming}
-            streamingContent={streamingContent}
-            streamingThinking={streamingThinking}
-            streamingToolCalls={streamingToolCalls}
+            isStreaming={streamState.isStreaming}
+            streamingContent={streamState.streamingContent}
+            streamingThinking={streamState.streamingThinking}
+            streamingToolCalls={streamState.streamingToolCalls}
           />
 
           {/* Stream progress indicator - always show during streaming */}
-          {isStreaming && (
+          {streamState.isStreaming && (
             <StreamProgress
-              elapsed={streamProgress.elapsed}
+              elapsed={streamState.streamProgress.elapsed}
               totalDuration={300}
-              stage={streamProgress.stage}
-              warning={streamProgress.warnings[streamProgress.warnings.length - 1]}
-              currentStep={currentPlanStep}
+              stage={streamState.streamProgress.stage}
+              warning={streamState.streamProgress.warnings[streamState.streamProgress.warnings.length - 1]}
+              currentStep={streamState.currentPlanStep}
             />
           )}
 
@@ -476,7 +563,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
       </div>
 
       {/* Input area */}
-      <div className="border-t border-[var(--border)] bg-[var(--card)] px-4 py-4">
+      <div className="border-t border-[var(--border)] bg-[var(--card)] px-3 sm:px-4 py-3 sm:py-4 pb-6 sm:pb-4 safe-bottom flex-shrink-0">
         <div className="max-w-3xl mx-auto">
           <div className="relative">
             {/* Suggestions */}
@@ -566,7 +653,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
             <div className="flex items-end gap-2">
               <div className="flex-1 relative">
                 {/* Streaming indicator overlay */}
-                {isStreaming && (
+                {streamState.isStreaming && (
                   <div className="absolute left-4 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1.5 pointer-events-none">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-ping" />
                     <span className="text-xs text-muted-foreground">{t("status.typing", "正在输入...")}</span>
@@ -577,20 +664,20 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder={isStreaming ? t("status.wait", "请等待...") : t("input.placeholder")}
+                  placeholder={streamState.isStreaming ? t("status.wait", "请等待...") : t("input.placeholder")}
                   rows={1}
-                  disabled={isStreaming}
+                  disabled={streamState.isStreaming}
                   className={cn(
-                    "w-full px-4 py-3 rounded-2xl resize-none",
+                    "w-full px-3 sm:px-4 py-3 rounded-2xl resize-none text-base",
                     "bg-[var(--input-focus-bg)] border border-[var(--border)]",
                     "text-[var(--foreground)] placeholder:text-muted-foreground",
                     "focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/50",
                     "transition-all duration-200",
-                    "max-h-32",
-                    isStreaming && "opacity-60 cursor-wait"
+                    "max-h-32 scroll-mb-32",
+                    streamState.isStreaming && "opacity-60 cursor-wait"
                   )}
                   style={{
-                    minHeight: "48px",
+                    minHeight: "44px",
                     height: "auto"
                   }}
                   onInput={(e) => {
@@ -604,16 +691,16 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
               {/* Send button - shows loading spinner when streaming */}
               <Button
                 onClick={handleSend}
-                disabled={!input.trim() || isStreaming}
+                disabled={!input.trim() || streamState.isStreaming}
                 className={cn(
                   "h-12 w-12 rounded-full flex-shrink-0",
                   "bg-blue-600 hover:bg-blue-700 text-white",
                   "transition-all duration-200",
                   "disabled:opacity-50 disabled:cursor-not-allowed",
-                  isStreaming && "relative overflow-hidden"
+                  streamState.isStreaming && "relative overflow-hidden"
                 )}
               >
-                {isStreaming ? (
+                {streamState.isStreaming ? (
                   <>
                     <span className="absolute inset-0 bg-blue-600/20 animate-ping" />
                     <Send className="h-5 w-5 relative" />

@@ -6,7 +6,7 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=overlays-content">
     <title>NeoMind - Edge AI Agent</title>
 
     <!-- Performance: DNS preconnect for API (reduces connection latency by ~200ms) -->
@@ -17,7 +17,7 @@
     <link rel="prefetch" href="/api/devices">
     <link rel="prefetch" href="/api/agents">
   </head>
-  <body class="h-screen overflow-hidden">
+  <body class="h-screen viewport-full overflow-hidden">
     <div id="root"></div>
     <div id="dialog-root"></div>
     <script type="module" src="/src/main.tsx"></script>

@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { BrandName, BrandLogoHorizontal } from "@/components/shared/BrandName"
+import { forceViewportReset } from "@/hooks/useVisualViewport"
 
 const languages = [
   { code: 'en', name: 'English' },
@@ -156,16 +157,26 @@ export function LoginPage() {
       }
 
       // Navigate to dashboard after successful login
+      forceViewportReset() // Ensure keyboard state is reset
       navigate('/', { replace: true })
     } catch (err) {
       setError(translateError(err instanceof Error ? err.message : String(t('auth:loginFailed')), t))
+      forceViewportReset() // Reset viewport state on error too
     } finally {
       setIsLoading(false)
     }
   }
 
+  // Handle tap outside to dismiss keyboard
+  const handleBackdropClick = () => {
+    forceViewportReset()
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  }
+
   return (
-    <div className="min-h-screen flex flex-col bg-background overflow-hidden">
+    <div className="flex flex-col bg-background relative overflow-hidden viewport-full">
       {/* Background Effects - AI Network Theme */}
       <div className="fixed inset-0">
         {/* Base gradient */}
@@ -205,28 +216,22 @@ export function LoginPage() {
           <div className="absolute top-1/4 left-0 w-full h-px bg-gradient-to-r from-transparent via-purple-500 to-transparent" />
           <div className="absolute bottom-1/4 left-0 w-full h-px bg-gradient-to-r from-transparent via-cyan-500 to-transparent" />
         </div>
-
-        {/* Corner accents */}
-        <div className="absolute top-8 left-8 w-16 h-16 border-l border-t border-primary/10 rounded-tl-lg" />
-        <div className="absolute top-8 right-8 w-16 h-16 border-r border-t border-blue-500/10 rounded-tr-lg" />
-        <div className="absolute bottom-8 left-8 w-16 h-16 border-l border-b border-purple-500/10 rounded-bl-lg" />
-        <div className="absolute bottom-8 right-8 w-16 h-16 border-r border-b border-cyan-500/10 rounded-br-lg" />
       </div>
 
-      {/* Top Header */}
-      <header className="relative z-10 backdrop-blur-sm">
-        <div className="flex items-center justify-between px-6 h-16">
+      {/* Top Header - Absolute positioned, doesn't affect layout */}
+      <header className="absolute top-0 left-0 right-0 z-50 bg-background/50 backdrop-blur-sm safe-top">
+        <div className="flex items-center justify-between px-4 sm:px-6 h-14 sm:h-16">
           {/* Left - Logo & Name */}
-          <div className="flex items-center gap-3">
-            <BrandLogoHorizontal className="h-7" />
+          <div className="flex items-center gap-2 sm:gap-3">
+            <BrandLogoHorizontal className="h-6 sm:h-7" />
           </div>
 
           {/* Right - Language Switcher */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="gap-1.5">
+              <Button variant="ghost" size="sm" className="gap-1 h-9 px-2 sm:px-3">
                 <Languages className="h-4 w-4" />
-                {languages.find(l => l.code === i18n.language)?.name || 'Language'}
+                <span>{languages.find(l => l.code === i18n.language)?.name || 'Language'}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[130px]">
@@ -244,16 +249,23 @@ export function LoginPage() {
         </div>
       </header>
 
-      {/* Main Content - Centered Login Form */}
-      <main className="relative z-10 flex-1 flex items-center justify-center px-6 py-12">
+      {/* Main Content - Centered on both mobile and desktop */}
+      <main
+        className="flex-1 px-4 sm:px-6 pt-14 sm:pt-16 pb-4 sm:pb-12 safe-bottom flex items-center justify-center min-h-0"
+        onClick={(e) => {
+          // If clicking outside the login card, dismiss keyboard
+          if ((e.target as HTMLElement).closest('form, button, a')) return
+          handleBackdropClick()
+        }}
+      >
         <div className="w-full max-w-md">
           {/* Login Card */}
-          <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-8">
+          <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-6 sm:p-8">
             {/* Login Title */}
-            <h2 className="text-3xl font-semibold mb-6 text-center">{t('auth:login')}</h2>
+            <h2 className="text-2xl sm:text-3xl font-semibold mb-4 sm:mb-6 text-center">{t('auth:login')}</h2>
 
             {/* Login Form */}
-            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4 sm:gap-5">
               {/* Username Field */}
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
@@ -265,7 +277,7 @@ export function LoginPage() {
                   placeholder={t('auth:username')}
                   autoComplete="username"
                   required
-                  className="pl-9 h-11 bg-background/70 dark:bg-background/30 border-border/50 dark:border-border/30 focus:bg-background dark:focus:bg-background/50 focus:border-primary/50 transition-colors"
+                  className="pl-9 h-11 bg-background/70 dark:bg-background/30 border-border/50 dark:border-border/30 focus:bg-background dark:focus:bg-background/50 focus:border-primary/50 transition-colors text-base scroll-mb-32"
                 />
               </div>
 
@@ -280,7 +292,7 @@ export function LoginPage() {
                   placeholder={t('auth:password')}
                   autoComplete="current-password"
                   required
-                  className="pl-9 h-11 bg-background/70 dark:bg-background/30 border-border/50 dark:border-border/30 focus:bg-background dark:focus:bg-background/50 focus:border-primary/50 transition-colors"
+                  className="pl-9 h-11 bg-background/70 dark:bg-background/30 border-border/50 dark:border-border/30 focus:bg-background dark:focus:bg-background/50 focus:border-primary/50 transition-colors text-base scroll-mb-32"
                 />
               </div>
 
@@ -323,7 +335,7 @@ export function LoginPage() {
             </form>
 
             {/* Footer */}
-            <div className="text-center mt-6 pt-6">
+            <div className="text-center mt-4 sm:mt-6 pt-4 sm:pt-6">
               {/* Version Info */}
               <p className="text-xs text-muted-foreground/50 dark:text-muted-foreground/40">
                 <BrandName /> Edge AI Agent v1.0

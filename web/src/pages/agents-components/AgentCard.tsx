@@ -157,8 +157,12 @@ export function AgentCard({
 
         {/* More menu */}
         <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <button className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
+          <DropdownMenuTrigger asChild>
+            <button
+              onClick={(e) => e.stopPropagation()}
+              className="h-9 w-9 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"
+              aria-label="More options"
+            >
               <MoreVertical className="h-4 w-4 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>

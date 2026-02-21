@@ -4472,14 +4472,20 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     // No dashboard found - show empty state with create button
     return (
       <div className="flex items-center justify-center h-screen">
-        <div className="text-center space-y-4">
+        <div className="text-center space-y-4 px-4">
           <LayoutDashboard className="h-16 w-16 mx-auto text-muted-foreground" />
           <div>
             <h2 className="text-lg font-medium mb-1">No Dashboard Found</h2>
             <p className="text-sm text-muted-foreground mb-4">
               Create your first dashboard to get started
             </p>
-            <Button onClick={() => handleDashboardCreate('Overview')}>
+            <Button
+              onClick={() => {
+                handleDashboardCreate('Overview').catch((err) => {
+                  console.error('[VisualDashboard] Failed to create dashboard:', err)
+                })
+              }}
+            >
               <Plus className="h-4 w-4 mr-1" />
               Create Dashboard
             </Button>

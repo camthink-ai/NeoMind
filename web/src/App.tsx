@@ -343,8 +343,8 @@ function App() {
             <ProtectedRoute>
               <div className="flex flex-col h-screen h-[100dvh] bg-background">
                 <TopNav />
-                <main className="flex flex-1 flex-col min-h-0 overflow-hidden">
-                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <main className="flex flex-1 min-h-0 overflow-hidden" style={{paddingTop: 'var(--topnav-height, 4rem)'}}>
+                  <div className="w-full h-full overflow-hidden">
                   <Routes>
                     <Route path="/" element={<ChatPage />} />
                     <Route path="/chat" element={<ChatPage />} />

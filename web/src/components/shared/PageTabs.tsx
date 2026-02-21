@@ -105,7 +105,7 @@ export function PageTabs({
         </div>
 
         {/* Mobile: Top actions bar */}
-        <div className="md:hidden mb-3 flex shrink-0 justify-start gap-2">
+        <div className="md:hidden mb-3 flex shrink-0 flex-wrap justify-start gap-2">
           {actions.map((action) => (
             <Button
               key={action.label}
@@ -113,14 +113,14 @@ export function PageTabs({
               size="sm"
               onClick={action.onClick}
               disabled={action.disabled || action.loading}
-              className="h-9"
+              className="h-9 text-xs px-2.5 sm:px-3"
             >
               {action.loading ? (
                 <span className="mr-1.5 h-4 w-4 animate-spin">⟳</span>
               ) : action.icon ? (
                 <span className="mr-1.5 shrink-0 h-4 w-4">{action.icon}</span>
               ) : null}
-              <span className="text-sm">{action.label}</span>
+              <span className="whitespace-nowrap">{action.label}</span>
             </Button>
           ))}
           {actionsExtra}

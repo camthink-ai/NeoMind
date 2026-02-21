@@ -26,6 +26,7 @@ import type { Message, ServerMessage, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
+import { forceViewportReset } from "@/hooks/useVisualViewport"
 
 /** Image gallery component for user messages */
 function MessageImages({ images }: { images: ChatImage[] }) {
@@ -490,7 +491,7 @@ export function ChatPage() {
 
     // Reset textarea height to initial state
     if (inputRef.current) {
-      inputRef.current.style.height = "44px"
+      inputRef.current.style.height = "40px"
     }
 
     setIsStreaming(true)
@@ -595,6 +596,14 @@ export function ChatPage() {
     }
   }
 
+  // Handle tap outside to dismiss keyboard (mobile)
+  const handleBackdropClick = () => {
+    forceViewportReset()
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+  }
+
   const getUserInitials = (username: string) => {
     return username.slice(0, 2).toUpperCase()
   }
@@ -632,7 +641,7 @@ export function ChatPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-row">
+    <div className="fixed inset-0 flex flex-row overflow-hidden z-0" style={{paddingTop: 'var(--chat-content-padding-top, 6.5rem)'}}>
       {/* Pending stream recovery dialog */}
       {pendingStream?.hasPending && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
@@ -707,12 +716,10 @@ export function ChatPage() {
         />
       )}
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Mobile Header - show when there are sessions or in chat mode */}
-        {!isDesktop && (sessions.length > 0 || !isWelcomeMode) && (
-          <div className="flex flex-col bg-background/50 backdrop-blur-sm border-b border-border/30">
-            <div className="h-11 flex items-center px-3 gap-2">
+      {/* Mobile Header - fixed, outside Main Content to avoid affecting flex layout */}
+      {!isDesktop && (sessions.length > 0 || !isWelcomeMode) && (
+        <div className="fixed left-0 right-0 z-30 flex flex-col bg-background/50 backdrop-blur-sm border-b border-border/30" style={{top: 'var(--topnav-height, 4rem)', paddingTop: 'env(safe-area-inset-top, 0px)'}}>
+            <div className="h-10 flex items-center px-2.5 gap-1.5">
               {/* Menu button */}
               <Button
                 variant="ghost"
@@ -735,9 +742,9 @@ export function ChatPage() {
                     navigate(`/chat/${newSessionId}`)
                   }
                 }}
-                className="h-8 gap-1.5 rounded-lg text-muted-foreground hover:text-foreground"
+                className="h-7 px-2 gap-1 rounded-lg text-muted-foreground hover:text-foreground"
               >
-                <Plus className="h-4 w-4" />
+                <Plus className="h-3.5 w-3.5" />
                 <span className="text-xs">{t('chat:input.newChat')}</span>
               </Button>
             </div>
@@ -754,16 +761,32 @@ export function ChatPage() {
           </div>
         )}
 
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {/* Chat Content Area */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {isWelcomeMode ? (
           /* Welcome Area - shown on /chat (no sessionId), scrollable on mobile */
-          <div className="touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto pt-4 pb-6">
+          <div
+            className="touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 pb-32 sm:pb-6"
+            onClick={(e) => {
+              // If clicking outside interactive elements, dismiss keyboard
+              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+              handleBackdropClick()
+            }}
+          >
             <WelcomeArea className="min-h-full" onQuickAction={handleQuickAction} />
           </div>
         ) : hasMessages ? (
           /* Chat Messages - shown on /chat/:sessionId with messages */
-          <div className="touch-scroll flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2">
+          <div
+            className="touch-scroll flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4 pb-32 sm:pb-2"
+            onClick={(e) => {
+              // If clicking outside interactive elements, dismiss keyboard
+              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+              handleBackdropClick()
+            }}
+          >
             <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
               {displayMessages.map((message) => (
                 <div
@@ -853,7 +876,14 @@ export function ChatPage() {
           </div>
         ) : (
           /* Empty chat - shown on /chat/:sessionId with no messages yet */
-          <div className="flex-1 min-h-0 flex items-center justify-center px-4">
+          <div
+            className="flex-1 min-h-0 flex items-center justify-center px-4 py-4 sm:py-6 pb-32 sm:pb-0"
+            onClick={(e) => {
+              // If clicking outside interactive elements, dismiss keyboard
+              if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
+              handleBackdropClick()
+            }}
+          >
             <div className="text-center space-y-4 max-w-md">
               <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto">
                 <Sparkles className="h-8 w-8 text-muted-foreground" />
@@ -869,11 +899,11 @@ export function ChatPage() {
         )}
         </div>
 
-        {/* Input Area */}
-        <div className="bg-background px-3 sm:px-4 py-3">
+        {/* Input Area - fixed on mobile, normal flex on desktop */}
+        <div className="bg-background sm:static fixed bottom-0 left-0 right-0 z-40 px-2.5 sm:px-4 py-3 sm:py-3 pb-8 sm:pb-4 safe-bottom border-t border-border/30 sm:border-0" style={{paddingBottom: 'max(2rem, env(safe-area-inset-bottom, 12px))'}}>
           <div className="max-w-3xl mx-auto">
             {/* Input toolbar with model selector and image preview */}
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 mb-1.5 sm:mb-2">
               {/* Model selector */}
               {llmBackends.length > 0 && (
                 <DropdownMenu>
@@ -881,7 +911,7 @@ export function ChatPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="h-7 px-2 rounded-lg text-muted-foreground hover:text-foreground text-xs gap-1 max-w-[140px]"
+                      className="h-7 sm:h-7 px-1.5 sm:px-2 rounded-lg text-muted-foreground hover:text-foreground text-xs gap-1 max-w-[120px] sm:max-w-[140px]"
                     >
                       <Zap className="h-3 w-3 shrink-0" />
                       <span className="truncate">
@@ -940,13 +970,13 @@ export function ChatPage() {
 
               {/* Image preview - shown next to model selector */}
               {attachedImages.length > 0 && (
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1 sm:gap-1.5">
                   {attachedImages.map((image, index) => (
                     <div key={index} className="relative group">
                       <img
                         src={image.data}
                         alt={`Attached ${index + 1}`}
-                        className="h-7 w-7 object-cover rounded-md border border-border"
+                        className="h-6 w-6 sm:h-7 sm:w-7 object-cover rounded-md border border-border"
                       />
                       <Button
                         variant="destructive"
@@ -964,7 +994,7 @@ export function ChatPage() {
               <div className="flex-1" />
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               {/* Image upload button */}
               <input
                 ref={fileInputRef}
@@ -981,7 +1011,7 @@ export function ChatPage() {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isStreaming || !supportsMultimodal}
                 className={cn(
-                  "h-11 w-11 rounded-full flex-shrink-0",
+                  "h-10 w-10 sm:h-11 sm:w-11 rounded-full flex-shrink-0",
                   "text-muted-foreground hover:text-foreground hover:bg-muted",
                   "transition-all disabled:opacity-50 disabled:cursor-not-allowed",
                   !supportsMultimodal && "opacity-50"
@@ -989,16 +1019,16 @@ export function ChatPage() {
                 title={supportsMultimodal ? t('chat:model.addImage') : t('chat:model.notSupportImage')}
               >
                 {isUploadingImage ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin" />
                 ) : attachedImages.length > 0 ? (
                   <div className="relative">
-                    <ImageIcon className="h-5 w-5" />
+                    <ImageIcon className="h-4 w-4 sm:h-5 sm:w-5" />
                     <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full h-4 w-4 flex items-center justify-center">
                       {attachedImages.length}
                     </span>
                   </div>
                 ) : (
-                  <ImageIcon className="h-5 w-5" />
+                  <ImageIcon className="h-4 w-4 sm:h-5 sm:w-5" />
                 )}
               </Button>
 
@@ -1010,15 +1040,15 @@ export function ChatPage() {
                 placeholder={t('chat:input.placeholder')}
                 rows={1}
                 className={cn(
-                  "flex-1 px-4 py-2.5 rounded-2xl resize-none text-sm",
-                  "bg-muted/50 text-foreground placeholder:text-muted-foreground",
+                  "flex-1 px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl resize-none text-base scroll-mb-32",
+                  "bg-muted/50 text-foreground placeholder:text-muted-foreground placeholder:text-sm",
                   "focus:outline-none focus:ring-2 focus:ring-foreground/20",
                   "transition-all max-h-32"
                 )}
-                style={{ minHeight: "44px", height: "44px" }}
+                style={{ minHeight: "40px", height: "40px" }}
                 onInput={(e) => {
                   const target = e.target as HTMLTextAreaElement
-                  target.style.height = "44px"
+                  target.style.height = "40px"
                   target.style.height = Math.min(target.scrollHeight, 128) + "px"
                 }}
               />
@@ -1027,12 +1057,12 @@ export function ChatPage() {
                 onClick={handleSend}
                 disabled={(!input.trim() && attachedImages.length === 0) || isStreaming}
                 className={cn(
-                  "h-11 w-11 rounded-full flex-shrink-0",
+                  "h-10 w-10 sm:h-11 sm:w-11 rounded-full flex-shrink-0",
                   "bg-foreground hover:bg-foreground/90 text-background",
                   "transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 )}
               >
-                <Send className="h-5 w-5" />
+                <Send className="h-4 w-4 sm:h-5 sm:w-5" />
               </Button>
             </div>
           </div>
