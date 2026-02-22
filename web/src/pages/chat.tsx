@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { useParams, useNavigate } from "react-router-dom"
+import { generateId } from "@/lib/id"
 import { Settings, Send, Sparkles, PanelLeft, MessageSquare, Zap, ChevronDown, X, Image as ImageIcon, Loader2, Eye, Brain, RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -307,7 +308,7 @@ export function ChatPage() {
 
         case "ToolCallStart": {
           const toolCall = {
-            id: crypto.randomUUID(),
+            id: generateId(),
             name: data.tool,
             arguments: data.arguments,
             result: null
@@ -357,7 +358,7 @@ export function ChatPage() {
         case "end": {
           const { content, thinking, toolCalls } = capturedStreamingRef.current
           if (content || thinking || toolCalls.length > 0) {
-            const messageId = streamingMessageIdRef.current || crypto.randomUUID()
+            const messageId = streamingMessageIdRef.current || generateId()
             const completeMessage: Message = {
               id: messageId,
               role: "assistant",
@@ -385,7 +386,7 @@ export function ChatPage() {
           // Save the current progress but keep streaming state active
           const { content, thinking, toolCalls } = capturedStreamingRef.current
           if (content || thinking || toolCalls.length > 0) {
-            const messageId = streamingMessageIdRef.current || crypto.randomUUID()
+            const messageId = streamingMessageIdRef.current || generateId()
             const intermediateMessage: Message = {
               id: messageId,
               role: "assistant",
@@ -482,7 +483,7 @@ export function ChatPage() {
     // Prepare message content
     const messageContent = trimmedInput || (attachedImages.length > 0 ? "[Image]" : "")
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       role: "user",
       content: messageContent,
       timestamp: Date.now(),
@@ -506,7 +507,7 @@ export function ChatPage() {
 
     ws.setSessionId(targetSessionId)
     setIsStreaming(true)
-    streamingMessageIdRef.current = crypto.randomUUID()
+    streamingMessageIdRef.current = generateId()
     setLastAssistantMessageId(null)
 
     ws.sendMessage(trimmedInput, attachedImages.length > 0 ? attachedImages : undefined)

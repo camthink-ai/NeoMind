@@ -10,6 +10,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createPortal } from 'react-dom'
+import { generateId } from '@/lib/id'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -550,7 +551,7 @@ function ruleConditionToUiCondition(
 ): UICondition {
   if (!ruleCond) {
     return {
-      id: crypto.randomUUID(),
+      id: generateId(),
       type: 'simple',
       source_type: 'device',
       device_id: '',
@@ -565,7 +566,7 @@ function ruleConditionToUiCondition(
     const op = (ruleCond as any).logical_operator || (ruleCond as any).operator
     if (op === 'and' || op === 'or') {
       return {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: op,
         source_type: undefined,
         conditions: ((ruleCond as any).conditions || []).map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dsl)),
@@ -573,7 +574,7 @@ function ruleConditionToUiCondition(
     }
     if (op === 'not') {
       return {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: 'not',
         source_type: undefined,
         conditions: [(ruleCond as any).conditions?.[0]].map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dsl)).filter(Boolean),
@@ -593,7 +594,7 @@ function ruleConditionToUiCondition(
 
     if (isExtension) {
       return {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: 'range',
         source_type: sourceType,
         extension_id: (ruleCond as any).extension_id || '',
@@ -614,7 +615,7 @@ function ruleConditionToUiCondition(
     }
 
     return {
-      id: crypto.randomUUID(),
+      id: generateId(),
       type: 'range',
       source_type: sourceType,
       device_id: deviceId,
@@ -630,7 +631,7 @@ function ruleConditionToUiCondition(
 
   if (isExtension) {
     return {
-      id: crypto.randomUUID(),
+      id: generateId(),
       type: 'simple',
       source_type: sourceType,
       extension_id: (ruleCond as any).extension_id || '',
@@ -652,7 +653,7 @@ function ruleConditionToUiCondition(
   }
 
   return {
-    id: crypto.randomUUID(),
+    id: generateId(),
     type: 'simple',
     source_type: sourceType,
     device_id: deviceId,
@@ -1533,7 +1534,7 @@ export function SimpleRuleBuilderSplit({
 
     if (!firstDevice && !firstExtension) {
       return {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: 'simple',
         source_type: 'device',
         metric: 'value',
@@ -1546,7 +1547,7 @@ export function SimpleRuleBuilderSplit({
     if (firstDevice) {
       const metrics = getDeviceMetrics(firstDevice.id, resources.devices, resources.deviceTypes)
       return {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: 'simple',
         source_type: 'device',
         device_id: firstDevice.id,
@@ -1557,7 +1558,7 @@ export function SimpleRuleBuilderSplit({
     } else {
       const metrics = getExtensionMetrics(firstExtension!.id, resources.extensions || [], resources.extensionDataSources || [])
       return {
-        id: crypto.randomUUID(),
+        id: generateId(),
         type: 'simple',
         source_type: 'extension',
         extension_id: firstExtension!.id,
@@ -3121,7 +3122,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
                 if (firstDevice) {
                   const metrics = getDeviceMetrics(firstDevice.id, devices, deviceTypes)
                   newCond = {
-                    id: crypto.randomUUID(),
+                    id: generateId(),
                     type: 'simple',
                     source_type: 'device',
                     device_id: firstDevice.id,
@@ -3132,7 +3133,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
                 } else if (firstExtension) {
                   const metrics = getExtensionMetrics(firstExtension.id, extensions || [], extensionDataSources || [])
                   newCond = {
-                    id: crypto.randomUUID(),
+                    id: generateId(),
                     type: 'simple',
                     source_type: 'extension',
                     extension_id: firstExtension.id,
@@ -3143,7 +3144,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
                 } else {
                   // Fallback - create empty condition
                   newCond = {
-                    id: crypto.randomUUID(),
+                    id: generateId(),
                     type: 'simple',
                     source_type: 'device',
                     operator: '>',

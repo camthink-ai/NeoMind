@@ -141,7 +141,16 @@ function updateDashboardInState(
  * Generate unique ID
  */
 function generateId(): string {
-  return crypto.randomUUID()
+  // Use crypto.randomUUID() if available, otherwise fallback to a simple random string generator
+  if (typeof crypto !== 'undefined' && crypto.randomUUID && typeof crypto.randomUUID === 'function') {
+    try {
+      return crypto.randomUUID()
+    } catch {
+      // Fall through to fallback
+    }
+  }
+  // Fallback: generate a random string using Math.random()
+  return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 15)
 }
 
 /**

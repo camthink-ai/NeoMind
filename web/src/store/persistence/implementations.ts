@@ -12,6 +12,7 @@ import type {
   UpdateDashboardDTO,
 } from './types'
 import type { Dashboard } from '@/types/dashboard'
+import { generateId } from '@/lib/id'
 import {
   toDashboardDTO,
   fromDashboardDTO,
@@ -73,7 +74,7 @@ export class LocalStorageDashboardStorage implements DashboardStorage {
       // If dashboard doesn't have an ID, generate one for new dashboards
       const dashboardToSave = dashboard.id
         ? dashboard
-        : { ...dashboard, id: crypto.randomUUID(), createdAt: Date.now(), updatedAt: Date.now() }
+        : { ...dashboard, id: generateId(), createdAt: Date.now(), updatedAt: Date.now() }
 
       const index = dashboards.findIndex(d => d.id === dashboardToSave.id)
       if (index >= 0) {

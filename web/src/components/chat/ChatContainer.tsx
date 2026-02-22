@@ -8,6 +8,7 @@ import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
+import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
 import type { Message, ServerMessage } from "@/types"
 import type { StreamProgress as StreamProgressType } from "@/types"
@@ -122,7 +123,7 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
         streamingToolCalls: [
           ...state.streamingToolCalls,
           {
-            id: crypto.randomUUID(),
+            id: generateId(),
             name: action.tool,
             arguments: action.arguments,
             result: null
@@ -275,7 +276,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
           dispatch({ type: 'TOOL_START', tool: data.tool, arguments: data.arguments })
           // Track locally for message assembly
           streamingToolCallsAccumulator.push({
-            id: crypto.randomUUID(),
+            id: generateId(),
             name: data.tool,
             arguments: data.arguments,
             result: null
@@ -331,7 +332,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
         case "end":
           // Save the complete message using the ID generated at stream start
           if (streamingContentAccumulator || streamingThinkingAccumulator || streamingToolCallsAccumulator.length > 0) {
-            const messageId = currentStreamMessageId || crypto.randomUUID()
+            const messageId = currentStreamMessageId || generateId()
             const completeMessage: Message = {
               id: messageId,
               role: "assistant",
@@ -388,7 +389,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
     // Add user message directly to current session
     // Backend handles session continuity - no need to create new session
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       role: "user",
       content: trimmedInput,
       timestamp: Math.floor(Date.now() / 1000), // Use seconds (matches backend)
@@ -406,7 +407,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
 
     // Start streaming - generate message ID once for the entire stream
     dispatch({ type: 'START_STREAM' })
-    const newMessageId = crypto.randomUUID()
+    const newMessageId = generateId()
     setCurrentStreamMessageId(newMessageId)
     streamStartRef.current = Date.now()  // Reset stream start time
     // Reset last assistant message ID (new response incoming)
