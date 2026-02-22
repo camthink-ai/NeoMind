@@ -62,7 +62,7 @@ export function DiscoveryDialog({
           <DialogTitle>{t('devices:discoveryDialog.title')}</DialogTitle>
         </DialogHeader>
 
-        <DialogContentBody className="flex-1 overflow-y-auto space-y-4">
+        <DialogContentBody className="flex-1 overflow-y-auto px-4 pt-6 pb-4 sm:px-6 space-y-4">
           <div className="flex gap-2">
             <Input
               value={host}
