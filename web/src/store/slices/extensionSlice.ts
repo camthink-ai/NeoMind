@@ -53,6 +53,7 @@ export interface ExtensionSlice extends ExtensionState {
   unregisterExtension: (id: string) => Promise<boolean>
   startExtension: (id: string) => Promise<boolean>
   stopExtension: (id: string) => Promise<boolean>
+  reloadExtension: (id: string) => Promise<boolean>
   getExtensionStats: (id: string) => Promise<ExtensionStatsDto | null>
   getExtensionHealth: (id: string) => Promise<{ healthy: boolean } | null>
   discoverExtensions: () => Promise<{ discovered: number; results: ExtensionDiscoveryResult[] }>
@@ -194,6 +195,20 @@ export const createExtensionSlice: StateCreator<
       return true
     } catch (error) {
       logError(error, { operation: 'Stop extension' })
+      return false
+    }
+  },
+
+  // Reload extension
+  // Backend: POST /api/extensions/:id/reload -> { message, extension_id, config_applied }
+  reloadExtension: async (id) => {
+    try {
+      await api.reloadExtension(id)
+      // Refresh extension data after reload
+      await get().fetchExtensions()
+      return true
+    } catch (error) {
+      logError(error, { operation: 'Reload extension' })
       return false
     }
   },

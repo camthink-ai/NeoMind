@@ -320,6 +320,26 @@ pub struct StreamConfig {
     /// Default: true
     #[serde(default = "StreamConfig::default_progress_enabled")]
     pub progress_enabled: bool,
+
+    /// Maximum total characters (thinking + content) before hard cutoff.
+    ///
+    /// This is a safety limit to prevent infinite loops where the model
+    /// continuously generates content without completing. If the total
+    /// output exceeds this limit, the stream will be terminated.
+    ///
+    /// Default: 200,000 characters
+    #[serde(default = "StreamConfig::default_max_total_chars")]
+    pub max_total_chars: usize,
+
+    /// Maximum thinking content repetition rate threshold.
+    ///
+    /// When the model's thinking content has this percentage or more
+    /// repetition (compared to total thinking chars), it's considered
+    /// stuck in a loop and will be terminated.
+    ///
+    /// Default: 0.8 (80% repetition)
+    #[serde(default = "StreamConfig::default_max_thinking_repetition_rate")]
+    pub max_thinking_repetition_rate: f64,
 }
 
 impl StreamConfig {
@@ -347,6 +367,14 @@ impl StreamConfig {
         true
     }
 
+    fn default_max_total_chars() -> usize {
+        200_000
+    }
+
+    fn default_max_thinking_repetition_rate() -> f64 {
+        0.8
+    }
+
     /// Get the max stream duration as a Duration.
     pub fn max_stream_duration(&self) -> Duration {
         Duration::from_secs(self.max_stream_duration_secs)
@@ -369,6 +397,8 @@ impl StreamConfig {
             warning_thresholds: vec![30, 60, 90],
             max_thinking_loop: 5,
             progress_enabled: true,
+            max_total_chars: 50_000,
+            max_thinking_repetition_rate: 0.9,
         }
     }
 
@@ -384,6 +414,8 @@ impl StreamConfig {
             warning_thresholds: vec![60, 120, 180, 240, 300, 420, 540],
             max_thinking_loop: 15,
             progress_enabled: true,
+            max_total_chars: 300_000,
+            max_thinking_repetition_rate: 0.85,
         }
     }
 }
@@ -397,6 +429,8 @@ impl Default for StreamConfig {
             warning_thresholds: Self::default_warning_thresholds(),
             max_thinking_loop: Self::default_max_thinking_loop(),
             progress_enabled: Self::default_progress_enabled(),
+            max_total_chars: Self::default_max_total_chars(),
+            max_thinking_repetition_rate: Self::default_max_thinking_repetition_rate(),
         }
     }
 }

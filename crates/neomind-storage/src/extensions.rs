@@ -50,6 +50,11 @@ pub struct ExtensionRecord {
     /// Whether the extension is enabled
     pub enabled: bool,
 
+    /// Whether the extension has been uninstalled by the user
+    /// This prevents auto-discovery from re-registering it
+    #[serde(default)]
+    pub uninstalled: bool,
+
     /// Extension configuration (key-value pairs)
     /// This config is passed to the extension when loaded
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,6 +87,7 @@ impl ExtensionRecord {
             author: None,
             auto_start: false,
             enabled: true,
+            uninstalled: false,
             config: None,
             updated_at: now,
             registered_at: now,
@@ -109,6 +115,34 @@ impl ExtensionRecord {
     /// Builder pattern: set config
     pub fn with_config(mut self, config: serde_json::Value) -> Self {
         self.config = Some(config);
+        self
+    }
+
+    /// Builder pattern: set checksum
+    pub fn with_checksum(mut self, checksum: Option<String>) -> Self {
+        // Note: checksum is stored in config for now
+        // In the future, we might add a dedicated checksum field
+        if let Some(checksum) = checksum {
+            let mut config = self.config.unwrap_or_else(|| serde_json::json!({}));
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("checksum".to_string(), serde_json::Value::String(checksum));
+            }
+            self.config = Some(config);
+        }
+        self
+    }
+
+    /// Builder pattern: set frontend path
+    pub fn with_frontend_path(mut self, frontend_path: Option<String>) -> Self {
+        // Note: frontend_path is stored in config for now
+        // In the future, we might add a dedicated frontend_path field
+        if let Some(frontend_path) = frontend_path {
+            let mut config = self.config.unwrap_or_else(|| serde_json::json!({}));
+            if let Some(obj) = config.as_object_mut() {
+                obj.insert("frontend_path".to_string(), serde_json::Value::String(frontend_path));
+            }
+            self.config = Some(config);
+        }
         self
     }
 
@@ -249,8 +283,29 @@ impl ExtensionStore {
         let all = self.load_all()?;
         Ok(all
             .into_iter()
-            .filter(|r| r.auto_start && r.enabled)
+            .filter(|r| r.auto_start && r.enabled && !r.uninstalled)
             .collect())
+    }
+
+    /// Mark an extension as uninstalled (prevents auto-discovery from re-registering)
+    pub fn mark_uninstalled(&self, id: &str) -> Result<bool, Error> {
+        if let Some(mut record) = self.load(id)? {
+            record.uninstalled = true;
+            record.auto_start = false;
+            record.touch();
+            self.save(&record)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Check if an extension is marked as uninstalled
+    pub fn is_uninstalled(&self, id: &str) -> Result<bool, Error> {
+        match self.load(id)? {
+            Some(record) => Ok(record.uninstalled),
+            None => Ok(false),
+        }
     }
 
     /// Delete an extension record

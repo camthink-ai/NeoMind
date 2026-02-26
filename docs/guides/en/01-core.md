@@ -131,33 +131,35 @@ pub trait Integration: Send + Sync {
 
 ### 4. Extension - Extension Interface
 
-Defines the interface for dynamically loaded extensions.
+Defines the interface for dynamically loaded extensions. The V2 Extension trait separates metrics from commands:
 
 ```rust
 #[async_trait]
 pub trait Extension: Send + Sync {
-    /// Get metadata
+    /// Get extension metadata
     fn metadata(&self) -> &ExtensionMetadata;
 
-    /// Initialize
-    async fn initialize(&mut self, config: &serde_json::Value) -> Result<()>;
+    /// Declare metrics provided by this extension
+    fn metrics(&self) -> &[MetricDescriptor] { &[] }
 
-    /// Start
-    async fn start(&mut self) -> Result<()>;
+    /// Declare commands supported by this extension
+    fn commands(&self) -> &[ExtensionCommand] { &[] }
 
-    /// Stop
-    async fn stop(&mut self) -> Result<()>;
+    /// Execute a command (async)
+    async fn execute_command(&self, command: &str, args: &Value) -> Result<Value>;
 
-    /// Shutdown
-    async fn shutdown(&mut self) -> Result<()>;
+    /// Produce metric data (sync for dylib compatibility)
+    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> { Ok(Vec::new()) }
 
-    /// Health check
-    async fn health_check(&self) -> Result<bool>;
+    /// Health check (async, optional)
+    async fn health_check(&self) -> Result<bool> { Ok(true) }
 
-    /// Handle command
-    async fn handle_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value>;
+    /// Runtime configuration (optional)
+    async fn configure(&mut self, config: &Value) -> Result<()> { Ok(()) }
 }
 ```
+
+See [Extension Development Guide](16-extension-dev.md) for complete API details.
 
 ### 5. DataSourceId - Data Source Identifier
 

@@ -158,7 +158,9 @@ impl Default for DeviceStatus {
     fn default() -> Self {
         Self {
             status: ConnectionStatus::Disconnected,
-            last_seen: chrono::Utc::now().timestamp(),
+            // Use 0 as default to indicate "never seen" - this ensures proper
+            // offline detection for devices that haven't sent any metrics yet
+            last_seen: 0,
             adapter_id: None,
         }
     }

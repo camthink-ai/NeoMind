@@ -4,9 +4,10 @@
 //! supporting dynamic backend switching, connection testing, and runtime caching.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use dashmap::DashMap;
 use neomind_core::llm::backend::{LlmError, LlmInput, LlmRuntime};
 use neomind_storage::{
     BackendCapabilities, ConnectionTestResult, LlmBackendInstance, LlmBackendStore, LlmBackendType,
@@ -64,17 +65,17 @@ pub struct LlmBackendInstanceManager {
     /// Storage for persistent configuration
     storage: Arc<LlmBackendStore>,
 
-    /// Cached instances (in-memory)
-    instances: Arc<RwLock<HashMap<String, LlmBackendInstance>>>,
+    /// Cached instances (in-memory) - using DashMap for concurrent access without explicit locking
+    instances: Arc<DashMap<String, LlmBackendInstance>>,
 
     /// Currently active backend ID
-    active_id: Arc<RwLock<Option<String>>>,
+    active_id: Arc<Mutex<Option<String>>>,
 
-    /// Runtime cache (LlmRuntime instances)
-    runtime_cache: Arc<RwLock<HashMap<String, Arc<dyn LlmRuntime>>>>,
+    /// Runtime cache (LlmRuntime instances) - using DashMap for concurrent access
+    runtime_cache: Arc<DashMap<String, Arc<dyn LlmRuntime>>>,
 
     /// Health check results cache
-    health_cache: Arc<RwLock<HashMap<String, (bool, Instant)>>>,
+    health_cache: Arc<DashMap<String, (bool, Instant)>>,
 }
 
 impl LlmBackendInstanceManager {
@@ -93,7 +94,7 @@ impl LlmBackendInstanceManager {
             });
 
         // Load instances from storage (after potentially creating default)
-        let instances = storage
+        let instances: Vec<(String, LlmBackendInstance)> = storage
             .load_all_instances()
             .unwrap_or_default()
             .into_iter()
@@ -102,28 +103,29 @@ impl LlmBackendInstanceManager {
 
         Self {
             storage,
-            instances: Arc::new(RwLock::new(instances)),
-            active_id: Arc::new(RwLock::new(active_id)),
-            runtime_cache: Arc::new(RwLock::new(HashMap::new())),
-            health_cache: Arc::new(RwLock::new(HashMap::new())),
+            instances: Arc::new(DashMap::from_iter(instances)),
+            active_id: Arc::new(Mutex::new(active_id)),
+            runtime_cache: Arc::new(DashMap::new()),
+            health_cache: Arc::new(DashMap::new()),
         }
     }
 
     /// Get the active backend instance
     pub fn get_active_instance(&self) -> Option<LlmBackendInstance> {
-        let active_id = self.active_id.read().unwrap();
-        if let Some(id) = active_id.as_ref() {
-            let instances = self.instances.read().unwrap();
-            instances.get(id).cloned()
-        } else {
-            None
-        }
+        let active_id = self.active_id.lock().ok()?.clone();
+        active_id.and_then(|id| {
+            self.instances
+                .get(&id)
+                .map(|item| item.value().clone())
+        })
     }
 
     /// Get the active runtime (with caching)
     pub async fn get_active_runtime(&self) -> Result<Arc<dyn LlmRuntime>, LlmError> {
         let active_id = {
-            let active_id = self.active_id.read().unwrap();
+            let active_id = self.active_id.lock().map_err(|_| {
+                LlmError::InvalidInput("Failed to acquire active_id lock".to_string())
+            })?;
             active_id.clone()
         };
 
@@ -136,19 +138,16 @@ impl LlmBackendInstanceManager {
 
     /// Get runtime for a specific backend instance
     pub async fn get_runtime(&self, id: &str) -> Result<Arc<dyn LlmRuntime>, LlmError> {
-        // Check cache first
-        {
-            let cache = self.runtime_cache.read().unwrap();
-            if let Some(runtime) = cache.get(id) {
-                return Ok(runtime.clone());
-            }
+        // Check cache first - DashMap read is lock-free
+        if let Some(runtime) = self.runtime_cache.get(id) {
+            return Ok(runtime.clone());
         }
 
-        // Get instance configuration
-        let instance = {
-            let instances = self.instances.read().unwrap();
-            instances.get(id).cloned()
-        };
+        // Get instance configuration - DashMap read is lock-free
+        let instance = self
+            .instances
+            .get(id)
+            .map(|item| item.value().clone());
 
         let instance = instance
             .ok_or_else(|| LlmError::BackendUnavailable(format!("Backend instance {}", id)))?;
@@ -157,10 +156,7 @@ impl LlmBackendInstanceManager {
         let runtime = self.create_runtime(&instance).await?;
 
         // Cache the runtime
-        {
-            let mut cache = self.runtime_cache.write().unwrap();
-            cache.insert(id.to_string(), runtime.clone());
-        }
+        self.runtime_cache.insert(id.to_string(), runtime.clone());
 
         Ok(runtime)
     }
@@ -185,22 +181,16 @@ impl LlmBackendInstanceManager {
 
     /// Set the active backend
     pub async fn set_active(&self, id: &str) -> Result<(), LlmError> {
-        // Verify instance exists
-        {
-            let instances = self.instances.read().unwrap();
-            if !instances.contains_key(id) {
-                return Err(LlmError::BackendUnavailable(format!(
-                    "Backend instance {}",
-                    id
-                )));
-            }
+        // Verify instance exists - DashMap read is lock-free
+        if !self.instances.contains_key(id) {
+            return Err(LlmError::BackendUnavailable(format!(
+                "Backend instance {}",
+                id
+            )));
         }
 
         // Clear runtime cache when switching
-        {
-            let mut cache = self.runtime_cache.write().unwrap();
-            cache.clear();
-        }
+        self.runtime_cache.clear();
 
         // Update storage
         self.storage
@@ -208,10 +198,10 @@ impl LlmBackendInstanceManager {
             .map_err(|e| LlmError::InvalidInput(e.to_string()))?;
 
         // Update in-memory state
-        {
-            let mut active_id = self.active_id.write().unwrap();
-            *active_id = Some(id.to_string());
-        }
+        let mut active_id = self.active_id.lock().map_err(|_| {
+            LlmError::InvalidInput("Failed to acquire active_id lock".to_string())
+        })?;
+        *active_id = Some(id.to_string());
 
         Ok(())
     }
@@ -228,15 +218,11 @@ impl LlmBackendInstanceManager {
             .save_instance(&instance)
             .map_err(|e| LlmError::InvalidInput(e.to_string()))?;
 
-        // Update in-memory cache
-        {
-            let mut instances = self.instances.write().unwrap();
-            instances.insert(id.clone(), instance);
+        // Update in-memory cache - DashMap insert is lock-free
+        self.instances.insert(id.clone(), instance);
 
-            // Clear runtime cache for this instance
-            let mut runtime_cache = self.runtime_cache.write().unwrap();
-            runtime_cache.remove(&id);
-        }
+        // Clear runtime cache for this instance
+        self.runtime_cache.remove(&id);
 
         Ok(())
     }
@@ -245,7 +231,9 @@ impl LlmBackendInstanceManager {
     pub async fn remove_instance(&self, id: &str) -> Result<(), LlmError> {
         // Cannot remove active backend
         {
-            let active_id = self.active_id.read().unwrap();
+            let active_id = self.active_id.lock().map_err(|_| {
+                LlmError::InvalidInput("Failed to acquire active_id lock".to_string())
+            })?;
             if active_id.as_ref().map(|a| a == id).unwrap_or(false) {
                 return Err(LlmError::InvalidInput(
                     "Cannot remove active backend".to_string(),
@@ -258,41 +246,31 @@ impl LlmBackendInstanceManager {
             .delete_instance(id)
             .map_err(|e| LlmError::InvalidInput(e.to_string()))?;
 
-        // Update in-memory
-        {
-            let mut instances = self.instances.write().unwrap();
-            instances.remove(id);
-        }
+        // Update in-memory - DashMap remove is lock-free
+        self.instances.remove(id);
 
         // Clear runtime cache
-        {
-            let mut runtime_cache = self.runtime_cache.write().unwrap();
-            runtime_cache.remove(id);
-        }
+        self.runtime_cache.remove(id);
 
         // Clear health cache
-        {
-            let mut health_cache = self.health_cache.write().unwrap();
-            health_cache.remove(id);
-        }
+        self.health_cache.remove(id);
 
         Ok(())
     }
 
     /// List all instances
     pub fn list_instances(&self) -> Vec<LlmBackendInstance> {
-        let instances = self.instances.read().unwrap();
-        instances
-            .values()
-            .cloned()
-            .map(ensure_instance_capabilities)
+        self.instances
+            .iter()
+            .map(|item| ensure_instance_capabilities(item.value().clone()))
             .collect()
     }
 
     /// Get a specific instance
     pub fn get_instance(&self, id: &str) -> Option<LlmBackendInstance> {
-        let instances = self.instances.read().unwrap();
-        instances.get(id).cloned().map(ensure_instance_capabilities)
+        self.instances
+            .get(id)
+            .map(|item| ensure_instance_capabilities(item.value().clone()))
     }
 
     /// Test connection to a backend instance
@@ -314,20 +292,14 @@ impl LlmBackendInstanceManager {
                     Ok(_) => {
                         let latency = start.elapsed().as_millis() as u64;
 
-                        // Cache health result
-                        {
-                            let mut health_cache = self.health_cache.write().unwrap();
-                            health_cache.insert(id.to_string(), (true, Instant::now()));
-                        }
+                        // Cache health result - DashMap insert is lock-free
+                        self.health_cache.insert(id.to_string(), (true, Instant::now()));
 
                         Ok(ConnectionTestResult::success(latency))
                     }
                     Err(e) => {
                         // Cache health result
-                        {
-                            let mut health_cache = self.health_cache.write().unwrap();
-                            health_cache.insert(id.to_string(), (false, Instant::now()));
-                        }
+                        self.health_cache.insert(id.to_string(), (false, Instant::now()));
 
                         Ok(ConnectionTestResult::failed(e.to_string()))
                     }
@@ -335,10 +307,7 @@ impl LlmBackendInstanceManager {
             }
             Err(e) => {
                 // Cache health result
-                {
-                    let mut health_cache = self.health_cache.write().unwrap();
-                    health_cache.insert(id.to_string(), (false, Instant::now()));
-                }
+                self.health_cache.insert(id.to_string(), (false, Instant::now()));
 
                 Ok(ConnectionTestResult::failed(e.to_string()))
             }
@@ -359,16 +328,17 @@ impl LlmBackendInstanceManager {
 
         let active_id = self.storage.get_active_backend_id().unwrap_or_default();
 
-        // Update in-memory state
-        {
-            let mut self_instances = self.instances.write().unwrap();
-            *self_instances = instances_map;
+        // Update in-memory state - DashMap clear and insert is lock-free
+        self.instances.clear();
+        for (k, v) in instances_map {
+            self.instances.insert(k, v);
         }
 
-        {
-            let mut self_active_id = self.active_id.write().unwrap();
-            *self_active_id = active_id;
-        }
+        // Update active_id
+        let mut self_active_id = self.active_id.lock().map_err(|_| {
+            LlmError::InvalidInput("Failed to acquire active_id lock".to_string())
+        })?;
+        *self_active_id = active_id;
 
         Ok(())
     }
@@ -602,17 +572,15 @@ impl LlmBackendInstanceManager {
 
     /// Clear the runtime cache (e.g., after configuration change)
     pub fn clear_cache(&self) {
-        let mut runtime_cache = self.runtime_cache.write().unwrap();
-        runtime_cache.clear();
+        self.runtime_cache.clear();
     }
 
     /// Get health check status (cached)
     pub fn get_health_status(&self, id: &str) -> Option<bool> {
-        let health_cache = self.health_cache.read().unwrap();
-        health_cache
+        self.health_cache
             .get(id)
-            .filter(|(_, timestamp)| timestamp.elapsed() < std::time::Duration::from_secs(60))
-            .map(|(healthy, _)| *healthy)
+            .filter(|item| item.value().1.elapsed() < std::time::Duration::from_secs(60))
+            .map(|item| item.value().0)
     }
 }
 
@@ -654,14 +622,18 @@ static INSTANCE_MANAGER: Mutex<Option<Arc<LlmBackendInstanceManager>>> = Mutex::
 pub fn get_instance_manager() -> Result<Arc<LlmBackendInstanceManager>, LlmError> {
     // Fast path: already initialized
     {
-        let guard = INSTANCE_MANAGER.lock().unwrap();
+        let guard = INSTANCE_MANAGER.lock().map_err(|_| {
+            LlmError::InvalidInput("Failed to acquire instance manager lock".to_string())
+        })?;
         if let Some(ref manager) = *guard {
             return Ok(manager.clone());
         }
     }
 
     // Slow path: initialize
-    let mut guard = INSTANCE_MANAGER.lock().unwrap();
+    let mut guard = INSTANCE_MANAGER.lock().map_err(|_| {
+        LlmError::InvalidInput("Failed to acquire instance manager lock".to_string())
+    })?;
     // Check again in case another thread initialized while we waited
     if let Some(ref manager) = *guard {
         return Ok(manager.clone());

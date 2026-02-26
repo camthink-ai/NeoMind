@@ -7,15 +7,17 @@
 //! - Task completion via explicit tool usage instructions
 //! - Error handling with recovery strategies
 //! - Multi-turn conversation consistency
+//! - **Language adaptation**: Auto-detect and respond in user's language
 //!
 //! ## System Prompt Structure
 //!
 //! The system prompt is organized into sections:
 //! 1. Core identity and capabilities
-//! 2. Interaction principles
-//! 3. Tool usage strategy
-//! 4. Response format guidelines
-//! 5. Error handling
+//! 2. Language policy (respond in user's language)
+//! 3. Interaction principles
+//! 4. Tool usage strategy
+//! 5. Response format guidelines
+//! 6. Error handling
 
 use crate::translation::Language;
 
@@ -42,9 +44,11 @@ pub struct PromptBuilder {
 
 impl PromptBuilder {
     /// Create a new prompt builder.
+    /// Default language is English, but the prompt instructs the LLM to
+    /// respond in the same language as the user's input.
     pub fn new() -> Self {
         Self {
-            language: Language::Chinese,
+            language: Language::English,
             include_thinking: true,
             include_examples: true,
             supports_vision: false,
@@ -137,8 +141,17 @@ impl PromptBuilder {
 
     // === Static content constants ===
 
-    // Chinese content
-    const IDENTITY_ZH: &str = r#"## 核心身份
+    // Unified system prompt with language adaptation (English as base, auto-detect user language)
+    const IDENTITY_ZH: &str = r#"## Language Policy / 语言策略
+**CRITICAL: You MUST respond in the SAME language as the user's input.**
+- 用户用中文提问 → 必须用中文回复
+- User asks in English → MUST respond in English
+- 用户用中文写了一个句子，你用中文回复
+- When uncertain, default to English
+
+This rule applies to ALL responses, including tool results explanations.
+
+## 核心身份
 
 你是 **NeoMind 智能物联网助手**，具备专业的设备和系统管理能力。
 
@@ -381,7 +394,16 @@ impl PromptBuilder {
 → 根据上下文解释，如果需要规则详情才调用工具"#;
 
     // English content
-    const IDENTITY_EN: &str = r#"## Core Identity
+    const IDENTITY_EN: &str = r#"## Language Policy
+**CRITICAL: You MUST respond in the SAME language as the user's input.**
+- 用户用中文提问 → 必须用中文回复
+- User asks in English → MUST respond in English
+- If the user writes a sentence in Chinese, respond in Chinese
+- When uncertain, default to English
+
+This rule applies to ALL responses, including tool results explanations.
+
+## Core Identity
 
 You are the **NeoMind Intelligent IoT Assistant** with professional device and system management capabilities.
 
@@ -1062,32 +1084,52 @@ mod tests {
 
     #[test]
     fn test_core_identity() {
-        let builder = PromptBuilder::new();
-        let identity = builder.core_identity();
-        assert!(identity.contains("核心身份"));
-        assert!(identity.contains("设备管理"));
+        // Test Chinese identity
+        let builder_zh = PromptBuilder::new().with_language(Language::Chinese);
+        let identity_zh = builder_zh.core_identity();
+        assert!(identity_zh.contains("核心身份"));
+        assert!(identity_zh.contains("设备管理"));
+
+        // Test English identity (default)
+        let builder_en = PromptBuilder::new();
+        let identity_en = builder_en.core_identity();
+        assert!(identity_en.contains("Core Identity"));
+        assert!(identity_en.contains("Device Management"));
     }
 
     #[test]
     fn test_interaction_principles() {
-        let builder = PromptBuilder::new();
-        let principles = builder.interaction_principles();
-        // The actual principle is "按需使用工具", not "工具优先"
-        assert!(principles.contains("按需使用工具"));
-        assert!(principles.contains("简洁直接"));
+        // Test Chinese principles
+        let builder_zh = PromptBuilder::new().with_language(Language::Chinese);
+        let principles_zh = builder_zh.interaction_principles();
+        assert!(principles_zh.contains("按需使用工具"));
+        assert!(principles_zh.contains("简洁直接"));
+
+        // Test English principles (default)
+        let builder_en = PromptBuilder::new();
+        let principles_en = builder_en.interaction_principles();
+        assert!(principles_en.contains("Use Tools as Needed"));
+        assert!(principles_en.contains("Concise"));
     }
 
     #[test]
     fn test_tool_strategy() {
-        let builder = PromptBuilder::new();
-        let strategy = builder.tool_strategy();
-        assert!(strategy.contains("工具使用策略"));
-        assert!(strategy.contains("list_devices"));
+        // Test Chinese strategy
+        let builder_zh = PromptBuilder::new().with_language(Language::Chinese);
+        let strategy_zh = builder_zh.tool_strategy();
+        assert!(strategy_zh.contains("工具使用策略"));
+        assert!(strategy_zh.contains("list_devices"));
+
+        // Test English strategy (default)
+        let builder_en = PromptBuilder::new();
+        let strategy_en = builder_en.tool_strategy();
+        assert!(strategy_en.contains("Tool Usage Strategy"));
+        assert!(strategy_en.contains("list_devices"));
     }
 
     #[test]
     fn test_intent_addon_zh() {
-        let builder = PromptBuilder::new();
+        let builder = PromptBuilder::new().with_language(Language::Chinese);
         let addon = builder.get_intent_prompt_addon("device");
         assert!(addon.contains("设备管理"));
     }
@@ -1097,5 +1139,21 @@ mod tests {
         let builder = PromptBuilder::new().with_language(Language::English);
         let addon = builder.get_intent_prompt_addon("data");
         assert!(addon.contains("Data Query"));
+    }
+
+    #[test]
+    fn test_language_policy_in_prompt() {
+        // Both Chinese and English prompts should contain language policy
+        let builder_zh = PromptBuilder::new().with_language(Language::Chinese);
+        let prompt_zh = builder_zh.build_system_prompt();
+        assert!(prompt_zh.contains("Language Policy") || prompt_zh.contains("语言策略"));
+        let prompt_zh_lower = prompt_zh.to_lowercase();
+        assert!(prompt_zh_lower.contains("same language"));
+
+        let builder_en = PromptBuilder::new();
+        let prompt_en = builder_en.build_system_prompt();
+        assert!(prompt_en.contains("Language Policy"));
+        let prompt_en_lower = prompt_en.to_lowercase();
+        assert!(prompt_en_lower.contains("same language"));
     }
 }

@@ -104,6 +104,26 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/extensions/types",
             get(extensions::list_extension_types_handler),
         )
+        // Dashboard Components API (must come before :id routes to avoid route conflicts)
+        .route(
+            "/api/extensions/dashboard-components",
+            get(extensions::get_all_dashboard_components_handler),
+        )
+        .route(
+            "/api/extensions/capabilities",
+            get(extensions::list_extension_capabilities_handler),
+        )
+        // Discover extensions (public - scans filesystem for available extensions)
+        .route(
+            "/api/extensions/discover",
+            post(extensions::discover_extensions_handler),
+        )
+        // Register all discovered extensions (public - for initial setup)
+        .route(
+            "/api/extensions/register-all",
+            post(extensions::register_all_discovered_handler),
+        )
+        // Extension-specific routes ( :id must come after specific paths)
         .route(
             "/api/extensions/:id",
             get(extensions::get_extension_handler),
@@ -129,13 +149,26 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             get(extensions::query_extension_metric_data_handler),
         )
         .route(
-            "/api/extensions/capabilities",
-            get(extensions::list_extension_capabilities_handler),
+            "/api/extensions/:id/components",
+            get(extensions::get_extension_components_handler),
         )
-        // Discover extensions (public - scans filesystem for available extensions)
         .route(
-            "/api/extensions/discover",
-            post(extensions::discover_extensions_handler),
+            "/api/extensions/:id/assets/*asset_path",
+            get(extensions::serve_extension_asset_handler),
+        )
+        // Extension command execution (public - for dashboard components)
+        .route(
+            "/api/extensions/:id/command",
+            post(extensions::execute_extension_command_handler),
+        )
+        .route(
+            "/api/extensions/:id/invoke",
+            post(extensions::invoke_extension_handler),
+        )
+        // Extension reload (public - for hot reloading)
+        .route(
+            "/api/extensions/:id/reload",
+            post(extensions::reload_extension_handler),
         )
         // Test data generation (public - for development)
         .route(
@@ -802,12 +835,12 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             post(extensions::register_extension_handler),
         )
         .route(
-            "/api/extensions/register-all",
-            post(extensions::register_all_discovered_handler),
-        )
-        .route(
             "/api/extensions/:id",
             delete(extensions::unregister_extension_handler),
+        )
+        .route(
+            "/api/extensions/:id/uninstall",
+            delete(extensions::uninstall_extension_handler),
         )
         .route(
             "/api/extensions/:id/start",
@@ -817,14 +850,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/extensions/:id/stop",
             post(extensions::stop_extension_handler),
         )
-        .route(
-            "/api/extensions/:id/command",
-            post(extensions::execute_extension_command_handler),
-        )
-        .route(
-            "/api/extensions/:id/invoke",
-            post(extensions::invoke_extension_handler),
-        )
         // Extension Configuration (protected)
         .route(
             "/api/extensions/:id/config",
@@ -833,10 +858,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/extensions/:id/config",
             put(extensions::update_extension_config_handler),
-        )
-        .route(
-            "/api/extensions/:id/reload",
-            post(extensions::reload_extension_handler),
         )
         // Extension Marketplace (install endpoint - protected)
         .route(

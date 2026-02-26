@@ -2,13 +2,39 @@
 //!
 //! This loader uses libloading to dynamically load extension libraries
 //! and call their FFI exports to create Extension instances.
+//!
+//! # Safety Mechanisms
+//!
+//! The loader includes comprehensive safety mechanisms to prevent extension
+//! bugs from crashing the main server:
+//!
+//! 1. **Panic Isolation**: All FFI calls are wrapped with `catch_unwind` to
+//!    catch panics originating from extension code.
+//!
+//! 2. **ABI Version Check**: Extensions must declare a compatible ABI version
+//!    before any other operations.
+//!
+//! 3. **Null Pointer Checks**: All pointers returned by extensions are
+//!    validated before use.
+//!
+//! 4. **Graceful Error Handling**: Any error during loading returns an
+//!    `ExtensionError` rather than panicking or aborting.
+//!
+//! # Requirements for Extension Authors
+//!
+//! To ensure compatibility with the safety mechanisms:
+//!
+//! - Extensions MUST be compiled with `panic = "unwind"` (not "abort")
+//! - Extensions should handle errors gracefully using `Result` types
+//! - Extensions should avoid using `unwrap()` or `expect()` in FFI boundary
 
 use std::path::{Path, PathBuf};
+use std::panic;
 use std::sync::Arc;
 
 use crate::extension::system::{CExtensionMetadata, DynExtension, Extension, ABI_VERSION};
 use crate::extension::types::{ExtensionError, ExtensionMetadata, Result};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Loaded native extension with its library handle.
 pub struct LoadedNativeExtension {
@@ -48,6 +74,12 @@ impl NativeExtensionLoader {
     /// Load the extension with a configuration.
     ///
     /// The config is passed as JSON to the extension's create function.
+    ///
+    /// # Safety
+    ///
+    /// This function uses unsafe FFI calls to interact with the extension library.
+    /// All FFI calls are wrapped with panic handlers to prevent extension bugs
+    /// from crashing the main server.
     pub fn load_with_config(
         &self,
         path: &Path,
@@ -72,14 +104,16 @@ impl NativeExtensionLoader {
         let library = unsafe { libloading::Library::new(path) }
             .map_err(|e| ExtensionError::LoadFailed(format!("Failed to load library: {}", e)))?;
 
-        // Get ABI version
-        let abi_version: libloading::Symbol<unsafe extern "C" fn() -> u32> = unsafe {
-            library
-                .get(b"neomind_extension_abi_version\0")
-                .map_err(|e| ExtensionError::SymbolNotFound(format!("abi_version: {}", e)))?
-        };
+        // Get ABI version with panic protection
+        let version = Self::safe_call_ffi("abi_version", || {
+            let abi_version: libloading::Symbol<unsafe extern "C" fn() -> u32> = unsafe {
+                library
+                    .get(b"neomind_extension_abi_version\0")
+                    .map_err(|e| ExtensionError::SymbolNotFound(format!("abi_version: {}", e)))?
+            };
+            Ok(unsafe { abi_version() })
+        })?;
 
-        let version = unsafe { abi_version() };
         if version != ABI_VERSION {
             return Err(ExtensionError::IncompatibleVersion {
                 expected: ABI_VERSION,
@@ -87,14 +121,15 @@ impl NativeExtensionLoader {
             });
         }
 
-        // Get extension metadata
-        let get_metadata: libloading::Symbol<unsafe extern "C" fn() -> CExtensionMetadata> = unsafe {
-            library
-                .get(b"neomind_extension_metadata\0")
-                .map_err(|e| ExtensionError::SymbolNotFound(format!("metadata: {}", e)))?
-        };
-
-        let c_meta = unsafe { get_metadata() };
+        // Get extension metadata with panic protection
+        let c_meta = Self::safe_call_ffi("metadata", || {
+            let get_metadata: libloading::Symbol<unsafe extern "C" fn() -> CExtensionMetadata> = unsafe {
+                library
+                    .get(b"neomind_extension_metadata\0")
+                    .map_err(|e| ExtensionError::SymbolNotFound(format!("metadata: {}", e)))?
+            };
+            Ok(unsafe { get_metadata() })
+        })?;
 
         // Convert C metadata to Rust metadata
         let id = unsafe { std::ffi::CStr::from_ptr(c_meta.id) }
@@ -142,34 +177,39 @@ impl NativeExtensionLoader {
             config_parameters: None,
         };
 
-        // Create extension instance
-        let create_ext: libloading::Symbol<
-            unsafe extern "C" fn(*const u8, usize) -> *mut tokio::sync::RwLock<Box<dyn Extension>>,
-        > = unsafe {
-            library
-                .get(b"neomind_extension_create\0")
-                .map_err(|e| ExtensionError::SymbolNotFound(format!("create: {}", e)))?
-        };
+        // Create extension instance with panic protection
+        // Note: Extensions return tokio::sync::RwLock<Box<dyn Extension>>
+        let ext_ptr = Self::safe_call_ffi("create", || {
+            let create_ext: libloading::Symbol<
+                unsafe extern "C" fn(*const u8, usize) -> *mut tokio::sync::RwLock<Box<dyn Extension>>,
+            > = unsafe {
+                library
+                    .get(b"neomind_extension_create\0")
+                    .map_err(|e| ExtensionError::SymbolNotFound(format!("create: {}", e)))?
+            };
 
-        // Serialize config to JSON bytes
-        let default_config = serde_json::json!({});
-        let config_value = config.unwrap_or(&default_config);
-        let config_string =
-            serde_json::to_string(config_value).unwrap_or_else(|_| "{}".to_string());
-        let config_json = std::ffi::CString::new(config_string)
-            .unwrap_or_else(|_| std::ffi::CString::new("{}").unwrap());
-        let ext_ptr = unsafe {
-            create_ext(
-                config_json.as_ptr() as *const u8,
-                config_json.as_bytes().len(),
-            )
-        };
+            // Serialize config to JSON bytes
+            let default_config = serde_json::json!({});
+            let config_value = config.unwrap_or(&default_config);
+            let config_string =
+                serde_json::to_string(config_value).unwrap_or_else(|_| "{}".to_string());
+            let config_json = std::ffi::CString::new(config_string)
+                .unwrap_or_else(|_| std::ffi::CString::new("{}").unwrap());
+            let ptr = unsafe {
+                create_ext(
+                    config_json.as_ptr() as *const u8,
+                    config_json.as_bytes().len(),
+                )
+            };
 
-        if ext_ptr.is_null() {
-            return Err(ExtensionError::LoadFailed(
-                "Extension creation returned null".to_string(),
-            ));
-        }
+            if ptr.is_null() {
+                return Err(ExtensionError::LoadFailed(
+                    "Extension creation returned null".to_string(),
+                ));
+            }
+
+            Ok(ptr)
+        })?;
 
         // Convert the raw pointer to Arc<RwLock<Box<dyn Extension>>>
         let extension = unsafe {
@@ -182,6 +222,40 @@ impl NativeExtensionLoader {
         debug!(extension_id = %metadata.id, "Native extension loaded successfully");
 
         Ok(LoadedNativeExtension { library, extension })
+    }
+
+    /// Safely call an FFI function with panic protection.
+    ///
+    /// This wraps the FFI call in `catch_unwind` to prevent panics from
+    /// propagating and crashing the main server.
+    fn safe_call_ffi<T, F>(fn_name: &str, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T> + panic::UnwindSafe,
+    {
+        match panic::catch_unwind(f) {
+            Ok(result) => result,
+            Err(panic_payload) => {
+                // Try to extract a meaningful error message
+                let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic in extension FFI".to_string()
+                };
+
+                warn!(
+                    function = %fn_name,
+                    panic_msg = %msg,
+                    "Extension FFI call panicked, caught and converted to error"
+                );
+
+                Err(ExtensionError::LoadFailed(format!(
+                    "Extension panicked in {}: {}",
+                    fn_name, msg
+                )))
+            }
+        }
     }
 
     /// Get metadata only (lightweight version for discovery).

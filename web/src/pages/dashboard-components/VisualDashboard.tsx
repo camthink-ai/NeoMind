@@ -9,6 +9,7 @@ import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
+import { useExtensionLifecycle } from '@/hooks/useExtensionLifecycle'
 import { logError } from '@/lib/errors'
 import { cn } from '@/lib/utils'
 import { useIsMobile, useTouchHover } from '@/hooks/useMobile'
@@ -128,7 +129,7 @@ import {
   createChartConfig,
   ComponentConfigDialog,
 } from '@/components/dashboard/config'
-import type { ComponentConfigSchema } from '@/components/dashboard/config/ComponentConfigBuilder'
+import type { ComponentConfigSchema, ConfigSection } from '@/components/dashboard/config/ComponentConfigBuilder'
 import { ValueMapEditor } from '@/components/dashboard/config/ValueMapEditor'
 import { DataMappingConfig } from '@/components/dashboard/config/UIConfigSections'
 import { LEDStateRulesConfig } from '@/components/dashboard/config/LEDStateRulesConfig'
@@ -167,6 +168,7 @@ import {
   CustomLayer,
   LayerEditorDialog,
   MapEditorDialog,
+  CenterPickerDialog,
   // Business Components
   AgentMonitorWidget,
   type MapBinding,
@@ -180,8 +182,13 @@ import { MobileEditBar } from '@/components/dashboard/MobileEditBar'
 import type { DashboardComponent, DataSourceOrList, DataSource, GenericComponent } from '@/types/dashboard'
 import type { Device, AiAgent } from '@/types'
 import { COMPONENT_SIZE_CONSTRAINTS } from '@/types/dashboard'
+import { dynamicRegistry, dtoToComponentMeta } from '@/components/dashboard/registry/DynamicRegistry'
+import * as lucideReact from 'lucide-react'
 import { api } from '@/lib/api'
 import { confirm } from '@/hooks/use-confirm'
+
+// Import ComponentRenderer for extension components
+import ComponentRenderer from '@/components/dashboard/registry/ComponentRenderer'
 
 // ============================================================================
 // Helper Functions
@@ -294,6 +301,46 @@ interface ComponentCategory {
 
 // Factory function to get component library with translations
 function getComponentLibrary(t: (key: string) => string): ComponentCategory[] {
+  // Get extension components from dynamic registry
+  const extensionDtos = dynamicRegistry.getAllMetas()
+
+  // Debug logging
+  console.log('[getComponentLibrary] Extension components from registry:', {
+    count: extensionDtos.length,
+    types: extensionDtos.map(d => d.type),
+  })
+
+  // Map extension DTOs to ComponentItem format
+  const extensionItems: ComponentItem[] = extensionDtos.map(dto => {
+    // Get icon component from lucide-react
+    const iconName = dto.icon || 'Box'
+    const lucideRecord: any = lucideReact
+    const IconComponent = lucideRecord[iconName] || Box
+
+    return {
+      id: dto.type,
+      name: dto.name,
+      description: dto.description,
+      icon: IconComponent,
+    }
+  })
+
+  // Group extension components by category
+  const extensionCategories: ComponentCategory[] = []
+  const customComponents = extensionItems.filter(item => {
+    const dto = extensionDtos.find(d => d.type === item.id)
+    return dto?.category === 'custom'
+  })
+
+  if (customComponents.length > 0) {
+    extensionCategories.push({
+      category: 'custom',
+      categoryLabel: t('componentLibrary.custom'),
+      categoryIcon: Layers,
+      items: customComponents,
+    })
+  }
+
   return [
     // Indicators & Metrics
     {
@@ -360,6 +407,8 @@ function getComponentLibrary(t: (key: string) => string): ComponentCategory[] {
         { id: 'agent-monitor-widget', name: t('componentLibrary.agentMonitor'), description: t('componentLibrary.agentMonitorDesc'), icon: Bot },
       ],
     },
+    // Extension Components (from dynamic registry)
+    ...extensionCategories,
   ]
 }
 
@@ -495,7 +544,7 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
           rules={config.rules as StateRule[]}
           defaultState={config.defaultState || 'unknown'}
           stateLabels={config.stateLabels as Record<string, string>}
-          title={config.label}
+          title={commonProps.title || config.label}
           size={config.size || 'md'}
           showGlow={config.showGlow ?? true}
           showAnimation={config.showAnimation ?? true}
@@ -842,6 +891,11 @@ function renderDashboardComponent(component: DashboardComponent, devices: Device
       )
     }
     default:
+      // Check if this is an extension component
+      if (dynamicRegistry.isDynamic(component.type)) {
+        console.log(`[VisualDashboard] Rendering extension component: ${component.type}`)
+        return <ComponentRenderer component={component} className="w-full h-full" />
+      }
       return (
         <div className="p-4 text-center text-muted-foreground h-full flex flex-col items-center justify-center">
           <p className="text-sm font-medium">{(component as any).type}</p>
@@ -1019,6 +1073,15 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     fetchDevicesCurrentBatch,
   } = useStore()
 
+  // Extension lifecycle management for hot updates
+  const { refreshVersion } = useExtensionLifecycle({
+    autoSyncOnRegister: true,
+    autoRemoveOnUnregister: true,
+  })
+
+  // Memoize component library with refreshVersion dependency to trigger re-renders
+  const componentLibrary = useMemo(() => getComponentLibrary(t), [t, refreshVersion])
+
   const [configOpen, setConfigOpen] = useState(false)
   const [selectedComponent, setSelectedComponent] = useState<DashboardComponent | null>(null)
 
@@ -1031,6 +1094,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   // Map editor dialog state
   const [mapEditorOpen, setMapEditorOpen] = useState(false)
   const [mapEditorBindings, setMapEditorBindings] = useState<MapBinding[]>([])
+
+  // Center picker dialog state
+  const [centerPickerOpen, setCenterPickerOpen] = useState(false)
 
   // Layer editor dialog state
   const [layerEditorOpen, setLayerEditorOpen] = useState(false)
@@ -1326,15 +1392,42 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
   // Handle adding a component
   const handleAddComponent = (componentType: string) => {
-    const item = getComponentLibrary(t)
+    const item = componentLibrary
       .flatMap(cat => cat.items)
       .find(i => i.id === componentType)
 
     // Get size constraints for this component type
-    const constraints = COMPONENT_SIZE_CONSTRAINTS[componentType as keyof typeof COMPONENT_SIZE_CONSTRAINTS]
+    let constraints = COMPONENT_SIZE_CONSTRAINTS[componentType as keyof typeof COMPONENT_SIZE_CONSTRAINTS]
+
+    // For extension components, get constraints from DTO
+    if (!constraints) {
+      const extensionDto = dynamicRegistry.getMeta(componentType)
+      if (extensionDto?.size_constraints) {
+        constraints = extensionDto.size_constraints as any
+      }
+    }
 
     // Build appropriate default config based on component type
     let defaultConfig: any = {}
+
+    // For extension components, use their default config from DTO
+    const extensionDto = dynamicRegistry.getMeta(componentType)
+    if (extensionDto?.default_config) {
+      defaultConfig = { ...extensionDto.default_config }
+    }
+
+    // For extension components, set up dataSource with extensionId
+    let dataSource: any = undefined
+    if (extensionDto?.extension_id) {
+      dataSource = {
+        type: 'extension' as const,
+        extensionId: extensionDto.extension_id,
+      }
+      // Also add extensionMetric if available from data_binding
+      if (extensionDto.data_binding?.extension_metric) {
+        dataSource.extensionMetric = extensionDto.data_binding.extension_metric
+      }
+    }
 
     switch (componentType) {
       // Charts
@@ -1458,7 +1551,10 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         defaultConfig = {}
         break
       default:
-        defaultConfig = {}
+        // For extension components, keep the default_config from DTO (already set above)
+        if (Object.keys(defaultConfig).length === 0) {
+          defaultConfig = {}
+        }
     }
 
     // Calculate position for new component to avoid overlap
@@ -1521,6 +1617,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       },
       title: item?.name || componentType,
       config: defaultConfig,
+      ...(dataSource && { dataSource }),
     }
 
     addComponent(newComponent)
@@ -1868,6 +1965,40 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     await persistDashboard()
 
     setLayerEditorOpen(false)
+  }
+
+  // Handle saving center picker
+  const handleCenterPickerSave = async (newCenter: { lat: number; lng: number }) => {
+    if (selectedComponent) {
+      const latestDashboard = useStore.getState().currentDashboard
+      const latestComponent = latestDashboard?.components.find(c => c.id === selectedComponent.id)
+
+      const latestConfig = (latestComponent as any)?.config || {}
+      const latestDataSource = (latestComponent as any)?.dataSource
+
+      // Merge the latest config with the new center, preserving dataSource
+      const newConfig = { ...latestConfig, center: newCenter }
+      const updateData: any = { config: newConfig }
+
+      // Preserve dataSource when updating
+      if (latestDataSource) {
+        updateData.dataSource = latestDataSource
+      }
+
+      // Update the store
+      updateComponent(selectedComponent.id, updateData, false)
+
+      // Force re-render
+      setConfigVersion(v => v + 1)
+
+      // Update local config state
+      setComponentConfig(prev => ({ ...prev, center: newCenter }))
+    }
+
+    // Persist to localStorage
+    await persistDashboard()
+
+    setCenterPickerOpen(false)
   }
 
   // Handle title change
@@ -3700,29 +3831,40 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               type: 'custom' as const,
               render: () => (
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field>
-                      <Label>{t('visualDashboard.latitude')}</Label>
-                      <Input
-                        type="number"
-                        step="0.0001"
-                        value={(config.center as { lat: number } | undefined)?.lat ?? 39.9042}
-                        onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lat: parseFloat(e.target.value) })}
-                        placeholder={t('mapDisplay.defaultLatitude', '39.9042')}
-                        className="h-9"
-                      />
-                    </Field>
-                    <Field>
-                      <Label>{t('visualDashboard.longitude')}</Label>
-                      <Input
-                        type="number"
-                        step="0.0001"
-                        value={(config.center as { lng: number } | undefined)?.lng ?? 116.4074}
-                        onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lng: parseFloat(e.target.value) })}
-                        placeholder={t('mapDisplay.defaultLongitude', '116.4074')}
-                        className="h-9"
-                      />
-                    </Field>
+                  <div className="flex items-end gap-2">
+                    <div className="grid grid-cols-2 gap-3 flex-1">
+                      <Field>
+                        <Label>{t('visualDashboard.latitude')}</Label>
+                        <Input
+                          type="number"
+                          step="0.0001"
+                          value={(config.center as { lat: number } | undefined)?.lat ?? 39.9042}
+                          onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lat: parseFloat(e.target.value) })}
+                          placeholder={t('mapDisplay.defaultLatitude', '39.9042')}
+                          className="h-9"
+                        />
+                      </Field>
+                      <Field>
+                        <Label>{t('visualDashboard.longitude')}</Label>
+                        <Input
+                          type="number"
+                          step="0.0001"
+                          value={(config.center as { lng: number } | undefined)?.lng ?? 116.4074}
+                          onChange={(e) => updateConfig('center')({ ...(config.center as { lat: number; lng: number } | undefined) || { lat: 39.9042, lng: 116.4074 }, lng: parseFloat(e.target.value) })}
+                          placeholder={t('mapDisplay.defaultLongitude', '116.4074')}
+                          className="h-9"
+                        />
+                      </Field>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCenterPickerOpen(true)}
+                      className="h-9 px-3 shrink-0"
+                      title={t('mapDisplay.visualSelectCenter', '可视化选择中心点')}
+                    >
+                      <MapPin className="h-4 w-4" />
+                    </Button>
                   </div>
 
                   <div className="grid grid-cols-3 gap-3">
@@ -4517,6 +4659,150 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         }
 
       default:
+        // Check if this is an extension component
+        const extensionDto = dynamicRegistry.getMeta(componentType)
+        if (extensionDto?.config_schema?.properties) {
+          // Generate config UI from extension's JSON Schema
+          const properties = extensionDto.config_schema.properties
+          const displaySections: ConfigSection[] = [
+            {
+              type: 'custom' as const,
+              render: () => (
+                <div className="space-y-3">
+                  {Object.entries(properties).map(([key, propDef]: [string, any]) => {
+                    const propValue = config[key] ?? extensionDto.default_config?.[key] ?? propDef.default
+
+                    const handleChange = (value: any) => {
+                      updateConfig(key)(value)
+                    }
+
+                    // Render based on property type
+                    const fieldLabel = propDef.title || propDef.description || key
+
+                    switch (propDef.type) {
+                      case 'boolean':
+                        return (
+                          <label key={key} className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={propValue ?? false}
+                              onChange={(e) => handleChange(e.target.checked)}
+                              className="rounded"
+                            />
+                            <span className="text-sm font-medium">{fieldLabel}</span>
+                          </label>
+                        )
+
+                      case 'number':
+                        return (
+                          <Field key={key}>
+                            <Label>{fieldLabel}</Label>
+                            <Input
+                              type="number"
+                              value={propValue ?? 0}
+                              onChange={(e) => handleChange(Number(e.target.value))}
+                              min={propDef.minimum}
+                              max={propDef.maximum}
+                              step={propDef.type === 'number' ? (propDef.multipleOf || 1) : undefined}
+                              className="h-9"
+                            />
+                          </Field>
+                        )
+
+                      case 'integer':
+                        return (
+                          <Field key={key}>
+                            <Label>{fieldLabel}</Label>
+                            <Input
+                              type="number"
+                              value={propValue ?? 0}
+                              onChange={(e) => handleChange(Math.floor(Number(e.target.value)))}
+                              min={propDef.minimum}
+                              max={propDef.maximum}
+                              step="1"
+                              className="h-9"
+                            />
+                          </Field>
+                        )
+
+                      case 'string':
+                        if (propDef.enum) {
+                          // Select dropdown for enum values
+                          // Support enumTitles for friendly display names
+                          const enumLabels = propDef.enumTitles || propDef.enum
+                          return (
+                            <Field key={key}>
+                              <Label>{fieldLabel}</Label>
+                              <select
+                                value={propValue ?? propDef.default ?? propDef.enum[0]}
+                                onChange={(e) => handleChange(e.target.value)}
+                                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                              >
+                                {propDef.enum.map((enumValue: string, idx: number) => (
+                                  <option key={enumValue} value={enumValue}>
+                                    {enumLabels[idx]}
+                                  </option>
+                                ))}
+                              </select>
+                            </Field>
+                          )
+                        }
+                        // Regular text input
+                        return (
+                          <Field key={key}>
+                            <Label>{fieldLabel}</Label>
+                            <Input
+                              value={propValue ?? ''}
+                              onChange={(e) => handleChange(e.target.value)}
+                              placeholder={propDef.description || fieldLabel}
+                              className="h-9"
+                            />
+                          </Field>
+                        )
+
+                      case 'array':
+                        return (
+                          <Field key={key}>
+                            <Label>{fieldLabel}</Label>
+                            <Input
+                              value={Array.isArray(propValue) ? propValue.join(', ') : ''}
+                              onChange={(e) => handleChange(e.target.value.split(',').map((s: string) => s.trim()))}
+                              placeholder="Comma-separated values"
+                              className="h-9"
+                            />
+                          </Field>
+                        )
+
+                      default:
+                        return null
+                    }
+                  })}
+                </div>
+              ),
+            },
+          ]
+
+          // Add data source section if component supports it
+          let dataSourceSections: ConfigSection[] = []
+          if (extensionDto.has_data_source) {
+            dataSourceSections = [
+              {
+                type: 'data-source' as const,
+                props: {
+                  dataSource: config.dataSource,
+                  onChange: updateDataSource,
+                  allowedTypes: ['extension', 'extension-command'],
+                },
+              },
+            ]
+          }
+
+          return {
+            displaySections,
+            dataSourceSections,
+            styleSections: [],
+          }
+        }
         return null
     }
   }
@@ -4646,7 +4932,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                 >
                   <SheetTitle>{t('visualDashboard.componentLibrary')}</SheetTitle>
                   <div className="mt-4 space-y-6 pb-6">
-                    {getComponentLibrary(t).map((category) => (
+                    {componentLibrary.map((category) => (
                       <div key={category.category}>
                         <div className="flex items-center gap-2 mb-3">
                           <category.categoryIcon className="h-4 w-4 text-muted-foreground" />
@@ -4758,6 +5044,16 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         zoom={componentConfig.zoom as number || 10}
         tileLayer={componentConfig.tileLayer as string || 'osm'}
         onSave={handleMapEditorSave}
+      />
+
+      {/* Center Picker Dialog */}
+      <CenterPickerDialog
+        open={centerPickerOpen}
+        onOpenChange={setCenterPickerOpen}
+        center={(componentConfig.center as { lat: number; lng: number }) || { lat: 39.9042, lng: 116.4074 }}
+        zoom={componentConfig.zoom as number || 10}
+        tileLayer={componentConfig.tileLayer as string || 'osm'}
+        onSave={handleCenterPickerSave}
       />
 
       {/* Layer Editor Dialog */}

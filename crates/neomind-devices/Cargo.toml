@@ -24,7 +24,7 @@ redb = { workspace = true }
 
 # MQTT
 rumqttc = { version = "0.24", optional = true }
-rumqttd = { version = "0.19", optional = true }
+rumqttd = { version = "0.20", optional = true }
 
 # Utils
 futures = { workspace = true }

@@ -301,7 +301,9 @@ export function SetupPage() {
   const handleComplete = () => {
     // Auto-login with the created account
     login(username, password, true).then(() => {
-      navigate('/')
+      // Use window.location.href instead of navigate() to force a full page reload
+      // This ensures App.tsx re-checks the setup status and clears any stale state
+      window.location.href = '/'
     }).catch(() => {
       navigate('/login')
     })
@@ -365,8 +367,8 @@ export function SetupPage() {
         </header>
 
         {/* Main Content */}
-        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12">
-          <div className="w-full max-w-lg mx-auto">
+        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12 flex items-center justify-center">
+          <div className="w-full max-w-lg">
             <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-4 sm:p-8">
               {/* Welcome Icon */}
               <div className="flex justify-center mb-4 sm:mb-6">
@@ -465,8 +467,8 @@ export function SetupPage() {
         </header>
 
         {/* Main Content */}
-        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12">
-          <div className="w-full max-w-md mx-auto">
+        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12 flex items-center justify-center">
+          <div className="w-full max-w-md">
             <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-6 sm:p-8">
               {/* Progress Indicator */}
               <div className="flex items-center justify-center gap-2 mb-6">
@@ -693,8 +695,8 @@ export function SetupPage() {
         </header>
 
         {/* Main Content */}
-        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12">
-          <div className="w-full max-w-md mx-auto">
+        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12 flex items-center justify-center">
+          <div className="w-full max-w-md">
             <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-6 sm:p-8">
               {/* Progress Indicator */}
               <div className="flex items-center justify-center gap-2 mb-6">
@@ -823,8 +825,8 @@ export function SetupPage() {
         </header>
 
         {/* Main Content */}
-        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12">
-          <div className="w-full max-w-md mx-auto">
+        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12 flex items-center justify-center">
+          <div className="w-full max-w-md">
             <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-6 sm:p-8">
               {/* Progress Indicator */}
               <div className="flex items-center justify-center gap-2 mb-6">
@@ -973,8 +975,8 @@ export function SetupPage() {
         </div>
 
         {/* Main Content */}
-        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12">
-          <div className="w-full max-w-md mx-auto text-center">
+        <main className="relative z-10 flex-1 px-4 py-6 sm:px-6 sm:py-12 flex items-center justify-center">
+          <div className="w-full max-w-md text-center">
             <div className="bg-background/50 dark:bg-background/30 backdrop-blur-md rounded-xl p-6 sm:p-8">
               {/* Success Icon */}
               <div className="flex justify-center mb-6">

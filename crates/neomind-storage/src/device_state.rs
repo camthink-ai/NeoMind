@@ -11,6 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -222,9 +223,9 @@ impl DeviceStateStore {
     pub fn with_memory() -> Self {
         Self {
             storage: UnifiedStorage::with_memory(),
-            cache: Arc::new(RwLock::new(HashMap::new())),
-            type_index: Arc::new(RwLock::new(HashMap::new())),
-            online_index: Arc::new(RwLock::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(HashMap::with_capacity(256))),  // Pre-allocate cache
+            type_index: Arc::new(RwLock::new(HashMap::with_capacity(32))),  // Pre-allocate for typical device types
+            online_index: Arc::new(RwLock::new(HashMap::with_capacity(2))),  // Only 2 states: online/offline
             cache_ttl: Duration::from_secs(300), // 5 minutes
             max_cache_size: 1000,
         }
@@ -234,9 +235,9 @@ impl DeviceStateStore {
     pub fn with_redb<P: AsRef<Path>>(path: P) -> Result<Self> {
         Ok(Self {
             storage: UnifiedStorage::with_redb(path)?,
-            cache: Arc::new(RwLock::new(HashMap::new())),
-            type_index: Arc::new(RwLock::new(HashMap::new())),
-            online_index: Arc::new(RwLock::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(HashMap::with_capacity(256))),
+            type_index: Arc::new(RwLock::new(HashMap::with_capacity(32))),
+            online_index: Arc::new(RwLock::new(HashMap::with_capacity(2))),
             cache_ttl: Duration::from_secs(300),
             max_cache_size: 1000,
         })

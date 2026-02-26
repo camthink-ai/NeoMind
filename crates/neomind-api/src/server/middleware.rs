@@ -31,7 +31,8 @@ pub async fn rate_limit_middleware(
 
     let client_id = extract_client_id(request.headers(), connect_info.as_ref());
 
-    match state.rate_limiter.check_rate_limit(&client_id).await {
+    // Note: check_rate_limit is now synchronous (no .await needed)
+    match state.rate_limiter.check_rate_limit(&client_id) {
         Ok(_) => next.run(request).await,
         Err(e) => {
             if e.should_log() {

@@ -180,34 +180,22 @@ impl ExtensionMetricsCollector {
                     .await;
             }
 
-            // Call produce_metrics() to get current values (synchronous call)
-            // Note: produce_metrics is now a synchronous method that may do blocking I/O
-            // We use spawn_blocking to avoid blocking the tokio executor
-            // CRITICAL: Use catch_unwind to prevent extension panics from crashing the server
-            let ext_clone = extension.clone();
-            let extension_id_for_closure = extension_id.clone();
-            let metric_values = tokio::task::spawn_blocking(move || {
-                use std::panic::{catch_unwind, AssertUnwindSafe};
-
-                let ext = ext_clone.blocking_read();
-                catch_unwind(AssertUnwindSafe(|| {
-                    ext.produce_metrics().unwrap_or_default()
-                }))
-                .unwrap_or_else(|_| {
-                    eprintln!("[ExtensionMetricsCollector] Extension {} panicked in produce_metrics(), returning empty metrics", extension_id_for_closure);
+            // Call produce_metrics() to get current values
+            // Note: produce_metrics is a synchronous method
+            let ext = extension.read().await;
+            let metric_values = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                ext.produce_metrics().unwrap_or_default()
+            })) {
+                Ok(values) => values,
+                Err(_) => {
+                    warn!(
+                        category = "extensions",
+                        extension_id = %extension_id,
+                        "Extension produce_metrics() call failed, returning empty metrics"
+                    );
                     Vec::new()
-                })
-            })
-            .await
-            .unwrap_or_else(|e| {
-                warn!(
-                    category = "extensions",
-                    extension_id = %extension_id,
-                    error = %e,
-                    "spawn_blocking task failed for produce_metrics()"
-                );
-                Vec::new()
-            });
+                }
+            };
 
             info!(
                 category = "extensions",
@@ -284,18 +272,8 @@ impl ExtensionMetricsCollector {
                         );
                         total_metrics += 1;
 
-                        // Publish ExtensionOutput event for real-time dashboard updates
-                        if let Some(event_bus) = &self.event_bus {
-                            let event = NeoMindEvent::ExtensionOutput {
-                                extension_id: extension_id.clone(),
-                                output_name: metric_value.name.clone(),
-                                value: convert_metric_value(value_for_event),
-                                timestamp,
-                                labels: None,
-                                quality: None,
-                            };
-                            let _ = event_bus.publish(event);
-                        }
+                        // DISABLED: Event publishing causes runtime crashes
+                        // ExtensionOutput events are no longer published to WebSocket streams
                     }
                     Err(e) => {
                         warn!(

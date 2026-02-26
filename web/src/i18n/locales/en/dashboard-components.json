@@ -491,7 +491,12 @@
     "boundItems": "Bound Items",
     "noMarkers": "No Markers",
     "addDataSourceHint": "Please add a data source in the configuration panel",
-    "autoPosition": "Auto Position"
+    "autoPosition": "Auto Position",
+    "selectCenter": "Select Map Center",
+    "clickToSelectCenter": "Click on the map to select center point",
+    "selectedCenter": "Selected Center Point",
+    "centerSelected": "New position selected",
+    "visualSelectCenter": "Visual Select Center"
   },
   "customLayer": {
     "title": "Custom Layer",
@@ -869,6 +874,7 @@
     "spatial": "Spatial & Media",
     "controls": "Controls",
     "business": "Business Components",
+    "custom": "Extension Components",
     "valueCard": "Value Card",
     "valueCardDesc": "Display a single value with optional trend and styling",
     "ledIndicator": "LED Indicator",

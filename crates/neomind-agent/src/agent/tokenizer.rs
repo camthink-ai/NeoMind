@@ -77,7 +77,9 @@ pub fn select_messages_within_token_limit(
     max_tokens: usize,
     min_messages: usize,
 ) -> Vec<&crate::agent::AgentMessage> {
-    let mut selected = Vec::new();
+    // Pre-allocate with estimated capacity (assume average 50 tokens per message)
+    let estimated_messages = (max_tokens / 50).min(messages.len());
+    let mut selected = Vec::with_capacity(estimated_messages);
     let mut current_tokens = 0;
 
     // Always include at least min_messages most recent messages
@@ -198,9 +200,11 @@ pub fn select_messages_with_importance(
     }
 
     // First: Always include the most recent min_messages
-    let mut selected = Vec::new();
-    let mut used_tokens = 0;
+    // Pre-allocate: assume we'll select ~30% of remaining messages by importance
     let recent_start = total_messages.saturating_sub(min_messages);
+    let estimated_remaining = ((recent_start as f32 * 0.3) as usize).min(100);
+    let mut selected = Vec::with_capacity(min_messages + estimated_remaining);
+    let mut used_tokens = 0;
 
     for msg in &messages[recent_start..] {
         selected.push(msg);

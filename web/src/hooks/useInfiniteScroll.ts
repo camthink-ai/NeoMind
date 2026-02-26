@@ -207,7 +207,10 @@ export function useWindowScrollLoad({
       // Find scroll container if selector provided
       let container: HTMLElement | Window | null = null
       if (containerSelector) {
-        container = document.querySelector(containerSelector)
+        const el = document.querySelector(containerSelector)
+        container = el as HTMLElement | null
+      } else {
+        container = window
       }
 
       // Get scroll dimensions
@@ -215,7 +218,7 @@ export function useWindowScrollLoad({
       let scrollHeight = 0
       let clientHeight = 0
 
-      if (container && container !== window) {
+      if (container && 'scrollTop' in container) {
         const el = container as HTMLElement
         scrollTop = el.scrollTop
         scrollHeight = el.scrollHeight

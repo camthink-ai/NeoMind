@@ -299,6 +299,10 @@ impl ServerState {
                 tracing::info!("Added extension discovery directory: {:?}", ext_dir);
             }
         }
+        // Set event bus on registry for lifecycle events
+        if let Some(ref bus) = event_bus {
+            registry_builder.set_event_bus(bus.clone());
+        }
         let extension_registry = Arc::new(registry_builder);
 
         // Create extension metrics storage (shares device telemetry.redb)
@@ -567,7 +571,11 @@ impl ServerState {
         );
 
         // ========== Build EXTENSION STATE ==========
-        let extension_registry = Arc::new(ExtensionRegistry::new());
+        let mut registry = ExtensionRegistry::new();
+        if let Some(ref bus) = event_bus {
+            registry.set_event_bus(bus.clone());
+        }
+        let extension_registry = Arc::new(registry);
         let extension_metrics_storage = Arc::new(ExtensionMetricsStorage::with_shared_storage(
             time_series_storage.clone(),
         ));

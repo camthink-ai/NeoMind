@@ -70,6 +70,7 @@ export interface DashboardState {
   addComponent: (component: Omit<DashboardComponent, 'id'>) => void
   updateComponent: (id: string, updates: Partial<DashboardComponent>, persist?: boolean) => void
   removeComponent: (id: string) => void
+  removeComponentsByExtension: (extensionId: string) => void
   moveComponent: (id: string, position: ComponentPosition) => void
   duplicateComponent: (id: string) => void
 
@@ -600,6 +601,60 @@ export const createDashboardSlice: StateCreator<
       }).catch(() => {})
     },
 
+    removeComponentsByExtension(extensionId: string) {
+      const { currentDashboard, dashboards, selectedComponent, configComponentId } = get()
+      if (!currentDashboard) return
+
+      // Find all components that belong to this extension
+      const componentsToRemove = currentDashboard.components.filter(
+        (comp) => {
+          // Check if component type matches extension's component pattern
+          // Extension components typically have types like "weather-card" or contain extension_id in dataSource
+          const dataSource = 'dataSource' in comp ? (comp.dataSource as any) : undefined
+          return (
+            comp.type.startsWith(`${extensionId}:`) ||
+            comp.type.includes(`-${extensionId}-`) ||
+            dataSource?.extensionId === extensionId ||
+            dataSource?.extension_id === extensionId
+          )
+        }
+      )
+
+      if (componentsToRemove.length === 0) return
+
+      const componentIdsToRemove = new Set(componentsToRemove.map((c) => c.id))
+
+      const updatedDashboard = {
+        ...currentDashboard,
+        components: currentDashboard.components.filter((c) => !componentIdsToRemove.has(c.id)),
+        updatedAt: Date.now(),
+      }
+
+      const updatedDashboards = dashboards.map((d) =>
+        d.id === currentDashboard.id ? updatedDashboard : d
+      )
+
+      // Clear selection if the deleted component was selected
+      const newSelectedComponent =
+        selectedComponent && componentIdsToRemove.has(selectedComponent) ? null : selectedComponent
+      const newConfigComponentId =
+        configComponentId && componentIdsToRemove.has(configComponentId) ? null : configComponentId
+
+      set({
+        dashboards: updatedDashboards,
+        currentDashboard: updatedDashboard,
+        selectedComponent: newSelectedComponent,
+        configComponentId: newConfigComponentId,
+      })
+
+      // Persist changes
+      storage.sync(updatedDashboard).catch(() => {})
+
+      console.log(
+        `[DashboardSlice] Removed ${componentsToRemove.length} components from extension ${extensionId}`
+      )
+    },
+
     moveComponent(id, position) {
       const { currentDashboard, dashboards } = get()
       if (!currentDashboard) {
@@ -633,24 +688,30 @@ export const createDashboardSlice: StateCreator<
         currentDashboard: updatedDashboard,
       })
 
-      // Sync and handle ID change if dashboard was just created on server
-      storage.sync(updatedDashboard).then((result) => {
-        if (result.data && result.data.id !== updatedDashboard.id) {
-          // Server assigned a new ID - update state
-          
-          const { dashboards: currentDashboards } = get()
-          const newDashboards = currentDashboards.map((d) =>
-            d.id === updatedDashboard.id ? result.data : d
-          ).filter((d): d is Dashboard => d !== null)
-          set({
-            dashboards: newDashboards,
-            currentDashboard: result.data,
-            currentDashboardId: result.data?.id,
-          })
-        }
-      }).catch((err) => {
-        console.warn('[DashboardSlice] Failed to sync after moveComponent:', err)
-      })
+      // Debounced sync - only sync after 500ms of inactivity
+      // This prevents excessive API calls during drag operations
+      if ((window as any).__dashboardSyncTimeout) {
+        clearTimeout((window as any).__dashboardSyncTimeout)
+      }
+      ;(window as any).__dashboardSyncTimeout = setTimeout(() => {
+        storage.sync(updatedDashboard).then((result) => {
+          if (result.data && result.data.id !== updatedDashboard.id) {
+            // Server assigned a new ID - update state
+
+            const { dashboards: currentDashboards } = get()
+            const newDashboards = currentDashboards.map((d) =>
+              d.id === updatedDashboard.id ? result.data : d
+            ).filter((d): d is Dashboard => d !== null)
+            set({
+              dashboards: newDashboards,
+              currentDashboard: result.data,
+              currentDashboardId: result.data?.id,
+            })
+          }
+        }).catch((err) => {
+          console.warn('[DashboardSlice] Failed to sync after moveComponent:', err)
+        })
+      }, 500)
     },
 
     duplicateComponent(id) {

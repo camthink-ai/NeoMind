@@ -264,7 +264,7 @@ fn test_extension_error_execution_failed() {
 
 #[test]
 fn test_extension_error_timeout() {
-    let err = ExtensionError::Timeout;
+    let err = ExtensionError::Timeout("Test timeout".to_string());
     assert!(err.to_string().contains("Timeout"));
 }
 

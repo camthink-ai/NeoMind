@@ -33,6 +33,8 @@ tiktoken-rs = { version = "0.6", optional = true }
 semver = { version = "1", features = ["serde"] }
 libloading = "0.8"
 neomind-sandbox = { path = "../neomind-sandbox" }
+zip = "2.1"
+sha2 = "0.10"
 
 [dev-dependencies]
 neomind-automation = { path = "../neomind-automation" }

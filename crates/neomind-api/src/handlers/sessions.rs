@@ -14,6 +14,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tracing::{info, info_span, Instrument};
 
 use neomind_agent::AgentEvent;
 use neomind_storage::{PendingStreamState, StreamStage};
@@ -692,7 +693,7 @@ pub async fn ws_chat_handler(
     let session_info = match params.get("token") {
         Some(token) => match state.auth.user_state.validate_token(token) {
             Ok(info) => {
-                tracing::info!(
+                info!(
                     username = %info.username,
                     role = info.role.as_str(),
                     "WebSocket authenticated via JWT"

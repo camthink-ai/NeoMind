@@ -980,6 +980,8 @@
     "clickToViewFull": "Click to view full data",
     "noHistoryData": "No history data",
     "preview": "Preview",
+    "imagePreview": "Image preview dialog",
+    "metricHistory": "Metric history data",
     "parameters": "Parameters:",
     "result": "Result:",
     "error": "Error:",

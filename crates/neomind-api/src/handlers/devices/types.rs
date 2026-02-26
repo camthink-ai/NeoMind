@@ -628,9 +628,10 @@ pub async fn generate_device_type_from_samples_handler(
 /// Configuration for cloud device type repository
 const CLOUD_REPO: &str = "camthink-ai/NeoMind-DeviceTypes";
 const CLOUD_BRANCH: &str = "main";
+const CLOUD_BASE_URL: &str = "https://raw.githubusercontent.com/camthink-ai/NeoMind-DeviceTypes";
 
-/// Cloud device type metadata
-#[derive(Debug, Serialize, Deserialize)]
+/// Cloud device type metadata (in index.json)
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CloudDeviceType {
     pub device_type: String,
     pub name: String,
@@ -638,6 +639,21 @@ pub struct CloudDeviceType {
     pub description: String,
     #[serde(default)]
     pub categories: Vec<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+}
+
+/// Index file structure for cloud device types
+#[derive(Debug, Deserialize)]
+struct CloudDeviceTypesIndex {
+    version: String,
+    #[serde(default)]
+    last_updated: Option<String>,
+    device_types: Vec<CloudDeviceType>,
 }
 
 /// Response for listing cloud device types
@@ -673,15 +689,16 @@ pub struct CloudImportResponse {
 }
 
 /// List available device types from cloud repository
-/// Uses GitHub Contents API to list files in types/ directory
+/// Uses raw.githubusercontent.com to read index.json (avoids GitHub API rate limits)
 ///
 /// GET /api/device-types/cloud/list
 pub async fn list_cloud_device_types_handler(
     State(_state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
-    let api_url = format!(
-        "https://api.github.com/repos/{}/contents/types?ref={}",
-        CLOUD_REPO, CLOUD_BRANCH
+    // Use raw.githubusercontent.com to avoid GitHub API rate limits
+    let index_url = format!(
+        "{}/{}/types/index.json",
+        CLOUD_BASE_URL, CLOUD_BRANCH
     );
 
     let client = reqwest::Client::builder()
@@ -690,79 +707,54 @@ pub async fn list_cloud_device_types_handler(
         .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
 
     let response = match client
-        .get(&api_url)
+        .get(&index_url)
         .header("User-Agent", "NeoMind-DeviceType-Importer")
         .send()
         .await
     {
         Ok(r) => r,
         Err(e) => {
-            tracing::error!("Failed to connect to GitHub API: {}", e);
+            tracing::error!("Failed to connect to cloud repository: {}", e);
             // Return empty list on network error (graceful degradation)
             return ok(json!({
                 "device_types": [],
                 "total": 0,
                 "error": "network_error",
-                "message": "Unable to connect to GitHub. Please check your internet connection."
+                "message": "Unable to connect to cloud repository. Please check your internet connection."
             }));
         }
     };
 
     if !response.status().is_success() {
         let status = response.status();
-        let error_text = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "Unable to read error response".to_string());
-        tracing::error!("GitHub API returned status {}: {}", status, error_text);
-
+        tracing::error!("Cloud repository returned status {}", status);
         // Return empty list if fetch fails (graceful degradation)
         return ok(json!({
             "device_types": [],
             "total": 0,
-            "error": format!("GitHub API returned status {}", status),
+            "error": format!("http_error_{}", status.as_u16()),
+            "message": "Failed to fetch device types from cloud repository."
         }));
     }
 
-    #[derive(Deserialize)]
-    struct GitHubFile {
-        name: String,
-        #[serde(default)]
-        _size: u64,
-    }
-
-    let files: Vec<GitHubFile> = match response.json().await {
-        Ok(f) => f,
+    let index: CloudDeviceTypesIndex = match response.json().await {
+        Ok(i) => i,
         Err(e) => {
-            tracing::error!("Failed to parse GitHub API response: {}", e);
+            tracing::error!("Failed to parse cloud index: {}", e);
             // Return empty list on parse error (graceful degradation)
             return ok(json!({
                 "device_types": [],
                 "total": 0,
                 "error": "parse_error",
-                "message": "Unable to parse GitHub response."
+                "message": "Unable to parse cloud repository response."
             }));
         }
     };
 
-    // Extract device_type_id from filenames (remove .json extension)
-    let cloud_types: Vec<CloudDeviceType> = files
-        .into_iter()
-        .filter(|f| f.name.ends_with(".json"))
-        .map(|f| {
-            let device_type_id = f.name.trim_end_matches(".json");
-            CloudDeviceType {
-                device_type: device_type_id.to_string(),
-                name: device_type_id.replace('_', " ").to_string(), // Simple name from ID
-                description: String::new(),
-                categories: Vec::new(),
-            }
-        })
-        .collect();
-
     ok(json!({
-        "device_types": cloud_types,
-        "total": cloud_types.len(),
+        "device_types": index.device_types,
+        "total": index.device_types.len(),
+        "index_version": index.version,
     }))
 }
 

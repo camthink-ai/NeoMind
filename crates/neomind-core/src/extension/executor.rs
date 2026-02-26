@@ -121,7 +121,10 @@ impl CommandExecutor {
                 }
             },
             Err(_) => {
-                let timeout_err = ExtensionError::Timeout;
+                let timeout_err = ExtensionError::Timeout(format!(
+                    "Extension '{}' command '{}' timed out",
+                    extension_id, command.name
+                ));
                 self.publish_error_event(
                     extension_id,
                     extension_name,

@@ -19,6 +19,12 @@ redb = { workspace = true }
 # LRU cache for hot data
 lru = "0.12"
 
+# Concurrent data structures
+dashmap = "6"
+
+# Async utilities for parallel operations
+futures = "0.3"
+
 # Utils
 bincode = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
@@ -41,3 +47,11 @@ all = ["redb", "memory", "settings"]
 [lints.clippy]
 # Temporarily suppress clippy warnings for neomind-storage
 type_complexity = "allow"
+
+[[bench]]
+name = "storage_bench"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }
+tempfile = "3"

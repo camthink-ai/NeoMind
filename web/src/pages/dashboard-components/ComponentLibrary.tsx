@@ -48,6 +48,7 @@ const CATEGORY_TRANSLATION_KEYS: Record<string, string> = {
   display: 'componentLibrary.display',
   spatial: 'componentLibrary.spatial',
   business: 'componentLibrary.business',
+  custom: 'componentLibrary.custom',
 }
 
 // ============================================================================

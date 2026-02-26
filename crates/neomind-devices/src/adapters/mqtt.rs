@@ -1728,76 +1728,69 @@ impl MqttAdapter {
                         }
                         // Skip auto-onboarding for registered devices - message already handled
                     } else {
-                        // Check if this message came from a configured subscription topic
-                        // If yes, skip auto-onboarding since the user explicitly subscribed to it
-                        let is_from_subscription = config
-                            .subscribe_topics
-                            .iter()
-                            .any(|pattern| match_topic_pattern_helper(&topic, pattern).is_some());
+                        // Trigger auto-onboarding for unknown devices
+                        // User-configured subscribe_topics define WHICH topics to listen on,
+                        // and we should auto-onboard devices from those topics
+                        info!(
+                            "Triggering auto-onboarding for non-standard topic: {}",
+                            topic
+                        );
 
-                        if !is_from_subscription {
-                            // Not from subscription topics - trigger auto-onboarding
-                            info!(
-                                "Triggering auto-onboarding for non-standard topic: {}",
-                                topic
-                            );
-
-                            // Generate a device_id for auto-discovery
-                            // Try to extract from topic, or use a hash-based ID
-                            let auto_device_id = extract_device_id_from_topic(&topic, config)
-                                .unwrap_or_else(|| {
-                                    // Use topic hash as device_id
-                                    format!("mqtt_{}", {
-                                        use std::collections::hash_map::DefaultHasher;
-                                        use std::hash::{Hash, Hasher};
-                                        let mut hasher = DefaultHasher::new();
-                                        topic.hash(&mut hasher);
-                                        format!("{:x}", hasher.finish())
-                                    })
-                                });
-
-                            // Determine data format and prepare sample
-                            // Extract the actual device data from payload.data if it exists
-                            let (sample_data, is_binary, data_format) = if let Ok(json_data) =
-                                serde_json::from_slice::<serde_json::Value>(&payload)
-                            {
-                                // Check if payload has a 'data' field containing the actual device data
-                                let actual_data = json_data.get("data").unwrap_or(&json_data);
-                                (actual_data.clone(), false, "json")
-                            } else {
-                                // Not JSON - store as base64 encoded binary data
-                                (serde_json::json!(BASE64.encode(&payload)), true, "base64")
-                            };
-
-                            // Publish unknown_device_data event for auto-onboarding
-                            if let Some(bus) = event_bus {
-                                let sample = serde_json::json!({
-                                    "device_id": auto_device_id,
-                                    "timestamp": chrono::Utc::now().timestamp(),
-                                    "topic": topic,
-                                    "data": sample_data,
-                                    "format": data_format,
-                                    "is_binary": is_binary
-                                });
-
-                                // Use the adapter's name as adapter_id for auto-onboarding
-                                // This matches the adapter_id used during registration
-                                let adapter_id = config.name.clone();
-
-                                bus.publish(NeoMindEvent::Custom {
-                                    event_type: "unknown_device_data".to_string(),
-                                    data: serde_json::json!({
-                                        "device_id": auto_device_id,
-                                        "source": "mqtt",
-                                        "broker_id": broker_id,
-                                        "adapter_id": adapter_id,
-                                        "original_topic": topic,
-                                        "sample": sample,
-                                        "is_binary": is_binary
-                                    }),
+                        // Generate a device_id for auto-discovery
+                        // Try to extract from topic, or use a hash-based ID
+                        let auto_device_id = extract_device_id_from_topic(&topic, config)
+                            .unwrap_or_else(|| {
+                                // Use topic hash as device_id
+                                format!("mqtt_{}", {
+                                    use std::collections::hash_map::DefaultHasher;
+                                    use std::hash::{Hash, Hasher};
+                                    let mut hasher = DefaultHasher::new();
+                                    topic.hash(&mut hasher);
+                                    format!("{:x}", hasher.finish())
                                 })
-                                .await;
-                            }
+                            });
+
+                        // Determine data format and prepare sample
+                        // Extract the actual device data from payload.data if it exists
+                        let (sample_data, is_binary, data_format) = if let Ok(json_data) =
+                            serde_json::from_slice::<serde_json::Value>(&payload)
+                        {
+                            // Check if payload has a 'data' field containing the actual device data
+                            let actual_data = json_data.get("data").unwrap_or(&json_data);
+                            (actual_data.clone(), false, "json")
+                        } else {
+                            // Not JSON - store as base64 encoded binary data
+                            (serde_json::json!(BASE64.encode(&payload)), true, "base64")
+                        };
+
+                        // Publish unknown_device_data event for auto-onboarding
+                        if let Some(bus) = event_bus {
+                            let sample = serde_json::json!({
+                                "device_id": auto_device_id,
+                                "timestamp": chrono::Utc::now().timestamp(),
+                                "topic": topic,
+                                "data": sample_data,
+                                "format": data_format,
+                                "is_binary": is_binary
+                            });
+
+                            // Use the adapter's name as adapter_id for auto-onboarding
+                            // This matches the adapter_id used during registration
+                            let adapter_id = config.name.clone();
+
+                            bus.publish(NeoMindEvent::Custom {
+                                event_type: "unknown_device_data".to_string(),
+                                data: serde_json::json!({
+                                    "device_id": auto_device_id,
+                                    "source": "mqtt",
+                                    "broker_id": broker_id,
+                                    "adapter_id": adapter_id,
+                                    "original_topic": topic,
+                                    "sample": sample,
+                                    "is_binary": is_binary
+                                }),
+                            })
+                            .await;
                         }
                     }
                 }

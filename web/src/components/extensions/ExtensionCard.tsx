@@ -34,6 +34,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  RefreshCw,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -44,6 +45,7 @@ interface ExtensionCardProps {
   extension: Extension
   onUnregister?: () => void
   onConfigure?: () => void
+  onReload?: () => void
 }
 
 // Data type colors
@@ -433,6 +435,7 @@ export function ExtensionCard({
   extension,
   onUnregister,
   onConfigure,
+  onReload,
 }: ExtensionCardProps) {
   const { t } = useTranslation(["extensions"])
   const [capabilitiesDialogOpen, setCapabilitiesDialogOpen] = useState(false)
@@ -492,6 +495,10 @@ export function ExtensionCard({
                 <DropdownMenuItem onClick={() => onConfigure?.()}>
                   <Settings className="mr-2 h-4 w-4" />
                   {t('card.configure')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onReload?.()}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {t('card.reload', { defaultValue: 'Reload' })}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => onUnregister?.()} className="text-destructive">
                   <Trash2 className="mr-2 h-4 w-4" />

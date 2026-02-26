@@ -2,11 +2,9 @@
 //!
 //! Tests command persistence, cache eviction, retry logic, and cleanup.
 
-use std::sync::Arc;
-
 use neomind_commands::{
-    command::{CommandPriority, CommandRequest, CommandResult, CommandSource, CommandStatus},
-    state::{CommandStateStore, StateError, StoreStats},
+    command::{CommandPriority, CommandRequest, CommandSource, CommandStatus},
+    state::CommandStateStore,
 };
 
 /// Helper to create a test command.
@@ -153,8 +151,8 @@ async fn test_state_store_list_by_status() {
     let store = CommandStateStore::new(100);
 
     // Add commands with different statuses
-    let mut cmd1 = make_command("device1", "cmd1", CommandPriority::Normal);
-    let mut cmd2 = make_command("device2", "cmd2", CommandPriority::Normal);
+    let cmd1 = make_command("device1", "cmd1", CommandPriority::Normal);
+    let cmd2 = make_command("device2", "cmd2", CommandPriority::Normal);
     let cmd3 = make_command("device3", "cmd3", CommandPriority::Normal);
     let id1 = cmd1.id.clone();
     let id2 = cmd2.id.clone();

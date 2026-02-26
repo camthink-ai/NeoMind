@@ -451,7 +451,12 @@
     "boundItems": "已绑定项目",
     "noMarkers": "暂无标记",
     "addDataSourceHint": "请在配置面板中添加数据源",
-    "autoPosition": "自动定位"
+    "autoPosition": "自动定位",
+    "selectCenter": "选择地图中心点",
+    "clickToSelectCenter": "点击地图选择中心点位置",
+    "selectedCenter": "选中的中心点",
+    "centerSelected": "已选择新位置",
+    "visualSelectCenter": "可视化选择中心点"
   },
   "customLayer": {
     "title": "自定义图层",
@@ -817,6 +822,7 @@
     "spatial": "空间",
     "controls": "控制",
     "business": "业务",
+    "custom": "扩展组件",
     "valueCard": "数值卡片",
     "valueCardDesc": "显示单个数值，支持趋势和样式自定义",
     "ledIndicator": "LED 指示灯",

@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
 import { useStore } from "@/store"
+import { syncExtensionComponents } from "@/hooks/useExtensionComponents"
 import { Loader2, Package, Check, Sparkles, X } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { ExtensionDiscoveryResult } from "@/types"
@@ -170,6 +171,8 @@ export function DiscoverExtensionsDialog({
     // Refresh extensions list and close dialog on success
     if (successCount > 0) {
       await fetchExtensions()
+      // Sync extension components to update Component Library
+      await syncExtensionComponents()
       onOpenChange(false)
     }
   }
@@ -193,6 +196,9 @@ export function DiscoverExtensionsDialog({
         newSet.delete(ext.id)
         return newSet
       })
+
+      // Sync extension components to update Component Library
+      await syncExtensionComponents()
 
       // Close dialog if no more extensions
       if (discoveredExtensions.length === 1) {

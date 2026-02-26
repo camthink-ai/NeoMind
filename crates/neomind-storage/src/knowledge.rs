@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 
 use crate::{
     vector::{Embedding, VectorDocument, VectorStore},
@@ -70,10 +70,10 @@ impl KnowledgeEntry {
 
 /// LLM Knowledge base with vector storage.
 pub struct LlmKnowledgeBase {
-    /// Vector store for semantic search.
-    vector_store: Arc<RwLock<VectorStore>>,
-    /// In-memory index of entries by ID.
-    entries: Arc<RwLock<HashMap<String, KnowledgeEntry>>>,
+    /// Vector store for semantic search - using DashMap for concurrent access
+    vector_store: VectorStore,
+    /// In-memory index of entries by ID - using DashMap for concurrent access
+    entries: DashMap<String, KnowledgeEntry>,
     /// Embedding dimension.
     embedding_dim: usize,
 }
@@ -82,8 +82,8 @@ impl LlmKnowledgeBase {
     /// Create a new knowledge base.
     pub fn new() -> Self {
         Self {
-            vector_store: Arc::new(RwLock::new(VectorStore::new())),
-            entries: Arc::new(RwLock::new(HashMap::new())),
+            vector_store: VectorStore::new(),
+            entries: DashMap::new(),
             embedding_dim: 384, // Default embedding dimension
         }
     }
@@ -96,7 +96,7 @@ impl LlmKnowledgeBase {
 
     /// Initialize with a vector store.
     pub fn with_vector_store(mut self, store: VectorStore) -> Self {
-        self.vector_store = Arc::new(RwLock::new(store));
+        self.vector_store = store;
         self
     }
 
@@ -162,12 +162,11 @@ impl LlmKnowledgeBase {
                 "metadata": entry.metadata,
             }));
 
-        let mut entries = self.entries.write().await;
-        entries.insert(entry.id.clone(), entry);
-        drop(entries);
+        // DashMap insert is lock-free
+        self.entries.insert(entry.id.clone(), entry);
 
-        let store = self.vector_store.read().await;
-        store.insert(doc).await?;
+        // VectorStore insert is now lock-free
+        self.vector_store.insert(doc).await?;
 
         Ok(())
     }
@@ -211,14 +210,13 @@ impl LlmKnowledgeBase {
     ) -> Result<Vec<KnowledgeSearchResult>, Error> {
         let query_embedding = self.generate_embedding(query).await;
 
-        let store = self.vector_store.read().await;
-        let raw_results = store.search(&query_embedding, top_k * 2).await?;
+        // VectorStore search is now lock-free
+        let raw_results = self.vector_store.search(&query_embedding, top_k * 2).await?;
 
-        let entries = self.entries.read().await;
-
+        // DashMap iterate is lock-free
         let mut results = Vec::new();
         for result in raw_results {
-            if let Some(entry) = entries.get(&result.id) {
+            if let Some(entry) = self.entries.get(&result.id) {
                 // Filter by type if specified
                 if let Some(ref ft) = filter_type {
                     if &entry.entry_type != ft {
@@ -227,7 +225,7 @@ impl LlmKnowledgeBase {
                 }
 
                 results.push(KnowledgeSearchResult {
-                    entry: entry.clone(),
+                    entry: entry.value().clone(),
                     score: result.score,
                 });
             }
@@ -265,51 +263,54 @@ impl LlmKnowledgeBase {
     }
 
     /// Get an entry by ID.
-    pub async fn get(&self, id: &str) -> Option<KnowledgeEntry> {
-        let entries = self.entries.read().await;
-        entries.get(id).cloned()
+    pub fn get(&self, id: &str) -> Option<KnowledgeEntry> {
+        self.entries.get(id).map(|item| item.value().clone())
     }
 
     /// Get all entries of a specific type.
-    pub async fn get_by_type(&self, entry_type: KnowledgeType) -> Vec<KnowledgeEntry> {
-        let entries = self.entries.read().await;
-        entries
-            .values()
-            .filter(|e| e.entry_type == entry_type)
-            .cloned()
+    pub fn get_by_type(&self, entry_type: KnowledgeType) -> Vec<KnowledgeEntry> {
+        self.entries
+            .iter()
+            .filter_map(|item| {
+                let entry = item.value();
+                if entry.entry_type == entry_type {
+                    Some(entry.clone())
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
     /// Get the number of entries.
-    pub async fn count(&self) -> usize {
-        let entries = self.entries.read().await;
-        entries.len()
+    pub fn count(&self) -> usize {
+        self.entries.len()
     }
 
     /// Get the count by type.
-    pub async fn count_by_type(&self, entry_type: KnowledgeType) -> usize {
-        let entries = self.entries.read().await;
-        entries
-            .values()
-            .filter(|e| e.entry_type == entry_type)
+    pub fn count_by_type(&self, entry_type: KnowledgeType) -> usize {
+        self.entries
+            .iter()
+            .filter_map(|item| {
+                if item.value().entry_type == entry_type {
+                    Some(())
+                } else {
+                    None
+                }
+            })
             .count()
     }
 
     /// Clear all entries.
-    pub async fn clear(&self) {
-        let mut entries = self.entries.write().await;
-        entries.clear();
-
-        let store = self.vector_store.read().await;
-        store.clear().await;
+    pub fn clear(&self) {
+        self.entries.clear();
+        self.vector_store.clear();
     }
 
     /// Delete an entry by ID.
     pub async fn delete(&self, id: &str) -> Result<bool, Error> {
-        let mut entries = self.entries.write().await;
-        if entries.remove(id).is_some() {
-            let store = self.vector_store.read().await;
-            store.delete(id).await?;
+        if self.entries.remove(id).is_some() {
+            self.vector_store.delete(id)?;
             Ok(true)
         } else {
             Ok(false)
@@ -317,8 +318,8 @@ impl LlmKnowledgeBase {
     }
 
     /// Get the vector store reference.
-    pub fn vector_store(&self) -> Arc<RwLock<VectorStore>> {
-        self.vector_store.clone()
+    pub fn vector_store(&self) -> &VectorStore {
+        &self.vector_store
     }
 }
 

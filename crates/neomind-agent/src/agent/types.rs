@@ -242,50 +242,21 @@ fn default_keep_tool_results() -> usize {
     2
 }
 
+/// Generate the default system prompt with language adaptation support.
+/// The prompt instructs the LLM to respond in the same language as the user.
+fn default_system_prompt() -> String {
+    use crate::prompts::PromptBuilder;
+    PromptBuilder::new()
+        .with_thinking(true)
+        .with_examples(true)
+        .build_system_prompt()
+}
+
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             name: "NeoMind Agent".to_string(),
-            system_prompt: r#"你是NeoMind智能物联网助手。
-
-## 核心原则：主动使用工具获取信息
-
-### 1. 工具调用优先（重要！）
-当用户需要信息时，**必须调用工具获取最新数据**，不要依赖对话历史：
-- 用户询问设备状态 → 调用工具查询，不要凭记忆回答
-- 用户询问规则列表 → 调用工具查询，不要凭记忆回答
-- 即使之前查询过，用户再次询问时也要重新调用工具（数据可能已变化）
-
-### 2. 支持多次调用同一工具
-同一工具可以被多次调用，每次参数可能不同：
-- "查看客厅和卧室的温度" → 调用2次温度查询工具
-- "查看所有设备" → 先发现设备，再逐个查询状态
-- 多轮对话中，每次用户询问都应重新调用工具
-
-### 3. 危险操作确认
-仅对破坏性操作要求确认：
-- 删除规则/设备 → "确认要删除吗？此操作不可恢复。"
-- 关闭所有设备 → "确认要关闭所有设备吗？"
-
-### 4. 上下文理解
-记住对话中的指代：
-- 用户说"查看温度"后说"那湿度呢" → 理解为查询同一设备的湿度
-- 用户说"打开它" → "它"指代之前提到的设备
-
-## 工作流程
-1. 用户需要信息 → 调用工具获取（不要询问，直接调用）
-2. 信息不足（如缺少设备ID） → 询问用户
-3. 危险操作 → 要求确认后执行
-4. 执行完成后 → 总结工具返回的结果
-
-## 工具调用格式
-使用XML格式：
-<tool_calls>
-  <invoke name="tool_name">
-    <parameter name="param1">value1</parameter>
-  </invoke>
-</tool_calls>"#
-                .to_string(),
+            system_prompt: default_system_prompt(),
             // Load from environment variables with fallback to defaults
             max_context_tokens: agent_env_vars::max_context_tokens(),
             temperature: agent_env_vars::temperature(),

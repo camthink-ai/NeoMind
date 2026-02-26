@@ -8,6 +8,7 @@ import { tokenManager } from "@/lib/api"
 import { StartupLoading } from "@/components/StartupLoading"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
+import { useExtensionComponents } from "@/hooks/useExtensionComponents"
 
 // Performance optimization: Lazy load route components to reduce initial bundle size
 // Each page is loaded on-demand, reducing Time to Interactive by ~70%
@@ -23,7 +24,6 @@ const AgentsPage = lazy(() => import('@/pages/agents').then(m => ({ default: m.A
 const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default: m.SettingsPage })))
 const MessagesPage = lazy(() => import('@/pages/messages').then(m => ({ default: m.default })))
 const ExtensionsPage = lazy(() => import('@/pages/extensions').then(m => ({ default: m.ExtensionsPage })))
-
 // Suppress Radix UI Portal cleanup errors during page transitions
 // This is a known issue with React 18 + Radix UI + fast page navigation
 const originalError = console.error
@@ -322,6 +322,10 @@ function App() {
     }
   }, [isAuthenticated, currentPath])
 
+  // Auto-sync extension dashboard components when authenticated
+  // This ensures extension-provided components are available in the dashboard
+  useExtensionComponents({ autoSync: true, syncInterval: 60000 })
+
   // Show loading screen in Tauri until backend is ready
   if (isTauri && !backendReady) {
     return <StartupLoading onReady={() => setBackendReady(true)} />
@@ -357,49 +361,49 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
 
           {/* Protected routes */}
-        <Route
-          path="/*"
-          element={
-            <ProtectedRoute>
-              <div className="flex flex-col bg-background" style={{height: 'var(--app-height, 100vh)'}}>
-                <TopNav />
-                <main className="flex flex-1 min-h-0 overflow-hidden" style={{paddingTop: 'var(--topnav-height, 4rem)'}}>
-                  <div className="w-full h-full overflow-auto" id="main-scroll-container">
-                  <Routes>
-                    <Route path="/" element={<ChatPage />} />
-                    <Route path="/chat" element={<ChatPage />} />
-                    {/* Session-based routes */}
-                    <Route path="/chat/:sessionId" element={<ChatPage />} />
-                    <Route path="/visual-dashboard" element={<VisualDashboard />} />
-                    <Route path="/visual-dashboard/:dashboardId" element={<VisualDashboard />} />
-                    {/* Devices with tab routes */}
-                    <Route path="/devices" element={<DevicesPage />} />
-                    <Route path="/devices/:id" element={<DevicesPage />} />
-                    <Route path="/devices/types" element={<DevicesPage />} />
-                    <Route path="/devices/drafts" element={<DevicesPage />} />
-                    {/* Automation with tab routes */}
-                    <Route path="/automation" element={<AutomationPage />} />
-                    <Route path="/automation/transforms" element={<AutomationPage />} />
-                    {/* Agents */}
-                    <Route path="/agents" element={<AgentsPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
-                    {/* Messages with tab routes */}
-                    <Route path="/messages" element={<MessagesPage />} />
-                    <Route path="/messages/channels" element={<MessagesPage />} />
-                    {/* Extensions */}
-                    <Route path="/extensions" element={<ExtensionsPage />} />
-                    <Route path="/plugins" element={<Navigate to="/extensions" replace />} />
-                    {/* Catch all - redirect to chat */}
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                  </Routes>
-                  </div>
-                </main>
-                <Toaster />
-                <Confirmer />
-              </div>
-            </ProtectedRoute>
-          }
-        />
+          <Route
+            path="/*"
+            element={
+              <ProtectedRoute>
+                <div className="flex flex-col bg-background" style={{height: 'var(--app-height, 100vh)'}}>
+                  <TopNav />
+                  <main className="flex flex-1 min-h-0 overflow-hidden" style={{paddingTop: 'var(--topnav-height, 4rem)'}}>
+                    <div className="w-full h-full overflow-auto" id="main-scroll-container">
+                    <Routes>
+                      <Route path="/" element={<ChatPage />} />
+                      <Route path="/chat" element={<ChatPage />} />
+                      {/* Session-based routes */}
+                      <Route path="/chat/:sessionId" element={<ChatPage />} />
+                      <Route path="/visual-dashboard" element={<VisualDashboard />} />
+                      <Route path="/visual-dashboard/:dashboardId" element={<VisualDashboard />} />
+                      {/* Devices with tab routes */}
+                      <Route path="/devices" element={<DevicesPage />} />
+                      <Route path="/devices/:id" element={<DevicesPage />} />
+                      <Route path="/devices/types" element={<DevicesPage />} />
+                      <Route path="/devices/drafts" element={<DevicesPage />} />
+                      {/* Automation with tab routes */}
+                      <Route path="/automation" element={<AutomationPage />} />
+                      <Route path="/automation/transforms" element={<AutomationPage />} />
+                      {/* Agents */}
+                      <Route path="/agents" element={<AgentsPage />} />
+                      <Route path="/settings" element={<SettingsPage />} />
+                      {/* Messages with tab routes */}
+                      <Route path="/messages" element={<MessagesPage />} />
+                      <Route path="/messages/channels" element={<MessagesPage />} />
+                      {/* Extensions */}
+                      <Route path="/extensions" element={<ExtensionsPage />} />
+                      <Route path="/plugins" element={<Navigate to="/extensions" replace />} />
+                      {/* Catch all - redirect to chat */}
+                      <Route path="*" element={<Navigate to="/" replace />} />
+                    </Routes>
+                    </div>
+                  </main>
+                  <Toaster />
+                  <Confirmer />
+                </div>
+              </ProtectedRoute>
+            }
+          />
         </Routes>
       </Suspense>
       {/* Show toaster and confirmer on login page too */}

@@ -1054,7 +1054,7 @@ export function AgentEditorFullScreen({
     if (existing) {
       setSelectedResources(prev => prev.filter(r => r.id !== resource.id))
     } else {
-      // Add with all metrics/commands selected by default
+      // Add with NO metrics/commands selected by default - user must explicitly select
       setSelectedResources(prev => [...prev, {
         id: resource.id,
         name: resource.name,
@@ -1062,8 +1062,8 @@ export function AgentEditorFullScreen({
         deviceType: resource.deviceType,
         allMetrics: resource.metrics,
         allCommands: resource.commands,
-        selectedMetrics: new Set(resource.metrics.map(m => m.name)),
-        selectedCommands: new Set(resource.commands.map(c => c.name)),
+        selectedMetrics: new Set(), // Empty by default - user must select explicitly
+        selectedCommands: new Set(), // Empty by default - user must select explicitly
       }])
     }
   }

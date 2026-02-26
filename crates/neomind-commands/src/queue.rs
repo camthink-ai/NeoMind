@@ -15,7 +15,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock, Semaphore};
 
-use crate::command::{CommandId, CommandPriority, CommandRequest, CommandSource};
+use crate::command::{CommandId, CommandPriority, CommandRequest};
 
 /// Queue statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,16 +34,11 @@ pub struct QueueStats {
 #[derive(Debug, Clone)]
 struct QueueItem {
     command: CommandRequest,
-    /// Enqueue order for FIFO within same priority
-    enqueue_order: u64,
 }
 
 impl QueueItem {
-    fn new(command: CommandRequest, enqueue_order: u64) -> Self {
-        Self {
-            command,
-            enqueue_order,
-        }
+    fn new(command: CommandRequest) -> Self {
+        Self { command }
     }
 }
 
@@ -57,9 +52,6 @@ pub struct CommandQueue {
 
     /// Semaphore for limiting queue size
     semaphore: Arc<Semaphore>,
-
-    /// Next enqueue order counter
-    enqueue_counter: Arc<RwLock<u64>>,
 }
 
 /// Inner queue data with per-priority VecDeques.
@@ -94,7 +86,6 @@ impl CommandQueue {
             })),
             notifier: Arc::new(notifier),
             semaphore: Arc::new(Semaphore::new(max_size)),
-            enqueue_counter: Arc::new(RwLock::new(0)),
         }
     }
 
@@ -108,14 +99,7 @@ impl CommandQueue {
             .map_err(|_| QueueError::Closed)?;
 
         let command_id = command.id.clone();
-
-        // Get enqueue order
-        let mut counter = self.enqueue_counter.write().await;
-        let order = *counter;
-        *counter += 1;
-        drop(counter);
-
-        let item = QueueItem::new(command, order);
+        let item = QueueItem::new(command);
         let mut inner = self.inner.write().await;
 
         // Check total size across all queues
@@ -433,7 +417,7 @@ mod tests {
 
         // Wait for all to complete
         for handle in handles {
-            handle.await.unwrap();
+            let _ = handle.await;
         }
 
         // All should succeed given large enough queue

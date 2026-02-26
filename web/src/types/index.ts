@@ -841,76 +841,6 @@ export interface Event {
   processed: boolean
 }
 
-// ========== Plugins Types ==========
-//
-// NOTE: The Plugin system has been migrated to the Extension system.
-// See Extension Types below for the new API.
-// The Plugin interface is kept for internal use in the usePlugins hook
-// to provide a unified format for displaying extensions.
-
-/**
- * Plugin type enumeration
- */
-export enum PluginTypeEnum {
-  LlmBackend = 'llm_backend',
-  StorageBackend = 'storage_backend',
-  DeviceAdapter = 'device_adapter',
-  InternalMqttBroker = 'internal_mqtt_broker',
-  ExternalMqttBroker = 'external_mqtt_broker',
-  Tool = 'tool',
-  Integration = 'integration',
-  AlertChannel = 'alert_channel',
-  RuleEngine = 'rule_engine',
-  Custom = 'custom',
-}
-
-/**
- * Plugin state enumeration
- */
-export enum PluginStateEnum {
-  Loaded = 'Loaded',
-  Initialized = 'Initialized',
-  Running = 'Running',
-  Stopped = 'Stopped',
-  Error = 'Error',
-  Paused = 'Paused',
-}
-
-/**
- * Plugin DTO - Internal interface for unified plugin representation
- *
- * This is used internally by the usePlugins hook to convert extensions
- * to a unified format for display purposes.
- */
-export interface Plugin {
-  id: string
-  name: string
-  plugin_type: string
-  category: 'ai' | 'devices' | 'notify' | 'integration' | 'storage' | 'tools'
-  state: string
-  enabled: boolean
-  version: string
-  description: string
-  author?: string
-  required_version: string
-  stats: PluginStatsDto
-  loaded_at: string
-  path?: string
-}
-
-/**
- * Plugin statistics DTO
- */
-export interface PluginStatsDto {
-  start_count: number
-  stop_count: number
-  error_count: number
-  total_execution_ms: number
-  avg_response_time_ms: number
-  last_start_time?: string
-  last_stop_time?: string
-}
-
 // ========== Extension Types ==========
 //
 // Matches backend ExtensionDto, ExtensionStatsDto, ExtensionTypeDto
@@ -1419,7 +1349,7 @@ export interface BackendTypeDefinition {
   supports_streaming: boolean
   supports_thinking: boolean
   supports_multimodal: boolean
-  config_schema?: PluginConfigSchema
+  config_schema?: Record<string, unknown>  // JSON Schema for configuration
 }
 
 export interface BackendTestResult {
@@ -1450,41 +1380,6 @@ export interface AdapterType {
   mode: 'push' | 'pull' | 'hybrid'  // Connection mode
   can_add_multiple: boolean  // Whether multiple instances can be created
   builtin: boolean  // Whether this is a built-in adapter
-}
-
-// ========== Plugin Config Schema Types ==========
-
-export interface PluginConfigSchema {
-  type: 'object'
-  properties: Record<string, PropertySchema>
-  required?: string[]
-  ui_hints?: UiHints
-}
-
-export interface PropertySchema {
-  type: 'string' | 'number' | 'boolean' | 'object' | 'array'
-  description?: string
-  default?: unknown
-  enum?: unknown[]
-  minimum?: number
-  maximum?: number
-  format?: string
-  secret?: boolean  // For passwords, API keys
-}
-
-export interface UiHints {
-  field_order?: string[]
-  display_names?: Record<string, string>
-  placeholders?: Record<string, string>
-  help_texts?: Record<string, string>
-  visibility_rules?: VisibilityRule[]
-}
-
-export interface VisibilityRule {
-  field: string
-  condition: 'equals' | 'not_equals' | 'contains' | 'empty' | 'not_empty'
-  value?: unknown
-  then_show: string[]
 }
 
 // ========== Unified Automation Types ==========
@@ -2738,6 +2633,137 @@ export interface UseExtensionStreamOptions {
    */
   onSessionClosed?: (stats: ExtensionSessionStats) => void
 }
+
+// ============================================================================
+// Dashboard Components from Extensions
+// ============================================================================
+
+/**
+ * Component category for dashboard widgets
+ */
+export type ComponentCategory =
+  | 'indicators' // Value displays (cards, indicators)
+  | 'charts' // Charts and graphs
+  | 'controls' // Interactive inputs
+  | 'display' // Content display
+  | 'spatial' // Maps, video, layers
+  | 'business' // Business-specific components
+  | 'custom' // Extension-provided custom components
+
+/**
+ * Size constraints for dashboard components
+ */
+export interface SizeConstraints {
+  min_w: number
+  min_h: number
+  default_w: number
+  default_h: number
+  max_w: number
+  max_h: number
+  preserve_aspect?: boolean
+}
+
+/**
+ * Data binding configuration for extension components
+ */
+export interface DataBindingConfig {
+  extension_metric?: string
+  extension_command?: string
+  required_fields: string[]
+}
+
+/**
+ * Dashboard component DTO from extension
+ */
+export interface DashboardComponentDto {
+  /** Component type identifier */
+  type: string
+  /** Display name */
+  name: string
+  /** Description */
+  description: string
+  /** Component category */
+  category: ComponentCategory
+  /** Icon name (lucide-react) */
+  icon?: string
+  /** Bundle URL (resolved) */
+  bundle_url: string
+  /** Export name in bundle */
+  export_name: string
+  /** Size constraints */
+  size_constraints: SizeConstraints
+  /** Whether this component accepts a data source */
+  has_data_source: boolean
+  /** Whether this component has display configuration */
+  has_display_config: boolean
+  /** Whether this component has actions */
+  has_actions: boolean
+  /** Maximum number of data sources */
+  max_data_sources: number
+  /** JSON Schema for component configuration */
+  config_schema?: JSONSchema
+  /** JSON Schema for data source binding */
+  data_source_schema?: JSONSchema
+  /** Default configuration values */
+  default_config?: Record<string, unknown>
+  /** Component variants */
+  variants: string[]
+  /** Data binding configuration */
+  data_binding: DataBindingConfig
+  /** Extension ID */
+  extension_id: string
+}
+
+/**
+ * Dashboard components list response
+ */
+export interface DashboardComponentsResponse {
+  extension_id: string
+  extension_name: string
+  components: DashboardComponentDto[]
+}
+
+/**
+ * JSON Schema definition
+ */
+export interface JSONSchema {
+  type?: string
+  properties?: Record<string, JSONSchema>
+  required?: string[]
+  items?: JSONSchema
+  enum?: (string | number | boolean)[]
+  default?: unknown
+  description?: string
+  title?: string
+  minimum?: number
+  maximum?: number
+  [key: string]: unknown
+}
+
+/**
+ * Plugin configuration schema (legacy - for backward compatibility)
+ */
+export interface PluginConfigSchema {
+  type: 'object'
+  properties: Record<string, {
+    type: string
+    description?: string
+    enum?: string[]
+    items?: any
+    properties?: any
+    required?: string[]
+    default?: any
+    minimum?: number
+    maximum?: number
+    format?: string
+    secret?: boolean
+    [key: string]: any
+  }>
+  required?: string[]
+  ui_hints?: any
+  [key: string]: any
+}
+
 
 
 

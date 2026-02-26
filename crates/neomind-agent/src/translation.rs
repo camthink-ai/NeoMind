@@ -18,7 +18,7 @@ pub enum Language {
 
 impl Default for Language {
     fn default() -> Self {
-        Self::Chinese
+        Self::English  // Default to English, but LLM responds in user's language
     }
 }
 
@@ -173,7 +173,11 @@ impl MdlTranslator {
     }
 
     fn list_capabilities(device: &DeviceTypeDefinition, language: Language) -> Vec<String> {
-        let mut caps = Vec::new();
+        // Pre-allocate with estimated capacity to reduce reallocations
+        let estimated_caps = device.categories.len()
+            + device.uplink.metrics.len()
+            + device.downlink.commands.len();
+        let mut caps = Vec::with_capacity(estimated_caps);
 
         match language {
             Language::Chinese => {

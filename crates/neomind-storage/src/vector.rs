@@ -9,11 +9,12 @@
 //! - **Batch operations**: Insert and search multiple vectors at once
 //! - **Hybrid search**: Combine vector similarity with keyword matching
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
+use dashmap::DashMap;
 use rand::random;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
@@ -44,7 +45,7 @@ pub struct SearchOptions {
     /// Minimum similarity threshold (0-1).
     pub min_score: Option<f32>,
     /// Metadata filter - only return results matching all key-value pairs.
-    pub metadata_filter: Option<HashMap<String, serde_json::Value>>,
+    pub metadata_filter: Option<std::collections::HashMap<String, serde_json::Value>>,
     /// Include vector in results (useful for debugging).
     pub include_vectors: bool,
     /// Maximum number of results to return.
@@ -69,7 +70,7 @@ impl SearchOptions {
     /// Add a metadata filter requirement.
     pub fn with_filter(mut self, key: impl Into<String>, value: serde_json::Value) -> Self {
         self.metadata_filter
-            .get_or_insert_with(HashMap::new)
+            .get_or_insert_with(std::collections::HashMap::new)
             .insert(key.into(), value);
         self
     }
@@ -144,12 +145,13 @@ impl VectorDocument {
     }
 
     /// Check if document matches metadata filter.
-    fn matches_filter(&self, filter: &HashMap<String, serde_json::Value>) -> bool {
+    fn matches_filter(&self, filter: &std::collections::HashMap<String, serde_json::Value>) -> bool {
         for (key, expected_value) in filter {
-            let actual_value = match key.as_str() {
+            let key_str = key.as_str();
+            let actual_value = match key_str {
                 "category" => self.category.as_ref().map(|c| serde_json::json!(c)),
                 "tags" => Some(serde_json::json!(self.tags)),
-                _ => self.metadata.get(key).cloned(),
+                _ => self.metadata.get(key_str).cloned(),
             };
 
             match actual_value {
@@ -193,10 +195,10 @@ struct HnswNode {
 
 /// In-memory vector store with HNSW-style indexing.
 pub struct VectorStore {
-    /// Stored documents indexed by ID.
-    documents: Arc<RwLock<HashMap<String, VectorDocument>>>,
-    /// HNSW-style graph index for fast ANN search.
-    graph_index: Arc<RwLock<HashMap<String, HnswNode>>>,
+    /// Stored documents indexed by ID - using DashMap for concurrent access
+    documents: DashMap<String, VectorDocument>,
+    /// HNSW-style graph index for fast ANN search - using DashMap for concurrent access
+    graph_index: DashMap<String, HnswNode>,
     /// Maximum connections per node (affects speed vs accuracy).
     max_connections: usize,
     /// Number of graph layers for hierarchical search.
@@ -216,8 +218,8 @@ impl VectorStore {
     /// Create a vector store with custom HNSW parameters.
     pub fn with_config(max_connections: usize, num_layers: usize) -> Self {
         Self {
-            documents: Arc::new(RwLock::new(HashMap::new())),
-            graph_index: Arc::new(RwLock::new(HashMap::new())),
+            documents: DashMap::with_capacity(256),  // Pre-allocate for typical use
+            graph_index: DashMap::with_capacity(256),
             max_connections,
             num_layers,
             metric: SimilarityMetric::default(),
@@ -249,40 +251,33 @@ impl VectorStore {
             }
         }
 
-        let mut docs = self.documents.write().await;
         let id = doc.id.clone();
-        docs.insert(id.clone(), doc.clone());
+        // DashMap insert is lock-free
+        self.documents.insert(id.clone(), doc.clone());
 
-        // Add to graph index
-        self.add_to_graph_index(&doc, &docs).await;
+        // Add to graph index - DashMap is lock-free
+        self.add_to_graph_index(&doc).await;
 
         Ok(())
     }
 
     /// Add document to HNSW-style graph index.
-    async fn add_to_graph_index(
-        &self,
-        doc: &VectorDocument,
-        docs: &HashMap<String, VectorDocument>,
-    ) {
-        let mut graph = self.graph_index.write().await;
+    async fn add_to_graph_index(&self, doc: &VectorDocument) {
         let id = doc.id.clone();
 
         // Determine which layer this node belongs to
-        let layer = if docs.is_empty() {
-            0
-        } else {
-            let rand_val: f32 = random();
-            ((1.0f32 - rand_val).log2() as usize).min(self.num_layers - 1)
-        };
+        let rand_val: f32 = random();
+        let layer = ((1.0f32 - rand_val).log2() as usize).min(self.num_layers - 1);
 
-        // Find nearest neighbors in this layer
+        // Find nearest neighbors in this layer - iterate DashMap
         let mut neighbors = Vec::new();
-        for (other_id, other_doc) in docs.iter() {
+        for ref_item in self.documents.iter() {
+            let other_id = ref_item.key();
             if other_id == &id {
                 continue;
             }
 
+            let other_doc = ref_item.value();
             let score = self.similarity(&doc.embedding, &other_doc.embedding);
             neighbors.push((other_id.clone(), score));
         }
@@ -291,7 +286,8 @@ impl VectorStore {
         neighbors.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         neighbors.truncate(self.max_connections);
 
-        graph.insert(
+        // DashMap insert is lock-free
+        self.graph_index.insert(
             id.clone(),
             HnswNode {
                 id,
@@ -315,8 +311,6 @@ impl VectorStore {
         query: &Embedding,
         options: SearchOptions,
     ) -> Result<Vec<SearchResult>, Error> {
-        let docs = self.documents.read().await;
-
         // Validate query dimension
         if let Some(expected_dim) = self.dimension {
             if query.len() != expected_dim {
@@ -327,9 +321,12 @@ impl VectorStore {
             }
         }
 
-        let mut results: Vec<SearchResult> = Vec::new();
+        let mut results: Vec<SearchResult> = Vec::with_capacity(64);  // Pre-allocate for typical results
 
-        for doc in docs.values() {
+        // Iterate DashMap - lock-free
+        for ref_item in self.documents.iter() {
+            let doc = ref_item.value();
+            
             // Apply metadata filter if specified
             if let Some(ref filter) = options.metadata_filter {
                 if !doc.matches_filter(filter) {
@@ -429,72 +426,65 @@ impl VectorStore {
     }
 
     /// Get documents by category.
-    pub async fn get_by_category(&self, category: &str) -> Vec<VectorDocument> {
-        let docs = self.documents.read().await;
-        docs.values()
-            .filter(|doc| doc.category.as_deref() == Some(category))
-            .cloned()
+    pub fn get_by_category(&self, category: &str) -> Vec<VectorDocument> {
+        self.documents
+            .iter()
+            .filter(|ref_item| ref_item.value().category.as_deref() == Some(category))
+            .map(|ref_item| ref_item.value().clone())
             .collect()
     }
 
     /// Get documents by tag.
-    pub async fn get_by_tag(&self, tag: &str) -> Vec<VectorDocument> {
-        let docs = self.documents.read().await;
-        docs.values()
-            .filter(|doc| doc.tags.contains(&tag.to_string()))
-            .cloned()
+    pub fn get_by_tag(&self, tag: &str) -> Vec<VectorDocument> {
+        self.documents
+            .iter()
+            .filter(|ref_item| ref_item.value().tags.contains(&tag.to_string()))
+            .map(|ref_item| ref_item.value().clone())
             .collect()
     }
 
     /// Get a document by ID.
-    pub async fn get(&self, id: &str) -> Option<VectorDocument> {
-        let docs = self.documents.read().await;
-        docs.get(id).cloned()
+    pub fn get(&self, id: &str) -> Option<VectorDocument> {
+        self.documents.get(id).map(|item| item.value().clone())
     }
 
     /// Delete a document.
-    pub async fn delete(&self, id: &str) -> Result<bool, Error> {
-        let mut docs = self.documents.write().await;
-        let mut graph = self.graph_index.write().await;
+    pub fn delete(&self, id: &str) -> Result<bool, Error> {
         // Call both removes to avoid short-circuit evaluation bug
-        let removed_from_graph = graph.remove(id).is_some();
-        let removed_from_docs = docs.remove(id).is_some();
+        let removed_from_graph = self.graph_index.remove(id).is_some();
+        let removed_from_docs = self.documents.remove(id).is_some();
         Ok(removed_from_graph || removed_from_docs)
     }
 
     /// Get the number of documents in the store.
-    pub async fn count(&self) -> usize {
-        let docs = self.documents.read().await;
-        docs.len()
+    pub fn count(&self) -> usize {
+        self.documents.len()
     }
 
     /// Clear all documents.
-    pub async fn clear(&self) {
-        let mut docs = self.documents.write().await;
-        let mut graph = self.graph_index.write().await;
-        docs.clear();
-        graph.clear();
+    pub fn clear(&self) {
+        self.documents.clear();
+        self.graph_index.clear();
     }
 
     /// List all document IDs.
-    pub async fn list_ids(&self) -> Vec<String> {
-        let docs = self.documents.read().await;
-        docs.keys().cloned().collect()
+    pub fn list_ids(&self) -> Vec<String> {
+        self.documents.iter().map(|ref_item| ref_item.key().clone()).collect()
     }
 
     /// Get all categories.
-    pub async fn categories(&self) -> HashSet<String> {
-        let docs = self.documents.read().await;
-        docs.values()
-            .filter_map(|doc| doc.category.clone())
+    pub fn categories(&self) -> HashSet<String> {
+        self.documents
+            .iter()
+            .filter_map(|ref_item| ref_item.value().category.clone())
             .collect()
     }
 
     /// Get all tags.
-    pub async fn tags(&self) -> HashSet<String> {
-        let docs = self.documents.read().await;
-        docs.values()
-            .flat_map(|doc| doc.tags.iter().cloned())
+    pub fn tags(&self) -> HashSet<String> {
+        self.documents
+            .iter()
+            .flat_map(|ref_item| ref_item.value().tags.clone())
             .collect()
     }
 
@@ -550,8 +540,8 @@ impl Default for VectorStore {
 pub struct PersistentVectorStore {
     /// redb database.
     db: Arc<Database>,
-    /// In-memory index for fast search.
-    index: Arc<RwLock<VectorStore>>,
+    /// In-memory index for fast search - using DashMap for concurrent access
+    index: VectorStore,
     /// Storage path for singleton
     path: String,
 }
@@ -586,7 +576,7 @@ impl PersistentVectorStore {
         let index = VectorStore::new();
         let store = Arc::new(PersistentVectorStore {
             db: Arc::new(db),
-            index: Arc::new(RwLock::new(index)),
+            index,
             path: path_str,
         });
 
@@ -607,8 +597,7 @@ impl PersistentVectorStore {
             }
         }
 
-        let index = self.index.read().await;
-        index.insert_batch(docs).await?;
+        self.index.insert_batch(docs).await?;
         Ok(())
     }
 
@@ -623,8 +612,7 @@ impl PersistentVectorStore {
         write_txn.commit()?;
 
         // Also update in-memory index
-        let index = self.index.read().await;
-        index.insert(doc).await?;
+        self.index.insert(doc).await?;
 
         Ok(())
     }
@@ -635,8 +623,7 @@ impl PersistentVectorStore {
         query: &Embedding,
         top_k: usize,
     ) -> Result<Vec<SearchResult>, Error> {
-        let index = self.index.read().await;
-        index.search(query, top_k).await
+        self.index.search(query, top_k).await
     }
 
     /// Delete a document.
@@ -648,14 +635,13 @@ impl PersistentVectorStore {
         }
         write_txn.commit()?;
 
-        let index = self.index.read().await;
-        index.delete(id).await
+        self.index.delete(id);
+        Ok(true)
     }
 
     /// Get the number of documents.
-    pub async fn count(&self) -> Result<usize, Error> {
-        let index = self.index.read().await;
-        Ok(index.count().await)
+    pub fn count(&self) -> Result<usize, Error> {
+        Ok(self.index.count())
     }
 
     /// Get a document by ID.

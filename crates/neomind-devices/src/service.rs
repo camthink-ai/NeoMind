@@ -169,7 +169,9 @@ impl Default for DeviceStatus {
     fn default() -> Self {
         Self {
             status: ConnectionStatus::Disconnected,
-            last_seen: chrono::Utc::now().timestamp(),
+            // Use 0 as default to indicate "never seen" - this ensures proper
+            // offline detection for devices that haven't sent any metrics yet
+            last_seen: 0,
             adapter_id: None,
         }
     }
@@ -456,6 +458,7 @@ impl DeviceService {
         let event_bus = self.event_bus.clone();
         let heartbeat_config = self.heartbeat_config.clone();
         let heartbeat_running = self.heartbeat_running.clone();
+        let registry = self.registry.clone();
 
         tokio::spawn(async move {
             // Mark heartbeat as running
@@ -476,11 +479,40 @@ impl DeviceService {
                 let mut stale_devices = Vec::new();
 
                 // Check for stale devices
+                // IMPORTANT: We must iterate over ALL registered devices from the registry,
+                // not just devices in the status map. This ensures devices that were registered
+                // but haven't sent any metrics yet are also monitored for stale status.
                 {
-                    let status_map = device_status.read().await;
-                    for (device_id, status) in status_map.iter() {
+                    // First, get all registered device IDs from the registry
+                    let registered_devices = registry.list_devices().await;
+
+                    // Then check status for each device
+                    let mut status_map = device_status.write().await;
+
+                    for device_config in registered_devices {
+                        let device_id = &device_config.device_id;
+
+                        // Get or create status entry for this device
+                        // Devices without status entries are considered "never seen" (last_seen = 0)
+                        let status = status_map.entry(device_id.clone()).or_insert_with(|| {
+                            tracing::debug!(
+                                "Creating initial status entry for registered device '{}' during heartbeat check",
+                                device_id
+                            );
+                            DeviceStatus {
+                                status: ConnectionStatus::Disconnected,
+                                last_seen: 0, // Never seen - very old timestamp to trigger offline
+                                adapter_id: device_config.adapter_id.clone(),
+                            }
+                        });
+
+                        // Check if this device is stale
                         if status.is_connected() && config.is_stale(status.last_seen) {
                             stale_devices.push((device_id.clone(), status.last_seen));
+                        } else if status.last_seen == 0 {
+                            // Device was never seen - mark as disconnected
+                            // But don't emit events for never-seen devices to avoid noise
+                            status.status = ConnectionStatus::Disconnected;
                         }
                     }
                 }
@@ -787,6 +819,27 @@ impl DeviceService {
 
         // First register the device in the registry
         self.registry.register_device(config).await?;
+
+        // Initialize device status in the status map
+        // This ensures the device is tracked for heartbeat monitoring
+        {
+            let mut status_map = self.device_status.write().await;
+            // Only initialize if not already present (preserve existing status on re-register)
+            if !status_map.contains_key(&device_id) {
+                status_map.insert(
+                    device_id.clone(),
+                    DeviceStatus {
+                        status: ConnectionStatus::Disconnected,
+                        last_seen: chrono::Utc::now().timestamp(),
+                        adapter_id: target_adapter_id.clone(),
+                    },
+                );
+                tracing::debug!(
+                    "Initialized status for device '{}' as Disconnected",
+                    device_id
+                );
+            }
+        }
 
         // Then notify the adapter to subscribe to this device's telemetry topic
         // Find the adapter that handles this device type

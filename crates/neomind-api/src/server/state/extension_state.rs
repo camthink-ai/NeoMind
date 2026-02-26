@@ -187,7 +187,7 @@ impl ExtensionState {
 
         if records.is_empty() {
             tracing::info!("No auto-start extensions found in storage");
-            return Ok(0);
+            // Don't return early - continue to auto-discovery
         }
 
         tracing::info!("Found {} auto-start extension(s) in storage", records.len());
@@ -207,32 +207,36 @@ impl ExtensionState {
                 continue;
             }
 
-            // Use spawn_blocking for native extensions to avoid blocking the async runtime
-            // For WASM extensions, we need to use the async load method
-            let is_wasm = file_path.extension().and_then(|e| e.to_str()) == Some("wasm");
-
-            let load_result = if is_wasm {
-                // WASM extensions require async loading
-                self.registry.load_from_path(file_path).await.map(|_| ())
-            } else {
-                // Native extensions can be loaded in a blocking context
-                tokio::task::spawn_blocking({
-                    let registry = Arc::clone(&self.registry);
-                    let file_path = file_path.to_path_buf();
-                    let config = record.config.clone().unwrap_or(serde_json::json!({}));
-
-                    move || registry.blocking_load(&file_path, &config)
-                })
-                .await
-                .map_err(|e| format!("Failed to join loading task: {}", e))?
-            };
+            // Use async load for all extensions
+            // Both WASM and native extensions use async loading to avoid Tokio runtime issues
+            let load_result = self.registry.load_from_path(file_path).await;
 
             match load_result {
-                Ok(()) => {
+                Ok(_) => {
+                    // Apply saved config if present
+                    if let Some(ref config) = record.config {
+                        if let Some(ext) = self.registry.get(&record.id).await {
+                            let mut ext_guard = ext.write().await;
+                            if let Err(e) = ext_guard.configure(config).await {
+                                tracing::warn!(
+                                    extension_id = %record.id,
+                                    error = %e,
+                                    "Failed to apply saved config to extension"
+                                );
+                            } else {
+                                tracing::info!(
+                                    extension_id = %record.id,
+                                    "Applied saved config to extension"
+                                );
+                            }
+                        }
+                    }
+
                     tracing::info!(
                         extension_id = %record.id,
                         name = %record.name,
                         extension_type = %record.extension_type,
+                        has_config = record.config.is_some(),
                         "Loaded extension from storage"
                     );
                     loaded_count += 1;
@@ -248,7 +252,104 @@ impl ExtensionState {
         }
 
         tracing::info!("Loaded {} extension(s) from storage", loaded_count);
+
+        // If no extensions were loaded, auto-discover and register
+        if loaded_count == 0 {
+            tracing::info!("No extensions loaded, attempting auto-discovery...");
+            match self.auto_discover_and_register().await {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("Auto-discovered and registered {} extension(s)", count);
+                        loaded_count = count;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Auto-discovery failed: {}", e);
+                }
+            }
+        }
+
         Ok(loaded_count)
+    }
+
+    /// Auto-discover and register extensions from default directories.
+    pub async fn auto_discover_and_register(&self) -> Result<usize, String> {
+        // Discover extensions using the registry
+        let discovered = self.registry.discover().await;
+
+        if discovered.is_empty() {
+            tracing::info!("No extensions discovered from filesystem");
+            return Ok(0);
+        }
+
+        // Open the store for checking uninstalled status and saving records
+        let store = ExtensionStore::open("data/extensions.redb")
+            .map_err(|e| format!("Failed to open extension store: {}", e))?;
+
+        let mut registered_count = 0;
+
+        for (path, metadata) in discovered {
+            // Check if already registered in memory
+            if self.registry.contains(&metadata.id).await {
+                continue;
+            }
+
+            // Check if extension was previously uninstalled by user
+            // Skip auto-discovery for uninstalled extensions
+            match store.is_uninstalled(&metadata.id) {
+                Ok(true) => {
+                    tracing::debug!(
+                        extension_id = %metadata.id,
+                        "Skipping auto-discovery for uninstalled extension"
+                    );
+                    continue;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        extension_id = %metadata.id,
+                        error = %e,
+                        "Failed to check uninstalled status"
+                    );
+                }
+            }
+
+            // Load the extension using async method
+            match self.registry.load_from_path(&path).await {
+                Ok(_) => {
+                    // Save to storage with auto_start enabled (clear uninstalled flag if set)
+                    let record = neomind_storage::ExtensionRecord::new(
+                        metadata.id.clone(),
+                        metadata.name.clone(),
+                        path.to_string_lossy().to_string(),
+                        "native".to_string(),
+                        metadata.version.to_string(),
+                    )
+                    .with_description(metadata.description.clone())
+                    .with_author(metadata.author.clone())
+                    .with_auto_start(true);
+
+                    if let Err(e) = store.save(&record) {
+                        tracing::warn!("Failed to save extension record: {}", e);
+                    }
+
+                    tracing::info!(
+                        extension_id = %metadata.id,
+                        "Auto-registered extension"
+                    );
+                    registered_count += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        extension_id = %metadata.id,
+                        error = %e,
+                        "Failed to load discovered extension"
+                    );
+                }
+            }
+        }
+
+        Ok(registered_count)
     }
 
     /// Restore extensions from storage (alias for load_from_storage).

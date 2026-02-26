@@ -48,6 +48,7 @@ export { MapDisplay, type MapDisplayProps, type MapMarker } from './generic/MapD
 export { VideoDisplay, type VideoDisplayProps, type VideoSourceType } from './generic/VideoDisplay'
 export { CustomLayer, type CustomLayerProps, type LayerItem, LayerEditorDialog, type LayerBinding, type LayerBindingType } from './generic/CustomLayer'
 export { MapEditorDialog, type MapBinding, type MapBindingType } from './generic/MapEditorDialog'
+export { CenterPickerDialog } from './generic/CenterPickerDialog'
 
 // Config system
 export * from './config'

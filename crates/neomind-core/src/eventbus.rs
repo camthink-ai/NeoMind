@@ -5,10 +5,20 @@
 
 use crate::event::{EventMetadata, NeoMindEvent};
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::broadcast;
 
 /// Default channel capacity for the event bus.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 1000;
+
+/// Event bus error types.
+#[derive(Debug, Error)]
+pub enum EventBusError {
+    #[error("Backpressure exceeded: too many pending events")]
+    BackpressureExceeded,
+    #[error("No subscribers available")]
+    NoSubscribers,
+}
 
 /// Event bus for NeoMind.
 ///
@@ -69,6 +79,13 @@ impl EventBus {
         self.publish_with_source(event, "system").await
     }
 
+    /// Publish an event with a custom source (synchronous version).
+    ///
+    /// This version can be called from any context, including non-async contexts.
+    pub fn publish_sync(&self, event: NeoMindEvent) -> bool {
+        self.publish_with_source_sync(event, "system")
+    }
+
     /// Publish an event with a custom source.
     pub async fn publish_with_source(
         &self,
@@ -79,6 +96,20 @@ impl EventBus {
         self.publish_with_metadata(event, metadata).await
     }
 
+    /// Publish an event with a custom source (synchronous version).
+    ///
+    /// This version can be called from any context, including non-async contexts.
+    pub fn publish_with_source_sync(
+        &self,
+        event: NeoMindEvent,
+        source: impl Into<String>,
+    ) -> bool {
+        let metadata = EventMetadata::new(source);
+        self.publish_with_metadata_sync(event, metadata)
+    }
+
+    /// Publish an event with custom metadata.
+
     /// Publish an event with custom metadata.
     pub async fn publish_with_metadata(
         &self,
@@ -86,6 +117,50 @@ impl EventBus {
         metadata: EventMetadata,
     ) -> bool {
         self.tx.send((event, metadata)).is_ok()
+    }
+
+    /// Publish an event with custom metadata (synchronous version).
+    ///
+    /// This version can be called from any context, including non-async contexts.
+    pub fn publish_with_metadata_sync(
+        &self,
+        event: NeoMindEvent,
+        metadata: EventMetadata,
+    ) -> bool {
+        self.tx.send((event, metadata)).is_ok()
+    }
+
+    /// Publish an event with backpressure control.
+    ///
+    /// Returns an error if there are no subscribers or if the channel is full.
+    /// This prevents memory buildup when consumers are slower than producers.
+    pub async fn publish_with_backpressure(
+        &self,
+        event: NeoMindEvent,
+    ) -> Result<bool, EventBusError> {
+        self.publish_with_backpressure_and_source(event, "system").await
+    }
+
+    /// Publish with backpressure and custom source.
+    pub async fn publish_with_backpressure_and_source(
+        &self,
+        event: NeoMindEvent,
+        source: impl Into<String>,
+    ) -> Result<bool, EventBusError> {
+        let subscriber_count = self.tx.receiver_count();
+        if subscriber_count == 0 {
+            // No subscribers - discard event to prevent memory buildup
+            return Ok(false);
+        }
+
+        let metadata = EventMetadata::new(source);
+        match self.tx.send((event, metadata)) {
+            Ok(_) => Ok(true),
+            Err(broadcast::error::SendError(_)) => {
+                // Channel is full (all receivers lagged)
+                Err(EventBusError::BackpressureExceeded)
+            }
+        }
     }
 
     /// Subscribe to all events.
@@ -113,7 +188,7 @@ impl EventBus {
     /// Create a filtered subscription helper for common patterns.
     pub fn filter(&self) -> FilterBuilder {
         FilterBuilder {
-            tx: self.tx.clone(),
+            tx: Arc::new(self.tx.clone()),
         }
     }
 }
@@ -209,7 +284,7 @@ where
 
 /// Builder for creating filtered subscriptions.
 pub struct FilterBuilder {
-    tx: broadcast::Sender<(NeoMindEvent, EventMetadata)>,
+    tx: Arc<broadcast::Sender<(NeoMindEvent, EventMetadata)>>,
 }
 
 impl FilterBuilder {

@@ -9,8 +9,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::RwLock;
 
+use crate::event::NeoMindEvent;
+use crate::eventbus::EventBus;
 use crate::extension::loader::{NativeExtensionLoader, WasmExtensionLoader};
 use crate::extension::safety::ExtensionSafetyManager;
 use crate::extension::system::{
@@ -37,9 +39,9 @@ pub struct ExtensionInfo {
 
 /// Registry for managing extensions.
 pub struct ExtensionRegistry {
-    /// Registered extensions
+    /// Registered extensions (using std::sync::RwLock for spawn_blocking compatibility)
     extensions: RwLock<HashMap<String, DynExtension>>,
-    /// Extension information cache
+    /// Extension information cache (using std::sync::RwLock for spawn_blocking compatibility)
     info_cache: RwLock<HashMap<String, ExtensionInfo>>,
     /// Native extension loader
     native_loader: NativeExtensionLoader,
@@ -51,6 +53,8 @@ pub struct ExtensionRegistry {
     _loaded_libraries: Vec<libloading::Library>,
     /// Safety manager for circuit breaking and panic isolation
     safety_manager: Arc<ExtensionSafetyManager>,
+    /// Event bus for publishing lifecycle events (optional)
+    event_bus: Option<Arc<EventBus>>,
 }
 
 impl ExtensionRegistry {
@@ -64,7 +68,13 @@ impl ExtensionRegistry {
             extension_dirs: vec![],
             _loaded_libraries: vec![],
             safety_manager: Arc::new(ExtensionSafetyManager::new()),
+            event_bus: None,
         }
+    }
+
+    /// Set the event bus for publishing lifecycle events.
+    pub fn set_event_bus(&mut self, event_bus: Arc<EventBus>) {
+        self.event_bus = Some(event_bus);
     }
 
     /// Add an extension directory to scan.
@@ -74,35 +84,67 @@ impl ExtensionRegistry {
 
     /// Register an extension instance.
     pub async fn register(&self, id: String, extension: DynExtension) -> Result<()> {
+        self.register_with_path(id, extension, None).await
+    }
+
+    /// Register an extension with an optional file path.
+    ///
+    /// The file path is used to locate the extension's manifest.json for dashboard components.
+    pub async fn register_with_path(
+        &self,
+        id: String,
+        extension: DynExtension,
+        file_path: Option<PathBuf>,
+    ) -> Result<()> {
         let ext = extension.read().await;
-        let metadata = ext.metadata().clone();
+        let mut metadata = ext.metadata().clone();
         let metrics = ext.metrics().to_vec();
         let commands = ext.commands().to_vec();
         drop(ext);
 
+        // Set file path if provided
+        metadata.file_path = file_path;
+
         // Check if already registered
-        if self.extensions.read().await.contains_key(&id) {
+        if self.extensions.read().unwrap().contains_key(&id) {
             return Err(ExtensionError::AlreadyRegistered(id));
         }
 
         // Store extension
         self.extensions
             .write()
-            .await
+            .unwrap()
             .insert(id.clone(), extension.clone());
 
         // Store info
-        self.info_cache.write().await.insert(
-            id.clone(),
-            ExtensionInfo {
-                metadata,
-                state: ExtensionState::Running,
-                stats: ExtensionStats::default(),
-                loaded_at: Some(chrono::Utc::now()),
-                metrics,
-                commands,
-            },
-        );
+        self.info_cache
+            .write()
+            .unwrap()
+            .insert(
+                id.clone(),
+                ExtensionInfo {
+                    metadata,
+                    state: ExtensionState::Running,
+                    stats: ExtensionStats::default(),
+                    loaded_at: Some(chrono::Utc::now()),
+                    metrics,
+                    commands,
+                },
+            );
+
+        // Publish ExtensionLifecycle { state: "registered" } event
+        // Use sync version to avoid issues with non-Tokio contexts
+        if let Some(ref event_bus) = self.event_bus {
+            let _ = event_bus.publish_with_source_sync(
+                NeoMindEvent::ExtensionLifecycle {
+                    extension_id: id.clone(),
+                    state: "registered".to_string(),
+                    message: Some(format!("Extension {} registered", id)),
+                    timestamp: chrono::Utc::now().timestamp(),
+                },
+                "extension",
+            );
+        }
 
         tracing::info!("Extension registered: {}", id);
         Ok(())
@@ -110,55 +152,36 @@ impl ExtensionRegistry {
 
     /// Unregister an extension.
     pub async fn unregister(&self, id: &str) -> Result<()> {
-        self.extensions.write().await.remove(id);
-        self.info_cache.write().await.remove(id);
-        tracing::info!("Extension unregistered: {}", id);
-        Ok(())
-    }
-
-    /// Register an extension instance (blocking version).
-    pub fn blocking_register(&self, id: String, extension: DynExtension) -> Result<()> {
-        let ext = extension.blocking_read();
-        let metadata = ext.metadata().clone();
-        let metrics = ext.metrics().to_vec();
-        let commands = ext.commands().to_vec();
-        drop(ext);
-
-        // Check if already registered
-        if self.extensions.blocking_read().contains_key(&id) {
-            return Err(ExtensionError::AlreadyRegistered(id));
+        // Publish ExtensionLifecycle { state: "unregistered" } event BEFORE removing
+        // Use sync version to avoid issues with non-Tokio contexts
+        if let Some(ref event_bus) = self.event_bus {
+            let _ = event_bus.publish_with_source_sync(
+                NeoMindEvent::ExtensionLifecycle {
+                    extension_id: id.to_string(),
+                    state: "unregistered".to_string(),
+                    message: Some(format!("Extension {} unregistered", id)),
+                    timestamp: chrono::Utc::now().timestamp(),
+                },
+                "extension",
+            );
         }
 
-        // Store extension
-        self.extensions
-            .blocking_write()
-            .insert(id.clone(), extension.clone());
-
-        // Store info
-        self.info_cache.blocking_write().insert(
-            id.clone(),
-            ExtensionInfo {
-                metadata,
-                state: ExtensionState::Running,
-                stats: ExtensionStats::default(),
-                loaded_at: Some(chrono::Utc::now()),
-                metrics,
-                commands,
-            },
-        );
-
-        tracing::info!("Extension registered: {}", id);
+        // Remove from memory
+        self.extensions.write().unwrap().remove(id);
+        self.info_cache.write().unwrap().remove(id);
+        
+        tracing::info!("Extension unregistered: {}", id);
         Ok(())
     }
 
     /// Get an extension by ID.
     pub async fn get(&self, id: &str) -> Option<DynExtension> {
-        self.extensions.read().await.get(id).cloned()
+        self.extensions.read().unwrap().get(id).cloned()
     }
 
     /// Get extension info by ID.
     pub async fn get_info(&self, id: &str) -> Option<ExtensionInfo> {
-        self.info_cache.read().await.get(id).cloned()
+        self.info_cache.read().unwrap().get(id).cloned()
     }
 
     /// Get current metric values from an extension.
@@ -192,7 +215,7 @@ impl ExtensionRegistry {
 
     /// List all extensions.
     pub async fn list(&self) -> Vec<ExtensionInfo> {
-        self.info_cache.read().await.values().cloned().collect()
+        self.info_cache.read().unwrap().values().cloned().collect()
     }
 
     /// Load an extension from a file path and register it.
@@ -206,14 +229,17 @@ impl ExtensionRegistry {
 
                 // Get metadata and metrics/commands
                 let ext = loaded.extension.read().await;
-                let metadata = ext.metadata().clone();
+                let mut metadata = ext.metadata().clone();
                 let _metrics = ext.metrics().to_vec();
                 let _commands = ext.commands().to_vec();
                 drop(ext);
 
-                // Register the extension
+                // Set file path for component loading
+                metadata.file_path = Some(path.to_path_buf());
+
+                // Register the extension with file path
                 let id = metadata.id.clone();
-                self.register(id, loaded.extension).await?;
+                self.register_with_path(id, loaded.extension, Some(path.to_path_buf())).await?;
 
                 Ok(metadata)
             }
@@ -223,57 +249,19 @@ impl ExtensionRegistry {
 
                 // Get metadata and metrics/commands
                 let ext = loaded.extension.read().await;
-                let metadata = ext.metadata().clone();
+                let mut metadata = ext.metadata().clone();
                 let _metrics = ext.metrics().to_vec();
                 let _commands = ext.commands().to_vec();
                 drop(ext);
 
-                // Register the extension
+                // Set file path for component loading
+                metadata.file_path = Some(path.to_path_buf());
+
+                // Register the extension with file path
                 let id = metadata.id.clone();
-                self.register(id, loaded.extension).await?;
+                self.register_with_path(id, loaded.extension, Some(path.to_path_buf())).await?;
 
                 Ok(metadata)
-            }
-            _ => Err(ExtensionError::InvalidFormat(format!(
-                "Unsupported extension format: {:?}",
-                path
-            ))),
-        }
-    }
-
-    /// Load an extension from a file path with a provided config (blocking version).
-    ///
-    /// This is a synchronous version that can be called from `spawn_blocking`.
-    /// It handles both native and WASM extensions.
-    pub fn blocking_load(&self, path: &Path, config: &serde_json::Value) -> Result<()> {
-        let extension = path.extension().and_then(|e| e.to_str());
-
-        match extension {
-            Some("so") | Some("dylib") | Some("dll") => {
-                // Load the native extension
-                let loaded = self.native_loader.load_with_config(path, Some(config))?;
-
-                // Get metadata
-                let metadata = {
-                    let ext = loaded.extension.blocking_read();
-                    ext.metadata().clone()
-                };
-
-                // Register the extension (blocking)
-                let id = metadata.id.clone();
-                if let Err(e) = self.blocking_register(id, loaded.extension) {
-                    return Err(e);
-                }
-
-                Ok(())
-            }
-            Some("wasm") => {
-                // For WASM, we need async context for loading
-                // This is a limitation - WASM loading requires async
-                // Return an error indicating this
-                return Err(ExtensionError::LoadFailed(
-                    "WASM extensions cannot be loaded in blocking mode. Use load_from_path() instead.".to_string()
-                ));
             }
             _ => Err(ExtensionError::InvalidFormat(format!(
                 "Unsupported extension format: {:?}",
@@ -330,6 +318,8 @@ impl ExtensionRegistry {
     }
 
     /// Execute a command on an extension.
+    ///
+    /// Includes a 30-second timeout to prevent hanging on slow or buggy extensions.
     pub async fn execute_command(
         &self,
         id: &str,
@@ -341,8 +331,41 @@ impl ExtensionRegistry {
             .await
             .ok_or_else(|| ExtensionError::NotFound(id.to_string()))?;
 
-        let ext = ext.read().await;
-        ext.execute_command(command, args).await
+        // Clone the Arc to avoid holding the lock across the await
+        let ext_clone = Arc::clone(&ext);
+
+        // Execute with timeout protection (30 seconds)
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            async {
+                let ext_guard = ext_clone.read().await;
+                ext_guard.execute_command(command, args).await
+            }
+        ).await;
+
+        match result {
+            Ok(Ok(value)) => Ok(value),
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    extension_id = %id,
+                    command = %command,
+                    error = %e,
+                    "[ExtensionRegistry] Extension command failed"
+                );
+                Err(e)
+            }
+            Err(_) => {
+                tracing::error!(
+                    extension_id = %id,
+                    command = %command,
+                    "[ExtensionRegistry] Extension command timed out after 30 seconds"
+                );
+                Err(ExtensionError::Timeout(format!(
+                    "Command '{}' on extension '{}' timed out",
+                    command, id
+                )))
+            }
+        }
     }
 
     /// Perform health check on an extension.
@@ -352,23 +375,27 @@ impl ExtensionRegistry {
             .await
             .ok_or_else(|| ExtensionError::NotFound(id.to_string()))?;
 
-        let ext = ext.read().await;
-        ext.health_check().await
+        let ext_clone = Arc::clone(&ext);
+        let result = {
+            let ext_guard = ext_clone.read().await;
+            ext_guard.health_check().await
+        };
+        result
     }
 
     /// Check if an extension is registered.
     pub async fn contains(&self, id: &str) -> bool {
-        self.extensions.read().await.contains_key(id)
+        self.extensions.read().unwrap().contains_key(id)
     }
 
     /// Get the number of registered extensions.
     pub async fn count(&self) -> usize {
-        self.extensions.read().await.len()
+        self.extensions.read().unwrap().len()
     }
 
     /// Get all registered extensions (alias for get_extensions() from trait).
     pub async fn get_all(&self) -> Vec<DynExtension> {
-        self.extensions.read().await.values().cloned().collect()
+        self.extensions.read().unwrap().values().cloned().collect()
     }
 
     /// Get the safety manager for this registry.
@@ -407,7 +434,7 @@ pub trait ExtensionRegistryTrait: Send + Sync {
 #[async_trait::async_trait]
 impl ExtensionRegistryTrait for ExtensionRegistry {
     async fn get_extensions(&self) -> Vec<DynExtension> {
-        self.extensions.read().await.values().cloned().collect()
+        self.extensions.read().unwrap().values().cloned().collect()
     }
 
     async fn get_extension(&self, id: &str) -> Option<DynExtension> {
@@ -420,15 +447,30 @@ impl ExtensionRegistryTrait for ExtensionRegistry {
         command: &str,
         args: &serde_json::Value,
     ) -> std::result::Result<serde_json::Value, String> {
-        self.execute_command(extension_id, command, args)
-            .await
-            .map_err(|e| e.to_string())
+        // Clone the Arc to avoid holding the lock
+        let ext_opt = self.get(extension_id).await;
+        match ext_opt {
+            Some(ext) => {
+                let ext_clone = Arc::clone(&ext);
+                let result = {
+                    let ext_guard = ext_clone.read().await;
+                    ext_guard.execute_command(command, args).await
+                };
+                result.map_err(|e| e.to_string())
+            }
+            None => Err(format!("Extension not found: {}", extension_id)),
+        }
     }
 
     async fn get_metrics(&self, extension_id: &str) -> Vec<super::system::MetricDescriptor> {
         if let Some(ext) = self.get(extension_id).await {
-            let ext = ext.read().await;
-            ext.metrics().to_vec()
+            // Clone the Arc to avoid holding the lock
+            let ext_clone = Arc::clone(&ext);
+            let metrics = {
+                let ext_guard = ext_clone.read().await;
+                ext_guard.metrics().to_vec()
+            };
+            metrics
         } else {
             vec![]
         }

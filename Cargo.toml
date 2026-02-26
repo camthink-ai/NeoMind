@@ -14,7 +14,6 @@ members = [
     "crates/neomind-agent",
     "crates/neomind-commands",
     "crates/neomind-integrations",
-    "crates/neomind-extension-sdk",
     "crates/neomind-automation",
     "crates/neomind-testing",
 ]

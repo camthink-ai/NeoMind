@@ -23,5 +23,8 @@ reqwest = { version = "0.12", features = ["json"] }
 # LRU cache for embeddings
 lru = "0.12"
 
+# Concurrent data structures
+dashmap = "6"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

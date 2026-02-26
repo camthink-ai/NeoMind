@@ -41,6 +41,7 @@ reqwest = { version = "0.12", features = ["json"] }
 # Web framework
 axum = { workspace = true, features = ["ws"] }
 tower-http = { workspace = true }
+http-body-util = "0.1"
 
 # Utils
 uuid = { workspace = true }
@@ -56,6 +57,10 @@ utoipa-swagger-ui = { version = "8", features = ["axum"] }
 atty = "0.2"
 sysinfo = "0.32"
 dirs = "5.0"
+tempfile = "3"
+
+# Concurrent data structures
+dashmap = "6"
 
 # Encryption
 aes-gcm = { workspace = true }

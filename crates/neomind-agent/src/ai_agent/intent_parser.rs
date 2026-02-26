@@ -74,7 +74,8 @@ impl IntentParser {
 
     /// Extract target metrics from the user prompt.
     fn extract_metrics(&self, prompt: &str) -> Vec<String> {
-        let mut metrics = Vec::new();
+        // Pre-allocate with small capacity (typically 1-5 metrics found)
+        let mut metrics = Vec::with_capacity(5);
 
         // Common metric keywords
         let metric_mappings = [
@@ -112,7 +113,8 @@ impl IntentParser {
 
     /// Extract conditions from the user prompt.
     fn extract_conditions(&self, prompt: &str) -> Vec<String> {
-        let mut conditions = Vec::new();
+        // Pre-allocate with small capacity (typically 1-3 conditions found)
+        let mut conditions = Vec::with_capacity(3);
 
         // Pattern: "大于X", "小于X", "超过X", "低于X", "高于X"
         let comparison_patterns = [
@@ -174,7 +176,8 @@ impl IntentParser {
 
     /// Extract actions from the user prompt.
     fn extract_actions(&self, prompt: &str) -> Vec<String> {
-        let mut actions = Vec::new();
+        // Pre-allocate with small capacity (typically 1-3 actions found)
+        let mut actions = Vec::with_capacity(3);
 
         let action_keywords = [
             ("报警", "send_alert"),

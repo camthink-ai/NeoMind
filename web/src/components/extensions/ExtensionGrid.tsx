@@ -20,6 +20,7 @@ interface ExtensionGridProps {
   loading?: boolean
   onConfigure?: (id: string) => void
   onUnregister?: (id: string) => Promise<boolean>
+  onReload?: (id: string) => Promise<boolean>
 }
 
 // Status filter options with counts
@@ -35,6 +36,7 @@ export function ExtensionGrid({
   loading = false,
   onConfigure,
   onUnregister,
+  onReload,
 }: ExtensionGridProps) {
   const { t } = useTranslation(["extensions", "common"])
 
@@ -248,6 +250,7 @@ export function ExtensionGrid({
             extension={extension}
             onConfigure={() => onConfigure?.(extension.id)}
             onUnregister={() => onUnregister?.(extension.id)}
+            onReload={() => onReload?.(extension.id)}
           />
         ))}
       </div>

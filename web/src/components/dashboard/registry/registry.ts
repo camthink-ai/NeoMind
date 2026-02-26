@@ -520,32 +520,58 @@ export const componentRegistry: ComponentRegistry = {
 // Registry Helpers
 // ============================================================================
 
+// Import dynamic registry
+import { dynamicRegistry, dtoToComponentMeta } from './DynamicRegistry'
+
 /**
  * Get component metadata by type
+ * Checks both static (built-in) and dynamic (extension-provided) registries
  */
 export function getComponentMeta(type: ComponentType): ComponentMeta | undefined {
-  return componentRegistry[type]
+  // First try static registry
+  const staticMeta = componentRegistry[type]
+  if (staticMeta) return staticMeta
+
+  // Then try dynamic registry
+  const dto = dynamicRegistry.getMeta(type)
+  if (dto) {
+    return dtoToComponentMeta(dto)
+  }
+
+  return undefined
 }
 
 /**
- * Get all component types
+ * Get all component types (static + dynamic)
  */
 export function getAllComponentTypes(): ComponentType[] {
-  return Object.keys(componentRegistry) as ComponentType[]
+  const staticTypes = Object.keys(componentRegistry) as ComponentType[]
+  const dynamicDtos = dynamicRegistry.getAllMetas()
+  const dynamicTypes = dynamicDtos.map(dto => dto.type) as ComponentType[]
+
+  return [...staticTypes, ...dynamicTypes]
 }
 
 /**
- * Get all component metadata as array
+ * Get all component metadata as array (static + dynamic)
  */
 export function getAllComponents(): ComponentMeta[] {
-  return Object.values(componentRegistry)
+  const staticComponents = Object.values(componentRegistry)
+  const dynamicDtos = dynamicRegistry.getAllMetas()
+  const dynamicComponents = dynamicDtos.map(dto => dtoToComponentMeta(dto))
+
+  return [...staticComponents, ...dynamicComponents]
 }
 
 /**
- * Filter components by options
+ * Filter components by options (includes dynamic components)
  */
 export function filterComponents(options: RegistryFilterOptions = {}): ComponentMeta[] {
-  let components = Object.values(componentRegistry)
+  const staticComponents = Object.values(componentRegistry)
+  const dynamicDtos = dynamicRegistry.getAllMetas()
+  const dynamicComponents = dynamicDtos.map(dto => dtoToComponentMeta(dto))
+
+  let components = [...staticComponents, ...dynamicComponents]
 
   if (options.category) {
     components = components.filter(c => c.category === options.category)
@@ -568,7 +594,7 @@ export function filterComponents(options: RegistryFilterOptions = {}): Component
 }
 
 /**
- * Group components by category
+ * Group components by category (includes dynamic components)
  */
 export function groupComponentsByCategory(options: RegistryFilterOptions = {}): GroupedComponentRegistry {
   const components = filterComponents(options)
@@ -585,7 +611,7 @@ export function groupComponentsByCategory(options: RegistryFilterOptions = {}): 
     return acc
   }, {} as Record<string, GroupedComponentRegistry[number]>)
 
-  // Return in a consistent order (without removed categories)
+  // Return in a consistent order (including custom category from extensions)
   const categoryOrder: ComponentCategory[] = [
     'indicators',
     'charts',
@@ -593,6 +619,7 @@ export function groupComponentsByCategory(options: RegistryFilterOptions = {}): 
     'display',
     'spatial',
     'business',
+    'custom', // Extension components
   ]
 
   return categoryOrder
@@ -611,6 +638,7 @@ export function getCategoryInfo(category: ComponentCategory): { name: string; ic
     display: { name: 'Display & Content', icon: Image },
     spatial: { name: 'Spatial & Media', icon: MapPin },
     business: { name: 'Business Components', icon: Bot },
+    custom: { name: 'Extension Components', icon: LayersIcon }, // For dynamic components
   }
 
   return categoryInfos[category]

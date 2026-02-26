@@ -153,7 +153,8 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 /// It starts the server in the background and returns immediately.
 ///
 /// Uses port 9375 to avoid conflicts with common applications.
+/// Binds to 0.0.0.0 to allow LAN access.
 pub async fn start_server() -> anyhow::Result<()> {
-    let bind: SocketAddr = "127.0.0.1:9375".parse()?;
+    let bind: SocketAddr = "0.0.0.0:9375".parse()?;
     run(bind).await
 }

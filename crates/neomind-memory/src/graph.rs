@@ -38,10 +38,10 @@
 //! ```
 
 use crate::error::{MemoryError, Result};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Unique identifier for an entity in the graph.
 pub type EntityId = String;
@@ -366,14 +366,14 @@ impl Default for GraphConfig {
 /// Memory graph for tracking entity relationships.
 #[derive(Clone)]
 pub struct MemoryGraph {
-    /// All entities in the graph
-    entities: Arc<RwLock<HashMap<EntityId, Entity>>>,
-    /// All relationships in the graph
-    relationships: Arc<RwLock<HashMap<RelationId, Relationship>>>,
-    /// Adjacency list: entity_id -> [(related_id, relation_id)]
-    adj_out: Arc<RwLock<HashMap<EntityId, Vec<(EntityId, RelationId)>>>>,
-    /// Reverse adjacency list: entity_id -> [(source_id, relation_id)]
-    adj_in: Arc<RwLock<HashMap<EntityId, Vec<(EntityId, RelationId)>>>>,
+    /// All entities in the graph - using DashMap for concurrent access
+    entities: DashMap<EntityId, Entity>,
+    /// All relationships in the graph - using DashMap for concurrent access
+    relationships: DashMap<RelationId, Relationship>,
+    /// Adjacency list: entity_id -> [(related_id, relation_id)] - using DashMap
+    adj_out: DashMap<EntityId, Vec<(EntityId, RelationId)>>,
+    /// Reverse adjacency list: entity_id -> [(source_id, relation_id)] - using DashMap
+    adj_in: DashMap<EntityId, Vec<(EntityId, RelationId)>>,
     /// Configuration
     config: GraphConfig,
 }
@@ -381,85 +381,75 @@ pub struct MemoryGraph {
 impl MemoryGraph {
     /// Create a new memory graph.
     pub fn new() -> Self {
-        Self {
-            entities: Arc::new(RwLock::new(HashMap::new())),
-            relationships: Arc::new(RwLock::new(HashMap::new())),
-            adj_out: Arc::new(RwLock::new(HashMap::new())),
-            adj_in: Arc::new(RwLock::new(HashMap::new())),
-            config: GraphConfig::default(),
-        }
+        Self::with_config(GraphConfig::default())
     }
 
     /// Create with custom configuration.
     pub fn with_config(config: GraphConfig) -> Self {
         Self {
-            entities: Arc::new(RwLock::new(HashMap::new())),
-            relationships: Arc::new(RwLock::new(HashMap::new())),
-            adj_out: Arc::new(RwLock::new(HashMap::new())),
-            adj_in: Arc::new(RwLock::new(HashMap::new())),
+            entities: DashMap::with_capacity(64),  // Pre-allocate for typical graphs
+            relationships: DashMap::with_capacity(64),
+            adj_out: DashMap::with_capacity(64),
+            adj_in: DashMap::with_capacity(64),
             config,
         }
     }
 
     /// Add an entity to the graph.
-    pub async fn add_entity(&self, entity: Entity) -> EntityId {
+    pub fn add_entity(&self, entity: Entity) -> EntityId {
         let id = entity.id.clone();
-        let mut entities = self.entities.write().await;
-        entities.insert(id.clone(), entity);
+        self.entities.insert(id.clone(), entity);
         id
     }
 
     /// Create and add a new entity.
-    pub async fn create_entity(
+    pub fn create_entity(
         &self,
         id: impl Into<String>,
         name: impl Into<String>,
         entity_type: EntityType,
     ) -> EntityId {
         let entity = Entity::new(id, name).with_type(entity_type);
-        self.add_entity(entity).await
+        self.add_entity(entity)
     }
 
     /// Get an entity by ID.
-    pub async fn get_entity(&self, id: &str) -> Option<Entity> {
-        let entities = self.entities.read().await;
-        entities.get(id).cloned()
+    pub fn get_entity(&self, id: &str) -> Option<Entity> {
+        self.entities.get(id).map(|item| item.value().clone())
     }
 
     /// Check if an entity exists.
-    pub async fn has_entity(&self, id: &str) -> bool {
-        let entities = self.entities.read().await;
-        entities.contains_key(id)
+    pub fn has_entity(&self, id: &str) -> bool {
+        self.entities.contains_key(id)
     }
 
     /// Remove an entity and all its relationships.
-    pub async fn remove_entity(&self, id: &str) -> bool {
+    pub fn remove_entity(&self, id: &str) -> bool {
         // First, remove all relationships involving this entity
-        let outgoing: Vec<_> = {
-            let adj = self.adj_out.read().await;
-            adj.get(id).cloned().unwrap_or_default()
-        };
-        let incoming: Vec<_> = {
-            let adj = self.adj_in.read().await;
-            adj.get(id).cloned().unwrap_or_default()
-        };
+        let outgoing: Vec<_> = self
+            .adj_out
+            .get(id)
+            .map(|item| item.value().clone())
+            .unwrap_or_default();
+        let incoming: Vec<_> = self
+            .adj_in
+            .get(id)
+            .map(|item| item.value().clone())
+            .unwrap_or_default();
 
         for (_, rel_id) in &outgoing {
-            self.remove_relationship(rel_id).await;
+            self.remove_relationship(rel_id);
         }
         for (_, rel_id) in &incoming {
-            self.remove_relationship(rel_id).await;
+            self.remove_relationship(rel_id);
         }
 
         // Remove the entity
-        let mut entities = self.entities.write().await;
-        let removed = entities.remove(id).is_some();
+        let removed = self.entities.remove(id).is_some();
 
         // Clean up adjacency lists
-        let mut adj_out = self.adj_out.write().await;
-        adj_out.remove(id);
-        let mut adj_in = self.adj_in.write().await;
-        adj_in.remove(id);
+        self.adj_out.remove(id);
+        self.adj_in.remove(id);
 
         removed
     }
@@ -474,15 +464,12 @@ impl MemoryGraph {
         let from_id = from.into();
         let to_id = to.into();
 
-        // Check if entities exist
-        {
-            let entities = self.entities.read().await;
-            if !entities.contains_key(&from_id) {
-                return Err(MemoryError::NotFound(format!("Source entity: {}", from_id)));
-            }
-            if !entities.contains_key(&to_id) {
-                return Err(MemoryError::NotFound(format!("Target entity: {}", to_id)));
-            }
+        // Check if entities exist - DashMap is lock-free
+        if !self.entities.contains_key(&from_id) {
+            return Err(MemoryError::NotFound(format!("Source entity: {}", from_id)));
+        }
+        if !self.entities.contains_key(&to_id) {
+            return Err(MemoryError::NotFound(format!("Target entity: {}", to_id)));
         }
 
         let rel_id = format!("{}_{}_{:?}", from_id, to_id, relation_type);
@@ -493,27 +480,19 @@ impl MemoryGraph {
             relation_type,
         );
 
-        // Add relationship
-        {
-            let mut relationships = self.relationships.write().await;
-            relationships.insert(rel_id.clone(), relationship);
-        }
+        // Add relationship - DashMap is lock-free
+        self.relationships.insert(rel_id.clone(), relationship);
 
-        // Update adjacency lists
-        {
-            let mut adj_out = self.adj_out.write().await;
-            adj_out
-                .entry(from_id.clone())
-                .or_default()
-                .push((to_id.clone(), rel_id.clone()));
-        }
-        {
-            let mut adj_in = self.adj_in.write().await;
-            adj_in
-                .entry(to_id)
-                .or_default()
-                .push((from_id, rel_id.clone()));
-        }
+        // Update adjacency lists - DashMap is lock-free
+        self.adj_out
+            .entry(from_id.clone())
+            .or_default()
+            .push((to_id.clone(), rel_id.clone()));
+
+        self.adj_in
+            .entry(to_id)
+            .or_default()
+            .push((from_id, rel_id.clone()));
 
         Ok(rel_id)
     }
@@ -537,50 +516,38 @@ impl MemoryGraph {
         )
         .with_weight(weight);
 
-        {
-            let mut relationships = self.relationships.write().await;
-            relationships.insert(rel_id.clone(), relationship);
-        }
+        // Add relationship - DashMap is lock-free
+        self.relationships.insert(rel_id.clone(), relationship);
 
-        {
-            let mut adj_out = self.adj_out.write().await;
-            adj_out
-                .entry(from_id.clone())
-                .or_default()
-                .push((to_id.clone(), rel_id.clone()));
-        }
-        {
-            let mut adj_in = self.adj_in.write().await;
-            adj_in
-                .entry(to_id)
-                .or_default()
-                .push((from_id, rel_id.clone()));
-        }
+        // Update adjacency lists - DashMap is lock-free
+        self.adj_out
+            .entry(from_id.clone())
+            .or_default()
+            .push((to_id.clone(), rel_id.clone()));
+
+        self.adj_in
+            .entry(to_id)
+            .or_default()
+            .push((from_id, rel_id.clone()));
 
         Ok(rel_id)
     }
 
     /// Get a relationship by ID.
-    pub async fn get_relationship(&self, id: &str) -> Option<Relationship> {
-        let relationships = self.relationships.read().await;
-        relationships.get(id).cloned()
+    pub fn get_relationship(&self, id: &str) -> Option<Relationship> {
+        self.relationships.get(id).map(|item| item.value().clone())
     }
 
     /// Remove a relationship.
-    pub async fn remove_relationship(&self, id: &str) -> bool {
-        let relationship = {
-            let mut relationships = self.relationships.write().await;
-            relationships.remove(id).clone()
-        };
+    pub fn remove_relationship(&self, id: &str) -> bool {
+        let relationship = self.relationships.remove(id).map(|(_, v)| v);
 
         if let Some(rel) = relationship {
-            // Update adjacency lists
-            let mut adj_out = self.adj_out.write().await;
-            if let Some(neighbors) = adj_out.get_mut(&rel.from) {
+            // Update adjacency lists - DashMap is lock-free
+            if let Some(mut neighbors) = self.adj_out.get_mut(&rel.from) {
                 neighbors.retain(|(to_id, rel_id)| to_id != &rel.to || rel_id != id);
             }
-            let mut adj_in = self.adj_in.write().await;
-            if let Some(sources) = adj_in.get_mut(&rel.to) {
+            if let Some(mut sources) = self.adj_in.get_mut(&rel.to) {
                 sources.retain(|(from_id, rel_id)| from_id != &rel.from || rel_id != id);
             }
             true
@@ -590,14 +557,12 @@ impl MemoryGraph {
     }
 
     /// Find entities directly related to the given entity.
-    pub async fn find_neighbors(&self, entity_id: &str) -> Vec<(EntityId, RelationType)> {
+    pub fn find_neighbors(&self, entity_id: &str) -> Vec<(EntityId, RelationType)> {
         let mut result = Vec::new();
-        let adj = self.adj_out.read().await;
-        let relationships = self.relationships.read().await;
 
-        if let Some(neighbors) = adj.get(entity_id) {
-            for (to_id, rel_id) in neighbors {
-                if let Some(rel) = relationships.get(rel_id) {
+        if let Some(neighbors) = self.adj_out.get(entity_id) {
+            for (to_id, rel_id) in neighbors.iter() {
+                if let Some(rel) = self.relationships.get(rel_id) {
                     result.push((to_id.clone(), rel.relation_type));
                 }
             }
@@ -623,16 +588,14 @@ impl MemoryGraph {
                 continue;
             }
 
-            let adj = self.adj_out.read().await;
-            let relationships = self.relationships.read().await;
-
-            if let Some(neighbors) = adj.get(&current_id) {
-                for (to_id, rel_id) in neighbors {
+            // DashMap is lock-free
+            if let Some(neighbors) = self.adj_out.get(&current_id) {
+                for (to_id, rel_id) in neighbors.iter() {
                     if visited.contains(to_id) {
                         continue;
                     }
 
-                    if let Some(rel) = relationships.get(rel_id) {
+                    if let Some(rel) = self.relationships.get(rel_id) {
                         if rel.relation_type == relation_type {
                             visited.insert(to_id.clone());
                             result.push(to_id.clone());
@@ -676,8 +639,8 @@ impl MemoryGraph {
                 continue;
             }
 
-            // Get neighbors
-            let neighbors = self.find_neighbors(&current).await;
+            // Get neighbors - now sync
+            let neighbors = self.find_neighbors(&current);
 
             for (next_id, rel_type) in neighbors {
                 // Avoid cycles
@@ -685,19 +648,18 @@ impl MemoryGraph {
                     continue;
                 }
 
-                // Get relationship weight
-                let adj = self.adj_out.read().await;
-                let relationships = self.relationships.read().await;
-                let edge_weight = if let Some(neighbors) = adj.get(&current) {
-                    neighbors
-                        .iter()
-                        .find(|(id, _)| id == &next_id)
-                        .and_then(|(_, rel_id)| relationships.get(rel_id))
-                        .map(|r| r.weight)
-                        .unwrap_or(0.5)
-                } else {
-                    0.5
-                };
+                // Get relationship weight - DashMap is lock-free
+                let edge_weight = self
+                    .adj_out
+                    .get(&current)
+                    .and_then(|neighbors| {
+                        neighbors
+                            .iter()
+                            .find(|(id, _)| id == &next_id)
+                            .and_then(|(_, rel_id)| self.relationships.get(rel_id))
+                            .map(|r| r.weight)
+                    })
+                    .unwrap_or(0.5);
 
                 let mut new_path = path.clone();
                 new_path.push(next_id.clone());
@@ -716,33 +678,30 @@ impl MemoryGraph {
     }
 
     /// Calculate centrality metrics for an entity.
-    pub async fn centrality(&self, entity_id: &str) -> Option<CentralityMetrics> {
-        let adj_out = self.adj_out.read().await;
-        let adj_in = self.adj_in.read().await;
-        let relationships = self.relationships.read().await;
+    pub fn centrality(&self, entity_id: &str) -> Option<CentralityMetrics> {
+        let out_degree = self.adj_out.get(entity_id).map(|v| v.len()).unwrap_or(0);
+        let in_degree = self.adj_in.get(entity_id).map(|v| v.len()).unwrap_or(0);
+        let total_degree = out_degree + in_degree;
 
-        let out_degree = adj_out.get(entity_id).map(|v| v.len()).unwrap_or(0);
-        let in_degree = adj_in.get(entity_id).map(|v| v.len()).unwrap_or(0);
-
-        // Calculate weighted score
+        // Calculate weighted score - DashMap is lock-free
         let mut weighted_score = 0.0;
-        if let Some(neighbors) = adj_out.get(entity_id) {
-            for (_, rel_id) in neighbors {
-                if let Some(rel) = relationships.get(rel_id) {
+        if let Some(neighbors) = self.adj_out.get(entity_id) {
+            for (_, rel_id) in neighbors.iter() {
+                if let Some(rel) = self.relationships.get(rel_id) {
                     weighted_score += rel.weight;
                 }
             }
         }
-        if let Some(sources) = adj_in.get(entity_id) {
-            for (_, rel_id) in sources {
-                if let Some(rel) = relationships.get(rel_id) {
+        if let Some(sources) = self.adj_in.get(entity_id) {
+            for (_, rel_id) in sources.iter() {
+                if let Some(rel) = self.relationships.get(rel_id) {
                     weighted_score += rel.weight;
                 }
             }
         }
 
         Some(CentralityMetrics {
-            degree: out_degree + in_degree,
+            degree: total_degree,
             out_degree,
             in_degree,
             weighted_score,
@@ -750,62 +709,62 @@ impl MemoryGraph {
     }
 
     /// Get all entities of a specific type.
-    pub async fn get_entities_by_type(&self, entity_type: EntityType) -> Vec<Entity> {
-        let entities = self.entities.read().await;
-        entities
-            .values()
-            .filter(|e| e.entity_type == entity_type)
-            .cloned()
+    pub fn get_entities_by_type(&self, entity_type: EntityType) -> Vec<Entity> {
+        self.entities
+            .iter()
+            .filter(|item| item.value().entity_type == entity_type)
+            .map(|item| item.value().clone())
             .collect()
     }
 
     /// Get all entities associated with a memory ID.
-    pub async fn get_entities_for_memory(&self, memory_id: &str) -> Vec<Entity> {
-        let entities = self.entities.read().await;
-        entities
-            .values()
-            .filter(|e| e.memory_ids.contains(&memory_id.to_string()))
-            .cloned()
+    pub fn get_entities_for_memory(&self, memory_id: &str) -> Vec<Entity> {
+        self.entities
+            .iter()
+            .filter(|item| item.value().memory_ids.contains(&memory_id.to_string()))
+            .map(|item| item.value().clone())
             .collect()
     }
 
     /// Associate a memory with an entity.
-    pub async fn associate_memory(
+    pub fn associate_memory(
         &self,
         entity_id: &str,
         memory_id: impl Into<String>,
     ) -> Result<()> {
-        let mut entities = self.entities.write().await;
-        let entity = entities
-            .get_mut(entity_id)
-            .ok_or_else(|| MemoryError::NotFound(format!("Entity: {}", entity_id)))?;
-
         let mem_id = memory_id.into();
-        if !entity.memory_ids.contains(&mem_id) {
-            entity.memory_ids.push(mem_id);
-        }
+        
+        // DashMap entry API is lock-free
+        self.entities
+            .entry(entity_id.to_string())
+            .and_modify(|entity| {
+                if !entity.memory_ids.contains(&mem_id) {
+                    entity.memory_ids.push(mem_id.clone());
+                }
+            })
+            .or_insert_with(|| {
+                Entity::new(entity_id, entity_id).with_memory(mem_id.clone())
+            });
 
         Ok(())
     }
 
     /// Get the total number of entities.
-    pub async fn entity_count(&self) -> usize {
-        let entities = self.entities.read().await;
-        entities.len()
+    pub fn entity_count(&self) -> usize {
+        self.entities.len()
     }
 
     /// Get the total number of relationships.
-    pub async fn relationship_count(&self) -> usize {
-        let relationships = self.relationships.read().await;
-        relationships.len()
+    pub fn relationship_count(&self) -> usize {
+        self.relationships.len()
     }
 
     /// Clear all entities and relationships.
-    pub async fn clear(&self) {
-        self.entities.write().await.clear();
-        self.relationships.write().await.clear();
-        self.adj_out.write().await.clear();
-        self.adj_in.write().await.clear();
+    pub fn clear(&self) {
+        self.entities.clear();
+        self.relationships.clear();
+        self.adj_out.clear();
+        self.adj_in.clear();
     }
 }
 

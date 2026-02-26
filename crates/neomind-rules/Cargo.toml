@@ -37,3 +37,10 @@ collapsible_if = "allow"
 manual_strip = "allow"
 should_implement_trait = "allow"
 type_complexity = "allow"
+
+[[bench]]
+name = "rules_bench"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["async_tokio"] }

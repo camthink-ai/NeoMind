@@ -51,10 +51,12 @@ export function ExtensionDetailsDialog({
   const getExtensionStats = useStore((state) => state.getExtensionStats)
   const getExtensionHealth = useStore((state) => state.getExtensionHealth)
   const fetchExtensions = useStore((state) => state.fetchExtensions)
+  const reloadExtensionStore = useStore((state) => state.reloadExtension)
 
   const [stats, setStats] = useState<ExtensionStatsDto | null>(null)
   const [health, setHealth] = useState<{ healthy: boolean } | null>(null)
   const [loading, setLoading] = useState(false)
+  const [reloading, setReloading] = useState(false)
 
   // Config state
   const [configData, setConfigData] = useState<ExtensionConfigResponse | null>(null)
@@ -107,11 +109,18 @@ export function ExtensionDetailsDialog({
       toast({ title: "Configuration saved successfully" })
 
       // Reload extension to apply new config
-      await api.post(`/extensions/${extension.id}/reload`, {})
-      toast({ title: "Extension reloaded with new configuration" })
+      const reloadSuccess = await reloadExtensionStore(extension.id)
+      if (reloadSuccess) {
+        toast({ title: "Extension reloaded with new configuration" })
+      } else {
+        toast({ title: "Extension reloaded, but config may not have been applied", variant: "default" })
+      }
 
-      // Refresh extensions list
-      await fetchExtensions()
+      // Refresh extensions list and config
+      await Promise.all([
+        fetchExtensions(),
+        loadConfig()
+      ])
     } catch (error) {
       handleError(error, { operation: 'Save extension config' })
     } finally {
@@ -133,6 +142,27 @@ export function ExtensionDetailsDialog({
       setConfigValues({})
     }
     onOpenChange(open)
+  }
+
+  // Reload extension
+  const handleReloadExtension = async () => {
+    if (!extension) return
+
+    setReloading(true)
+    try {
+      const success = await reloadExtensionStore(extension.id)
+      if (success) {
+        toast({ title: "Extension reloaded successfully" })
+        // Refresh details
+        await loadDetails()
+      } else {
+        handleError(new Error("Failed to reload extension"), { operation: 'Reload extension' })
+      }
+    } catch (error) {
+      handleError(error, { operation: 'Reload extension' })
+    } finally {
+      setReloading(false)
+    }
   }
 
   // Render config input based on type
@@ -280,6 +310,17 @@ export function ExtensionDetailsDialog({
 
             {/* Info Tab */}
             <TabsContent value="info" className="flex-1 overflow-y-auto mt-4 space-y-4">
+              <div className="flex justify-end pb-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleReloadExtension}
+                  disabled={reloading}
+                >
+                  <RefreshCw className={`h-4 w-4 mr-1 ${reloading ? 'animate-spin' : ''}`} />
+                  {reloading ? 'Reloading...' : 'Reload Extension'}
+                </Button>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <Label className="text-muted-foreground text-xs">ID</Label>

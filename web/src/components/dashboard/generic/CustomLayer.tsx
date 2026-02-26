@@ -151,39 +151,39 @@ interface LayerItemComponentProps {
 const TYPE_CONFIG = {
   device: {
     icon: MapPin,
-    color: 'text-green-600 dark:text-green-400',
-    bgColor: 'bg-green-500/10 dark:bg-green-500/20',
-    borderColor: 'border-green-500/30',
+    color: 'text-white',
+    bgColor: 'bg-green-500',
+    borderColor: 'border-green-600',
   },
   metric: {
     icon: Activity,
-    color: 'text-purple-600 dark:text-purple-400',
-    bgColor: 'bg-purple-500/10 dark:bg-purple-500/20',
-    borderColor: 'border-purple-500/30',
+    color: 'text-white',
+    bgColor: 'bg-purple-500',
+    borderColor: 'border-purple-600',
   },
   command: {
     icon: Zap,
-    color: 'text-blue-600 dark:text-blue-400',
-    bgColor: 'bg-blue-500/10 dark:bg-blue-500/20',
-    borderColor: 'border-blue-500/30',
+    color: 'text-white',
+    bgColor: 'bg-blue-500',
+    borderColor: 'border-blue-600',
   },
   text: {
     icon: Type,
     color: 'text-foreground',
-    bgColor: 'bg-muted/50',
+    bgColor: 'bg-muted',
     borderColor: 'border-border',
   },
   icon: {
     icon: Sparkles,
-    color: 'text-orange-600 dark:text-orange-400',
-    bgColor: 'bg-orange-500/10 dark:bg-orange-500/20',
-    borderColor: 'border-orange-500/30',
+    color: 'text-white',
+    bgColor: 'bg-orange-500',
+    borderColor: 'border-orange-600',
   },
   component: {
     icon: Layers,
-    color: 'text-cyan-600 dark:text-cyan-400',
-    bgColor: 'bg-cyan-500/10 dark:bg-cyan-500/20',
-    borderColor: 'border-cyan-500/30',
+    color: 'text-white',
+    bgColor: 'bg-cyan-500',
+    borderColor: 'border-cyan-600',
   },
 } as const
 
@@ -499,7 +499,7 @@ function LayerItemComponent({
         >
           {/* Close button */}
           <button
-            className="absolute top-1.5 right-1.5 p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+            className="absolute top-1.5 right-1.5 p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center"
             onClick={() => setShowDetails(false)}
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

@@ -30,6 +30,7 @@ export type EventType =
   | 'ToolExecutionSuccess'
   | 'ToolExecutionFailure'
   | 'ExtensionOutput'
+  | 'ExtensionLifecycle'
   | 'Custom'
 
 export interface CustomEvent extends NeoMindEvent {
@@ -69,6 +70,15 @@ export interface ExtensionOutputEvent extends NeoMindEvent {
     value: number | string | boolean
     quality?: number
     labels?: Record<string, string>
+  }
+}
+
+export interface ExtensionLifecycleEvent extends NeoMindEvent {
+  type: 'ExtensionLifecycle'
+  data: {
+    extension_id: string
+    state: 'registered' | 'unregistered' | 'loaded' | 'started' | 'stopped' | 'error'
+    message?: string
   }
 }
 

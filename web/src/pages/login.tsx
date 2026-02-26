@@ -11,8 +11,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { BrandName, BrandLogoHorizontal } from "@/components/shared/BrandName"
+import { BrandLogoHorizontal } from "@/components/shared/BrandName"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
+import { tokenManager } from "@/lib/api"
 
 const languages = [
   { code: 'en', name: 'English' },
@@ -51,7 +52,7 @@ function translateError(error: string, t: (key: string, params?: Record<string, 
 
 export function LoginPage() {
   const { t, i18n } = useTranslation(['common', 'auth'])
-  const { login } = useStore()
+  const { login, checkAuthStatus } = useStore()
   const navigate = useNavigate()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
@@ -59,9 +60,33 @@ export function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [isFirstSetup, setIsFirstSetup] = useState<boolean | null>(null)
+  const [checkingAuth, setCheckingAuth] = useState(true)
+
+  // Check if already authenticated on mount
+  useEffect(() => {
+    const checkExistingAuth = async () => {
+      const token = tokenManager.getToken()
+      if (token) {
+        // Verify token is still valid by checking auth status
+        try {
+          await checkAuthStatus()
+          // If we get here without error, token is valid - redirect to home
+          navigate('/', { replace: true })
+          return
+        } catch {
+          // Token invalid, clear it and continue to login form
+          tokenManager.clearToken()
+        }
+      }
+      setCheckingAuth(false)
+    }
+    checkExistingAuth()
+  }, [checkAuthStatus, navigate])
 
   // Load saved credentials on mount
   useEffect(() => {
+    if (checkingAuth) return // Skip if still checking auth
+
     // Check if this is first-time setup (no admin user exists)
     const checkSetupStatus = async () => {
       const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
@@ -104,7 +129,7 @@ export function LoginPage() {
     } catch {
       // Ignore parsing errors
     }
-  }, [])
+  }, [checkingAuth, navigate])
 
   // Save credentials when rememberMe changes
   useEffect(() => {
@@ -175,6 +200,15 @@ export function LoginPage() {
     }
   }
 
+  // Show loading while checking authentication
+  if (checkingAuth) {
+    return (
+      <div className="flex flex-col bg-background relative overflow-hidden viewport-full items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col bg-background relative overflow-hidden viewport-full">
       {/* Background Effects - AI Network Theme */}
@@ -218,8 +252,8 @@ export function LoginPage() {
         </div>
       </div>
 
-      {/* Top Header - Absolute positioned, doesn't affect layout */}
-      <header className="absolute top-0 left-0 right-0 z-50 bg-background/50 backdrop-blur-sm safe-top">
+      {/* Top Header - No background, transparent */}
+      <header className="absolute top-0 left-0 right-0 z-50 safe-top">
         <div className="flex items-center justify-between px-4 sm:px-6 h-14 sm:h-16">
           {/* Left - Logo & Name */}
           <div className="flex items-center gap-2 sm:gap-3">
@@ -251,7 +285,7 @@ export function LoginPage() {
 
       {/* Main Content - Centered on both mobile and desktop */}
       <main
-        className="flex-1 px-4 sm:px-6 pt-14 sm:pt-16 pb-4 sm:pb-12 safe-bottom flex items-center justify-center min-h-0"
+        className="flex-1 px-4 sm:px-6 safe-bottom flex items-center justify-center min-h-0"
         onClick={(e) => {
           // If clicking outside the login card, dismiss keyboard
           if ((e.target as HTMLElement).closest('form, button, a')) return
@@ -333,16 +367,15 @@ export function LoginPage() {
                 {isLoading ? t('auth:loggingIn') : t('auth:login')}
               </Button>
             </form>
-
-            {/* Footer */}
-            <div className="text-center mt-4 sm:mt-6 pt-4 sm:pt-6">
-              {/* Version Info */}
-              <p className="text-xs text-muted-foreground/50 dark:text-muted-foreground/40">
-                <BrandName /> Edge AI Agent v1.0
-              </p>
-            </div>
           </div>
         </div>
+
+        {/* Footer - Copyright - hidden on mobile, shown at bottom on desktop */}
+        <footer className="hidden sm:block absolute left-0 right-0 z-10 text-center bottom-6">
+          <p className="text-xs text-muted-foreground/50 dark:text-muted-foreground/40">
+            © CamThink {new Date().getFullYear()}
+          </p>
+        </footer>
       </main>
     </div>
   )

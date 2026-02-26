@@ -17,6 +17,7 @@ export type ComponentCategory =
   | 'display'       // Content display (images, web, markdown)
   | 'spatial'       // Spatial & media (maps, video, layers)
   | 'business'      // Business-specific components (agents, etc.)
+  | 'custom'        // Extension-provided custom components
 
 // ============================================================================
 // Component Metadata

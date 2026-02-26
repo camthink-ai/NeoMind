@@ -981,6 +981,8 @@
     "clickToViewFull": "点击查看完整数据",
     "noHistoryData": "暂无历史数据",
     "preview": "预览",
+    "imagePreview": "图片预览对话框",
+    "metricHistory": "指标历史数据",
     "parameters": "参数:",
     "result": "结果:",
     "error": "错误:",

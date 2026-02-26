@@ -121,18 +121,14 @@ impl OllamaRuntime {
         );
 
         // Configure HTTP client with connection pooling for better performance
-        // - pool_max_idle_per_host: Keep up to 10 idle connections ready for reuse (increased from 5)
-        // - pool_idle_timeout: Close idle connections after 120 seconds (increased from 90s)
-        // - connect_timeout: Fail fast if server doesn't respond within 5 seconds
-        // - http2_prior_knowledge: Skip ALPN negotiation for local Ollama
         let client = Client::builder()
             .timeout(config.timeout())
-            .pool_max_idle_per_host(10) // Increased: Keep 10 idle connections for concurrent requests
-            .pool_idle_timeout(Duration::from_secs(120)) // Increased: Close after 120s idle
-            .connect_timeout(Duration::from_secs(5)) // Fast connection fail
-            .http2_keep_alive_interval(Duration::from_secs(30)) // Keep HTTP/2 alive
-            .http2_keep_alive_timeout(Duration::from_secs(10)) // Keep-alive timeout
-            .http2_adaptive_window(true) // Adaptive flow control
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Duration::from_secs(120))
+            .connect_timeout(Duration::from_secs(5))
+            .http2_keep_alive_interval(Duration::from_secs(30))
+            .http2_keep_alive_timeout(Duration::from_secs(10))
+            .http2_adaptive_window(true)
             .build()
             .map_err(|e| LlmError::Network(e.to_string()))?;
 
@@ -902,7 +898,7 @@ impl LlmRuntime for OllamaRuntime {
                     let mut total_chars = 0usize; // Track total output characters
                     let mut thinking_chars = 0usize; // Track thinking characters separately
                     let mut thinking_start_time: Option<Instant> = None; // Track when thinking started
-                    let terminate_early = false; // Flag to terminate stream early
+                    let mut terminate_early = false; // Flag to terminate stream early
                     let mut skip_remaining_thinking = false; // Skip thinking chunks but wait for content
                     let mut last_thinking_chunk = String::new(); // Track last thinking chunk for loop detection
                     let mut consecutive_same_thinking = 0usize; // Count consecutive identical thinking chunks
@@ -911,13 +907,20 @@ impl LlmRuntime for OllamaRuntime {
                     let mut last_warning_index = 0usize; // Track last warning threshold sent
                     let mut content_buffer = String::new(); // Buffer for detecting thinking in content
                     let mut detected_thinking_in_content = false; // Flag for thinking detection
+                    let mut thinking_content_history = String::new(); // Track thinking content for repetition detection
+                    let mut terminate_early_reason: Option<String> = None; // Track reason for early termination
 
                     while let Some(chunk_result) = byte_stream.next().await {
                         // Check for early termination flag
                         if terminate_early {
-                            tracing::info!(
-                                "[ollama.rs] Early termination requested, ending stream."
+                            tracing::warn!(
+                                "[ollama.rs] Early termination: {}",
+                                terminate_early_reason.as_deref().unwrap_or("unknown reason")
                             );
+                            // Send error to client
+                            let _ = tx.send(Err(LlmError::Generation(
+                                terminate_early_reason.unwrap_or_else(|| "Stream terminated early".to_string())
+                            ))).await;
                             break;
                         }
 
@@ -1120,6 +1123,24 @@ impl LlmRuntime for OllamaRuntime {
                                                 thinking_chars += thinking_content.chars().count();
                                                 total_chars += thinking_content.chars().count();
 
+                                                // Track thinking content for repetition detection
+                                                thinking_content_history.push_str(thinking_content);
+
+                                                // SAFETY CHECK 1: Total characters limit (hard cutoff)
+                                                if total_chars > stream_config.max_total_chars {
+                                                    tracing::error!(
+                                                        "[ollama.rs] CRITICAL: Total chars limit reached ({} > {}). Terminating stream to prevent infinite loop.",
+                                                        total_chars,
+                                                        stream_config.max_total_chars
+                                                    );
+                                                    terminate_early_reason = Some(format!(
+                                                        "Total output limit reached: {} chars",
+                                                        total_chars
+                                                    ));
+                                                    terminate_early = true;
+                                                    break;
+                                                }
+
                                                 // Track when thinking started
                                                 if thinking_start_time.is_none() {
                                                     thinking_start_time = Some(Instant::now());
@@ -1159,7 +1180,27 @@ impl LlmRuntime for OllamaRuntime {
                                                     last_thinking_chunk = thinking_content.clone();
                                                 }
 
-                                                // SAFETY CHECK: Detect if model is stuck in thinking loop
+                                                // SAFETY CHECK 2: Thinking content repetition rate detection
+                                                // Detect if model is generating repetitive thinking content
+                                                if thinking_chars > 5000 && thinking_content_history.len() > 5000 {
+                                                    // Calculate repetition rate by checking unique vs total chars
+                                                    let unique_chars = thinking_content_history
+                                                        .chars()
+                                                        .collect::<std::collections::HashSet<_>>()
+                                                        .len();
+                                                    let repetition_rate = 1.0 - (unique_chars as f64 / thinking_content_history.len() as f64);
+                                                    
+                                                    if repetition_rate > stream_config.max_thinking_repetition_rate {
+                                                        tracing::warn!(
+                                                            "[ollama.rs] High thinking repetition detected (rate: {:.2}%, threshold: {:.2}%). Model may be stuck in loop.",
+                                                            repetition_rate * 100.0,
+                                                            stream_config.max_thinking_repetition_rate * 100.0
+                                                        );
+                                                        // Don't terminate immediately, but watch for continued repetition
+                                                    }
+                                                }
+
+                                                // SAFETY CHECK 3: Detect if model is stuck in thinking loop
                                                 if thinking_chars > stream_config.max_thinking_chars
                                                 {
                                                     tracing::warn!(

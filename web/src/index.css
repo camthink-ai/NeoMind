@@ -397,9 +397,15 @@ a {
   }
 
   /* Exception: Small icon buttons - add padding instead of forcing size */
-  button:where([class*="h-7"], [class*="h-8"], [class*="h-9"]) {
+  button:where([class*="h-6"], [class*="h-7"], [class*="h-8"], [class*="h-9"]) {
     min-height: auto;
     min-width: auto;
+  }
+
+  /* Exception: Color picker preset buttons - keep original size */
+  button[type="button"]:where([class*="w-6"][class*="h-6"]) {
+    min-height: auto !important;
+    min-width: auto !important;
   }
 
   /* Exception: Switch component - keep original size */

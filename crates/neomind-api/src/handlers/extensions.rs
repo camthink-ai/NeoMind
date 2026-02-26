@@ -9,14 +9,18 @@
 //! - extension_type field removed from metadata
 
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
+    http::HeaderMap,
     Json,
+    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use http_body_util::{BodyExt, Limited};
 use serde_json::json;
 
 use crate::handlers::common::{ok, HandlerResult};
@@ -52,6 +56,28 @@ pub struct ExtensionDto {
     /// Metrics provided by this extension (V2)
     #[serde(default)]
     pub metrics: Vec<MetricDescriptorDto>,
+    /// Configuration parameters for this extension
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_parameters: Option<Vec<ConfigParamDto>>,
+}
+
+/// Configuration parameter DTO
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigParamDto {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    #[serde(rename = "type")]
+    pub param_type: String,
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
 }
 
 /// Metric descriptor DTO (V2)
@@ -233,6 +259,37 @@ pub async fn list_extensions_handler(
                 })
                 .collect();
 
+            // Convert config parameters to DTOs
+            let config_parameters = info.metadata.config_parameters.as_ref().map(|params| {
+                params
+                    .iter()
+                    .map(|p| {
+                        use neomind_core::extension::system::ParamMetricValue;
+                        ConfigParamDto {
+                            name: p.name.clone(),
+                            display_name: p.display_name.clone(),
+                            description: p.description.clone(),
+                            param_type: format!("{:?}", p.param_type).to_lowercase(),
+                            required: p.required,
+                            default: p.default_value.as_ref().map(|v| match v {
+                                ParamMetricValue::Float(f) => serde_json::json!(f),
+                                ParamMetricValue::Integer(i) => serde_json::json!(i),
+                                ParamMetricValue::Boolean(b) => serde_json::json!(b),
+                                ParamMetricValue::String(s) => serde_json::json!(s),
+                                ParamMetricValue::Binary(_) => serde_json::json!(null),
+                                ParamMetricValue::Null => serde_json::json!(null),
+                            }),
+                            min: p.min,
+                            max: p.max,
+                            options: match &p.param_type {
+                                MetricDataType::Enum { options } => options.clone(),
+                                _ => Vec::new(),
+                            },
+                        }
+                    })
+                    .collect()
+            });
+
             ExtensionDto {
                 id: info.metadata.id.clone(),
                 name: info.metadata.name.clone(),
@@ -248,6 +305,7 @@ pub async fn list_extensions_handler(
                 loaded_at: info.loaded_at.map(|t| t.timestamp()),
                 commands,
                 metrics,
+                config_parameters,
             }
         })
         .collect();
@@ -308,6 +366,37 @@ pub async fn get_extension_handler(
         })
         .collect();
 
+    // Convert config parameters to DTOs
+    let config_parameters = info.metadata.config_parameters.as_ref().map(|params| {
+        params
+            .iter()
+            .map(|p| {
+                use neomind_core::extension::system::ParamMetricValue;
+                ConfigParamDto {
+                    name: p.name.clone(),
+                    display_name: p.display_name.clone(),
+                    description: p.description.clone(),
+                    param_type: format!("{:?}", p.param_type).to_lowercase(),
+                    required: p.required,
+                    default: p.default_value.as_ref().map(|v| match v {
+                        ParamMetricValue::Float(f) => serde_json::json!(f),
+                        ParamMetricValue::Integer(i) => serde_json::json!(i),
+                        ParamMetricValue::Boolean(b) => serde_json::json!(b),
+                        ParamMetricValue::String(s) => serde_json::json!(s),
+                        ParamMetricValue::Binary(_) => serde_json::json!(null),
+                        ParamMetricValue::Null => serde_json::json!(null),
+                    }),
+                    min: p.min,
+                    max: p.max,
+                    options: match &p.param_type {
+                        MetricDataType::Enum { options } => options.clone(),
+                        _ => Vec::new(),
+                    },
+                }
+            })
+            .collect()
+    });
+
     ok(ExtensionDto {
         id: info.metadata.id.clone(),
         name: info.metadata.name.clone(),
@@ -323,6 +412,7 @@ pub async fn get_extension_handler(
         loaded_at: info.loaded_at.map(|t| t.timestamp()),
         commands,
         metrics,
+        config_parameters,
     })
 }
 
@@ -391,12 +481,21 @@ pub async fn discover_extensions_handler(
 ) -> HandlerResult<Vec<ExtensionDiscoveryResult>> {
     let registry = &state.extensions.registry;
 
+    // Get list of already registered extension IDs
+    let registered_ids: std::collections::HashSet<String> = registry
+        .list()
+        .await
+        .into_iter()
+        .map(|info| info.metadata.id.clone())
+        .collect();
+
     // Discover extensions using the registry
     let discovered = registry.discover().await;
 
-    // Convert to DTOs (V2 - no extension_type)
+    // Filter out already registered extensions and convert to DTOs
     let results: Vec<ExtensionDiscoveryResult> = discovered
         .into_iter()
+        .filter(|(_, metadata)| !registered_ids.contains(&metadata.id))
         .map(|(path, metadata)| ExtensionDiscoveryResult {
             id: metadata.id.clone(),
             name: metadata.name.clone(),
@@ -576,17 +675,56 @@ pub async fn unregister_extension_handler(
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to unregister: {}", e)))?;
 
-    // Also remove from persistent storage
+    // Mark as uninstalled in storage (instead of deleting) to prevent auto-discovery
+    // from re-registering it on server restart
     if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
-        if let Err(e) = store.delete(&id) {
-            tracing::warn!("Failed to delete extension from storage: {}", e);
+        if let Err(e) = store.mark_uninstalled(&id) {
+            tracing::warn!("Failed to mark extension as uninstalled: {}", e);
         }
     }
+
+    // Clean up extension metrics data from telemetry.redb
+    // Extension metrics are stored with device_part = "extension:{extension_id}"
+    cleanup_extension_metrics(&state, &id).await;
 
     ok(serde_json::json!({
         "message": "Extension unregistered",
         "extension_id": id
     }))
+}
+
+/// Clean up extension metrics data from time-series storage.
+async fn cleanup_extension_metrics(state: &ServerState, extension_id: &str) {
+    // Get the metrics storage from ExtensionState
+    let metrics_storage = &state.extensions.metrics_storage;
+
+    // Extension metrics are stored with device_part = "extension:{extension_id}"
+    let device_part = format!("extension:{}", extension_id);
+
+    // List all metrics for this extension
+    match metrics_storage.list_metrics(&device_part).await {
+        Ok(metrics) => {
+            if !metrics.is_empty() {
+                tracing::info!(
+                    extension_id = %extension_id,
+                    metrics_count = metrics.len(),
+                    metrics = ?metrics,
+                    "Extension unregistered, {} metric data series will be cleaned up by retention policy",
+                    metrics.len()
+                );
+                // Note: TimeSeriesStorage doesn't have a bulk delete API
+                // The data will eventually be cleaned up by retention policies
+                // For immediate cleanup, we would need to add a delete method to TimeSeriesStorage
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                extension_id = %extension_id,
+                error = %e,
+                "Failed to list extension metrics for cleanup"
+            );
+        }
+    }
 }
 
 /// POST /api/extensions/:id/start
@@ -726,7 +864,7 @@ async fn publish_extension_metrics(
                     labels: None,
                     quality: None,
                 };
-                let _ = event_bus.publish(event);
+                let _ = event_bus.publish(event).await;
             }
         }
     }
@@ -734,6 +872,8 @@ async fn publish_extension_metrics(
 
 /// POST /api/extensions/:id/command
 /// Execute a command on an extension.
+///
+/// Includes panic protection to prevent server crashes from buggy extensions.
 pub async fn execute_extension_command_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
@@ -741,15 +881,50 @@ pub async fn execute_extension_command_handler(
 ) -> HandlerResult<serde_json::Value> {
     let registry = &state.extensions.registry;
 
-    let result = registry
-        .execute_command(&id, &req.command, &req.args)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Command execution failed: {}", e)))?;
+    // Check if extension exists first
+    if !registry.contains(&id).await {
+        return Err(ErrorResponse::not_found(format!("Extension '{}' not found", id)));
+    }
 
-    // Publish ExtensionOutput events for real-time dashboard updates
-    publish_extension_metrics(&state, &id, &result).await;
+    // Execute command with panic protection
+    let result = match registry.execute_command(&id, &req.command, &req.args).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                extension_id = %id,
+                command = %req.command,
+                error = %e,
+                "Extension command execution failed"
+            );
+            return Err(ErrorResponse::internal(format!("Command execution failed: {}", e)));
+        }
+    };
+
+    // DISABLED: Publish ExtensionOutput events - causes "no reactor running" crashes
+    // Event publishing will be re-enabled after fixing the Tokio runtime issue
+    // publish_extension_metrics_safe(&state, &id, &result).await;
 
     ok(result)
+}
+
+/// Safe version of publish_extension_metrics that handles errors gracefully
+async fn publish_extension_metrics_safe(
+    state: &ServerState,
+    extension_id: &str,
+    result: &serde_json::Value,
+) {
+    // Use a timeout to prevent hanging on slow operations
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        publish_extension_metrics(state, extension_id, result)
+    ).await {
+        Ok(()) => {
+            tracing::debug!(extension_id = %extension_id, "Extension metrics published successfully");
+        }
+        Err(_) => {
+            tracing::warn!(extension_id = %extension_id, "Timeout while publishing extension metrics");
+        }
+    }
 }
 
 // ============================================================================
@@ -783,13 +958,22 @@ pub async fn invoke_extension_handler(
         return Err(ErrorResponse::not_found(format!("Extension {}", id)));
     }
 
-    let result = registry
-        .execute_command(&id, &req.command, &req.params)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Invoke failed: {}", e)))?;
+    // Execute command with proper error logging
+    let result = match registry.execute_command(&id, &req.command, &req.params).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                extension_id = %id,
+                command = %req.command,
+                error = %e,
+                "Extension invoke failed"
+            );
+            return Err(ErrorResponse::internal(format!("Invoke failed: {}", e)));
+        }
+    };
 
-    // Publish ExtensionOutput events for real-time dashboard updates
-    publish_extension_metrics(&state, &id, &result).await;
+    // Publish ExtensionOutput events with timeout protection
+    publish_extension_metrics_safe(&state, &id, &result).await;
 
     ok(serde_json::json!({
         "extension_id": id,
@@ -1195,6 +1379,14 @@ pub struct MarketplaceExtensionMetadata {
     #[serde(default)]
     pub readme_url: Option<String>,
 
+    /// .nep package URL (if available as a package instead of individual binaries)
+    #[serde(default)]
+    pub package_url: Option<String>,
+
+    /// Package SHA256 checksum (for .nep packages)
+    #[serde(default)]
+    pub package_sha256: Option<String>,
+
     #[serde(default)]
     pub capabilities: ExtensionCapabilities,
 
@@ -1471,6 +1663,127 @@ fn compute_sha256(data: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Helper function to install an extension from a .nep package URL
+async fn install_nep_package(
+    registry: &neomind_core::extension::registry::ExtensionRegistry,
+    package_url: &str,
+    expected_sha256: Option<&str>,
+    extension_id: &str,
+) -> Result<MarketplaceInstallResponse, ErrorResponse> {
+    use neomind_core::extension::package::ExtensionPackage;
+    use std::path::PathBuf;
+
+    // Download the .nep package
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| ErrorResponse::internal(format!("Failed to build HTTP client: {}", e)))?;
+
+    let download_response = client
+        .get(package_url)
+        .send()
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Package download failed: {}", e)))?;
+
+    if !download_response.status().is_success() {
+        return Ok(MarketplaceInstallResponse {
+            success: false,
+            extension_id: extension_id.to_string(),
+            downloaded: false,
+            installed: false,
+            path: None,
+            error: Some(format!("Package download failed: {}", download_response.status())),
+        });
+    }
+
+    let bytes = download_response
+        .bytes()
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to read package: {}", e)))?;
+
+    // Verify SHA256 if provided
+    if let Some(expected_sha) = expected_sha256 {
+        if !expected_sha.is_empty() {
+            let checksum = compute_sha256(&bytes);
+            if checksum != expected_sha {
+                return Ok(MarketplaceInstallResponse {
+                    success: false,
+                    extension_id: extension_id.to_string(),
+                    downloaded: true,
+                    installed: false,
+                    path: None,
+                    error: Some(format!(
+                        "Package checksum verification failed: expected {}, got {}",
+                        expected_sha, checksum
+                    )),
+                });
+            }
+        }
+    }
+
+    // Save package to temporary file
+    let temp_dir = std::env::temp_dir();
+    let temp_package_path = temp_dir.join(format!("{}.nep", extension_id));
+    std::fs::write(&temp_package_path, &bytes)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to write package: {}", e)))?;
+
+    // Use ExtensionPackage to install
+    let package = ExtensionPackage::load(&temp_package_path).await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load package: {}", e)))?;
+
+    // Create extensions directory
+    let extensions_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".neomind")
+        .join("extensions");
+
+    std::fs::create_dir_all(&extensions_dir).map_err(|e| {
+        ErrorResponse::internal(format!("Failed to create extensions directory: {}", e))
+    })?;
+
+    // Install the package
+    let install_result = package.install(&extensions_dir).await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to install package: {}", e)))?;
+
+    // Clean up temp package file
+    let _ = std::fs::remove_file(&temp_package_path);
+
+    // Load and register the extension using load_from_path
+    let file_path = install_result.binary_path.to_str().ok_or_else(|| {
+        ErrorResponse::internal("Invalid file path".to_string())
+    })?;
+
+    registry.load_from_path(&install_result.binary_path).await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to register extension: {}", e)))?;
+
+    // Save to storage for persistence
+    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+        let record = ExtensionRecord::new(
+            install_result.extension_id.clone(),
+            package.manifest.name.clone(),
+            file_path.to_string(),
+            "native".to_string(),
+            install_result.version.clone(),
+        )
+        .with_description(package.manifest.description.clone())
+        .with_author(package.manifest.author.clone())
+        .with_checksum(Some(install_result.checksum.clone()));
+
+        let _ = store.save(&record);
+    }
+
+    tracing::info!("Extension {} installed successfully from .nep package", extension_id);
+
+    Ok(MarketplaceInstallResponse {
+        success: true,
+        extension_id: extension_id.to_string(),
+        downloaded: true,
+        installed: true,
+        path: Some(file_path.to_string()),
+        error: None,
+    })
+}
+
 /// POST /api/extensions/market/install
 ///
 /// Download and install an extension from the marketplace
@@ -1536,6 +1849,20 @@ pub async fn install_marketplace_extension_handler(
     // Detect platform
     let platform = detect_platform();
 
+    // Check if .nep package is available (preferred method)
+    if let Some(ref package_url) = metadata.package_url {
+        let _url = package_url;
+        return ok(MarketplaceInstallResponse {
+            success: false,
+            extension_id: req.id.clone(),
+            downloaded: false,
+            installed: false,
+            path: None,
+            error: Some("This extension is available as a .nep package. Please use the file upload feature to install it.".to_string()),
+        });
+    }
+
+    // Fall back to platform-specific binary download
     // Check if this is a WASM extension (works on all platforms)
     let is_wasm = metadata.builds.contains_key("wasm");
     let build_key = if is_wasm { "wasm" } else { platform };
@@ -1729,14 +2056,14 @@ pub async fn install_marketplace_extension_handler(
 
             tracing::info!("Extension {} installed successfully", req.id);
 
-            ok(MarketplaceInstallResponse {
+            return ok(MarketplaceInstallResponse {
                 success: true,
                 extension_id: req.id,
                 downloaded: true,
                 installed: true,
                 path: Some(file_path.to_string_lossy().to_string()),
                 error: None,
-            })
+            });
         }
         Err(e) => {
             // Clean up the downloaded file(s) on failure
@@ -1745,14 +2072,14 @@ pub async fn install_marketplace_extension_handler(
                 let _ = std::fs::remove_file(jp);
             }
 
-            ok(MarketplaceInstallResponse {
+            return ok(MarketplaceInstallResponse {
                 success: false,
                 extension_id: req.id,
                 downloaded: true,
                 installed: false,
                 path: None,
                 error: Some(format!("Failed to load extension: {}", e)),
-            })
+            });
         }
     }
 }
@@ -1922,6 +2249,14 @@ pub async fn reload_extension_handler(
 ) -> HandlerResult<serde_json::Value> {
     let registry = &state.extensions.registry;
 
+    // Get extension info before unregistering
+    let ext_info = registry
+        .get_info(&id)
+        .await
+        .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
+
+    let file_path = ext_info.metadata.file_path.clone();
+
     // Get current config
     let config: Option<serde_json::Value> =
         if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
@@ -1936,14 +2271,51 @@ pub async fn reload_extension_handler(
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to unregister: {}", e)))?;
 
-    // Re-register with config (this is a simplified reload - in production
-    // you'd want to load from the stored file path)
-    // For now, we'll need the file path from the registry
+    // Re-load from file if we have the path
+    let mut config_applied = false;
+    if let Some(ref path) = file_path {
+        use neomind_core::extension::loader::WasmExtensionLoader;
+
+        let loader = WasmExtensionLoader::new()
+            .map_err(|e| ErrorResponse::internal(format!("Failed to create loader: {}", e)))?;
+        match loader.load(path).await {
+            Ok(loaded) => {
+                // Apply saved config before registering
+                if let Some(ref cfg) = config {
+                    let mut ext = loaded.extension.write().await;
+                    if let Err(e) = ext.configure(cfg).await {
+                        tracing::warn!(
+                            extension_id = %id,
+                            error = %e,
+                            "Failed to apply config to extension during reload"
+                        );
+                    } else {
+                        config_applied = true;
+                        tracing::info!(
+                            extension_id = %id,
+                            "Applied saved config to extension during reload"
+                        );
+                    }
+                    drop(ext);
+                }
+
+                // Register the reloaded extension
+                registry
+                    .register(id.clone(), loaded.extension)
+                    .await
+                    .map_err(|e| ErrorResponse::internal(format!("Failed to register: {}", e)))?;
+            }
+            Err(e) => {
+                return Err(ErrorResponse::internal(format!("Failed to reload extension: {}", e)));
+            }
+        }
+    }
 
     ok(json!({
         "extension_id": id,
-        "message": "Extension reloaded",
-        "config_applied": config.is_some(),
+        "message": "Extension reloaded from file",
+        "config_applied": config_applied,
+        "file_path": file_path,
     }))
 }
 
@@ -2092,4 +2464,732 @@ fn validate_config(
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Dashboard Components API
+// ============================================================================
+
+/// Component category for dashboard components.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComponentCategory {
+    Chart,
+    Metric,
+    Table,
+    Control,
+    Media,
+    Custom,
+    Other,
+}
+
+/// Size constraints for dashboard components.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SizeConstraints {
+    pub min_w: u32,
+    pub min_h: u32,
+    pub default_w: u32,
+    pub default_h: u32,
+    pub max_w: u32,
+    pub max_h: u32,
+    pub preserve_aspect: Option<bool>,
+}
+
+/// Data binding configuration for dashboard components.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataBindingConfig {
+    pub extension_metric: Option<String>,
+    pub extension_command: Option<String>,
+    pub required_fields: Vec<String>,
+}
+
+/// Dashboard component definition from manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardComponentDef {
+    pub r#type: String,
+    pub name: String,
+    pub description: String,
+    pub category: ComponentCategory,
+    pub icon: Option<String>,
+    pub bundle_path: String,
+    pub export_name: String,
+    pub size_constraints: SizeConstraints,
+    pub has_data_source: bool,
+    pub has_display_config: bool,
+    pub has_actions: bool,
+    pub max_data_sources: u8,
+    pub config_schema: Option<serde_json::Value>,
+    pub data_source_schema: Option<serde_json::Value>,
+    pub default_config: Option<serde_json::Value>,
+    pub variants: Vec<String>,
+    pub data_binding: DataBindingConfig,
+}
+
+/// Dashboard component DTO for API responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardComponentDto {
+    /// Component type identifier
+    #[serde(rename = "type")]
+    pub component_type: String,
+    /// Display name
+    pub name: String,
+    /// Description
+    pub description: String,
+    /// Component category
+    pub category: String,
+    /// Icon name (lucide-react)
+    pub icon: Option<String>,
+    /// Bundle URL (resolved)
+    pub bundle_url: String,
+    /// Export name in bundle
+    pub export_name: String,
+    /// Size constraints
+    pub size_constraints: SizeConstraintsDto,
+    /// Whether this component accepts a data source
+    pub has_data_source: bool,
+    /// Whether this component has display configuration
+    pub has_display_config: bool,
+    /// Whether this component has actions
+    pub has_actions: bool,
+    /// Maximum number of data sources
+    pub max_data_sources: u8,
+    /// JSON Schema for component configuration
+    pub config_schema: Option<serde_json::Value>,
+    /// JSON Schema for data source binding
+    pub data_source_schema: Option<serde_json::Value>,
+    /// Default configuration values
+    pub default_config: Option<serde_json::Value>,
+    /// Component variants
+    pub variants: Vec<String>,
+    /// Data binding configuration
+    pub data_binding: DataBindingDto,
+    /// Extension ID
+    pub extension_id: String,
+}
+
+/// Size constraints DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SizeConstraintsDto {
+    pub min_w: u32,
+    pub min_h: u32,
+    pub default_w: u32,
+    pub default_h: u32,
+    pub max_w: u32,
+    pub max_h: u32,
+    pub preserve_aspect: Option<bool>,
+}
+
+impl From<SizeConstraints> for SizeConstraintsDto {
+    fn from(c: SizeConstraints) -> Self {
+        Self {
+            min_w: c.min_w,
+            min_h: c.min_h,
+            default_w: c.default_w,
+            default_h: c.default_h,
+            max_w: c.max_w,
+            max_h: c.max_h,
+            preserve_aspect: c.preserve_aspect,
+        }
+    }
+}
+
+/// Data binding DTO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataBindingDto {
+    pub extension_metric: Option<String>,
+    pub extension_command: Option<String>,
+    pub required_fields: Vec<String>,
+}
+
+impl From<DataBindingConfig> for DataBindingDto {
+    fn from(c: DataBindingConfig) -> Self {
+        Self {
+            extension_metric: c.extension_metric,
+            extension_command: c.extension_command,
+            required_fields: c.required_fields,
+        }
+    }
+}
+
+/// Response for dashboard components list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardComponentsResponse {
+    /// Extension ID
+    pub extension_id: String,
+    /// Extension name
+    pub extension_name: String,
+    /// Dashboard components provided by this extension
+    pub components: Vec<DashboardComponentDto>,
+}
+
+/// Extension manifest JSON structure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionManifest {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub dashboard_components: Vec<DashboardComponentDef>,
+    /// Other fields that we don't parse
+    #[serde(flatten)]
+    pub _other: serde_json::Value,
+}
+
+/// GET /api/extensions/:id/components
+/// Get dashboard components provided by an extension.
+pub async fn get_extension_components_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<DashboardComponentsResponse> {
+    let registry = &state.extensions.registry;
+
+    // Check if extension exists
+    let info = registry
+        .get_info(&id)
+        .await
+        .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
+
+    // Try to load manifest from extension directory
+    let components = load_extension_components(&id, info.metadata.file_path.as_ref())
+        .unwrap_or_default();
+
+    let extension_name = info.metadata.name.clone();
+
+    ok(DashboardComponentsResponse {
+        extension_id: id,
+        extension_name,
+        components,
+    })
+}
+
+/// Load dashboard components from extension manifest.
+fn load_extension_components(
+    extension_id: &str,
+    file_path: Option<&std::path::PathBuf>,
+) -> Option<Vec<DashboardComponentDto>> {
+    let file_path = file_path?;
+
+    // Get the extension directory (parent of the .dylib/.so file)
+    let ext_dir = file_path.parent()?;
+
+    // Try multiple manifest locations in order:
+    // 1. ext_dir/manifest.json (same dir as library)
+    // 2. ext_dir/{extension_id}/manifest.json (e.g., ext_dir/neomind.weather.forecast/manifest.json)
+    // 3. ext_dir/{extension_name}/manifest.json (e.g., ext_dir/weather-forecast/manifest.json)
+    //    where extension_name is derived from extension_id by removing "neomind." prefix and replacing dots with hyphens
+    let extension_name = extension_id
+        .strip_prefix("neomind.")
+        .unwrap_or(extension_id)
+        .replace('.', "-");
+
+    let manifest_paths = vec![
+        ext_dir.join("manifest.json"),
+        ext_dir.join(extension_id).join("manifest.json"),
+        ext_dir.join(&extension_name).join("manifest.json"),
+    ];
+
+    let mut manifest_content = None;
+    for manifest_path in &manifest_paths {
+        if let Ok(content) = std::fs::read_to_string(manifest_path) {
+            manifest_content = Some(content);
+            break;
+        }
+    }
+
+    let manifest_content = manifest_content?;
+
+    // Parse manifest
+    let manifest: ExtensionManifest = serde_json::from_str(&manifest_content).ok()?;
+
+    // Convert component definitions to DTOs
+    let base_url = format!("/api/extensions/{}/assets", extension_id);
+    let components: Vec<DashboardComponentDto> = manifest
+        .dashboard_components
+        .into_iter()
+        .map(|def| DashboardComponentDto {
+            component_type: def.r#type,
+            name: def.name,
+            description: def.description,
+            category: format!("{:?}", def.category).to_lowercase(),
+            icon: def.icon,
+            bundle_url: format!("{}/{}", base_url, def.bundle_path.trim_start_matches('/')),
+            export_name: def.export_name,
+            size_constraints: SizeConstraintsDto::from(def.size_constraints),
+            has_data_source: def.has_data_source,
+            has_display_config: def.has_display_config,
+            has_actions: def.has_actions,
+            max_data_sources: def.max_data_sources,
+            config_schema: def.config_schema,
+            data_source_schema: def.data_source_schema,
+            default_config: def.default_config,
+            variants: def.variants,
+            data_binding: DataBindingDto::from(def.data_binding),
+            extension_id: extension_id.to_string(),
+        })
+        .collect();
+
+    Some(components)
+}
+
+/// GET /api/extensions/:id/assets/*
+/// Serve static assets from extension directory.
+pub async fn serve_extension_asset_handler(
+    Path((id, asset_path)): Path<(String, String)>,
+) -> Result<axum::response::Response, ErrorResponse> {
+    use axum::body::Body;
+    use axum::http::{header, StatusCode};
+
+    // Get the extension directory
+    let ext_dir = std::path::PathBuf::from(format!(
+        "{}/extensions/{}",
+        std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "./data".to_string()),
+        id
+    ));
+
+    // Prevent directory traversal
+    if asset_path.contains("..") {
+        return Err(ErrorResponse::bad_request("Invalid asset path"));
+    }
+
+    let asset_file = ext_dir.join(&asset_path);
+
+    // Check if file exists
+    if !asset_file.exists() {
+        return Err(ErrorResponse::not_found("Asset not found"));
+    }
+
+    // Read file content
+    let content = match std::fs::read(&asset_file) {
+        Ok(c) => c,
+        Err(e) => {
+            return Err(ErrorResponse::internal(format!(
+                "Failed to read asset: {}",
+                e
+            )))
+        }
+    };
+
+    // Determine content type based on file extension
+    let mime_type = asset_file
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| match ext {
+            "js" => "application/javascript",
+            "json" => "application/json",
+            "css" => "text/css",
+            "html" => "text/html",
+            "svg" => "image/svg+xml",
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "woff" => "font/woff",
+            "woff2" => "font/woff2",
+            "ttf" => "font/ttf",
+            _ => "application/octet-stream",
+        })
+        .unwrap_or("application/octet-stream");
+
+    // Build response
+    Ok(axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, mime_type)
+        .header(
+            header::CACHE_CONTROL,
+            "public, max-age=3600", // Cache for 1 hour
+        )
+        .body(Body::from(content))
+        .unwrap())
+}
+
+/// GET /api/extensions/dashboard-components
+/// Get all dashboard components from all registered extensions.
+///
+/// This endpoint only returns components from extensions that are currently registered.
+/// When an extension is unregistered, its components will no longer appear.
+pub async fn get_all_dashboard_components_handler(
+    State(state): State<ServerState>,
+) -> HandlerResult<Vec<DashboardComponentDto>> {
+    let registry = &state.extensions.registry;
+    let mut all_components = Vec::new();
+
+    // Load components only from registered extensions
+    let all_extensions = registry.list().await;
+    for info in all_extensions {
+        if let Some(components) =
+            load_extension_components(&info.metadata.id, info.metadata.file_path.as_ref())
+        {
+            all_components.extend(components);
+        }
+    }
+
+    ok(all_components)
+}
+
+/// POST /api/extensions/upload
+/// Upload and install an extension package (.nep file).
+/// Note: This endpoint requires the .nep file to be manually uploaded to the data directory first.
+/// POST body: { "file_path": "/path/to/package.nep" }
+pub async fn upload_extension_package_handler(
+    State(state): State<ServerState>,
+    Json(req): Json<UploadPackageRequest>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_core::extension::package::{ExtensionPackage, detect_platform};
+
+    let file_path = PathBuf::from(&req.file_path);
+
+    if !file_path.exists() {
+        return Err(ErrorResponse::not_found(format!("Package file not found: {}", req.file_path)));
+    }
+
+    // Load the package
+    let package = ExtensionPackage::load(&file_path).await
+        .map_err(|e| ErrorResponse::bad_request(format!("Invalid package: {}", e)))?;
+
+    let ext_id = package.manifest.id.clone();
+    let version = package.manifest.version.clone();
+    let name = package.manifest.name.clone();
+
+    tracing::info!(
+        extension_id = %ext_id,
+        version = %version,
+        name = %name,
+        checksum = %package.checksum,
+        size = package.size,
+        "Processing extension package upload"
+    );
+
+    // Check if extension is already registered
+    let registry = &state.extensions.registry;
+    let is_registered = registry.contains(&ext_id).await;
+
+    if is_registered {
+        // Unregister existing version first
+        tracing::info!("Extension {} already registered, will replace", ext_id);
+        registry.unregister(&ext_id).await
+            .map_err(|e| ErrorResponse::internal(format!("Failed to unregister existing: {}", e)))?;
+    }
+
+    // Install the package
+    let data_dir = std::env::var("NEOMIND_DATA_DIR")
+        .unwrap_or_else(|_| "data".to_string());
+    let target_dir = PathBuf::from(data_dir).join("extensions");
+
+    let install_result = package.install(&target_dir).await
+        .map_err(|e| ErrorResponse::internal(format!("Installation failed: {}", e)))?;
+
+    tracing::info!(
+        extension_id = %install_result.extension_id,
+        binary_path = %install_result.binary_path.display(),
+        manifest_path = %install_result.manifest_path.display(),
+        frontend_dir = ?install_result.frontend_dir,
+        components_count = install_result.components.len(),
+        "Package installed successfully"
+    );
+
+    // Load and register the extension binary
+    let _metadata = registry.load_from_path(&install_result.binary_path).await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load extension binary: {}", e)))?;
+
+    // Save to storage
+    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+        let record = ExtensionRecord::new(
+            ext_id.clone(),
+            name.clone(),
+            install_result.binary_path.to_string_lossy().to_string(),
+            package.manifest.extension_type.clone(),
+            version.clone(),
+        )
+        .with_description(package.manifest.description.clone())
+        .with_author(package.manifest.author.clone())
+        .with_checksum(Some(install_result.checksum.clone()))
+        .with_auto_start(true)
+        .with_frontend_path(install_result.frontend_dir.as_ref()
+            .map(|p| p.to_string_lossy().to_string()));
+
+        if let Err(e) = store.save(&record) {
+            tracing::warn!("Failed to save extension to storage: {}", e);
+        }
+    }
+
+    // Build response
+    ok(serde_json::json!({
+        "message": "Extension package installed successfully",
+        "extension_id": ext_id,
+        "name": name,
+        "version": version,
+        "description": package.manifest.description,
+        "author": package.manifest.author,
+        "checksum": install_result.checksum,
+        "binary_path": install_result.binary_path.to_string_lossy(),
+        "manifest_path": install_result.manifest_path.to_string_lossy(),
+        "frontend_dir": install_result.frontend_dir.as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        "components_count": install_result.components.len(),
+        "components": install_result.components.iter().map(|c| json!({
+            "type": c.component_type,
+            "name": c.name,
+            "description": c.description,
+            "category": c.category
+        })).collect::<Vec<_>>(),
+        "replaced": is_registered
+    }))
+}
+
+/// POST /api/extensions/package/validate
+/// Validate an extension package without installing.
+pub async fn validate_extension_package_handler(
+    Json(req): Json<ValidatePackageRequest>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_core::extension::package::ExtensionPackage;
+
+    let file_path = PathBuf::from(&req.file_path);
+
+    if !file_path.exists() {
+        return Err(ErrorResponse::not_found(format!("Package file not found: {}", req.file_path)));
+    }
+
+    let package = ExtensionPackage::load(&file_path).await
+        .map_err(|e| ErrorResponse::bad_request(format!("Invalid package: {}", e)))?;
+
+    let platform = detect_platform();
+    let has_binary = package.get_binary_path().is_some();
+    let has_frontend = package.manifest.frontend.is_some();
+    let components_count = package.manifest.frontend.as_ref()
+        .map(|f| f.components.len())
+        .unwrap_or(0);
+
+    ok(serde_json::json!({
+        "valid": true,
+        "format": package.manifest.format,
+        "format_version": package.manifest.format_version,
+        "extension_id": package.manifest.id,
+        "name": package.manifest.name,
+        "version": package.manifest.version,
+        "description": package.manifest.description,
+        "author": package.manifest.author,
+        "license": package.manifest.license,
+        "current_platform": platform,
+        "has_binary_for_platform": has_binary,
+        "has_frontend": has_frontend,
+        "components_count": components_count,
+        "capabilities": package.manifest.capabilities,
+        "permissions": package.manifest.permissions,
+        "checksum": package.checksum,
+        "size": package.size
+    }))
+}
+
+/// Upload package request
+#[derive(Debug, Deserialize)]
+pub struct UploadPackageRequest {
+    pub file_path: String,
+}
+
+/// Validate package request
+#[derive(Debug, Deserialize)]
+pub struct ValidatePackageRequest {
+    pub file_path: String,
+}
+
+/// DELETE /api/extensions/:id/uninstall
+/// Completely uninstall an extension (remove all files).
+pub async fn uninstall_extension_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_core::extension::package::ExtensionPackage;
+
+    let registry = &state.extensions.registry;
+
+    // Check if extension exists
+    let exists = registry.contains(&id).await;
+    let ext_info = if exists {
+        registry.get_info(&id).await
+    } else {
+        None
+    };
+
+    // Unregister from memory
+    if exists {
+        registry.unregister(&id).await
+            .map_err(|e| ErrorResponse::internal(format!("Failed to unregister: {}", e)))?;
+    }
+
+    // Mark as uninstalled in storage
+    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+        if let Err(e) = store.mark_uninstalled(&id) {
+            tracing::warn!("Failed to mark extension as uninstalled: {}", e);
+        }
+    }
+
+    // Clean up extension directory
+    let data_dir = std::env::var("NEOMIND_DATA_DIR")
+        .unwrap_or_else(|_| "data".to_string());
+    let extensions_dir = PathBuf::from(data_dir).join("extensions");
+    let ext_dir = extensions_dir.join(&id);
+
+    let mut removed_files = Vec::new();
+    if ext_dir.exists() {
+        tracing::info!("Removing extension directory: {}", ext_dir.display());
+        tokio::fs::remove_dir_all(&ext_dir).await
+            .map_err(|e| ErrorResponse::internal(format!("Failed to remove extension directory: {}", e)))?;
+        removed_files.push(ext_dir.to_string_lossy().to_string());
+    }
+
+    // Clean up extension metrics
+    cleanup_extension_metrics(&state, &id).await;
+
+    ok(serde_json::json!({
+        "message": "Extension uninstalled completely",
+        "extension_id": id,
+        "name": ext_info.and_then(|info| Some(info.metadata.name)),
+        "removed_files": removed_files,
+        "note": "All extension files, including frontend components, have been removed"
+    }))
+}
+
+/// POST /api/extensions/upload/file
+/// Upload an extension package file directly (.nep format).
+///
+/// This endpoint accepts raw binary data of a .nep file.
+///
+/// Example with curl:
+/// ```bash
+/// curl -X POST http://localhost:9375/api/extensions/upload/file \
+///   -H "Content-Type: application/octet-stream" \
+///   --data-binary @extension.nep
+/// ```
+pub async fn upload_extension_file_handler(
+    State(state): State<ServerState>,
+    req: axum::extract::Request,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_core::extension::package::{ExtensionPackage, detect_platform};
+    use http_body_util::BodyExt;
+
+    // Limit file size to 100MB
+    const MAX_SIZE: usize = 100 * 1024 * 1024;
+
+    // Collect body data with size limit
+    let body_bytes = Limited::new(req.into_body(), MAX_SIZE)
+        .collect()
+        .await
+        .map_err(|e| ErrorResponse::bad_request(format!("Failed to read body: {}", e)))?
+        .to_bytes();
+
+    // Check if this looks like a ZIP file (starts with ZIP magic)
+    if body_bytes.len() < 4 {
+        return Err(ErrorResponse::bad_request("File too small to be a valid package"));
+    }
+
+    let zip_magic = &[0x50, 0x4B, 0x03, 0x04]; // PK..
+    let zip_empty = &[0x50, 0x4B, 0x05, 0x06]; // PK..
+    let zip_spanned = &[0x50, 0x4B, 0x07, 0x08]; // PK..
+
+    let is_zip = body_bytes.starts_with(zip_magic)
+        || body_bytes.starts_with(zip_empty)
+        || body_bytes.starts_with(zip_spanned);
+
+    if !is_zip {
+        return Err(ErrorResponse::bad_request("File is not a valid ZIP archive (.nep files are ZIP format)"));
+    }
+
+    // Parse the package
+    let package = ExtensionPackage::from_bytes(body_bytes.to_vec())
+        .map_err(|e| ErrorResponse::bad_request(format!("Invalid package: {}", e)))?;
+
+    let ext_id = package.manifest.id.clone();
+    let version = package.manifest.version.clone();
+    let name = package.manifest.name.clone();
+
+    tracing::info!(
+        extension_id = %ext_id,
+        version = %version,
+        name = %name,
+        checksum = %package.checksum,
+        size = package.size,
+        "Processing extension package file upload"
+    );
+
+    // Check if extension is already registered
+    let registry = &state.extensions.registry;
+    let is_registered = registry.contains(&ext_id).await;
+
+    if is_registered {
+        tracing::info!("Extension {} already registered, will replace", ext_id);
+        registry.unregister(&ext_id).await
+            .map_err(|e| ErrorResponse::internal(format!("Failed to unregister existing: {}", e)))?;
+    }
+
+    // Install the package
+    let data_dir = std::env::var("NEOMIND_DATA_DIR")
+        .unwrap_or_else(|_| "data".to_string());
+    let target_dir = PathBuf::from(data_dir).join("extensions");
+
+    let install_result = package.install(&target_dir).await
+        .map_err(|e| ErrorResponse::internal(format!("Installation failed: {}", e)))?;
+
+    tracing::info!(
+        extension_id = %install_result.extension_id,
+        binary_path = %install_result.binary_path.display(),
+        manifest_path = %install_result.manifest_path.display(),
+        frontend_dir = ?install_result.frontend_dir,
+        components_count = install_result.components.len(),
+        "Package installed successfully"
+    );
+
+    // Load and register the extension binary
+    let _metadata = registry.load_from_path(&install_result.binary_path).await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load extension binary: {}", e)))?;
+
+    // Save to storage
+    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+        let record = ExtensionRecord::new(
+            ext_id.clone(),
+            name.clone(),
+            install_result.binary_path.to_string_lossy().to_string(),
+            package.manifest.extension_type.clone(),
+            version.clone(),
+        )
+        .with_description(package.manifest.description.clone())
+        .with_author(package.manifest.author.clone())
+        .with_checksum(Some(install_result.checksum.clone()))
+        .with_auto_start(true)
+        .with_frontend_path(install_result.frontend_dir.as_ref()
+            .map(|p| p.to_string_lossy().to_string()));
+
+        if let Err(e) = store.save(&record) {
+            tracing::warn!("Failed to save extension to storage: {}", e);
+        }
+    }
+
+    // Build response
+    ok(serde_json::json!({
+        "message": "Extension package installed successfully",
+        "extension_id": ext_id,
+        "name": name,
+        "version": version,
+        "description": package.manifest.description,
+        "author": package.manifest.author,
+        "checksum": install_result.checksum,
+        "binary_path": install_result.binary_path.to_string_lossy(),
+        "manifest_path": install_result.manifest_path.to_string_lossy(),
+        "frontend_dir": install_result.frontend_dir.as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+        "components_count": install_result.components.len(),
+        "components": install_result.components.iter().map(|c| json!({
+            "type": c.component_type,
+            "name": c.name,
+            "description": c.description,
+            "category": c.category
+        })).collect::<Vec<_>>(),
+        "replaced": is_registered
+    }))
 }

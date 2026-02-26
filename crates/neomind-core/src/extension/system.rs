@@ -452,8 +452,8 @@ pub enum ExtensionError {
     #[error("Execution failed: {0}")]
     ExecutionFailed(String),
 
-    #[error("Timeout")]
-    Timeout,
+    #[error("Timeout: {0}")]
+    Timeout(String),
 
     #[error("Not found: {0}")]
     NotFound(String),
@@ -508,6 +508,8 @@ pub enum ExtensionError {
 pub type Result<T> = std::result::Result<T, ExtensionError>;
 
 /// Type alias for dynamic extension
+/// Uses tokio::sync::RwLock for async compatibility.
+/// IMPORTANT: All operations on DynExtension must be within a Tokio runtime context.
 pub type DynExtension = Arc<tokio::sync::RwLock<Box<dyn Extension>>>;
 
 // ============================================================================

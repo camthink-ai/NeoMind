@@ -435,8 +435,9 @@ export function UnifiedAlertChannelsTab({
 
   // ========== DETAIL VIEW ==========
   if (view === 'detail' && selectedType) {
-    const typeChannels = getChannelsForType(selectedType.id)
-    const info = CHANNEL_TYPE_INFO[selectedType.id] || CHANNEL_TYPE_INFO.webhook
+    const typeId = selectedType.id || 'webhook'
+    const typeChannels = getChannelsForType(typeId)
+    const info = CHANNEL_TYPE_INFO[typeId] || CHANNEL_TYPE_INFO.webhook
     const pluginInstances = typeChannels.map(c => toPluginInstance(c))
 
     return (

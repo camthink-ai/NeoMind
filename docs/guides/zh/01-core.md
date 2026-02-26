@@ -131,33 +131,35 @@ pub trait Integration: Send + Sync {
 
 ### 4. Extension - 扩展接口
 
-定义了动态加载扩展的接口。
+定义了动态加载扩展的接口。V2 Extension trait 将指标和命令分离：
 
 ```rust
 #[async_trait]
 pub trait Extension: Send + Sync {
-    /// 获取元数据
+    /// 获取扩展元数据
     fn metadata(&self) -> &ExtensionMetadata;
 
-    /// 初始化
-    async fn initialize(&mut self, config: &serde_json::Value) -> Result<()>;
+    /// 声明扩展提供的指标
+    fn metrics(&self) -> &[MetricDescriptor] { &[] }
 
-    /// 启动
-    async fn start(&mut self) -> Result<()>;
+    /// 声明扩展支持的命令
+    fn commands(&self) -> &[ExtensionCommand] { &[] }
 
-    /// 停止
-    async fn stop(&mut self) -> Result<()>;
+    /// 执行命令（异步）
+    async fn execute_command(&self, command: &str, args: &Value) -> Result<Value>;
 
-    /// 关闭
-    async fn shutdown(&mut self) -> Result<()>;
+    /// 生成指标数据（同步，兼容动态库）
+    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> { Ok(Vec::new()) }
 
-    /// 健康检查
-    async fn health_check(&self) -> Result<bool>;
+    /// 健康检查（异步，可选）
+    async fn health_check(&self) -> Result<bool> { Ok(true) }
 
-    /// 处理命令
-    async fn handle_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value>;
+    /// 运行时配置（可选）
+    async fn configure(&mut self, config: &Value) -> Result<()> { Ok(()) }
 }
 ```
+
+完整 API 详情请参考 [扩展开发指南](16-extension-dev.md)。
 
 ### 5. DataSourceId - 数据源标识
 

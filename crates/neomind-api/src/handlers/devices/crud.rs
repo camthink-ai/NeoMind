@@ -79,8 +79,7 @@ pub async fn list_devices_handler(
     // This eliminates the N+1 query problem where status was queried twice per device
     struct DeviceWithStatus {
         config: neomind_devices::DeviceConfig,
-        status: neomind_devices::adapter::ConnectionStatus,
-        last_seen: i64,
+        device_status: neomind_devices::service::DeviceStatus,
     }
 
     let mut devices_with_status = Vec::new();
@@ -91,7 +90,6 @@ pub async fn list_devices_handler(
             .service
             .get_device_status(&config.device_id)
             .await;
-        let last_seen = device_status.last_seen;
 
         // Filter by device_type
         if let Some(ref filter_type) = pagination.device_type {
@@ -101,13 +99,18 @@ pub async fn list_devices_handler(
         }
 
         // Filter by status (using the already-queried status)
+        // Use is_connected() to properly check both status and last_seen timeout
         if let Some(ref filter_status) = pagination.status {
-            let status_str = match device_status.status {
-                AdapterConnectionStatus::Connected => "connected",
-                AdapterConnectionStatus::Disconnected => "disconnected",
-                AdapterConnectionStatus::Connecting => "connecting",
-                AdapterConnectionStatus::Reconnecting => "reconnecting",
-                AdapterConnectionStatus::Error => "error",
+            let is_connected = device_status.is_connected();
+            let status_str = if is_connected {
+                "connected"
+            } else {
+                match device_status.status {
+                    AdapterConnectionStatus::Connecting => "connecting",
+                    AdapterConnectionStatus::Reconnecting => "reconnecting",
+                    AdapterConnectionStatus::Error => "error",
+                    _ => "disconnected",
+                }
             };
             if status_str != filter_status {
                 continue;
@@ -116,8 +119,7 @@ pub async fn list_devices_handler(
 
         devices_with_status.push(DeviceWithStatus {
             config,
-            status: device_status.status,
-            last_seen,
+            device_status,
         });
     }
 
@@ -134,16 +136,14 @@ pub async fn list_devices_handler(
     let mut dtos = Vec::new();
     for device_with_status in paginated_devices {
         let config = device_with_status.config;
-        let device_status = device_with_status.status;
-        let last_seen_ts = device_with_status.last_seen;
+        let device_status = device_with_status.device_status;
+        let last_seen_ts = device_status.last_seen;
 
         let (plugin_id, plugin_name) = get_plugin_info(&config.adapter_id);
 
-        // Use the cached status instead of querying again
-        let online = match device_status {
-            AdapterConnectionStatus::Connected => true,
-            _ => false,
-        };
+        // Use is_connected() to properly check both status and last_seen timeout
+        // This ensures devices that haven't reported in >5 minutes show as offline
+        let online = device_status.is_connected();
 
         // Determine status string based on actual connectivity
         let status = if online {
@@ -154,8 +154,14 @@ pub async fn list_devices_handler(
         let status = convert_status(status);
 
         // Use cached last_seen instead of querying again
-        let last_seen = chrono::DateTime::from_timestamp(last_seen_ts, 0)
-            .unwrap_or_else(chrono::Utc::now);
+        // Handle the case where last_seen is 0 (never seen) - use registration time placeholder
+        let last_seen = if last_seen_ts == 0 {
+            // Device has never been seen - show as "never" in UI
+            chrono::DateTime::from_timestamp(0, 0).unwrap_or_else(chrono::Utc::now)
+        } else {
+            chrono::DateTime::from_timestamp(last_seen_ts, 0)
+                .unwrap_or_else(chrono::Utc::now)
+        };
 
         let instance = config_to_device_instance(&config, status, last_seen);
 

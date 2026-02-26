@@ -3,14 +3,16 @@
  *
  * Dynamic component rendering based on registry.
  * Uses component metadata to determine how to render each component type.
+ * Supports both static (built-in) and dynamic (extension-provided) components.
  */
 
-import { lazy, Suspense, memo, useMemo } from 'react'
+import { lazy, Suspense, memo, useMemo, useState, useEffect } from 'react'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import type { DashboardComponent, GenericComponentType } from '@/types/dashboard'
 import { getComponentMeta } from './registry'
+import { dynamicRegistry, dtoToComponentMeta } from './DynamicRegistry'
 
 // ============================================================================
 // Lazy Import Components
@@ -149,6 +151,7 @@ export interface RenderComponentProps {
 /**
  * Render a dashboard component based on its type
  * Uses the component registry to determine the appropriate component to render
+ * Supports both static (built-in) and dynamic (extension-provided) components
  *
  * Memoized to prevent unnecessary re-renders when parent updates.
  * Only re-renders when component.id, component.type, component.dataSource,
@@ -160,15 +163,92 @@ const ComponentRenderer = memo(function ComponentRenderer({
   style,
   onError,
 }: RenderComponentProps) {
-  const meta = getComponentMeta(component.type)
+  const componentType = component.type
+  const isDynamic = dynamicRegistry.isDynamic(componentType)
 
-  // Try to get component from generic or business component map
-  const Component = componentMap[component.type as GenericComponentType] || businessComponentMap[component.type]
+  // State for dynamic component loading
+  const [DynamicComponent, setDynamicComponent] = useState<React.ComponentType<any> | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<Error | null>(null)
+
+  // Load dynamic component when type changes
+  useEffect(() => {
+    if (!isDynamic) {
+      setDynamicComponent(null)
+      setLoadError(null)
+      return
+    }
+
+    setLoading(true)
+    setLoadError(null)
+
+    dynamicRegistry.loadComponent(componentType)
+      .then((module) => {
+        if (module) {
+          // Handle different export formats
+          // - function: regular component
+          // - object with $$typeof: forwardRef, memo, etc.
+          // - object with default: module default export
+          let Component: React.ComponentType<any> | null = null
+
+          if (typeof module === 'function') {
+            Component = module as React.ComponentType
+          } else if (typeof module === 'object' && module !== null) {
+            // Check if it's a forwardRef/memo component
+            if ((module as any).$$typeof || typeof (module as any).render === 'function') {
+              Component = module as React.ComponentType
+            } else if ('default' in module) {
+              // Module default export
+              const defaultExport = (module as { default: unknown }).default
+              if (typeof defaultExport === 'function') {
+                Component = defaultExport as React.ComponentType
+              } else if (typeof defaultExport === 'object' && defaultExport !== null) {
+                // Default export might be forwardRef/memo
+                if ((defaultExport as any).$$typeof || typeof (defaultExport as any).render === 'function') {
+                  Component = defaultExport as React.ComponentType
+                }
+              }
+            }
+          }
+
+          if (Component) {
+            setDynamicComponent(() => Component as React.ComponentType)
+          } else {
+            setLoadError(new Error(`Failed to load component: ${componentType} (invalid component type)`))
+          }
+        } else {
+          setLoadError(new Error(`Failed to load component: ${componentType}`))
+        }
+      })
+      .catch((err) => {
+        console.error(`[ComponentRenderer] loadComponent error for ${componentType}:`, err)
+        setLoadError(err)
+      })
+      .finally(() => {
+        setLoading(false)
+      })
+  }, [componentType, isDynamic])
+
+  // Get metadata (check both static and dynamic registries)
+  let meta = getComponentMeta(componentType)
+
+  // If not found in static registry, try dynamic registry
+  if (!meta && isDynamic) {
+    const dto = dynamicRegistry.getMeta(componentType)
+    if (dto) {
+      meta = dtoToComponentMeta(dto)
+    }
+  }
+
+  // Try to get component from generic or business component map (static components)
+  const StaticComponent = componentMap[component.type as GenericComponentType] || businessComponentMap[component.type]
+
+  // Determine which component to render
+  const Component = isDynamic ? DynamicComponent : StaticComponent
 
   // Extract specific values for stable dependencies
   // Use individual properties instead of entire component object to prevent unnecessary re-creates
   const componentId = component.id
-  const componentType = component.type
   const componentTitle = component.title
   const componentConfig = (component as any).config || {}
   const componentDataSource = (component as any).dataSource
@@ -201,6 +281,27 @@ const ComponentRenderer = memo(function ComponentRenderer({
 
     return builtProps
   }, [componentId, componentType, componentTitle, componentConfig, componentDataSource, componentDisplay, className, style])
+
+  // Show loading state for dynamic components
+  if (isDynamic && loading) {
+    return <ComponentSkeleton meta={meta} className={className} />
+  }
+
+  // Show error state for dynamic component load failures
+  if (isDynamic && loadError) {
+    return (
+      <Card className={cn('border-destructive/50', className)}>
+        <div className="flex items-center justify-center h-full min-h-[120px] p-4 text-center">
+          <div className="text-destructive">
+            <p className="font-medium">Component Load Failed</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {loadError.message}
+            </p>
+          </div>
+        </div>
+      </Card>
+    )
+  }
 
   // Handle unknown component types (after hooks to follow React Hooks rules)
   if (!meta || !Component) {

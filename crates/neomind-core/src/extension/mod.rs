@@ -62,6 +62,7 @@
 
 pub mod executor;
 pub mod loader;
+pub mod package;
 pub mod registry;
 pub mod safety;
 pub mod stream;
@@ -70,6 +71,7 @@ pub mod types;
 
 pub use executor::{CommandExecutor, CommandResult, UnifiedStorage};
 pub use loader::{NativeExtensionLoader, WasmExtensionLoader};
+pub use package::{detect_platform, ExtensionPackage, InstallResult, PACKAGE_FORMAT, PACKAGE_FORMAT_VERSION};
 pub use registry::{ExtensionInfo, ExtensionRegistry, ExtensionRegistryTrait};
 pub use stream::{
     ClientInfo, DataChunk, FlowControl, SessionStats, StreamCapability, StreamDataType,

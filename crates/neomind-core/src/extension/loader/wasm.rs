@@ -9,13 +9,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::RwLock;
 
 use serde_json::Value;
-use tokio::sync::RwLock;
+use tokio::sync::RwLock as TokioRwLock;
 
 use crate::extension::system::{
     CommandDefinition, DynExtension, Extension, ExtensionMetadata as SystemMetadata,
-    ExtensionMetricValue, MetricDataType, MetricDescriptor, ParamMetricValue,
+    ExtensionMetricValue, MetricDataType, MetricDescriptor, ParamMetricValue, ParameterDefinition,
 };
 use crate::extension::types::{ExtensionError, Result};
 use neomind_sandbox::{Sandbox, SandboxConfig};
@@ -128,7 +129,7 @@ impl Extension for WasmExtension {
 
                     // Cache all found metric values
                     if !values_to_cache.is_empty() {
-                        let mut values = self.metric_values.write().await;
+                        let mut values = self.metric_values.write().unwrap();
                         for (name, value) in values_to_cache {
                             values.insert(name, value);
                         }
@@ -142,43 +143,51 @@ impl Extension for WasmExtension {
 
     fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
         // Return cached metric values
-        let values = self.metric_values.blocking_read();
-        let mut result = Vec::new();
+        // Use try_read() instead of blocking_read() to avoid runtime issues
+        match self.metric_values.try_read() {
+            Ok(values) => {
+                let mut result = Vec::new();
 
-        for metric in &self.metrics {
-            if let Some(value) = values.get(&metric.name) {
-                // Convert JSON value to extension metric value
-                let metric_value = match metric.data_type {
-                    MetricDataType::Float => value.as_f64().map(|v| ExtensionMetricValue {
-                        name: metric.name.clone(),
-                        value: v.into(),
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                    }),
-                    MetricDataType::Integer => value.as_i64().map(|v| ExtensionMetricValue {
-                        name: metric.name.clone(),
-                        value: v.into(),
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                    }),
-                    MetricDataType::Boolean => value.as_bool().map(|v| ExtensionMetricValue {
-                        name: metric.name.clone(),
-                        value: v.into(),
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                    }),
-                    MetricDataType::String => value.as_str().map(|v| ExtensionMetricValue {
-                        name: metric.name.clone(),
-                        value: v.into(),
-                        timestamp: chrono::Utc::now().timestamp_millis(),
-                    }),
-                    _ => None,
-                };
+                for metric in &self.metrics {
+                    if let Some(value) = values.get(&metric.name) {
+                        // Convert JSON value to extension metric value
+                        let metric_value = match metric.data_type {
+                            MetricDataType::Float => value.as_f64().map(|v| ExtensionMetricValue {
+                                name: metric.name.clone(),
+                                value: v.into(),
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            }),
+                            MetricDataType::Integer => value.as_i64().map(|v| ExtensionMetricValue {
+                                name: metric.name.clone(),
+                                value: v.into(),
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            }),
+                            MetricDataType::Boolean => value.as_bool().map(|v| ExtensionMetricValue {
+                                name: metric.name.clone(),
+                                value: v.into(),
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            }),
+                            MetricDataType::String => value.as_str().map(|v| ExtensionMetricValue {
+                                name: metric.name.clone(),
+                                value: v.into(),
+                                timestamp: chrono::Utc::now().timestamp_millis(),
+                            }),
+                            _ => None,
+                        };
 
-                if let Some(v) = metric_value {
-                    result.push(v);
+                        if let Some(v) = metric_value {
+                            result.push(v);
+                        }
+                    }
                 }
+
+                Ok(result)
+            }
+            Err(_) => {
+                // Lock is already held, return empty metrics
+                Ok(Vec::new())
             }
         }
-
-        Ok(result)
     }
 
     async fn health_check(&self) -> Result<bool> {
@@ -252,12 +261,15 @@ impl WasmExtensionLoader {
 
         // Try to load metadata from sidecar JSON file
         let json_path = path.with_extension("json");
-        let (metadata, metrics, commands) = if json_path.exists() {
+        let (mut metadata, metrics, commands) = if json_path.exists() {
             self.load_metadata_from_json(&json_path)?
         } else {
             // Extract from filename
             self.metadata_from_filename(path)?
         };
+
+        // Ensure file_path is set to the WASM file path
+        metadata.file_path = Some(path.to_path_buf());
 
         // Load the WASM module into sandbox
         let module_name = metadata.id.clone();
@@ -278,7 +290,7 @@ impl WasmExtensionLoader {
         );
 
         // Wrap in Arc<RwLock<>> to match DynExtension type
-        let extension: DynExtension = Arc::new(RwLock::new(Box::new(wasm_ext)));
+        let extension: DynExtension = Arc::new(TokioRwLock::new(Box::new(wasm_ext)));
 
         Ok(LoadedWasmExtension { extension })
     }
@@ -310,7 +322,43 @@ impl WasmExtensionLoader {
             homepage: json.homepage.clone(),
             license: json.license.clone(),
             file_path: json.file_path,
-            config_parameters: None,
+            config_parameters: json.config_parameters.map(|params| {
+                params.into_iter().map(|p| {
+                    let param_type = match p.param_type.to_lowercase().as_str() {
+                        "integer" => MetricDataType::Integer,
+                        "float" | "number" => MetricDataType::Float,
+                        "boolean" | "bool" => MetricDataType::Boolean,
+                        "string" => MetricDataType::String,
+                        _ => MetricDataType::String,
+                    };
+                    let default_value = p.default.and_then(|v| match v {
+                        Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                Some(ParamMetricValue::Integer(i))
+                            } else if let Some(f) = n.as_f64() {
+                                Some(ParamMetricValue::Float(f))
+                            } else {
+                                None
+                            }
+                        }
+                        Value::Bool(b) => Some(ParamMetricValue::Boolean(b)),
+                        Value::String(s) => Some(ParamMetricValue::String(s)),
+                        Value::Null => Some(ParamMetricValue::Null),
+                        _ => None,
+                    });
+                    ParameterDefinition {
+                        name: p.name,
+                        display_name: p.display_name,
+                        description: p.description,
+                        param_type,
+                        required: p.required,
+                        default_value,
+                        min: p.min,
+                        max: p.max,
+                        options: p.options,
+                    }
+                }).collect()
+            }),
         };
 
         let metrics: Vec<MetricDescriptor> = json
@@ -488,6 +536,8 @@ struct WasmMetadataJson {
     metrics: Option<Vec<WasmMetricJson>>,
     #[serde(default)]
     commands: Option<Vec<WasmCommandJson>>,
+    #[serde(default)]
+    config_parameters: Option<Vec<WasmConfigParamJson>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -504,6 +554,27 @@ struct WasmMetricJson {
     max: Option<f64>,
     #[serde(default)]
     required: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct WasmConfigParamJson {
+    name: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default, rename = "type")]
+    param_type: String,
+    #[serde(default)]
+    required: bool,
+    #[serde(default)]
+    default: Option<serde_json::Value>,
+    #[serde(default)]
+    min: Option<f64>,
+    #[serde(default)]
+    max: Option<f64>,
+    #[serde(default)]
+    options: Vec<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]

@@ -474,6 +474,9 @@ export function DeviceDetail({
               <Clock className="h-5 w-5" />
               {selectedMetric && getMetricDisplayName(selectedMetric)}
             </DialogTitle>
+            <DialogDescription className="sr-only">
+              {t('devices:detailPage.metricHistory')}
+            </DialogDescription>
           </DialogHeader>
           <DialogContentBody className="max-h-[500px] overflow-y-auto pr-4">
               {currentMetricData.length > 0 ? (
@@ -538,6 +541,10 @@ export function DeviceDetail({
       {/* Image Preview Dialog */}
       <Dialog open={imagePreviewOpen} onOpenChange={setImagePreviewOpen}>
         <DialogContent className="sm:max-w-4xl rounded-2xl p-2">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{t('devices:detailPage.preview')}</DialogTitle>
+            <DialogDescription>{t('devices:detailPage.imagePreview')}</DialogDescription>
+          </DialogHeader>
           <button
             onClick={() => setImagePreviewOpen(false)}
             className="absolute right-4 top-4 rounded-full bg-black/50 p-2 text-white hover:bg-black/70 transition-colors z-10"

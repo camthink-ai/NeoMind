@@ -103,31 +103,25 @@ function toUnifiedPluginType(type: BackendTypeDefinition, t: (key: string) => st
   const info = getLlmProviderInfo(type.id, t)
 
   // Filter out system-managed fields from config schema
-  const filteredSchema: PluginConfigSchema = type.config_schema
+  const configSchema = type.config_schema as any
+  const filteredSchema: PluginConfigSchema = configSchema
     ? {
-        ...type.config_schema,
+        type: 'object' as const,
         properties: Object.fromEntries(
-          Object.entries(type.config_schema.properties).filter(
-            ([key]) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(key)
+          Object.entries(configSchema.properties || {}).filter(
+            ([key]) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(key as string)
           )
+        ) as any,
+        required: (configSchema.required || []).filter(
+          (field: string) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(field)
         ),
-        required: type.config_schema.required?.filter(
-          (field) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(field)
-        ),
-        ui_hints: type.config_schema.ui_hints
-          ? {
-              ...type.config_schema.ui_hints,
-              field_order: type.config_schema.ui_hints.field_order?.filter(
-                (field) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(field)
-              ),
-            }
-          : undefined,
+        ui_hints: configSchema.ui_hints || undefined,
       }
     : {
         type: 'object',
         properties: {},
         required: [],
-        ui_hints: {},
+        ui_hints: undefined,
       }
 
   return {
@@ -348,8 +342,9 @@ export function UnifiedLLMBackendsTab({
 
   // ========== DETAIL VIEW ==========
   if (view === 'detail' && selectedType) {
-    const typeInstances = getInstancesForType(selectedType.id)
-    const info = getLlmProviderInfo(selectedType.id, t)
+    const typeId = selectedType.id || 'ollama'
+    const typeInstances = getInstancesForType(typeId)
+    const info = getLlmProviderInfo(typeId, t)
     const pluginInstances = typeInstances.map(i => toPluginInstance(i, activeBackendId))
 
     return (

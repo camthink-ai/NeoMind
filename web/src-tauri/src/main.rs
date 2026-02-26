@@ -28,12 +28,13 @@ impl ServerState {
             .timeout(Duration::from_millis(500))
             .build();
 
-        if client.is_err() {
-            // Fallback to TCP check if HTTP client fails to build
-            return self.wait_for_server_ready_tcp(timeout_secs);
-        }
-
-        let client = client.unwrap();
+        let client = match client {
+            Ok(client) => client,
+            Err(_) => {
+                // Fallback to TCP check if HTTP client fails to build
+                return self.wait_for_server_ready_tcp(timeout_secs);
+            }
+        };
 
         for attempt in 0..max_attempts {
             // Try HTTP health check first
@@ -88,8 +89,10 @@ impl ServerState {
 
 impl Drop for ServerState {
     fn drop(&mut self) {
-        if let Some(rt) = self.runtime.lock().unwrap().take() {
-            rt.shutdown_background();
+        if let Ok(mut guard) = self.runtime.lock() {
+            if let Some(rt) = guard.take() {
+                rt.shutdown_background();
+            }
         }
     }
 }
@@ -128,8 +131,10 @@ fn clean_shutdown(app_handle: &AppHandle) {
     // Try to get server state and shutdown
     if let Some(state) = app_handle.try_state::<ServerState>() {
         // Shutdown the tokio runtime
-        if let Some(rt) = state.runtime.lock().unwrap().take() {
-            rt.shutdown_timeout(tokio::time::Duration::from_secs(2));
+        if let Ok(mut guard) = state.runtime.lock() {
+            if let Some(rt) = guard.take() {
+                rt.shutdown_timeout(tokio::time::Duration::from_secs(2));
+            }
         }
         // The server thread will be joined when ServerState is dropped
     }
@@ -201,18 +206,29 @@ struct TrayState {
 fn start_axum_server(state: tauri::State<ServerState>) -> Result<(), String> {
     let runtime_arc = Arc::clone(&state.runtime);
     let thread_handle = std::thread::spawn(move || {
-        let rt = runtime_arc
-            .lock()
-            .unwrap()
-            .take()
-            .expect("Runtime not available");
+        let rt = match state.runtime.lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => {
+                eprintln!("Failed to acquire runtime lock");
+                return;
+            }
+        };
+
+        let Some(rt) = rt else {
+            eprintln!("Runtime not available");
+            return;
+        };
+
         rt.block_on(async {
             if let Err(e) = edge_api::start_server().await {
                 eprintln!("Failed to start server: {}", e);
             }
         });
     });
-    *state.server_thread.lock().unwrap() = Some(thread_handle);
+    
+    if let Ok(mut guard) = state.server_thread.lock() {
+        *guard = Some(thread_handle);
+    }
     Ok(())
 }
 
@@ -238,7 +254,10 @@ pub fn run() {
         .manage(server_state)
         .setup(setup_app)
         .build(tauri::generate_context!())
-        .expect("Failed to build Tauri application")
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to build Tauri application: {}", e);
+            std::process::exit(1);
+        })
         .run(|app_handle, event| {
             match event {
                 #[cfg(target_os = "macos")]

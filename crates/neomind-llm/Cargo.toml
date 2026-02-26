@@ -20,6 +20,9 @@ async-trait = { workspace = true }
 # HTTP client for API backends
 reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
 
+# Concurrent data structures
+dashmap = "6"
+
 [features]
 default = ["ollama"]
 

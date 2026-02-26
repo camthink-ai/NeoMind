@@ -34,7 +34,7 @@ enum Command {
     /// Start the web server.
     Serve {
         /// Host to bind to.
-        #[arg(long, default_value = "127.0.0.1")]
+        #[arg(long, default_value = "0.0.0.0")]
         host: String,
         /// Port to bind to.
         #[arg(short, long, default_value_t = 9375)]

@@ -232,7 +232,7 @@ impl Tool for ExtensionTool {
                 ExtensionError::InvalidArguments(msg) => {
                     Ok(ToolOutput::error(format!("Invalid arguments: {}", msg)))
                 }
-                ExtensionError::Timeout => Ok(ToolOutput::error("Operation timed out".to_string())),
+                ExtensionError::Timeout(msg) => Ok(ToolOutput::error(msg)),
                 ExtensionError::Io(e) => Ok(ToolOutput::error(format!("IO error: {}", e))),
                 ExtensionError::Json(e) => Ok(ToolOutput::error(format!("JSON error: {}", e))),
                 ExtensionError::Other(msg) => Ok(ToolOutput::error(msg)),

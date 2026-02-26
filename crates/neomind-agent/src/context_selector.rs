@@ -224,11 +224,20 @@ impl IntentAnalyzer {
 
     /// Extract entities from query.
     async fn extract_entities(&self, query: &str, query_lower: &str) -> Vec<Entity> {
-        let mut entities = Vec::new();
+        // Pre-allocate with estimated capacity based on collection sizes
         let device_ids = self.device_ids.read().await;
         let metrics = self.metrics.read().await;
         let device_types = self.device_types.read().await;
         let commands = self.commands.read().await;
+
+        // Estimate: assume ~10% of items will match
+        let estimated_entities = (device_ids.len()
+            + metrics.len()
+            + device_types.len()
+            + commands.len())
+            / 10
+            + 1;
+        let mut entities = Vec::with_capacity(estimated_entities.min(50));
 
         // Find device IDs
         for device_id in &*device_ids {

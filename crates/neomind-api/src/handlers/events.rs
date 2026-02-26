@@ -195,6 +195,38 @@ fn extract_event_data(event: &NeoMindEvent) -> Value {
                 "quality": quality,
             })
         }
+        // ExtensionOutput: payload for extension metric/output events
+        NeoMindEvent::ExtensionOutput {
+            extension_id,
+            output_name,
+            value,
+            timestamp,
+            labels,
+            quality,
+        } => {
+            serde_json::json!({
+                "extension_id": extension_id,
+                "output_name": output_name,
+                "value": value,
+                "timestamp": timestamp,
+                "labels": labels,
+                "quality": quality,
+            })
+        }
+        // ExtensionLifecycle: payload for extension lifecycle events
+        NeoMindEvent::ExtensionLifecycle {
+            extension_id,
+            state,
+            message,
+            timestamp,
+        } => {
+            serde_json::json!({
+                "extension_id": extension_id,
+                "state": state,
+                "message": message,
+                "timestamp": timestamp,
+            })
+        }
         // For other event types, serialize the full event (they may have the type field, but frontend handles them)
         _ => serde_json::to_value(event).unwrap_or(Value::Null),
     }

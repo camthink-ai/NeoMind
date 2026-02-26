@@ -19,10 +19,9 @@ docs/guides/en/
 ├── 10-storage.md             # Storage layer module
 ├── 11-integrations.md        # Integration module
 ├── 12-commands.md            # Command queue module
-├── 13-extension-sdk.md        # Extension SDK module
 ├── 14-api.md                 # REST API module
 ├── 15-web.md                 # Frontend module
-└── 16-extension-dev.md        # Extension development guide
+└── 16-extension-dev.md       # Extension development guide
 ```
 
 ## Module Dependencies
@@ -95,7 +94,6 @@ graph TB
 | [Storage](10-storage.md) | 95% | Persistent storage, unified time-series DB |
 | [Integrations](11-integrations.md) | 65% | External system integration |
 | [Commands](12-commands.md) | 70% | Device command queue |
-| [Extension SDK](13-extension-sdk.md) | 85% | Extension SDK (V2 unified system) |
 | [API](14-api.md) | 90% | REST/WebSocket API, extension metrics |
 | [Web](15-web.md) | 80% | React frontend, Zustand state |
 | [Extension Dev](16-extension-dev.md) | New | Extension development tutorial |

@@ -19,10 +19,9 @@ docs/guides/zh/
 ├── 10-storage.md             # 存储层模块
 ├── 11-integrations.md        # 集成模块
 ├── 12-commands.md            # 命令队列模块
-├── 13-extension-sdk.md        # Extension SDK 模块
 ├── 14-api.md                 # REST API模块
 ├── 15-web.md                 # 前端模块
-└── 16-extension-dev.md        # 扩展开发指南（新增）
+└── 16-extension-dev.md       # 扩展开发指南（新增）
 ```
 
 ## 模块依赖关系
@@ -95,7 +94,6 @@ graph TB
 | [Storage](./10-storage.md) | 95% | 持久化存储、统一时序数据库 |
 | [Integrations](./11-integrations.md) | 65% | 外部系统集成 |
 | [Commands](./12-commands.md) | 70% | 设备命令队列 |
-| [Extension SDK](./13-extension-sdk.md) | 85% | 扩展SDK（V2统一系统） |
 | [API](./14-api.md) | 90% | REST/WebSocket API、扩展指标 |
 | [Web](./15-web.md) | 80% | React前端、Zustand状态管理 |
 | [Extension Dev](./16-extension-dev.md) | 新增 | 扩展开发教程 |

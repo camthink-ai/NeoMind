@@ -46,16 +46,17 @@ export default defineConfig({
     hmr: {
       overlay: true
     },
-    // Allow external access for mobile testing
+    // Allow external access for mobile/LAN testing
     strictPort: false,
-    host: true,
+    host: '0.0.0.0',  // Bind to all interfaces for LAN access
     proxy: {
       '/api': {
         // Use environment variable or default to localhost
-        // This allows accessing the dev server via IP address (e.g., for mobile testing)
-        target: process.env.VITE_API_TARGET || 'http://localhost:9375',
+        // For LAN access, set VITE_API_TARGET=http://<server-ip>:9375
+        target: process.env.VITE_API_TARGET || 'http://127.0.0.1:9375',
         changeOrigin: true,
         ws: true,
+        // Configure proxy to handle both localhost and LAN access
         configure: (proxy, _options) => {
           proxy.on('error', (err, req, _res) => {
             const code = (err as NodeJS.ErrnoException)?.code
@@ -90,31 +91,79 @@ export default defineConfig({
     // Performance: Use esbuild for faster minification
     minify: 'esbuild',
     target: 'es2020',
+    // Performance: Enable sourcemaps for production debugging (optional)
+    sourcemap: false,
     rollupOptions: {
       output: {
-        // Simplified chunking strategy to avoid ALL circular dependencies
-        // Put all node_modules in a single vendor chunk
+        // Optimized chunking strategy for better caching and smaller initial load
         manualChunks: (id) => {
-          // Application chunks - only split heavy pages
-          if (id.includes('/pages/login')) return 'page-login'
-          if (id.includes('/pages/setup')) return 'page-setup'
-          if (id.includes('/pages/dashboard-components/VisualDashboard')) return 'page-dashboard'
-          if (id.includes('/pages/plugins')) return 'page-plugins'
-          if (id.includes('/pages/agents') || id.includes('/pages/agents-components')) return 'page-agents'
-          if (id.includes('/pages/devices')) return 'page-devices'
-          if (id.includes('/pages/automation')) return 'page-automation'
-          if (id.includes('/pages/events')) return 'page-events'
-          if (id.includes('/pages/commands')) return 'page-commands'
-          if (id.includes('/pages/decisions')) return 'page-decisions'
-          if (id.includes('/pages/messages')) return 'page-messages'
-          if (id.includes('/pages/settings')) return 'page-settings'
-          if (id.includes('/pages/chat')) return 'page-chat'
-
-          // ALL node_modules in one chunk to eliminate circular dependencies
-          if (id.includes('node_modules')) {
-            return 'vendor'
+          // 1. Separate large visualization libraries
+          if (id.includes('node_modules/recharts') || id.includes('recharts')) {
+            return 'vendor-recharts'
           }
-
+          
+          // 2. Separate UI component libraries
+          if (id.includes('node_modules/@radix-ui')) {
+            return 'vendor-radix'
+          }
+          if (id.includes('node_modules/lucide-react')) {
+            return 'vendor-icons'
+          }
+          
+          // 3. State management
+          if (id.includes('node_modules/zustand')) {
+            return 'vendor-state'
+          }
+          
+          // 4. React core (shared across all pages)
+          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
+            return 'vendor-react'
+          }
+          
+          // 5. React Router
+          if (id.includes('node_modules/react-router')) {
+            return 'vendor-router'
+          }
+          
+          // 6. Page-level code splitting
+          if (id.includes('/pages/dashboard-components/VisualDashboard')) {
+            return 'page-dashboard'
+          }
+          if (id.includes('/pages/agents')) {
+            return 'page-agents'
+          }
+          if (id.includes('/pages/devices')) {
+            return 'page-devices'
+          }
+          if (id.includes('/pages/automation')) {
+            return 'page-automation'
+          }
+          if (id.includes('/pages/chat')) {
+            return 'page-chat'
+          }
+          if (id.includes('/pages/messages')) {
+            return 'page-messages'
+          }
+          if (id.includes('/pages/settings')) {
+            return 'page-settings'
+          }
+          if (id.includes('/pages/login') || id.includes('/pages/setup')) {
+            return 'page-auth'
+          }
+          
+          // 7. Heavy components
+          if (id.includes('node_modules/@codemirror')) {
+            return 'vendor-editor'
+          }
+          if (id.includes('node_modules/react-markdown')) {
+            return 'vendor-markdown'
+          }
+          
+          // 8. All other node_modules
+          if (id.includes('node_modules')) {
+            return 'vendor-core'
+          }
+          
           return undefined
         },
       },

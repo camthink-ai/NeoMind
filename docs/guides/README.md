@@ -25,7 +25,6 @@ docs/guides/
 │   ├── 10-storage.md      # Storage layer module
 │   ├── 11-integrations.md # Integration module
 │   ├── 12-commands.md     # Command queue module
-│   ├── 13-extension-sdk.md # Extension SDK module
 │   ├── 14-api.md         # REST API module
 │   ├── 15-web.md         # Frontend module
 │   └── 16-extension-dev.md # Extension development guide
@@ -51,7 +50,6 @@ docs/guides/
 | [Storage](en/10-storage.md) | 95% | Persistent storage, unified time-series DB |
 | [Integrations](en/11-integrations.md) | 65% | External system integration |
 | [Commands](en/12-commands.md) | 70% | Device command queue |
-| [Extension SDK](en/13-extension-sdk.md) | 85% | Extension SDK (V2 unified system) |
 | [API](en/14-api.md) | 90% | REST/WebSocket API, extension metrics |
 | [Web](en/15-web.md) | 80% | React frontend, Zustand state |
 | [Extension Dev](en/16-extension-dev.md) | New | Extension development tutorial |
@@ -72,7 +70,6 @@ docs/guides/
 | [Storage](zh/10-storage.md) | 95% | 持久化存储、统一时序数据库 |
 | [Integrations](zh/11-integrations.md) | 65% | 外部系统集成 |
 | [Commands](zh/12-commands.md) | 70% | 设备命令队列 |
-| [Extension SDK](zh/13-extension-sdk.md) | 85% | 扩展SDK（V2统一系统） |
 | [API](zh/14-api.md) | 90% | REST/WebSocket API、扩展指标 |
 | [Web](zh/15-web.md) | 80% | React前端、Zustand状态管理 |
 | [Extension Dev](zh/16-extension-dev.md) | 新增 | 扩展开发教程 |

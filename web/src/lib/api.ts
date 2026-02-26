@@ -20,8 +20,6 @@ import type {
   CommandStatsResponse,
   Rule,
   MemoryEntry,
-  Plugin,
-  PluginStatsDto,
   Extension,
   ExtensionStatsDto,
   ExtensionTypeDto,
@@ -1097,100 +1095,6 @@ export const api = {
       method: 'POST',
     }),
 
-  // ========== Plugins API ==========
-  // Matches backend: crates/api/src/handlers/plugins.rs
-  //
-  // Response format: { plugins: PluginDto[], count: number } (no success wrapper)
-
-  listPlugins: (params?: {
-    type?: string      // Filter by plugin_type (llm_backend, device_adapter, etc.)
-    state?: string     // Filter by state (Loaded, Running, Stopped, etc.)
-    enabled?: boolean  // Filter by enabled status
-    builtin?: boolean  // Include built-in plugins (true=default, false=extension only)
-  }) =>
-    fetchAPI<{ plugins: Plugin[]; count: number }>(
-      `/plugins${params ? `?${new URLSearchParams(
-        Object.entries(params).reduce((acc, [key, value]) => {
-          if (value !== undefined) acc[key] = String(value)
-          return acc
-        }, {} as Record<string, string>)
-      )}` : ''}`
-    ),
-  getPlugin: (id: string) =>
-    fetchAPI<{ plugin: Plugin }>(`/plugins/${id}`),
-
-  registerPlugin: (plugin: {
-    id: string
-    name: string
-    plugin_type: string
-    description?: string
-    path?: string
-    config?: Record<string, unknown>
-    auto_start?: boolean
-    enabled?: boolean
-  }) =>
-    fetchAPI<{ message: string; plugin_id: string }>('/plugins', {
-      method: 'POST',
-      body: JSON.stringify(plugin),
-    }),
-
-  unregisterPlugin: (id: string) =>
-    fetchAPI<{ message: string }>(`/plugins/${id}`, {
-      method: 'DELETE',
-    }),
-
-  enablePlugin: (id: string) =>
-    fetchAPI<{ message: string }>(`/plugins/${id}/enable`, {
-      method: 'POST',
-    }),
-
-  disablePlugin: (id: string) =>
-    fetchAPI<{ message: string }>(`/plugins/${id}/disable`, {
-      method: 'POST',
-    }),
-
-  startPlugin: (id: string) =>
-    fetchAPI<{ message: string }>(`/plugins/${id}/start`, {
-      method: 'POST',
-    }),
-
-  stopPlugin: (id: string) =>
-    fetchAPI<{ message: string }>(`/plugins/${id}/stop`, {
-      method: 'POST',
-    }),
-
-  getPluginConfig: (id: string) =>
-    fetchAPI<{ plugin_id: string; config: Record<string, unknown> }>(`/plugins/${id}/config`),
-
-  updatePluginConfig: (id: string, config: Record<string, unknown>, reload?: boolean) =>
-    fetchAPI<{ message: string }>(`/plugins/${id}/config`, {
-      method: 'PUT',
-      body: JSON.stringify({ config, reload }),
-    }),
-
-  executePluginCommand: (id: string, command: string, parameters?: Record<string, unknown>) =>
-    fetchAPI<{ result: unknown }>(`/plugins/${id}/command`, {
-      method: 'POST',
-      body: JSON.stringify({ command, args: parameters }),
-    }),
-
-  getPluginStats: (id: string) =>
-    fetchAPI<{ plugin_id: string; stats: PluginStatsDto }>(`/plugins/${id}/stats`),
-
-  getPluginHealth: (id: string) =>
-    fetchAPI<{ status: string; plugin_id: string; state: string }>(`/plugins/${id}/health`),
-
-  discoverPlugins: () =>
-    fetchAPI<{ message: string; count: number }>('/plugins/discover', {
-      method: 'POST',
-    }),
-
-  listPluginsByType: (type: string) =>
-    fetchAPI<{ plugin_type: string; plugins: Plugin[]; count: number }>(`/plugins/type/${type}`),
-
-  getPluginTypesSummary: () =>
-    fetchAPI<{ types: Record<string, number>; total: number }>('/plugins/types'),
-
   // ========== Extensions API ==========
   // Matches backend: crates/api/src/handlers/extensions.rs
   //
@@ -1280,6 +1184,50 @@ export const api = {
    */
   stopExtension: (id: string) =>
     fetchAPI<{ message: string; extension_id: string }>(`/extensions/${id}/stop`, {
+      method: 'POST',
+    }),
+
+  /**
+   * Upload and install an extension package (.nep file)
+   * POST /api/extensions/upload/file
+   *
+   * For Tauri desktop: Uploads the file directly
+   * For web: Requires the file to be uploaded to a temporary location first
+   */
+  uploadExtensionFile: async (file: File) => {
+    // Check if running in Tauri using type-safe check
+    const isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI__
+
+    if (!isTauri) {
+      throw new Error('Direct file upload only supported in Tauri desktop app. Please use the file path method.')
+    }
+
+    // Use fetch directly to upload file
+    const arrayBuffer = await file.arrayBuffer()
+    const body = new Uint8Array(arrayBuffer)
+
+    const response = await fetch('http://localhost:9375/api/extensions/upload/file', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+      body,
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(error || 'Upload failed')
+    }
+
+    return await response.json()
+  },
+
+  /**
+   * Reload an extension from file
+   * POST /api/extensions/:id/reload
+   */
+  reloadExtension: (id: string) =>
+    fetchAPI<{ message: string; extension_id: string; config_applied: boolean }>(`/extensions/${id}/reload`, {
       method: 'POST',
     }),
 

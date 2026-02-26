@@ -26,6 +26,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -383,25 +384,18 @@ export function ComponentConfigDialog({
   // For desktop/tablet: use original Dialog
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="
-        max-w-[95vw] w-[1100px]
-        p-0 gap-0 h-[850px] overflow-hidden flex flex-col
-        [&>[data-radix-dialog-close]]:right-4 [&>[data-radix-dialog-close]]:top-5
-        rounded-2xl
-      ">
+      <DialogContent className="max-w-4xl p-0 sm:p-0 gap-0 flex flex-col">
         {/* Header */}
-        <DialogHeader className="px-4 py-4 border-b shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Settings className="h-5 w-5 text-muted-foreground" />
-              <div>
-                <DialogTitle className="text-base font-semibold p-0 h-auto">
-                  {t('componentConfig.editComponent')}
-                </DialogTitle>
-                <p className="text-xs text-muted-foreground mt-0.5 font-medium">
-                  {componentType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                </p>
-              </div>
+        <DialogHeader className="px-4 py-3 border-b shrink-0">
+          <div className="flex items-center gap-2.5">
+            <Settings className="h-4 w-4 text-muted-foreground" />
+            <div>
+              <DialogTitle className="text-sm font-medium">
+                {t('componentConfig.editComponent')}
+              </DialogTitle>
+              <p className="text-xs text-muted-foreground">
+                {componentType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+              </p>
             </div>
           </div>
         </DialogHeader>
@@ -411,19 +405,19 @@ export function ComponentConfigDialog({
           {/* Tablet (md-lg): Tab-based layout */}
           <div className="flex-1 flex flex-col lg:hidden overflow-hidden">
             <Tabs defaultValue="preview" className="flex-1 flex flex-col">
-              <TabsList className="grid w-full grid-cols-2 h-11 bg-muted/50 p-1.5 rounded-xl mx-4 mt-4">
-                <TabsTrigger value="preview" className="gap-2 rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                  <Eye className="h-4 w-4" />
-                  <span className="font-medium">{t('componentConfig.preview')}</span>
+              <TabsList className="grid w-full grid-cols-2 h-10 bg-muted/50 p-1 rounded-lg mx-3 mt-3">
+                <TabsTrigger value="preview" className="gap-1.5 rounded data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Eye className="h-3.5 w-3.5" />
+                  <span className="text-sm">{t('componentConfig.preview')}</span>
                 </TabsTrigger>
-                <TabsTrigger value="config" className="gap-2 rounded-lg data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                  <Settings className="h-4 w-4" />
-                  <span className="font-medium">{t('componentConfig.config')}</span>
+                <TabsTrigger value="config" className="gap-1.5 rounded data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Settings className="h-3.5 w-3.5" />
+                  <span className="text-sm">{t('componentConfig.config')}</span>
                 </TabsTrigger>
               </TabsList>
 
-              <TabsContent value="preview" className="flex-1 min-h-0 overflow-y-auto px-4 pb-4 mt-2">
-                <div className="rounded-xl border bg-muted/20 p-4">
+              <TabsContent value="preview" className="flex-1 min-h-0 overflow-y-auto px-3 pb-3 mt-2">
+                <div className="rounded-lg border bg-muted/20 p-3">
                   <ComponentPreview
                     key={previewKey}
                     componentType={componentType}
@@ -437,14 +431,14 @@ export function ComponentConfigDialog({
 
               <TabsContent value="config" className="flex-1 min-h-0 overflow-y-auto flex flex-col">
                 {hasDataSource && (
-                  <div className="rounded-xl border bg-card overflow-hidden mx-4 mt-2 shrink-0">
+                  <div className="rounded-lg border bg-card overflow-hidden mx-3 mt-2 shrink-0">
                     {shouldShowDataTransform ? (
                       <>
-                        <div className="flex items-center gap-2 px-4 py-3 border-b bg-muted/30">
+                        <div className="flex items-center gap-2 px-3 py-2.5 border-b bg-muted/30">
                           <div className="flex gap-1">
                             <button
                               onClick={() => setMobileDataSourceTab('datasource')}
-                              className={`px-3 h-8 text-sm rounded-none transition-colors border-b-2 ${
+                              className={`px-3 h-7 text-sm rounded-none transition-colors border-b-2 ${
                                 mobileDataSourceTab === 'datasource'
                                   ? 'border-primary text-foreground'
                                   : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -454,7 +448,7 @@ export function ComponentConfigDialog({
                             </button>
                             <button
                               onClick={() => setMobileDataSourceTab('transform')}
-                              className={`px-3 h-8 text-sm rounded-none transition-colors border-b-2 ${
+                              className={`px-3 h-7 text-sm rounded-none transition-colors border-b-2 ${
                                 mobileDataSourceTab === 'transform'
                                   ? 'border-primary text-foreground'
                                   : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -463,11 +457,11 @@ export function ComponentConfigDialog({
                               {t('componentConfig.transform')}
                             </button>
                           </div>
-                          {hasConfiguredDataSource && <CheckCircle2 className="h-4 w-4 text-green-500 ml-auto" />}
+                          {hasConfiguredDataSource && <CheckCircle2 className="h-3.5 w-3.5 text-green-500 ml-auto" />}
                         </div>
 
                         {mobileDataSourceTab === 'datasource' && (
-                          <div className="p-4">
+                          <div className="p-3">
                             <UnifiedDataSourceConfig
                               value={previewDataSource}
                               onChange={handleDataSourceChange}
@@ -479,7 +473,7 @@ export function ComponentConfigDialog({
                         )}
 
                         {mobileDataSourceTab === 'transform' && (
-                          <div className="p-4">
+                          <div className="p-3">
                             <DataTransformConfig
                               dataSource={previewDataSource}
                               onChange={handleDataTransformChange}
@@ -490,12 +484,12 @@ export function ComponentConfigDialog({
                       </>
                     ) : (
                       <>
-                        <div className="flex items-center gap-2 px-4 py-3 border-b bg-muted/30">
+                        <div className="flex items-center gap-2 px-3 py-2.5 border-b bg-muted/30">
                           <Settings className="h-4 w-4 text-primary" />
                           <span className="text-sm font-semibold">{t('componentConfig.dataSourceConfig')}</span>
                           {hasConfiguredDataSource && <CheckCircle2 className="h-4 w-4 text-green-500 ml-auto" />}
                         </div>
-                        <div className="p-4">
+                        <div className="p-3">
                           <UnifiedDataSourceConfig
                             value={previewDataSource}
                             onChange={handleDataSourceChange}
@@ -510,8 +504,8 @@ export function ComponentConfigDialog({
                 )}
 
                 {(hasStyleConfig || hasDisplayConfig) && (
-                  <Tabs value={configTabValue} onValueChange={(v) => setConfigTabValue(v as 'style' | 'display')} className="flex-1 flex flex-col min-h-0 mx-4 mt-3 overflow-hidden">
-                    <TabsList className="w-full justify-start bg-muted/50 p-1 rounded-xl h-11 shrink-0">
+                  <Tabs value={configTabValue} onValueChange={(v) => setConfigTabValue(v as 'style' | 'display')} className="flex-1 flex flex-col min-h-0 mx-3 mt-2 overflow-hidden">
+                    <TabsList className="w-auto justify-start bg-muted/50 p-1 rounded-lg h-10 shrink-0">
                       {hasStyleConfig && (
                         <TabsTrigger value="style" className="gap-2 data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-lg">
                           {t('componentConfig.style')}
@@ -539,12 +533,12 @@ export function ComponentConfigDialog({
                 )}
 
                 {!hasDataSource && !hasStyleConfig && !displaySections.length && allSections.length > 0 && (
-                  <div className="rounded-xl border bg-card overflow-hidden m-4 mt-2">
-                    <div className="flex items-center gap-2 px-4 py-3 border-b bg-muted/30">
-                      <Settings className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-semibold">{t('componentConfig.configOptions')}</span>
+                  <div className="rounded-lg border bg-card overflow-hidden mx-3 mt-2">
+                    <div className="flex items-center gap-2 px-3 py-2.5 border-b bg-muted/30">
+                      <Settings className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="text-sm font-medium">{t('componentConfig.configOptions')}</span>
                     </div>
-                    <div className="p-4">
+                    <div className="p-3">
                       <ConfigRenderer sections={allSections} />
                     </div>
                   </div>
@@ -570,14 +564,14 @@ export function ComponentConfigDialog({
 
               {(hasStyleConfig || hasDisplayConfig) && (
                 <Tabs value={configTabValue} onValueChange={(v) => setConfigTabValue(v as 'style' | 'display')} className="flex-1 flex flex-col min-h-0">
-                  <TabsList className="w-full justify-start rounded-none border-b bg-transparent px-3 h-10 shrink-0">
+                  <TabsList className="w-auto justify-start bg-muted/50 p-1 rounded-lg px-3 h-10 shrink-0">
                     {hasStyleConfig && (
-                      <TabsTrigger value="style" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none">
+                      <TabsTrigger value="style" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded">
                         {t('componentConfig.style')}
                       </TabsTrigger>
                     )}
                     {hasDisplayConfig && (
-                      <TabsTrigger value="display" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none">
+                      <TabsTrigger value="display" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded">
                         {t('componentConfig.display')}
                       </TabsTrigger>
                     )}
@@ -608,7 +602,7 @@ export function ComponentConfigDialog({
             {hasDataSource && (
               <div className="w-1/2 flex flex-col overflow-hidden bg-background">
                 <div className="flex-1 min-h-0 flex flex-col">
-                  <div className="flex items-center gap-2 px-4 py-2 bg-muted/30 border-b shrink-0">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b shrink-0">
                     <div className="flex gap-1">
                       <button
                         onClick={() => setRightDataSourceTab('datasource')}
@@ -646,7 +640,7 @@ export function ComponentConfigDialog({
                         maxSources={maxSources}
                       />
                     ) : (
-                      <div className="flex-1 overflow-y-auto p-4">
+                      <div className="flex-1 overflow-y-auto p-3">
                         <DataTransformConfig
                           dataSource={previewDataSource}
                           onChange={handleDataTransformChange}
@@ -668,14 +662,14 @@ export function ComponentConfigDialog({
         </div>
 
         {/* Desktop Footer */}
-        <div className="px-6 py-4 border-t flex justify-end gap-3 shrink-0 bg-muted/20">
-          <Button variant="outline" onClick={onClose} className="h-10 px-5 rounded-lg">
+        <DialogFooter className="px-4 py-3 border-t bg-muted/30">
+          <Button variant="outline" size="sm" onClick={onClose}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={onSave} className="h-10 px-5 rounded-lg">
+          <Button size="sm" onClick={onSave}>
             {t('common.saveChanges')}
           </Button>
-        </div>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

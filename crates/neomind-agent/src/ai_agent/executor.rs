@@ -39,8 +39,9 @@ use tokio::sync::RwLock;
 use neomind_core::datasource::DataSourceId;
 
 use crate::agent::types::LlmBackend;
+use crate::agent::semantic_mapper::SemanticToolMapper;
 use crate::error::{NeoMindError, Result as AgentResult};
-use crate::prompts::CONVERSATION_CONTEXT_ZH;
+use crate::prompts::{CONVERSATION_CONTEXT_EN, CONVERSATION_CONTEXT_ZH};
 
 /// Internal representation of image content for multimodal LLM messages.
 #[allow(dead_code)]
@@ -791,8 +792,9 @@ pub struct AgentExecutor {
     llm_backend_store: Option<Arc<LlmBackendStore>>,
     /// Event-triggered agents cache
     event_agents: Arc<RwLock<HashMap<String, AiAgent>>>,
-    /// Track recent executions to prevent duplicates (agent_id, device_id, metric -> timestamp)
-    recent_executions: Arc<RwLock<HashMap<(String, String, String), i64>>>,
+    /// Track recent executions to prevent duplicates (agent_id, device_id -> timestamp)
+    /// Deduplicates by device only, not by individual metrics
+    recent_executions: Arc<RwLock<HashMap<(String, String), i64>>>,
     /// LLM runtime cache: backend_id -> runtime
     /// Key format: "{backend_type}:{endpoint}:{model}" for cache invalidation
     llm_runtime_cache:
@@ -1439,10 +1441,12 @@ Respond in JSON format:
                     .await
                 {
                     // Check for duplicate execution within the last 5 seconds
-                    let key = (agent.id.clone(), device_id.clone(), metric.to_string());
+                    // Deduplicate by (agent_id, device_id) - only trigger once per device
+                    // regardless of how many metrics changed
+                    let dedup_key = (agent.id.clone(), device_id.clone());
                     let recent = self.recent_executions.read().await;
                     let is_duplicate = recent
-                        .get(&key)
+                        .get(&dedup_key)
                         .map(|&timestamp| now - timestamp < 5)
                         .unwrap_or(false);
                     drop(recent);
@@ -1460,7 +1464,7 @@ Respond in JSON format:
                     // Mark this execution as recent
                     {
                         let mut recent = self.recent_executions.write().await;
-                        recent.insert(key, now);
+                        recent.insert(dedup_key, now);
                     }
 
                     tracing::info!(
@@ -3071,6 +3075,21 @@ Respond in JSON format:
             .cloned()
             .collect();
 
+        // Extract device IDs and their bound metrics from Metric resources
+        // Format: "device_id:metric_name"
+        let mut device_bound_metrics: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for resource in &metric_resources {
+            let parts: Vec<&str> = resource.resource_id.split(':').collect();
+            if parts.len() == 2 {
+                let (device_id, metric_name) = (parts[0], parts[1]);
+                device_bound_metrics
+                    .entry(device_id.to_string())
+                    .or_default()
+                    .push(metric_name.to_string());
+            }
+        }
+
         let device_resources: Vec<_> = agent
             .resources
             .iter()
@@ -3113,7 +3132,7 @@ Respond in JSON format:
 
         // Collect device data in parallel
         let device_data = self
-            .collect_device_data_parallel(agent, device_resources, timestamp)
+            .collect_device_data_parallel(agent, device_resources, device_bound_metrics, timestamp)
             .await?;
         tracing::debug!(
             agent_id = %agent.id,
@@ -3419,6 +3438,7 @@ Respond in JSON format:
         &self,
         _agent: &AiAgent, // Reserved for future use
         device_ids: Vec<String>,
+        bound_metrics: std::collections::HashMap<String, Vec<String>>,
         timestamp: i64,
     ) -> AgentResult<Vec<DataCollected>> {
         // If no device IDs, return empty data without requiring services
@@ -3448,10 +3468,17 @@ Respond in JSON format:
             .map(|device_id| {
                 let device_service = device_service.clone();
                 let storage = storage.clone();
+                let bound_metrics_for_device = bound_metrics.get(&device_id).cloned();
                 async move {
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(QUERY_TIMEOUT_SECS),
-                        Self::collect_single_device_data(device_service, storage, &device_id, timestamp)
+                        Self::collect_single_device_data(
+                            device_service,
+                            storage,
+                            &device_id,
+                            bound_metrics_for_device,
+                            timestamp
+                        )
                     ).await {
                         Ok(result) => result,
                         Err(_) => {
@@ -3476,11 +3503,12 @@ Respond in JSON format:
     ///
     /// This collects:
     /// 1. Device metadata (device_info)
-    /// 2. Latest data point for ALL available metrics (not just images)
+    /// 2. Latest data point for bound metrics (or ALL metrics if no specific bindings)
     async fn collect_single_device_data(
         device_service: Arc<DeviceService>,
         storage: Arc<neomind_storage::TimeSeriesStore>,
         device_id: &str,
+        bound_metrics: Option<Vec<String>>,
         timestamp: i64,
     ) -> AgentResult<Vec<DataCollected>> {
         let mut data = Vec::new();
@@ -3501,17 +3529,28 @@ Respond in JSON format:
                 timestamp,
             });
 
-            // Get all available metrics for this device
+            // Determine which metrics to collect
+            // If bound_metrics is specified, only collect those; otherwise collect all
+            let metrics: Vec<String> = if let Some(ref bound) = bound_metrics {
+                tracing::debug!(
+                    device_id = %device_id,
+                    bound_metrics = ?bound,
+                    "[COLLECT] Using bound metrics for device"
+                );
+                bound.clone()
+            } else {
+                // Get all available metrics for this device
+                let all_metrics = storage.list_metrics(device_id).await.unwrap_or_default();
+                tracing::debug!(
+                    device_id = %device_id,
+                    metrics_count = all_metrics.len(),
+                    "[COLLECT] Found all metrics for device (no binding)"
+                );
+                all_metrics
+            };
+
             let end_time = chrono::Utc::now().timestamp();
             let start_time = end_time - (3600); // Last 1 hour for regular metrics
-
-            let metrics = storage.list_metrics(device_id).await.unwrap_or_default();
-
-            tracing::debug!(
-                device_id = %device_id,
-                metrics_count = metrics.len(),
-                "[COLLECT] Found metrics for device"
-            );
 
             // Image metrics to check separately (only collect one image)
             let image_metric_names = vec![
@@ -4740,8 +4779,19 @@ Respond in JSON format:
 
         // === SYSTEM PROMPT - Restore original working structure ===
         // This was the proven working format - don't over-engineer it
-        let role_prompt =
-            "You are an IoT automation assistant. Output ONLY valid JSON. No other text.";
+
+        // Detect language from user_prompt to determine response language
+        let detected_language = SemanticToolMapper::detect_language(&agent.user_prompt);
+        let is_chinese = matches!(
+            detected_language,
+            crate::agent::semantic_mapper::Language::Chinese | crate::agent::semantic_mapper::Language::Mixed
+        );
+
+        let role_prompt = if is_chinese {
+            "你是一个物联网自动化助手。只输出有效的JSON格式，不要输出其他任何文字。"
+        } else {
+            "You are an IoT automation assistant. Output ONLY valid JSON. No other text."
+        };
 
         // Get current time context for temporal understanding
         let time_context = get_time_context();
@@ -4760,35 +4810,71 @@ Respond in JSON format:
             format!("{}\n\n{}", available_commands, available_data_sources)
         };
 
-        let system_prompt = if has_valid_images {
-            format!(
-                "{}\n\n{}\n\n# 输出格式 - 仅输出JSON，不要输出其他任何文字\n{{\n  \"situation_analysis\": \"图像内容描述\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"分析步骤\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"描述\", \"action\": \"log或device:command\", \"rationale\": \"理由\", \"confidence\": 0.8}}],\n  \"conclusion\": \"结论\"\n}}\n\n# 用户指令\n{}",
-                role_prompt, resources_info, agent.user_prompt
+        // Language-specific templates
+        let (output_format_header, user_instruction_header) = if is_chinese {
+            (
+                "# 输出格式 - 仅输出JSON，不要输出其他任何文字",
+                "# 用户指令"
             )
         } else {
-            format!(
-                "{}\n\n{}\n\n# 输出格式 - 仅输出JSON，不要输出其他任何文字\n{{\n  \"situation_analysis\": \"情况分析\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"步骤\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"描述\", \"action\": \"log或device:command\", \"rationale\": \"理由\", \"confidence\": 0.8}}],\n  \"conclusion\": \"结论\"\n}}\n\n# 用户指令\n{}",
-                role_prompt, resources_info, agent.user_prompt
+            (
+                "# Output Format - Output ONLY valid JSON, no other text",
+                "# User Instruction"
             )
+        };
+
+        let system_prompt = if has_valid_images {
+            if is_chinese {
+                format!(
+                    "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"图像内容描述\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"分析步骤\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"描述\", \"action\": \"log或device:command\", \"rationale\": \"理由\", \"confidence\": 0.8}}],\n  \"conclusion\": \"结论\"\n}}\n\n{}\n{}",
+                    role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
+                )
+            } else {
+                format!(
+                    "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"Image content description\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"Analysis step\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"Description\", \"action\": \"log or device:command\", \"rationale\": \"Rationale\", \"confidence\": 0.8}}],\n  \"conclusion\": \"Conclusion\"\n}}\n\n{}\n{}",
+                    role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
+                )
+            }
+        } else {
+            if is_chinese {
+                format!(
+                    "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"情况分析\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"步骤\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"描述\", \"action\": \"log或device:command\", \"rationale\": \"理由\", \"confidence\": 0.8}}],\n  \"conclusion\": \"结论\"\n}}\n\n{}\n{}",
+                    role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
+                )
+            } else {
+                format!(
+                    "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"Situation analysis\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"Step\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"Description\", \"action\": \"log or device:command\", \"rationale\": \"Rationale\", \"confidence\": 0.8}}],\n  \"conclusion\": \"Conclusion\"\n}}\n\n{}\n{}",
+                    role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
+                )
+            }
         };
 
         // === CONTEXT MANAGEMENT ===
         // For image analysis, include minimal memory context
         let memory_context_for_msg = if !memory_context.is_empty() {
-            format!("\n\n# 历史参考\n{}", memory_context)
+            let history_header = if is_chinese { "# 历史参考" } else { "# Historical Reference" };
+            format!("\n\n{}\n{}", history_header, memory_context)
         } else {
             String::new()
         };
 
         // Build messages - multimodal if images present
         let messages = if has_valid_images {
+            let (current_data_header, important_note, image_only_text) = if is_chinese {
+                ("## 当前数据", "重要：只输出JSON格式，不要有任何其他文字。", "仅有图像数据")
+            } else {
+                ("## Current Data", "Important: Output ONLY JSON format, no other text.", "Image data only")
+            };
+
             let mut parts = vec![ContentPart::text(format!(
-                "## 当前数据\n{}\n\n重要：只输出JSON格式，不要有任何其他文字。",
+                "{}\n{}\n\n{}",
+                current_data_header,
                 if text_data_summary.is_empty() {
-                    "仅有图像数据".to_string()
+                    image_only_text.to_string()
                 } else {
                     text_data_summary.join("\n")
-                }
+                },
+                important_note
             ))];
 
             // Add images
@@ -4814,14 +4900,20 @@ Respond in JSON format:
         } else {
             // Text-only message
             let data_summary = if text_data_summary.is_empty() {
-                "No data available".to_string()
+                if is_chinese { "无数据" } else { "No data available" }.to_string()
             } else {
                 text_data_summary.join("\n")
             };
 
+            let (current_data_header, json_only_note) = if is_chinese {
+                ("## 当前数据", "只输出JSON，不要有其他文字。")
+            } else {
+                ("## Current Data", "Output ONLY JSON, no other text.")
+            };
+
             let mut user_msg_content = format!(
-                "## 当前数据\n{}\n\n只输出JSON，不要有其他文字。",
-                data_summary
+                "{}\n{}\n\n{}",
+                current_data_header, data_summary, json_only_note
             );
 
             if !memory_context_for_msg.is_empty() {
@@ -6350,15 +6442,34 @@ Respond in JSON format:
     ) -> Vec<Message> {
         let mut messages = Vec::new();
 
+        // Detect language from user_prompt to determine response language
+        let detected_language = SemanticToolMapper::detect_language(&agent.user_prompt);
+        let is_chinese = matches!(
+            detected_language,
+            crate::agent::semantic_mapper::Language::Chinese | crate::agent::semantic_mapper::Language::Mixed
+        );
+
         // 1. Generic system prompt with conversation context
-        let role_prompt = "你是一个 NeoMind 智能物联网系统的自动化助手。根据用户的指令分析数据、做出决策并执行相应操作。";
+        let (role_prompt, conversation_context, task_header) = if is_chinese {
+            (
+                "你是一个 NeoMind 智能物联网系统的自动化助手。根据用户的指令分析数据、做出决策并执行相应操作。",
+                CONVERSATION_CONTEXT_ZH,
+                "## 你的任务"
+            )
+        } else {
+            (
+                "You are an automation assistant for the NeoMind IoT system. Analyze data, make decisions, and execute operations based on user instructions.",
+                CONVERSATION_CONTEXT_EN,
+                "## Your Task"
+            )
+        };
 
         // Get current time context for temporal understanding
         let time_context = get_time_context();
 
         let system_prompt = format!(
-            "{}\n\n{}\n\n## 你的任务\n{}\n\n{}",
-            role_prompt, time_context, agent.user_prompt, CONVERSATION_CONTEXT_ZH
+            "{}\n\n{}\n\n{}\n{}\n\n{}",
+            role_prompt, time_context, task_header, agent.user_prompt, conversation_context
         );
         messages.push(Message::system(system_prompt));
 
@@ -6377,19 +6488,32 @@ Respond in JSON format:
                 })
                 .collect();
 
-            messages.push(Message::system(format!(
-                "## ⚠️ 用户最新指令 (必须严格遵循)\n\n\
-                用户在运行期间发送了以下消息，这些消息包含对执行策略的更新。\
-                **请务必将这些指令作为最高优先级，覆盖初始配置中的任何冲突规则：**\n\n\
-                {}\n\n\
-                请在分析当前情况时，严格按照上述用户指令进行决策。",
-                user_msgs_text.join("\n")
-            )));
+            let formatted_msg = if is_chinese {
+                format!(
+                    "## ⚠️ 用户最新指令 (必须严格遵循)\n\n\
+                    用户在运行期间发送了以下消息，这些消息包含对执行策略的更新。\
+                    **请务必将这些指令作为最高优先级，覆盖初始配置中的任何冲突规则：**\n\n\
+                    {}\n\n\
+                    请在分析当前情况时，严格按照上述用户指令进行决策。",
+                    user_msgs_text.join("\n")
+                )
+            } else {
+                format!(
+                    "## ⚠️ Latest User Instructions (Must Follow Strictly)\n\n\
+                    The user sent the following messages during runtime, containing updates to execution strategy.\
+                    **These instructions must be treated as highest priority, overriding any conflicting rules in the initial configuration:**\n\n\
+                    {}\n\n\
+                    When analyzing the current situation, strictly follow the above user instructions for decision-making.",
+                    user_msgs_text.join("\n")
+                )
+            };
+            messages.push(Message::system(formatted_msg));
         }
 
         // 3. Add conversation summary if available
         if let Some(ref summary) = agent.conversation_summary {
-            messages.push(Message::system(format!("## 历史对话摘要\n\n{}", summary)));
+            let summary_header = if is_chinese { "## 历史对话摘要" } else { "## Conversation Summary" };
+            messages.push(Message::system(format!("{}\n\n{}", summary_header, summary)));
         }
 
         // 4. Add recent conversation turns as context with intelligent filtering
@@ -6420,10 +6544,18 @@ Respond in JSON format:
         let recent_turns: Vec<_> = scored_turns.into_iter().take(context_window).collect();
 
         if !recent_turns.is_empty() {
-            messages.push(Message::system(format!(
-                "## 之前的执行历史 (最近 {} 次)\n\n请参考以下历史记录，避免重复告警，追踪趋势变化。",
-                recent_turns.len()
-            )));
+            let history_header = if is_chinese {
+                format!(
+                    "## 之前的执行历史 (最近 {} 次)\n\n请参考以下历史记录，避免重复告警，追踪趋势变化。",
+                    recent_turns.len()
+                )
+            } else {
+                format!(
+                    "## Previous Execution History (Last {})\n\nRefer to the following history to avoid duplicate alerts and track trend changes.",
+                    recent_turns.len()
+                )
+            };
+            messages.push(Message::system(history_header));
 
             // Add each turn as context (in reverse order since we sorted by relevance desc)
             // recent_turns is Vec<(&ConversationTurn, f64)>
@@ -6432,14 +6564,25 @@ Respond in JSON format:
                     .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
                     .unwrap_or_else(|| "Unknown".to_string());
 
-                let turn_context = format!(
-                    "### 历史执行 #{} ({})\n触发方式: {}\n分析: {}\n结论: {}",
-                    i + 1,
-                    timestamp_str,
-                    turn.trigger_type,
-                    turn.output.situation_analysis,
-                    turn.output.conclusion
-                );
+                let turn_context = if is_chinese {
+                    format!(
+                        "### 历史执行 #{} ({})\n触发方式: {}\n分析: {}\n结论: {}",
+                        i + 1,
+                        timestamp_str,
+                        turn.trigger_type,
+                        turn.output.situation_analysis,
+                        turn.output.conclusion
+                    )
+                } else {
+                    format!(
+                        "### Historical Execution #{} ({})\nTrigger: {}\nAnalysis: {}\nConclusion: {}",
+                        i + 1,
+                        timestamp_str,
+                        turn.trigger_type,
+                        turn.output.situation_analysis,
+                        turn.output.conclusion
+                    )
+                };
 
                 messages.push(Message::system(turn_context));
 
@@ -6451,25 +6594,32 @@ Respond in JSON format:
                         .iter()
                         .map(|d| format!("- {}", d.description))
                         .collect();
+                    let decisions_label = if is_chinese { "历史决策" } else { "Historical Decisions" };
                     messages.push(Message::system(format!(
-                        "历史决策:\n{}",
+                        "{}:\n{}",
+                        decisions_label,
                         decisions_summary.join("\n")
                     )));
                 }
             }
 
-            messages.push(Message::system(
+            let current_execution_note = if is_chinese {
                 "## 当前执行\n\n请参考上述历史，分析当前情况。特别注意：\n\
                 - 与之前数据相比的变化趋势\n\
                 - 之前报告的问题是否持续\n\
                 - 避免重复相同的分析或决策"
-                    .to_string(),
-            ));
+            } else {
+                "## Current Execution\n\nRefer to the history above when analyzing the current situation. Pay attention to:\n\
+                - Trend changes compared to previous data\n\
+                - Whether previously reported issues persist\n\
+                - Avoid repeating the same analysis or decisions"
+            };
+            messages.push(Message::system(current_execution_note.to_string()));
         }
 
         // 5. Current execution data
         let data_text = if current_data.is_empty() {
-            "无数据".to_string()
+            if is_chinese { "无数据" } else { "No data" }.to_string()
         } else {
             current_data
                 .iter()
@@ -6478,14 +6628,15 @@ Respond in JSON format:
                 .join("\n")
         };
 
+        let (current_data_header, data_sources_label, trigger_label, trigger_type_text, analysis_request) = if is_chinese {
+            ("## 当前数据", "数据来源", "触发方式", if event_data.is_some() { "事件触发" } else { "定时/手动" }, "请分析当前情况并做出决策。")
+        } else {
+            ("## Current Data", "Data Sources", "Trigger", if event_data.is_some() { "Event-triggered" } else { "Scheduled/Manual" }, "Please analyze the current situation and make decisions.")
+        };
+
         let current_input = format!(
-            "## 当前数据\n\n数据来源:\n{}\n\n触发方式: {}\n\n请分析当前情况并做出决策。",
-            data_text,
-            if event_data.is_some() {
-                "事件触发"
-            } else {
-                "定时/手动"
-            }
+            "{}\n\n{}:\n{}\n\n{}: {}\n\n{}",
+            current_data_header, data_sources_label, data_text, trigger_label, trigger_type_text, analysis_request
         );
 
         messages.push(Message::user(current_input));

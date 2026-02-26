@@ -136,7 +136,6 @@ NeoMind/
 | `rules` | `neomind-rules` | Pest DSL rule engine (legacy) |
 | `automation` | `neomind-automation` | Unified automations (rules + transforms) with NL2 automation |
 | `messages` | `neomind-messages` | Unified messaging and notification system |
-| `extension-sdk` | `neomind-extension-sdk` | Extension development SDK (Native + WASM) |
 | `commands` | `neomind-commands` | Command queue with retry and state tracking |
 | `integrations` | `neomind-integrations` | External system connectors |
 | `cli` | `neomind-cli` | Command line interface |

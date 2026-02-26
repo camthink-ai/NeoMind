@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use redb::{Database, ReadableTable, TableDefinition};
 use tracing::{error, info, warn};
 
@@ -52,9 +53,9 @@ pub struct ApiKeyInfo {
 /// Authentication state with persistent storage.
 #[derive(Clone)]
 pub struct AuthState {
-    /// API Keys storage (in-memory for fast access)
+    /// API Keys storage (in-memory for fast access) - using DashMap for concurrent access
     /// Maps hash -> (encrypted_key, ApiKeyInfo)
-    api_keys: Arc<RwLock<HashMap<String, (String, ApiKeyInfo)>>>,
+    api_keys: Arc<DashMap<String, (String, ApiKeyInfo)>>,
     /// Database path for persistence
     db_path: &'static str,
     /// Cryptographic service for key encryption
@@ -86,7 +87,7 @@ impl AuthState {
         };
 
         Self {
-            api_keys: Arc::new(RwLock::new(keys)),
+            api_keys: Arc::new(DashMap::from_iter(keys)),
             db_path,
             crypto,
         }
@@ -101,7 +102,7 @@ impl AuthState {
         let crypto = Arc::new(CryptoService::from_env_or_generate());
 
         Self {
-            api_keys: Arc::new(RwLock::new(HashMap::new())),
+            api_keys: Arc::new(DashMap::new()),
             db_path: ":memory:",
             crypto,
         }
@@ -186,13 +187,9 @@ impl AuthState {
                 hash_table.remove(&**key)?;
             }
 
-            // Insert all current keys (already encrypted)
-            let keys = self
-                .api_keys
-                .try_read()
-                .map_err(|_| "Failed to acquire read lock")?;
-
-            for (hash, (encrypted, info)) in keys.iter() {
+            // Insert all current keys (already encrypted) - DashMap iter is lock-free
+            for ref_item in self.api_keys.iter() {
+                let (hash, (encrypted, info)) = ref_item.pair();
                 table.insert(&**hash, encrypted.as_bytes())?;
                 let info_bytes = bincode::serialize(info)?;
                 hash_table.insert(&**hash, &*info_bytes)?;
@@ -256,23 +253,18 @@ impl AuthState {
     /// Validate an API key.
     pub fn validate_key(&self, key: &str) -> bool {
         let hash = self.crypto.hash_api_key(key);
-        if let Ok(keys) = self.api_keys.try_read() {
-            if let Some((_, info)) = keys.get(&hash) {
-                return info.active;
-            }
-        }
-        false
+        self.api_keys
+            .get(&hash)
+            .map(|item| item.value().1.active)
+            .unwrap_or(false)
     }
 
     /// List all API keys (for admin endpoints).
     /// Returns the masked keys (first 8 chars only) with info.
     pub async fn list_keys(&self) -> Vec<(String, ApiKeyInfo)> {
-        let keys = self.api_keys.read().await;
-        keys.iter()
-            .map(|(k, (_, v))| {
-                // Return masked key (hash) with info
-                (k.clone(), v.clone())
-            })
+        self.api_keys
+            .iter()
+            .map(|item| (item.key().clone(), item.value().1.clone()))
             .collect()
     }
 
@@ -293,10 +285,8 @@ impl AuthState {
             .encrypt_str(&key)
             .unwrap_or_else(|_| key.clone());
 
-        {
-            let mut keys = self.api_keys.write().await;
-            keys.insert(hash.clone(), (encrypted, info.clone()));
-        }
+        // DashMap insert is lock-free
+        self.api_keys.insert(hash.clone(), (encrypted, info.clone()));
 
         // Persist to database
         if let Err(e) = self.save_to_db(self.db_path) {
@@ -309,10 +299,7 @@ impl AuthState {
     /// Delete an API key and persist to database.
     pub async fn delete_key(&self, key: &str) -> bool {
         let hash = self.crypto.hash_api_key(key);
-        let removed = {
-            let mut keys = self.api_keys.write().await;
-            keys.remove(&hash).is_some()
-        };
+        let removed = self.api_keys.remove(&hash).is_some();
 
         if removed {
             // Persist to database
@@ -341,8 +328,10 @@ impl AuthState {
     /// Check if a key has a specific permission.
     pub fn check_permission(&self, key: &str, permission: &str) -> bool {
         let hash = self.crypto.hash_api_key(key);
-        if let Ok(keys) = self.api_keys.try_read() {
-            if let Some((_, info)) = keys.get(&hash) {
+        self.api_keys
+            .get(&hash)
+            .map(|item| {
+                let info = &item.value().1;
                 if !info.active {
                     return false;
                 }
@@ -351,10 +340,9 @@ impl AuthState {
                     return true;
                 }
                 // Check specific permission
-                return info.permissions.contains(&permission.to_string());
-            }
-        }
-        false
+                info.permissions.contains(&permission.to_string())
+            })
+            .unwrap_or(false)
     }
 }
 

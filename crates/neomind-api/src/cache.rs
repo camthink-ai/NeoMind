@@ -1,10 +1,10 @@
 //! Response caching layer for API endpoints.
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
+
+use dashmap::DashMap;
+use serde::{Deserialize, Serialize};
 
 /// Cache entry with expiration.
 #[derive(Debug, Clone)]
@@ -24,20 +24,28 @@ impl CacheEntry {
     }
 }
 
-/// In-memory response cache.
+/// In-memory response cache with LRU eviction.
 pub struct ResponseCache {
-    /// Cache entries keyed by request key
-    entries: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    /// Cache entries keyed by request key - using DashMap for concurrent access
+    entries: Arc<DashMap<String, CacheEntry>>,
     /// Default TTL for cache entries
     default_ttl: Duration,
+    /// Maximum number of entries before LRU eviction
+    max_entries: usize,
 }
 
 impl ResponseCache {
-    /// Create a new response cache.
+    /// Create a new response cache with default max entries.
     pub fn new(default_ttl: Duration) -> Self {
+        Self::with_max_entries(default_ttl, 10000)
+    }
+
+    /// Create a cache with max entries limit for LRU eviction.
+    pub fn with_max_entries(default_ttl: Duration, max_entries: usize) -> Self {
         Self {
-            entries: Arc::new(RwLock::new(HashMap::new())),
+            entries: Arc::new(DashMap::with_capacity(max_entries.min(1000))),
             default_ttl,
+            max_entries,
         }
     }
 
@@ -47,10 +55,11 @@ impl ResponseCache {
     }
 
     /// Get a cached response if available and not expired.
-    pub async fn get(&self, key: &str) -> Option<CachedResponse> {
-        let entries = self.entries.read().await;
-        entries.get(key).and_then(|entry| {
+    pub fn get(&self, key: &str) -> Option<CachedResponse> {
+        self.entries.get(key).and_then(|entry| {
             if entry.is_expired() {
+                drop(entry); // Release read lock before removing
+                self.entries.remove(key);
                 None
             } else {
                 Some(CachedResponse {
@@ -61,8 +70,13 @@ impl ResponseCache {
         })
     }
 
-    /// Store a response in the cache.
-    pub async fn put(&self, key: String, response: CachedResponse, ttl: Option<Duration>) {
+    /// Store a response in the cache with LRU eviction.
+    pub fn put(&self, key: String, response: CachedResponse, ttl: Option<Duration>) {
+        // Evict if at capacity
+        if self.entries.len() >= self.max_entries {
+            self.evict_expired_or_oldest();
+        }
+
         let expires_at =
             chrono::Utc::now().timestamp() + ttl.unwrap_or(self.default_ttl).as_secs() as i64;
 
@@ -72,37 +86,73 @@ impl ResponseCache {
             expires_at,
         };
 
-        let mut entries = self.entries.write().await;
-        entries.insert(key, entry);
+        self.entries.insert(key, entry);
+    }
+
+    /// Evict expired entries or the oldest entry if none expired.
+    fn evict_expired_or_oldest(&self) {
+        let mut oldest_time = i64::MAX;
+        let mut oldest_key = None;
+
+        // Find expired or oldest entry
+        for ref_item in self.entries.iter() {
+            let (key, entry) = ref_item.pair();
+            if entry.is_expired() {
+                self.entries.remove(key);
+                return;
+            }
+            if entry.expires_at < oldest_time {
+                oldest_time = entry.expires_at;
+                oldest_key = Some(key.clone());
+            }
+        }
+
+        // Remove oldest if no expired entries
+        if let Some(key) = oldest_key {
+            self.entries.remove(&key);
+        }
     }
 
     /// Invalidate a cache entry.
-    pub async fn invalidate(&self, key: &str) {
-        let mut entries = self.entries.write().await;
-        entries.remove(key);
+    pub fn invalidate(&self, key: &str) {
+        self.entries.remove(key);
     }
 
     /// Clear all cache entries.
-    pub async fn clear(&self) {
-        let mut entries = self.entries.write().await;
-        entries.clear();
+    pub fn clear(&self) {
+        self.entries.clear();
     }
 
     /// Clean up expired entries.
-    pub async fn cleanup(&self) {
-        let mut entries = self.entries.write().await;
-        entries.retain(|_, entry| !entry.is_expired());
+    pub fn cleanup(&self) {
+        let expired_keys: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|item| item.value().is_expired())
+            .map(|item| item.key().clone())
+            .collect();
+
+        for key in expired_keys {
+            self.entries.remove(&key);
+        }
     }
 
     /// Get cache statistics.
-    pub async fn stats(&self) -> CacheStats {
-        let entries = self.entries.read().await;
+    pub fn stats(&self) -> CacheStats {
         let now = chrono::Utc::now().timestamp();
-        let active = entries.values().filter(|e| e.expires_at > now).count();
-        let expired = entries.len() - active;
+        let mut active = 0;
+        let mut expired = 0;
+
+        for ref_item in self.entries.iter() {
+            if ref_item.value().expires_at > now {
+                active += 1;
+            } else {
+                expired += 1;
+            }
+        }
 
         CacheStats {
-            total_entries: entries.len(),
+            total_entries: self.entries.len(),
             active_entries: active,
             expired_entries: expired,
         }
@@ -114,6 +164,7 @@ impl Clone for ResponseCache {
         Self {
             entries: Arc::clone(&self.entries),
             default_ttl: self.default_ttl,
+            max_entries: self.max_entries,
         }
     }
 }

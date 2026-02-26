@@ -47,6 +47,7 @@ interface CloudExtension {
   categories: string[]
   homepage?: string | null
   metadata_url?: string | null
+  package_url?: string | null  // .nep package URL if available
 }
 
 interface MarketplaceListResponse {
@@ -77,6 +78,7 @@ interface FullExtensionMetadata {
   homepage?: string | null
   repository?: string | null
   readme_url?: string | null
+  package_url?: string | null  // .nep package URL if available
   capabilities: {
     tools: Array<{
       name: string
@@ -467,6 +469,12 @@ function ExtensionDetailView({
         <div className="flex items-center gap-2 mb-2">
           <h2 className="text-xl font-semibold">{extension.name}</h2>
           <Badge variant="outline">{extension.version}</Badge>
+          {extension.package_url && (
+            <Badge variant="default" className="text-xs">
+              <Package className="h-3 w-3 mr-1" />
+              .nep Package
+            </Badge>
+          )}
           {extension.categories.map((cat) => (
             <Badge key={cat} variant="secondary">
               {cat}
