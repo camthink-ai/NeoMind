@@ -15,7 +15,7 @@ use tauri::tray::TrayIconEvent;
 // Global state for the Axum server
 struct ServerState {
     runtime: Arc<Mutex<Option<Runtime>>>,
-    server_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    server_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
 impl ServerState {
@@ -204,9 +204,12 @@ struct TrayState {
 }
 
 fn start_axum_server(state: tauri::State<ServerState>) -> Result<(), String> {
+    // Clone the Arc before moving into the closure
     let runtime_arc = Arc::clone(&state.runtime);
+    let server_thread = Arc::clone(&state.server_thread);
+
     let thread_handle = std::thread::spawn(move || {
-        let rt = match state.runtime.lock() {
+        let rt = match runtime_arc.lock() {
             Ok(mut guard) => guard.take(),
             Err(_) => {
                 eprintln!("Failed to acquire runtime lock");
@@ -225,8 +228,8 @@ fn start_axum_server(state: tauri::State<ServerState>) -> Result<(), String> {
             }
         });
     });
-    
-    if let Ok(mut guard) = state.server_thread.lock() {
+
+    if let Ok(mut guard) = server_thread.lock() {
         *guard = Some(thread_handle);
     }
     Ok(())
@@ -245,7 +248,7 @@ pub fn run() {
 
     let server_state = ServerState {
         runtime: Arc::new(Mutex::new(Some(rt))),
-        server_thread: Mutex::new(None),
+        server_thread: Arc::new(Mutex::new(None)),
     };
 
     tauri::Builder::default()
