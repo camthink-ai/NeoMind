@@ -1398,6 +1398,18 @@ pub struct MarketplaceExtensionMetadata {
 
     #[serde(default)]
     pub safety: ExtensionSafety,
+
+    /// Configuration parameters for the extension
+    #[serde(default)]
+    pub config_parameters: Vec<ConfigParameterInfo>,
+
+    /// Dashboard components provided by this extension
+    #[serde(default)]
+    pub dashboard_components: Vec<DashboardComponentInfo>,
+
+    /// Permissions required by the extension
+    #[serde(default)]
+    pub permissions: Vec<String>,
 }
 
 /// Extension capabilities from metadata
@@ -1409,6 +1421,9 @@ pub struct ExtensionCapabilities {
     pub metrics: Vec<MetricInfo>,
     #[serde(default)]
     pub commands: Vec<CommandInfo>,
+    /// Streaming capability (for video/image processing extensions)
+    #[serde(default)]
+    pub streaming: Option<StreamingCapability>,
 }
 
 /// Tool descriptor from marketplace
@@ -1436,6 +1451,10 @@ pub struct MetricInfo {
     pub unit: String,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
 }
 
 /// Command info from marketplace
@@ -1448,6 +1467,70 @@ pub struct CommandInfo {
     pub description: String,
     #[serde(default)]
     pub parameters: serde_json::Value,
+}
+
+/// Streaming capability definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingCapability {
+    pub mode: String,
+    pub direction: String,
+    #[serde(default)]
+    pub supported_data_types: Vec<String>,
+    #[serde(default)]
+    pub max_chunk_size: usize,
+    #[serde(default)]
+    pub preferred_chunk_size: usize,
+    #[serde(default)]
+    pub max_concurrent_sessions: usize,
+}
+
+/// Configuration parameter info from marketplace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigParameterInfo {
+    pub name: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "type", default)]
+    pub param_type: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub default: Option<serde_json::Value>,
+    #[serde(default)]
+    pub minimum: Option<f64>,
+    #[serde(default)]
+    pub maximum: Option<f64>,
+    #[serde(default)]
+    pub min: Option<f64>,
+    #[serde(default)]
+    pub max: Option<f64>,
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    #[serde(rename = "enum")]
+    pub enum_values: Vec<String>,
+}
+
+/// Dashboard component info from marketplace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DashboardComponentInfo {
+    #[serde(rename = "type")]
+    pub component_type: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub bundle_path: Option<String>,
+    #[serde(default)]
+    pub export_name: Option<String>,
 }
 
 /// Extension build info for different platforms

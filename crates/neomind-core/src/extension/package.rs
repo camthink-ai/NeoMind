@@ -564,6 +564,57 @@ impl ExtensionPackage {
     async fn create_wasm_sidecar_json(&self, json_path: &Path) -> Result<(), PackageError> {
         use serde_json::json;
 
+        // Build metrics array if capabilities exist
+        let metrics = self.manifest.capabilities.as_ref().map(|cap| {
+            cap.metrics.iter().map(|m| {
+                json!({
+                    "name": m.name,
+                    "display_name": m.display_name,
+                    "data_type": m.data_type,
+                    "unit": m.unit,
+                    "min": m.min,
+                    "max": m.max,
+                    "required": false
+                })
+            }).collect::<Vec<_>>()
+        }).unwrap_or_default();
+
+        // Build commands array if capabilities exist
+        let commands = self.manifest.capabilities.as_ref().map(|cap| {
+            cap.commands.iter().map(|c| {
+                json!({
+                    "name": c.name,
+                    "display_name": c.display_name,
+                    "payload_template": "",
+                    "parameters": c.parameters.as_ref().map(|params| {
+                        if let serde_json::Value::Object(props) = params {
+                            if let Some(properties) = props.get("properties") {
+                                if let serde_json::Value::Object(props_map) = properties {
+                                    return props_map.iter().map(|(name, _)| {
+                                        json!({
+                                            "name": name,
+                                            "display_name": name,
+                                            "description": "",
+                                            "param_type": "String",
+                                            "required": false,
+                                            "default_value": null,
+                                            "min": null,
+                                            "max": null,
+                                            "options": []
+                                        })
+                                    }).collect::<Vec<_>>();
+                                }
+                            }
+                        }
+                        Vec::<serde_json::Value>::new()
+                    }).unwrap_or_default(),
+                    "fixed_values": {},
+                    "samples": [],
+                    "llm_hints": ""
+                })
+            }).collect::<Vec<_>>()
+        }).unwrap_or_default();
+
         let sidecar_data = json!({
             "id": self.manifest.id,
             "name": self.manifest.name,
@@ -573,6 +624,8 @@ impl ExtensionPackage {
             "homepage": self.manifest.homepage,
             "license": self.manifest.license,
             "file_path": self.path,
+            "metrics": metrics,
+            "commands": commands
         });
 
         let content = serde_json::to_string_pretty(&sidecar_data)
