@@ -3272,8 +3272,7 @@ pub async fn upload_extension_file_handler(
     State(state): State<ServerState>,
     req: axum::extract::Request,
 ) -> HandlerResult<serde_json::Value> {
-    use neomind_core::extension::package::{ExtensionPackage, detect_platform};
-    use http_body_util::BodyExt;
+    use neomind_core::extension::package::ExtensionPackage;
 
     // Limit file size to 100MB
     const MAX_SIZE: usize = 100 * 1024 * 1024;

@@ -834,6 +834,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/extensions",
             post(extensions::register_extension_handler),
         )
+        .route(
+            "/api/extensions/upload/file",
+            post(extensions::upload_extension_file_handler),
+        )
         // Multipart upload temporarily disabled due to Handler trait issues
         // .route(
         //     "/api/extensions/upload/multipart",
