@@ -217,27 +217,38 @@ impl Tool for ExtensionTool {
     }
 
     async fn execute(&self, args: Value) -> ToolResult<ToolOutput> {
-        // Call the extension's execute_command method (V2)
-        let ext = self.extension.read().await;
-        let result = ext.execute_command(&self.command.name, &args).await;
-        drop(ext);
+        // Execute with a 30-second timeout to avoid hanging the agent on slow extensions
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            async {
+                let ext = self.extension.read().await;
+                ext.execute_command(&self.command.name, &args).await
+            },
+        )
+        .await;
 
         match result {
-            Ok(value) => Ok(ToolOutput::success(value)),
-            Err(e) => match e {
-                ExtensionError::CommandNotFound(cmd) => {
-                    Ok(ToolOutput::error(format!("Command not found: {}", cmd)))
-                }
-                ExtensionError::ExecutionFailed(msg) => Ok(ToolOutput::error(msg)),
-                ExtensionError::InvalidArguments(msg) => {
-                    Ok(ToolOutput::error(format!("Invalid arguments: {}", msg)))
-                }
-                ExtensionError::Timeout(msg) => Ok(ToolOutput::error(msg)),
-                ExtensionError::Io(e) => Ok(ToolOutput::error(format!("IO error: {}", e))),
-                ExtensionError::Json(e) => Ok(ToolOutput::error(format!("JSON error: {}", e))),
-                ExtensionError::Other(msg) => Ok(ToolOutput::error(msg)),
-                _ => Ok(ToolOutput::error(format!("Extension error: {}", e))),
+            Ok(inner) => match inner {
+                Ok(value) => Ok(ToolOutput::success(value)),
+                Err(e) => match e {
+                    ExtensionError::CommandNotFound(cmd) => {
+                        Ok(ToolOutput::error(format!("Command not found: {}", cmd)))
+                    }
+                    ExtensionError::ExecutionFailed(msg) => Ok(ToolOutput::error(msg)),
+                    ExtensionError::InvalidArguments(msg) => {
+                        Ok(ToolOutput::error(format!("Invalid arguments: {}", msg)))
+                    }
+                    ExtensionError::Timeout(msg) => Ok(ToolOutput::error(msg)),
+                    ExtensionError::Io(e) => Ok(ToolOutput::error(format!("IO error: {}", e))),
+                    ExtensionError::Json(e) => Ok(ToolOutput::error(format!("JSON error: {}", e))),
+                    ExtensionError::Other(msg) => Ok(ToolOutput::error(msg)),
+                    _ => Ok(ToolOutput::error(format!("Extension error: {}", e))),
+                },
             },
+            Err(_) => Ok(ToolOutput::error(format!(
+                "Extension tool '{}' timed out after 30 seconds",
+                self.full_name
+            ))),
         }
     }
 

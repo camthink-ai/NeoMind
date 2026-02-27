@@ -275,7 +275,8 @@ impl ExtensionMetricsCollector {
             }
 
             // Call produce_metrics() to get current values
-            // Note: produce_metrics is a synchronous method
+            // Note: produce_metrics is a synchronous method; we wrap it in catch_unwind
+            // and also notify the safety manager on repeated failures.
             let ext = extension.read().await;
             let metric_values = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 ext.produce_metrics().unwrap_or_default()
@@ -285,8 +286,13 @@ impl ExtensionMetricsCollector {
                     warn!(
                         category = "extensions",
                         extension_id = %extension_id,
-                        "Extension produce_metrics() call failed, returning empty metrics"
+                        "Extension produce_metrics() call panicked, returning empty metrics"
                     );
+                    // Record panic with safety manager so misbehaving extensions can be disabled
+                    self.extension_registry
+                        .safety_manager()
+                        .record_panic(&extension_id)
+                        .await;
                     Vec::new()
                 }
             };

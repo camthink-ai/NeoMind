@@ -321,8 +321,12 @@ async fn handle_stream_socket(
 ) {
     tracing::info!("Extension stream connection requested for: {}", extension_id);
 
+    // Get extension and safety manager
+    let registry = &state.extensions.registry;
+    let safety_manager = registry.safety_manager();
+
     // Get extension
-    let extension = match state.extensions.registry.get(&extension_id).await {
+    let extension = match registry.get(&extension_id).await {
         Some(ext) => ext,
         None => {
             send_error(&mut socket, "EXTENSION_NOT_FOUND",
@@ -449,18 +453,52 @@ async fn handle_stream_socket(
                             is_last: false,
                         };
 
+                        // Before executing, check safety manager
+                        if !safety_manager.is_allowed(&extension_id).await {
+                            send_error(
+                                &mut socket,
+                                "EXTENSION_DISABLED",
+                                format!(
+                                    "Extension '{}' is temporarily disabled by safety policy",
+                                    extension_id
+                                ),
+                            )
+                            .await;
+                            continue;
+                        }
+
                         let result = if let Some(ref sid) = session_id {
-                            // Stateful processing
-                            ext.process_session_chunk(sid, chunk).await
+                            // Stateful processing with timeout
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                ext.process_session_chunk(sid, chunk),
+                            )
+                            .await
+                            .map_err(|_| StreamError {
+                                code: "TIMEOUT".to_string(),
+                                message: "Session chunk processing timed out".to_string(),
+                                retryable: true,
+                            })
                         } else {
-                            // Stateless processing
-                            ext.process_chunk(chunk).await
+                            // Stateless processing with timeout
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                ext.process_chunk(chunk),
+                            )
+                            .await
+                            .map_err(|_| StreamError {
+                                code: "TIMEOUT".to_string(),
+                                message: "Chunk processing timed out".to_string(),
+                                retryable: true,
+                            })
                         };
 
                         let processing_ms = start.elapsed().as_secs_f32() * 1000.0;
 
                         match result {
-                            Ok(stream_result) => {
+                            Ok(Ok(stream_result)) => {
+                                // Record success with safety manager
+                                safety_manager.record_success(&extension_id).await;
                                 output_sequence = output_sequence.wrapping_add(1);
                                 send_message(&mut socket, &ServerMessage::Result {
                                     input_sequence: stream_result.input_sequence,
@@ -476,9 +514,30 @@ async fn handle_stream_socket(
                                     tracing::warn!("Stream processing error: {} - {}", err.code, err.message);
                                 }
                             }
-                            Err(e) => {
-                                send_error(&mut socket, "PROCESSING_ERROR",
-                                               format!("Failed to process chunk: {}", e)).await;
+                            Ok(Err(e)) => {
+                                // Logical failure from extension
+                                safety_manager.record_failure(&extension_id).await;
+                                send_error(
+                                    &mut socket,
+                                    "PROCESSING_ERROR",
+                                    format!("Failed to process chunk: {}", e),
+                                )
+                                .await;
+                            }
+                            Err(timeout_err) => {
+                                // Timeout wrapper already converted into StreamError, just log and notify safety manager
+                                tracing::warn!(
+                                    "Stream processing timeout for extension {}: {}",
+                                    extension_id,
+                                    timeout_err.to_string()
+                                );
+                                safety_manager.record_failure(&extension_id).await;
+                                send_error(
+                                    &mut socket,
+                                    "PROCESSING_TIMEOUT",
+                                    "Stream processing timed out".to_string(),
+                                )
+                                .await;
                             }
                         }
                     }

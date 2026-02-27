@@ -60,11 +60,27 @@ pub struct ExtensionRegistry {
 impl ExtensionRegistry {
     /// Create a new extension registry.
     pub fn new() -> Self {
+        // Create WASM loader, but avoid panicking the whole process on failure.
+        // If the sandbox cannot be created, we log an error and disable WASM extension loading
+        // while still allowing native extensions to function.
+        let wasm_loader = match WasmExtensionLoader::new() {
+            Ok(loader) => loader,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "[ExtensionRegistry] Failed to create WASM loader, WASM extensions will be unavailable"
+                );
+                // Fallback to a default loader that will report errors on use.
+                // This uses Default, which is expected to succeed in normal configurations.
+                WasmExtensionLoader::default()
+            }
+        };
+
         Self {
             extensions: RwLock::new(HashMap::new()),
             info_cache: RwLock::new(HashMap::new()),
             native_loader: NativeExtensionLoader::new(),
-            wasm_loader: WasmExtensionLoader::new().expect("Failed to create WASM loader"),
+            wasm_loader,
             extension_dirs: vec![],
             _loaded_libraries: vec![],
             safety_manager: Arc::new(ExtensionSafetyManager::new()),
@@ -115,6 +131,11 @@ impl ExtensionRegistry {
             .write()
             .unwrap()
             .insert(id.clone(), extension.clone());
+
+        // Register with safety manager for circuit breaking and panic tracking
+        self.safety_manager
+            .register_extension(id.clone())
+            .await;
 
         // Store info
         self.info_cache
@@ -169,6 +190,9 @@ impl ExtensionRegistry {
         // Remove from memory
         self.extensions.write().unwrap().remove(id);
         self.info_cache.write().unwrap().remove(id);
+
+        // Unregister from safety manager
+        self.safety_manager.unregister_extension(id).await;
         
         tracing::info!("Extension unregistered: {}", id);
         Ok(())
@@ -326,6 +350,19 @@ impl ExtensionRegistry {
         command: &str,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value> {
+        // Check safety manager before executing
+        if !self.safety_manager.is_allowed(id).await {
+            tracing::warn!(
+                extension_id = %id,
+                command = %command,
+                "[ExtensionRegistry] Extension execution blocked by safety manager"
+            );
+            return Err(ExtensionError::SecurityError(format!(
+                "Extension '{}' is temporarily disabled by safety policy",
+                id
+            )));
+        }
+
         let ext = self
             .get(id)
             .await
@@ -344,8 +381,14 @@ impl ExtensionRegistry {
         ).await;
 
         match result {
-            Ok(Ok(value)) => Ok(value),
+            Ok(Ok(value)) => {
+                // Record success with safety manager
+                self.safety_manager.record_success(id).await;
+                Ok(value)
+            }
             Ok(Err(e)) => {
+                // Record logical failure
+                self.safety_manager.record_failure(id).await;
                 tracing::warn!(
                     extension_id = %id,
                     command = %command,
@@ -355,6 +398,8 @@ impl ExtensionRegistry {
                 Err(e)
             }
             Err(_) => {
+                // Timeout is treated as a failure for safety manager
+                self.safety_manager.record_failure(id).await;
                 tracing::error!(
                     extension_id = %id,
                     command = %command,
@@ -447,19 +492,12 @@ impl ExtensionRegistryTrait for ExtensionRegistry {
         command: &str,
         args: &serde_json::Value,
     ) -> std::result::Result<serde_json::Value, String> {
-        // Clone the Arc to avoid holding the lock
-        let ext_opt = self.get(extension_id).await;
-        match ext_opt {
-            Some(ext) => {
-                let ext_clone = Arc::clone(&ext);
-                let result = {
-                    let ext_guard = ext_clone.read().await;
-                    ext_guard.execute_command(command, args).await
-                };
-                result.map_err(|e| e.to_string())
-            }
-            None => Err(format!("Extension not found: {}", extension_id)),
-        }
+        // Delegate to the main registry execute_command which includes timeout
+        // and safety manager integration. This ensures all callers (including
+        // tools and automation) go through the same protection layer.
+        self.execute_command(extension_id, command, args)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     async fn get_metrics(&self, extension_id: &str) -> Vec<super::system::MetricDescriptor> {

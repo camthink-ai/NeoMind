@@ -715,6 +715,7 @@ impl SessionStore {
     // ========== P0.3: Pending Stream State Management ==========
 
     /// Save or update a pending stream state for a session.
+    /// Returns Ok(()) even if the table doesn't exist (creates it automatically).
     pub fn save_pending_stream(&self, state: &PendingStreamState) -> Result<(), Error> {
         let serialized = serde_json::to_vec(state).map_err(|e| {
             Error::Storage(format!("Failed to serialize pending stream state: {}", e))
@@ -722,7 +723,9 @@ impl SessionStore {
 
         let write_txn = self.db.begin_write()?;
         {
-            let mut table = write_txn.open_table(PENDING_STREAM_TABLE)?;
+            // Use open_table which creates the table if it doesn't exist
+            let mut table = write_txn.open_table(PENDING_STREAM_TABLE)
+                .map_err(|e| Error::Storage(format!("Failed to open pending_streams table: {}", e)))?;
             table.insert(state.session_id.as_str(), serialized)?;
         }
         write_txn.commit()?;
@@ -730,12 +733,27 @@ impl SessionStore {
     }
 
     /// Get the pending stream state for a session (if any).
+    /// Returns Ok(None) if the table doesn't exist or session not found.
     pub fn get_pending_stream(
         &self,
         session_id: &str,
     ) -> Result<Option<PendingStreamState>, Error> {
-        let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(PENDING_STREAM_TABLE)?;
+        let read_txn = match self.db.begin_read() {
+            Ok(txn) => txn,
+            Err(_) => return Ok(None), // Database error, return None
+        };
+
+        let table = match read_txn.open_table(PENDING_STREAM_TABLE) {
+            Ok(t) => t,
+            Err(e) => {
+                // Table doesn't exist yet - this is normal for new databases
+                let error_msg = e.to_string();
+                if error_msg.contains("does not exist") || error_msg.contains("Table") {
+                    return Ok(None);
+                }
+                return Err(Error::Storage(format!("Redb table error: {}", e)));
+            }
+        };
 
         match table.get(session_id)? {
             Some(value) => {
@@ -751,10 +769,21 @@ impl SessionStore {
     }
 
     /// Delete the pending stream state for a session.
+    /// Returns Ok(()) even if the table doesn't exist.
     pub fn delete_pending_stream(&self, session_id: &str) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
         {
-            let mut table = write_txn.open_table(PENDING_STREAM_TABLE)?;
+            let mut table = match write_txn.open_table(PENDING_STREAM_TABLE) {
+                Ok(t) => t,
+                Err(e) => {
+                    // Table doesn't exist yet - nothing to delete
+                    let error_msg = e.to_string();
+                    if error_msg.contains("does not exist") || error_msg.contains("Table") {
+                        return Ok(());
+                    }
+                    return Err(Error::Storage(format!("Redb table error: {}", e)));
+                }
+            };
             table.remove(session_id)?;
         }
         write_txn.commit()?;
