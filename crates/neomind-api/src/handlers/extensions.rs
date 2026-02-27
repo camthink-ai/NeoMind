@@ -2605,7 +2605,11 @@ pub struct DashboardComponentDef {
     pub data_source_schema: Option<serde_json::Value>,
     pub default_config: Option<serde_json::Value>,
     pub variants: Vec<String>,
-    pub data_binding: DataBindingConfig,
+    #[serde(default)]
+    pub data_binding: Option<DataBindingConfig>,
+    /// Other fields that we don't parse (e.g., examples, etc.)
+    #[serde(flatten)]
+    pub _other: serde_json::Value,
 }
 
 /// Dashboard component DTO for API responses.
@@ -2684,6 +2688,16 @@ pub struct DataBindingDto {
     pub required_fields: Vec<String>,
 }
 
+impl Default for DataBindingDto {
+    fn default() -> Self {
+        Self {
+            extension_metric: None,
+            extension_command: None,
+            required_fields: Vec::new(),
+        }
+    }
+}
+
 impl From<DataBindingConfig> for DataBindingDto {
     fn from(c: DataBindingConfig) -> Self {
         Self {
@@ -2760,24 +2774,68 @@ fn load_extension_components(
 ) -> Option<Vec<DashboardComponentDto>> {
     let file_path = file_path?;
 
-    // Get the extension directory (parent of the .dylib/.so file)
+    tracing::debug!(
+        extension_id = %extension_id,
+        file_path = %file_path.display(),
+        "Loading dashboard components for extension"
+    );
+
+    // Get the extension directory
+    // For legacy format: file_path = extensions/xxx.wasm -> ext_dir = extensions/
+    // For .nep format: file_path = extensions/xxx/binaries/wasm/extension.wasm -> ext_dir should be extensions/xxx/
     let ext_dir = file_path.parent()?;
 
+    tracing::debug!(ext_dir = %ext_dir.display(), "Extension directory");
+
+    // Try to find the extension root directory
+    // For .nep format, we need to go up from binaries/{platform}/ to the extension root
+    let extension_root = {
+        let components: Vec<_> = ext_dir.components().collect();
+
+        // Check if this is a .nep format by looking for "binaries" in the path
+        let binaries_idx = components.iter().position(|c| {
+            if let std::path::Component::Normal(os_str) = c {
+                os_str.to_str().map(|s| s == "binaries").unwrap_or(false)
+            } else {
+                false
+            }
+        });
+
+        if let Some(idx) = binaries_idx {
+            // .nep format: go up to the directory containing "binaries"
+            let root: std::path::PathBuf = components[..idx].iter().collect();
+            tracing::debug!(root = %root.display(), "Detected .nep format");
+            root
+        } else {
+            // Legacy format: use parent as-is
+            tracing::debug!(root = %ext_dir.display(), "Detected legacy format");
+            ext_dir.to_path_buf()
+        }
+    };
+
+    tracing::debug!(extension_root = %extension_root.display(), "Extension root directory");
+
     // Try multiple manifest locations in order:
-    // 1. ext_dir/manifest.json (same dir as library)
-    // 2. ext_dir/{extension_id}/manifest.json (e.g., ext_dir/neomind.weather.forecast/manifest.json)
-    // 3. ext_dir/{extension_name}/manifest.json (e.g., ext_dir/weather-forecast/manifest.json)
-    //    where extension_name is derived from extension_id by removing "neomind." prefix and replacing dots with hyphens
+    // 1. extension_root/manifest.json (.nep format)
+    // 2. ext_dir/manifest.json (legacy format, same dir as library)
+    // 3. ext_dir/{extension_id}/manifest.json
+    // 4. ext_dir/{extension_name}/manifest.json
     let extension_name = extension_id
         .strip_prefix("neomind.")
         .unwrap_or(extension_id)
         .replace('.', "-");
 
     let manifest_paths = vec![
+        extension_root.join("manifest.json"),
         ext_dir.join("manifest.json"),
         ext_dir.join(extension_id).join("manifest.json"),
         ext_dir.join(&extension_name).join("manifest.json"),
     ];
+
+    tracing::debug!(
+        paths = ?manifest_paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+        "Trying manifest paths"
+    );
 
     let mut manifest_content = None;
     for manifest_path in &manifest_paths {
@@ -2789,8 +2847,30 @@ fn load_extension_components(
 
     let manifest_content = manifest_content?;
 
+    tracing::debug!(
+        extension_id = %extension_id,
+        content_len = manifest_content.len(),
+        "Found manifest.json"
+    );
+
     // Parse manifest
-    let manifest: ExtensionManifest = serde_json::from_str(&manifest_content).ok()?;
+    let manifest: ExtensionManifest = match serde_json::from_str(&manifest_content) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(
+                extension_id = %extension_id,
+                error = %e,
+                "Failed to parse manifest.json"
+            );
+            return None;
+        }
+    };
+
+    tracing::debug!(
+        extension_id = %extension_id,
+        components_count = manifest.dashboard_components.len(),
+        "Parsed manifest.json"
+    );
 
     // Convert component definitions to DTOs
     let base_url = format!("/api/extensions/{}/assets", extension_id);
@@ -2814,7 +2894,7 @@ fn load_extension_components(
             data_source_schema: def.data_source_schema,
             default_config: def.default_config,
             variants: def.variants,
-            data_binding: DataBindingDto::from(def.data_binding),
+            data_binding: def.data_binding.map(DataBindingDto::from).unwrap_or_default(),
             extension_id: extension_id.to_string(),
         })
         .collect();
