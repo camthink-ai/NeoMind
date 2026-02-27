@@ -39,9 +39,10 @@ tracing-subscriber = { workspace = true }
 reqwest = { version = "0.12", features = ["json"] }
 
 # Web framework
-axum = { workspace = true, features = ["ws"] }
+axum = { workspace = true, features = ["ws", "multipart"] }
 tower-http = { workspace = true }
 http-body-util = "0.1"
+multer = "3.1.0"
 
 # Utils
 uuid = { workspace = true }
@@ -76,3 +77,4 @@ bincode = { workspace = true }
 # Static file embedding (optional, requires 'static' feature)
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
+bytes = "1.11.1"

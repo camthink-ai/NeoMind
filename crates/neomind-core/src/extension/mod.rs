@@ -35,7 +35,7 @@
 //! # FFI Exports
 //!
 //! Extensions must export these symbols for dynamic loading:
-//! - `neomind_extension_abi_version()` -> u32 (should return 2)
+//! - `neomind_extension_abi_version()` -> u32 (should return 3)
 //! - `neomind_extension_metadata()` -> CExtensionMetadata
 //! - `neomind_extension_create()` -> *mut RwLock<Box<dyn Extension>>
 //! - `neomind_extension_destroy(*mut RwLock<Box<dyn Extension>>)
@@ -61,6 +61,7 @@
 //! ```
 
 pub mod executor;
+pub mod isolated;
 pub mod loader;
 pub mod package;
 pub mod registry;
@@ -70,6 +71,9 @@ pub mod system;
 pub mod types;
 
 pub use executor::{CommandExecutor, CommandResult, UnifiedStorage};
+pub use isolated::{
+    IsolatedExtension, IsolatedExtensionConfig, IsolatedExtensionError, IsolatedResult,
+};
 pub use loader::{NativeExtensionLoader, WasmExtensionLoader};
 pub use package::{detect_platform, ExtensionPackage, InstallResult, PACKAGE_FORMAT, PACKAGE_FORMAT_VERSION};
 pub use registry::{ExtensionInfo, ExtensionRegistry, ExtensionRegistryTrait};

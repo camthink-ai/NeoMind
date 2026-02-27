@@ -619,7 +619,7 @@ impl LlmBackendStore {
         // Create default Ollama instance
         let default_instance = LlmBackendInstance::new(
             "ollama-default".to_string(),
-            "默认 Ollama".to_string(),
+            "Ollama".to_string(),
             LlmBackendType::Ollama,
         );
 

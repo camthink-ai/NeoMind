@@ -305,55 +305,61 @@ Full API documentation available at `/api/docs` when server is running.
 
 ## Extension Development
 
-Create dynamic extensions for NeoMind using the Extension SDK:
+Create dynamic extensions for NeoMind using the Extension SDK V2:
 
 ```rust
 use neomind_extension_sdk::prelude::*;
+use std::sync::atomic::{AtomicI64, Ordering};
 
-struct MyExtension;
+pub struct MyExtension {
+    counter: AtomicI64,
+}
 
-declare_extension!(
-    MyExtension,
-    metadata: ExtensionMetadata {
-        name: "my.extension".to_string(),
-        version: "1.0.0".to_string(),
-        author: "Your Name".to_string(),
-        description: "My extension".to_string(),
-    },
-);
-
-impl Extension for MyExtension {
-    fn metrics(&self) -> &[MetricDefinition] {
-        &[
-            MetricDefinition {
-                name: "temperature".to_string(),
-                display_name: "Temperature".to_string(),
-                data_type: MetricDataType::Float,
-                unit: "°C".to_string(),
-                min: Some(-50.0),
-                max: Some(50.0),
-                required: true,
-            },
-        ]
-    }
-
-    fn commands(&self) -> &[ExtensionCommand] {
-        &[
-            ExtensionCommand {
-                name: "refresh".to_string(),
-                display_name: "Refresh".to_string(),
-                payload_template: "{}".to_string(),
-                parameters: vec![],
-                fixed_values: serde_json::Map::new(),
-                llm_hints: "Force refresh".to_string(),
-                parameter_groups: vec![],
-            },
-        ]
+impl MyExtension {
+    pub fn new() -> Self {
+        Self { counter: AtomicI64::new(0) }
     }
 }
+
+#[async_trait]
+impl Extension for MyExtension {
+    fn metadata(&self) -> &ExtensionMetadata {
+        static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
+        META.get_or_init(|| ExtensionMetadata {
+            id: "my-extension".to_string(),
+            name: "My Extension".to_string(),
+            version: Version::parse("1.0.0").unwrap(),
+            description: Some("My custom extension".to_string()),
+            author: Some("Your Name".to_string()),
+            ..Default::default()
+        })
+    }
+
+    async fn execute_command(&self, cmd: &str, args: &Value) -> Result<Value> {
+        match cmd {
+            "increment" => {
+                let amount = args.get("amount").and_then(|v| v.as_i64()).unwrap_or(1);
+                let new_value = self.counter.fetch_add(amount, Ordering::SeqCst) + amount;
+                Ok(json!({ "counter": new_value }))
+            }
+            _ => Err(ExtensionError::CommandNotFound(cmd.to_string())),
+        }
+    }
+
+    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+        Ok(vec![ExtensionMetricValue {
+            name: "counter".to_string(),
+            value: ParamMetricValue::Integer(self.counter.load(Ordering::SeqCst)),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        }])
+    }
+}
+
+// Export FFI - just one line!
+neomind_extension_sdk::neomind_export!(MyExtension);
 ```
 
-See [Extension Development Guide](docs/guides/16-extension-dev.md) for details.
+See [Extension Development Guide](docs/guides/zh/16-extension-dev.md) for details.
 
 ---
 

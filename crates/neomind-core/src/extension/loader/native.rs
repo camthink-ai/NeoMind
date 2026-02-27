@@ -20,6 +20,9 @@
 //! 4. **Graceful Error Handling**: Any error during loading returns an
 //!    `ExtensionError` rather than panicking or aborting.
 //!
+//! 5. **Library Lifetime Management**: The library handle is kept alive
+//!    through `Arc<Library>` tied to the extension instance.
+//!
 //! # Requirements for Extension Authors
 //!
 //! To ensure compatibility with the safety mechanisms:
@@ -37,12 +40,35 @@ use crate::extension::types::{ExtensionError, ExtensionMetadata, Result};
 use tracing::{debug, warn};
 
 /// Loaded native extension with its library handle.
+///
+/// The `library` field keeps the dynamic library loaded in memory.
+/// The `extension` field contains the actual extension instance.
+///
+/// # Important
+///
+/// Both fields must be kept together. Dropping the library while the
+/// extension is still in use will cause undefined behavior.
 pub struct LoadedNativeExtension {
-    /// The underlying library (kept alive to prevent unloading)
-    #[allow(dead_code)]
-    library: libloading::Library,
+    /// The underlying library (kept alive to prevent unloading).
+    /// Using Arc allows sharing the library handle if needed.
+    pub library: Arc<libloading::Library>,
     /// The extension instance
     pub extension: DynExtension,
+}
+
+impl LoadedNativeExtension {
+    /// Create a new loaded extension with library handle.
+    pub fn new(library: libloading::Library, extension: DynExtension) -> Self {
+        Self {
+            library: Arc::new(library),
+            extension,
+        }
+    }
+
+    /// Get a clone of the library Arc for separate storage.
+    pub fn library_arc(&self) -> Arc<libloading::Library> {
+        Arc::clone(&self.library)
+    }
 }
 
 /// Loader for native extensions (.so, .dylib, .dll).
@@ -221,7 +247,7 @@ impl NativeExtensionLoader {
 
         debug!(extension_id = %metadata.id, "Native extension loaded successfully");
 
-        Ok(LoadedNativeExtension { library, extension })
+        Ok(LoadedNativeExtension::new(library, extension))
     }
 
     /// Safely call an FFI function with panic protection.

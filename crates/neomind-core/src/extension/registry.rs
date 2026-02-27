@@ -9,7 +9,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::RwLock;
+
+use parking_lot::RwLock;
 
 use crate::event::NeoMindEvent;
 use crate::eventbus::EventBus;
@@ -39,9 +40,12 @@ pub struct ExtensionInfo {
 
 /// Registry for managing extensions.
 pub struct ExtensionRegistry {
-    /// Registered extensions (using std::sync::RwLock for spawn_blocking compatibility)
+    /// Registered extensions.
+    /// Using parking_lot::RwLock for better performance and no potential for
+    /// blocking the async runtime (unlike std::sync::RwLock).
     extensions: RwLock<HashMap<String, DynExtension>>,
-    /// Extension information cache (using std::sync::RwLock for spawn_blocking compatibility)
+    /// Extension information cache.
+    /// Using parking_lot::RwLock for consistent locking strategy.
     info_cache: RwLock<HashMap<String, ExtensionInfo>>,
     /// Native extension loader
     native_loader: NativeExtensionLoader,
@@ -49,8 +53,10 @@ pub struct ExtensionRegistry {
     wasm_loader: WasmExtensionLoader,
     /// Extension directories to scan
     extension_dirs: Vec<PathBuf>,
-    /// Loaded libraries (kept alive to prevent unloading)
-    _loaded_libraries: Vec<libloading::Library>,
+    /// Loaded libraries kept alive to prevent unloading.
+    /// Maps extension ID to the library Arc, ensuring the library
+    /// stays loaded as long as the extension is registered.
+    loaded_libraries: RwLock<HashMap<String, Arc<libloading::Library>>>,
     /// Safety manager for circuit breaking and panic isolation
     safety_manager: Arc<ExtensionSafetyManager>,
     /// Event bus for publishing lifecycle events (optional)
@@ -82,7 +88,7 @@ impl ExtensionRegistry {
             native_loader: NativeExtensionLoader::new(),
             wasm_loader,
             extension_dirs: vec![],
-            _loaded_libraries: vec![],
+            loaded_libraries: RwLock::new(HashMap::new()),
             safety_manager: Arc::new(ExtensionSafetyManager::new()),
             event_bus: None,
         }
@@ -122,14 +128,13 @@ impl ExtensionRegistry {
         metadata.file_path = file_path;
 
         // Check if already registered
-        if self.extensions.read().unwrap().contains_key(&id) {
+        if self.extensions.read().contains_key(&id) {
             return Err(ExtensionError::AlreadyRegistered(id));
         }
 
         // Store extension
         self.extensions
             .write()
-            .unwrap()
             .insert(id.clone(), extension.clone());
 
         // Register with safety manager for circuit breaking and panic tracking
@@ -140,7 +145,6 @@ impl ExtensionRegistry {
         // Store info
         self.info_cache
             .write()
-            .unwrap()
             .insert(
                 id.clone(),
                 ExtensionInfo {
@@ -188,24 +192,29 @@ impl ExtensionRegistry {
         }
 
         // Remove from memory
-        self.extensions.write().unwrap().remove(id);
-        self.info_cache.write().unwrap().remove(id);
+        self.extensions.write().remove(id);
+        self.info_cache.write().remove(id);
+
+        // Release the library handle, allowing the library to be unloaded.
+        // This should happen after removing the extension to ensure no code
+        // from the library is still being executed.
+        self.loaded_libraries.write().remove(id);
 
         // Unregister from safety manager
         self.safety_manager.unregister_extension(id).await;
-        
+
         tracing::info!("Extension unregistered: {}", id);
         Ok(())
     }
 
     /// Get an extension by ID.
     pub async fn get(&self, id: &str) -> Option<DynExtension> {
-        self.extensions.read().unwrap().get(id).cloned()
+        self.extensions.read().get(id).cloned()
     }
 
     /// Get extension info by ID.
     pub async fn get_info(&self, id: &str) -> Option<ExtensionInfo> {
-        self.info_cache.read().unwrap().get(id).cloned()
+        self.info_cache.read().get(id).cloned()
     }
 
     /// Get current metric values from an extension.
@@ -239,7 +248,7 @@ impl ExtensionRegistry {
 
     /// List all extensions.
     pub async fn list(&self) -> Vec<ExtensionInfo> {
-        self.info_cache.read().unwrap().values().cloned().collect()
+        self.info_cache.read().values().cloned().collect()
     }
 
     /// Load an extension from a file path and register it.
@@ -263,6 +272,11 @@ impl ExtensionRegistry {
 
                 // Register the extension with file path
                 let id = metadata.id.clone();
+                
+                // Store the library handle to prevent unloading
+                let library_arc = loaded.library_arc();
+                self.loaded_libraries.write().insert(id.clone(), library_arc);
+                
                 self.register_with_path(id, loaded.extension, Some(path.to_path_buf())).await?;
 
                 Ok(metadata)
@@ -430,17 +444,17 @@ impl ExtensionRegistry {
 
     /// Check if an extension is registered.
     pub async fn contains(&self, id: &str) -> bool {
-        self.extensions.read().unwrap().contains_key(id)
+        self.extensions.read().contains_key(id)
     }
 
     /// Get the number of registered extensions.
     pub async fn count(&self) -> usize {
-        self.extensions.read().unwrap().len()
+        self.extensions.read().len()
     }
 
     /// Get all registered extensions (alias for get_extensions() from trait).
     pub async fn get_all(&self) -> Vec<DynExtension> {
-        self.extensions.read().unwrap().values().cloned().collect()
+        self.extensions.read().values().cloned().collect()
     }
 
     /// Get the safety manager for this registry.
@@ -479,7 +493,7 @@ pub trait ExtensionRegistryTrait: Send + Sync {
 #[async_trait::async_trait]
 impl ExtensionRegistryTrait for ExtensionRegistry {
     async fn get_extensions(&self) -> Vec<DynExtension> {
-        self.extensions.read().unwrap().values().cloned().collect()
+        self.extensions.read().values().cloned().collect()
     }
 
     async fn get_extension(&self, id: &str) -> Option<DynExtension> {

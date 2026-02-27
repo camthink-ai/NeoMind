@@ -1,114 +1,113 @@
-# NeoMind Extension Package (.nep) 标准
+# NeoMind Extension Package (.nep) Standard
 
-## 概述
+## Overview
 
-.nep (NeoMind Extension Package) 是一个标准的 ZIP 压缩包格式，用于分发和安装 NeoMind 扩展。
+.nep (NeoMind Extension Package) is a standard ZIP archive format for distributing and installing NeoMind extensions.
 
-## 包结构
+## Package Structure
 
 ```
 {extension-id}-{version}.nep
-├── manifest.json              # 扩展元数据（必需）
-├── binaries/                  # 平台相关二进制文件
+├── manifest.json              # Extension metadata (required)
+├── binaries/                  # Platform-specific binaries
 │   ├── darwin_aarch64/
-│   │   └── extension.dylib
+│   │   └── libneomind_extension_*.dylib
 │   ├── darwin_x86_64/
-│   │   └── extension.dylib
+│   │   └── libneomind_extension_*.dylib
 │   ├── linux_amd64/
-│   │   └── extension.so
+│   │   └── libneomind_extension_*.so
 │   ├── windows_amd64/
-│   │   └── extension.dll
+│   │   └── neomind_extension_*.dll
 │   └── wasm/
 │       ├── extension.wasm
 │       └── extension.json
-└── frontend/                  # 前端组件（可选）
-    ├── dist/
-    │   ├── bundle.js
-    │   └── bundle.css
-    └── assets/
-        └── icons/
+└── frontend/                  # Frontend components (optional)
+    ├── *-components.umd.cjs
+    └── frontend.json
 ```
 
-## manifest.json 格式
+## manifest.json Format
 
 ```json
 {
   "format": "neomind-extension-package",
-  "format_version": "1.0",
-  "id": "neomind.weather.forecast",
+  "format_version": "2.0",
+  "abi_version": 3,
+  "id": "weather-forecast-v2",
   "name": "Weather Forecast",
-  "version": "1.0.0",
-  "description": "Weather data extension",
+  "version": "2.0.0",
+  "sdk_version": "2.0.0",
+  "description": "Weather data extension using unified SDK",
   "author": "NeoMind Team",
-  "license": "MIT",
-  "homepage": "https://github.com/camthink-ai/NeoMind-Extensions",
-  "type": "wasm",
-  "neomind": {
-    "min_version": "0.5.0"
-  },
+  "license": "Apache-2.0",
+  "type": "native",
   "binaries": {
-    "wasm": "binaries/wasm/extension.wasm"
+    "darwin_aarch64": "binaries/darwin_aarch64/libneomind_extension_weather_forecast_v2.dylib"
   },
-  "frontend": {
-    "components": [
-      {
-        "type": "weather-card",
-        "name": "Weather Card",
-        "description": "Display weather data",
-        "category": "visualization",
-        "bundle_path": "frontend/dist/bundle.js",
-        "export_name": "WeatherCard"
-      }
-    ]
-  },
-  "permissions": ["network"]
+  "frontend": "frontend/",
+  "permissions": [],
+  "config_parameters": [],
+  "metrics": [],
+  "commands": []
 }
 ```
 
-## 安装方式
+## Installation
 
-### 方式 1：本地文件安装
-
-```bash
-# 1. 构建 .nep 包
-cd ~/NeoMind-Extension/extensions/your-extension
-../scripts/package.sh
-
-# 2. 安装到 NeoMind
-curl -X POST http://localhost:9375/api/extensions/upload \
-  -H "Content-Type: application/json" \
-  -d '{"file_path": "/path/to/extension.nep"}'
-```
-
-### 方式 2：从扩展商店安装
+### Method 1: Local File Installation
 
 ```bash
-curl -X POST http://localhost:9375/api/extensions/market/install \
-  -H "Content-Type: application/json" \
-  -d '{"id": "neomind.weather.forecast"}'
+# 1. Build .nep package (in NeoMind-Extension repository)
+cd NeoMind-Extension
+./build.sh --yes
+
+# 2. Install via API
+curl -X POST http://localhost:9375/api/extensions/upload/file \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @dist/weather-forecast-v2-2.0.0.nep
 ```
 
-## 卸载
+### Method 2: Web UI Installation
+
+1. Open NeoMind Web UI
+2. Navigate to Extensions → Add Extension → File Mode
+3. Drag and drop the .nep file
+
+## Uninstall
 
 ```bash
-curl -X DELETE http://localhost:9375/api/extensions/{extension-id}/uninstall
+curl -X DELETE http://localhost:9375/api/extensions/{extension-id}
 ```
 
-## 扩展类型
+## Extension Types
 
-| 类型 | 说明 | 二进制格式 |
-|------|------|-----------|
-| `native` | 原生扩展 | .dylib/.so/.dll |
-| `wasm` | WASM 扩展 | .wasm |
-| `frontend-only` | 纯前端扩展 | 无二进制 |
+| Type | Description | Binary Format |
+|------|-------------|---------------|
+| `native` | Native extension | .dylib/.so/.dll |
+| `wasm` | WASM extension | .wasm |
+| `frontend-only` | Frontend-only extension | No binary |
 
-## 平台标识
+## Platform Identifiers
 
-| 平台 | 标识 |
-|------|------|
+| Platform | Identifier |
+|----------|------------|
 | Apple Silicon (macOS) | `darwin_aarch64` |
 | Intel (macOS) | `darwin_x86_64` |
 | Linux (x86_64) | `linux_amd64` |
 | Linux (ARM64) | `linux_arm64` |
 | Windows (x64) | `windows_amd64` |
 | WASM | `wasm` |
+
+## ABI Version
+
+Current ABI version: **3**
+
+Extensions must return this version via `neomind_extension_abi_version()` FFI function.
+
+## Available V2 Extensions
+
+| Extension ID | Type | Description |
+|--------------|------|-------------|
+| `weather-forecast-v2` | Native | Weather forecast extension |
+| `image-analyzer-v2` | Native | Image analysis with YOLOv8 |
+| `yolo-video-v2` | Native | Video processing with YOLOv11 |

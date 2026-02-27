@@ -282,55 +282,61 @@ neomind/
 
 ## 扩展开发
 
-使用扩展 SDK 为 NeoMind 创建动态扩展：
+使用扩展 SDK V2 为 NeoMind 创建动态扩展：
 
 ```rust
 use neomind_extension_sdk::prelude::*;
+use std::sync::atomic::{AtomicI64, Ordering};
 
-struct MyExtension;
+pub struct MyExtension {
+    counter: AtomicI64,
+}
 
-declare_extension!(
-    MyExtension,
-    metadata: ExtensionMetadata {
-        name: "my.extension".to_string(),
-        version: "1.0.0".to_string(),
-        author: "Your Name".to_string(),
-        description: "我的扩展".to_string(),
-    },
-);
-
-impl Extension for MyExtension {
-    fn metrics(&self) -> &[MetricDefinition] {
-        &[
-            MetricDefinition {
-                name: "temperature".to_string(),
-                display_name: "温度".to_string(),
-                data_type: MetricDataType::Float,
-                unit: "°C".to_string(),
-                min: Some(-50.0),
-                max: Some(50.0),
-                required: true,
-            },
-        ]
-    }
-
-    fn commands(&self) -> &[ExtensionCommand] {
-        &[
-            ExtensionCommand {
-                name: "refresh".to_string(),
-                display_name: "刷新".to_string(),
-                payload_template: "{}".to_string(),
-                parameters: vec![],
-                fixed_values: serde_json::Map::new(),
-                llm_hints: "强制刷新".to_string(),
-                parameter_groups: vec![],
-            },
-        ]
+impl MyExtension {
+    pub fn new() -> Self {
+        Self { counter: AtomicI64::new(0) }
     }
 }
+
+#[async_trait]
+impl Extension for MyExtension {
+    fn metadata(&self) -> &ExtensionMetadata {
+        static META: std::sync::OnceLock<ExtensionMetadata> = std::sync::OnceLock::new();
+        META.get_or_init(|| ExtensionMetadata {
+            id: "my-extension".to_string(),
+            name: "我的扩展".to_string(),
+            version: Version::parse("1.0.0").unwrap(),
+            description: Some("我的第一个扩展".to_string()),
+            author: Some("你的名字".to_string()),
+            ..Default::default()
+        })
+    }
+
+    async fn execute_command(&self, cmd: &str, args: &Value) -> Result<Value> {
+        match cmd {
+            "increment" => {
+                let amount = args.get("amount").and_then(|v| v.as_i64()).unwrap_or(1);
+                let new_value = self.counter.fetch_add(amount, Ordering::SeqCst) + amount;
+                Ok(json!({ "counter": new_value }))
+            }
+            _ => Err(ExtensionError::CommandNotFound(cmd.to_string())),
+        }
+    }
+
+    fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+        Ok(vec![ExtensionMetricValue {
+            name: "counter".to_string(),
+            value: ParamMetricValue::Integer(self.counter.load(Ordering::SeqCst)),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        }])
+    }
+}
+
+// 导出 FFI - 只需要这一行！
+neomind_extension_sdk::neomind_export!(MyExtension);
 ```
 
-详情请参阅 [扩展开发指南](docs/guides/16-extension-dev.md)。
+详情请参阅 [扩展开发指南](docs/guides/zh/16-extension-dev.md)。
 
 ## 相关项目
 

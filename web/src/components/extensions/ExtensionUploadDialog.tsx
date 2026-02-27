@@ -1,4 +1,4 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import {
   Dialog,
   DialogContent,
@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/use-toast"
 import { useStore } from "@/store"
-import { Upload, Loader2, FolderOpen, Package, File, X } from "lucide-react"
+import { Upload, Loader2, FolderOpen, Package, File } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { api } from "@/lib/api"
 import { Progress } from "@/components/ui/progress"
@@ -30,6 +30,7 @@ interface UploadProgress {
   total: number
   status: 'idle' | 'uploading' | 'processing' | 'success' | 'error'
   message?: string
+  extensionId?: string
 }
 
 export function ExtensionUploadDialog({
@@ -47,10 +48,25 @@ export function ExtensionUploadDialog({
   const [uploading, setUploading] = useState(false)
   const [uploadMode, setUploadMode] = useState<'path' | 'file'>('path')
   const [progress, setProgress] = useState<UploadProgress | null>(null)
+  const [isTauri, setIsTauri] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pathInputRef = useRef<HTMLInputElement>(null)
+
+  // Detect Tauri environment on mount
+  useEffect(() => {
+    setIsTauri(typeof window !== 'undefined' && !!(window as any).__TAURI__)
+    // In web environment, default to file mode
+    if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
+      setUploadMode('file')
+    }
+  }, [])
 
   const handleFileSelect = () => {
-    fileInputRef.current?.click()
+    if (uploadMode === 'path') {
+      pathInputRef.current?.click()
+    } else {
+      fileInputRef.current?.click()
+    }
   }
 
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -76,7 +92,6 @@ export function ExtensionUploadDialog({
     })
     setUploading(true)
 
-    // Declare interval outside try block so it's accessible in catch
     let interval: ReturnType<typeof setInterval> | null = null
 
     try {
@@ -94,42 +109,31 @@ export function ExtensionUploadDialog({
         })
       }, 100)
 
-      const isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI__
-      if (isTauri) {
-        // Use direct file upload
-        await api.uploadExtensionFile(file)
-        setProgress(prev => prev ? { ...prev, status: 'processing' } : null)
-      } else {
-        // For web, need to use path method
-        const arrayBuffer = await file.arrayBuffer()
-        const tempDir = '/tmp'
-        const fileName = `${Date.now()}-${file.name}`
-
-        // In web, we can't save to filesystem directly
-        // Show message for web users
-        toast({
-          title: t('extensions:webUploadNotSupported'),
-          description: t('extensions:webUploadNotSupportedDesc'),
-          variant: 'destructive',
-        })
-        if (interval) clearInterval(interval)
-        setUploading(false)
-        setProgress(null)
-        return
-      }
+      // Use the unified upload API (works for both Tauri and Web)
+      const result = await api.uploadExtensionFile(file)
 
       if (interval) clearInterval(interval)
+
+      setProgress(prev => prev ? { ...prev, status: 'processing' } : null)
+
+      // Web: result from /extensions/upload contains file_path, need to install
+      // Tauri: result from /extensions/upload/file already installed the extension
+      let extensionId = ''
+      if (result.extension_id) {
+        extensionId = result.extension_id
+      }
 
       setProgress({
         filename: file.name,
         loaded: file.size,
         total: file.size,
         status: 'success',
+        extensionId,
       })
 
       toast({
         title: t('extensions:installSuccess'),
-        description: file.name.replace('.nep', ''),
+        description: result.name || file.name.replace('.nep', ''),
       })
 
       await fetchExtensions()
@@ -139,7 +143,7 @@ export function ExtensionUploadDialog({
         resetForm()
       }, 1500)
 
-      onUploadComplete?.(file.name)
+      onUploadComplete?.(extensionId || file.name)
     } catch (error) {
       if (interval) clearInterval(interval)
       setProgress({
@@ -184,14 +188,29 @@ export function ExtensionUploadDialog({
 
     setUploading(true)
     try {
+      // Check if file is a .nep or .zip package
+      const isPackageFile = filePath.endsWith('.nep') || filePath.endsWith('.zip')
+
+      if (isPackageFile) {
+        // Show message that .nep files are not yet supported via path mode
+        toast({
+          title: t('extensions:packageNotSupportedTitle'),
+          description: t('extensions:packageNotSupportedDesc'),
+          variant: 'destructive',
+        })
+        return
+      }
+
+      // Use regular register API for native binaries (.so, .dylib, .dll, .wasm)
       await registerExtension({
         file_path: filePath,
         auto_start: autoStart,
       })
-
       toast({
         title: t("registerSuccess"),
       })
+
+      await fetchExtensions()
       onUploadComplete?.(filePath)
       onOpenChange(false)
       resetForm()
@@ -213,11 +232,14 @@ export function ExtensionUploadDialog({
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
+    if (pathInputRef.current) {
+      pathInputRef.current.value = ''
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Upload className="h-5 w-5" />
@@ -228,8 +250,8 @@ export function ExtensionUploadDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {/* Upload Mode Toggle */}
-        {(typeof window !== 'undefined' && !!(window as any).__TAURI__) && (
+        {/* Upload Mode Toggle - only show in Tauri environment */}
+        {isTauri && (
           <div className="flex gap-2 mb-4 p-1 bg-muted rounded-lg">
             <Button
               type="button"
@@ -252,7 +274,7 @@ export function ExtensionUploadDialog({
           </div>
         )}
 
-        <div className="space-y-4 pt-4">
+        <div className="space-y-4 py-4 flex-1 overflow-y-auto -mx-6 px-6">
           {uploadMode === 'path' ? (
             <>
               {/* File Path Input */}
@@ -277,7 +299,7 @@ export function ExtensionUploadDialog({
                     <FolderOpen className="h-4 w-4" />
                   </Button>
                   <input
-                    ref={fileInputRef}
+                    ref={pathInputRef}
                     type="file"
                     accept=".so,.dylib,.dll,.wasm"
                     className="hidden"

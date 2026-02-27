@@ -31,7 +31,7 @@ pub use super::system::{
     Result,
     // Tool descriptor (V2)
     ToolDescriptor,
-    // ABI version (V2)
+    // ABI version (V3)
     ABI_VERSION,
 };
 
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn test_abi_version() {
-        // V2 uses ABI version 2
-        assert_eq!(ABI_VERSION, 2);
+        // V2 SDK uses ABI version 3
+        assert_eq!(ABI_VERSION, 3);
     }
 }

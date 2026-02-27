@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 /// ABI version for dynamic loading
 /// Incremented when breaking changes are made to the extension interface
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 // ============================================================================
 // Device-Standard Types (defined locally to avoid cyclic dependency)
@@ -671,7 +671,7 @@ mod tests {
 
     #[test]
     fn test_abi_version() {
-        assert_eq!(ABI_VERSION, 2);
+        assert_eq!(ABI_VERSION, 3);
     }
 
     #[test]

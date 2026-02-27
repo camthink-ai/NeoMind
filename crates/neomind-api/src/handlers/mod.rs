@@ -85,6 +85,7 @@ pub use extensions::{
     start_extension_handler,
     stop_extension_handler,
     unregister_extension_handler,
+    upload_extension_file_handler,
 };
 // LLM Backends API
 pub use llm_backends::{

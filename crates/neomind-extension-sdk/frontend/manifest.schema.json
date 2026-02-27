@@ -1,0 +1,152 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Extension Frontend Manifest",
+  "description": "Schema for extension frontend component manifest",
+  "type": "object",
+  "required": ["id", "version", "components"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Extension ID that this frontend belongs to",
+      "pattern": "^[a-z0-9-]+$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Frontend version (should match extension version)",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "entrypoint": {
+      "type": "string",
+      "description": "Path to the main JavaScript file (relative to manifest)",
+      "default": "index.js"
+    },
+    "styleEntrypoint": {
+      "type": "string",
+      "description": "Path to the main CSS file (relative to manifest)"
+    },
+    "components": {
+      "type": "array",
+      "description": "List of components provided by this extension",
+      "items": {
+        "type": "object",
+        "required": ["name", "type", "displayName"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Component identifier (used in code)"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["card", "widget", "panel", "dialog", "settings"],
+            "description": "Component type"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Human-readable component name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Component description"
+          },
+          "icon": {
+            "type": "string",
+            "description": "Icon name or SVG path"
+          },
+          "defaultSize": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "number" },
+              "height": { "type": "number" }
+            },
+            "required": ["width", "height"]
+          },
+          "minSize": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "number" },
+              "height": { "type": "number" }
+            },
+            "required": ["width", "height"]
+          },
+          "maxSize": {
+            "type": "object",
+            "properties": {
+              "width": { "type": "number" },
+              "height": { "type": "number" }
+            },
+            "required": ["width", "height"]
+          },
+          "configSchema": {
+            "type": "object",
+            "description": "JSON Schema for component configuration",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["string", "number", "boolean", "object", "array"]
+                },
+                "required": { "type": "boolean" },
+                "default": {},
+                "description": { "type": "string" }
+              }
+            }
+          },
+          "dataSourceSchema": {
+            "type": "object",
+            "description": "Schema for data source configuration",
+            "properties": {
+              "supportedTypes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "requiredFields": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          },
+          "refreshable": {
+            "type": "boolean",
+            "description": "Whether the component supports manual refresh",
+            "default": true
+          },
+          "refreshInterval": {
+            "type": "number",
+            "description": "Default refresh interval in milliseconds (0 = no auto-refresh)",
+            "default": 0
+          }
+        }
+      }
+    },
+    "i18n": {
+      "type": "object",
+      "description": "Internationalization support",
+      "properties": {
+        "defaultLanguage": {
+          "type": "string",
+          "default": "en"
+        },
+        "supportedLanguages": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "resourcesPath": {
+          "type": "string",
+          "description": "Path to i18n resource files"
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "description": "Frontend dependencies",
+      "properties": {
+        "react": {
+          "type": "string",
+          "description": "Required React version range"
+        }
+      },
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

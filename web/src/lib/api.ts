@@ -1191,32 +1191,29 @@ export const api = {
    * Upload and install an extension package (.nep file)
    * POST /api/extensions/upload/file
    *
-   * For Tauri desktop: Uploads the file directly
-   * For web: Requires the file to be uploaded to a temporary location first
+   * Uses standard multipart/form-data upload (works for both Tauri and Web)
    */
   uploadExtensionFile: async (file: File) => {
-    // Check if running in Tauri using type-safe check
+    // Check if running in Tauri
     const isTauri = typeof window !== 'undefined' && !!(window as any).__TAURI__
 
-    if (!isTauri) {
-      throw new Error('Direct file upload only supported in Tauri desktop app. Please use the file path method.')
-    }
+    // Prepare form data
+    const formData = new FormData()
+    formData.append('file', file)
 
-    // Use fetch directly to upload file
-    const arrayBuffer = await file.arrayBuffer()
-    const body = new Uint8Array(arrayBuffer)
+    // Determine API URL
+    const apiUrl = isTauri
+      ? 'http://localhost:9375/api/extensions/upload/file'
+      : '/api/extensions/upload/file'
 
-    const response = await fetch('http://localhost:9375/api/extensions/upload/file', {
+    const response = await fetch(apiUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-      },
-      body,
+      body: formData,
     })
 
     if (!response.ok) {
-      const error = await response.text()
-      throw new Error(error || 'Upload failed')
+      const errorText = await response.text()
+      throw new Error(errorText || 'Upload failed')
     }
 
     return await response.json()

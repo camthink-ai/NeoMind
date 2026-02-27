@@ -349,7 +349,7 @@ impl LlmBackendInstanceManager {
             BackendTypeDefinition {
                 id: "ollama".to_string(),
                 name: "Ollama".to_string(),
-                description: "本地 Ollama LLM 后端".to_string(),
+                description: "Ollama LLM".to_string(),
                 default_model: "qwen3-vl:2b".to_string(),
                 default_endpoint: Some("http://localhost:11434".to_string()),
                 requires_api_key: false,
