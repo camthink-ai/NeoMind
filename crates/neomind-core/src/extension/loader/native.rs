@@ -351,6 +351,10 @@ impl NativeExtensionLoader {
     }
 
     /// Discover native extensions in a directory.
+    ///
+    /// Supports two formats:
+    /// 1. Legacy: Top-level binary files (e.g., `extension.dylib`)
+    /// 2. .nep package format: Folders with `binaries/{platform}/extension.{ext}`
     pub async fn discover(&self, dir: &Path) -> Vec<(PathBuf, ExtensionMetadata)> {
         let mut extensions = Vec::new();
 
@@ -360,10 +364,21 @@ impl NativeExtensionLoader {
 
         // Collect all potential extension paths first
         let mut extension_paths: Vec<PathBuf> = Vec::new();
+
         for entry in entries.flatten() {
             let path = entry.path();
+
+            // 1. Legacy format: Top-level binary files
             if crate::extension::is_native_extension(&path) {
                 extension_paths.push(path);
+                continue;
+            }
+
+            // 2. .nep package format: Folder with binaries/ subdirectory
+            if path.is_dir() {
+                if let Some(nep_binary) = self.find_nep_binary(&path).await {
+                    extension_paths.push(nep_binary);
+                }
             }
         }
 
@@ -376,6 +391,44 @@ impl NativeExtensionLoader {
         }
 
         extensions
+    }
+
+    /// Find binary file in .nep package folder structure.
+    /// Looks for: binaries/{platform}/extension.{ext}
+    async fn find_nep_binary(&self, folder: &Path) -> Option<PathBuf> {
+        let binaries_dir = folder.join("binaries");
+        if !binaries_dir.exists() {
+            return None;
+        }
+
+        // Detect current platform
+        let platform = crate::extension::package::detect_platform();
+
+        // Platform-specific subdirectory names
+        let platform_dirs: Vec<&str> = match platform.as_str() {
+            "darwin-aarch64" => vec!["darwin_aarch64", "darwin-aarch64", "darwin-arm64"],
+            "darwin-x64" => vec!["darwin_x64", "darwin-x64", "darwin-amd64"],
+            "linux-x64" => vec!["linux_x64", "linux-x64", "linux-amd64"],
+            "linux-arm64" => vec!["linux_arm64", "linux-arm64"],
+            "windows-x64" => vec!["windows_x64", "windows-x64", "windows-amd64"],
+            _ => vec![platform.as_str()],
+        };
+
+        // Look for binary in platform-specific directories
+        for platform_dir in platform_dirs {
+            let platform_path = binaries_dir.join(platform_dir);
+            if platform_path.exists() {
+                // Look for extension binary
+                for ext in &["dylib", "so", "dll"] {
+                    let binary = platform_path.join(format!("extension.{}", ext));
+                    if binary.exists() {
+                        return Some(binary);
+                    }
+                }
+            }
+        }
+
+        None
     }
 }
 

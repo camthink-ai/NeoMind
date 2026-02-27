@@ -7,10 +7,8 @@ target/
 Cargo.lock
 
 # Extension binaries (compiled libraries)
-extensions/*.dylib
-extensions/*.so
-extensions/*.dll
-extensions/*.wasm
+# Extensions are loaded at runtime, not part of source code
+extensions/
 
 # =============================================================================
 # Runtime Data

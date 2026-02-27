@@ -25,6 +25,10 @@ use neomind_sandbox::{Sandbox, SandboxConfig};
 pub struct LoadedWasmExtension {
     /// The sandbox module
     pub extension: DynExtension,
+    /// Module name for cleanup
+    pub module_name: String,
+    /// Sandbox reference for cleanup
+    pub sandbox: Arc<Sandbox>,
 }
 
 /// WASM Extension - implements Extension trait backed by sandbox.
@@ -259,13 +263,25 @@ impl WasmExtensionLoader {
             return Err(ExtensionError::InvalidFormat("Not a WASM file".to_string()));
         }
 
-        // Try to load metadata from sidecar JSON file
-        let json_path = path.with_extension("json");
-        let (mut metadata, metrics, commands) = if json_path.exists() {
-            self.load_metadata_from_json(&json_path)?
+        // 1. Try to load from .nep package manifest.json
+        let (mut metadata, metrics, commands) = if let Some(nep_manifest) = self.find_nep_manifest(path) {
+            if nep_manifest.exists() {
+                match self.load_metadata_from_json(&nep_manifest) {
+                    Ok(result) => result,
+                    Err(_) => self.metadata_from_filename(path)?,
+                }
+            } else {
+                self.metadata_from_filename(path)?
+            }
         } else {
-            // Extract from filename
-            self.metadata_from_filename(path)?
+            // 2. Try to load metadata from sidecar JSON file (legacy format)
+            let json_path = path.with_extension("json");
+            if json_path.exists() {
+                self.load_metadata_from_json(&json_path)?
+            } else {
+                // 3. Extract from filename
+                self.metadata_from_filename(path)?
+            }
         };
 
         // Ensure file_path is set to the WASM file path
@@ -286,13 +302,17 @@ impl WasmExtensionLoader {
             metrics,
             commands,
             Arc::clone(&self.sandbox),
-            module_name,
+            module_name.clone(),
         );
 
         // Wrap in Arc<RwLock<>> to match DynExtension type
         let extension: DynExtension = Arc::new(TokioRwLock::new(Box::new(wasm_ext)));
 
-        Ok(LoadedWasmExtension { extension })
+        Ok(LoadedWasmExtension {
+            extension,
+            module_name,
+            sandbox: Arc::clone(&self.sandbox),
+        })
     }
 
     /// Load metadata from JSON sidecar file.
@@ -461,19 +481,52 @@ impl WasmExtensionLoader {
             return Err(ExtensionError::InvalidFormat("Not a WASM file".to_string()));
         }
 
-        // Try to load metadata from sidecar JSON file
+        // 1. Try to load from .nep package manifest.json
+        // If path is like "extensions/xxx/binaries/wasm/extension.wasm",
+        // look for manifest at "extensions/xxx/manifest.json"
+        if let Some(nep_manifest) = self.find_nep_manifest(path) {
+            if nep_manifest.exists() {
+                if let Ok((metadata, _, _)) = self.load_metadata_from_json(&nep_manifest) {
+                    return Ok(metadata);
+                }
+            }
+        }
+
+        // 2. Try to load metadata from sidecar JSON file (legacy format)
         let json_path = path.with_extension("json");
         if json_path.exists() {
             let (metadata, _, _) = self.load_metadata_from_json(&json_path)?;
             return Ok(metadata);
         }
 
-        // Fall back to generating metadata from filename
+        // 3. Fall back to generating metadata from filename
         let (metadata, _, _) = self.metadata_from_filename(path)?;
         Ok(metadata)
     }
 
+    /// Find manifest.json in .nep package folder structure.
+    /// For path like "extensions/xxx/binaries/wasm/extension.wasm",
+    /// returns "extensions/xxx/manifest.json"
+    fn find_nep_manifest(&self, wasm_path: &Path) -> Option<PathBuf> {
+        // Go up from binaries/wasm/extension.wasm to find manifest.json
+        // Path structure: extension_folder/binaries/wasm/extension.wasm
+        let binaries_dir = wasm_path.parent()?; // binaries/wasm
+        let wasm_dir = binaries_dir.parent()?;  // binaries
+        let extension_folder = wasm_dir.parent()?;  // extension_folder
+
+        let manifest = extension_folder.join("manifest.json");
+        if manifest.exists() {
+            return Some(manifest);
+        }
+
+        None
+    }
+
     /// Discover WASM extensions in a directory.
+    ///
+    /// Supports two formats:
+    /// 1. Legacy: Top-level .wasm files with optional .json sidecar
+    /// 2. .nep package format: Folders with `binaries/wasm/extension.wasm`
     pub async fn discover(&self, dir: &Path) -> Vec<(PathBuf, SystemMetadata)> {
         let mut extensions = Vec::new();
 
@@ -483,10 +536,21 @@ impl WasmExtensionLoader {
 
         // Collect all potential extension paths first
         let mut wasm_paths: Vec<PathBuf> = Vec::new();
+
         for entry in entries.flatten() {
             let path = entry.path();
+
+            // 1. Legacy format: Top-level .wasm files
             if crate::extension::is_wasm_extension(&path) {
                 wasm_paths.push(path);
+                continue;
+            }
+
+            // 2. .nep package format: Folder with binaries/wasm/ subdirectory
+            if path.is_dir() {
+                if let Some(nep_wasm) = self.find_nep_wasm(&path) {
+                    wasm_paths.push(nep_wasm);
+                }
             }
         }
 
@@ -502,6 +566,25 @@ impl WasmExtensionLoader {
         }
 
         extensions
+    }
+
+    /// Find WASM file in .nep package folder structure.
+    /// Looks for: binaries/wasm/extension.wasm
+    fn find_nep_wasm(&self, folder: &Path) -> Option<PathBuf> {
+        let wasm_path = folder.join("binaries/wasm/extension.wasm");
+        if wasm_path.exists() {
+            return Some(wasm_path);
+        }
+
+        // Also check for other common names
+        for name in &["extension.wasm", "main.wasm", "index.wasm"] {
+            let path = folder.join("binaries/wasm").join(name);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+
+        None
     }
 
     /// Get the sandbox reference.

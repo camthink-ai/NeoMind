@@ -38,7 +38,7 @@ pub const ABI_VERSION: u32 = 2;
 
 /// Metric data type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "PascalCase")]
+#[serde(rename_all = "lowercase")]
 #[derive(Default)]
 pub enum MetricDataType {
     Float,
