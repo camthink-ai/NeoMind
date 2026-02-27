@@ -154,7 +154,9 @@
   "errors": {
     "sendMessage": "Failed to send message",
     "connectionLost": "Connection lost",
-    "retry": "Retry"
+    "retry": "Retry",
+    "llmError": "LLM Service Error",
+    "dismiss": "Dismiss"
   },
   "notConfigured": {
     "title": "LLM Not Configured",

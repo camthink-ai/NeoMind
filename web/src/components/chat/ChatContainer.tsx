@@ -59,6 +59,7 @@ interface StreamState {
   streamingToolCalls: any[]
   streamProgress: StreamProgressType
   currentPlanStep: string
+  errorMessage: string | null
 }
 
 type StreamAction =
@@ -71,8 +72,9 @@ type StreamAction =
   | { type: 'PLAN'; step: string }
   | { type: 'WARNING'; message: string }
   | { type: 'END_STREAM' }
-  | { type: 'ERROR' }
+  | { type: 'ERROR'; message?: string }
   | { type: 'RESET' }
+  | { type: 'CLEAR_ERROR' }
 
 const initialStreamState: StreamState = {
   isStreaming: false,
@@ -85,7 +87,8 @@ const initialStreamState: StreamState = {
     warnings: [],
     remainingTime: 300
   },
-  currentPlanStep: ""
+  currentPlanStep: "",
+  errorMessage: null
 }
 
 function streamReducer(state: StreamState, action: StreamAction): StreamState {
@@ -179,7 +182,14 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
     case 'ERROR':
       return {
         ...initialStreamState,
-        isStreaming: false
+        isStreaming: false,
+        errorMessage: action.message || null
+      }
+
+    case 'CLEAR_ERROR':
+      return {
+        ...state,
+        errorMessage: null
       }
 
     case 'RESET':
@@ -353,7 +363,7 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
           break
 
         case "Error":
-          dispatch({ type: 'ERROR' })
+          dispatch({ type: 'ERROR', message: data.message })
           break
 
         case "session_created":
@@ -556,6 +566,25 @@ export function ChatContainer({ className = "" }: ChatContainerProps) {
               warning={streamState.streamProgress.warnings[streamState.streamProgress.warnings.length - 1]}
               currentStep={streamState.currentPlanStep}
             />
+          )}
+
+          {/* Error message display */}
+          {streamState.errorMessage && (
+            <div className="flex items-center gap-3 p-4 rounded-lg bg-destructive/10 border border-destructive/20 text-sm">
+              <div className="w-2 h-2 rounded-full bg-destructive shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-destructive">{t("errors.llmError")}</p>
+                <p className="text-muted-foreground text-xs mt-1 break-all">{streamState.errorMessage}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="shrink-0 text-xs"
+                onClick={() => dispatch({ type: 'CLEAR_ERROR' })}
+              >
+                {t("errors.dismiss")}
+              </Button>
+            </div>
           )}
 
           {/* Scroll anchor */}
