@@ -154,7 +154,9 @@
   "errors": {
     "sendMessage": "发送消息失败",
     "connectionLost": "连接已断开",
-    "retry": "重试"
+    "retry": "重试",
+    "llmError": "LLM 服务错误",
+    "dismiss": "关闭"
   },
   "notConfigured": {
     "title": "LLM 未配置",

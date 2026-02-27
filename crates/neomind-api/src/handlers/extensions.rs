@@ -10,14 +10,15 @@
 
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
+    extract::{Extension, Multipart, Path, Query, State},
     http::HeaderMap,
     Json,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use http_body_util::{BodyExt, Limited};
@@ -28,6 +29,7 @@ use crate::handlers::devices::models::TimeRangeQuery;
 use crate::models::error::ErrorResponse;
 use crate::server::ServerState;
 use neomind_core::datasource::DataSourceId;
+use neomind_core::extension::registry::ExtensionRegistry;
 use neomind_core::extension::{MetricDataType, ParameterDefinition};
 use neomind_storage::{ExtensionRecord, ExtensionStore};
 
@@ -3214,6 +3216,45 @@ pub async fn uninstall_extension_handler(
         "removed_files": removed_files,
         "note": "All extension files, including frontend components, have been removed"
     }))
+}
+
+/// POST /api/extensions/upload/multipart
+/// Upload an extension package file using multipart/form-data.
+///
+/// This endpoint is currently disabled due to technical limitations.
+/// Please use the `/api/extensions/upload/file` endpoint instead with
+/// `Content-Type: application/octet-stream`.
+///
+/// Example with curl:
+/// ```bash
+/// curl -X POST http://localhost:9375/api/extensions/upload/file \
+///   -H "Content-Type: application/octet-stream" \
+///   --data-binary @extension.nep
+/// ```
+///
+/// For frontend JavaScript:
+/// ```javascript
+/// const formData = new FormData();
+/// formData.append('file', fileBlob);
+///
+/// // Convert to binary and use /upload/file endpoint
+/// const arrayBuffer = await fileBlob.arrayBuffer();
+/// const response = await fetch('/api/extensions/upload/file', {
+///   method: 'POST',
+///   headers: { 'Content-Type': 'application/octet-stream' },
+///   body: arrayBuffer
+/// });
+/// ```
+#[allow(dead_code)]
+pub async fn upload_extension_multipart_handler(
+    State(_state): State<ServerState>,
+    _req: axum::extract::Request,
+) -> HandlerResult<serde_json::Value> {
+    // This handler is currently disabled.
+    // Use /api/extensions/upload/file with Content-Type: application/octet-stream
+    Err(ErrorResponse::gone(
+        "This endpoint is disabled. Please use /api/extensions/upload/file with Content-Type: application/octet-stream"
+    ))
 }
 
 /// POST /api/extensions/upload/file
