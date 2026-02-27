@@ -3273,13 +3273,13 @@ pub async fn upload_extension_file_handler(
     req: axum::extract::Request,
 ) -> HandlerResult<serde_json::Value> {
     use neomind_core::extension::package::ExtensionPackage;
+    use http_body_util::BodyExt;
 
     // Limit file size to 100MB
     const MAX_SIZE: usize = 100 * 1024 * 1024;
 
     // Collect body data with size limit
-    let body_bytes = Limited::new(req.into_body(), MAX_SIZE)
-        .collect()
+    let body_bytes = BodyExt::collect(Limited::new(req.into_body(), MAX_SIZE))
         .await
         .map_err(|e| ErrorResponse::bad_request(format!("Failed to read body: {}", e)))?
         .to_bytes();
