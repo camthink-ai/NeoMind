@@ -2915,29 +2915,16 @@ pub async fn serve_extension_asset_handler(
         return Err(ErrorResponse::bad_request("Invalid asset path"));
     }
 
-    // Try multiple extension directories in order:
-    // 1. extensions/{id}/ - Development directory (.nep format)
-    // 2. data/extensions/{id}/ - Runtime installed extensions
-    let search_dirs = vec![
-        std::path::PathBuf::from("extensions"),
-        std::path::PathBuf::from(
-            std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "./data".to_string())
-        ).join("extensions"),
-    ];
+    // Extension directory is always data/extensions/{id}
+    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "./data".to_string());
+    let ext_dir = std::path::PathBuf::from(data_dir).join("extensions").join(&id);
 
-    let mut asset_file = None;
-    for dir in &search_dirs {
-        let file = dir.join(&id).join(&asset_path);
-        if file.exists() {
-            asset_file = Some(file);
-            break;
-        }
+    let asset_file = ext_dir.join(&asset_path);
+
+    // Check if file exists
+    if !asset_file.exists() {
+        return Err(ErrorResponse::not_found("Asset not found"));
     }
-
-    let asset_file = match asset_file {
-        Some(f) => f,
-        None => return Err(ErrorResponse::not_found("Asset not found")),
-    };
 
     // Read file content
     let content = match std::fs::read(&asset_file) {
