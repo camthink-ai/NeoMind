@@ -7,8 +7,11 @@
 //! Fully decoupled from device system - uses independent ExtensionMetricsStorage.
 //! Now with circuit breaker integration for safety.
 //! Publishes ExtensionOutput events for real-time dashboard updates.
+//!
+//! Supports per-extension collection intervals via config_parameters.collect_interval.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use tracing::{debug, info, warn};
@@ -42,6 +45,14 @@ fn convert_metric_value(value: neomind_devices::mdl::MetricValue) -> CoreMetricV
     }
 }
 
+/// Per-extension collection state
+struct ExtensionCollectionState {
+    /// Last collection timestamp (Unix timestamp in seconds)
+    last_collection: i64,
+    /// Configured collection interval in seconds (0 = disabled, None = use default)
+    collect_interval: Option<u64>,
+}
+
 /// Extension metrics collector - periodically collects and stores extension metrics.
 pub struct ExtensionMetricsCollector {
     /// Extension registry for accessing extensions
@@ -50,8 +61,10 @@ pub struct ExtensionMetricsCollector {
     metrics_storage: Arc<ExtensionMetricsStorage>,
     /// Event bus for publishing metric update events
     event_bus: Option<Arc<neomind_core::EventBus>>,
-    /// Collection interval (default 60 seconds)
-    interval: Duration,
+    /// Default collection interval (60 seconds)
+    default_interval: Duration,
+    /// Per-extension collection state
+    extension_states: RwLock<HashMap<String, ExtensionCollectionState>>,
 }
 
 impl ExtensionMetricsCollector {
@@ -65,31 +78,57 @@ impl ExtensionMetricsCollector {
             extension_registry,
             metrics_storage,
             event_bus,
-            interval: Duration::from_secs(60),
+            default_interval: Duration::from_secs(60),
+            extension_states: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Set the collection interval.
+    /// Set the default collection interval.
     pub fn with_interval(mut self, interval: Duration) -> Self {
-        self.interval = interval;
+        self.default_interval = interval;
         self
+    }
+
+    /// Get the collect_interval from extension config_parameters.
+    /// Returns None if not configured (use default), Some(0) if disabled.
+    fn get_collect_interval(info: &neomind_core::extension::registry::ExtensionInfo) -> Option<u64> {
+        if let Some(ref params) = info.metadata.config_parameters {
+            for param in params {
+                if param.name == "collect_interval" {
+                    // Try to get the value from default_value
+                    if let Some(ref default) = param.default_value {
+                        match default {
+                            neomind_core::extension::system::ParamMetricValue::Integer(n) => {
+                                return Some(*n as u64);
+                            }
+                            neomind_core::extension::system::ParamMetricValue::Float(f) => {
+                                return Some(*f as u64);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Run the collector as a background task.
     ///
     /// This periodically calls `produce_metrics()` on all registered extensions
     /// and stores the returned values in the extension metrics database.
+    /// Each extension can have its own collection interval via config_parameters.collect_interval.
     pub async fn run(self) {
         // Wait for server to fully initialize before starting
         tokio::time::sleep(Duration::from_secs(5)).await;
 
         info!(
             category = "extensions",
-            "Extension metrics collector started (interval: {:?})", self.interval
+            "Extension metrics collector started (default interval: {:?})", self.default_interval
         );
 
         // First loop iteration - wait before collecting
-        tokio::time::sleep(self.interval).await;
+        tokio::time::sleep(self.default_interval).await;
         info!(
             category = "extensions",
             "About to collect metrics for first time"
@@ -104,7 +143,7 @@ impl ExtensionMetricsCollector {
         }
 
         loop {
-            tokio::time::sleep(self.interval).await;
+            tokio::time::sleep(self.default_interval).await;
             info!(category = "extensions", "Collecting metrics");
 
             if let Err(e) = self.collect_and_store().await {
@@ -132,6 +171,7 @@ impl ExtensionMetricsCollector {
             return Ok(());
         }
 
+        let now = chrono::Utc::now().timestamp();
         let mut total_metrics = 0;
         let mut total_errors = 0;
 
@@ -144,6 +184,60 @@ impl ExtensionMetricsCollector {
                     category = "extensions",
                     "Extension {} has no metrics, skipping", extension_id
                 );
+                continue;
+            }
+
+            // Check if we should collect metrics for this extension based on its collect_interval
+            let should_collect = {
+                let mut states = self.extension_states.write().unwrap();
+                let state = states.entry(extension_id.clone()).or_insert_with(|| {
+                    // Initialize state from extension config
+                    let interval = Self::get_collect_interval(&info);
+                    ExtensionCollectionState {
+                        last_collection: 0,
+                        collect_interval: interval,
+                    }
+                });
+
+                // Update collect_interval in case config changed
+                state.collect_interval = Self::get_collect_interval(&info);
+
+                match state.collect_interval {
+                    Some(0) => {
+                        // collect_interval = 0 means disabled
+                        debug!(
+                            category = "extensions",
+                            extension_id = %extension_id,
+                            "Extension collection disabled (collect_interval=0)"
+                        );
+                        false
+                    }
+                    Some(interval_secs) => {
+                        // Check if enough time has passed
+                        let elapsed = now - state.last_collection;
+                        if elapsed >= interval_secs as i64 {
+                            state.last_collection = now;
+                            true
+                        } else {
+                            debug!(
+                                category = "extensions",
+                                extension_id = %extension_id,
+                                elapsed_secs = elapsed,
+                                interval_secs = interval_secs,
+                                "Skipping collection, interval not elapsed"
+                            );
+                            false
+                        }
+                    }
+                    None => {
+                        // No interval configured, use default (always collect)
+                        state.last_collection = now;
+                        true
+                    }
+                }
+            };
+
+            if !should_collect {
                 continue;
             }
 
