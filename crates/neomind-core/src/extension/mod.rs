@@ -4,23 +4,37 @@
 //! NeoMind's capabilities. They are distinct from user configurations like
 //! LLM backends, device connections, or alert channels.
 //!
-//! # Architecture (V2 - Device-Standard Unified)
+//! # Architecture (V2 - Unified with Process Isolation)
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────┐
-//! │                  ExtensionRegistry                   │
-//! │  - Manages extension lifecycle                       │
-//! │  - Provides health monitoring                        │
-//! │  - Handles discovery and loading                     │
+//! │              UnifiedExtensionService                 │
+//! │  - Unified API for all extension operations         │
+//! │  - Routes to isolated or in-process backends        │
 //! └─────────────────────────────────────────────────────┘
-//!                          │
-//!          ┌───────────────┼───────────────┐
-//!          ▼               ▼               ▼
-//!   ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-//! │ Native Ext  │ │  WASM Ext   │ │ Future Ext  │
-//! │ (.so/.dll)  │ │  (.wasm)    │ │  Types      │
-//! └─────────────┘ └─────────────┘ └─────────────┘
+//!                         │
+//!          ┌───────────────┴───────────────┐
+//!          ▼                               ▼
+//! ┌─────────────────────┐       ┌─────────────────────┐
+//! │  ExtensionRegistry  │       │ IsolatedExtension   │
+//! │  (in-process)       │       │ Manager (isolated)  │
+//! └─────────────────────┘       └─────────────────────┘
+//!          │                               │
+//!          ▼                               ▼
+//! ┌─────────────────────┐       ┌─────────────────────┐
+//! │ Native/WASM Ext     │       │ Extension Runner    │
+//! │ (direct calls)      │       │ (separate process)  │
+//! └─────────────────────┘       └─────────────────────┘
 //! ```
+//!
+//! # Process Isolation
+//!
+//! Extensions can run in two modes:
+//! - **In-process**: Direct calls, fastest but extension crashes can affect main process
+//! - **Isolated**: Separate process, extension crashes don't affect main process
+//!
+//! By default, extensions run in isolated mode for safety. This can be configured
+//! via `UnifiedExtensionConfig`.
 //!
 //! # V2 Extension API
 //!
@@ -43,21 +57,15 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use neomind_core::extension::{ExtensionRegistry, Extension};
+//! use neomind_core::extension::{UnifiedExtensionService, Extension};
 //!
-//! let registry = ExtensionRegistry::new();
+//! let service = UnifiedExtensionService::with_defaults(registry);
 //!
-//! // Discover extensions from filesystem
-//! let discovered = registry.discover().await;
-//! for (path, metadata) in discovered {
-//!     println!("Found: {} at {:?}", metadata.id, path);
-//! }
-//!
-//! // Load extension from file
-//! let metadata = registry.load_from_path(&path).await?;
+//! // Load extension (automatically chooses isolated or in-process)
+//! let metadata = service.load(&path).await?;
 //!
 //! // Execute command
-//! let result = registry.execute_command(&id, &command, &args).await?;
+//! let result = service.execute_command(&id, &command, &args).await?;
 //! ```
 
 pub mod executor;
@@ -69,13 +77,15 @@ pub mod safety;
 pub mod stream;
 pub mod system;
 pub mod types;
+pub mod unified;
 
 pub use executor::{CommandExecutor, CommandResult, UnifiedStorage};
 pub use isolated::{
-    IsolatedExtension, IsolatedExtensionConfig, IsolatedExtensionError, IsolatedResult,
+    IsolatedExtension, IsolatedExtensionConfig, IsolatedExtensionError, IsolatedExtensionInfo,
+    IsolatedExtensionManager, IsolatedManagerConfig, IsolatedResult,
 };
-pub use loader::{NativeExtensionLoader, WasmExtensionLoader};
-pub use package::{detect_platform, ExtensionPackage, InstallResult, PACKAGE_FORMAT, PACKAGE_FORMAT_VERSION};
+pub use loader::{IsolatedExtensionLoader, IsolatedLoaderConfig, LoadedExtension, NativeExtensionLoader, WasmExtensionLoader};
+pub use package::{detect_platform, ExtensionPackage, InstallResult, PACKAGE_FORMAT, CURRENT_ABI_VERSION, MIN_ABI_VERSION};
 pub use registry::{ExtensionInfo, ExtensionRegistry, ExtensionRegistryTrait};
 pub use stream::{
     ClientInfo, DataChunk, FlowControl, SessionStats, StreamCapability, StreamDataType,
@@ -88,6 +98,7 @@ pub use system::{
     ToolDescriptor, ValidationRule,
 };
 pub use types::{DynExtension, ExtensionError, Result};
+pub use unified::{UnifiedExtensionConfig, UnifiedExtensionInfo, UnifiedExtensionService};
 
 /// Check if a file is a native extension.
 pub fn is_native_extension(path: &std::path::Path) -> bool {

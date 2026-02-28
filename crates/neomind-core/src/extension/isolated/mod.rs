@@ -5,9 +5,11 @@
 //! cannot crash the main NeoMind process.
 
 mod ipc;
+mod manager;
 mod process;
 
-pub use ipc::{IpcMessage, IpcResponse};
+pub use ipc::{ErrorKind, IpcFrame, IpcMessage, IpcResponse};
+pub use manager::{IsolatedExtensionInfo, IsolatedExtensionManager, IsolatedManagerConfig};
 pub use process::{IsolatedExtension, IsolatedExtensionConfig};
 
 /// Result type for isolated extension operations
@@ -47,4 +49,14 @@ pub enum IsolatedExtensionError {
     /// Extension not running
     #[error("Extension not running")]
     NotRunning,
+
+    /// Extension load error
+    #[error("Extension load error: {0}")]
+    LoadError(String),
+}
+
+impl From<crate::extension::system::ExtensionError> for IsolatedExtensionError {
+    fn from(err: crate::extension::system::ExtensionError) -> Self {
+        IsolatedExtensionError::LoadError(err.to_string())
+    }
 }

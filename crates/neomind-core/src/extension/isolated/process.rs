@@ -6,14 +6,13 @@
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
 
 use super::ipc::{IpcFrame, IpcMessage, IpcResponse};
 use super::{IsolatedExtensionError, IsolatedResult};
-use crate::extension::system::{ExtensionMetadata, ExtensionMetricValue, Result};
+use crate::extension::system::{ExtensionMetadata, ExtensionMetricValue};
 
 /// Configuration for isolated extension
 #[derive(Debug, Clone)]
@@ -242,6 +241,34 @@ impl IsolatedExtension {
     /// Check if process is alive
     pub fn is_alive(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    /// Get the extension ID
+    pub fn extension_id(&self) -> String {
+        self.extension_id.clone()
+    }
+
+    /// Check extension health via IPC
+    pub async fn health_check(&self) -> IsolatedResult<bool> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Ok(false);
+        }
+
+        let request_id = self.request_id.fetch_add(1, Ordering::SeqCst);
+
+        // Use a short timeout for health checks
+        match self.send_message(&IpcMessage::HealthCheck { request_id }).await {
+            Ok(()) => {}
+            Err(_) => return Ok(false),
+        }
+
+        match self
+            .receive_response_with_timeout(Duration::from_secs(5))
+            .await
+        {
+            Ok(IpcResponse::Health { healthy, .. }) => Ok(healthy),
+            _ => Ok(false),
+        }
     }
 
     /// Get extension metadata
