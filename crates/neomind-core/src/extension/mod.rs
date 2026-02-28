@@ -10,31 +10,24 @@
 //! ┌─────────────────────────────────────────────────────┐
 //! │              UnifiedExtensionService                 │
 //! │  - Unified API for all extension operations         │
-//! │  - Routes to isolated or in-process backends        │
+//! │  - All extensions use process isolation by default  │
 //! └─────────────────────────────────────────────────────┘
 //!                         │
-//!          ┌───────────────┴───────────────┐
-//!          ▼                               ▼
-//! ┌─────────────────────┐       ┌─────────────────────┐
-//! │  ExtensionRegistry  │       │ IsolatedExtension   │
-//! │  (in-process)       │       │ Manager (isolated)  │
-//! └─────────────────────┘       └─────────────────────┘
-//!          │                               │
-//!          ▼                               ▼
-//! ┌─────────────────────┐       ┌─────────────────────┐
-//! │ Native/WASM Ext     │       │ Extension Runner    │
-//! │ (direct calls)      │       │ (separate process)  │
-//! └─────────────────────┘       └─────────────────────┘
+//!                         ▼
+//! ┌─────────────────────────────────────────────────────┐
+//! │              Extension Runner Process                │
+//! │  - Native extensions (.so/.dylib/.dll) via FFI      │
+//! │  - WASM extensions (.wasm) via wasmtime             │
+//! │  - Complete isolation from main process             │
+//! └─────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Process Isolation
 //!
-//! Extensions can run in two modes:
-//! - **In-process**: Direct calls, fastest but extension crashes can affect main process
-//! - **Isolated**: Separate process, extension crashes don't affect main process
-//!
-//! By default, extensions run in isolated mode for safety. This can be configured
-//! via `UnifiedExtensionConfig`.
+//! All extensions run in isolated mode by default:
+//! - Extension crashes don't affect main NeoMind process
+//! - Memory and resource limits are enforced
+//! - Clean separation of concerns
 //!
 //! # V2 Extension API
 //!
@@ -61,7 +54,7 @@
 //!
 //! let service = UnifiedExtensionService::with_defaults(registry);
 //!
-//! // Load extension (automatically chooses isolated or in-process)
+//! // Load extension (runs in isolated process)
 //! let metadata = service.load(&path).await?;
 //!
 //! // Execute command
@@ -84,7 +77,7 @@ pub use isolated::{
     IsolatedExtension, IsolatedExtensionConfig, IsolatedExtensionError, IsolatedExtensionInfo,
     IsolatedExtensionManager, IsolatedManagerConfig, IsolatedResult,
 };
-pub use loader::{IsolatedExtensionLoader, IsolatedLoaderConfig, LoadedExtension, NativeExtensionLoader, WasmExtensionLoader};
+pub use loader::{IsolatedExtensionLoader, IsolatedLoaderConfig, LoadedExtension, NativeExtensionLoader};
 pub use package::{detect_platform, ExtensionPackage, InstallResult, PACKAGE_FORMAT, CURRENT_ABI_VERSION, MIN_ABI_VERSION};
 pub use registry::{ExtensionInfo, ExtensionRegistry, ExtensionRegistryTrait};
 pub use stream::{

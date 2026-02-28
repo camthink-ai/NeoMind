@@ -1,9 +1,10 @@
-//! Extension loaders for native, WASM, and isolated extensions.
+//! Extension loaders for native and isolated extensions.
+//!
+//! WASM extensions are now handled by the extension-runner process,
+//! which uses wasmtime directly for execution.
 
 pub mod isolated;
 pub mod native;
-pub mod wasm;
 
 pub use isolated::{IsolatedExtensionLoader, IsolatedLoaderConfig, LoadedExtension};
 pub use native::{LoadedNativeExtension, NativeExtensionLoader};
-pub use wasm::WasmExtensionLoader;

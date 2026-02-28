@@ -5,6 +5,9 @@
 //! - Extension discovery from filesystem
 //! - Health monitoring
 //! - Safety management (circuit breaker, panic isolation)
+//!
+//! Note: WASM extensions are now handled via the extension-runner process.
+//! This registry only handles native extensions directly.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,7 +17,7 @@ use parking_lot::RwLock;
 
 use crate::event::NeoMindEvent;
 use crate::eventbus::EventBus;
-use crate::extension::loader::{NativeExtensionLoader, WasmExtensionLoader};
+use crate::extension::loader::NativeExtensionLoader;
 use crate::extension::safety::ExtensionSafetyManager;
 use crate::extension::system::{
     DynExtension, ExtensionError, ExtensionMetadata, ExtensionState, ExtensionStats,
@@ -49,8 +52,6 @@ pub struct ExtensionRegistry {
     info_cache: RwLock<HashMap<String, ExtensionInfo>>,
     /// Native extension loader
     native_loader: NativeExtensionLoader,
-    /// WASM extension loader
-    wasm_loader: WasmExtensionLoader,
     /// Extension directories to scan
     extension_dirs: Vec<PathBuf>,
     /// Loaded libraries kept alive to prevent unloading.
@@ -66,27 +67,10 @@ pub struct ExtensionRegistry {
 impl ExtensionRegistry {
     /// Create a new extension registry.
     pub fn new() -> Self {
-        // Create WASM loader, but avoid panicking the whole process on failure.
-        // If the sandbox cannot be created, we log an error and disable WASM extension loading
-        // while still allowing native extensions to function.
-        let wasm_loader = match WasmExtensionLoader::new() {
-            Ok(loader) => loader,
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "[ExtensionRegistry] Failed to create WASM loader, WASM extensions will be unavailable"
-                );
-                // Fallback to a default loader that will report errors on use.
-                // This uses Default, which is expected to succeed in normal configurations.
-                WasmExtensionLoader::default()
-            }
-        };
-
         Self {
             extensions: RwLock::new(HashMap::new()),
             info_cache: RwLock::new(HashMap::new()),
             native_loader: NativeExtensionLoader::new(),
-            wasm_loader,
             extension_dirs: vec![],
             loaded_libraries: RwLock::new(HashMap::new()),
             safety_manager: Arc::new(ExtensionSafetyManager::new()),
@@ -252,6 +236,9 @@ impl ExtensionRegistry {
     }
 
     /// Load an extension from a file path and register it.
+    ///
+    /// Note: WASM extensions should be loaded via the extension-runner process,
+    /// not directly through this registry.
     pub async fn load_from_path(&self, path: &Path) -> Result<ExtensionMetadata> {
         let extension = path.extension().and_then(|e| e.to_str());
 
@@ -272,34 +259,21 @@ impl ExtensionRegistry {
 
                 // Register the extension with file path
                 let id = metadata.id.clone();
-                
+
                 // Store the library handle to prevent unloading
                 let library_arc = loaded.library_arc();
                 self.loaded_libraries.write().insert(id.clone(), library_arc);
-                
+
                 self.register_with_path(id, loaded.extension, Some(path.to_path_buf())).await?;
 
                 Ok(metadata)
             }
             Some("wasm") => {
-                // Load the WASM extension
-                let loaded = self.wasm_loader.load(path).await?;
-
-                // Get metadata and metrics/commands
-                let ext = loaded.extension.read().await;
-                let mut metadata = ext.metadata().clone();
-                let _metrics = ext.metrics().to_vec();
-                let _commands = ext.commands().to_vec();
-                drop(ext);
-
-                // Set file path for component loading
-                metadata.file_path = Some(path.to_path_buf());
-
-                // Register the extension with file path
-                let id = metadata.id.clone();
-                self.register_with_path(id, loaded.extension, Some(path.to_path_buf())).await?;
-
-                Ok(metadata)
+                // WASM extensions should be loaded via extension-runner
+                // Return an error pointing users to the isolated extension path
+                Err(ExtensionError::InvalidFormat(
+                    "WASM extensions must be loaded via UnifiedExtensionService for process isolation".to_string()
+                ))
             }
             _ => Err(ExtensionError::InvalidFormat(format!(
                 "Unsupported extension format: {:?}",
@@ -311,6 +285,8 @@ impl ExtensionRegistry {
     /// Discover extensions in configured directories.
     ///
     /// Returns a list of (path, metadata) tuples for discovered extensions.
+    /// Note: Only native extensions are discovered directly. WASM extensions
+    /// should be discovered via the extension-runner process.
     pub async fn discover(&self) -> Vec<(PathBuf, ExtensionMetadata)> {
         let mut discovered = Vec::new();
 
@@ -337,15 +313,8 @@ impl ExtensionRegistry {
                 discovered.push((path, metadata));
             }
 
-            // Discover WASM extensions
-            let wasm_found = self.wasm_loader.discover(dir).await;
-            tracing::debug!(
-                "Extension discover: found {} wasm extensions",
-                wasm_found.len()
-            );
-            for (path, metadata) in wasm_found {
-                discovered.push((path, metadata));
-            }
+            // Note: WASM extensions are discovered by the extension-runner,
+            // not here in the registry
         }
 
         tracing::debug!(

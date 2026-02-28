@@ -2558,19 +2558,22 @@ pub async fn update_extension_config_handler(
 /// POST /api/extensions/:id/reload
 ///
 /// Reload an extension with its current configuration.
+/// Uses the unified extension service which handles both native and WASM extensions
+/// via process isolation.
+#[axum::debug_handler]
 pub async fn reload_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let registry = &state.extensions.registry;
+    let unified_service = state.extensions.unified_service.clone();
 
-    // Get extension info before unregistering
-    let ext_info = registry
+    // Get extension info before reloading
+    let ext_info = unified_service
         .get_info(&id)
         .await
         .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
 
-    let file_path = ext_info.metadata.file_path.clone();
+    let file_path = ext_info.path.clone();
 
     // Get current config
     let config: Option<serde_json::Value> =
@@ -2580,25 +2583,24 @@ pub async fn reload_extension_handler(
             None
         };
 
-    // Unregister the extension
-    registry
-        .unregister(&id)
+    // Unload the extension
+    unified_service
+        .unload(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to unregister: {}", e)))?;
+        .map_err(|e| ErrorResponse::internal(format!("Failed to unload: {}", e)))?;
 
     // Re-load from file if we have the path
     let mut config_applied = false;
     if let Some(ref path) = file_path {
-        use neomind_core::extension::loader::WasmExtensionLoader;
-
-        let loader = WasmExtensionLoader::new()
-            .map_err(|e| ErrorResponse::internal(format!("Failed to create loader: {}", e)))?;
-        match loader.load(path).await {
-            Ok(loaded) => {
-                // Apply saved config before registering
+        // Load via unified service (handles both native and WASM)
+        match unified_service.load(path).await {
+            Ok(metadata) => {
+                // Apply saved config
                 if let Some(ref cfg) = config {
-                    let mut ext = loaded.extension.write().await;
-                    if let Err(e) = ext.configure(cfg).await {
+                    if let Err(e) = unified_service
+                        .execute_command(&metadata.id, "configure", cfg)
+                        .await
+                    {
                         tracing::warn!(
                             extension_id = %id,
                             error = %e,
@@ -2611,14 +2613,14 @@ pub async fn reload_extension_handler(
                             "Applied saved config to extension during reload"
                         );
                     }
-                    drop(ext);
                 }
 
-                // Register the reloaded extension
-                registry
-                    .register(id.clone(), loaded.extension)
-                    .await
-                    .map_err(|e| ErrorResponse::internal(format!("Failed to register: {}", e)))?;
+                let is_isolated = unified_service.is_isolated(&id).await;
+                tracing::info!(
+                    extension_id = %id,
+                    is_isolated = is_isolated,
+                    "Extension reloaded"
+                );
             }
             Err(e) => {
                 return Err(ErrorResponse::internal(format!("Failed to reload extension: {}", e)));

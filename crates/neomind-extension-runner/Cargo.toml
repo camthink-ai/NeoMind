@@ -12,13 +12,14 @@ path = "src/main.rs"
 
 [dependencies]
 neomind-core = { path = "../neomind-core" }
-neomind-sandbox = { path = "../neomind-sandbox" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 clap = { version = "4", features = ["derive"] }
-async-trait = "0.1"
 chrono = "0.4"
 semver = "1.0"
+# WASM runtime (direct dependency)
+wasmtime = { version = "26", features = ["async", "component-model"] }
+wasmtime-wasi = { version = "26" }
