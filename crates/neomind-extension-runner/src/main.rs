@@ -4,10 +4,16 @@
 //! It communicates with the main NeoMind process via stdin/stdout using
 //! the IPC protocol.
 //!
+//! # Supported Extension Types
+//!
+//! - Native libraries (.so, .dylib, .dll)
+//! - WebAssembly modules (.wasm)
+//!
 //! # Usage
 //!
 //! ```bash
 //! neomind-extension-runner --extension-path /path/to/extension.dylib
+//! neomind-extension-runner --extension-path /path/to/extension.wasm
 //! ```
 //!
 //! # Protocol
@@ -26,12 +32,32 @@ use neomind_core::extension::isolated::{ErrorKind, IpcFrame, IpcMessage, IpcResp
 use neomind_core::extension::loader::NativeExtensionLoader;
 use neomind_core::extension::system::DynExtension;
 
+/// Extension type detected from file
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ExtensionType {
+    Native,
+    Wasm,
+}
+
+impl ExtensionType {
+    /// Detect extension type from file path
+    fn from_path(path: &PathBuf) -> Self {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|ext| match ext.to_lowercase().as_str() {
+                "wasm" => ExtensionType::Wasm,
+                _ => ExtensionType::Native,
+            })
+            .unwrap_or(ExtensionType::Native)
+    }
+}
+
 /// Extension runner arguments
 #[derive(Parser, Debug)]
 #[command(name = "neomind-extension-runner")]
 #[command(about = "Run a NeoMind extension in isolated mode")]
 struct Args {
-    /// Path to the extension library
+    /// Path to the extension library (.so, .dylib, .dll, or .wasm)
     #[arg(long, short = 'e')]
     extension_path: PathBuf,
 
@@ -46,6 +72,8 @@ struct Runner {
     extension: DynExtension,
     /// Extension metadata
     metadata: neomind_core::extension::system::ExtensionMetadata,
+    /// Extension type
+    extension_type: ExtensionType,
     /// Stdin reader
     stdin: BufReader<std::io::Stdin>,
     /// Stdout writer
@@ -57,31 +85,176 @@ struct Runner {
 impl Runner {
     /// Load extension and create runner
     fn load(extension_path: &PathBuf) -> Result<Self, String> {
-        info!(path = %extension_path.display(), "Loading extension");
+        let extension_type = ExtensionType::from_path(extension_path);
+        info!(
+            path = %extension_path.display(),
+            extension_type = ?extension_type,
+            "Loading extension"
+        );
 
-        // Load the extension using the native loader
-        let loader = NativeExtensionLoader::new();
-        let loaded = loader.load(extension_path).map_err(|e| format!("Failed to load extension: {}", e))?;
-
-        // Get metadata
-        let ext_guard = loaded.extension.blocking_read();
-        let metadata = ext_guard.metadata().clone();
-        drop(ext_guard);
+        // Load the extension based on type
+        let (extension, metadata) = match extension_type {
+            ExtensionType::Native => {
+                Self::load_native(extension_path)?
+            }
+            ExtensionType::Wasm => {
+                Self::load_wasm(extension_path)?
+            }
+        };
 
         info!(
             extension_id = %metadata.id,
             name = %metadata.name,
             version = %metadata.version,
+            extension_type = ?extension_type,
             "Extension loaded successfully"
         );
 
         Ok(Self {
-            extension: loaded.extension,
+            extension,
             metadata,
+            extension_type,
             stdin: BufReader::new(std::io::stdin()),
             stdout: BufWriter::new(std::io::stdout()),
             running: true,
         })
+    }
+
+    /// Load a native extension (.so, .dylib, .dll)
+    fn load_native(extension_path: &PathBuf) -> Result<(DynExtension, neomind_core::extension::system::ExtensionMetadata), String> {
+        let loader = NativeExtensionLoader::new();
+        let loaded = loader.load(extension_path).map_err(|e| format!("Failed to load native extension: {}", e))?;
+
+        let ext_guard = loaded.extension.blocking_read();
+        let metadata = ext_guard.metadata().clone();
+        drop(ext_guard);
+
+        Ok((loaded.extension, metadata))
+    }
+
+    /// Load a WASM extension (.wasm)
+    fn load_wasm(extension_path: &PathBuf) -> Result<(DynExtension, neomind_core::extension::system::ExtensionMetadata), String> {
+        // Use neomind-sandbox to load WASM
+        use neomind_sandbox::{Sandbox, SandboxConfig};
+
+        info!("Loading WASM extension using sandbox");
+
+        // Create sandbox with config
+        let config = SandboxConfig {
+            max_memory_mb: 256,
+            max_execution_time_secs: 30,
+            allow_wasi: true,
+        };
+
+        let sandbox = Arc::new(Sandbox::new(config).map_err(|e| format!("Failed to create sandbox: {}", e))?);
+
+        // Load metadata first
+        let metadata = Self::load_wasm_metadata(extension_path)?;
+
+        // Load the WASM module
+        let module_name = metadata.id.clone();
+        let sandbox_clone = Arc::clone(&sandbox);
+
+        // Use tokio runtime for async loading
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(async {
+            sandbox_clone.load_module_from_file(&module_name, extension_path).await
+        }).map_err(|e| format!("Failed to load WASM module: {}", e))?;
+
+        // Create WasmExtension wrapper
+        let wasm_ext = WasmExtensionWrapper::new(metadata.clone(), sandbox, module_name);
+        let extension: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(wasm_ext)));
+
+        Ok((extension, metadata))
+    }
+
+    /// Load WASM metadata from sidecar JSON or filename
+    fn load_wasm_metadata(extension_path: &PathBuf) -> Result<neomind_core::extension::system::ExtensionMetadata, String> {
+        // Try to load from sidecar JSON file
+        let json_path = extension_path.with_extension("json");
+        if json_path.exists() {
+            if let Ok(meta) = Self::load_metadata_from_json(&json_path) {
+                return Ok(meta);
+            }
+        }
+
+        // Try to find manifest.json in parent directories (.nep package structure)
+        if let Some(manifest_path) = Self::find_nep_manifest(extension_path) {
+            if manifest_path.exists() {
+                if let Ok(meta) = Self::load_metadata_from_json(&manifest_path) {
+                    return Ok(meta);
+                }
+            }
+        }
+
+        // Fall back to filename
+        let file_name = extension_path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+
+        Ok(neomind_core::extension::system::ExtensionMetadata::new(
+            file_name.to_string(),
+            format!("{} WASM Extension", file_name),
+            semver::Version::new(1, 0, 0),
+        ))
+    }
+
+    /// Load metadata from JSON file
+    fn load_metadata_from_json(json_path: &PathBuf) -> Result<neomind_core::extension::system::ExtensionMetadata, String> {
+        let content = std::fs::read_to_string(json_path)
+            .map_err(|e| format!("Failed to read JSON: {}", e))?;
+
+        #[derive(serde::Deserialize)]
+        struct MetadataJson {
+            id: String,
+            name: String,
+            version: String,
+            #[serde(default)]
+            description: Option<String>,
+            #[serde(default)]
+            author: Option<String>,
+            #[serde(default)]
+            homepage: Option<String>,
+            #[serde(default)]
+            license: Option<String>,
+        }
+
+        let json: MetadataJson = serde_json::from_str(&content)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        let version = semver::Version::parse(&json.version).unwrap_or(semver::Version::new(1, 0, 0));
+
+        Ok(neomind_core::extension::system::ExtensionMetadata {
+            id: json.id,
+            name: json.name,
+            version,
+            description: json.description,
+            author: json.author,
+            homepage: json.homepage,
+            license: json.license,
+            file_path: None,
+            config_parameters: None,
+        })
+    }
+
+    /// Find manifest.json in .nep package folder structure
+    fn find_nep_manifest(wasm_path: &PathBuf) -> Option<PathBuf> {
+        // Go up from binaries/wasm/extension.wasm to find manifest.json
+        let binaries_dir = wasm_path.parent()?; // binaries/wasm
+        let wasm_dir = binaries_dir.parent()?;  // binaries
+        let extension_folder = wasm_dir.parent()?;  // extension_folder
+
+        let manifest = extension_folder.join("manifest.json");
+        if manifest.exists() {
+            return Some(manifest);
+        }
+
+        None
     }
 
     /// Run the main loop
@@ -347,6 +520,122 @@ impl Runner {
     }
 }
 
+/// WASM Extension wrapper that implements the Extension trait
+/// This wraps the neomind-sandbox Sandbox to provide a unified interface
+struct WasmExtensionWrapper {
+    metadata: neomind_core::extension::system::ExtensionMetadata,
+    sandbox: Arc<neomind_sandbox::Sandbox>,
+    module_name: String,
+    metrics: Vec<neomind_core::extension::system::MetricDescriptor>,
+    commands: Vec<neomind_core::extension::system::CommandDefinition>,
+    metric_values: std::sync::RwLock<std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl WasmExtensionWrapper {
+    fn new(
+        metadata: neomind_core::extension::system::ExtensionMetadata,
+        sandbox: Arc<neomind_sandbox::Sandbox>,
+        module_name: String,
+    ) -> Self {
+        Self {
+            metadata,
+            sandbox,
+            module_name,
+            metrics: Vec::new(),
+            commands: Vec::new(),
+            metric_values: std::sync::RwLock::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl neomind_core::extension::system::Extension for WasmExtensionWrapper {
+    fn metadata(&self) -> &neomind_core::extension::system::ExtensionMetadata {
+        &self.metadata
+    }
+
+    fn metrics(&self) -> &[neomind_core::extension::system::MetricDescriptor] {
+        &self.metrics
+    }
+
+    fn commands(&self) -> &[neomind_core::extension::system::CommandDefinition] {
+        &self.commands
+    }
+
+    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> neomind_core::extension::types::Result<serde_json::Value> {
+        use neomind_core::extension::system::ExtensionError;
+
+        let result = self.sandbox.execute(&self.module_name, command, args.clone()).await
+            .map_err(|e| ExtensionError::ExecutionFailed(format!("{}", e)))?;
+
+        // Cache metric values from result
+        if let Some(obj) = result.as_object() {
+            let mut values = self.metric_values.write().unwrap();
+            for metric in &self.metrics {
+                if let Some(value) = obj.get(&metric.name) {
+                    values.insert(metric.name.clone(), value.clone());
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn produce_metrics(&self) -> neomind_core::extension::types::Result<Vec<neomind_core::extension::system::ExtensionMetricValue>> {
+        use neomind_core::extension::system::{ExtensionMetricValue, MetricDataType};
+
+        let values = self.metric_values.try_read().map_err(|_| {
+            neomind_core::extension::system::ExtensionError::ExecutionFailed("Lock error".to_string())
+        })?;
+
+        let mut result = Vec::new();
+        for metric in &self.metrics {
+            if let Some(value) = values.get(&metric.name) {
+                let metric_value = match metric.data_type {
+                    MetricDataType::Float => value.as_f64().map(|v| ExtensionMetricValue {
+                        name: metric.name.clone(),
+                        value: v.into(),
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                    }),
+                    MetricDataType::Integer => value.as_i64().map(|v| ExtensionMetricValue {
+                        name: metric.name.clone(),
+                        value: v.into(),
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                    }),
+                    MetricDataType::Boolean => value.as_bool().map(|v| ExtensionMetricValue {
+                        name: metric.name.clone(),
+                        value: v.into(),
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                    }),
+                    MetricDataType::String => value.as_str().map(|v| ExtensionMetricValue {
+                        name: metric.name.clone(),
+                        value: v.into(),
+                        timestamp: chrono::Utc::now().timestamp_millis(),
+                    }),
+                    _ => None,
+                };
+                if let Some(v) = metric_value {
+                    result.push(v);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn health_check(&self) -> neomind_core::extension::types::Result<bool> {
+        // Try to execute a simple health check
+        match self.sandbox.execute(&self.module_name, "health", serde_json::json!({})).await {
+            Ok(result) => Ok(result.as_bool().unwrap_or(true)),
+            Err(_) => Ok(true), // Assume healthy if health function not implemented
+        }
+    }
+
+    async fn configure(&mut self, _config: &serde_json::Value) -> neomind_core::extension::types::Result<()> {
+        Ok(())
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -367,6 +656,12 @@ fn main() {
 
     info!("NeoMind Extension Runner starting");
     debug!(extension_path = %args.extension_path.display(), "Extension path");
+
+    // Check if file exists
+    if !args.extension_path.exists() {
+        error!(path = %args.extension_path.display(), "Extension file not found");
+        std::process::exit(1);
+    }
 
     // Load the extension
     let mut runner = match Runner::load(&args.extension_path) {

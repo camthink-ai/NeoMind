@@ -127,18 +127,12 @@ impl UnifiedExtensionService {
     }
 
     /// Determine if an extension should use isolated mode
+    ///
+    /// All extensions now use process isolation by default for maximum safety.
+    /// The extension-runner supports both native (.so/.dylib/.dll) and WASM (.wasm) extensions.
     async fn should_use_isolated(&self, path: &Path) -> Result<bool, ExtensionError> {
-        // Check if we can get metadata first
-        // For now, just use the default setting
-        // In the future, we could inspect the extension metadata for hints
-
-        // Check file extension - WASM extensions are naturally sandboxed
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if ext == "wasm" {
-                return Ok(false); // WASM doesn't need process isolation
-            }
-        }
-
+        // All extensions use process isolation by default
+        // The extension-runner handles both native and WASM extensions
         Ok(self.config.isolated_by_default)
     }
 
