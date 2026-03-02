@@ -227,22 +227,22 @@ Automation      Devices      Messages    Extensions
 ```
 neomind/
 ├── crates/
-│   ├── core/          # Core traits and type definitions
-│   ├── llm/           # LLM runtime (Ollama/OpenAI/Anthropic)
-│   ├── api/           # Web API server (Axum)
-│   ├── agent/         # AI Agent with tool calling
-│   ├── automation/    # Unified automation system (rules + transforms)
-│   ├── devices/       # Device management (MQTT)
-│   ├── storage/       # Storage system (redb)
-│   ├── memory/        # Three-tier LLM memory
-│   ├── messages/      # Unified messaging and notification
-│   ├── tools/         # Function calling framework
-│   ├── commands/      # Command queue with retry
-│   ├── integrations/  # External system integrations
-│   ├── sandbox/       # WASM sandbox for secure execution
-│   ├── extension-sdk/  # SDK for building extensions
-│   ├── cli/           # Command-line interface
-│   └── testing/       # Testing utilities
+│   ├── neomind-core/          # Core traits and type definitions
+│   ├── neomind-llm/           # LLM runtime (Ollama/OpenAI/Anthropic)
+│   ├── neomind-api/           # Web API server (Axum)
+│   ├── neomind-agent/         # AI Agent with tool calling
+│   ├── neomind-automation/    # Unified automation system (rules + transforms)
+│   ├── neomind-devices/       # Device management (MQTT)
+│   ├── neomind-storage/       # Storage system (redb)
+│   ├── neomind-memory/        # Three-tier LLM memory
+│   ├── neomind-messages/      # Unified messaging and notification
+│   ├── neomind-tools/         # Function calling framework
+│   ├── neomind-commands/      # Command queue with retry
+│   ├── neomind-rules/         # Rule engine for automation
+│   ├── neomind-extension-sdk/ # SDK for building extensions
+│   ├── neomind-extension-runner/ # Extension process isolation runner
+│   ├── neomind-cli/           # Command-line interface
+│   └── neomind-testing/       # Testing utilities
 ├── web/               # React frontend + Tauri desktop app
 │   ├── src/           # TypeScript source
 │   └── src-tauri/     # Rust backend for desktop

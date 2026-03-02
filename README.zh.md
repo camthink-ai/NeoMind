@@ -212,22 +212,22 @@ npm run tauri:build
 ```
 neomind/
 ├── crates/
-│   ├── core/          # 核心 traits 和类型定义
-│   ├── llm/           # LLM 运行时（Ollama/OpenAI/Anthropic）
-│   ├── api/           # Web API 服务器（Axum）
-│   ├── agent/         # AI 智能体与工具调用
-│   ├── automation/    # 统一自动化系统（规则 + 转换）
-│   ├── devices/       # 设备管理（MQTT）
-│   ├── storage/       # 存储系统（redb）
-│   ├── memory/        # LLM 三层记忆
-│   ├── messages/      # 统一消息和通知
-│   ├── tools/         # 函数调用框架
-│   ├── commands/      # 命令队列（带重试）
-│   ├── integrations/  # 外部系统集成
-│   ├── sandbox/       # WASM 沙箱安全执行
-│   ├── extension-sdk/  # 扩展开发 SDK
-│   ├── cli/           # 命令行接口
-│   └── testing/       # 测试工具
+│   ├── neomind-core/          # 核心 traits 和类型定义
+│   ├── neomind-llm/           # LLM 运行时（Ollama/OpenAI/Anthropic）
+│   ├── neomind-api/           # Web API 服务器（Axum）
+│   ├── neomind-agent/         # AI 智能体与工具调用
+│   ├── neomind-automation/    # 统一自动化系统（规则 + 转换）
+│   ├── neomind-devices/       # 设备管理（MQTT）
+│   ├── neomind-storage/       # 存储系统（redb）
+│   ├── neomind-memory/        # LLM 三层记忆
+│   ├── neomind-messages/      # 统一消息和通知
+│   ├── neomind-tools/         # 函数调用框架
+│   ├── neomind-commands/      # 命令队列（带重试）
+│   ├── neomind-rules/         # 自动化规则引擎
+│   ├── neomind-extension-sdk/ # 扩展开发 SDK
+│   ├── neomind-extension-runner/ # 扩展进程隔离运行器
+│   ├── neomind-cli/           # 命令行接口
+│   └── neomind-testing/       # 测试工具
 ├── web/               # React 前端 + Tauri 桌面应用
 │   ├── src/           # TypeScript 源码
 │   └── src-tauri/     # 桌面应用 Rust 后端

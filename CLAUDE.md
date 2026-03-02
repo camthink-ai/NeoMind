@@ -22,7 +22,23 @@ npm run dev && npm run build
 
 ```
 NeoMind/
-├── crates/           # Rust workspace (api, agent, llm, core, devices, storage, memory)
+├── crates/           # Rust workspace
+│   ├── neomind-core/        # Core traits and types
+│   ├── neomind-llm/         # LLM backends (Ollama, OpenAI, etc.)
+│   ├── neomind-api/         # Web API server (Axum)
+│   ├── neomind-agent/       # AI Agent with tool calling
+│   ├── neomind-automation/  # Automation system
+│   ├── neomind-devices/     # Device management (MQTT)
+│   ├── neomind-storage/     # Storage (redb)
+│   ├── neomind-memory/      # LLM memory system
+│   ├── neomind-messages/    # Messaging system
+│   ├── neomind-tools/       # Function calling tools
+│   ├── neomind-commands/    # Command queue
+│   ├── neomind-rules/       # Rule engine
+│   ├── neomind-extension-sdk/     # Extension SDK
+│   ├── neomind-extension-runner/  # Extension process isolation
+│   ├── neomind-cli/         # CLI tools
+│   └── neomind-testing/     # Testing utilities
 ├── web/src/          # React frontend (components, pages, hooks, store, types)
 ├── docs/guides/      # User documentation (en/zh)
 └── data/             # Runtime databases (telemetry.redb, sessions.redb, etc.)

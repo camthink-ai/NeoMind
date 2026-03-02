@@ -12,16 +12,16 @@ The Tools module implements a tool system for AI-callable functions, including d
 ## Module Structure
 
 ```
-crates/tools/src/
+crates/neomind-tools/src/
 ├── lib.rs                      # Public interface
 ├── tool.rs                     # Tool trait
 ├── registry.rs                 # Tool registry
-├── builtin.rs                  # Built-in tools
 ├── core_tools.rs               # Core business tools
 ├── agent_tools.rs              # Agent tools
 ├── system_tools.rs             # System tools
+├── extension_tools.rs          # Extension tools
 ├── real.rs                     # Real implementation (feature-gated)
-├── simplified.rs               # Simplified interface
+└── simplified.rs               # Simplified interface
 ```
 
 ## Core Trait
