@@ -24,7 +24,6 @@ import type {
   ExtensionStatsDto,
   ExtensionTypeDto,
   ExtensionCapabilityDto,
-  ExtensionDiscoveryResult,
   ExtensionRegistrationResponse,
   ExtensionHealthResponse,
   // Unified Extension Types
@@ -1116,39 +1115,6 @@ export const api = {
    */
   listExtensionTypes: () =>
     fetchAPI<ExtensionTypeDto[]>('/extensions/types'),
-
-  /**
-   * Discover extensions in configured directories
-   * POST /api/extensions/discover
-   */
-  discoverExtensions: () =>
-    fetchAPI<ExtensionDiscoveryResult[]>('/extensions/discover', {
-      method: 'POST',
-    }),
-
-  /**
-   * Register all discovered extensions
-   * POST /api/extensions/register-all
-   */
-  registerAllDiscovered: () =>
-    fetchAPI<{
-      message: string
-      registered: number
-      failed: number
-      extensions: Array<{
-        id: string
-        name: string
-        version: string
-        file_path: string
-      }>
-      failed_extensions?: Array<{
-        id: string
-        name: string
-        error: string
-      }>
-    }>('/extensions/register-all', {
-      method: 'POST',
-    }),
 
   /**
    * Register a new extension from file path

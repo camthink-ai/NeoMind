@@ -115,16 +115,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/extensions/capabilities",
             get(extensions::list_extension_capabilities_handler),
         )
-        // Discover extensions (public - scans filesystem for available extensions)
-        .route(
-            "/api/extensions/discover",
-            post(extensions::discover_extensions_handler),
-        )
-        // Register all discovered extensions (public - for initial setup)
-        .route(
-            "/api/extensions/register-all",
-            post(extensions::register_all_discovered_handler),
-        )
         // Extension-specific routes ( :id must come after specific paths)
         .route(
             "/api/extensions/:id",

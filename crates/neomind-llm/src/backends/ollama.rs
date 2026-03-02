@@ -613,28 +613,27 @@ impl LlmRuntime for OllamaRuntime {
                 }
             };
 
-        // Handle native tool calls from Ollama
+        // Handle native tool calls from Ollama - preserve JSON format to keep tool ID
         if !ollama_response.message.tool_calls.is_empty() {
             tracing::debug!(
                 "Ollama: received {} native tool calls",
                 ollama_response.message.tool_calls.len()
             );
-            let mut xml_buffer = String::from("<tool_calls>");
-            for tool_call in &ollama_response.message.tool_calls {
-                xml_buffer.push_str(&format!("<invoke name=\"{}\">", tool_call.function.name));
-                if let Some(obj) = tool_call.function.arguments.as_object() {
-                    for (key, value) in obj {
-                        xml_buffer.push_str(&format!(
-                            "<parameter name=\"{}\">{}</parameter>",
-                            key,
-                            value.as_str().unwrap_or(&value.to_string())
-                        ));
-                    }
-                }
-                xml_buffer.push_str("</invoke>");
-            }
-            xml_buffer.push_str("</tool_calls>");
-            response_text.push_str(&xml_buffer);
+            // Build JSON array to preserve tool IDs (OpenAI-compatible format)
+            let tool_calls_json: Vec<serde_json::Value> = ollama_response
+                .message
+                .tool_calls
+                .iter()
+                .map(|tc| {
+                    serde_json::json!({
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments
+                    })
+                })
+                .collect();
+            let json_str = serde_json::to_string(&tool_calls_json).unwrap_or_default();
+            response_text.push_str(&json_str);
         }
 
         let result = Ok(LlmOutput {
@@ -1047,7 +1046,7 @@ impl LlmRuntime for OllamaRuntime {
                                         if let Ok(ollama_chunk) =
                                             serde_json::from_str::<OllamaStreamResponse>(json_str)
                                         {
-                                            // Handle native tool calls - convert to XML format for compatibility
+                                            // Handle native tool calls - preserve JSON format to keep tool ID
                                             if !ollama_chunk.message.tool_calls.is_empty() {
                                                 // BUSINESS LOG: Tool calls detected
                                                 let tool_names: Vec<&str> = ollama_chunk
@@ -1061,33 +1060,25 @@ impl LlmRuntime for OllamaRuntime {
                                                     tool_names.len(),
                                                     tool_names.join(", ")
                                                 );
-                                                // Convert tool_calls to XML format for streaming.rs compatibility
-                                                let mut xml_buffer = String::from("<tool_calls>");
-                                                for tool_call in &ollama_chunk.message.tool_calls {
-                                                    xml_buffer.push_str(&format!(
-                                                        "<invoke name=\"{}\">",
-                                                        tool_call.function.name
-                                                    ));
-                                                    // Convert arguments JSON to XML parameter format
-                                                    if let Some(obj) =
-                                                        tool_call.function.arguments.as_object()
-                                                    {
-                                                        for (key, value) in obj {
-                                                            xml_buffer.push_str(&format!(
-                                                                "<parameter name=\"{}\">{}</parameter>",
-                                                                key,
-                                                                value.as_str().unwrap_or(&value.to_string())
-                                                            ));
-                                                        }
-                                                    }
-                                                    xml_buffer.push_str("</invoke>");
-                                                }
-                                                xml_buffer.push_str("</tool_calls>");
+                                                // Build JSON array to preserve tool IDs (OpenAI-compatible format)
+                                                let tool_calls_json: Vec<serde_json::Value> = ollama_chunk
+                                                    .message
+                                                    .tool_calls
+                                                    .iter()
+                                                    .map(|tc| {
+                                                        serde_json::json!({
+                                                            "id": tc.id,
+                                                            "name": tc.function.name,
+                                                            "arguments": tc.function.arguments
+                                                        })
+                                                    })
+                                                    .collect();
+                                                let json_str = serde_json::to_string(&tool_calls_json).unwrap_or_default();
                                                 tracing::debug!(
-                                                    "Ollama: converted tool_calls to XML: {}",
-                                                    xml_buffer
+                                                    "Ollama: converted tool_calls to JSON: {}",
+                                                    json_str
                                                 );
-                                                let _ = tx.send(Ok((xml_buffer, false))).await;
+                                                let _ = tx.send(Ok((json_str, false))).await;
 
                                                 // CRITICAL FIX: Don't return immediately!
                                                 // Continue consuming the stream until done=true to avoid:
@@ -1189,14 +1180,20 @@ impl LlmRuntime for OllamaRuntime {
                                                         .collect::<std::collections::HashSet<_>>()
                                                         .len();
                                                     let repetition_rate = 1.0 - (unique_chars as f64 / thinking_content_history.len() as f64);
-                                                    
+
                                                     if repetition_rate > stream_config.max_thinking_repetition_rate {
-                                                        tracing::warn!(
-                                                            "[ollama.rs] High thinking repetition detected (rate: {:.2}%, threshold: {:.2}%). Model may be stuck in loop.",
+                                                        tracing::error!(
+                                                            "[ollama.rs] CRITICAL: High thinking repetition detected (rate: {:.2}%, threshold: {:.2}%). Model is stuck in loop. Terminating stream.",
                                                             repetition_rate * 100.0,
                                                             stream_config.max_thinking_repetition_rate * 100.0
                                                         );
-                                                        // Don't terminate immediately, but watch for continued repetition
+                                                        // Terminate immediately - model is stuck
+                                                        terminate_early_reason = Some(format!(
+                                                            "Model stuck in thinking loop (repetition rate: {:.1}%)",
+                                                            repetition_rate * 100.0
+                                                        ));
+                                                        terminate_early = true;
+                                                        break;
                                                     }
                                                 }
 

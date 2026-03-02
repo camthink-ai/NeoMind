@@ -46,14 +46,14 @@ impl ToolCategory {
     /// Get display name
     pub fn display_name(&self) -> &str {
         match self {
-            ToolCategory::Device => "设备管理",
-            ToolCategory::Data => "数据查询",
-            ToolCategory::Analysis => "数据分析",
-            ToolCategory::Rule => "规则管理",
-            ToolCategory::Alert => "告警管理",
-            ToolCategory::Agent => "智能体管理",
-            ToolCategory::System => "系统工具",
-            ToolCategory::Config => "配置管理",
+            ToolCategory::Device => "Device Management",
+            ToolCategory::Data => "Data Query",
+            ToolCategory::Analysis => "Data Analysis",
+            ToolCategory::Rule => "Rule Management",
+            ToolCategory::Alert => "Alert Management",
+            ToolCategory::Agent => "Agent Management",
+            ToolCategory::System => "System Tools",
+            ToolCategory::Config => "Configuration",
         }
     }
 }

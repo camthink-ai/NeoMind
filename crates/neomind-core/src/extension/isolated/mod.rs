@@ -10,7 +10,7 @@ mod manager;
 mod process;
 
 pub use in_flight::{InFlightError, InFlightRequests, RequestId};
-pub use ipc::{ErrorKind, IpcFrame, IpcMessage, IpcResponse};
+pub use ipc::{ErrorKind, IpcFrame, IpcMessage, IpcResponse, StreamDataChunk, StreamClientInfo};
 pub use manager::{IsolatedExtensionInfo, IsolatedExtensionManager, IsolatedManagerConfig};
 pub use process::{IsolatedExtension, IsolatedExtensionConfig};
 
@@ -55,6 +55,18 @@ pub enum IsolatedExtensionError {
     /// Extension load error
     #[error("Extension load error: {0}")]
     LoadError(String),
+
+    /// Unexpected response type
+    #[error("Unexpected response type")]
+    UnexpectedResponse,
+
+    /// Channel closed
+    #[error("Response channel closed")]
+    ChannelClosed,
+
+    /// Extension error
+    #[error("Extension error: {0}")]
+    ExtensionError(String),
 }
 
 impl From<crate::extension::system::ExtensionError> for IsolatedExtensionError {

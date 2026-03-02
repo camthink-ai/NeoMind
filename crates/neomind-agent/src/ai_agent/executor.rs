@@ -124,27 +124,27 @@ fn get_time_context() -> String {
     // Format various time components
     let utc_time = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
     let local_time = local_now.format("%Y-%m-%d %H:%M:%S").to_string();
-    let date_str = local_now.format("%Y年%m月%d日").to_string();
+    let date_str = local_now.format("%B %d, %Y").to_string();
     let day_of_week = local_now.format("%A").to_string(); // Monday, Tuesday, etc.
 
     // Get time period description - use format to get hour value
     let hour_str = local_now.format("%H").to_string();
     let hour: u32 = hour_str.parse().unwrap_or(12);
     let time_period = match hour {
-        5..=11 => "上午",
-        12..=13 => "中午",
-        14..=17 => "下午",
-        18..=22 => "晚上",
-        _ => "夜间",
+        5..=11 => "Morning",
+        12..=13 => "Noon",
+        14..=17 => "Afternoon",
+        18..=22 => "Evening",
+        _ => "Night",
     };
 
     format!(
-        "### 当前时间信息\n\
-         - UTC时间: {}\n\
-         - 本地时间: {} ({})\n\
-         - 日期: {}\n\
-         - 星期: {}\n\
-         - 时段: {}",
+        "### Current Time Information\n\
+         - UTC Time: {}\n\
+         - Local Time: {} ({})\n\
+         - Date: {}\n\
+         - Day of Week: {}\n\
+         - Time Period: {}",
         utc_time, local_time, timezone, date_str, day_of_week, time_period
     )
 }

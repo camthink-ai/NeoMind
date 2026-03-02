@@ -894,16 +894,6 @@ export interface ExtensionTypeDto {
 }
 
 /**
- * Extension discovery result - returned by POST /api/extensions/discover
- */
-export interface ExtensionDiscoveryResult {
-  id: string
-  name: string
-  version: string
-  file_path?: string
-}
-
-/**
  * Extension registration response - returned by POST /api/extensions
  */
 export interface ExtensionRegistrationResponse {

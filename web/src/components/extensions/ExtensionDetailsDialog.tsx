@@ -310,17 +310,6 @@ export function ExtensionDetailsDialog({
 
             {/* Info Tab */}
             <TabsContent value="info" className="flex-1 overflow-y-auto mt-4 space-y-4">
-              <div className="flex justify-end pb-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleReloadExtension}
-                  disabled={reloading}
-                >
-                  <RefreshCw className={`h-4 w-4 mr-1 ${reloading ? 'animate-spin' : ''}`} />
-                  {reloading ? 'Reloading...' : 'Reload Extension'}
-                </Button>
-              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <Label className="text-muted-foreground text-xs">ID</Label>

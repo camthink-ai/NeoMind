@@ -266,6 +266,11 @@ impl IsolatedExtensionManager {
         extensions.get(id).map(|e| e.is_alive()).unwrap_or(false)
     }
 
+    /// Get an isolated extension by ID
+    pub async fn get(&self, id: &str) -> Option<Arc<IsolatedExtension>> {
+        self.extensions.read().await.get(id).cloned()
+    }
+
     /// Stop all extensions
     pub async fn stop_all(&self) {
         let mut extensions = self.extensions.write().await;

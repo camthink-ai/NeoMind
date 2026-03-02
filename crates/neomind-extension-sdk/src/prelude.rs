@@ -20,13 +20,13 @@ pub use neomind_core::extension::system::{
     Extension, ExtensionMetadata, ExtensionError,
     ExtensionMetricValue, ParamMetricValue,
     MetricDescriptor, ExtensionCommand, MetricDataType, ParameterDefinition,
-    CExtensionMetadata, ABI_VERSION, Result,
+    CExtensionMetadata, ABI_VERSION, Result, PushOutputMessage,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use neomind_core::extension::{
     StreamCapability, StreamMode, StreamDirection, StreamDataType,
-    DataChunk, StreamResult, StreamSession, SessionStats,
+    DataChunk, StreamResult, StreamSession, SessionStats, StreamError,
 };
 
 // SDK types (for both targets)
@@ -63,3 +63,7 @@ pub use semver::Version;
 // Re-export chrono for timestamp handling
 #[cfg(not(target_arch = "wasm32"))]
 pub use chrono;
+
+// Tokio sync for Push mode
+#[cfg(not(target_arch = "wasm32"))]
+pub use tokio::sync::mpsc;

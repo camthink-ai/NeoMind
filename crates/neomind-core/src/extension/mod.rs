@@ -65,6 +65,7 @@ pub mod executor;
 pub mod isolated;
 pub mod loader;
 pub mod package;
+pub mod proxy;
 pub mod registry;
 pub mod safety;
 pub mod stream;
@@ -88,7 +89,7 @@ pub use system::{
     ABI_VERSION, CExtensionMetadata, CommandDefinition, Extension, ExtensionCommand,
     ExtensionMetadata, ExtensionMetricValue, ExtensionState, ExtensionStats, MetricDataType,
     MetricDefinition, MetricDescriptor, ParamMetricValue, ParameterDefinition, ParameterGroup,
-    ToolDescriptor, ValidationRule,
+    PushOutputMessage, ToolDescriptor, ValidationRule,
 };
 pub use types::{DynExtension, ExtensionError, Result};
 pub use unified::{UnifiedExtensionConfig, UnifiedExtensionInfo, UnifiedExtensionService};

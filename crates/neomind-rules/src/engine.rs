@@ -843,8 +843,35 @@ impl RuleEngine {
 
         match action {
             RuleAction::Notify { message, channels } => {
-                tracing::info!("NOTIFY: {} (channels: {:?})", message, channels);
-                Ok(format!("NOTIFY: {}", message))
+                // Try to use MessageManager if available
+                let msg_manager = self.message_manager.read().await;
+                if let Some(manager) = msg_manager.as_ref() {
+                    // Determine severity from message content or default to Info
+                    let severity = neomind_messages::MessageSeverity::Info;
+
+                    // Create a message using MessageManager
+                    let msg = neomind_messages::Message::alert(
+                        severity,
+                        "Rule Triggered".to_string(),
+                        message.clone(),
+                        "rule_engine".to_string(),
+                    );
+
+                    match manager.create_message(msg).await {
+                        Ok(_) => {
+                            tracing::info!("NOTIFY: {} (channels: {:?}) - Message created", message, channels);
+                            Ok(format!("NOTIFY: {}", message))
+                        }
+                        Err(e) => {
+                            tracing::error!("Failed to create message: {}", e);
+                            Err(format!("Failed to create message: {}", e))
+                        }
+                    }
+                } else {
+                    // Fallback: just log if MessageManager is not set
+                    tracing::warn!("NOTIFY: {} (channels: {:?}) - MessageManager not configured, only logging", message, channels);
+                    Ok(format!("NOTIFY: {} (logged only)", message))
+                }
             }
             RuleAction::Execute {
                 device_id,

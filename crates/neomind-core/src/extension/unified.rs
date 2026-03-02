@@ -112,10 +112,25 @@ impl UnifiedExtensionService {
                 "Loading extension in ISOLATED mode"
             );
 
-            self.isolated_manager
+            let metadata = self.isolated_manager
                 .load(path)
                 .await
-                .map_err(|e| ExtensionError::LoadFailed(e.to_string()))
+                .map_err(|e| ExtensionError::LoadFailed(e.to_string()))?;
+
+            // Get the isolated extension and create a proxy for streaming support
+            if let Some(isolated) = self.isolated_manager.get(&metadata.id).await {
+                let descriptor = isolated.descriptor().await;
+                let proxy = if let Some(desc) = descriptor {
+                    super::proxy::create_proxy_with_descriptor(isolated, desc)
+                } else {
+                    super::proxy::create_proxy(isolated)
+                };
+                
+                // Register proxy in registry for streaming
+                self.registry.register(metadata.id.clone(), proxy).await?;
+            }
+
+            Ok(metadata)
         } else {
             tracing::info!(
                 path = %path.display(),
@@ -244,21 +259,14 @@ impl UnifiedExtensionService {
     /// List all extensions
     pub async fn list(&self) -> Vec<UnifiedExtensionInfo> {
         let mut result = Vec::new();
+        
+        // Get all isolated extension IDs first
+        let isolated_ids: std::collections::HashSet<String> = self.isolated_manager.list().await
+            .iter()
+            .map(|info| info.descriptor.metadata.id.clone())
+            .collect();
 
-        // Add in-process extensions
-        for info in self.registry.list().await {
-            let path = info.metadata.file_path.clone();
-            result.push(UnifiedExtensionInfo {
-                metadata: info.metadata,
-                is_isolated: false,
-                is_running: info.state == crate::extension::system::ExtensionState::Running,
-                path,
-                metrics: info.metrics,
-                commands: info.commands,
-            });
-        }
-
-        // Add isolated extensions
+        // Add isolated extensions (they are the source of truth)
         for info in self.isolated_manager.list().await {
             result.push(UnifiedExtensionInfo {
                 metadata: info.descriptor.metadata,
@@ -267,6 +275,24 @@ impl UnifiedExtensionService {
                 path: Some(info.path),
                 metrics: info.descriptor.metrics,
                 commands: info.descriptor.commands,
+            });
+        }
+
+        // Add in-process extensions (excluding proxies for isolated extensions)
+        for info in self.registry.list().await {
+            // Skip if this is a proxy for an isolated extension
+            if isolated_ids.contains(&info.metadata.id) {
+                continue;
+            }
+            
+            let path = info.metadata.file_path.clone();
+            result.push(UnifiedExtensionInfo {
+                metadata: info.metadata,
+                is_isolated: false,
+                is_running: info.state == crate::extension::system::ExtensionState::Running,
+                path,
+                metrics: info.metrics,
+                commands: info.commands,
             });
         }
 
@@ -305,7 +331,8 @@ impl UnifiedExtensionService {
 
     /// Get count of all extensions
     pub async fn count(&self) -> usize {
-        self.registry.count().await + self.isolated_manager.count().await
+        // Use list() which handles deduplication properly
+        self.list().await.len()
     }
 
     /// Check if an extension is running in isolated mode
@@ -327,6 +354,20 @@ impl UnifiedExtensionService {
     /// Get the isolated manager
     pub fn isolated_manager(&self) -> Arc<IsolatedExtensionManager> {
         Arc::clone(&self.isolated_manager)
+    }
+
+    /// Get extension as DynExtension for streaming operations
+    /// This returns the extension from registry if available
+    /// For isolated extensions, they should be registered in both places
+    pub async fn get_extension(&self, id: &str) -> Option<Arc<tokio::sync::RwLock<Box<dyn crate::extension::system::Extension>>>> {
+        // First check registry (in-process or proxy-registered isolated extensions)
+        if let Some(ext) = self.registry.get(id).await {
+            return Some(ext);
+        }
+        
+        // Isolated extensions are not directly accessible as DynExtension
+        // They need to be registered via proxy when loaded
+        None
     }
 }
 

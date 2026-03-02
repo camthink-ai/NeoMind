@@ -866,8 +866,7 @@ export function AreaChart({
             {showTooltip && <Tooltip content={<ChartTooltip />} />}
             {showLegend && <Legend />}
             {series.map((s, i) => {
-              const isCssVariable = s.color && (s.color.startsWith('hsl') || s.color.startsWith('var('))
-              const seriesColor = isCssVariable ? fallbackColors[i % fallbackColors.length] : (s.color || fallbackColors[i % fallbackColors.length])
+              const seriesColor = s.color || color || fallbackColors[i % fallbackColors.length]
               return (
                 <Area
                   key={i}

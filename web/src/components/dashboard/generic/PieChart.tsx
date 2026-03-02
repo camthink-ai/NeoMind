@@ -339,6 +339,7 @@ export function PieChart({
   // Normalize data to PieData[] format
   const chartData: PieData[] = useMemo(() => {
     const sources = normalizeDataSource(dataSource)
+    const chartColors = colors || fallbackColors
 
     // Multi-source data - combine into single pie chart
     // preserveMultiple returns array of arrays where length equals sources length
@@ -351,7 +352,7 @@ export function PieChart({
               ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.metricId || ds.property)}`
               : t('chart.series', { count: i + 1 }),
             value: 0,
-            color: fallbackColors[i % fallbackColors.length],
+            color: chartColors[i % chartColors.length],
           }
         }
 
@@ -380,7 +381,7 @@ export function PieChart({
                 ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.metricId || ds.property)}`
                 : t('chart.series', { count: i + 1 }),
               value: aggregatedValue ?? 0,
-              color: fallbackColors[i % fallbackColors.length],
+              color: chartColors[i % chartColors.length],
             }
           }
         }
@@ -399,7 +400,7 @@ export function PieChart({
               ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.metricId || ds.property)}`
               : t('chart.series', { count: i + 1 }),
             value: aggregatedValue ?? 0,
-            color: fallbackColors[i % fallbackColors.length],
+            color: chartColors[i % chartColors.length],
           }
         }
 
@@ -408,7 +409,7 @@ export function PieChart({
             ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.metricId || ds.property)}`
             : t('chart.series', { count: i + 1 }),
           value: 0,
-          color: fallbackColors[i % fallbackColors.length],
+          color: chartColors[i % chartColors.length],
         }
       })
     }
@@ -460,7 +461,7 @@ export function PieChart({
       { name: t('chart.categoryB'), value: 45 },
       { name: t('chart.categoryC'), value: 25 },
     ]
-  }, [data, propData, dataSource, dataMapping, effectiveAggregate, loading, t])
+  }, [data, propData, dataSource, dataMapping, effectiveAggregate, loading, t, colors])
 
   if (loading) {
     return (
@@ -477,7 +478,7 @@ export function PieChart({
     return <EmptyState size={size} className={className} message={title ? `${title} - No Data Available` : undefined} />
   }
 
-  const chartColors = colors || fallbackColors
+  const effectiveColors = colors || fallbackColors
 
   return (
     <div className={cn(dashboardCardBase, config.padding, className)}>
@@ -500,7 +501,7 @@ export function PieChart({
               {chartData.map((entry, index) => (
                 <Cell
                   key={`cell-${index}`}
-                  fill={entry.color || chartColors[index % chartColors.length]}
+                  fill={entry.color || effectiveColors[index % effectiveColors.length]}
                   stroke="none"
                 />
               ))}

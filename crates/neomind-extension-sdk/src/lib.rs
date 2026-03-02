@@ -184,6 +184,107 @@ pub use neomind_core::extension::{
     DataChunk, StreamResult, StreamSession, SessionStats,
 };
 
+// ============================================================================
+// WASM-specific Types and Extension Trait
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_types {
+    pub use crate::extension::{
+        SdkExtensionMetadata as ExtensionMetadata,
+        SdkMetricDataType as MetricDataType,
+        SdkMetricDefinition as MetricDescriptor,
+        SdkCommandDefinition as ExtensionCommand,
+        SdkParameterDefinition as ParameterDefinition,
+        SdkExtensionMetricValue as ExtensionMetricValue,
+        SdkMetricValue as ParamMetricValue,
+        SdkExtensionError as ExtensionError,
+        SdkParameterGroup as ParameterGroup,
+    };
+
+    pub type Result<T> = std::result::Result<T, crate::extension::SdkExtensionError>;
+    pub const ABI_VERSION: u32 = 3;
+    
+    /// Simplified StreamCapability for WASM
+    /// WASM extensions typically don't support streaming, so this is a stub
+    #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+    pub struct StreamCapability {
+        pub direction: StreamDirection,
+        pub mode: StreamMode,
+        pub max_chunk_size: usize,
+        pub preferred_chunk_size: usize,
+        pub max_concurrent_sessions: usize,
+    }
+    
+    impl Default for StreamCapability {
+        fn default() -> Self {
+            Self {
+                direction: StreamDirection::None,
+                mode: StreamMode::Push,
+                max_chunk_size: 0,
+                preferred_chunk_size: 0,
+                max_concurrent_sessions: 0,
+            }
+        }
+    }
+    
+    /// Stream direction
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum StreamDirection {
+        None,
+        Input,
+        Output,
+        Duplex,
+    }
+    
+    /// Stream mode
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum StreamMode {
+        Push,
+        Pull,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use wasm_types::*;
+
+// Extension trait for WASM
+#[cfg(target_arch = "wasm32")]
+mod wasm_extension {
+    use super::*;
+
+    #[async_trait::async_trait]
+    pub trait Extension: Send + Sync {
+        fn metadata(&self) -> &ExtensionMetadata;
+        fn metrics(&self) -> &[MetricDescriptor] { &[] }
+        fn commands(&self) -> &[ExtensionCommand] { &[] }
+        
+        async fn execute_command(
+            &self,
+            command: &str,
+            args: &serde_json::Value,
+        ) -> Result<serde_json::Value>;
+        
+        fn produce_metrics(&self) -> Result<Vec<ExtensionMetricValue>> {
+            Ok(Vec::new())
+        }
+        
+        async fn health_check(&self) -> Result<bool> {
+            Ok(true)
+        }
+        
+        /// Stream capability - returns None for WASM extensions that don't support streaming
+        fn stream_capability(&self) -> Option<StreamCapability> {
+            None
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use wasm_extension::Extension;
+
 // Re-export async_trait for convenience
 pub use async_trait::async_trait;
 

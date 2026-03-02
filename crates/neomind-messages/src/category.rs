@@ -28,9 +28,9 @@ impl MessageCategory {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Alert => "告警",
-            Self::System => "系统",
-            Self::Business => "业务",
+            Self::Alert => "Alert",
+            Self::System => "System",
+            Self::Business => "Business",
         }
     }
 
@@ -74,6 +74,6 @@ mod tests {
     #[test]
     fn test_category_display() {
         assert_eq!(MessageCategory::Alert.as_str(), "alert");
-        assert_eq!(MessageCategory::Alert.display_name(), "告警");
+        assert_eq!(MessageCategory::Alert.display_name(), "Alert");
     }
 }

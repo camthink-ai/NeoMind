@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { useParams, useNavigate } from "react-router-dom"
@@ -143,6 +143,79 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
+// Compress image to target size (default 2MB)
+async function compressImage(file: File, maxSizeMB: number = 2): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let width = img.width
+        let height = img.height
+
+        // Calculate new dimensions to reduce file size
+        const maxDimension = 2048
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = (height / width) * maxDimension
+            width = maxDimension
+          } else {
+            width = (width / height) * maxDimension
+            height = maxDimension
+          }
+        }
+
+        canvas.width = width
+        canvas.height = height
+
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'))
+          return
+        }
+
+        ctx.drawImage(img, 0, 0, width, height)
+
+        // Try different quality levels to meet size target
+        let quality = 0.9
+        const tryCompress = () => {
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(new Error('Failed to compress image'))
+                return
+              }
+
+              const sizeMB = blob.size / (1024 * 1024)
+
+              // If size is acceptable or quality is too low, use this result
+              if (sizeMB <= maxSizeMB || quality <= 0.5) {
+                const reader = new FileReader()
+                reader.onload = () => resolve(reader.result as string)
+                reader.onerror = reject
+                reader.readAsDataURL(blob)
+              } else {
+                // Try lower quality
+                quality -= 0.1
+                tryCompress()
+              }
+            },
+            'image/jpeg',
+            quality
+          )
+        }
+
+        tryCompress()
+      }
+      img.onerror = () => reject(new Error('Failed to load image'))
+      img.src = e.target?.result as string
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
 export function ChatPage() {
   const { t } = useTranslation(['common', 'chat'])
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
@@ -273,13 +346,31 @@ export function ChatPage() {
   // Determine mode: welcome mode (no sessionId in URL) or chat mode (has sessionId in URL)
   const isWelcomeMode = !urlSessionId
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom with debouncing for better performance
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [])
 
+  // Debounced scroll to reduce excessive scrolling during streaming
+  const debouncedScrollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   useEffect(() => {
-    scrollToBottom()
+    // Clear existing timeout
+    if (debouncedScrollRef.current) {
+      clearTimeout(debouncedScrollRef.current)
+    }
+
+    // Set new timeout for debounced scroll
+    debouncedScrollRef.current = setTimeout(() => {
+      scrollToBottom()
+    }, 100) // 100ms debounce
+
+    // Cleanup on unmount
+    return () => {
+      if (debouncedScrollRef.current) {
+        clearTimeout(debouncedScrollRef.current)
+      }
+    }
   }, [messages, streamingContent, scrollToBottom])
 
   // Handle WebSocket events
@@ -288,22 +379,16 @@ export function ChatPage() {
       switch (data.type) {
         case "Thinking":
           setIsStreaming(true)
-          setStreamingThinking(prev => {
-            const updated = prev + (data.content || "")
-            // Sync to ref for end event
-            capturedStreamingRef.current.thinking = updated
-            return updated
-          })
+          // Immediately update ref synchronously before setState
+          capturedStreamingRef.current.thinking += (data.content || "")
+          setStreamingThinking(prev => prev + (data.content || ""))
           break
 
         case "Content":
           setIsStreaming(true)
-          setStreamingContent(prev => {
-            const updated = prev + (data.content || "")
-            // Sync to ref for end event
-            capturedStreamingRef.current.content = updated
-            return updated
-          })
+          // Immediately update ref synchronously before setState
+          capturedStreamingRef.current.content += (data.content || "")
+          setStreamingContent(prev => prev + (data.content || ""))
           break
 
         case "ToolCallStart": {
@@ -313,45 +398,24 @@ export function ChatPage() {
             arguments: data.arguments,
             result: null
           }
-          setStreamingToolCalls(prev => {
-            const updated = [...prev, toolCall]
-            // Sync to ref for end event
-            capturedStreamingRef.current.toolCalls = updated
-            return updated
-          })
+          // Immediately update ref synchronously before setState
+          capturedStreamingRef.current.toolCalls = [...capturedStreamingRef.current.toolCalls, toolCall]
+          setStreamingToolCalls(prev => [...prev, toolCall])
           break
         }
 
         case "ToolCallEnd": {
-          setStreamingToolCalls(prev => {
-            const updated = prev.map(tc =>
-              tc.name === data.tool
-                ? { ...tc, result: data.result }
-                : tc
-            )
-            // Sync to ref for end event
-            capturedStreamingRef.current.toolCalls = updated
-
-            // If not currently streaming content (stream ended before tool execution),
-            // update the saved assistant message's tool_calls
-            if (!isStreaming && lastAssistantMessageId) {
-              const lastMessage = messages.find(m => m.id === lastAssistantMessageId)
-              if (lastMessage && lastMessage.role === "assistant" && lastMessage.tool_calls) {
-                const updatedToolCalls = lastMessage.tool_calls.map(tc =>
-                  tc.name === data.tool
-                    ? { ...tc, result: data.result }
-                    : tc
-                )
-                // Update the message in store
-                addMessage({
-                  ...lastMessage,
-                  tool_calls: updatedToolCalls
-                })
-              }
-            }
-
-            return updated
-          })
+          // Immediately update ref synchronously before setState
+          capturedStreamingRef.current.toolCalls = capturedStreamingRef.current.toolCalls.map(tc =>
+            tc.name === data.tool
+              ? { ...tc, result: data.result }
+              : tc
+          )
+          setStreamingToolCalls(prev => prev.map(tc =>
+            tc.name === data.tool
+              ? { ...tc, result: data.result }
+              : tc
+          ))
           break
         }
 
@@ -408,6 +472,29 @@ export function ChatPage() {
           setIsStreaming(false)
           // Reset captured ref on error too
           capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
+
+          // Display error message to user with error styling
+          const errorMessage = data.message || "An error occurred during processing"
+          const errorMsg: Message = {
+            id: generateId(),
+            role: "assistant",
+            content: `❌ **Error**: ${errorMessage}`,
+            timestamp: Date.now(),
+          }
+          addMessage(errorMsg)
+          break
+
+        case "Warning":
+          // Display warning message (non-blocking)
+          const warningMessage = data.message || "Warning"
+          const warningMsg: Message = {
+            id: generateId(),
+            role: "assistant",
+            content: `⚠️ **Warning**: ${warningMessage}`,
+            timestamp: Date.now(),
+            isPartial: true,  // Mark as temporary/partial
+          }
+          addMessage(warningMsg)
           break
 
         case "session_created":
@@ -529,16 +616,17 @@ export function ChatPage() {
         const file = files[i]
         if (!file.type.startsWith('image/')) continue
 
-        // Limit file size to 10MB
+        // Limit original file size to 10MB
         if (file.size > 10 * 1024 * 1024) {
           alert(`Image ${file.name} is too large. Maximum size is 10MB.`)
           continue
         }
 
-        const dataUrl = await fileToBase64(file)
+        // Compress image to 2MB for better performance
+        const dataUrl = await compressImage(file, 2)
         newImages.push({
           data: dataUrl,
-          mimeType: file.type,
+          mimeType: 'image/jpeg', // Compressed images are always JPEG
         })
       }
 
@@ -599,6 +687,31 @@ export function ChatPage() {
     ws.manualReconnect()
   }
 
+  // Handle cancel request
+  const handleCancelRequest = () => {
+    if (!isStreaming) return
+
+    // Send cancel message to backend
+    ws.sendMessage("__CANCEL__", undefined)
+
+    // Reset streaming state
+    setIsStreaming(false)
+    setStreamingContent("")
+    setStreamingThinking("")
+    setStreamingToolCalls([])
+    capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
+    streamingMessageIdRef.current = null
+
+    // Add a message to indicate cancellation
+    const cancelMsg: Message = {
+      id: generateId(),
+      role: "assistant",
+      content: "⚠️ Request cancelled by user",
+      timestamp: Date.now(),
+    }
+    addMessage(cancelMsg)
+  }
+
   // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -620,8 +733,16 @@ export function ChatPage() {
   }
 
   // Filter out partial messages and merge fragmented assistant messages
-  const filteredMessages = messages.filter(msg => !msg.isPartial)
-  const displayMessages = mergeMessagesForDisplay(filteredMessages)
+  // Use useMemo to cache the result and avoid recalculating on every render
+  const filteredMessages = useMemo(() =>
+    messages.filter(msg => !msg.isPartial),
+    [messages]
+  )
+
+  const displayMessages = useMemo(() =>
+    mergeMessagesForDisplay(filteredMessages),
+    [filteredMessages]
+  )
 
   // Show chat area if there are messages or currently streaming
   const hasMessages = filteredMessages.length > 0 || isStreaming
@@ -828,18 +949,25 @@ export function ChatPage() {
                   <div className="max-w-[85%] sm:max-w-[80%]">
                     <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-muted text-foreground">
                       <div className="message-bubble-assistant">
-                      {streamingThinking && <ThinkingBlock thinking={streamingThinking} />}
+                      {/* Thinking block with loading indicator */}
+                      {streamingThinking && <ThinkingBlock thinking={streamingThinking} isStreaming={true} />}
+
+                      {/* Tool calls with loading indicator */}
                       {streamingToolCalls.length > 0 && (
                         <ToolCallVisualization toolCalls={streamingToolCalls} isStreaming={true} />
                       )}
+
+                      {/* Content */}
                       {streamingContent && (
                         <MarkdownMessage content={streamingContent} variant="assistant" />
                       )}
-                      {!streamingContent && !streamingThinking && streamingToolCalls.length === 0 && (
+
+                      {/* Loading states for different phases */}
+                      {!streamingContent && (
                         <div className="flex items-center gap-1">
-                          <span key="dot-1" className="w-2 h-2 rounded-full bg-current animate-bounce delay-0" />
-                          <span key="dot-2" className="w-2 h-2 rounded-full bg-current animate-bounce delay-150" />
-                          <span key="dot-3" className="w-2 h-2 rounded-full bg-current animate-bounce delay-300" />
+                          <span className="w-2 h-2 rounded-full bg-current animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-2 h-2 rounded-full bg-current animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-2 h-2 rounded-full bg-current animate-bounce" style={{ animationDelay: '300ms' }} />
                         </div>
                       )}
                       </div>
@@ -1037,17 +1165,32 @@ export function ChatPage() {
                 }}
               />
 
-              <Button
-                type="button"
-                onClick={handleSend}
-                disabled={(!input.trim() && attachedImages.length === 0) || isStreaming}
-                className={cn(
-                  "h-10 w-10 sm:h-11 sm:w-11 rounded-full flex-shrink-0",
-                  "bg-foreground hover:bg-foreground/90 text-background"
-                )}
-              >
-                <Send className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
+              {/* Send or Cancel button */}
+              {isStreaming ? (
+                <Button
+                  type="button"
+                  onClick={handleCancelRequest}
+                  className={cn(
+                    "h-10 w-10 sm:h-11 sm:w-11 rounded-full flex-shrink-0",
+                    "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+                  )}
+                  title="Cancel request"
+                >
+                  <X className="h-4 w-4 sm:h-5 sm:w-5" />
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!input.trim() && attachedImages.length === 0}
+                  className={cn(
+                    "h-10 w-10 sm:h-11 sm:w-11 rounded-full flex-shrink-0",
+                    "bg-foreground hover:bg-foreground/90 text-background"
+                  )}
+                >
+                  <Send className="h-4 w-4 sm:h-5 sm:w-5" />
+                </Button>
+              )}
             </div>
           </div>
         </div>

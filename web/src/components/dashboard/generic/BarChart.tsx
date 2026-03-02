@@ -519,11 +519,11 @@ export function BarChart({
         name: ds.deviceId
           ? `${getDeviceName(ds.deviceId)} · ${getPropertyDisplayName(ds.metricId || ds.property)}`
           : t('chart.series', { count: i + 1 }),
-        color: fallbackColors[i % fallbackColors.length],
+        color: color || fallbackColors[i % fallbackColors.length],
       }))
     }
     return null
-  }, [dataSource, data])
+  }, [dataSource, data, color, t])
 
   // Show loading skeleton when fetching data
   if (dataSource && loading) {

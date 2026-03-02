@@ -14,7 +14,6 @@ import type {
   Extension,
   ExtensionStatsDto,
   ExtensionTypeDto,
-  ExtensionDiscoveryResult,
   ExtensionCommandDescriptor,
   ExtensionDataSourceInfo,
   ExtensionExecuteRequest,
@@ -32,7 +31,6 @@ export interface ExtensionState {
   selectedExtension: Extension | null
   extensionsLoading: boolean
   extensionDialogOpen: boolean
-  discovering: boolean
   extensionStats: Record<string, ExtensionStatsDto>
   extensionTypes: ExtensionTypeDto[]
 
@@ -56,7 +54,6 @@ export interface ExtensionSlice extends ExtensionState {
   reloadExtension: (id: string) => Promise<boolean>
   getExtensionStats: (id: string) => Promise<ExtensionStatsDto | null>
   getExtensionHealth: (id: string) => Promise<{ healthy: boolean } | null>
-  discoverExtensions: () => Promise<{ discovered: number; results: ExtensionDiscoveryResult[] }>
   fetchExtensionTypes: () => Promise<void>
   executeExtensionCommand: (id: string, command: string, args?: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; message?: string }>
 
@@ -83,7 +80,6 @@ export const createExtensionSlice: StateCreator<
   selectedExtension: null,
   extensionsLoading: false,
   extensionDialogOpen: false,
-  discovering: false,
   extensionStats: {},
   extensionTypes: [],
   commands: {},
@@ -237,23 +233,6 @@ export const createExtensionSlice: StateCreator<
     } catch (error) {
       logError(error, { operation: 'Fetch extension health' })
       return null
-    }
-  },
-
-  // Discover extensions
-  // Backend: POST /api/extensions/discover -> ExtensionDiscoveryResult[]
-  discoverExtensions: async () => {
-    set({ discovering: true })
-    try {
-      const results = await api.discoverExtensions()
-      // Refresh the extension list after discovery
-      await get().fetchExtensions()
-      return { discovered: results.length, results }
-    } catch (error) {
-      logError(error, { operation: 'Discover extensions' })
-      return { discovered: 0, results: [] }
-    } finally {
-      set({ discovering: false })
     }
   },
 

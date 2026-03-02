@@ -697,45 +697,45 @@ impl LlmInterface {
         prompt.push_str("\n\n");
 
         // Add tool calling instruction and format
-        prompt.push_str("## 重要：你必须调用工具来执行操作\n");
-        prompt.push_str("1. 不要只说你将要做什么，直接输出工具调用的JSON！\n");
-        prompt.push_str("2. 严禁在没有调用工具的情况下声称操作成功！\n");
-        prompt.push_str("3. 只有在工具真正执行并返回成功结果后，才能使用「✓」标记。\n\n");
-        prompt.push_str("## 工具调用格式\n");
+        prompt.push_str("## IMPORTANT: You MUST call tools to execute operations\n");
+        prompt.push_str("1. Don't just say what you will do - directly output the tool call JSON!\n");
+        prompt.push_str("2. NEVER claim operation success without calling tools!\n");
+        prompt.push_str("3. Only use the \"✓\" mark after the tool actually executes and returns success.\n\n");
+        prompt.push_str("## Tool Call Format\n");
         prompt
-            .push_str("在回复中输出: [{\"name\":\"工具名\",\"arguments\":{\"参数\":\"值\"}}]\n\n");
+            .push_str("Output in response: [{\"name\":\"tool_name\",\"arguments\":{\"param\":\"value\"}}]\n\n");
 
         // Add simplified tools
         use neomind_tools::simplified;
         let simplified_tools = simplified::get_simplified_tools();
 
-        prompt.push_str("## 可用工具\n\n");
+        prompt.push_str("## Available Tools\n\n");
         for tool in simplified_tools.iter() {
             prompt.push_str(&format!("### {} ({})\n", tool.name, tool.description));
 
             if !tool.aliases.is_empty() {
-                prompt.push_str(&format!("**别名**: {}\n", tool.aliases.join("、")));
+                prompt.push_str(&format!("**Aliases**: {}\n", tool.aliases.join(", ")));
             }
 
-            prompt.push_str("**参数**:\n");
+            prompt.push_str("**Parameters**:\n");
             if tool.required.is_empty() && tool.optional.is_empty() {
-                prompt.push_str("  无需参数\n");
+                prompt.push_str("  No parameters required\n");
             } else {
                 for param in &tool.required {
-                    prompt.push_str(&format!("  - `{}` (必需)\n", param));
+                    prompt.push_str(&format!("  - `{}` (required)\n", param));
                 }
                 for (param, info) in &tool.optional {
                     prompt.push_str(&format!(
-                        "  - `{}` (可选，默认: {}) - {}\n",
+                        "  - `{}` (optional, default: {}) - {}\n",
                         param, info.default, info.description
                     ));
                 }
             }
 
             if !tool.examples.is_empty() {
-                prompt.push_str("\n**示例**:\n");
+                prompt.push_str("\n**Examples**:\n");
                 for ex in &tool.examples {
-                    prompt.push_str(&format!("  - 用户: \"{}\"\n", ex.user_query));
+                    prompt.push_str(&format!("  - User: \"{}\"\n", ex.user_query));
                     prompt.push_str(&format!("    → `{}`\n", ex.tool_call));
                 }
             }
@@ -744,17 +744,17 @@ impl LlmInterface {
         }
 
         // Add quick reference table
-        prompt.push_str("## 快速参考\n");
-        prompt.push_str("| 用户问什么 | 调用什么工具 |\n");
-        prompt.push_str("|-----------|-------------|\n");
-        prompt.push_str("| \"有哪些设备\" | `list_devices()` |\n");
+        prompt.push_str("## Quick Reference\n");
+        prompt.push_str("| User Query | Tool to Call |\n");
+        prompt.push_str("|------------|-------------|\n");
+        prompt.push_str("| \"What devices are there?\" | `list_devices()` |\n");
         prompt
-            .push_str("| \"温度是多少\" | `query_data(device='设备ID', metric='temperature')` |\n");
-        prompt.push_str("| \"打开灯\" | `control_device(device='设备ID', action='on')` |\n");
+            .push_str("| \"What's the temperature?\" | `query_data(device='device_id', metric='temperature')` |\n");
+        prompt.push_str("| \"Turn on the light\" | `control_device(device='device_id', action='on')` |\n");
         prompt.push_str(
-            "| \"创建规则\" | `create_rule(name='规则名', condition='条件', action='动作')` |\n",
+            "| \"Create a rule\" | `create_rule(name='rule_name', condition='condition', action='action')` |\n",
         );
-        prompt.push_str("| \"显示所有规则\" | `list_rules()` |\n");
+        prompt.push_str("| \"Show all rules\" | `list_rules()` |\n");
         prompt.push('\n');
 
         // Cache the result
@@ -803,17 +803,17 @@ impl LlmInterface {
 
         // Get additional time context for better LLM understanding
         let day_of_week = now.with_timezone(&tz).format("%A").to_string();
-        let date_str = now.with_timezone(&tz).format("%Y年%m月%d日").to_string();
+        let date_str = now.with_timezone(&tz).format("%B %d, %Y").to_string();
 
         // Get time period description (morning, afternoon, evening, night)
         let hour_str = now.with_timezone(&tz).format("%H").to_string();
         let hour: u32 = hour_str.parse().unwrap_or(12);
         let time_period = match hour {
-            5..=11 => "上午",
-            12..=13 => "中午",
-            14..=17 => "下午",
-            18..=22 => "晚上",
-            _ => "夜间",
+            5..=11 => "Morning",
+            12..=13 => "Noon",
+            14..=17 => "Afternoon",
+            18..=22 => "Evening",
+            _ => "Night",
         };
 
         // Build enhanced time context

@@ -334,6 +334,7 @@ export function SessionSidebar({
                           className={cn(
                             "absolute right-1 top-1/2 -translate-y-1/2",
                             "p-1 rounded transition-all",
+                            "flex items-center justify-center",
                             "text-muted-foreground hover:text-destructive hover:bg-destructive/10",
                             "opacity-0 group-hover:opacity-100",
                             isDeleting && "opacity-50"

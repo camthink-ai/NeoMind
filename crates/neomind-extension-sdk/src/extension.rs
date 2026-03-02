@@ -152,7 +152,7 @@ impl SdkMetricDefinition {
     }
 }
 
-/// Metric value
+/// Metric value (enum for parameters)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SdkMetricValue {
@@ -192,6 +192,47 @@ impl From<&str> for SdkMetricValue {
 
 impl From<Vec<u8>> for SdkMetricValue {
     fn from(v: Vec<u8>) -> Self { Self::Binary(v) }
+}
+
+// ============================================================================
+// Extension Metric Value (struct for produce_metrics)
+// ============================================================================
+
+/// Extension metric value with name, value and timestamp
+/// This matches the Native ExtensionMetricValue structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SdkExtensionMetricValue {
+    /// Metric name
+    pub name: String,
+    /// Metric value
+    pub value: SdkMetricValue,
+    /// Timestamp in milliseconds
+    pub timestamp: i64,
+}
+
+impl SdkExtensionMetricValue {
+    /// Create a new extension metric value
+    pub fn new(name: impl Into<String>, value: SdkMetricValue) -> Self {
+        Self {
+            name: name.into(),
+            value,
+            timestamp: {
+                #[cfg(not(target_arch = "wasm32"))]
+                { chrono::Utc::now().timestamp_millis() }
+                #[cfg(target_arch = "wasm32")]
+                { 0 } // WASM: use host-provided timestamp or 0
+            },
+        }
+    }
+
+    /// Create with explicit timestamp
+    pub fn with_timestamp(name: impl Into<String>, value: SdkMetricValue, timestamp: i64) -> Self {
+        Self {
+            name: name.into(),
+            value,
+            timestamp,
+        }
+    }
 }
 
 // ============================================================================
@@ -276,12 +317,62 @@ impl SdkParameterDefinition {
 pub struct SdkCommandDefinition {
     /// Command name
     pub name: String,
-    /// Description
+    /// Display name
+    #[serde(default)]
+    pub display_name: String,
+    /// Payload template
+    #[serde(default)]
+    pub payload_template: String,
+    /// Description (mapped to llm_hints for compatibility)
     #[serde(default)]
     pub description: String,
     /// Parameters
     #[serde(default)]
     pub parameters: Vec<SdkParameterDefinition>,
+    /// Fixed values
+    #[serde(default)]
+    pub fixed_values: std::collections::HashMap<String, serde_json::Value>,
+    /// Sample payloads
+    #[serde(default)]
+    pub samples: Vec<serde_json::Value>,
+    /// LLM hints
+    #[serde(default)]
+    pub llm_hints: String,
+    /// Parameter groups
+    #[serde(default)]
+    pub parameter_groups: Vec<SdkParameterGroup>,
+}
+
+/// Parameter group for organizing command parameters
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SdkParameterGroup {
+    /// Group name
+    pub name: String,
+    /// Display name
+    #[serde(default)]
+    pub display_name: String,
+    /// Description
+    #[serde(default)]
+    pub description: String,
+    /// Parameters in this group
+    #[serde(default)]
+    pub parameters: Vec<String>,
+}
+
+impl Default for SdkCommandDefinition {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            display_name: String::new(),
+            payload_template: String::new(),
+            description: String::new(),
+            parameters: Vec::new(),
+            fixed_values: std::collections::HashMap::new(),
+            samples: Vec::new(),
+            llm_hints: String::new(),
+            parameter_groups: Vec::new(),
+        }
+    }
 }
 
 impl SdkCommandDefinition {
@@ -289,8 +380,14 @@ impl SdkCommandDefinition {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            display_name: String::new(),
+            payload_template: String::new(),
             description: String::new(),
             parameters: Vec::new(),
+            fixed_values: std::collections::HashMap::new(),
+            samples: Vec::new(),
+            llm_hints: String::new(),
+            parameter_groups: Vec::new(),
         }
     }
 

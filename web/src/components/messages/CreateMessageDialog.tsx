@@ -182,10 +182,10 @@ export function CreateMessageDialog({ open, onOpenChange, onCreate }: CreateMess
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
-            {t('common.cancel')}
+            {t('common:cancel')}
           </Button>
           <Button onClick={handleSubmit} disabled={!isValid || isSubmitting}>
-            {isSubmitting ? t('common.creating') : t('common.create')}
+            {isSubmitting ? t('common:creating') : t('common:create')}
           </Button>
         </DialogFooter>
       </DialogContent>

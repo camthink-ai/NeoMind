@@ -23,6 +23,11 @@ base64 = { workspace = true }
 regex = "1"
 tracing = { workspace = true }
 
+# Image analysis
+usls = { version = "0.2.0-alpha.3", default-features = false, features = ["ort-download-binaries", "vision"] }
+image = "0.25"
+reqwest = { version = "0.12", features = ["blocking"] }
+
 [features]
 default = []
 # All features are enabled by default - no feature flags needed

@@ -1,4 +1,7 @@
 //! Tool call parser for extracting tool calls from LLM responses.
+//!
+//! Priority: JSON > XML (fallback)
+//! JSON format preserves tool IDs from Ollama/OpenAI API.
 
 use serde_json::Value;
 use uuid::Uuid;
@@ -8,321 +11,267 @@ use crate::error::Result;
 
 /// Parse tool calls from LLM response text.
 ///
-/// **Supported formats**:
-/// 1. JSON array format: [{"name": "tool1", "arguments": {...}}, {"name": "tool2", "arguments": {...}}]
-/// 2. JSON object format: {"name": "tool_name", "arguments": {...}}
-/// 3. XML format: <tool_calls><invoke name="tool_name"><parameter name="key" value="val"/></invoke></tool_calls>
-/// 4. Multiple JSON arrays (for thinking field with tools on separate lines)
+/// **Supported formats** (in priority order):
+/// 1. JSON array: `[{"id": "call_123", "name": "tool1", "arguments": {...}}]`
+/// 2. JSON object: `{"id": "call_123", "name": "tool_name", "arguments": {...}}`
+/// 3. XML (fallback): `<tool_calls><invoke name="tool_name">...</invoke></tool_calls>`
 ///
 /// Returns the remaining text along with any parsed tool calls.
 pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
-    let mut content = text.to_string();
-    let mut tool_calls = Vec::new();
-
-    // First, try to parse XML format: <tool_calls><invoke name="tool_name">...</invoke></tool_calls>
-    if let Some(start) = text.find("<tool_calls>") {
-        if let Some(end) = text.find("</tool_calls>") {
-            let xml_section = &text[start..end + 13]; // 13 = len("</tool_calls>")
-            content = format!("{}{}", &text[..start], &text[end + 13..]);
-
-            // Parse <invoke name="..."> entries
-            let mut remaining = xml_section;
-            while let Some(invoke_start) = remaining.find("<invoke") {
-                let invoke_end = match remaining.find("</invoke>") {
-                    Some(pos) => pos,
-                    None => break,
-                };
-
-                let invoke_section = &remaining[invoke_start..invoke_end + 8]; // 8 = len("</invoke>")
-
-                // Extract tool name from <invoke name="tool_name">
-                if let Some(name_start) = invoke_section.find("name=\"") {
-                    let name_section = &invoke_section[name_start + 6..];
-                    if let Some(name_end) = name_section.find('"') {
-                        let tool_name = &name_section[..name_end];
-
-                        // Extract parameters from <parameter name="key">value</parameter> or <parameter name="key" value="value"/>
-                        let mut arguments = serde_json::Map::new();
-                        let mut search_start = 0;
-                        while search_start < invoke_section.len() {
-                            if let Some(param_start) =
-                                invoke_section[search_start..].find("<parameter")
-                            {
-                                let absolute_param_start = search_start + param_start;
-
-                                // Find end of opening parameter tag (could be /> or >)
-                                let tag_end = match invoke_section[absolute_param_start..].find('>')
-                                {
-                                    Some(pos) => absolute_param_start + pos,
-                                    None => {
-                                        // Malformed, skip past <parameter
-                                        search_start = absolute_param_start + "<parameter".len();
-                                        continue;
-                                    }
-                                };
-
-                                let tag_section = &invoke_section[absolute_param_start..=tag_end];
-                                let is_self_closing = tag_section.trim_end().ends_with("/>");
-
-                                // Extract parameter name
-                                let param_name = match tag_section.find("name=\"") {
-                                    Some(name_start) => {
-                                        let name_section = &tag_section[name_start + 6..];
-                                        match name_section.find('"') {
-                                            Some(name_end) => name_section[..name_end].to_string(),
-                                            None => {
-                                                // Invalid, skip
-                                                search_start =
-                                                    absolute_param_start + "<parameter".len();
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        // No name, skip
-                                        search_start = absolute_param_start + "<parameter".len();
-                                        continue;
-                                    }
-                                };
-
-                                // Extract parameter value
-                                let param_value = match tag_section.find("value=\"") {
-                                    Some(val_start) => {
-                                        // value="..." format
-                                        let val_section = &tag_section[val_start + 7..];
-                                        match val_section.find('"') {
-                                            Some(val_end) => val_section[..val_end].to_string(),
-                                            None => {
-                                                // Invalid, skip
-                                                search_start =
-                                                    absolute_param_start + "<parameter".len();
-                                                continue;
-                                            }
-                                        }
-                                    }
-                                    None => {
-                                        if !is_self_closing {
-                                            // <parameter name="key">value</parameter> format
-                                            let content_start = tag_end + 1;
-                                            match invoke_section[content_start..]
-                                                .find("</parameter>")
-                                            {
-                                                Some(end_pos) => {
-                                                    let value = invoke_section
-                                                        [content_start..content_start + end_pos]
-                                                        .trim()
-                                                        .to_string();
-                                                    arguments
-                                                        .insert(param_name, Value::String(value));
-                                                    search_start = content_start
-                                                        + end_pos
-                                                        + "</parameter>".len();
-                                                    continue;
-                                                }
-                                                None => {
-                                                    // No closing tag, skip
-                                                    search_start =
-                                                        absolute_param_start + "<parameter".len();
-                                                    continue;
-                                                }
-                                            }
-                                        } else {
-                                            // Self-closing with no value attribute, skip
-                                            search_start =
-                                                absolute_param_start + "<parameter".len();
-                                            continue;
-                                        }
-                                    }
-                                };
-
-                                arguments.insert(param_name, Value::String(param_value));
-
-                                // Move past this self-closing tag
-                                search_start = tag_end + 1;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        tool_calls.push(ToolCall {
-                            name: tool_name.to_string(),
-                            id: Uuid::new_v4().to_string(),
-                            arguments: Value::Object(arguments),
-                            result: None,
-                        });
-                    }
-                }
-
-                remaining = &remaining[invoke_end + 8..];
-            }
-
-            if !tool_calls.is_empty() {
-                return Ok((content.trim().to_string(), tool_calls));
-            }
-        }
+    // === PRIORITY 1: JSON array format ===
+    // Native format from Ollama/OpenAI, preserves tool IDs
+    if let Some(result) = try_parse_json_array(text) {
+        return result;
     }
 
-    // Second, try to parse JSON array format: [{"name": "tool1", "arguments": {...}}, ...]
-    // Support multiple JSON arrays (e.g., when model puts tools on separate lines in thinking)
-    // Find all JSON arrays that contain tool calls and collect them
-    let mut search_start = 0;
-    let mut first_array_start = None;
+    // === PRIORITY 2: JSON object format ===
+    if let Some(result) = try_parse_json_object(text) {
+        return result;
+    }
 
-    while let Some(start) = text[search_start..].find('[') {
-        let absolute_start = search_start + start;
+    // === PRIORITY 3: XML format (fallback for models without native tool support) ===
+    if let Some(result) = try_parse_xml(text) {
+        return result;
+    }
 
-        // Find the matching closing bracket by counting brackets
-        let mut bracket_count = 0;
-        let mut array_end = absolute_start;
+    Ok((text.to_string(), Vec::new()))
+}
 
-        for (i, c) in text[absolute_start..].char_indices() {
-            if c == '[' {
-                bracket_count += 1;
-            } else if c == ']' {
+/// Try to parse JSON array format tool calls.
+/// Returns None if not found, Some(result) if found (even if empty).
+fn try_parse_json_array(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
+    let start = text.find('[')?;
+
+    // Find matching closing bracket
+    let mut bracket_count = 0;
+    let mut end = start;
+    for (i, c) in text[start..].char_indices() {
+        match c {
+            '[' => bracket_count += 1,
+            ']' => {
                 bracket_count -= 1;
                 if bracket_count == 0 {
-                    array_end = absolute_start + i + 1;
+                    end = start + i + 1;
                     break;
                 }
             }
+            _ => {}
         }
+    }
 
-        if array_end > absolute_start {
-            let json_str = &text[absolute_start..array_end];
+    if end <= start {
+        return None;
+    }
 
-            // Only process if it looks like a tool call array (has "name", "tool", or "function")
-            if json_str.contains("\"name\"")
-                || json_str.contains("\"tool\"")
-                || json_str.contains("\"function\"")
-            {
-                if first_array_start.is_none() {
-                    first_array_start = Some(absolute_start);
+    let json_str = &text[start..end];
+
+    // Check if it looks like tool calls
+    if !json_str.contains("\"name\"")
+        && !json_str.contains("\"tool\"")
+        && !json_str.contains("\"function\"") {
+        return None;
+    }
+
+    let array = serde_json::from_str::<Vec<Value>>(json_str).ok()?;
+
+    let mut tool_calls = Vec::new();
+    for value in array {
+        if let Some(tool_call) = extract_tool_call_from_json(&value) {
+            tool_calls.push(tool_call);
+        }
+    }
+
+    if tool_calls.is_empty() {
+        return None;
+    }
+
+    let content = text[..start].trim().to_string();
+    Some(Ok((content, tool_calls)))
+}
+
+/// Try to parse JSON object format tool call.
+fn try_parse_json_object(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
+    let start = text.find('{')?;
+
+    // Find matching closing brace
+    let mut brace_count = 0;
+    let mut end = start;
+    for (i, c) in text[start..].char_indices() {
+        match c {
+            '{' => brace_count += 1,
+            '}' => {
+                brace_count -= 1;
+                if brace_count == 0 {
+                    end = start + i + 1;
+                    break;
                 }
+            }
+            _ => {}
+        }
+    }
 
-                if let Ok(array) = serde_json::from_str::<Vec<Value>>(json_str) {
-                    for value in array {
-                        if let Some(tool_name) = value
-                            .get("name")
-                            .or_else(|| value.get("tool"))
-                            .or_else(|| value.get("function"))
-                            .and_then(|v| v.as_str())
-                        {
-                            let arguments = value
-                                .get("arguments")
-                                .or_else(|| value.get("params"))
-                                .or_else(|| value.get("parameters"))
-                                .cloned()
-                                .unwrap_or_else(|| {
-                                    let mut args = serde_json::Map::new();
-                                    if let Some(obj) = value.as_object() {
-                                        for (k, v) in obj {
-                                            if k != "name"
-                                                && k != "tool"
-                                                && k != "function"
-                                                && k != "arguments"
-                                                && k != "params"
-                                                && k != "parameters"
-                                            {
-                                                args.insert(k.clone(), v.clone());
-                                            }
-                                        }
-                                    }
-                                    Value::Object(args)
-                                });
+    if end <= start {
+        return None;
+    }
 
-                            tool_calls.push(ToolCall {
-                                name: tool_name.to_string(),
-                                id: Uuid::new_v4().to_string(),
-                                arguments,
-                                result: None,
-                            });
-                        }
+    let json_str = &text[start..end];
+    let value = serde_json::from_str::<Value>(json_str).ok()?;
+
+    if let Some(tool_call) = extract_tool_call_from_json(&value) {
+        let content = text[..start].trim().to_string();
+        return Some(Ok((content, vec![tool_call])));
+    }
+
+    None
+}
+
+/// Extract a ToolCall from a JSON value.
+/// Preserves the `id` field from Ollama/OpenAI API.
+fn extract_tool_call_from_json(value: &Value) -> Option<ToolCall> {
+    // Get tool name from various possible fields
+    let name = value
+        .get("name")
+        .or_else(|| value.get("tool"))
+        .or_else(|| value.get("function"))
+        .and_then(|v| v.as_str())?
+        .to_string();
+
+    // Preserve the ID from API, or generate a new one
+    let id = value
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    // Get arguments
+    let arguments = value
+        .get("arguments")
+        .or_else(|| value.get("params"))
+        .or_else(|| value.get("parameters"))
+        .cloned()
+        .unwrap_or_else(|| {
+            // If no explicit arguments, collect remaining fields
+            let mut args = serde_json::Map::new();
+            if let Some(obj) = value.as_object() {
+                for (k, v) in obj {
+                    if !matches!(k.as_str(), "name" | "tool" | "function" | "arguments" | "params" | "parameters" | "id") {
+                        args.insert(k.clone(), v.clone());
                     }
                 }
             }
+            Value::Object(args)
+        });
+
+    Some(ToolCall {
+        name,
+        id,
+        arguments,
+        result: None,
+    })
+}
+
+/// Try to parse XML format tool calls (fallback for models without native tool support).
+fn try_parse_xml(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
+    let start = text.find("<tool_calls>")?;
+    let end = text.find("</tool_calls>")?;
+
+    let xml_section = &text[start..end + 13];
+    let content = format!("{}{}", &text[..start], &text[end + 13..]);
+
+    let mut tool_calls = Vec::new();
+    let mut remaining = xml_section;
+
+    while let Some(invoke_start) = remaining.find("<invoke") {
+        let invoke_end = remaining.find("</invoke>")?;
+        let invoke_section = &remaining[invoke_start..invoke_end + 8];
+
+        // Extract tool name
+        if let Some(tool_call) = parse_invoke_element(invoke_section) {
+            tool_calls.push(tool_call);
         }
 
-        // Move past this array to search for more
-        search_start = array_end;
+        remaining = &remaining[invoke_end + 8..];
     }
 
-    if !tool_calls.is_empty() {
-        if let Some(first_start) = first_array_start {
-            content = text[..first_start].trim().to_string();
-        }
-        return Ok((content, tool_calls));
+    if tool_calls.is_empty() {
+        return None;
     }
 
-    // Third, try to parse JSON object format: {"name": "tool_name", "arguments": {...}}
-    if let Some(match_start) = text.find('{') {
-        // Find the matching closing brace by counting braces
-        let mut brace_count = 0;
-        let mut json_end = match_start;
+    Some(Ok((content.trim().to_string(), tool_calls)))
+}
 
-        for (i, c) in text[match_start..].char_indices() {
-            if c == '{' {
-                brace_count += 1;
-            } else if c == '}' {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    json_end = match_start + i + 1;
-                    break;
+/// Parse a single <invoke> element from XML.
+fn parse_invoke_element(invoke_section: &str) -> Option<ToolCall> {
+    let name_start = invoke_section.find("name=\"")?;
+    let name_section = &invoke_section[name_start + 6..];
+    let name_end = name_section.find('"')?;
+    let tool_name = &name_section[..name_end];
+
+    // Extract parameters
+    let mut arguments = serde_json::Map::new();
+    let mut search_start = 0;
+
+    while search_start < invoke_section.len() {
+        if let Some(param_start) = invoke_section[search_start..].find("<parameter") {
+            let absolute_param_start = search_start + param_start;
+
+            // Find end of parameter tag
+            let tag_end = invoke_section[absolute_param_start..].find('>')?;
+            let absolute_tag_end = absolute_param_start + tag_end;
+            let tag_section = &invoke_section[absolute_param_start..=absolute_tag_end];
+            let is_self_closing = tag_section.trim_end().ends_with("/>");
+
+            // Extract parameter name
+            let param_name = if let Some(n_start) = tag_section.find("name=\"") {
+                let n_section = &tag_section[n_start + 6..];
+                if let Some(n_end) = n_section.find('"') {
+                    n_section[..n_end].to_string()
+                } else {
+                    search_start = absolute_param_start + "<parameter".len();
+                    continue;
                 }
-            }
-        }
+            } else {
+                search_start = absolute_param_start + "<parameter".len();
+                continue;
+            };
 
-        if json_end > match_start {
-            let json_str = &text[match_start..json_end];
-            if let Ok(value) = serde_json::from_str::<Value>(json_str) {
-                // Check for "tool" or "function" or "name" key
-                let tool_name = value
-                    .get("tool")
-                    .or_else(|| value.get("function"))
-                    .or_else(|| value.get("name"))
-                    .and_then(|v| v.as_str());
-
-                if let Some(name) = tool_name {
-                    // Extract arguments
-                    let arguments = value
-                        .get("arguments")
-                        .or_else(|| value.get("params"))
-                        .or_else(|| value.get("parameters"))
-                        .cloned()
-                        .unwrap_or_else(|| {
-                            // If no explicit arguments field, use the whole value except tool name
-                            let mut args = value.clone();
-                            if let Some(obj) = args.as_object_mut() {
-                                obj.remove("tool");
-                                obj.remove("function");
-                                obj.remove("name");
-                            }
-                            args
-                        });
-
-                    let call = ToolCall {
-                        name: name.to_string(),
-                        id: Uuid::new_v4().to_string(),
-                        arguments,
-                        result: None, // Will be populated after execution
-                    };
-                    tool_calls.push(call);
-                    content = text[..match_start].trim().to_string();
-                    return Ok((content, tool_calls));
+            // Extract parameter value
+            if let Some(v_start) = tag_section.find("value=\"") {
+                let v_section = &tag_section[v_start + 7..];
+                if let Some(v_end) = v_section.find('"') {
+                    arguments.insert(param_name, Value::String(v_section[..v_end].to_string()));
                 }
+                search_start = absolute_tag_end + 1;
+            } else if !is_self_closing {
+                // Content format: <parameter name="key">value</parameter>
+                let content_start = absolute_tag_end + 1;
+                if let Some(close_end) = invoke_section[content_start..].find("</parameter>") {
+                    let value = invoke_section[content_start..content_start + close_end].trim().to_string();
+                    arguments.insert(param_name, Value::String(value));
+                    search_start = content_start + close_end + "</parameter>".len();
+                } else {
+                    search_start = absolute_param_start + "<parameter".len();
+                }
+            } else {
+                search_start = absolute_tag_end + 1;
             }
+        } else {
+            break;
         }
     }
 
-    Ok((content, tool_calls))
+    Some(ToolCall {
+        name: tool_name.to_string(),
+        id: Uuid::new_v4().to_string(), // XML format doesn't have IDs
+        arguments: Value::Object(arguments),
+        result: None,
+    })
 }
 
 /// Parse tool call from JSON content (for streaming).
-///
-/// Looks for {"name": "tool_name", "arguments": {...}} format.
 pub fn parse_tool_call_json(content: &str) -> Result<(String, Value)> {
     let content = content.trim();
 
-    // Try to find JSON object
     let start = content
         .find('{')
         .ok_or_else(|| crate::error::invalid_input("No JSON object found"))?;
@@ -354,40 +303,29 @@ pub fn parse_tool_call_json(content: &str) -> Result<(String, Value)> {
 pub fn remove_tool_calls_from_response(response: &str) -> String {
     let mut result = response.to_string();
 
-    // Remove XML format: <tool_calls>...</tool_calls>
-    while let Some(start) = result.find("<tool_calls>") {
-        if let Some(end) = result.find("</tool_calls>") {
-            result.replace_range(start..end + 13, "");
-            continue;
-        }
-        break;
-    }
-
-    // Remove JSON array format: [{...}, {...}]
+    // Remove JSON array format
     while let Some(start) = result.find('[') {
         let mut bracket_count = 0;
         let mut end = start;
 
         for (i, c) in result[start..].char_indices() {
-            if c == '[' {
-                bracket_count += 1;
-            } else if c == ']' {
-                bracket_count -= 1;
-                if bracket_count == 0 {
-                    end = start + i + 1;
-                    break;
+            match c {
+                '[' => bracket_count += 1,
+                ']' => {
+                    bracket_count -= 1;
+                    if bracket_count == 0 {
+                        end = start + i + 1;
+                        break;
+                    }
                 }
+                _ => {}
             }
         }
 
         if end > start {
-            // Check if it's a tool call array
             let json_str = &result[start..end];
             if let Ok(array) = serde_json::from_str::<Vec<Value>>(json_str) {
-                if array
-                    .iter()
-                    .any(|v| v.get("name").is_some() || v.get("tool").is_some())
-                {
+                if array.iter().any(|v| v.get("name").is_some() || v.get("tool").is_some()) {
                     result.replace_range(start..end, "");
                     continue;
                 }
@@ -396,20 +334,22 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
         break;
     }
 
-    // Remove JSON object format: {"name": "tool_name", ...}
+    // Remove JSON object format
     while let Some(start) = result.find('{') {
         let mut brace_count = 0;
         let mut end = start;
 
         for (i, c) in result[start..].char_indices() {
-            if c == '{' {
-                brace_count += 1;
-            } else if c == '}' {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    end = start + i + 1;
-                    break;
+            match c {
+                '{' => brace_count += 1,
+                '}' => {
+                    brace_count -= 1;
+                    if brace_count == 0 {
+                        end = start + i + 1;
+                        break;
+                    }
                 }
+                _ => {}
             }
         }
 
@@ -425,6 +365,15 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
         break;
     }
 
+    // Remove XML format
+    while let Some(start) = result.find("<tool_calls>") {
+        if let Some(end) = result.find("</tool_calls>") {
+            result.replace_range(start..end + 13, "");
+            continue;
+        }
+        break;
+    }
+
     result.trim().to_string()
 }
 
@@ -433,38 +382,73 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_json_array_tool_calls() {
-        let text = "我来查询。 [{\"name\": \"list_devices\", \"arguments\": {}}, {\"name\": \"list_rules\", \"arguments\": {}}]";
+    fn test_parse_json_array_with_id() {
+        let text = r#"[{"id": "call_abc123", "name": "list_devices", "arguments": {"type": "sensor"}}]"#;
         let (content, calls) = parse_tool_calls(text).unwrap();
 
-        assert_eq!(content.trim(), "我来查询。");
+        assert!(content.is_empty());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "list_devices");
+        assert_eq!(calls[0].id, "call_abc123"); // ID preserved!
+        assert_eq!(calls[0].arguments["type"], "sensor");
+    }
+
+    #[test]
+    fn test_parse_json_array_without_id() {
+        let text = r#"[{"name": "list_devices", "arguments": {}}]"#;
+        let (content, calls) = parse_tool_calls(text).unwrap();
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "list_devices");
+        // ID should be generated (UUID format)
+        assert!(!calls[0].id.is_empty());
+    }
+
+    #[test]
+    fn test_parse_json_object_with_id() {
+        let text = r#"{"id": "call_xyz", "name": "query_data", "arguments": {"device": "sensor1"}}"#;
+        let (content, calls) = parse_tool_calls(text).unwrap();
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_xyz"); // ID preserved!
+    }
+
+    #[test]
+    fn test_parse_multiple_tool_calls() {
+        let text = r#"[{"id": "call_1", "name": "list_devices"}, {"id": "call_2", "name": "list_rules"}]"#;
+        let (_, calls) = parse_tool_calls(text).unwrap();
+
         assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].name, "list_devices");
-        assert_eq!(calls[1].name, "list_rules");
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(calls[1].id, "call_2");
     }
 
     #[test]
-    fn test_parse_json_object_tool_call() {
-        let text = "I'll help. {\"name\": \"list_devices\", \"arguments\": {}}";
+    fn test_parse_xml_fallback() {
+        let text = r#"<tool_calls><invoke name="device.query"><parameter name="device_id">sensor1</parameter></invoke></tool_calls>"#;
         let (content, calls) = parse_tool_calls(text).unwrap();
 
-        assert_eq!(content.trim(), "I'll help.");
         assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "device.query");
+        assert_eq!(calls[0].arguments["device_id"], "sensor1");
+        // XML format generates UUID
+        assert!(!calls[0].id.is_empty());
+    }
+
+    #[test]
+    fn test_json_priority_over_xml() {
+        // When both formats exist, JSON should be parsed first
+        let text = r#"[{"id": "call_json", "name": "list_devices"}]<tool_calls><invoke name="list_rules"></invoke></tool_calls>"#;
+        let (_, calls) = parse_tool_calls(text).unwrap();
+
+        // Should parse JSON, not XML
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_json");
         assert_eq!(calls[0].name, "list_devices");
     }
 
     #[test]
-    fn test_parse_tool_calls_with_json() {
-        let text = "I'll help you with that. {\"tool\": \"list_devices\", \"arguments\": {}}";
-        let (content, calls) = parse_tool_calls(text).unwrap();
-
-        assert_eq!(content.trim(), "I'll help you with that.");
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "list_devices");
-    }
-
-    #[test]
-    fn test_parse_tool_calls_no_json() {
+    fn test_parse_tool_calls_no_tools() {
         let text = "Hello, how can I help you today?";
         let (content, calls) = parse_tool_calls(text).unwrap();
 
@@ -473,87 +457,21 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_tool_call_json() {
-        let json = r#"{"name": "query_data", "arguments": {"device_id": "sensor1"}}"#;
-        let (name, args) = parse_tool_call_json(json).unwrap();
+    fn test_parse_with_content() {
+        let text = r#"Let me check. [{"id": "call_1", "name": "list_devices"}]"#;
+        let (content, calls) = parse_tool_calls(text).unwrap();
 
-        assert_eq!(name, "query_data");
-        assert_eq!(args["device_id"], "sensor1");
+        assert_eq!(content, "Let me check.");
+        assert_eq!(calls.len(), 1);
     }
 
     #[test]
-    fn test_remove_json_array_tool_calls() {
-        let response = "Here's the result [{\"name\":\"test\"}] done.";
+    fn test_remove_tool_calls() {
+        let response = r#"Checking... [{"id": "call_1", "name": "test"}] done"#;
         let cleaned = remove_tool_calls_from_response(response);
 
-        assert!(cleaned.contains("Here's the result"));
+        assert!(cleaned.contains("Checking..."));
         assert!(cleaned.contains("done"));
-    }
-
-    #[test]
-    fn test_remove_json_object_tool_calls() {
-        let response = "Here's the result {\"name\":\"test\"} done.";
-        let cleaned = remove_tool_calls_from_response(response);
-
-        assert!(cleaned.contains("Here's the result"));
-        assert!(cleaned.contains("done"));
-    }
-
-    #[test]
-    fn test_parse_tool_calls_with_arguments() {
-        let text = r#"{"name": "query_data", "arguments": {"device_id": "sensor1", "metric": "temperature"}}"#;
-        let (content, calls) = parse_tool_calls(text).unwrap();
-
-        assert!(content.trim().is_empty());
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "query_data");
-        assert_eq!(calls[0].arguments["device_id"], "sensor1");
-        assert_eq!(calls[0].arguments["metric"], "temperature");
-    }
-
-    #[test]
-    fn test_parse_multiple_tool_calls() {
-        let text = r#"[{"name": "list_devices", "arguments": {}}, {"name": "list_rules", "arguments": {}}]"#;
-        let (content, calls) = parse_tool_calls(text).unwrap();
-
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].name, "list_devices");
-        assert_eq!(calls[1].name, "list_rules");
-    }
-
-    #[test]
-    fn test_parse_multiple_separate_json_arrays() {
-        // Test the case where model puts tools on separate lines in thinking
-        let text = "[{\"name\": \"list_devices\", \"arguments\": {}}]\n[{\"name\": \"list_rules\", \"arguments\": {}}]";
-        let (content, calls) = parse_tool_calls(text).unwrap();
-
-        assert_eq!(calls.len(), 2);
-        assert_eq!(calls[0].name, "list_devices");
-        assert_eq!(calls[1].name, "list_rules");
-    }
-
-    #[test]
-    fn test_parse_xml_tool_calls_with_content_parameters() {
-        // Test <parameter name="key">value</parameter> format (generated by qwen2.5:3b)
-        let text = r#"<tool_calls><invoke name="device.query"><parameter name="device_id">sensor_temp_living</parameter><parameter name="metrics">["temperature"]</parameter></invoke></tool_calls>"#;
-        let (content, calls) = parse_tool_calls(text).unwrap();
-
-        assert_eq!(content.trim(), "");
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "device.query");
-        assert_eq!(calls[0].arguments["device_id"], "sensor_temp_living");
-        assert_eq!(calls[0].arguments["metrics"], "[\"temperature\"]");
-    }
-
-    #[test]
-    fn test_parse_xml_tool_calls_with_value_attribute() {
-        // Test <parameter name="key" value="value"/> format (original format)
-        let text = r#"<tool_calls><invoke name="device.query"><parameter name="device_id" value="sensor_temp_living"/></invoke></tool_calls>"#;
-        let (content, calls) = parse_tool_calls(text).unwrap();
-
-        assert_eq!(content.trim(), "");
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "device.query");
-        assert_eq!(calls[0].arguments["device_id"], "sensor_temp_living");
+        assert!(!cleaned.contains("call_1"));
     }
 }

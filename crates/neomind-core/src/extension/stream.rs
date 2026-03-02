@@ -323,6 +323,12 @@ impl StreamResult {
             None
         }
     }
+
+    /// Add metadata to result
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
 }
 
 /// Stream error

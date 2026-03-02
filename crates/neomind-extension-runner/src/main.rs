@@ -98,6 +98,9 @@ struct WasmRuntime {
     metric_values: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
+/// Result buffer offset for WASM (matches SDK)
+const WASM_RESULT_OFFSET: usize = 65536;
+
 impl WasmRuntime {
     fn new(path: &PathBuf, module_name: String) -> Result<Self, String> {
         // Configure wasmtime engine
@@ -121,6 +124,349 @@ impl WasmRuntime {
         })
     }
 
+    /// Get the extension descriptor from the WASM module (blocking version)
+    fn get_descriptor_blocking(&self) -> Result<neomind_core::extension::system::ExtensionDescriptor, String> {
+        let engine = self.engine.clone();
+        let module = self.module.clone();
+
+        // Create a new store for this operation
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        rt.block_on(async {
+            self.get_descriptor_async(&engine, &module).await
+        })
+    }
+
+    /// Get the extension descriptor from the WASM module (async version)
+    async fn get_descriptor_async(
+        &self,
+        engine: &Engine,
+        module: &Module,
+    ) -> Result<neomind_core::extension::system::ExtensionDescriptor, String> {
+        // Create linker with WASI support
+        let mut linker = Linker::new(engine);
+        preview1::add_to_linker_async(&mut linker, |t: &mut HostState| &mut t.wasi)
+            .map_err(|e| format!("Failed to add WASI: {}", e))?;
+
+        let wasi = WasiCtxBuilder::new()
+            .inherit_stdio()
+            .build_p1();
+
+        let host_state = HostState {
+            wasi,
+            memory: None,
+        };
+
+        let mut store = Store::new(engine, host_state);
+        store.set_fuel(1_000_000)
+            .map_err(|e| format!("Failed to set fuel: {}", e))?;
+
+        // Instantiate module
+        let instance = linker
+            .instantiate_async(&mut store, module)
+            .await
+            .map_err(|e| format!("Failed to instantiate module: {}", e))?;
+
+        // Get memory
+        let memory = instance
+            .get_memory(&mut store, "memory")
+            .ok_or_else(|| "Module does not export 'memory'".to_string())?;
+        store.data_mut().memory = Some(memory);
+
+        // Try to call get_descriptor_json function
+        let func = instance
+            .get_func(&mut store, "get_descriptor_json")
+            .ok_or_else(|| "Function 'get_descriptor_json' not found".to_string())?;
+
+        let mut results = [Val::I32(0)];
+        func.call_async(&mut store, &[], &mut results)
+            .await
+            .map_err(|e| format!("Failed to call get_descriptor_json: {}", e))?;
+
+        let result_len = match results[0] {
+            Val::I32(len) => len as usize,
+            _ => return Err("Invalid return type from get_descriptor_json".to_string()),
+        };
+
+        if result_len == 0 || result_len >= 65536 {
+            return Err(format!("Invalid result length: {}", result_len));
+        }
+
+        // Read result from memory
+        let memory = store.data().memory.unwrap();
+        let mut result_bytes = vec![0u8; result_len];
+        memory.read(&store, WASM_RESULT_OFFSET, &mut result_bytes)
+            .map_err(|e| format!("Failed to read result: {}", e))?;
+
+        let json_str = String::from_utf8_lossy(&result_bytes);
+        let descriptor_json: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| format!("Failed to parse descriptor JSON: {}", e))?;
+
+        // Parse the descriptor JSON
+        Self::parse_descriptor_json(&descriptor_json)
+    }
+
+    /// Parse descriptor JSON into ExtensionDescriptor
+    fn parse_descriptor_json(json: &serde_json::Value) -> Result<neomind_core::extension::system::ExtensionDescriptor, String> {
+        use neomind_core::extension::system::{
+            ExtensionMetadata, ExtensionCommand, MetricDescriptor, 
+            MetricDataType, ParameterDefinition, ParamMetricValue
+        };
+
+        let metadata_json = json.get("metadata")
+            .ok_or("Missing 'metadata' in descriptor")?;
+
+        // Parse metadata
+        let id = metadata_json.get("id")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing 'id' in metadata")?
+            .to_string();
+        let name = metadata_json.get("name")
+            .and_then(|v| v.as_str())
+            .ok_or("Missing 'name' in metadata")?
+            .to_string();
+        let version_str = metadata_json.get("version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("1.0.0");
+        let version = semver::Version::parse(version_str)
+            .unwrap_or(semver::Version::new(1, 0, 0));
+        let description = metadata_json.get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let author = metadata_json.get("author")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let mut metadata = ExtensionMetadata::new(id, name, version);
+        metadata.description = description;
+        metadata.author = author;
+
+        // Parse metrics
+        let metrics: Vec<MetricDescriptor> = json.get("metrics")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().filter_map(|m| {
+                    let name = m.get("name")?.as_str()?.to_string();
+                    let display_name = m.get("display_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&name)
+                        .to_string();
+                    let data_type_str = m.get("data_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("string");
+                    let data_type = match data_type_str {
+                        "float" => MetricDataType::Float,
+                        "integer" => MetricDataType::Integer,
+                        "boolean" => MetricDataType::Boolean,
+                        "binary" => MetricDataType::Binary,
+                        _ => MetricDataType::String,
+                    };
+                    let unit = m.get("unit")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let min = m.get("min").and_then(|v| v.as_f64());
+                    let max = m.get("max").and_then(|v| v.as_f64());
+                    let required = m.get("required")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    Some(MetricDescriptor {
+                        name,
+                        display_name,
+                        data_type,
+                        unit,
+                        min,
+                        max,
+                        required,
+                    })
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        // Parse commands
+        let commands: Vec<ExtensionCommand> = json.get("commands")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter().filter_map(|c| {
+                    let name = c.get("name")?.as_str()?.to_string();
+                    let display_name = c.get("display_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&name)
+                        .to_string();
+                    let llm_hints = c.get("description")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    // Parse parameters
+                    let parameters: Vec<ParameterDefinition> = c.get("parameters")
+                        .and_then(|v| v.as_array())
+                        .map(|params| {
+                            params.iter().filter_map(|p| {
+                                let param_name = p.get("name")?.as_str()?.to_string();
+                                let param_display_name = p.get("display_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&param_name)
+                                    .to_string();
+                                let param_desc = p.get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let param_type_str = p.get("param_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("string");
+                                let param_type = match param_type_str {
+                                    "float" => MetricDataType::Float,
+                                    "integer" => MetricDataType::Integer,
+                                    "boolean" => MetricDataType::Boolean,
+                                    "binary" => MetricDataType::Binary,
+                                    _ => MetricDataType::String,
+                                };
+                                let required = p.get("required")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(true);
+
+                                Some(ParameterDefinition {
+                                    name: param_name,
+                                    display_name: param_display_name,
+                                    description: param_desc,
+                                    param_type,
+                                    required,
+                                    default_value: None,
+                                    min: None,
+                                    max: None,
+                                    options: Vec::new(),
+                                })
+                            }).collect()
+                        })
+                        .unwrap_or_default();
+
+                    // Parse samples
+                    let samples: Vec<serde_json::Value> = c.get("samples")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+
+                    Some(ExtensionCommand {
+                        name,
+                        display_name,
+                        payload_template: String::new(),
+                        parameters,
+                        fixed_values: HashMap::new(),
+                        samples,
+                        llm_hints,
+                        parameter_groups: Vec::new(),
+                    })
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        Ok(neomind_core::extension::system::ExtensionDescriptor::with_capabilities(
+            metadata,
+            commands,
+            metrics,
+        ))
+    }
+
+    /// Execute a command using the new execute_command_json function
+    async fn execute_command(&self, command: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
+        let input = serde_json::to_string(&json!({
+            "command": command,
+            "args": args
+        })).map_err(|e| format!("Failed to serialize input: {}", e))?;
+
+        let module = self.module.clone();
+        let engine = self.engine.clone();
+        let input_bytes = input.into_bytes();
+        let input_len = input_bytes.len();
+        let metric_values = self.metric_values.clone();
+
+        // Execute with timeout
+        let result = tokio::time::timeout(
+            tokio::time::Duration::from_secs(30),
+            async move {
+                // Create linker with WASI support
+                let mut linker = Linker::new(&engine);
+                preview1::add_to_linker_async(&mut linker, |t: &mut HostState| &mut t.wasi)
+                    .map_err(|e| format!("Failed to add WASI: {}", e))?;
+
+                let wasi = WasiCtxBuilder::new()
+                    .inherit_stdio()
+                    .build_p1();
+
+                let host_state = HostState {
+                    wasi,
+                    memory: None,
+                };
+
+                let mut store = Store::new(&engine, host_state);
+                store.set_fuel(1_000_000)
+                    .map_err(|e| format!("Failed to set fuel: {}", e))?;
+
+                let instance = linker
+                    .instantiate_async(&mut store, &module)
+                    .await
+                    .map_err(|e| format!("Failed to instantiate module: {}", e))?;
+
+                let memory = instance
+                    .get_memory(&mut store, "memory")
+                    .ok_or_else(|| "Module does not export 'memory'".to_string())?;
+                store.data_mut().memory = Some(memory);
+
+                // Try execute_command_json first
+                if let Some(func) = instance.get_func(&mut store, "execute_command_json") {
+                    // Write input to memory at offset 0
+                    memory.write(&mut store, 0, &input_bytes)
+                        .map_err(|e| format!("Failed to write input: {}", e))?;
+
+                    let mut results = [Val::I32(0)];
+                    let params = [Val::I32(0), Val::I32(input_len as i32)];
+                    
+                    func.call_async(&mut store, &params, &mut results)
+                        .await
+                        .map_err(|e| format!("execute_command_json call failed: {}", e))?;
+
+                    let result_len = match results[0] {
+                        Val::I32(len) => len as usize,
+                        _ => 0,
+                    };
+
+                    if result_len > 0 && result_len < 65536 {
+                        let mut result_bytes = vec![0u8; result_len];
+                        memory.read(&store, WASM_RESULT_OFFSET, &mut result_bytes)
+                            .map_err(|e| format!("Failed to read result: {}", e))?;
+
+                        let result_str = String::from_utf8_lossy(&result_bytes);
+                        let result_json: serde_json::Value = serde_json::from_str(&result_str)
+                            .map_err(|e| format!("Failed to parse result JSON: {}", e))?;
+
+                        // Cache metric values if present
+                        if let Some(metrics) = result_json.get("metrics").and_then(|v| v.as_array()) {
+                            let mut values = metric_values.write().await;
+                            for m in metrics {
+                                if let (Some(name), Some(value)) = (m.get("name").and_then(|n| n.as_str()), m.get("value")) {
+                                    values.insert(name.to_string(), value.clone());
+                                }
+                            }
+                        }
+
+                        return Ok(result_json);
+                    }
+                }
+
+                // Fallback: try the old execute function
+                Err("execute_command_json not found, extension may not support new API".to_string())
+            }
+        ).await;
+
+        result.map_err(|_| "Execution timeout".to_string())?
+    }
+
+    /// Legacy execute function for backward compatibility
     async fn execute(&self, function_name: &str, args: &serde_json::Value) -> Result<serde_json::Value, String> {
         let args_str = serde_json::to_string(args)
             .map_err(|e| format!("Failed to serialize args: {}", e))?;
@@ -199,7 +545,6 @@ impl WasmRuntime {
                     memory.write(&mut store, 0, args_bytes)
                         .map_err(|e| format!("Failed to write args: {}", e))?;
 
-                    let result_offset = 65536usize;
                     let params = [Val::I32(0), Val::I32(args_len as i32)];
                     let mut results = [Val::I32(0)];
 
@@ -214,7 +559,7 @@ impl WasmRuntime {
 
                     if result_len > 0 && result_len < 65536 {
                         let mut result_bytes = vec![0u8; result_len];
-                        memory.read(&store, result_offset, &mut result_bytes)
+                        memory.read(&store, WASM_RESULT_OFFSET, &mut result_bytes)
                             .map_err(|e| format!("Failed to read result: {}", e))?;
 
                         let result_str = String::from_utf8_lossy(&result_bytes);
@@ -331,10 +676,8 @@ impl Runner {
                 (Some(ext), None, desc)
             }
             ExtensionType::Wasm => {
-                let (runtime, meta) = Self::load_wasm(extension_path)?;
-                // WASM extensions don't have declarative commands/metrics yet
-                let desc = neomind_core::extension::system::ExtensionDescriptor::new(meta);
-                (None, Some(runtime), desc)
+                let (runtime, descriptor) = Self::load_wasm(extension_path)?;
+                (None, Some(runtime), descriptor)
             }
         };
 
@@ -373,17 +716,42 @@ impl Runner {
         Ok((loaded.extension, descriptor))
     }
 
-    /// Load a WASM extension
-    fn load_wasm(extension_path: &PathBuf) -> Result<(WasmRuntime, neomind_core::extension::system::ExtensionMetadata), String> {
-        let metadata = Self::load_wasm_metadata(extension_path)?;
-        let module_name = metadata.id.clone();
-
+    /// Load a WASM extension with full descriptor support
+    fn load_wasm(extension_path: &PathBuf) -> Result<(WasmRuntime, neomind_core::extension::system::ExtensionDescriptor), String> {
+        // First, create the runtime
+        let module_name = extension_path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        
         let runtime = WasmRuntime::new(extension_path, module_name)?;
 
-        Ok((runtime, metadata))
+        // Try to get descriptor from WASM module itself
+        match runtime.get_descriptor_blocking() {
+            Ok(descriptor) => {
+                info!(
+                    extension_id = %descriptor.metadata.id,
+                    name = %descriptor.metadata.name,
+                    version = %descriptor.metadata.version,
+                    commands_count = descriptor.commands.len(),
+                    metrics_count = descriptor.metrics.len(),
+                    "Got descriptor from WASM module"
+                );
+                Ok((runtime, descriptor))
+            }
+            Err(e) => {
+                info!(error = %e, "Failed to get descriptor from WASM, trying sidecar files");
+                
+                // Fallback to sidecar JSON files
+                let metadata = Self::load_wasm_metadata(extension_path)?;
+                let descriptor = neomind_core::extension::system::ExtensionDescriptor::new(metadata);
+                Ok((runtime, descriptor))
+            }
+        }
     }
 
-    /// Load WASM metadata
+    /// Load WASM metadata (fallback from sidecar files)
     fn load_wasm_metadata(extension_path: &PathBuf) -> Result<neomind_core::extension::system::ExtensionMetadata, String> {
         // Try sidecar JSON
         let json_path = extension_path.with_extension("json");
@@ -570,6 +938,23 @@ impl Runner {
             IpcMessage::Ping { timestamp } => {
                 self.send_response(IpcResponse::Pong { timestamp });
             }
+
+            // Streaming support
+            IpcMessage::GetStreamCapability { request_id } => {
+                self.handle_get_stream_capability(request_id);
+            }
+
+            IpcMessage::InitStreamSession { session_id, extension_id: _, config, client_info: _ } => {
+                self.handle_init_stream_session(session_id, config);
+            }
+
+            IpcMessage::ProcessStreamChunk { request_id, session_id, chunk } => {
+                self.handle_process_stream_chunk(request_id, session_id, chunk);
+            }
+
+            IpcMessage::CloseStreamSession { session_id } => {
+                self.handle_close_stream_session(session_id);
+            }
         }
     }
 
@@ -628,7 +1013,24 @@ impl Runner {
             .map_err(|e| format!("Failed to create runtime: {}", e))?;
 
         rt.block_on(async {
-            runtime.execute(command, args).await
+            // Try new execute_command API first
+            match runtime.execute_command(command, args).await {
+                Ok(result) => {
+                    // Extract the actual result from the response
+                    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+                        Ok(result.get("result").cloned().unwrap_or(result))
+                    } else {
+                        Err(result.get("error")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Unknown error")
+                            .to_string())
+                    }
+                }
+                Err(_) => {
+                    // Fallback to legacy execute function
+                    runtime.execute(command, args).await
+                }
+            }
         })
     }
 
@@ -739,6 +1141,231 @@ impl Runner {
 
         rt.block_on(async {
             runtime.health_check().await
+        })
+    }
+
+    // =========================================================================
+    // Streaming Support
+    // =========================================================================
+
+    fn handle_get_stream_capability(&mut self, request_id: u64) {
+        debug!(request_id, "Getting stream capability");
+
+        let capability = match self.extension_type {
+            ExtensionType::Native => {
+                self.get_native_stream_capability()
+            }
+            ExtensionType::Wasm => {
+                Ok(None)  // WASM doesn't support streaming yet
+            }
+        };
+
+        match capability {
+            Ok(cap) => {
+                self.send_response(IpcResponse::StreamCapability {
+                    request_id,
+                    capability: cap.map(|c| serde_json::to_value(c).unwrap_or_default()),
+                });
+            }
+            Err(e) => {
+                self.send_response(IpcResponse::Error {
+                    request_id,
+                    error: e,
+                    kind: ErrorKind::Internal,
+                });
+            }
+        }
+    }
+
+    fn get_native_stream_capability(&self) -> Result<Option<neomind_core::extension::StreamCapability>, String> {
+        let ext = self.extension.as_ref().ok_or("No native extension loaded")?;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        let ext_clone = Arc::clone(ext);
+
+        rt.block_on(async {
+            let ext_guard = ext_clone.read().await;
+            Ok(ext_guard.stream_capability())
+        })
+    }
+
+    fn handle_init_stream_session(&mut self, session_id: String, config: serde_json::Value) {
+        debug!(session_id = %session_id, "Initializing stream session");
+
+        let result = match self.extension_type {
+            ExtensionType::Native => {
+                self.init_native_stream_session(&session_id, config)
+            }
+            ExtensionType::Wasm => {
+                Err("WASM streaming not supported".to_string())
+            }
+        };
+
+        match result {
+            Ok(_) => {
+                self.send_response(IpcResponse::StreamSessionInit {
+                    session_id,
+                    success: true,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                self.send_response(IpcResponse::StreamSessionInit {
+                    session_id,
+                    success: false,
+                    error: Some(e),
+                });
+            }
+        }
+    }
+
+    fn init_native_stream_session(&self, session_id: &str, config: serde_json::Value) -> Result<(), String> {
+        let ext = self.extension.as_ref().ok_or("No native extension loaded")?;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        let ext_clone = Arc::clone(ext);
+        let session_id_owned = session_id.to_string();
+
+        rt.block_on(async {
+            let ext_guard = ext_clone.read().await;
+            
+            // Create StreamSession
+            let session = neomind_core::extension::StreamSession::new(
+                session_id_owned,
+                "extension".to_string(),  // Extension ID from metadata
+                config,
+                neomind_core::extension::ClientInfo {
+                    client_id: "runner".to_string(),
+                    ip_addr: None,
+                    user_agent: None,
+                },
+            );
+
+            ext_guard.init_session(&session).await
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn handle_process_stream_chunk(&mut self, request_id: u64, session_id: String, chunk: neomind_core::extension::isolated::StreamDataChunk) {
+        debug!(session_id = %session_id, sequence = chunk.sequence, request_id, "Processing stream chunk");
+
+        let result = match self.extension_type {
+            ExtensionType::Native => {
+                self.process_native_stream_chunk(&session_id, chunk)
+            }
+            ExtensionType::Wasm => {
+                Err("WASM streaming not supported".to_string())
+            }
+        };
+
+        match result {
+            Ok(stream_result) => {
+                self.send_response(IpcResponse::StreamChunkResult {
+                    request_id,
+                    session_id,
+                    input_sequence: stream_result.input_sequence.unwrap_or(0),
+                    output_sequence: stream_result.output_sequence,
+                    data: stream_result.data,
+                    data_type: stream_result.data_type.mime_type(),
+                    processing_ms: stream_result.processing_ms,
+                });
+            }
+            Err(e) => {
+                self.send_response(IpcResponse::Error {
+                    request_id,
+                    error: e,
+                    kind: ErrorKind::ExecutionFailed,
+                });
+            }
+        }
+    }
+
+    fn process_native_stream_chunk(
+        &self,
+        session_id: &str,
+        chunk: neomind_core::extension::isolated::StreamDataChunk,
+    ) -> Result<neomind_core::extension::StreamResult, String> {
+        let ext = self.extension.as_ref().ok_or("No native extension loaded")?;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        let ext_clone = Arc::clone(ext);
+        let session_id_owned = session_id.to_string();
+
+        rt.block_on(async {
+            let ext_guard = ext_clone.read().await;
+
+            // Convert StreamDataChunk to DataChunk
+            let data_chunk = neomind_core::extension::DataChunk {
+                sequence: chunk.sequence,
+                data_type: neomind_core::extension::StreamDataType::Binary,  // Will be overridden by actual data
+                data: chunk.data,
+                timestamp: chunk.timestamp,
+                metadata: None,
+                is_last: chunk.is_last,
+            };
+
+            ext_guard.process_session_chunk(&session_id_owned, data_chunk).await
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn handle_close_stream_session(&mut self, session_id: String) {
+        debug!(session_id = %session_id, "Closing stream session");
+
+        let result = match self.extension_type {
+            ExtensionType::Native => {
+                self.close_native_stream_session(&session_id)
+            }
+            ExtensionType::Wasm => {
+                Ok(neomind_core::extension::SessionStats::default())
+            }
+        };
+
+        match result {
+            Ok(stats) => {
+                self.send_response(IpcResponse::StreamSessionClosed {
+                    session_id,
+                    total_frames: stats.input_chunks,
+                    duration_ms: 0,  // We don't track this in runner
+                });
+            }
+            Err(e) => {
+                self.send_response(IpcResponse::StreamError {
+                    session_id,
+                    code: "CLOSE_ERROR".to_string(),
+                    message: e,
+                });
+            }
+        }
+    }
+
+    fn close_native_stream_session(&self, session_id: &str) -> Result<neomind_core::extension::SessionStats, String> {
+        let ext = self.extension.as_ref().ok_or("No native extension loaded")?;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to create runtime: {}", e))?;
+
+        let ext_clone = Arc::clone(ext);
+        let session_id_owned = session_id.to_string();
+
+        rt.block_on(async {
+            let ext_guard = ext_clone.read().await;
+            ext_guard.close_session(&session_id_owned).await
+                .map_err(|e| e.to_string())
         })
     }
 }

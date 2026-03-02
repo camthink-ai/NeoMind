@@ -127,6 +127,9 @@ impl ExtensionRegistry {
             .await;
 
         // Store info
+        let mut stats = ExtensionStats::default();
+        stats.start_count = 1; // First registration counts as a start
+
         self.info_cache
             .write()
             .insert(
@@ -134,7 +137,7 @@ impl ExtensionRegistry {
                 ExtensionInfo {
                     metadata,
                     state: ExtensionState::Running,
-                    stats: ExtensionStats::default(),
+                    stats,
                     loaded_at: Some(chrono::Utc::now()),
                     metrics,
                     commands,
@@ -161,6 +164,11 @@ impl ExtensionRegistry {
 
     /// Unregister an extension.
     pub async fn unregister(&self, id: &str) -> Result<()> {
+        // Update stats before removing
+        if let Some(info) = self.info_cache.write().get_mut(id) {
+            info.stats.stop_count += 1;
+        }
+
         // Publish ExtensionLifecycle { state: "unregistered" } event BEFORE removing
         // Use sync version to avoid issues with non-Tokio contexts
         if let Some(ref event_bus) = self.event_bus {
@@ -354,6 +362,9 @@ impl ExtensionRegistry {
         // Clone the Arc to avoid holding the lock across the await
         let ext_clone = Arc::clone(&ext);
 
+        // Record start time for execution stats
+        let start_time = std::time::Instant::now();
+
         // Execute with timeout protection (30 seconds)
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(30),
@@ -363,15 +374,33 @@ impl ExtensionRegistry {
             }
         ).await;
 
+        // Calculate execution time
+        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
         match result {
             Ok(Ok(value)) => {
                 // Record success with safety manager
                 self.safety_manager.record_success(id).await;
+
+                // Update stats for successful execution
+                if let Some(info) = self.info_cache.write().get_mut(id) {
+                    info.stats.commands_executed += 1;
+                    info.stats.total_execution_time_ms += execution_time_ms;
+                    info.stats.last_execution_time = Some(chrono::Utc::now());
+                }
+
                 Ok(value)
             }
             Ok(Err(e)) => {
                 // Record logical failure
                 self.safety_manager.record_failure(id).await;
+
+                // Update error stats
+                if let Some(info) = self.info_cache.write().get_mut(id) {
+                    info.stats.error_count += 1;
+                    info.stats.last_error = Some(e.to_string());
+                }
+
                 tracing::warn!(
                     extension_id = %id,
                     command = %command,
@@ -383,6 +412,14 @@ impl ExtensionRegistry {
             Err(_) => {
                 // Timeout is treated as a failure for safety manager
                 self.safety_manager.record_failure(id).await;
+
+                // Update error stats for timeout
+                let error_msg = format!("Command '{}' timed out after 30 seconds", command);
+                if let Some(info) = self.info_cache.write().get_mut(id) {
+                    info.stats.error_count += 1;
+                    info.stats.last_error = Some(error_msg.clone());
+                }
+
                 tracing::error!(
                     extension_id = %id,
                     command = %command,

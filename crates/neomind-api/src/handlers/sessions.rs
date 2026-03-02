@@ -861,6 +861,20 @@ async fn handle_ws_socket(
                                 }
 
                                 if let Ok(chat_req) = serde_json::from_str::<ChatRequest>(&text) {
+                                    // Check for cancel request
+                                    if chat_req.message == "__CANCEL__" {
+                                        tracing::info!("Received cancel request from client");
+                                        // Send acknowledgment
+                                        let cancel_msg = json!({
+                                            "type": "cancelled",
+                                            "message": "Request cancelled by user"
+                                        }).to_string();
+                                        if socket.send(AxumMessage::Text(cancel_msg)).await.is_err() {
+                                            return;
+                                        }
+                                        continue;
+                                    }
+
                                     // Use the sessionId from the request if provided, otherwise use current
                                     let requested_session_id = chat_req.session_id;
 

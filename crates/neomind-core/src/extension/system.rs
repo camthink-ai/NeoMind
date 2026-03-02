@@ -369,6 +369,118 @@ pub trait Extension: Send + Sync {
     fn supports_streaming(&self) -> bool {
         self.stream_capability().is_some()
     }
+
+    // =========================================================================
+    // Push Mode Support
+    // =========================================================================
+
+    /// Set the output sender for Push mode streaming
+    ///
+    /// Called by the host when a Push mode session is initialized.
+    /// The extension can use this sender to push data to connected clients.
+    ///
+    /// The sender is a channel that accepts (session_id, StreamOutput) tuples.
+    /// The host will forward these outputs to the appropriate WebSocket clients.
+    fn set_output_sender(
+        &self,
+        _sender: std::sync::Arc<tokio::sync::mpsc::Sender<PushOutputMessage>>,
+    ) {
+        // Default: do nothing
+    }
+
+    /// Start pushing data for a session (Push mode)
+    ///
+    /// Called after `init_session` for Push mode extensions.
+    /// The extension should start its data production loop and push
+    /// outputs via the output sender.
+    ///
+    /// Returns immediately; the extension pushes data asynchronously.
+    async fn start_push(&self, _session_id: &str) -> Result<()> {
+        Err(ExtensionError::NotSupported("Push mode not supported".into()))
+    }
+
+    /// Stop pushing data for a session (Push mode)
+    ///
+    /// Called when the client disconnects or session is closed.
+    /// The extension should stop its data production loop.
+    async fn stop_push(&self, _session_id: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Message sent from extension to host for Push mode streaming
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushOutputMessage {
+    /// Session ID
+    pub session_id: String,
+    /// Output sequence number
+    pub sequence: u64,
+    /// Output data
+    pub data: Vec<u8>,
+    /// Data type (MIME type)
+    pub data_type: String,
+    /// Timestamp (milliseconds)
+    pub timestamp: i64,
+    /// Optional metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+impl PushOutputMessage {
+    /// Create a new push output message
+    pub fn new(
+        session_id: impl Into<String>,
+        sequence: u64,
+        data: Vec<u8>,
+        data_type: impl Into<String>,
+    ) -> Self {
+        Self {
+            session_id: session_id.into(),
+            sequence,
+            data,
+            data_type: data_type.into(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            metadata: None,
+        }
+    }
+
+    /// Create a JSON push output
+    pub fn json(
+        session_id: impl Into<String>,
+        sequence: u64,
+        value: serde_json::Value,
+    ) -> serde_json::Result<Self> {
+        Ok(Self {
+            session_id: session_id.into(),
+            sequence,
+            data: serde_json::to_vec(&value)?,
+            data_type: "application/json".to_string(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            metadata: None,
+        })
+    }
+
+    /// Create an image push output (JPEG)
+    pub fn image_jpeg(
+        session_id: impl Into<String>,
+        sequence: u64,
+        data: Vec<u8>,
+    ) -> Self {
+        Self {
+            session_id: session_id.into(),
+            sequence,
+            data,
+            data_type: "image/jpeg".to_string(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            metadata: None,
+        }
+    }
+
+    /// Add metadata to the message
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
 }
 
 /// Metric value with name for extensions

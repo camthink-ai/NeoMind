@@ -37,7 +37,7 @@ fn dht22_sensor() -> DeviceTypeDefinition {
             "metrics": [
                 {
                     "name": "temperature",
-                    "display_name": "温度",
+                    "display_name": "Temperature",
                     "data_type": "float",
                     "unit": "°C",
                     "min": -40.0,
@@ -46,7 +46,7 @@ fn dht22_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "humidity",
-                    "display_name": "湿度",
+                    "display_name": "Humidity",
                     "data_type": "float",
                     "unit": "%",
                     "min": 0.0,
@@ -55,7 +55,7 @@ fn dht22_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "heat_index",
-                    "display_name": "体感温度",
+                    "display_name": "Heat Index",
                     "data_type": "float",
                     "unit": "°C",
                     "required": false
@@ -66,11 +66,11 @@ fn dht22_sensor() -> DeviceTypeDefinition {
             "commands": [
                 {
                     "name": "set_interval",
-                    "display_name": "设置上报间隔",
+                    "display_name": "Set Report Interval",
                     "parameters": [
                         {
                             "name": "interval",
-                            "display_name": "间隔时间",
+                            "display_name": "Interval",
                             "data_type": "integer",
                             "default_value": 60,
                             "min": 10.0,
@@ -81,7 +81,7 @@ fn dht22_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "request_reading",
-                    "display_name": "请求读取",
+                    "display_name": "Request Reading",
                     "parameters": []
                 }
             ]
@@ -108,19 +108,19 @@ fn relay_module() -> DeviceTypeDefinition {
             "metrics": [
                 {
                     "name": "relay_state",
-                    "display_name": "继电器状态",
+                    "display_name": "Relay Status",
                     "data_type": "boolean",
                     "required": true
                 },
                 {
                     "name": "relay_count",
-                    "display_name": "继电器数量",
+                    "display_name": "Relay Count",
                     "data_type": "integer",
                     "required": true
                 },
                 {
                     "name": "power_consumption",
-                    "display_name": "功耗",
+                    "display_name": "Power Consumption",
                     "data_type": "float",
                     "unit": "W",
                     "required": false
@@ -131,11 +131,11 @@ fn relay_module() -> DeviceTypeDefinition {
             "commands": [
                 {
                     "name": "turn_on",
-                    "display_name": "开启继电器",
+                    "display_name": "Turn On Relay",
                     "parameters": [
                         {
                             "name": "channel",
-                            "display_name": "通道号",
+                            "display_name": "Channel",
                             "data_type": "integer",
                             "default_value": 1,
                             "min": 1.0,
@@ -145,11 +145,11 @@ fn relay_module() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "turn_off",
-                    "display_name": "关闭继电器",
+                    "display_name": "Turn Off Relay",
                     "parameters": [
                         {
                             "name": "channel",
-                            "display_name": "通道号",
+                            "display_name": "Channel",
                             "data_type": "integer",
                             "default_value": 1,
                             "min": 1.0,
@@ -159,11 +159,11 @@ fn relay_module() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "toggle",
-                    "display_name": "切换状态",
+                    "display_name": "Toggle State",
                     "parameters": [
                         {
                             "name": "channel",
-                            "display_name": "通道号",
+                            "display_name": "Channel",
                             "data_type": "integer",
                             "default_value": 1,
                             "min": 1.0,
@@ -173,11 +173,11 @@ fn relay_module() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "pulse",
-                    "display_name": "脉冲触发",
+                    "display_name": "Pulse Trigger",
                     "parameters": [
                         {
                             "name": "channel",
-                            "display_name": "通道号",
+                            "display_name": "Channel",
                             "data_type": "integer",
                             "default_value": 1,
                             "min": 1.0,
@@ -185,7 +185,7 @@ fn relay_module() -> DeviceTypeDefinition {
                         },
                         {
                             "name": "duration",
-                            "display_name": "脉冲时长",
+                            "display_name": "Pulse Duration",
                             "data_type": "integer",
                             "default_value": 500,
                             "min": 50.0,
@@ -218,7 +218,7 @@ fn energy_meter() -> DeviceTypeDefinition {
             "metrics": [
                 {
                     "name": "voltage",
-                    "display_name": "电压",
+                    "display_name": "Voltage",
                     "data_type": "float",
                     "unit": "V",
                     "min": 0.0,
@@ -227,7 +227,7 @@ fn energy_meter() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "current",
-                    "display_name": "电流",
+                    "display_name": "Current",
                     "data_type": "float",
                     "unit": "A",
                     "min": 0.0,
@@ -236,7 +236,7 @@ fn energy_meter() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "active_power",
-                    "display_name": "有功功率",
+                    "display_name": "Active Power",
                     "data_type": "float",
                     "unit": "kW",
                     "min": 0.0,
@@ -244,7 +244,7 @@ fn energy_meter() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "energy",
-                    "display_name": "电能",
+                    "display_name": "Energy",
                     "data_type": "float",
                     "unit": "kWh",
                     "min": 0.0,
@@ -252,7 +252,7 @@ fn energy_meter() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "frequency",
-                    "display_name": "频率",
+                    "display_name": "Frequency",
                     "data_type": "float",
                     "unit": "Hz",
                     "min": 45.0,
@@ -261,7 +261,7 @@ fn energy_meter() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "power_factor",
-                    "display_name": "功率因数",
+                    "display_name": "Power Factor",
                     "data_type": "float",
                     "min": 0.0,
                     "max": 1.0,
@@ -273,16 +273,16 @@ fn energy_meter() -> DeviceTypeDefinition {
             "commands": [
                 {
                     "name": "reset_energy",
-                    "display_name": "重置电能",
+                    "display_name": "Reset Energy",
                     "parameters": []
                 },
                 {
                     "name": "set_alarm",
-                    "display_name": "设置告警",
+                    "display_name": "Set Alert",
                     "parameters": [
                         {
                             "name": "type",
-                            "display_name": "告警类型",
+                            "display_name": "Alert Type",
                             "data_type": "string",
                             "default_value": "overload",
                             "allowed_values": [
@@ -293,7 +293,7 @@ fn energy_meter() -> DeviceTypeDefinition {
                         },
                         {
                             "name": "threshold",
-                            "display_name": "阈值",
+                            "display_name": "Threshold",
                             "data_type": "float",
                             "min": 0.0
                         }
@@ -341,7 +341,7 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "co2",
-                    "display_name": "二氧化碳",
+                    "display_name": "CO2",
                     "data_type": "float",
                     "unit": "ppm",
                     "min": 400.0,
@@ -350,7 +350,7 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "tvoc",
-                    "display_name": "总挥发性有机物",
+                    "display_name": "TVOC",
                     "data_type": "float",
                     "unit": "ppb",
                     "min": 0.0,
@@ -359,7 +359,7 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "formaldehyde",
-                    "display_name": "甲醛",
+                    "display_name": "Formaldehyde",
                     "data_type": "float",
                     "unit": "mg/m³",
                     "min": 0.0,
@@ -368,14 +368,14 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "temperature",
-                    "display_name": "温度",
+                    "display_name": "Temperature",
                     "data_type": "float",
                     "unit": "°C",
                     "required": false
                 },
                 {
                     "name": "humidity",
-                    "display_name": "湿度",
+                    "display_name": "Humidity",
                     "data_type": "float",
                     "unit": "%",
                     "min": 0.0,
@@ -384,7 +384,7 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "aqi",
-                    "display_name": "空气质量指数",
+                    "display_name": "Air Quality Index",
                     "data_type": "integer",
                     "min": 0.0,
                     "max": 500.0,
@@ -396,11 +396,11 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
             "commands": [
                 {
                     "name": "set_interval",
-                    "display_name": "设置上报间隔",
+                    "display_name": "Set Report Interval",
                     "parameters": [
                         {
                             "name": "interval",
-                            "display_name": "间隔时间",
+                            "display_name": "Interval",
                             "data_type": "integer",
                             "default_value": 60,
                             "min": 10.0,
@@ -411,11 +411,11 @@ fn air_quality_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "calibrate",
-                    "display_name": "校准传感器",
+                    "display_name": "Calibrate Sensor",
                     "parameters": [
                         {
                             "name": "sensor",
-                            "display_name": "传感器类型",
+                            "display_name": "Sensor Type",
                             "data_type": "string",
                             "default_value": "all",
                             "allowed_values": [
@@ -450,32 +450,32 @@ fn ip_camera() -> DeviceTypeDefinition {
             "metrics": [
                 {
                     "name": "image",
-                    "display_name": "图片数据",
+                    "display_name": "Image Data",
                     "data_type": "binary",
                     "unit": "bytes",
                     "required": true
                 },
                 {
                     "name": "image_metadata",
-                    "display_name": "图片元数据",
+                    "display_name": "Image Metadata",
                     "data_type": "string",
                     "required": false
                 },
                 {
                     "name": "motion_detected",
-                    "display_name": "运动检测",
+                    "display_name": "Motion Detection",
                     "data_type": "boolean",
                     "required": false
                 },
                 {
                     "name": "resolution",
-                    "display_name": "分辨率",
+                    "display_name": "Resolution",
                     "data_type": "string",
                     "required": false
                 },
                 {
                     "name": "fps",
-                    "display_name": "帧率",
+                    "display_name": "Frame Rate",
                     "data_type": "float",
                     "unit": "fps",
                     "required": false
@@ -486,11 +486,11 @@ fn ip_camera() -> DeviceTypeDefinition {
             "commands": [
                 {
                     "name": "capture_image",
-                    "display_name": "拍摄图片",
+                    "display_name": "Capture Image",
                     "parameters": [
                         {
                             "name": "format",
-                            "display_name": "图片格式",
+                            "display_name": "Image Format",
                             "data_type": "string",
                             "default_value": "jpeg",
                             "allowed_values": [
@@ -501,7 +501,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                         },
                         {
                             "name": "quality",
-                            "display_name": "图片质量",
+                            "display_name": "Image Quality",
                             "data_type": "integer",
                             "default_value": 85,
                             "min": 1.0,
@@ -511,11 +511,11 @@ fn ip_camera() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "set_resolution",
-                    "display_name": "设置分辨率",
+                    "display_name": "Set Resolution",
                     "parameters": [
                         {
                             "name": "width",
-                            "display_name": "宽度",
+                            "display_name": "Width",
                             "data_type": "integer",
                             "default_value": 1920,
                             "min": 320.0,
@@ -523,7 +523,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                         },
                         {
                             "name": "height",
-                            "display_name": "高度",
+                            "display_name": "Height",
                             "data_type": "integer",
                             "default_value": 1080,
                             "min": 240.0,
@@ -533,17 +533,17 @@ fn ip_camera() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "enable_motion_detection",
-                    "display_name": "启用运动检测",
+                    "display_name": "Enable Motion Detection",
                     "parameters": [
                         {
                             "name": "enabled",
-                            "display_name": "启用",
+                            "display_name": "Enable",
                             "data_type": "boolean",
                             "default_value": true
                         },
                         {
                             "name": "sensitivity",
-                            "display_name": "灵敏度",
+                            "display_name": "Sensitivity",
                             "data_type": "integer",
                             "default_value": 50,
                             "min": 0.0,
@@ -553,11 +553,11 @@ fn ip_camera() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "start_stream",
-                    "display_name": "开始推流",
+                    "display_name": "Start Streaming",
                     "parameters": [
                         {
                             "name": "format",
-                            "display_name": "流格式",
+                            "display_name": "Stream Format",
                             "data_type": "string",
                             "default_value": "h264",
                             "allowed_values": [
@@ -569,7 +569,7 @@ fn ip_camera() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "stop_stream",
-                    "display_name": "停止推流",
+                    "display_name": "Stop Streaming",
                     "parameters": []
                 }
             ]
@@ -601,41 +601,41 @@ fn image_sensor() -> DeviceTypeDefinition {
             "metrics": [
                 {
                     "name": "image_data",
-                    "display_name": "图像数据",
+                    "display_name": "Image Data",
                     "data_type": "binary",
                     "unit": "bytes",
                     "required": true
                 },
                 {
                     "name": "image_timestamp",
-                    "display_name": "图像时间戳",
+                    "display_name": "Image Timestamp",
                     "data_type": "integer",
                     "unit": "unix",
                     "required": true
                 },
                 {
                     "name": "image_width",
-                    "display_name": "图像宽度",
+                    "display_name": "Image Width",
                     "data_type": "integer",
                     "unit": "px",
                     "required": false
                 },
                 {
                     "name": "image_height",
-                    "display_name": "图像高度",
+                    "display_name": "Image Height",
                     "data_type": "integer",
                     "unit": "px",
                     "required": false
                 },
                 {
                     "name": "image_format",
-                    "display_name": "图像格式",
+                    "display_name": "Image Format",
                     "data_type": "string",
                     "required": false
                 },
                 {
                     "name": "image_size",
-                    "display_name": "图像大小",
+                    "display_name": "Image Size",
                     "data_type": "integer",
                     "unit": "bytes",
                     "required": false
@@ -646,16 +646,16 @@ fn image_sensor() -> DeviceTypeDefinition {
             "commands": [
                 {
                     "name": "trigger_capture",
-                    "display_name": "触发采集",
+                    "display_name": "Trigger Capture",
                     "parameters": []
                 },
                 {
                     "name": "set_interval",
-                    "display_name": "设置定时采集",
+                    "display_name": "Set Scheduled Capture",
                     "parameters": [
                         {
                             "name": "interval",
-                            "display_name": "间隔时间",
+                            "display_name": "Interval",
                             "data_type": "integer",
                             "default_value": 300,
                             "min": 10.0,
@@ -666,11 +666,11 @@ fn image_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "set_resolution",
-                    "display_name": "设置分辨率",
+                    "display_name": "Set Resolution",
                     "parameters": [
                         {
                             "name": "width",
-                            "display_name": "宽度",
+                            "display_name": "Width",
                             "data_type": "integer",
                             "default_value": 640,
                             "min": 160.0,
@@ -678,7 +678,7 @@ fn image_sensor() -> DeviceTypeDefinition {
                         },
                         {
                             "name": "height",
-                            "display_name": "高度",
+                            "display_name": "Height",
                             "data_type": "integer",
                             "default_value": 480,
                             "min": 120.0,
@@ -688,11 +688,11 @@ fn image_sensor() -> DeviceTypeDefinition {
                 },
                 {
                     "name": "set_format",
-                    "display_name": "设置格式",
+                    "display_name": "Set Format",
                     "parameters": [
                         {
                             "name": "format",
-                            "display_name": "图片格式",
+                            "display_name": "Image Format",
                             "data_type": "string",
                             "default_value": "png",
                             "allowed_values": [
@@ -704,7 +704,7 @@ fn image_sensor() -> DeviceTypeDefinition {
                         },
                         {
                             "name": "quality",
-                            "display_name": "质量",
+                            "display_name": "Quality",
                             "data_type": "integer",
                             "default_value": 90,
                             "min": 1.0,

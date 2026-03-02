@@ -109,8 +109,8 @@ impl VirtualMetricGenerator {
             if group_metrics.len() >= 2 {
                 suggestions.push(AggregationSuggestion {
                     name: format!("avg_{}", semantic.to_lowercase()),
-                    display_name: format!("平均{}", semantic),
-                    description: format!("所有{}传感器的平均值", semantic),
+                    display_name: format!("Average {}", semantic),
+                    description: format!("Average of all {} sensors", semantic),
                     operation: AggregationOperation::Average,
                     source_metrics: group_metrics.iter().map(|m| m.name.clone()).collect(),
                     unit: group_metrics.first().and_then(|m| m.unit.clone()),
@@ -147,8 +147,8 @@ impl VirtualMetricGenerator {
             if let (Some(temp), Some(humid)) = (temp_metric, humid_metric) {
                 derived.push(DerivedMetric {
                     name: "heat_index".to_string(),
-                    display_name: "体感温度".to_string(),
-                    description: "基于温度和湿度计算的体感温度".to_string(),
+                    display_name: "Heat Index".to_string(),
+                    description: "Apparent temperature based on temperature and humidity".to_string(),
                     formula: "heat_index(temperature, humidity)".to_string(),
                     source_metrics: vec![temp.name.clone(), humid.name.clone()],
                     unit: Some("°C".to_string()),
@@ -165,8 +165,8 @@ impl VirtualMetricGenerator {
         if !power_metrics.is_empty() {
             derived.push(DerivedMetric {
                 name: "total_energy".to_string(),
-                display_name: "总能耗".to_string(),
-                description: "基于功率积分计算的总能耗".to_string(),
+                display_name: "Total Energy".to_string(),
+                description: "Total energy consumption calculated from power integration".to_string(),
                 formula: "integral(power)".to_string(),
                 source_metrics: power_metrics.iter().map(|m| m.name.clone()).collect(),
                 unit: Some("kWh".to_string()),

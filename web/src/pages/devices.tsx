@@ -656,6 +656,32 @@ export function DevicesPage() {
       title={deviceDetailView ? undefined : t('devices:title')}
       subtitle={deviceDetailView ? undefined : t('devices:subtitle')}
       hideFooterOnMobile
+      footer={
+        !deviceDetailView && (
+          activeTab === 'devices' && devices.length > devicesPerPage ? (
+            <Pagination
+              total={devices.length}
+              pageSize={devicesPerPage}
+              currentPage={devicePage}
+              onPageChange={setDevicePage}
+            />
+          ) : activeTab === 'types' && deviceTypes.length > deviceTypesPerPage ? (
+            <Pagination
+              total={deviceTypes.length}
+              pageSize={deviceTypesPerPage}
+              currentPage={deviceTypePage}
+              onPageChange={setDeviceTypePage}
+            />
+          ) : activeTab === 'drafts' && draftsCount > draftsPerPage ? (
+            <Pagination
+              total={draftsCount}
+              pageSize={draftsPerPage}
+              currentPage={draftPage}
+              onPageChange={setDraftPage}
+            />
+          ) : undefined
+        )
+      }
     >
       {deviceDetailView ? (
         // Device Detail View
@@ -780,17 +806,6 @@ export function DevicesPage() {
                 />
               }
             />
-            {/* Pagination for devices */}
-            {devices.length > devicesPerPage && (
-              <div className="mt-4">
-                <Pagination
-                  total={devices.length}
-                  pageSize={devicesPerPage}
-                  currentPage={devicePage}
-                  onPageChange={setDevicePage}
-                />
-              </div>
-            )}
           </PageTabsContent>
 
           {/* Device Types Tab */}
@@ -817,17 +832,6 @@ export function DevicesPage() {
                 />
               }
             />
-            {/* Pagination for device types */}
-            {deviceTypes.length > deviceTypesPerPage && (
-              <div className="mt-4">
-                <Pagination
-                  total={deviceTypes.length}
-                  pageSize={deviceTypesPerPage}
-                  currentPage={deviceTypePage}
-                  onPageChange={setDeviceTypePage}
-                />
-              </div>
-            )}
           </PageTabsContent>
 
           {/* Draft Devices Tab (Auto-onboarding) */}
@@ -842,17 +846,6 @@ export function DevicesPage() {
                 fetchDeviceTypes()
               }}
             />
-            {/* Pagination for draft devices */}
-            {draftsCount > draftsPerPage && (
-              <div className="mt-4">
-                <Pagination
-                  total={draftsCount}
-                  pageSize={draftsPerPage}
-                  currentPage={draftPage}
-                  onPageChange={setDraftPage}
-                />
-              </div>
-            )}
           </PageTabsContent>
         </PageTabs>
       )}

@@ -28,15 +28,15 @@ impl BusinessContext {
         let mut prompt = String::new();
 
         // Add context header
-        prompt.push_str("## 系统当前状态\n\n");
+        prompt.push_str("## Current System Status\n\n");
 
         // Add device summary
         if !self.system_state.devices.is_empty() {
             prompt.push_str(&format!(
-                "**在线设备**: {} 个\n",
+                "**Online Devices**: {}\n",
                 self.system_state.devices.len()
             ));
-            prompt.push_str("\n### 设备列表\n\n");
+            prompt.push_str("\n### Device List\n\n");
 
             // Group devices by location
             let mut by_location: std::collections::HashMap<String, Vec<&DeviceState>> =
@@ -48,7 +48,7 @@ impl BusinessContext {
                         device
                             .location
                             .clone()
-                            .unwrap_or_else(|| "未分类".to_string()),
+                            .unwrap_or_else(|| "Uncategorized".to_string()),
                     )
                     .or_default()
                     .push(device);
@@ -57,7 +57,7 @@ impl BusinessContext {
             for (location, devices) in &by_location {
                 prompt.push_str(&format!("**{}**: ", location));
                 let device_names: Vec<&str> = devices.iter().map(|d| d.name.as_str()).collect();
-                prompt.push_str(&device_names.join("、"));
+                prompt.push_str(&device_names.join(", "));
                 prompt.push('\n');
             }
             prompt.push('\n');
@@ -65,15 +65,15 @@ impl BusinessContext {
 
         // Add relevant devices from query analysis
         if !self.devices.is_empty() {
-            prompt.push_str("### 相关设备\n\n");
+            prompt.push_str("### Relevant Devices\n\n");
             for device in &self.devices {
                 prompt.push_str(&format!("- **{}** (`{}`)", device.name, device.device_id));
                 if let Some(loc) = &device.location {
-                    prompt.push_str(&format!(" - 位置: {}", loc));
+                    prompt.push_str(&format!(" - Location: {}", loc));
                 }
                 if !device.capabilities.is_empty() {
                     let caps: Vec<&str> = device.capabilities.iter().map(|c| c.as_str()).collect();
-                    prompt.push_str(&format!(" - 能力: {}", caps.join("、")));
+                    prompt.push_str(&format!(" - Capabilities: {}", caps.join(", ")));
                 }
                 prompt.push('\n');
             }
@@ -83,7 +83,7 @@ impl BusinessContext {
         // Add rules summary
         if !self.system_state.rules.is_empty() {
             prompt.push_str(&format!(
-                "**活跃规则**: {} 个\n",
+                "**Active Rules**: {}\n",
                 self.system_state.rules.len()
             ));
         }
@@ -91,7 +91,7 @@ impl BusinessContext {
         // Add workflows summary
         if !self.system_state.workflows.is_empty() {
             prompt.push_str(&format!(
-                "**活跃工作流**: {} 个\n",
+                "**Active Workflows**: {}\n",
                 self.system_state.workflows.len()
             ));
         }
@@ -99,13 +99,13 @@ impl BusinessContext {
         // Add alerts summary
         if !self.system_state.alerts.is_empty() {
             prompt.push_str(&format!(
-                "**当前告警**: {} 个\n",
+                "**Current Alerts**: {}\n",
                 self.system_state.alerts.len()
             ));
         }
 
         // Add context-specific guidance
-        prompt.push_str("\n## 查询理解指南\n\n");
+        prompt.push_str("\n## Query Understanding Guide\n\n");
         prompt.push_str(self.scope.guidance());
 
         prompt
@@ -231,18 +231,19 @@ impl ContextScope {
     /// Get guidance text for this scope.
     pub fn guidance(&self) -> &'static str {
         match self {
-            ContextScope::Minimal => "用户查询简单，直接回答问题即可。",
+            ContextScope::Minimal => "Simple query - answer directly.",
             ContextScope::Discovery => {
-                "用户想了解系统但未指定具体设备。先调用 list_devices 查看可用设备，\
-                然后根据设备能力引导用户。"
+                "User wants to explore the system but hasn't specified a device. \
+                First call list_devices to see available devices, then guide user based on capabilities."
             }
             ContextScope::Standard => {
-                "用户询问数据或状态但未指定设备。分析上下文，如果只有一个相关设备则直接查询，\
-                否则列出选项让用户选择。"
+                "User asks for data or status but hasn't specified a device. \
+                Analyze context - if only one relevant device exists, query directly; \
+                otherwise list options for user to choose."
             }
-            ContextScope::Focused => "用户指定了具体设备，直接执行相应操作即可。",
-            ContextScope::Location => "用户指定了位置。先查询该位置的设备，然后执行相应操作。",
-            ContextScope::Full => "用户请求系统概览。调用相关列表工具返回完整信息。",
+            ContextScope::Focused => "User specified a device - execute the operation directly.",
+            ContextScope::Location => "User specified a location. First query devices at that location, then execute operations.",
+            ContextScope::Full => "User requests system overview. Call relevant list tools to return complete information.",
         }
     }
 
@@ -279,7 +280,7 @@ mod tests {
     #[test]
     fn test_context_scope_guidance() {
         assert!(ContextScope::Discovery.guidance().contains("list_devices"));
-        assert!(ContextScope::Full.guidance().contains("概览"));
+        assert!(ContextScope::Full.guidance().contains("overview"));
     }
 
     #[test]

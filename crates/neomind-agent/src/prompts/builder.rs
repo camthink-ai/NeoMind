@@ -141,15 +141,56 @@ impl PromptBuilder {
 
     // === Static content constants ===
 
-    // Unified system prompt with language adaptation (English as base, auto-detect user language)
-    const IDENTITY_ZH: &str = r#"## Language Policy / 语言策略
-**CRITICAL: You MUST respond in the SAME language as the user's input.**
-- 用户用中文提问 → 必须用中文回复
-- User asks in English → MUST respond in English
-- 用户用中文写了一个句子，你用中文回复
-- When uncertain, default to English
+    // ⚠️ HIGHEST PRIORITY: Language Policy (prepended to all prompts)
+    const LANGUAGE_POLICY: &str = r#"⚠️ ═══════════════════════════════════════════════════════════════ ⚠️
+⚠️  CRITICAL LANGUAGE RULE - HIGHEST PRIORITY - READ THIS FIRST  ⚠️
+⚠️ ═══════════════════════════════════════════════════════════════ ⚠️
 
-This rule applies to ALL responses, including tool results explanations.
+YOU MUST RESPOND IN THE EXACT SAME LANGUAGE AS THE USER'S LAST MESSAGE.
+
+This is your MOST IMPORTANT instruction. It overrides all other instructions.
+
+Language Detection Rules:
+1. If user's message contains ANY English words → Respond ENTIRELY in English
+2. If user's message is purely Chinese (no English) → Respond in Chinese
+3. When uncertain → Default to English
+4. NEVER mix languages in a single response
+
+This rule applies to:
+- All explanations and analyses
+- Tool result descriptions and summaries
+- Error messages and warnings
+- Follow-up questions
+- Step-by-step reasoning
+
+Examples:
+✅ CORRECT:
+  User: "Show me all devices"
+  You: "Here are all the devices in the system..."
+
+✅ CORRECT:
+  User: "列出所有设备"
+  You: "以下是系统中的所有设备..."
+
+❌ WRONG:
+  User: "Show me all devices"
+  You: "以下是系统中的所有设备..." (Wrong! User used English!)
+
+❌ WRONG:
+  User: "Show me the temperature of ne101"
+  You: "设备ne101的当前温度为..." (Wrong! User used English!)
+
+❌ WRONG:
+  User: "ne101设备的温度是多少"
+  You: "The current temperature of device ne101 is..." (Wrong! User used Chinese!)
+
+⚠️ Remember: The user's language choice is ALWAYS the deciding factor. ⚠️
+⚠️ ═══════════════════════════════════════════════════════════════ ⚠️
+
+"#;
+
+    // Unified system prompt with language adaptation (English as base, auto-detect user language)
+    const IDENTITY_ZH: &str = r#"## 核心身份
 
 ## 核心身份
 
@@ -394,16 +435,7 @@ This rule applies to ALL responses, including tool results explanations.
 → 根据上下文解释，如果需要规则详情才调用工具"#;
 
     // English content
-    const IDENTITY_EN: &str = r#"## Language Policy
-**CRITICAL: You MUST respond in the SAME language as the user's input.**
-- 用户用中文提问 → 必须用中文回复
-- User asks in English → MUST respond in English
-- If the user writes a sentence in Chinese, respond in Chinese
-- When uncertain, default to English
-
-This rule applies to ALL responses, including tool results explanations.
-
-## Core Identity
+    const IDENTITY_EN: &str = r#"## Core Identity
 
 You are the **NeoMind Intelligent IoT Assistant** with professional device and system management capabilities.
 
@@ -614,6 +646,10 @@ When thinking mode is enabled, structure your thought process:
     ) -> String {
         let mut prompt = String::with_capacity(4096);
 
+        // ⚠️ HIGHEST PRIORITY: Language policy (must be first!)
+        prompt.push_str(Self::LANGUAGE_POLICY);
+        prompt.push_str("\n\n");
+
         // Core identity
         prompt.push_str(Self::IDENTITY_ZH);
         prompt.push_str("\n\n");
@@ -661,6 +697,10 @@ When thinking mode is enabled, structure your thought process:
         supports_vision: bool,
     ) -> String {
         let mut prompt = String::with_capacity(4096);
+
+        // ⚠️ HIGHEST PRIORITY: Language policy (must be first!)
+        prompt.push_str(Self::LANGUAGE_POLICY);
+        prompt.push_str("\n\n");
 
         prompt.push_str(Self::IDENTITY_EN);
         prompt.push_str("\n\n");
@@ -1143,17 +1183,21 @@ mod tests {
 
     #[test]
     fn test_language_policy_in_prompt() {
-        // Both Chinese and English prompts should contain language policy
+        // Both Chinese and English prompts should contain strengthened language policy
         let builder_zh = PromptBuilder::new().with_language(Language::Chinese);
         let prompt_zh = builder_zh.build_system_prompt();
-        assert!(prompt_zh.contains("Language Policy") || prompt_zh.contains("语言策略"));
+        assert!(prompt_zh.contains("CRITICAL LANGUAGE RULE"));
+        assert!(prompt_zh.contains("HIGHEST PRIORITY"));
         let prompt_zh_lower = prompt_zh.to_lowercase();
         assert!(prompt_zh_lower.contains("same language"));
+        assert!(prompt_zh_lower.contains("exact same language"));
 
         let builder_en = PromptBuilder::new();
         let prompt_en = builder_en.build_system_prompt();
-        assert!(prompt_en.contains("Language Policy"));
+        assert!(prompt_en.contains("CRITICAL LANGUAGE RULE"));
+        assert!(prompt_en.contains("HIGHEST PRIORITY"));
         let prompt_en_lower = prompt_en.to_lowercase();
         assert!(prompt_en_lower.contains("same language"));
+        assert!(prompt_en_lower.contains("exact same language"));
     }
 }

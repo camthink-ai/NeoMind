@@ -474,15 +474,20 @@ const NON_CACHEABLE_TOOLS: &[&str] = &[
 /// 1. Reduces latency (no second LLM call)
 /// 2. Eliminates unnecessary thinking content
 /// 3. Provides exact data from tools without LLM reformatting
-#[allow(dead_code)]
+///
+/// This follows the design pattern of mainstream agent frameworks:
+/// - AutoGen: `reflect_on_tool_use=False` returns tool results directly
+/// - LangChain: `return_direct=True` stops agent loop after tool execution
 const SIMPLE_QUERY_TOOLS: &[&str] = &[
-    "list_devices",
-    "list_rules",
-    "list_scenarios",
-    "list_workflows",
-    "query_rule_history",
-    "query_workflow_status",
-    "get_device_metrics",
+    "device_discover",  // Device discovery - returns device list
+    "list_devices",     // List all devices
+    "list_rules",       // List automation rules
+    "list_agents",      // List AI agents
+    "list_scenarios",   // List scenarios
+    "list_workflows",   // List workflows
+    "query_rule_history",  // Query rule execution history
+    "query_workflow_status", // Get workflow status
+    "get_device_metrics",   // Get device metrics/data
 ];
 
 fn is_tool_cacheable(name: &str) -> bool {
@@ -490,8 +495,11 @@ fn is_tool_cacheable(name: &str) -> bool {
 }
 
 /// Check if all tools in the result set are simple query tools
-/// that can return results directly without LLM follow-up
-#[allow(dead_code)]
+/// that can return results directly without LLM follow-up.
+///
+/// This follows mainstream agent design:
+/// - AutoGen: `reflect_on_tool_use=False` by default
+/// - LangChain: Tools with `return_direct=True` stop the agent loop
 fn should_return_directly(tool_results: &[(String, String)]) -> bool {
     if tool_results.is_empty() {
         return false;
@@ -1562,12 +1570,12 @@ pub async fn process_stream_events_with_safeguards(
     };
 
     // === COMPLEX INTENT DETECTION FOR MULTI-ROUND TOOL CALLING ===
-    // Use LLM-based detection for reliability (slower but more accurate)
-    // This helps determine if we need multiple rounds of tool calling
-    let is_complex_intent = detect_complex_intent_with_llm(&llm_interface, &user_message).await;
+    // Use keyword-based detection for fast response (removed LLM call to prevent blocking)
+    // The fallback function provides reliable detection for common patterns
+    let is_complex_intent = is_complex_multi_step_intent_fallback(&user_message);
 
     tracing::info!(
-        "Complex intent detection (LLM-based): is_complex={}, message={}",
+        "Complex intent detection (keyword-based): is_complex={}, message={}",
         is_complex_intent,
         user_message.chars().take(50).collect::<String>()
     );
@@ -1702,6 +1710,11 @@ pub async fn process_stream_events_with_safeguards(
         // === SAFEGUARD: Track recent chunks for repetition detection ===
         let mut recent_chunks: Vec<String> = Vec::new();
         const RECENT_CHUNK_WINDOW: usize = 10;
+
+        // === SAFEGUARD: Track thinking time and content ===
+        let mut thinking_start_time: Option<Instant> = None;
+        let mut thinking_timeout_warned = false;
+        const THINKING_TIMEOUT_SECS: u64 = 120;
 
         // === SAFEGUARD: Track recently executed tools to prevent loops ===
         // Store both tool name and a hash of arguments for better loop detection
@@ -1923,6 +1936,26 @@ pub async fn process_stream_events_with_safeguards(
                         }
 
                         if is_thinking {
+                            // Track thinking start time
+                            if thinking_start_time.is_none() {
+                                thinking_start_time = Some(Instant::now());
+                            }
+
+                            // Check for thinking timeout
+                            if let Some(start) = thinking_start_time {
+                                let thinking_elapsed = start.elapsed();
+                                if thinking_elapsed > Duration::from_secs(THINKING_TIMEOUT_SECS) && !thinking_timeout_warned {
+                                    tracing::warn!(
+                                        "Thinking timeout detected ({:.1}s elapsed). Model may be stuck in thinking loop.",
+                                        thinking_elapsed.as_secs_f64()
+                                    );
+                                    yield AgentEvent::warning(
+                                        "The model is taking longer than expected to think. This may indicate a complex query or the model getting stuck. Please wait...".to_string()
+                                    );
+                                    thinking_timeout_warned = true;
+                                }
+                            }
+
                             // No thinking limit - let the model think as much as needed
                             // First, add the new text to thinking content
                             thinking_content.push_str(&text);
@@ -2132,6 +2165,14 @@ pub async fn process_stream_events_with_safeguards(
             if tool_calls_detected {
                 tracing::info!("Starting tool execution round {}", tool_iteration_count + 1);
 
+                // Send progress event to inform user about tool iteration
+                let current_elapsed = stream_start.elapsed();
+                yield AgentEvent::progress(
+                    format!("Executing tools (round {}/{})", tool_iteration_count + 1, safeguards.max_tool_iterations),
+                    "executing",
+                    current_elapsed.as_millis() as u64,
+                );
+
                 if tool_calls.len() > safeguards.max_tool_iterations {
                     tracing::warn!(
                         "Too many tool calls ({}) requested, limiting to {}",
@@ -2298,42 +2339,81 @@ pub async fn process_stream_events_with_safeguards(
 
                 // Trim history
                 let state_guard = internal_state.read().await;
-                let mut history_messages: Vec<neomind_core::Message> = state_guard.memory.iter()
-                    .map(|msg| msg.to_core())
-                    .collect::<Vec<_>>();
-                drop(state_guard);
+                let history_agent_messages = &state_guard.memory;
 
                 // Extract the user question that triggered this round (most recent real user message).
                 // Skip tool-result messages (they are converted to User with content "[Tool: ... returned]\n...").
-                let original_user_question = history_messages.iter()
+                let original_user_question = history_agent_messages.iter()
                     .rev()
                     .find(|msg| {
-                        if msg.role != neomind_core::MessageRole::User {
+                        if msg.role != "user" {
                             return false;
                         }
-                        let text = msg.content.as_text();
-                        !text.starts_with("[Tool:")
+                        !msg.content.starts_with("[Tool:")
                     })
-                    .and_then(|msg| {
-                        if let neomind_core::Content::Text(text) = &msg.content {
-                            Some(text.clone())
-                        } else {
-                            None
-                        }
-                    });
+                    .map(|msg| msg.content.clone());
 
-                if history_messages.len() > 6 {
-                    let keep_count = 6;
-                    tracing::info!("Trimming history from {} to {} messages",
-                        history_messages.len(), keep_count);
-                    let split_idx = history_messages.len() - keep_count;
-                    history_messages = history_messages.split_off(split_idx);
+                // === DYNAMIC HISTORY TRIMMING: Use token-based windowing ===
+                // Instead of hardcoded 6 messages, use the model's context capacity
+                // Reserve 30% for Phase 2 response generation
+                let max_context = llm_interface.max_context_length().await;
+                let max_history_tokens = (max_context * 70) / 100;
+
+                tracing::info!(
+                    "Phase 2 history: {} messages, max_tokens={} (70% of {})",
+                    history_agent_messages.len(),
+                    max_history_tokens,
+                    max_context
+                );
+
+                // Use intelligent context window building with token limits
+                let trimmed_agent_messages = build_context_window(history_agent_messages, max_history_tokens);
+
+                // Convert to core Message format for LLM
+                let history_messages: Vec<neomind_core::Message> = trimmed_agent_messages
+                    .iter()
+                    .map(|msg| msg.to_core())
+                    .collect();
+
+                drop(state_guard);
+
+                // === SIMPLE QUERY FAST PATH: Skip Phase 2 for simple queries ===
+                // This follows mainstream agent design patterns:
+                // - AutoGen: reflect_on_tool_use=False returns tool results directly
+                // - LangChain: return_direct=True stops agent loop after tool execution
+                //
+                // For simple list/query operations, the formatted tool result is the final answer.
+                // No need for another LLM call to "interpret" the data.
+                if should_return_directly(&tool_call_results) {
+                    tracing::info!(
+                        "Simple query detected (tools: {:?}), skipping Phase 2 LLM call",
+                        tool_call_results.iter().map(|(n, _)| n).collect::<Vec<_>>()
+                    );
+
+                    // Format tool results directly for user display
+                    let formatted_response = format_tool_results(&tool_call_results);
+                    tracing::info!("Direct response length: {} chars", formatted_response.len());
+
+                    // Stream the formatted response
+                    for chunk in formatted_response.chars().collect::<Vec<_>>().chunks(30) {
+                        let chunk_str: String = chunk.iter().collect();
+                        if !chunk_str.is_empty() {
+                            yield AgentEvent::content(chunk_str);
+                        }
+                    }
+
+                    // Save the response to memory
+                    let response_msg = AgentMessage::assistant(formatted_response.clone());
+                    internal_state.write().await.push_message(response_msg);
+                    internal_state.write().await.register_response(&formatted_response);
+
+                    yield AgentEvent::end();
+                    return;
                 }
 
                 // === PHASE 2: Generate follow-up response ===
-                // Always use Phase 2 for proper summarization, even for simple queries
-                // This ensures consistent, high-quality responses
-                tracing::info!("Phase 2: Generating follow-up response");
+                // For complex queries that need LLM analysis/summarization
+                tracing::info!("Phase 2: Generating follow-up response (complex query)");
 
                 // Build Phase 2 prompt with tool results explicitly included so the second LLM
                 // always receives them (history alone can be dropped or mishandled by backends).
@@ -2960,7 +3040,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 }
 
 /// Detect if the user's intent requires multi-step tool calling using LLM analysis.
-/// This is more reliable than keyword matching and can understand nuanced requests.
+///
+/// NOTE: This function is currently unused as it adds latency.
+/// Kept for potential future use with configuration option.
+#[allow(dead_code)]
 async fn detect_complex_intent_with_llm(llm_interface: &LlmInterface, user_message: &str) -> bool {
     let detection_prompt = format!(
         "分析以下用户请求是否需要**多步操作**才能完成。

@@ -472,6 +472,16 @@ export default function MessagesPage() {
       title={t('messages.title')}
       subtitle={t('messages.description')}
       hideFooterOnMobile
+      footer={
+        activeTab === 'messages' && messages.length > messagesPerPage ? (
+          <Pagination
+            total={messages.length}
+            pageSize={messagesPerPage}
+            currentPage={messagePage}
+            onPageChange={setMessagePage}
+          />
+        ) : undefined
+      }
     >
       <PageTabs
         tabs={tabs}
@@ -664,7 +674,7 @@ export default function MessagesPage() {
                 },
                 {
                   key: 'timestamp',
-                  label: t('common.createdAt'),
+                  label: t('common:createdAt'),
                   width: 'w-[130px]',
                 },
               ]}
@@ -780,16 +790,6 @@ export default function MessagesPage() {
               }
             />
             {/* Pagination - shows as footer on desktop, infinite scroll trigger on mobile */}
-            {messages.length > messagesPerPage && (
-              <div className="mt-4">
-                <Pagination
-                  total={messages.length}
-                  pageSize={messagesPerPage}
-                  currentPage={messagePage}
-                  onPageChange={setMessagePage}
-                />
-              </div>
-            )}
           </div>
         </PageTabsContent>
 

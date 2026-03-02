@@ -440,10 +440,10 @@ export function MessageChannelsTab({
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
-              {t('common.cancel')}
+              {t('common:cancel')}
             </Button>
             <Button onClick={handleCreateChannel} disabled={!newChannelName.trim()}>
-              {t('common.create')}
+              {t('common:create')}
             </Button>
           </DialogFooter>
         </DialogContent>

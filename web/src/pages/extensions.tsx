@@ -2,10 +2,10 @@ import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { ExtensionGrid, ExtensionDetailsDialog, DiscoverExtensionsDialog, MarketplaceDialog } from "@/components/extensions"
+import { ExtensionGrid, ExtensionDetailsDialog, MarketplaceDialog } from "@/components/extensions"
 import { ExtensionUploadDialog } from "@/components/extensions"
 import { useToast } from "@/hooks/use-toast"
-import { RefreshCw, Upload, Search, Globe } from "lucide-react"
+import { RefreshCw, Upload, Globe } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   AlertDialog,
@@ -34,7 +34,6 @@ export function ExtensionsPage() {
   const [selectedExtension, setSelectedExtension] = useState<Extension | null>(null)
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false)
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false)
-  const [discoverDialogOpen, setDiscoverDialogOpen] = useState(false)
   const [marketplaceDialogOpen, setMarketplaceDialogOpen] = useState(false)
 
   // Confirmation dialogs state
@@ -133,14 +132,6 @@ export function ExtensionsPage() {
     setUploadDialogOpen(false)
   }
 
-  const handleDiscoverDialogChange = (open: boolean) => {
-    setDiscoverDialogOpen(open)
-    // Refresh extensions when discover dialog closes
-    if (!open) {
-      fetchExtensions()
-    }
-  }
-
   return (
     <>
       <PageLayout
@@ -158,14 +149,6 @@ export function ExtensionsPage() {
             >
               <Globe className="h-4 w-4 mr-2" />
               {t("extensions:marketplace", { defaultValue: "Marketplace" })}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDiscoverDialogOpen(true)}
-            >
-              <Search className="h-4 w-4 mr-2" />
-              {t("extensions:discoverExtensions", { defaultValue: "Discover" })}
             </Button>
             <Button
               variant="outline"
@@ -208,12 +191,6 @@ export function ExtensionsPage() {
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
         onUploadComplete={handleUploadComplete}
-      />
-
-      {/* Discover Dialog */}
-      <DiscoverExtensionsDialog
-        open={discoverDialogOpen}
-        onOpenChange={handleDiscoverDialogChange}
       />
 
       {/* Marketplace Dialog */}

@@ -198,21 +198,6 @@ pub struct ExecuteCommandRequest {
     pub args: serde_json::Value,
 }
 
-/// Extension discovery result DTO.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtensionDiscoveryResult {
-    /// Extension ID
-    pub id: String,
-    /// Display name
-    pub name: String,
-    /// Version
-    pub version: String,
-    /// Description
-    pub description: Option<String>,
-    /// File path
-    pub file_path: String,
-}
-
 /// GET /api/extensions
 /// List all registered extensions.
 pub async fn list_extensions_handler(
@@ -440,11 +425,21 @@ pub async fn get_extension_stats_handler(
         return Err(ErrorResponse::not_found(format!("Extension {}", id)));
     }
 
-    // For isolated extensions, we don't have detailed stats
-    // Return default stats for now
-    // TODO: Add stats support for isolated extensions
+    // Try to get stats from registry (for in-process extensions)
+    if let Some(info) = state.extensions.registry.get_info(&id).await {
+        return ok(ExtensionStatsDto {
+            start_count: info.stats.start_count,
+            stop_count: info.stats.stop_count,
+            error_count: info.stats.error_count,
+            last_error: info.stats.last_error,
+        });
+    }
+
+    // For isolated extensions, we don't have detailed stats yet
+    // Return default stats
+    // TODO: Add stats support for isolated extensions via IPC
     ok(ExtensionStatsDto {
-        start_count: 1,
+        start_count: 0,
         stop_count: 0,
         error_count: 0,
         last_error: None,
@@ -483,130 +478,6 @@ pub async fn list_extension_types_handler() -> HandlerResult<Vec<ExtensionTypeDt
     ];
 
     ok(types)
-}
-
-/// POST /api/extensions/discover
-/// Discover extensions in configured directories.
-///
-/// Scans default and configured extension directories for
-/// unregistered extensions and returns their metadata.
-pub async fn discover_extensions_handler(
-    State(state): State<ServerState>,
-) -> HandlerResult<Vec<ExtensionDiscoveryResult>> {
-    let registry = &state.extensions.registry;
-
-    // Get list of already registered extension IDs
-    let registered_ids: std::collections::HashSet<String> = registry
-        .list()
-        .await
-        .into_iter()
-        .map(|info| info.metadata.id.clone())
-        .collect();
-
-    // Discover extensions using the registry
-    let discovered = registry.discover().await;
-
-    // Filter out already registered extensions and convert to DTOs
-    let results: Vec<ExtensionDiscoveryResult> = discovered
-        .into_iter()
-        .filter(|(_, metadata)| !registered_ids.contains(&metadata.id))
-        .map(|(path, metadata)| ExtensionDiscoveryResult {
-            id: metadata.id.clone(),
-            name: metadata.name.clone(),
-            version: metadata.version.to_string(),
-            description: metadata.description.clone(),
-            file_path: path.to_string_lossy().to_string(),
-        })
-        .collect();
-
-    ok(results)
-}
-
-/// POST /api/extensions/register-all
-/// Register all discovered extensions.
-///
-/// Discovers extensions from default directories and registers them all.
-pub async fn register_all_discovered_handler(
-    State(state): State<ServerState>,
-) -> HandlerResult<serde_json::Value> {
-    let unified = &state.extensions.unified_service;
-    let registry = &state.extensions.registry;
-
-    // Discover extensions using the registry (just scans directories)
-    let discovered = registry.discover().await;
-
-    if discovered.is_empty() {
-        return ok(serde_json::json!({
-            "message": "No new extensions to register",
-            "registered": 0,
-            "extensions": []
-        }));
-    }
-
-    // Open the store once for all registrations
-    let store = match ExtensionStore::open("data/extensions.redb") {
-        Ok(s) => s,
-        Err(e) => {
-            return Err(ErrorResponse::internal(format!(
-                "Failed to open extension store: {}",
-                e
-            )));
-        }
-    };
-
-    let mut registered = Vec::new();
-    let mut failed = Vec::new();
-
-    for (path, metadata) in discovered {
-        // Check if already registered (use unified to check both)
-        let is_registered = unified.contains(&metadata.id).await;
-        if is_registered {
-            continue;
-        }
-
-        // Load and register the extension (unified handles isolated/in-process)
-        match unified.load(&path).await {
-            Ok(_) => {
-                // Save to storage for persistence
-                let record = ExtensionRecord::new(
-                    metadata.id.clone(),
-                    metadata.name.clone(),
-                    path.to_string_lossy().to_string(),
-                    "native".to_string(),
-                    metadata.version.to_string(),
-                )
-                .with_description(metadata.description.clone())
-                .with_author(metadata.author.clone())
-                .with_auto_start(true);
-
-                if let Err(e) = store.save(&record) {
-                    tracing::warn!("Failed to save extension to storage: {}", e);
-                }
-
-                registered.push(serde_json::json!({
-                    "id": metadata.id,
-                    "name": metadata.name,
-                    "version": metadata.version.to_string(),
-                    "file_path": path.to_string_lossy().to_string(),
-                }));
-            }
-            Err(e) => {
-                failed.push(serde_json::json!({
-                    "id": metadata.id,
-                    "name": metadata.name,
-                    "error": e.to_string(),
-                }));
-            }
-        }
-    }
-
-    ok(serde_json::json!({
-        "message": format!("Registered {} extension(s)", registered.len()),
-        "registered": registered.len(),
-        "failed": failed.len(),
-        "extensions": registered,
-        "failed_extensions": failed,
-    }))
 }
 
 /// POST /api/extensions

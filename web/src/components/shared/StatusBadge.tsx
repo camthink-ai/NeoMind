@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
-import { getStatusColor, getStatusLabel } from '@/lib/utils/status'
+import { getStatusColor } from '@/lib/utils/status'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
@@ -42,9 +42,11 @@ export interface StatusBadgeProps extends VariantProps<typeof badgeVariants> {
  * <StatusBadge status="failed" size="sm" showDot />
  */
 export function StatusBadge({ status, className, showDot = true }: StatusBadgeProps) {
+  const { t } = useTranslation('common')
   const color = getStatusColor(status)
-  const label = getStatusLabel(status)
-  const isOnline = ['online', 'connected', 'active'].includes(status.toLowerCase())
+  const statusLower = status.toLowerCase()
+  const label = t(`statusLabels.${statusLower}`, { defaultValue: status })
+  const isOnline = ['online', 'connected', 'active'].includes(statusLower)
 
   return (
     <span className={cn(badgeVariants({ variant: color }), className)}>

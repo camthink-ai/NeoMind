@@ -71,7 +71,6 @@ pub use commands::{
 pub use stats::{get_device_stats_handler, get_rule_stats_handler, get_system_stats_handler};
 // Extensions API
 pub use extensions::{
-    discover_extensions_handler,
     execute_extension_command_handler,
     extension_health_handler,
     get_extension_handler,

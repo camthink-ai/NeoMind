@@ -51,7 +51,7 @@ impl Default for IsolatedExtensionConfig {
         Self {
             startup_timeout_secs: 30,
             command_timeout_secs: 30,
-            max_memory_mb: 512,
+            max_memory_mb: 4096,  // Increased for YOLO - will optimize architecture later
             restart_on_crash: true,
             max_restart_attempts: 3,
             restart_cooldown_secs: 5,
@@ -83,6 +83,10 @@ pub struct IsolatedExtension {
     last_restart: Mutex<Option<Instant>>,
     /// Running state (shared with background receiver thread)
     running: Arc<AtomicBool>,
+    /// Process ID for resource monitoring
+    process_id: Mutex<Option<u32>>,
+    /// Last resource check time
+    last_resource_check: Mutex<Option<Instant>>,
 }
 
 impl IsolatedExtension {
@@ -104,6 +108,8 @@ impl IsolatedExtension {
             restart_count: AtomicU64::new(0),
             last_restart: Mutex::new(None),
             running: Arc::new(AtomicBool::new(false)),
+            process_id: Mutex::new(None),
+            last_resource_check: Mutex::new(None),
         }
     }
 
@@ -169,9 +175,13 @@ impl IsolatedExtension {
         );
 
         // Spawn the extension runner process
+        let extension_dir = self.extension_path.parent()
+            .ok_or_else(|| IsolatedExtensionError::SpawnFailed("Invalid extension path".to_string()))?;
+
         let mut child = Command::new(&runner_path)
             .arg("--extension-path")
             .arg(&self.extension_path)
+            .env("NEOMIND_EXTENSION_DIR", extension_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -180,9 +190,14 @@ impl IsolatedExtension {
 
         let stdin = BufWriter::new(child.stdin.take().unwrap());
         let stdout = BufReader::new(child.stdout.take().unwrap());
+        let stderr = child.stderr.take().unwrap();
+
+        // Save process ID for resource monitoring
+        let pid = child.id();
 
         *process_guard = Some(child);
         *self.stdin.lock().await = Some(stdin);
+        *self.process_id.lock().await = Some(pid);
         self.running.store(true, Ordering::SeqCst);
 
         // Start the background receiver thread
@@ -192,6 +207,19 @@ impl IsolatedExtension {
         // Get the current tokio runtime handle to pass to the receiver thread
         let rt_handle = tokio::runtime::Handle::current();
         self.spawn_receiver_thread(stdout, shutdown_rx, rt_handle);
+
+        // Spawn stderr reader to prevent pipe buffer from filling up
+        let extension_id = self.extension_id.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    // Use eprintln to output directly, or tracing::info for structured logging
+                    eprintln!("[Extension:{}] {}", extension_id, line);
+                }
+            }
+        });
 
         // Send initialization message
         self.send_message(&IpcMessage::Init {
@@ -507,6 +535,169 @@ impl IsolatedExtension {
         }
     }
 
+    // =========================================================================
+    // Streaming Support
+    // =========================================================================
+
+    /// Get stream capability via IPC
+    pub async fn stream_capability(&self) -> IsolatedResult<Option<super::super::stream::StreamCapability>> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(IsolatedExtensionError::NotRunning);
+        }
+
+        let (request_id, rx) = self.in_flight.register().await;
+
+        self.send_message(&IpcMessage::GetStreamCapability { request_id }).await?;
+
+        let response = self
+            .in_flight
+            .wait_with_timeout(request_id, rx, Duration::from_secs(5))
+            .await
+            .map_err(|e| match e {
+                super::in_flight::InFlightError::Timeout(ms) => {
+                    IsolatedExtensionError::Timeout(ms)
+                }
+                super::in_flight::InFlightError::ChannelClosed => {
+                    IsolatedExtensionError::IpcError("Response channel closed".to_string())
+                }
+            })?;
+
+        match response {
+            IpcResponse::StreamCapability { capability, .. } => {
+                match capability {
+                    Some(cap_json) => {
+                        let cap: super::super::stream::StreamCapability = 
+                            serde_json::from_value(cap_json)
+                                .map_err(|e| IsolatedExtensionError::IpcError(e.to_string()))?;
+                        Ok(Some(cap))
+                    }
+                    None => Ok(None),
+                }
+            }
+            IpcResponse::Error { error, .. } => Err(IsolatedExtensionError::IpcError(error)),
+            _ => Err(IsolatedExtensionError::InvalidResponse("Expected StreamCapability response".to_string())),
+        }
+    }
+
+    /// Initialize a stream session via IPC
+    pub async fn init_session(&self, session_id: &str, config: serde_json::Value) -> IsolatedResult<()> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(IsolatedExtensionError::NotRunning);
+        }
+
+        let client_info = super::ipc::StreamClientInfo {
+            client_id: "host".to_string(),
+            ip_addr: None,
+            user_agent: None,
+        };
+
+        self.send_message(&IpcMessage::InitStreamSession {
+            session_id: session_id.to_string(),
+            extension_id: self.extension_id.clone(),
+            config,
+            client_info,
+        }).await?;
+
+        // Wait for StreamSessionInit response
+        // Note: InitStreamSession doesn't have a request_id, so we need to handle it specially
+        // For now, just return Ok - the runner will send the response asynchronously
+        Ok(())
+    }
+
+    /// Process a stream chunk via IPC
+    pub async fn process_session_chunk(
+        &self,
+        session_id: &str,
+        chunk: super::super::stream::DataChunk,
+    ) -> IsolatedResult<super::super::stream::StreamResult> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(IsolatedExtensionError::NotRunning);
+        }
+
+        // Check resources before processing
+        self.check_resources().await?;
+
+        let stream_chunk = super::ipc::StreamDataChunk {
+            sequence: chunk.sequence,
+            data_type: chunk.data_type.mime_type(),
+            data: chunk.data,
+            timestamp: chunk.timestamp,
+            is_last: chunk.is_last,
+        };
+
+        // Register request and get receiver for response
+        let (request_id, rx) = self.in_flight.register().await;
+
+        // Send message with request_id
+        self.send_message(&IpcMessage::ProcessStreamChunk {
+            request_id,
+            session_id: session_id.to_string(),
+            chunk: stream_chunk,
+        }).await?;
+
+        // Wait for response with timeout (10s for streaming operations)
+        let response = tokio::time::timeout(
+            Duration::from_secs(10),
+            rx
+        ).await
+        .map_err(|_| IsolatedExtensionError::Timeout(10000))?
+        .map_err(|_| IsolatedExtensionError::ChannelClosed)?;
+
+        // Parse response
+        match response {
+            IpcResponse::StreamChunkResult {
+                request_id: _,
+                session_id: _,
+                input_sequence,
+                output_sequence,
+                data,
+                data_type,
+                processing_ms,
+            } => {
+                // Parse data_type string back to StreamDataType
+                let stream_data_type = if data_type.starts_with("image/") {
+                    let format = data_type.strip_prefix("image/").unwrap_or("jpeg").to_string();
+                    super::super::stream::StreamDataType::Image { format }
+                } else if data_type == "application/json" {
+                    super::super::stream::StreamDataType::Json
+                } else if data_type == "text/plain" {
+                    super::super::stream::StreamDataType::Text
+                } else {
+                    // For video, audio, and other complex types, use Binary
+                    // since we don't have all the required metadata from IPC
+                    super::super::stream::StreamDataType::Binary
+                };
+
+                Ok(super::super::stream::StreamResult::success(
+                    Some(input_sequence),
+                    output_sequence,
+                    data,
+                    stream_data_type,
+                    processing_ms,
+                ))
+            }
+            IpcResponse::Error { error, .. } => {
+                Err(IsolatedExtensionError::ExtensionError(error))
+            }
+            _ => {
+                Err(IsolatedExtensionError::UnexpectedResponse)
+            }
+        }
+    }
+
+    /// Close a stream session via IPC
+    pub async fn close_session(&self, session_id: &str) -> IsolatedResult<super::super::stream::SessionStats> {
+        if !self.running.load(Ordering::SeqCst) {
+            return Err(IsolatedExtensionError::NotRunning);
+        }
+
+        self.send_message(&IpcMessage::CloseStreamSession {
+            session_id: session_id.to_string(),
+        }).await?;
+
+        Ok(super::super::stream::SessionStats::default())
+    }
+
     /// Get extension descriptor
     pub async fn descriptor(&self) -> Option<super::super::system::ExtensionDescriptor> {
         self.descriptor.lock().await.clone()
@@ -578,6 +769,175 @@ impl IsolatedExtension {
             let _ = child.wait();
         }
         self.running.store(false, Ordering::SeqCst);
+        *self.process_id.lock().await = None;
+    }
+
+    /// Check resource usage and restart if necessary
+    pub async fn check_resources(&self) -> IsolatedResult<()> {
+        // Only check every 5 seconds to avoid overhead
+        {
+            let mut last_check = self.last_resource_check.lock().await;
+            if let Some(last) = *last_check {
+                if last.elapsed() < Duration::from_secs(5) {
+                    return Ok(());
+                }
+            }
+            *last_check = Some(Instant::now());
+        }
+
+        let pid = {
+            let pid_guard = self.process_id.lock().await;
+            match *pid_guard {
+                Some(p) => p,
+                None => return Ok(()), // Process not running
+            }
+        };
+
+        // Check if process is still alive
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            let mut process_guard = self.process.lock().await;
+            if let Some(child) = process_guard.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        // Process has exited
+                        warn!(
+                            extension_id = %self.extension_id,
+                            exit_code = status.code(),
+                            signal = status.signal(),
+                            "Extension process exited unexpectedly"
+                        );
+                        self.kill_internal(&mut *process_guard).await;
+                        return Err(IsolatedExtensionError::Crashed(
+                            format!("Process exited with status: {:?}", status)
+                        ));
+                    }
+                    Ok(None) => {
+                        // Process still running, check resources
+                    }
+                    Err(e) => {
+                        warn!(extension_id = %self.extension_id, error = %e, "Failed to check process status");
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(unix))]
+        {
+            let mut process_guard = self.process.lock().await;
+            if let Some(child) = process_guard.as_mut() {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        warn!(
+                            extension_id = %self.extension_id,
+                            exit_code = status.code(),
+                            "Extension process exited unexpectedly"
+                        );
+                        self.kill_internal(&mut *process_guard).await;
+                        return Err(IsolatedExtensionError::Crashed(
+                            format!("Process exited with code: {:?}", status.code())
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        warn!(extension_id = %self.extension_id, error = %e, "Failed to check process status");
+                    }
+                }
+            }
+        }
+
+        // Check memory usage (platform-specific)
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(memory_kb) = self.get_process_memory_linux(pid) {
+                let memory_mb = memory_kb / 1024;
+                if memory_mb > self.config.max_memory_mb as u64 {
+                    error!(
+                        extension_id = %self.extension_id,
+                        memory_mb,
+                        max_memory_mb = self.config.max_memory_mb,
+                        "Extension exceeded memory limit, restarting"
+                    );
+                    let mut process_guard = self.process.lock().await;
+                    self.kill_internal(&mut *process_guard).await;
+                    drop(process_guard);
+
+                    // Attempt restart
+                    if self.config.restart_on_crash {
+                        return self.start().await;
+                    }
+                    return Err(IsolatedExtensionError::Crashed(
+                        format!("Memory limit exceeded: {}MB > {}MB", memory_mb, self.config.max_memory_mb)
+                    ));
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Ok(memory_bytes) = self.get_process_memory_macos(pid) {
+                let memory_mb = memory_bytes / (1024 * 1024);
+                if memory_mb > self.config.max_memory_mb as u64 {
+                    error!(
+                        extension_id = %self.extension_id,
+                        memory_mb,
+                        max_memory_mb = self.config.max_memory_mb,
+                        "Extension exceeded memory limit, restarting"
+                    );
+                    let mut process_guard = self.process.lock().await;
+                    self.kill_internal(&mut *process_guard).await;
+                    drop(process_guard);
+
+                    // Attempt restart
+                    if self.config.restart_on_crash {
+                        return self.start().await;
+                    }
+                    return Err(IsolatedExtensionError::Crashed(
+                        format!("Memory limit exceeded: {}MB > {}MB", memory_mb, self.config.max_memory_mb)
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn get_process_memory_linux(&self, pid: u32) -> Result<u64, std::io::Error> {
+        let status_path = format!("/proc/{}/status", pid);
+        let content = std::fs::read_to_string(status_path)?;
+
+        for line in content.lines() {
+            if line.starts_with("VmRSS:") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(kb) = parts[1].parse::<u64>() {
+                        return Ok(kb);
+                    }
+                }
+            }
+        }
+
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "VmRSS not found"))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn get_process_memory_macos(&self, pid: u32) -> Result<u64, std::io::Error> {
+        use std::process::Command;
+
+        let output = Command::new("ps")
+            .args(&["-o", "rss=", "-p", &pid.to_string()])
+            .output()?;
+
+        if output.status.success() {
+            let rss_str = String::from_utf8_lossy(&output.stdout);
+            if let Ok(rss_kb) = rss_str.trim().parse::<u64>() {
+                return Ok(rss_kb * 1024); // Convert KB to bytes
+            }
+        }
+
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Failed to get memory"))
     }
 }
 

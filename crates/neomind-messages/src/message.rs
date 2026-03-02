@@ -74,10 +74,10 @@ impl MessageSeverity {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Info => "信息",
-            Self::Warning => "警告",
-            Self::Critical => "严重",
-            Self::Emergency => "紧急",
+            Self::Info => "Info",
+            Self::Warning => "Warning",
+            Self::Critical => "Critical",
+            Self::Emergency => "Emergency",
         }
     }
 
@@ -146,10 +146,10 @@ impl MessageStatus {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Active => "活跃",
-            Self::Acknowledged => "已确认",
-            Self::Resolved => "已解决",
-            Self::Archived => "已归档",
+            Self::Active => "Active",
+            Self::Acknowledged => "Acknowledged",
+            Self::Resolved => "Resolved",
+            Self::Archived => "Archived",
         }
     }
 
@@ -490,7 +490,7 @@ mod tests {
         );
 
         let summary = msg.summary();
-        assert!(summary.contains("[严重]"));
+        assert!(summary.contains("[Critical]"));
         assert!(summary.contains("High Temp"));
         assert!(summary.contains("Temperature is too high"));
         assert!(summary.contains("sensor_1"));

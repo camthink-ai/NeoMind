@@ -593,6 +593,23 @@ export function AutomationPage() {
       title={tAuto('title')}
       subtitle={tAuto('pageDescription')}
       hideFooterOnMobile
+      footer={
+        activeTab === 'rules' && rules.length > RULES_ITEMS_PER_PAGE ? (
+          <Pagination
+            total={rules.length}
+            pageSize={RULES_ITEMS_PER_PAGE}
+            currentPage={rulesPage}
+            onPageChange={setRulesPage}
+          />
+        ) : activeTab === 'transforms' && transforms.length > TRANSFORMS_ITEMS_PER_PAGE ? (
+          <Pagination
+            total={transforms.length}
+            pageSize={TRANSFORMS_ITEMS_PER_PAGE}
+            currentPage={transformsPage}
+            onPageChange={setTransformsPage}
+          />
+        ) : undefined
+      }
     >
       {/* Tabs with Actions */}
       <PageTabs
@@ -669,17 +686,6 @@ export function AutomationPage() {
             onToggleStatus={handleToggleRule}
             onExecute={handleExecuteRule}
           />
-          {/* Pagination for rules */}
-          {rules.length > RULES_ITEMS_PER_PAGE && (
-            <div className="mt-4">
-              <Pagination
-                total={rules.length}
-                pageSize={RULES_ITEMS_PER_PAGE}
-                currentPage={rulesPage}
-                onPageChange={setRulesPage}
-              />
-            </div>
-          )}
         </PageTabsContent>
 
         {/* Transforms Tab */}
@@ -695,17 +701,6 @@ export function AutomationPage() {
             onToggleStatus={handleToggleTransform}
             onExport={handleExportSingleTransform}
           />
-          {/* Pagination for transforms */}
-          {transforms.length > TRANSFORMS_ITEMS_PER_PAGE && (
-            <div className="mt-4">
-              <Pagination
-                total={transforms.length}
-                pageSize={TRANSFORMS_ITEMS_PER_PAGE}
-                currentPage={transformsPage}
-                onPageChange={setTransformsPage}
-              />
-            </div>
-          )}
         </PageTabsContent>
       </PageTabs>
 

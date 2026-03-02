@@ -20,6 +20,7 @@
 //! - `capability`: Stream capability description
 //! - `session_created`: Session initialized (stateful mode)
 //! - `result`: Processing result
+//! - `push_output`: Extension-pushed data (push mode)
 //! - `error`: Error occurred
 //! - `session_closed`: Session terminated
 //! - `heartbeat`: Keep-alive message
@@ -30,19 +31,29 @@
 //! ```text
 //! [sequence: u64 (8 bytes, big endian)][data...]
 //! ```
+//!
+//! # Push Mode Architecture
+//!
+//! For Push mode, extensions actively push data to clients:
+//! 1. Client connects via WebSocket and sends `init` message
+//! 2. Server creates session and registers WebSocket sender
+//! 3. Server calls `extension.start_push(session_id)`
+//! 4. Extension pushes data via `PushOutputMessage` channel
+//! 5. Server forwards pushed data to WebSocket client
+//! 6. On disconnect, server calls `extension.stop_push()` and cleans up
 
 use axum::{
     extract::{
         Path, State, WebSocketUpgrade,
     },
-    extract::ws::WebSocket,
+    extract::ws::{Message as WsMessage, WebSocket},
     response::IntoResponse,
 };
 use futures::sink::SinkExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc, broadcast};
 use uuid::Uuid;
 use base64::prelude::*;
 
@@ -51,7 +62,7 @@ use crate::models::error::ErrorResponse;
 use crate::server::ServerState;
 use neomind_core::extension::{
     DataChunk, StreamCapability, StreamDataType, StreamDirection, StreamError,
-    StreamResult, StreamMode, StreamSession, SessionStats,
+    StreamResult, StreamMode, StreamSession, SessionStats, PushOutputMessage,
 };
 
 // ============================================================================
@@ -96,6 +107,15 @@ enum ServerMessage {
         data: String,  // base64 encoded
         data_type: String,
         processing_ms: f32,
+        metadata: Option<serde_json::Value>,
+    },
+    /// Extension-pushed output (Push mode)
+    PushOutput {
+        session_id: String,
+        sequence: u64,
+        data: String,  // base64 encoded
+        data_type: String,
+        timestamp: i64,
         metadata: Option<serde_json::Value>,
     },
     /// Error occurred
@@ -289,6 +309,82 @@ impl SessionManager {
     }
 }
 
+// ============================================================================
+// Push Output Router
+// ============================================================================
+
+/// Router for pushing extension outputs to WebSocket clients
+///
+/// This structure manages the routing of PushOutputMessage from extensions
+/// to the appropriate WebSocket client connections.
+pub struct PushOutputRouter {
+    /// Map of session_id -> WebSocket sender
+    /// Each sender can be used to forward pushed data to the client
+    senders: RwLock<HashMap<String, mpsc::Sender<PushOutputMessage>>>,
+}
+
+impl PushOutputRouter {
+    /// Create a new router
+    pub fn new() -> Self {
+        Self {
+            senders: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Register a sender for a session
+    pub async fn register(&self, session_id: String, sender: mpsc::Sender<PushOutputMessage>) {
+        let mut senders: tokio::sync::RwLockWriteGuard<'_, HashMap<String, mpsc::Sender<PushOutputMessage>>> = self.senders.write().await;
+        senders.insert(session_id.clone(), sender);
+        tracing::debug!("Registered push output sender for session: {}", session_id);
+    }
+
+    /// Unregister a session
+    pub async fn unregister(&self, session_id: &str) {
+        let mut senders: tokio::sync::RwLockWriteGuard<'_, HashMap<String, mpsc::Sender<PushOutputMessage>>> = self.senders.write().await;
+        senders.remove(session_id);
+        tracing::debug!("Unregistered push output sender for session: {}", session_id);
+    }
+
+    /// Route a push output message to the appropriate session
+    pub async fn route(&self, output: PushOutputMessage) -> bool {
+        let senders: tokio::sync::RwLockReadGuard<'_, HashMap<String, mpsc::Sender<PushOutputMessage>>> = self.senders.read().await;
+        if let Some(sender) = senders.get(&output.session_id) {
+            match sender.send(output).await {
+                Ok(_) => true,
+                Err(_) => {
+                    tracing::warn!("Failed to route push output: channel closed");
+                    false
+                }
+            }
+        } else {
+            tracing::debug!("No sender registered for session: {}", output.session_id);
+            false
+        }
+    }
+
+    /// Get the count of active sessions
+    pub async fn session_count(&self) -> usize {
+        let senders: tokio::sync::RwLockReadGuard<'_, HashMap<String, mpsc::Sender<PushOutputMessage>>> = self.senders.read().await;
+        senders.len()
+    }
+}
+
+impl Default for PushOutputRouter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Global push router instance
+static PUSH_ROUTER: std::sync::OnceLock<Arc<PushOutputRouter>> = std::sync::OnceLock::new();
+
+/// Get the global push router
+pub fn get_push_router() -> Arc<PushOutputRouter> {
+    PUSH_ROUTER
+        .get_or_init(|| Arc::new(PushOutputRouter::new()))
+        .clone()
+}
+
 /// Client info message format
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ClientInfoMessage {
@@ -319,18 +415,28 @@ async fn handle_stream_socket(
     extension_id: String,
     state: ServerState,
 ) {
-    tracing::info!("Extension stream connection requested for: {}", extension_id);
+    tracing::info!("Extension stream connection opened for: {}", extension_id);
 
     // Get extension and safety manager
     let registry = &state.extensions.registry;
+    let unified_service = &state.extensions.unified_service;
     let safety_manager = registry.safety_manager();
 
-    // Get extension
+    // Try to get extension from registry first, then from isolated manager
     let extension = match registry.get(&extension_id).await {
-        Some(ext) => ext,
+        Some(ext) => {
+            tracing::debug!("Found extension {} in registry", extension_id);
+            ext
+        }
         None => {
+            // Check if it's in the unified service's isolated manager
+            tracing::debug!("Extension {} not in registry, checking isolated manager", extension_id);
+            
+            // For isolated extensions, we need to create a proxy that implements Extension trait
+            // and communicates via IPC for streaming operations
+            // This is a complex task - for now, return an error
             send_error(&mut socket, "EXTENSION_NOT_FOUND",
-                       format!("Extension '{}' not found", extension_id)).await;
+                       format!("Extension '{}' not found in registry. Isolated extensions require streaming support via IPC.", extension_id)).await;
             return;
         }
     };
@@ -353,18 +459,57 @@ async fn handle_stream_socket(
     let msg = ServerMessage::Capability {
         capability: StreamCapabilityDto::from(&cap),
     };
+    tracing::info!("Sending capability: mode={:?}, direction={:?}", cap.mode, cap.direction);
     send_message(&mut socket, &msg).await;
 
     // Track session if stateful
     let mut session_id: Option<String> = None;
     let mut output_sequence = 0u64;
 
+    // For Push mode: channel to receive push outputs from extension
+    let mut push_rx: Option<mpsc::Receiver<PushOutputMessage>> = None;
+    let push_router = get_push_router();
+
     // Message loop
-    while let Some(msg_result) = socket.recv().await {
+    loop {
+        // For Push mode: also check for push outputs
+        let msg_result = if let Some(ref mut rx) = push_rx {
+            // Use tokio::select to handle both WebSocket messages and push outputs
+            // Type annotation needed for the receiver
+            let rx: &mut mpsc::Receiver<PushOutputMessage> = rx;
+            tokio::select! {
+                msg = socket.recv() => msg,
+                output = rx.recv() => {
+                    match output {
+                        Some(output) => {
+                            // Forward push output to WebSocket
+                            let push_msg = ServerMessage::PushOutput {
+                                session_id: output.session_id,
+                                sequence: output.sequence,
+                                data: BASE64_STANDARD.encode(&output.data),
+                                data_type: output.data_type,
+                                timestamp: output.timestamp,
+                                metadata: output.metadata,
+                            };
+                            send_message(&mut socket, &push_msg).await;
+                            continue;
+                        }
+                        None => {
+                            // Channel closed
+                            tracing::info!("Push output channel closed");
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            socket.recv().await
+        };
+
         match msg_result {
-            Ok(msg) => {
+            Some(Ok(msg)) => {
                 match msg {
-                    axum::extract::ws::Message::Text(text) => {
+                    WsMessage::Text(text) => {
                         // Parse client message
                         if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                             match client_msg {
@@ -394,15 +539,43 @@ async fn handle_stream_socket(
 
                                         // Initialize in extension
                                         let ext = extension.read().await;
+                                        tracing::info!("Initializing session {} for extension {}", sid, extension_id);
                                         if let Err(e) = ext.init_session(&session).await {
+                                            tracing::error!("Failed to init session: {}", e);
                                             send_error(&mut socket, "SESSION_INIT_FAILED",
                                                        format!("Failed to init session: {}", e)).await;
                                             continue;
                                         }
+                                        tracing::info!("Session {} initialized successfully", sid);
+
+                                        // For Push mode: setup output channel
+                                        if cap.mode == StreamMode::Push {
+                                            // Create channel for push outputs
+                                            let (tx, rx) = mpsc::channel::<PushOutputMessage>(32);
+                                            push_rx = Some(rx);
+
+                                            // Register with router
+                                            push_router.register(sid.clone(), tx).await;
+
+                                            // Set output sender on extension
+                                            let output_sender = Arc::new(
+                                                create_push_forwarder(sid.clone(), push_router.clone())
+                                            );
+                                            ext.set_output_sender(output_sender);
+
+                                            // Start pushing
+                                            if let Err(e) = ext.start_push(&sid).await {
+                                                send_error(&mut socket, "PUSH_START_FAILED",
+                                                           format!("Failed to start push: {}", e)).await;
+                                                push_router.unregister(&sid).await;
+                                                push_rx = None;
+                                                continue;
+                                            }
+                                        }
+
                                         drop(ext);
 
                                         // Track locally
-                                        // Note: In production, you'd use a proper session manager
                                         session_id = Some(sid.clone());
 
                                         // Send session created
@@ -411,7 +584,8 @@ async fn handle_stream_socket(
                                             server_time: chrono::Utc::now().timestamp_millis(),
                                         }).await;
 
-                                        tracing::info!("Session created: {} for extension: {}", sid, extension_id);
+                                        tracing::info!("Session created: {} for extension: {} (mode: {:?})",
+                                                       sid, extension_id, cap.mode);
                                     } else {
                                         send_error(&mut socket, "INVALID_MODE",
                                                    "Cannot init session in stateless mode".to_string()).await;
@@ -428,7 +602,7 @@ async fn handle_stream_socket(
                             }
                         }
                     }
-                    axum::extract::ws::Message::Binary(data) => {
+                    WsMessage::Binary(data) => {
                         // Process binary chunk
                         let (sequence, chunk_data) = match parse_binary_frame(data) {
                             Some((s, d)) => (s, d),
@@ -524,13 +698,8 @@ async fn handle_stream_socket(
                                 )
                                 .await;
                             }
-                            Err(timeout_err) => {
-                                // Timeout wrapper already converted into StreamError, just log and notify safety manager
-                                tracing::warn!(
-                                    "Stream processing timeout for extension {}: {}",
-                                    extension_id,
-                                    timeout_err.to_string()
-                                );
+                            Err(_timeout_err) => {
+                                // Timeout wrapper already converted into StreamError
                                 safety_manager.record_failure(&extension_id).await;
                                 send_error(
                                     &mut socket,
@@ -541,24 +710,29 @@ async fn handle_stream_socket(
                             }
                         }
                     }
-                    axum::extract::ws::Message::Close(_) => {
-                        tracing::info!("Client disconnected");
-                        break;
-                    }
-                    axum::extract::ws::Message::Ping(data) => {
+                    WsMessage::Ping(data) => {
                         // Respond with pong
-                        if let Err(e) = socket.send(axum::extract::ws::Message::Pong(data)).await {
+                        if let Err(e) = socket.send(WsMessage::Pong(data)).await {
                             tracing::error!("Failed to send pong: {}", e);
                             break;
                         }
                     }
-                    axum::extract::ws::Message::Pong(_) => {
+                    WsMessage::Pong(_) => {
                         // Received pong, ignore
+                    }
+                    WsMessage::Close(_) => {
+                        tracing::info!("Client disconnected");
+                        break;
                     }
                 }
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 tracing::error!("WebSocket error: {}", e);
+                break;
+            }
+            None => {
+                // socket.recv() returned None - connection closed
+                tracing::info!("WebSocket connection closed");
                 break;
             }
         }
@@ -566,10 +740,19 @@ async fn handle_stream_socket(
 
     // Cleanup session
     if let Some(sid) = session_id {
+        // For Push mode: stop pushing
+        if cap.mode == StreamMode::Push {
+            let ext = extension.read().await;
+            if let Err(e) = ext.stop_push(&sid).await {
+                tracing::warn!("Failed to stop push for session {}: {}", sid, e);
+            }
+            push_router.unregister(&sid).await;
+        }
+
         let ext = extension.read().await;
         if let Ok(stats) = ext.close_session(&sid).await {
             send_message(&mut socket, &ServerMessage::SessionClosed {
-                session_id: sid,
+                session_id: sid.clone(),
                 total_frames: stats.input_chunks,
                 duration_ms: (chrono::Utc::now().timestamp_millis() - stats.last_activity) as u64,
                 stats: SessionStatsDto::from(&stats),
@@ -578,6 +761,26 @@ async fn handle_stream_socket(
     }
 
     tracing::info!("Extension stream disconnected for: {}", extension_id);
+}
+
+/// Create a push forwarder that sends PushOutputMessage to the router
+fn create_push_forwarder(
+    session_id: String,
+    router: Arc<PushOutputRouter>,
+) -> mpsc::Sender<PushOutputMessage> {
+    let (tx, mut rx) = mpsc::channel::<PushOutputMessage>(64);
+
+    tokio::spawn(async move {
+        while let Some(output) = rx.recv().await {
+            // Ensure session_id matches
+            let mut output = output;
+            output.session_id = session_id.clone();
+            router.route(output).await;
+        }
+        tracing::debug!("Push forwarder stopped for session: {}", session_id);
+    });
+
+    tx
 }
 
 /// Parse binary frame: [sequence: u64 (8 bytes, big endian)][data...]

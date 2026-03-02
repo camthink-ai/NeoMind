@@ -55,6 +55,7 @@ pub mod agent_tools;
 pub mod core_tools;
 pub mod error;
 pub mod extension_tools;
+pub mod image_analyzer;
 pub mod real;
 pub mod registry;
 pub mod simplified;
@@ -171,6 +172,14 @@ pub use agent_tools::{
 
 pub use extension_tools::{
     ExtensionFilter, ExtensionTool, ExtensionToolExecutor, ExtensionToolGenerator,
+};
+
+// ============================================================================
+// Image Analysis Tools
+// ============================================================================
+
+pub use image_analyzer::{
+    AnalysisResult as ImageAnalysisResult, Detection, ImageAnalyzerTool, ImageSource, ModelConfig,
 };
 
 // Note: ExtensionRegistry is now defined in neomind_core::extension
