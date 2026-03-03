@@ -18,7 +18,7 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 <div align="center">
   <table>
     <tr>
-      <td width="60%" align="center">
+      <td width="65%" align="center">
         <table width="100%">
           <tr>
             <td align="center">
@@ -36,9 +36,8 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
           </tr>
         </table>
         <sub><b>💻 Desktop Application</b></sub>
-        </td>
       </td>
-      <td width="34%" align="center">
+      <td width="35%" align="center">
         <img src="docs/img/mobile_web.png" alt="Mobile Web" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
         <br/>
         <sub>📱 Mobile Web</sub>
