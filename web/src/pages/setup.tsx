@@ -287,7 +287,7 @@ export function SetupPage() {
       // Subscribe to newsletter if requested and email is provided
       if (subscribeToNewsletter && email && email.trim()) {
         try {
-          await mcSubscribe(email)
+          await mcSubscribe(email, username)
           // Subscription successful, but don't block user flow
           console.log('Successfully subscribed to Camthink newsletter')
         } catch (subscribeErr) {
