@@ -333,29 +333,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Failed to start server: {}", e);
     }
 
-    // Check server readiness asynchronously - don't block window display
-    // Window is already visible (visible: true in config), frontend will connect when ready
-    let app_handle_for_health = app.handle().clone();
-    let state_for_health = app.state::<ServerState>().inner().clone();
-
-    tauri::async_runtime::spawn(async move {
-        // Use HTTP health check (30 second timeout)
-        let server_ready = state_for_health.wait_for_server_ready(30);
-
-        let _ = app_handle_for_health.emit_to(
-            "main",
-            "backend-ready",
-            serde_json::json!({
-                "status": if server_ready { "ready" } else { "timeout" },
-                "port": 9375
-            }),
-        );
-
-        if !server_ready {
-            eprintln!("Warning: Backend health check timed out after 30 seconds");
-        }
-    });
-
     Ok(())
 }
 
