@@ -22,14 +22,14 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
         <table width="100%">
           <tr>
             <td align="center">
-              <img src="docs/img/dashboard_light.png" alt="Desktop Light Theme" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+              <img src="docs/img/dashboard_light.png" alt="Desktop Light Theme" width="100%" style="max-width: 600px; border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
               <br/>
               <sub>Light Theme</sub>
             </td>
           </tr>
           <tr>
             <td align="center" style="padding-top: 10px;">
-              <img src="docs/img/dashboard_dark.png" alt="Desktop Dark Theme" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+              <img src="docs/img/dashboard_dark.png" alt="Desktop Dark Theme" width="100%" style="max-width: 600px; border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
               <br/>
               <sub>Dark Theme</sub>
             </td>
@@ -37,8 +37,8 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
         </table>
         <sub><b>💻 Desktop Application</b></sub>
       </td>
-      <td width="35%" align="center">
-        <img src="docs/img/mobile_web.png" alt="Mobile Web" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+      <td width="35%" align="center" valign="top">
+        <img src="docs/img/mobile_web.png" alt="Mobile Web" width="100%" style="max-width: 280px; border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
         <br/>
         <sub>📱 Mobile Web</sub>
       </td>
