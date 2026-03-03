@@ -17,7 +17,7 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
 
 # HTTP Client
-reqwest = { version = "0.12", optional = true, features = ["json"] }
+reqwest = { workspace = true, optional = true }
 
 # Storage
 redb = { workspace = true }

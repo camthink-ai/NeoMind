@@ -10,6 +10,18 @@ use crate::auth_users::UserRole;
 use crate::models::error::ErrorResponse;
 use crate::server::ServerState;
 
+/// Basic email validation helper
+fn is_valid_email(email: &str) -> bool {
+    // Simple email validation: must contain @ and . after @
+    if let Some(at_pos) = email.find('@') {
+        if at_pos > 0 && at_pos < email.len() - 1 {
+            let after_at = &email[at_pos + 1..];
+            return after_at.contains('.') && !after_at.starts_with('.') && !after_at.ends_with('.');
+        }
+    }
+    false
+}
+
 /// Setup status response.
 #[derive(Debug, Serialize)]
 pub struct SetupStatusResponse {
@@ -116,6 +128,18 @@ pub async fn initialize_admin_handler(
         });
     }
 
+    // Validate email format if provided
+    if let Some(ref email_addr) = req.email {
+        if !email_addr.is_empty() && !is_valid_email(email_addr) {
+            return Err(ErrorResponse {
+                status: StatusCode::BAD_REQUEST,
+                code: "INVALID_EMAIL".to_string(),
+                message: "Please provide a valid email address".to_string(),
+                request_id: None,
+            });
+        }
+    }
+
     // Validate password strength
     if req.password.len() < 8 {
         return Err(ErrorResponse {
@@ -136,6 +160,7 @@ pub async fn initialize_admin_handler(
             message: "Password must contain both letters and numbers".to_string(),
             request_id: None,
         });
+    });
     }
 
     // Create admin user

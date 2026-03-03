@@ -18,7 +18,7 @@ async-trait = { workspace = true }
 thiserror = { workspace = true }
 
 # HTTP client for embedding APIs
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 
 # LRU cache for embeddings
 lru = "0.12"

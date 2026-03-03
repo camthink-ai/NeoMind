@@ -42,5 +42,6 @@
   "accountCreated": "Admin account created",
   "goToDashboard": "Go to Dashboard",
   "setupAlreadyCompleted": "Setup has already been completed",
-  "setupFailed": "Setup failed. Please try again."
+  "setupFailed": "Setup failed. Please try again.",
+  "subscribeNewsletter": "Subscribe to Camthink newsletter for product updates and new features"
 }

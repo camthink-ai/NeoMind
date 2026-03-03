@@ -18,13 +18,28 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 <div align="center">
   <table>
     <tr>
-      <td width="70%" align="center">
-        <img src="docs/img/dashboard_light.png" alt="Desktop App" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
-        <br/>
-        <sub>💻 Desktop Application</sub>
+      <td width="60%" align="center">
+        <table width="100%">
+          <tr>
+            <td align="center">
+              <img src="docs/img/dashboard_light.png" alt="Desktop Light Theme" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+              <br/>
+              <sub>Light Theme</sub>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding-top: 10px;">
+              <img src="docs/img/dashboard_dark.png" alt="Desktop Dark Theme" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+              <br/>
+              <sub>Dark Theme</sub>
+            </td>
+          </tr>
+        </table>
+        <sub><b>💻 Desktop Application</b></sub>
+        </td>
       </td>
-      <td width="30%" align="center">
-        <img src="docs/img/mobile_web.png" alt="Mobile Web" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(49, 28, 28, 0.15);" />
+      <td width="34%" align="center">
+        <img src="docs/img/mobile_web.png" alt="Mobile Web" style="border-radius: 3px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
         <br/>
         <sub>📱 Mobile Web</sub>
       </td>

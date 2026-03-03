@@ -21,6 +21,57 @@ const languages = [
   { code: 'zh', name: '简体中文' },
 ]
 
+// Mailchimp subscription function
+function mcSubscribe(email: string): Promise<{ result: string; msg: string }> {
+  const base = "https://camthink.us2.list-manage.com/subscribe/post-json"
+
+  // Generate unique JSONP callback name
+  const cb = "mc_cb_" + Date.now() + "_" + Math.random().toString(16).slice(2)
+
+  const params = new URLSearchParams({
+    u: "4ecc400d85930178fb49aa9de",
+    id: "466fcc3b55",
+    f_id: "00e60ae1f0",
+    EMAIL: email,
+    // honeypot must be empty
+    b_4ecc400d85930178fb49aa9de_466fcc3b55: "",
+    // JSONP callback
+    c: cb,
+    // optional: cache buster
+    _: Date.now().toString(),
+  })
+
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      reject(new Error("Mailchimp JSONP timeout"))
+    }, 8000)
+
+    function cleanup() {
+      clearTimeout(timeout)
+      try {
+        delete (window as any)[cb]
+      } catch (_) {
+        // ignore
+      }
+      if (script && script.parentNode) script.parentNode.removeChild(script)
+    }
+
+    ;(window as any)[cb] = function (data: { result: string; msg: string }) {
+      cleanup()
+      resolve(data) // data.result / data.msg
+    }
+
+    const script = document.createElement("script")
+    script.src = base + "?" + params.toString()
+    script.onerror = () => {
+      cleanup()
+      reject(new Error("Mailchimp JSONP network error"))
+    }
+    document.head.appendChild(script)
+  })
+}
+
 type SetupStep = 'welcome' | 'account' | 'timezone' | 'llm' | 'complete'
 type LlmProvider = 'ollama' | 'openai' | 'anthropic' | 'google' | 'xai'
 
@@ -113,6 +164,7 @@ export function SetupPage() {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [email, setEmail] = useState("")
+  const [subscribeToNewsletter, setSubscribeToNewsletter] = useState(false)
 
   // LLM config state
   const [selectedProvider, setSelectedProvider] = useState<LlmProvider>('ollama')
@@ -226,6 +278,19 @@ export function SetupPage() {
       // Store token for next steps
       localStorage.setItem('neomind_token', data.token)
       localStorage.setItem('neomind_user', JSON.stringify(data.user))
+
+      // Subscribe to newsletter if requested and email is provided
+      if (subscribeToNewsletter && email && email.trim()) {
+        try {
+          await mcSubscribe(email)
+          // Subscription successful, but don't block user flow
+          console.log('Successfully subscribed to Camthink newsletter')
+        } catch (subscribeErr) {
+          // Log error but don't block the setup flow
+          logError(subscribeErr, { operation: 'Newsletter subscription' })
+          console.warn('Newsletter subscription failed, but continuing setup')
+        }
+      }
 
       // Move to timezone step
       setStep('timezone')
@@ -522,6 +587,22 @@ export function SetupPage() {
                     autoComplete="email"
                     className="h-10 bg-background/70 dark:bg-background/30 border-border/50 dark:border-border/30 mt-1.5"
                   />
+                  
+                  {/* Newsletter Subscription Checkbox */}
+                  {email && email.trim() && (
+                    <div className="flex items-start gap-2 mt-2">
+                      <input
+                        type="checkbox"
+                        id="subscribe"
+                        checked={subscribeToNewsletter}
+                        onChange={(e) => setSubscribeToNewsletter(e.target.checked)}
+                        className="mt-1 h-4 w-4 rounded border-border/50"
+                      />
+                      <label htmlFor="subscribe" className="text-xs text-muted-foreground cursor-pointer">
+                        {t('setup:subscribeNewsletter')}
+                      </label>
+                    </div>
+                  )}
                 </div>
 
                 {/* Password Field */}

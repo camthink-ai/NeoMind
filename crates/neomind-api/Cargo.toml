@@ -36,7 +36,7 @@ toml = "0.8"
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 
 # Web framework
 axum = { workspace = true, features = ["ws", "multipart", "macros"] }
