@@ -61,8 +61,10 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             web/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('web/src-tauri/Cargo.lock') }}
+          # Include version tag in cache key to prevent using old cached builds
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('web/src-tauri/Cargo.lock') }}-${{ github.ref_name }}
           restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('web/src-tauri/Cargo.lock') }}-
             ${{ runner.os }}-cargo-${{ matrix.target }}-
             ${{ runner.os }}-cargo-
 
@@ -157,8 +159,10 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          # Include version tag in cache key to prevent using old cached builds
+          key: server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.ref_name }}
           restore-keys: |
+            server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-
             server-${{ matrix.target }}-
 
       - name: Build server binary
