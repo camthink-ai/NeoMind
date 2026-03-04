@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Listener, Manager};
 use tokio::runtime::Runtime;
 
 use tauri::tray::TrayIconEvent;
@@ -18,73 +18,7 @@ struct ServerState {
     server_thread: Arc<Mutex<Option<std::thread::JoinHandle<()>>>>,
 }
 
-impl ServerState {
-    /// Wait for the server to be ready with HTTP health check.
-    /// Uses exponential backoff and checks the actual health endpoint.
-    fn wait_for_server_ready(&self, timeout_secs: u64) -> bool {
-        let max_attempts = timeout_secs * 10; // Check every 100ms
-        let client = reqwest::blocking::Client::builder()
-            .timeout(Duration::from_millis(500))
-            .build();
-
-        let client = match client {
-            Ok(client) => client,
-            Err(_) => {
-                // Fallback to TCP check if HTTP client fails to build
-                return self.wait_for_server_ready_tcp(timeout_secs);
-            }
-        };
-
-        for attempt in 0..max_attempts {
-            // Try HTTP health check first
-            if let Ok(response) = client.get("http://127.0.0.1:9375/api/health").send() {
-                if response.status().is_success() {
-                    println!(
-                        "Server health check passed via HTTP (attempt {})",
-                        attempt + 1
-                    );
-                    return true;
-                }
-            }
-
-            // Fallback to TCP check for early startup
-            if self.check_tcp_health() {
-                // If TCP is ready but HTTP isn't, give it a bit more time
-                if attempt > 5 {
-                    println!(
-                        "Server TCP ready, waiting for HTTP handler (attempt {})",
-                        attempt + 1
-                    );
-                }
-            }
-
-            std::thread::sleep(Duration::from_millis(100));
-        }
-
-        // Final TCP fallback
-        self.check_tcp_health()
-    }
-
-    /// Simple TCP health check as fallback
-    fn wait_for_server_ready_tcp(&self, timeout_secs: u64) -> bool {
-        let max_attempts = timeout_secs * 20;
-        for _ in 0..max_attempts {
-            if self.check_tcp_health() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        false
-    }
-
-    fn check_tcp_health(&self) -> bool {
-        std::net::TcpStream::connect_timeout(
-            &std::net::SocketAddr::from(([127, 0, 0, 1], 9375)),
-            Duration::from_millis(100),
-        )
-        .is_ok()
-    }
-}
+impl ServerState {}
 
 impl Drop for ServerState {
     fn drop(&mut self) {
@@ -300,6 +234,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // On macOS/Linux: close button minimizes to tray
     if let Some(window) = app.get_webview_window("main") {
         let window_clone = window.clone();
+        #[cfg(target_os = "windows")]
         let app_handle = app.handle().clone();
         window.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

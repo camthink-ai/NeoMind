@@ -553,7 +553,7 @@ impl ConversationContext {
         }
 
         // "关闭"
-        if (lower == "关闭" || lower == "关") {
+        if lower == "关闭" || lower == "关" {
             if let Some(device) = &self.current_device {
                 return Some(format!("关闭{}", device));
             }

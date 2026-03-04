@@ -41,7 +41,6 @@ use crate::error::{MemoryError, Result};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
 
 /// Unique identifier for an entity in the graph.
 pub type EntityId = String;

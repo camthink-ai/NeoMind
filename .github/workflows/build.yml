@@ -81,6 +81,7 @@ jobs:
 
       - name: Build frontend
         working-directory: ./web
+        shell: bash
         run: |
           npm run build
           ls -la dist/
