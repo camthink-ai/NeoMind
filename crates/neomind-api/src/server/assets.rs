@@ -8,7 +8,7 @@
 
 use axum::{
     extract::Path,
-    http::{header, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
 };
 
@@ -82,14 +82,11 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
                 "public, max-age=31536000, immutable"
             };
 
-            (
-                [
-                    (header::CONTENT_TYPE, mime),
-                    ("cache-control", cache_control),
-                ],
-                file.data.to_vec(),
-            )
-                .into_response()
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_str(&mime).unwrap());
+            headers.insert(header::CACHE_CONTROL, HeaderValue::from_str(cache_control).unwrap());
+
+            (headers, file.data.to_vec()).into_response()
         })
         .unwrap_or_else(|| {
             // File not found - for SPA routes, serve index.html
@@ -102,7 +99,9 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
                 if asset_path.contains('.') {
                     (StatusCode::NOT_FOUND, html).into_response()
                 } else {
-                    (StatusCode::OK, [(header::CONTENT_TYPE, "text/html")], html).into_response()
+                    let mut headers = HeaderMap::new();
+                    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+                    (headers, html).into_response()
                 }
             } else {
                 StatusCode::NOT_FOUND.into_response()
@@ -148,7 +147,9 @@ pub async fn serve_asset(Path(path): Path<String>) -> impl IntoResponse {
 </html>
     "#;
 
-    ([(header::CONTENT_TYPE, "text/html")], html.to_string()).into_response()
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+    (headers, html.to_string()).into_response()
 }
 
 /// Serve the main index.html entry point.
@@ -158,9 +159,15 @@ pub async fn serve_index() -> impl IntoResponse {
         .map(|file| {
             let html = String::from_utf8(file.data.to_vec())
                 .unwrap_or_else(|_| "<!DOCTYPE html><html><body>Error loading app</body></html>".to_string());
-            ([(header::CONTENT_TYPE, "text/html")], html)
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+            (headers, html)
         })
-        .unwrap_or_else(|| ([(header::CONTENT_TYPE, "text/html")], "<!DOCTYPE html><html><body>NeoMind UI not found. Please run: cd web && npm run build</body></html>"))
+        .unwrap_or_else(|| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+            (headers, "<!DOCTYPE html><html><body>NeoMind UI not found. Please run: cd web && npm run build</body></html>".to_string())
+        })
         .into_response()
 }
 
@@ -192,7 +199,9 @@ pub async fn serve_index() -> impl IntoResponse {
 </html>
     "#;
 
-    ([(header::CONTENT_TYPE, "text/html")], html.to_string()).into_response()
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html"));
+    (headers, html.to_string()).into_response()
 }
 
 /// Check if embedded assets are available.
