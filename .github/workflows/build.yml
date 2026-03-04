@@ -79,6 +79,13 @@ jobs:
         working-directory: ./web
         run: npm ci
 
+      - name: Build frontend
+        working-directory: ./web
+        run: |
+          npm run build
+          ls -la dist/
+          test -f dist/index.html || (echo "Frontend build failed: dist/index.html not found" && exit 1)
+
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
