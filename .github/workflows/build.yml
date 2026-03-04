@@ -130,38 +130,60 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  # Server binary build (Linux x64 and ARM64)
+  # Server binary build with embedded frontend (Linux x64 and ARM64, macOS x64 and ARM64)
   build-server:
-    name: Server Binary
+    name: Server Binary (${{ matrix.os }}-${{ matrix.arch }})
     strategy:
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
+          - os: linux
+            target: x86_64-unknown-linux-gnu
             arch: amd64
-          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - os: linux
+            target: aarch64-unknown-linux-gnu
             arch: arm64
-    runs-on: ubuntu-latest
+            runner: ubuntu-latest
+          - os: darwin
+            target: x86_64-apple-darwin
+            arch: amd64
+            runner: macos-latest
+          - os: darwin
+            target: aarch64-apple-darwin
+            arch: arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Install frontend dependencies
+        working-directory: ./web
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: ./web
+        run: npm run build
+
+      - name: Prepare static assets for embedding
+        run: |
+          mkdir -p crates/neomind-api/static
+          cp -r web/dist/* crates/neomind-api/static/
+          echo "Static assets prepared:"
+          ls -la crates/neomind-api/static/
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-          components: rust-src
-
-      - name: Cache cross-compilation tool
-        uses: actions/cache@v4
-        id: cache-cross
-        with:
-          path: ~/.cargo/bin/cross
-          key: cross-${{ runner.os }}-v1
-
-      - name: Install cross-compilation tool
-        if: steps.cache-cross.outputs.cache-hit != 'true'
-        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Cache Rust dependencies
         uses: actions/cache@v4
@@ -170,28 +192,50 @@ jobs:
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          # Include version tag in cache key to prevent using old cached builds
           key: server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.ref_name }}
           restore-keys: |
             server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-
             server-${{ matrix.target }}-
 
-      - name: Build server binary
-        run: cross build --release -p neomind-cli --target ${{ matrix.target }}
+      # Linux cross-compilation setup
+      - name: Cache cross-compilation tool
+        if: matrix.os == 'linux'
+        uses: actions/cache@v4
+        id: cache-cross
+        with:
+          path: ~/.cargo/bin/cross
+          key: cross-${{ runner.os }}-v1
 
-      - name: Build extension runner
+      - name: Install cross-compilation tool
+        if: matrix.os == 'linux' && steps.cache-cross.outputs.cache-hit != 'true'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build server binary with embedded frontend (Linux)
+        if: matrix.os == 'linux'
+        run: cross build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static
+
+      - name: Build extension runner (Linux)
+        if: matrix.os == 'linux'
         run: cross build --release -p neomind-extension-runner --target ${{ matrix.target }}
+
+      - name: Build server binary with embedded frontend (macOS)
+        if: matrix.os == 'darwin'
+        run: cargo build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static
+
+      - name: Build extension runner (macOS)
+        if: matrix.os == 'darwin'
+        run: cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
 
       - name: Create release archive
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../neomind-server-linux-${{ matrix.arch }}.tar.gz neomind neomind-extension-runner
+          tar czf ../../../neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz neomind neomind-extension-runner
 
       - name: Upload server artifact
         uses: actions/upload-artifact@v4
         with:
-          name: neomind-server-linux-${{ matrix.arch }}
-          path: neomind-server-linux-${{ matrix.arch }}.tar.gz
+          name: neomind-server-${{ matrix.os }}-${{ matrix.arch }}
+          path: neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
           retention-days: 30
 
   release:
@@ -222,6 +266,8 @@ jobs:
             artifacts/**/*.deb
             artifacts/neomind-server-linux-amd64/*.tar.gz
             artifacts/neomind-server-linux-arm64/*.tar.gz
+            artifacts/neomind-server-darwin-amd64/*.tar.gz
+            artifacts/neomind-server-darwin-arm64/*.tar.gz
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -30,7 +30,7 @@
     "security": {
       "csp": {
         "default-src": "'self' customprotocol: asset:",
-        "connect-src": "ipc: http://ipc.localhost https://localhost:9375 ws://localhost:9375 ws://localhost:5173 tauri://*",
+        "connect-src": "ipc: http://ipc.localhost http://localhost:9375 https://localhost:9375 ws://localhost:9375 ws://localhost:5173 http://tauri.localhost tauri://*",
         "font-src": "'self' https://fonts.gstatic.com",
         "img-src": "'self' asset: http://asset.localhost blob: data: https:",
         "style-src": "'self' https://fonts.googleapis.com",

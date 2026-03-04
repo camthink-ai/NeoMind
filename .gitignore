@@ -21,6 +21,9 @@ config.toml
 # Crate-level data folders (should use project root data/)
 crates/*/data/
 
+# Embedded static assets (generated during CI build)
+crates/neomind-api/static/
+
 # =============================================================================
 # Web Frontend
 # =============================================================================

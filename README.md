@@ -148,34 +148,68 @@ On first launch, a setup wizard will guide you through:
 2. Configuring LLM backend (Ollama recommended for edge deployment)
 3. Connecting to your MQTT broker or discovering devices
 
-### 🖥️ Server Binary Deployment (Linux)
+### 🖥️ Server Binary Deployment
 
-**One-line installation (always installs latest version):**
+> **✨ Out of the Box**: The server binary has the Web UI embedded. Just download and run - no additional frontend deployment needed!
+
+**One-line installation (Linux & macOS):**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | sh
 ```
 
 **Install specific version:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.5.9 bash
+curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.5.9 sh
 ```
+
+**Custom installation:**
+
+```bash
+# Custom directories
+curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | INSTALL_DIR=~/.local/bin DATA_DIR=~/.neomind sh
+
+# Skip service installation
+curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | NO_SERVICE=true sh
+```
+
+**Supported platforms:**
+- Linux (x86_64/amd64, aarch64/arm64)
+- macOS (Intel, Apple Silicon)
+
+**What the script does:**
+1. Detects your OS and architecture automatically
+2. Downloads the correct binary with embedded Web UI
+3. Installs to `/usr/local/bin` (or custom directory)
+4. Creates systemd service (Linux) or launchd service (macOS)
+5. Starts the service automatically
 
 **Manual installation:**
 
 ```bash
-# Download binary (replace VERSION with desired version)
+# Download binary (replace VERSION and PLATFORM)
+# PLATFORM: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64
 wget https://github.com/camthink-ai/NeoMind/releases/download/v0.5.9/neomind-server-linux-amd64.tar.gz
 tar xzf neomind-server-linux-amd64.tar.gz
+
+# Run directly - Web UI included!
+./neomind
+
+# Or install system-wide
 sudo install -m 755 neomind /usr/local/bin/
 
-# Create systemd service
+# Create systemd service (Linux)
 sudo cp scripts/neomind.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable neomind
 sudo systemctl start neomind
 ```
+
+**Access the application:**
+- Web UI: http://localhost:9375
+- API: http://localhost:9375/api
+- API Docs: http://localhost:9375/api/docs
 
 ### 💻 Development Mode
 
@@ -232,10 +266,11 @@ The installer will be in `web/src-tauri/target/release/bundle/`
 
 ## Deployment Options
 
-| Method | Use Case | Link |
-|--------|----------|------|
-| **Desktop App** | End-user desktop application | [Download](https://github.com/camthink-ai/NeoMind/releases/latest) |
-| **Server Binary** | Standalone server deployment (Linux amd64) | [Download](https://github.com/camthink-ai/NeoMind/releases/download/v0.5.9/neomind-server-linux-amd64.tar.gz) |
+| Method | Use Case | Platforms |
+|--------|----------|-----------|
+| **Desktop App** | End-user desktop application | macOS, Windows, Linux |
+| **Server Binary** | Server/headless deployment | Linux (amd64/arm64), macOS (Intel/ARM) |
+| **One-line Install** | Quick server setup | `curl -fsSL ... \| sh` |
 
 ---
 
