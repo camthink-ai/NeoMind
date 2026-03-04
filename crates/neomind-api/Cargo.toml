@@ -12,7 +12,7 @@ default = ["embedded-broker", "webhook", "email"]
 embedded-broker = []
 webhook = []
 email = []
-static = ["rust-embed"]
+static = ["rust-embed", "mime_guess"]
 testing = []  # Enable test-only APIs for parallel test execution
 
 [dependencies]
