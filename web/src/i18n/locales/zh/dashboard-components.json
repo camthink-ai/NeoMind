@@ -410,7 +410,11 @@
     "noUrlSpecified": "未指定 URL",
     "configureUrl": "配置数据源或 URL",
     "urlPlaceholder": "https://example.com",
-    "webContent": "网页内容"
+    "webContent": "网页内容",
+    "openInNewWindow": "在新窗口中打开",
+    "cannotEmbed": "此网站无法直接嵌入显示",
+    "openInWindowHint": "点击下方按钮在新窗口中打开",
+    "cancel": "取消"
   },
   "videoDisplay": {
     "noVideoSource": "无视频源",

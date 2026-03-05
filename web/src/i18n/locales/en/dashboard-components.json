@@ -446,7 +446,11 @@
     "noUrlSpecified": "No URL specified",
     "configureUrl": "Configure a data source or URL",
     "urlPlaceholder": "https://example.com",
-    "webContent": "Web content"
+    "webContent": "Web content",
+    "openInNewWindow": "Open in new window",
+    "cannotEmbed": "This website cannot be embedded directly",
+    "openInWindowHint": "Click below to open in a separate window",
+    "cancel": "Cancel"
   },
   "videoDisplay": {
     "noVideoSource": "No Video Source",

@@ -5,12 +5,10 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use tauri::{AppHandle, Listener, Manager};
-use tokio::runtime::Runtime;
-
+use tauri::{AppHandle, Listener, Manager, image::Image};
 use tauri::tray::TrayIconEvent;
+use tokio::runtime::Runtime;
 
 // Global state for the Axum server
 struct ServerState {
@@ -75,7 +73,6 @@ fn clean_shutdown(app_handle: &AppHandle) {
 
 /// Create and set up the system tray menu
 fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn std::error::Error>> {
-    use tauri::image::Image;
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::TrayIconBuilder;
 
@@ -88,15 +85,8 @@ fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn s
     let app_handle = app.handle().clone();
     let app_handle_for_tray = app_handle.clone();
 
-    // Load tray icon - Tauri 2.x requires raw RGBA bytes
-    // For now, use a simple colored square (32x32)
-    let icon_size = 32 * 32;
-    let mut rgba = Vec::with_capacity(icon_size * 4);
-    for _ in 0..icon_size {
-        // Blue color (R=0, G=100, B=255, A=255)
-        rgba.extend_from_slice(&[0, 100, 255, 255]);
-    }
-    let tray_icon = Image::new_owned(rgba, 32, 32);
+    // Load tray icon from embedded resource
+    let tray_icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
 
     // Try to load tray icon at compile time
     let tray = TrayIconBuilder::new()
@@ -187,6 +177,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        // Single instance plugin - prevents multiple app instances
+        // When a second instance is launched, focus the existing window
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .manage(server_state)
         .setup(setup_app)
         .build(tauri::generate_context!())

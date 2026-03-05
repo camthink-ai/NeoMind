@@ -322,6 +322,10 @@ pub async fn create_backend_handler(
         "anthropic" => LlmBackendType::Anthropic,
         "google" => LlmBackendType::Google,
         "xai" => LlmBackendType::XAi,
+        "qwen" => LlmBackendType::Qwen,
+        "deepseek" => LlmBackendType::DeepSeek,
+        "glm" => LlmBackendType::GLM,
+        "minimax" => LlmBackendType::MiniMax,
         _ => {
             return Err(ErrorResponse::bad_request(format!(
                 "Unknown backend type: {}",

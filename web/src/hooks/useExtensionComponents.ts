@@ -9,13 +9,17 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import type { DashboardComponentsResponse, DashboardComponentDto } from '@/types'
 import { dynamicRegistry } from '@/components/dashboard/registry/DynamicRegistry'
 
+// In Tauri, we need to use the full URL since the backend runs on port 9375
+// In development/web, we can use relative path
+const API_BASE = (window as any).__TAURI__ ? 'http://localhost:9375/api' : '/api'
+
 /**
  * Manually sync extension components from the API
  * This can be called from anywhere to refresh the component registry
  */
 export async function syncExtensionComponents(): Promise<number> {
   try {
-    const response = await fetch('/api/extensions/dashboard-components')
+    const response = await fetch(`${API_BASE}/extensions/dashboard-components`)
     if (!response.ok) {
       throw new Error(`Failed to fetch extension components: ${response.statusText}`)
     }
@@ -108,7 +112,7 @@ export function useExtensionComponents(options?: {
       // Get all dashboard components from all extensions
       // This endpoint reads from manifest.json files, so components are available
       // even if the extension itself is not running
-      const response = await fetch('/api/extensions/dashboard-components')
+      const response = await fetch(`${API_BASE}/extensions/dashboard-components`)
       if (!response.ok) {
         throw new Error(`Failed to fetch extension components: ${response.statusText}`)
       }
@@ -200,7 +204,7 @@ export function useExtensionComponentsByExtension(extensionId: string): {
     setError(null)
 
     try {
-      const response = await fetch(`/api/extensions/${extensionId}/components`)
+      const response = await fetch(`${API_BASE}/extensions/${extensionId}/components`)
       if (!response.ok) {
         if (response.status === 404) {
           // Extension not found or no components - return empty

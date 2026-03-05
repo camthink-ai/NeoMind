@@ -1,4 +1,27 @@
 {
   "title": "Plugins",
-  "description": "Legacy plugin system (deprecated - use Extensions instead)"
+  "description": "Legacy plugin system (deprecated - use Extensions instead)",
+  "llm": {
+    "status": "Status",
+    "instances": "Instances",
+    "instancesCount": "{{count}} instance(s)",
+    "back": "Back",
+    "running": "Running",
+    "notConfigured": "Not Configured",
+    "active": "Active",
+    "endpoint": "Endpoint",
+    "latency": "Latency",
+    "noBackends": "No LLM Backends",
+    "noBackendsDesc": "Add an LLM backend to start using AI features",
+    "requiresApiKey": "Requires API Key",
+    "streamingOutput": "Streaming Output",
+    "defaultModel": "Default Model",
+    "selectModel": "Select Model",
+    "selectModelPlaceholder": "Select a model...",
+    "noModelsFound": "No models found. Click refresh to fetch from server",
+    "noInstanceYet": "No {{name}} instances yet",
+    "configureToStart": "Configure {{name}} to get started",
+    "addInstance": "Add Instance",
+    "addInstance2": "Add {{name}} Instance"
+  }
 }

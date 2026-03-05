@@ -84,6 +84,38 @@ pub fn create_backend(
             Ok(std::sync::Arc::new(CloudRuntime::new(cfg)?))
         }
 
+        #[cfg(feature = "cloud")]
+        "qwen" => {
+            let mut cfg: CloudConfig = serde_json::from_value(config.clone())
+                .map_err(|e| anyhow::anyhow!("Invalid Qwen config: {}", e))?;
+            cfg.provider = CloudProvider::Qwen;
+            Ok(std::sync::Arc::new(CloudRuntime::new(cfg)?))
+        }
+
+        #[cfg(feature = "cloud")]
+        "deepseek" => {
+            let mut cfg: CloudConfig = serde_json::from_value(config.clone())
+                .map_err(|e| anyhow::anyhow!("Invalid DeepSeek config: {}", e))?;
+            cfg.provider = CloudProvider::DeepSeek;
+            Ok(std::sync::Arc::new(CloudRuntime::new(cfg)?))
+        }
+
+        #[cfg(feature = "cloud")]
+        "glm" => {
+            let mut cfg: CloudConfig = serde_json::from_value(config.clone())
+                .map_err(|e| anyhow::anyhow!("Invalid GLM config: {}", e))?;
+            cfg.provider = CloudProvider::GLM;
+            Ok(std::sync::Arc::new(CloudRuntime::new(cfg)?))
+        }
+
+        #[cfg(feature = "cloud")]
+        "minimax" => {
+            let mut cfg: CloudConfig = serde_json::from_value(config.clone())
+                .map_err(|e| anyhow::anyhow!("Invalid MiniMax config: {}", e))?;
+            cfg.provider = CloudProvider::MiniMax;
+            Ok(std::sync::Arc::new(CloudRuntime::new(cfg)?))
+        }
+
         _ => Err(anyhow::anyhow!("Unknown backend type: {}", backend_type)),
     }
 }
@@ -106,6 +138,18 @@ pub fn available_backends() -> Vec<&'static str> {
 
     #[cfg(feature = "xai")]
     backends.push("xai");
+
+    #[cfg(feature = "cloud")]
+    backends.push("qwen");
+
+    #[cfg(feature = "cloud")]
+    backends.push("deepseek");
+
+    #[cfg(feature = "cloud")]
+    backends.push("glm");
+
+    #[cfg(feature = "cloud")]
+    backends.push("minimax");
 
     backends
 }

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef } from "react"
 import {
   Dialog,
   DialogContent,
@@ -8,13 +8,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { useStore } from "@/store"
-import { Upload, Loader2, FolderOpen, Package, File } from "lucide-react"
+import { Loader2, Package, File } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import { api } from "@/lib/api"
 import { Progress } from "@/components/ui/progress"
 
 interface ExtensionUploadDialogProps {
@@ -39,33 +36,15 @@ export function ExtensionUploadDialog({
 }: ExtensionUploadDialogProps) {
   const { t } = useTranslation(["extensions", "common"])
   const { toast } = useToast()
-  const registerExtension = useStore((state) => state.registerExtension)
   const fetchExtensions = useStore((state) => state.fetchExtensions)
   const isAuthenticated = useStore((state) => state.isAuthenticated)
 
-  const [filePath, setFilePath] = useState("")
   const [uploading, setUploading] = useState(false)
-  const [uploadMode, setUploadMode] = useState<'path' | 'file'>('path')
   const [progress, setProgress] = useState<UploadProgress | null>(null)
-  const [isTauri, setIsTauri] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const pathInputRef = useRef<HTMLInputElement>(null)
-
-  // Detect Tauri environment on mount
-  useEffect(() => {
-    setIsTauri(typeof window !== 'undefined' && !!(window as any).__TAURI__)
-    // In web environment, default to file mode
-    if (typeof window !== 'undefined' && !(window as any).__TAURI__) {
-      setUploadMode('file')
-    }
-  }, [])
 
   const handleFileSelect = () => {
-    if (uploadMode === 'path') {
-      pathInputRef.current?.click()
-    } else {
-      fileInputRef.current?.click()
-    }
+    fileInputRef.current?.click()
   }
 
   const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -145,6 +124,9 @@ export function ExtensionUploadDialog({
     }
 
     try {
+      // Dynamically import api to avoid circular dependencies
+      const { api } = await import('@/lib/api')
+
       // Simulate progress
       interval = setInterval(() => {
         setProgress(prev => {
@@ -192,8 +174,6 @@ export function ExtensionUploadDialog({
 
       setProgress(prev => prev ? { ...prev, status: 'processing' } : null)
 
-      // Web: result from /extensions/upload contains file_path, need to install
-      // Tauri: result from /extensions/upload/file already installed the extension
       let extensionId = ''
       if (result.extension_id) {
         extensionId = result.extension_id
@@ -234,77 +214,10 @@ export function ExtensionUploadDialog({
     }
   }
 
-  const handlePathInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const filePath = (file as any).path || file.name
-      setFilePath(filePath)
-    }
-  }
-
-  const handleSubmit = async () => {
-    if (uploadMode === 'file') {
-      handleFileSelect()
-      return
-    }
-
-    if (!filePath.trim()) {
-      toast({
-        title: t("extensionFile"),
-        description: t("extensionPathLabel"),
-        variant: "destructive",
-      })
-      return
-    }
-
-    setUploading(true)
-    try {
-      // Check if file is a .nep or .zip package
-      const isPackageFile = filePath.endsWith('.nep') || filePath.endsWith('.zip')
-
-      if (isPackageFile) {
-        // Show message that .nep files are not yet supported via path mode
-        toast({
-          title: t('extensions:packageNotSupportedTitle'),
-          description: t('extensions:packageNotSupportedDesc'),
-          variant: 'destructive',
-        })
-        return
-      }
-
-      // Use regular register API for native binaries (.so, .dylib, .dll, .wasm)
-      // auto_start defaults to true - extensions should auto-start after registration
-      await registerExtension({
-        file_path: filePath,
-        auto_start: true,
-      })
-      toast({
-        title: t("registerSuccess"),
-      })
-
-      await fetchExtensions()
-      onUploadComplete?.(filePath)
-      onOpenChange(false)
-      resetForm()
-    } catch (error) {
-      toast({
-        title: t("registerFailed"),
-        description: error instanceof Error ? error.message : "Unknown error",
-        variant: "destructive",
-      })
-    } finally {
-      setUploading(false)
-    }
-  }
-
   const resetForm = () => {
-    setFilePath("")
     setProgress(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
-    }
-    if (pathInputRef.current) {
-      pathInputRef.current.value = ''
     }
   }
 
@@ -313,157 +226,92 @@ export function ExtensionUploadDialog({
       <DialogContent className="sm:max-w-[500px] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Upload className="h-5 w-5" />
-            {t("registerExtension")}
+            <Package className="h-5 w-5" />
+            {t("extensions:uploadExtension")}
           </DialogTitle>
           <DialogDescription>
-            {t("registerExtensionDesc")}
+            {t("extensions:dragDropDescription")}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Upload Mode Toggle - only show in Tauri environment */}
-        {isTauri && (
-          <div className="flex gap-2 mb-4 p-1 bg-muted rounded-lg">
-            <Button
-              type="button"
-              variant={uploadMode === 'path' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setUploadMode('path')}
-            >
-              <FolderOpen className="h-4 w-4 mr-1" />
-              {t('extensions:pathMode')}
-            </Button>
-            <Button
-              type="button"
-              variant={uploadMode === 'file' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => setUploadMode('file')}
-            >
-              <Package className="h-4 w-4 mr-1" />
-              {t('extensions:fileMode')}
-            </Button>
-          </div>
-        )}
-
         <div className="space-y-4 py-4 flex-1 overflow-y-auto -mx-6 px-6">
-          {uploadMode === 'path' ? (
-            <>
-              {/* File Path Input */}
-              <div className="space-y-2">
-                <Label htmlFor="file-path">{t("extensionFile")}</Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="file-path"
-                    placeholder={t("extensionPathPlaceholder")}
-                    value={filePath}
-                    onChange={(e) => setFilePath(e.target.value)}
-                    disabled={uploading}
-                    className="font-mono text-sm"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={handleFileSelect}
-                    disabled={uploading}
-                  >
-                    <FolderOpen className="h-4 w-4" />
-                  </Button>
-                  <input
-                    ref={pathInputRef}
-                    type="file"
-                    accept=".so,.dylib,.dll,.wasm"
-                    className="hidden"
-                    onChange={handlePathInputChange}
-                  />
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t("extensionPathHint")}
-                </p>
-              </div>
-            </>
-          ) : (
-            <>
-              {/* File Upload */}
-              <div
-                className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                  progress?.status === 'error'
-                    ? 'border-destructive/50 bg-destructive/5 cursor-pointer hover:border-destructive/70'
-                    : 'cursor-pointer hover:border-primary/50'
-                }`}
-                onClick={() => {
-                  // Allow clicking to retry when there's an error
-                  if (progress?.status === 'error') {
-                    resetForm()
-                  }
-                  handleFileSelect()
-                }}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".nep,.zip"
-                  className="hidden"
-                  onChange={handleFileInputChange}
-                  disabled={uploading}
-                />
-                {progress && (uploading || progress.status === 'error' || progress.status === 'success') ? (
-                  <div className="space-y-3">
-                    {progress.status === 'error' ? (
-                      // Error state - show error with retry option
-                      <>
-                        <div className="flex items-center justify-center gap-2 text-destructive">
-                          <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
-                          <span className="text-sm font-medium">{t('extensions:installFailed')}</span>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{progress.filename}</p>
-                        <div className="text-destructive/80 text-xs bg-destructive/10 rounded p-2">
-                          {progress.message || t('extensions:installFailed')}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {t('extensions:clickToRetry')}
-                        </p>
-                      </>
-                    ) : progress.status === 'success' ? (
-                      // Success state
-                      <div className="flex items-center justify-center gap-2 text-green-600">
-                        <File className="h-4 w-4" />
-                        <span>{t('extensions:installComplete')}</span>
-                      </div>
-                    ) : (
-                      // Uploading/Processing state
-                      <>
-                        <div className="flex items-center justify-center gap-2">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          <span className="text-sm text-muted-foreground">
-                            {progress.status === 'processing'
-                              ? t('extensions:processing')
-                              : t('extensions:uploading')}
-                          </span>
-                        </div>
-                        <Progress value={(progress.loaded / progress.total) * 100} />
-                        <p className="text-sm text-muted-foreground">{progress.filename}</p>
-                      </>
-                    )}
+          {/* File Upload */}
+          <div
+            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+              progress?.status === 'error'
+                ? 'border-destructive/50 bg-destructive/5 cursor-pointer hover:border-destructive/70'
+                : 'cursor-pointer hover:border-primary/50'
+            }`}
+            onClick={() => {
+              // Allow clicking to retry when there's an error
+              if (progress?.status === 'error') {
+                resetForm()
+              }
+              handleFileSelect()
+            }}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".nep,.zip"
+              className="hidden"
+              onChange={handleFileInputChange}
+              disabled={uploading}
+            />
+            {progress && (uploading || progress.status === 'error' || progress.status === 'success') ? (
+              <div className="space-y-3">
+                {progress.status === 'error' ? (
+                  // Error state - show error with retry option
+                  <>
+                    <div className="flex items-center justify-center gap-2 text-destructive">
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span className="text-sm font-medium">{t('extensions:installFailed')}</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{progress.filename}</p>
+                    <div className="text-destructive/80 text-xs bg-destructive/10 rounded p-2">
+                      {progress.message || t('extensions:installFailed')}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {t('extensions:clickToRetry')}
+                    </p>
+                  </>
+                ) : progress.status === 'success' ? (
+                  // Success state
+                  <div className="flex items-center justify-center gap-2 text-green-600">
+                    <File className="h-4 w-4" />
+                    <span>{t('extensions:installComplete')}</span>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    <Package className="h-12 w-12 mx-auto text-muted-foreground" />
-                    <p className="text-sm font-medium">{t('extensions:dragDrop')}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t('extensions:dragDropDescription')}
-                    </p>
-                  </div>
+                  // Uploading/Processing state
+                  <>
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      <span className="text-sm text-muted-foreground">
+                        {progress.status === 'processing'
+                          ? t('extensions:processing')
+                          : t('extensions:uploading')}
+                      </span>
+                    </div>
+                    <Progress value={(progress.loaded / progress.total) * 100} />
+                    <p className="text-sm text-muted-foreground">{progress.filename}</p>
+                  </>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground text-center">
-                {t('extensions:supportedFormats')}: .nep, .zip
-              </p>
-            </>
-          )}
-
+            ) : (
+              <div className="space-y-2">
+                <Package className="h-12 w-12 mx-auto text-muted-foreground" />
+                <p className="text-sm font-medium">{t('extensions:dragDrop')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('extensions:dragDropDescription')}
+                </p>
+              </div>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground text-center">
+            {t('extensions:supportedFormats')}: .nep, .zip
+          </p>
         </div>
 
         <DialogFooter>
@@ -477,7 +325,7 @@ export function ExtensionUploadDialog({
           >
             {t("common:cancel")}
           </Button>
-          <Button onClick={handleSubmit} disabled={uploading || (uploadMode === 'path' && !filePath.trim())}>
+          <Button onClick={handleFileSelect} disabled={uploading}>
             {uploading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -485,10 +333,8 @@ export function ExtensionUploadDialog({
               </>
             ) : (
               <>
-                <Upload className="mr-2 h-4 w-4" />
-                {uploadMode === 'file'
-                  ? t('extensions:uploadAndInstall')
-                  : t('extensions:registerExtension')}
+                <Package className="mr-2 h-4 w-4" />
+                {t('extensions:uploadAndInstall')}
               </>
             )}
           </Button>
@@ -497,4 +343,3 @@ export function ExtensionUploadDialog({
     </Dialog>
   )
 }
-

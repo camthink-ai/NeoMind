@@ -894,17 +894,6 @@ export interface ExtensionTypeDto {
 }
 
 /**
- * Extension registration response - returned by POST /api/extensions
- */
-export interface ExtensionRegistrationResponse {
-  message: string
-  extension_id: string
-  name: string
-  version: string
-  auto_start?: boolean
-}
-
-/**
  * Extension health check response - returned by GET /api/extensions/:id/health
  */
 export interface ExtensionHealthResponse {

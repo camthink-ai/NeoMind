@@ -145,20 +145,73 @@ impl UnifiedExtensionService {
     ///
     /// All extensions now use process isolation by default for maximum safety.
     /// The extension-runner supports both native (.so/.dylib/.dll) and WASM (.wasm) extensions.
+    ///
+    /// If the extension-runner is not available, automatically falls back to in-process mode.
     async fn should_use_isolated(&self, path: &Path) -> Result<bool, ExtensionError> {
-        // All extensions use process isolation by default
-        // The extension-runner handles both native and WASM extensions
-        Ok(self.config.isolated_by_default)
+        // If isolated mode is disabled in config, use in-process
+        if !self.config.isolated_by_default {
+            return Ok(false);
+        }
+
+        // Check if extension-runner is available
+        if Self::is_extension_runner_available() {
+            Ok(true)
+        } else {
+            tracing::warn!(
+                "neomind-extension-runner not found, falling back to in-process mode for extension at {}",
+                path.display()
+            );
+            Ok(false)
+        }
+    }
+
+    /// Check if the extension-runner binary is available
+    fn is_extension_runner_available() -> bool {
+        let runner_name = if cfg!(windows) {
+            "neomind-extension-runner.exe"
+        } else {
+            "neomind-extension-runner"
+        };
+
+        // Check same directory as current executable
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let runner_in_exe_dir = exe_dir.join(runner_name);
+                if runner_in_exe_dir.exists() {
+                    return true;
+                }
+            }
+        }
+
+        // Check PATH
+        if let Ok(path_var) = std::env::var("PATH") {
+            let separator = if cfg!(windows) { ";" } else { ":" };
+            for path in path_var.split(separator) {
+                let runner_in_path = std::path::Path::new(path).join(runner_name);
+                if runner_in_path.exists() {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Unload an extension
     pub async fn unload(&self, id: &str) -> Result<(), ExtensionError> {
         // Check if it's an isolated extension
         if self.isolated_manager.contains(id).await {
+            // Unload from isolated manager
             self.isolated_manager
                 .unload(id)
                 .await
                 .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))?;
+
+            // Also remove the proxy from registry (it was registered during load)
+            // Ignore error if proxy doesn't exist in registry
+            if self.registry.contains(id).await {
+                let _ = self.registry.unregister(id).await;
+            }
         } else {
             self.registry.unregister(id).await?;
         }

@@ -47,7 +47,6 @@ export interface ExtensionSlice extends ExtensionState {
   // Extension actions
   fetchExtensions: (params?: { state?: string }) => Promise<void>
   getExtension: (id: string) => Promise<Extension | null>
-  registerExtension: (extension: { file_path: string; auto_start?: boolean }) => Promise<void>
   unregisterExtension: (id: string) => Promise<boolean>
   startExtension: (id: string) => Promise<boolean>
   stopExtension: (id: string) => Promise<boolean>
@@ -123,15 +122,6 @@ export const createExtensionSlice: StateCreator<
       logError(error, { operation: 'Fetch extension' })
       return null
     }
-  },
-
-  // Register new extension
-  // Backend: POST /api/extensions -> { message, extension_id, name, version, auto_start, note }
-  // Throws on error with message from API
-  registerExtension: async (extension) => {
-    await api.registerExtension(extension)
-    // Refresh the list after successful registration
-    await get().fetchExtensions()
   },
 
   // Unregister extension

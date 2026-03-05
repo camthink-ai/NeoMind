@@ -437,7 +437,7 @@ export const componentRegistry: ComponentRegistry = {
       controls: true,
       fit: 'contain',
     },
-    variants: ['file', 'stream', 'rtsp', 'hls', 'camera'],
+    variants: ['file', 'stream', 'rtsp', 'hls', 'webrtc', 'camera'],
   },
 
   'custom-layer': {

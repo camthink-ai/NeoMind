@@ -29,11 +29,14 @@
     ],
     "security": {
       "csp": {
-        "default-src": "'self' customprotocol: asset:",
-        "connect-src": "ipc: http://ipc.localhost http://localhost:9375 https://localhost:9375 ws://localhost:9375 ws://localhost:5173 http://tauri.localhost tauri://*",
+        "default-src": "'self' customprotocol: asset: tauri:",
+        "connect-src": "'self' ipc: http://ipc.localhost http://localhost:9375 https://localhost:9375 ws://localhost:9375 ws://localhost:5173 wss: ws: http://tauri.localhost tauri://* https: http:",
         "font-src": "'self' https://fonts.gstatic.com",
-        "img-src": "'self' asset: http://asset.localhost blob: data: https:",
-        "style-src": "'self' https://fonts.googleapis.com",
+        "frame-src": "'self' https: http:",
+        "frame-ancestors": "'self'",
+        "img-src": "'self' asset: http://asset.localhost blob: data: https: http:",
+        "media-src": "'self' blob: data: https: http: mediastream:",
+        "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
         "script-src": "'self' 'wasm-unsafe-eval'"
       }
     },
@@ -51,6 +54,9 @@
     "category": "Developer Tool",
     "shortDescription": "Edge AI Platform",
     "longDescription": "NeoMind - Edge-deployed LLM agent platform for IoT automation",
+    "externalBin": [
+      "binaries/neomind-extension-runner"
+    ],
     "macOS": {
       "frameworks": [],
       "minimumSystemVersion": "10.15",

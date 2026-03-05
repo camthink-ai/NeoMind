@@ -426,7 +426,6 @@ impl CommandBuilder {
             command: ExtensionCommand {
                 name: name.into(),
                 display_name: String::new(),
-                description: String::new(),
                 payload_template: String::new(),
                 parameters: Vec::new(),
                 fixed_values: std::collections::HashMap::new(),

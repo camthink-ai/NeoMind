@@ -24,7 +24,6 @@ import type {
   ExtensionStatsDto,
   ExtensionTypeDto,
   ExtensionCapabilityDto,
-  ExtensionRegistrationResponse,
   ExtensionHealthResponse,
   // Unified Extension Types
   ExtensionCommandDescriptor,
@@ -1115,19 +1114,6 @@ export const api = {
    */
   listExtensionTypes: () =>
     fetchAPI<ExtensionTypeDto[]>('/extensions/types'),
-
-  /**
-   * Register a new extension from file path
-   * POST /api/extensions
-   */
-  registerExtension: (extension: {
-    file_path: string
-    auto_start?: boolean
-  }) =>
-    fetchAPI<ExtensionRegistrationResponse>('/extensions', {
-      method: 'POST',
-      body: JSON.stringify(extension),
-    }),
 
   /**
    * Unregister an extension

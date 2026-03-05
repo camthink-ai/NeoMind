@@ -170,7 +170,7 @@ impl LlmBackendInstanceManager {
 
         let config = serde_json::json!({
             "backend": instance.backend_name(),
-            "endpoint": instance.endpoint,
+            "base_url": instance.endpoint,
             "model": instance.model,
             "api_key": instance.api_key,
         });
@@ -517,6 +517,7 @@ impl LlmBackendInstanceManager {
                 "api_key": {
                     "type": "string",
                     "title": "API 密钥",
+                    "description": "编辑时留空将保留现有密钥",
                     "x_secret": true,
                 },
                 "temperature": {

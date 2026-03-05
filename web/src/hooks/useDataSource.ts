@@ -419,6 +419,65 @@ function getPointValue(p: unknown): unknown {
 }
 
 /**
+ * Check if a data point already exists in an array based on timestamp + value combination.
+ * A point is considered duplicate only if BOTH timestamp and value match an existing point.
+ * This preserves different images at the same timestamp, and same images at different timestamps.
+ */
+function isDuplicatePoint(
+  existingPoints: unknown[],
+  newTimestamp: number,
+  newValue: unknown,
+  getTs: (p: unknown) => number
+): boolean {
+  if (existingPoints.length === 0) return false
+
+  const newStr = typeof newValue === 'string' ? newValue : JSON.stringify(newValue)
+  if (!newStr) return false
+
+  // Extract the actual content for comparison (handles data URLs)
+  const extractContent = (str: string): string => {
+    if (str.startsWith('data:')) {
+      const commaIndex = str.indexOf(',')
+      if (commaIndex !== -1) {
+        return str.slice(commaIndex + 1)
+      }
+    }
+    return str
+  }
+
+  const newContent = extractContent(newStr)
+
+  return existingPoints.some((p) => {
+    // Check timestamp match first (within 1 second tolerance for clock skew)
+    const existingTs = getTs(p)
+    const tsDiff = Math.abs(existingTs - newTimestamp)
+    if (tsDiff > 1) return false // Different timestamps = not duplicate
+
+    // Same timestamp, now check value
+    const existingVal = getPointValue(p)
+    if (existingVal === undefined || existingVal === null) return false
+
+    const existingStr = typeof existingVal === 'string' ? existingVal : JSON.stringify(existingVal)
+    if (!existingStr) return false
+
+    const existingContent = extractContent(existingStr)
+
+    // For long content (e.g., base64 images), compare first and last 500 chars
+    if (newContent.length > 100 && existingContent.length > 100) {
+      const newStart = newContent.slice(0, 500)
+      const existingStart = existingContent.slice(0, 500)
+      if (newStart !== existingStart) return false
+
+      const newEnd = newContent.slice(-500)
+      const existingEnd = existingContent.slice(-500)
+      return newEnd === existingEnd
+    }
+
+    return newContent === existingContent
+  })
+}
+
+/**
  * Deduplicate telemetry points: keep one per (timestamp, value) with near-duplicate collapse.
  * Points with same value within DEDUP_WINDOW_SEC are treated as duplicates (fixes MQTT+DeviceService double-write).
  * For image data, skip deduplication entirely (each image is unique, keep all).
@@ -1259,7 +1318,6 @@ export function useDataSource<T = unknown>(
                 currentArray = currentData as unknown[]
               }
             }
-            const merged = [newPoint, ...currentArray]
 
             // Detect image data sources for special handling (no dedup, higher limit)
             const isImageDataSource = (ds.params?.includeRawPoints === true || ds.transform === 'raw') ||
@@ -1268,6 +1326,12 @@ export function useDataSource<T = unknown>(
                                                     metricId.includes('values.image')))
             const maxLimit = isImageDataSource ? 200 : (ds.limit ?? 50)
 
+            // For image data sources, check for duplicate (timestamp + value) before merging
+            if (isImageDataSource && isDuplicatePoint(currentArray, now, latestValue, getTs)) {
+              return undefined // Skip duplicate point
+            }
+
+            const merged = [newPoint, ...currentArray]
             const sorted = [...merged].sort((a, b) => getTs(b) - getTs(a))
 
             // For image data sources, skip deduplication to preserve all unique images
@@ -1524,6 +1588,11 @@ export function useDataSource<T = unknown>(
               }
             }
 
+            // For image data sources, check for duplicate (timestamp + value) before merging
+            if (isImageDataSource && isDuplicatePoint(currentArray, eventTimestamp, eventValue, getTs)) {
+              return undefined // Skip duplicate point
+            }
+
             // Merge new point and sort by timestamp (newest first)
             const merged = [newPoint, ...currentArray]
             const sorted = [...merged].sort((a, b) => getTs(b) - getTs(a))
@@ -1756,7 +1825,6 @@ export function useDataSource<T = unknown>(
                   const currentArray = currentDataSources.length > 1 && Array.isArray(currentData) && currentData[index] !== undefined
                     ? (Array.isArray(currentData[index]) ? (currentData[index] as unknown[]) : [])
                     : (Array.isArray(currentData) ? (currentData as unknown[]) : [])
-                  const merged = [newPoint, ...currentArray]
 
                   // Detect image data sources for special handling (no dedup, higher limit)
                   const isImageDataSource = (ds.params?.includeRawPoints === true || ds.transform === 'raw') ||
@@ -1770,6 +1838,14 @@ export function useDataSource<T = unknown>(
                     const o = p as Record<string, unknown>
                     return (o.timestamp ?? o.time ?? o.t ?? 0) as number
                   }
+
+                  // For image data sources, check for duplicate (timestamp + value) before merging
+                  if (isImageDataSource && isDuplicatePoint(currentArray, eventTimestamp, eventValue, getTs)) {
+                    result = currentArray.length > 0 ? currentArray : []
+                    break
+                  }
+
+                  const merged = [newPoint, ...currentArray]
                   const sorted = [...merged].sort((a, b) => getTs(b) - getTs(a))
 
                   // For image data sources, skip deduplication to preserve all unique images
@@ -2211,10 +2287,18 @@ export function useDataSource<T = unknown>(
           }
           const sorted = [...finalData].sort((a, b) => getTs(b) - getTs(a))
 
-          // For image data, skip deduplication entirely to preserve all unique images
+          // For image data, remove duplicates based on (timestamp + value) combination
           if (isImageDataSource) {
-            // For images, just take first N without deduplication
-            finalData = sorted.slice(0, maxLimit)
+            const dedupedPoints: unknown[] = []
+            for (const point of sorted) {
+              const ts = getTs(point)
+              const value = getPointValue(point)
+              if (!isDuplicatePoint(dedupedPoints, ts, value, getTs)) {
+                dedupedPoints.push(point)
+              }
+              if (dedupedPoints.length >= maxLimit) break
+            }
+            finalData = dedupedPoints
           } else {
             const deduped = dedupeTelemetryPoints(sorted, getTs, maxLimit)
             finalData = deduped

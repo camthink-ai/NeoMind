@@ -108,9 +108,16 @@ function toUnifiedPluginType(type: BackendTypeDefinition, t: (key: string) => st
     ? {
         type: 'object' as const,
         properties: Object.fromEntries(
-          Object.entries(configSchema.properties || {}).filter(
-            ([key]) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(key as string)
-          )
+          Object.entries(configSchema.properties || {})
+            .filter(([key]) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(key as string))
+            .map(([key, prop]) => {
+              const typedProp = prop as any
+              // Convert x_secret to secret for the form builder
+              return [key, {
+                ...typedProp,
+                secret: typedProp.x_secret || typedProp.secret || false,
+              }]
+            })
         ) as any,
         required: (configSchema.required || []).filter(
           (field: string) => !EXCLUDED_LLM_CONFIG_FIELDS.includes(field)
@@ -244,7 +251,11 @@ export function UnifiedLLMBackendsTab({
       name: config.name as string,
       endpoint: config.endpoint as string,
       model: config.model as string,
-      api_key: config.api_key as string,
+      // Only include api_key if it's provided (non-empty string)
+      // This prevents overwriting the existing key with an empty value
+      ...(config.api_key && typeof config.api_key === 'string' && config.api_key.trim()
+        ? { api_key: config.api_key }
+        : {}),
       temperature: config.temperature as number,
       top_p: config.top_p as number,
       top_k: config.top_k as number,

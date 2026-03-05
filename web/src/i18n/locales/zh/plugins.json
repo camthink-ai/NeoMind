@@ -1,4 +1,27 @@
 {
   "title": "插件",
-  "description": "旧版插件系统（已弃用 - 请使用扩展）"
+  "description": "旧版插件系统（已弃用 - 请使用扩展）",
+  "llm": {
+    "status": "状态",
+    "instances": "实例",
+    "instancesCount": "{{count}} 个",
+    "back": "返回",
+    "running": "运行中",
+    "notConfigured": "未配置",
+    "active": "活跃",
+    "endpoint": "端点",
+    "latency": "延迟",
+    "noBackends": "暂无 LLM 后端",
+    "noBackendsDesc": "添加一个 LLM 后端以开始使用 AI 功能",
+    "requiresApiKey": "需要 API Key",
+    "streamingOutput": "流式输出",
+    "defaultModel": "默认模型",
+    "selectModel": "选择模型",
+    "selectModelPlaceholder": "选择一个模型...",
+    "noModelsFound": "未找到模型，点击刷新从服务端获取",
+    "noInstanceYet": "暂无 {{name}} 实例",
+    "configureToStart": "配置 {{name}} 以开始使用",
+    "addInstance": "添加实例",
+    "addInstance2": "添加 {{name}} 实例"
+  }
 }

@@ -615,6 +615,18 @@ impl ExtensionPackage {
             None
         };
 
+        // Extract models directory if exists (for AI/ML extensions)
+        let models_path = ext_dir.join("models");
+        Self::extract_directory_sync(&mut archive, "models/", &models_path)?;
+
+        // Extract assets directory if exists (for static assets)
+        let assets_path = ext_dir.join("assets");
+        Self::extract_directory_sync(&mut archive, "assets/", &assets_path)?;
+
+        // Extract config directory if exists (for configuration files)
+        let config_path = ext_dir.join("config");
+        Self::extract_directory_sync(&mut archive, "config/", &config_path)?;
+
         // Get component definitions
         let components = manifest.frontend.as_ref()
             .map(|f| f.components.clone())

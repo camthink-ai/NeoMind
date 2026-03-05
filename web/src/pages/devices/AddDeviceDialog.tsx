@@ -277,7 +277,7 @@ export function AddDeviceDialog({
                 {t('devices:add.webhookUrlDescription')}
               </p>
               <code className="text-xs break-all block">
-                {window.location.origin}/api/devices/webhook/{deviceId}
+                {(window as any).__TAURI__ ? 'http://localhost:9375' : window.location.origin}/api/devices/webhook/{deviceId}
               </code>
             </div>
           )}

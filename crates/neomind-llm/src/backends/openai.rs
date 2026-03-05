@@ -24,7 +24,7 @@ use neomind_core::message::{Content, ContentPart, ImageDetail, Message, MessageR
 use crate::rate_limited_client::{ProviderRateLimits, RateLimitedClient};
 
 /// Cloud API provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloudProvider {
     /// OpenAI (https://api.openai.com)
     OpenAI,
@@ -39,6 +39,7 @@ pub enum CloudProvider {
     Grok,
 
     /// Custom OpenAI-compatible endpoint
+    #[default]
     Custom,
 
     /// Qwen (Alibaba DashScope)
@@ -107,7 +108,8 @@ pub struct CloudConfig {
     /// API key for authentication.
     pub api_key: String,
 
-    /// Cloud provider.
+    /// Cloud provider (optional during deserialization, will be set by backend creation code).
+    #[serde(default)]
     pub provider: CloudProvider,
 
     /// Model to use (overrides provider default).
@@ -434,12 +436,20 @@ impl LlmRuntime for CloudRuntime {
             self.config.provider.chat_path()
         );
 
+        // Handle max_tokens: cap at reasonable limit for cloud APIs
+        const MAX_TOKENS_CAP: u32 = 32768; // 32k tokens - reasonable for most models
+        let max_tokens = match input.params.max_tokens {
+            Some(v) if v >= usize::MAX - 1000 => Some(MAX_TOKENS_CAP),
+            Some(v) => Some((v as u32).min(MAX_TOKENS_CAP)),
+            None => None, // Let API use its default
+        };
+
         let request = ChatCompletionRequest {
             model: model.clone(),
             messages: self.messages_to_api(&input.messages),
             temperature: input.params.temperature,
             top_p: input.params.top_p,
-            max_tokens: input.params.max_tokens,
+            max_tokens,
             stop: input.params.stop.clone(),
             frequency_penalty: input.params.frequency_penalty,
             presence_penalty: input.params.presence_penalty,
@@ -545,12 +555,20 @@ impl LlmRuntime for CloudRuntime {
         let inner_client = self.client.inner().clone();
         let provider = self.config.provider;
 
+        // Handle max_tokens: cap at reasonable limit for cloud APIs
+        const MAX_TOKENS_CAP: u32 = 32768; // 32k tokens - reasonable for most models
+        let max_tokens = match input.params.max_tokens {
+            Some(v) if v >= usize::MAX - 1000 => Some(MAX_TOKENS_CAP),
+            Some(v) => Some((v as u32).min(MAX_TOKENS_CAP)),
+            None => None, // Let API use its default
+        };
+
         let request = ChatCompletionRequest {
             model: model.clone(),
             messages: self.messages_to_api(&input.messages),
             temperature: input.params.temperature,
             top_p: input.params.top_p,
-            max_tokens: input.params.max_tokens,
+            max_tokens,
             stop: input.params.stop.clone(),
             frequency_penalty: input.params.frequency_penalty,
             presence_penalty: input.params.presence_penalty,
@@ -754,7 +772,7 @@ struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens: Option<usize>,
+    max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

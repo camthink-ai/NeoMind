@@ -271,7 +271,8 @@ export function UnifiedDeviceConnectionsTab() {
   }
 
   const getWebhookUrl = () => {
-    return `${window.location.origin}/api/devices/webhook/{device_id}`
+    const apiBase = (window as any).__TAURI__ ? 'http://localhost:9375' : window.location.origin
+    return `${apiBase}/api/devices/webhook/{device_id}`
   }
 
   const copyWebhookUrl = async () => {

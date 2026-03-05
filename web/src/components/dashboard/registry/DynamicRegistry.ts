@@ -142,22 +142,30 @@ export class DynamicComponentRegistry {
    */
   private async doLoadComponent(def: DashboardComponentDto, type: string): Promise<unknown> {
     try {
-      // Check if we're in dev mode and need to use the full URL
-      const isDev = import.meta.env.DEV
       let bundleUrl = def.bundle_url
+      const isTauri = !!(window as any).__TAURI__
 
       console.log(`[DynamicRegistry] Loading component ${type}:`, {
-        isDev,
+        isTauri,
         bundleUrl,
         globalName: def.global_name,
         exportName: def.export_name
       })
 
-      if (isDev && bundleUrl.startsWith('/api/')) {
-        // Add cache-busting timestamp to avoid cached HTTP response
-        const url = new URL(bundleUrl, window.location.origin)
-        url.searchParams.set('_t', Date.now().toString())
-        bundleUrl = url.toString()
+      // Handle API URLs - use script tag injection for IIFE bundles
+      // This works for both Tauri and web browser environments
+      if (bundleUrl.startsWith('/api/')) {
+        // In Tauri, we need to use the full URL since the backend runs on port 9375
+        // In web browser, Vite proxy will handle the request
+        if (isTauri) {
+          const url = new URL(bundleUrl, 'http://localhost:9375')
+          url.searchParams.set('_t', Date.now().toString())
+          bundleUrl = url.toString()
+        } else {
+          // Add cache-busting query parameter for web browser
+          const separator = bundleUrl.includes('?') ? '&' : '?'
+          bundleUrl = `${bundleUrl}${separator}_t=${Date.now()}`
+        }
 
         // For IIFE bundles, use script tag injection instead of dynamic import
         // IIFE assigns to a global variable, which we can access after script loads

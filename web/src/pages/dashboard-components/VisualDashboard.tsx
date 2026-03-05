@@ -1199,7 +1199,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     // Quick check: if length changed, definitely different
     if (components.length !== prevComponents.length) {
       prevComponentsRef.current = components
-      return `changed-${components.length}-${Date.now()}-${configVersion}`
+      return `changed-${components.length}`
     }
 
     // Deep check: compare each component's key properties
@@ -1209,7 +1209,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
 
       if (!prev) {
         prevComponentsRef.current = components
-        return `new-${curr.id}-${curr.type}-${Date.now()}-${configVersion}`
+        return `new-${curr.id}-${curr.type}`
       }
 
       // Check each property separately (including title and dataSource)
@@ -1227,13 +1227,13 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           JSON.stringify(curr.config) !== JSON.stringify(prev.config) ||
           dataSourceChanged) {
         prevComponentsRef.current = components
-        return `changed-${curr.id}-${Date.now()}-${configVersion}`
+        return `changed-${curr.id}`
       }
     }
 
-    // No actual changes detected - return stable key with version
-    return `stable-${components.length}-${configVersion}`
-  }, [currentDashboard?.components, configVersion])
+    // No actual changes detected - return stable key
+    return `stable-${components.length}`
+  }, [currentDashboard?.components])
 
   // Initialize dashboards on mount
   useEffect(() => {
@@ -1738,7 +1738,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         ),
       }
     }) ?? []
-  }, [componentsStableKey, editMode, configVersion, devices.length, currentDashboard, isMobile, handleOpenConfig])
+  }, [componentsStableKey, editMode, devices.length, currentDashboard, isMobile])
 
   // Track initial config load to avoid unnecessary updates
   const initialConfigRef = useRef<any>(null)
@@ -3596,14 +3596,27 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                     onChange={updateConfig('type')}
                     options={[
                       { value: 'file', label: t('visualDashboard.videoFile') },
-                      { value: 'stream', label: t('visualDashboard.videoStream') },
-                      { value: 'rtsp', label: 'RTSP' },
-                      { value: 'rtmp', label: 'RTMP' },
-                      { value: 'hls', label: 'HLS' },
-                      { value: 'webrtc', label: 'WebRTC' },
+                      { value: 'hls', label: 'HLS (.m3u8)' },
                       { value: 'device-camera', label: t('visualDashboard.deviceCamera') },
                     ]}
                   />
+
+                  {/* Type-specific hints */}
+                  {config.type === 'hls' && (
+                    <div className="p-2 bg-green-500/10 border border-green-500/20 rounded-md">
+                      <p className="text-xs text-green-600 dark:text-green-400">
+                        <strong>HLS URL格式：</strong> http://server/path/index.m3u8
+                      </p>
+                    </div>
+                  )}
+
+                  {config.type === 'device-camera' && (
+                    <div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded-md">
+                      <p className="text-xs text-blue-600 dark:text-blue-400">
+                        <strong>设备摄像头：</strong> 将请求访问本地摄像头设备
+                      </p>
+                    </div>
+                  )}
 
                   <SelectField
                     label={t('visualDashboard.fitMethod')}
