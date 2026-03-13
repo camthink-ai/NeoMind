@@ -311,33 +311,54 @@ The installer will be in `web/src-tauri/target/release/bundle/`
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   Desktop App / Web UI                       │
-│                    React + TypeScript                       │
-└───────────────────────┬─────────────────────────────────────┘
-                        │ REST API / WebSocket / SSE
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      API Gateway                             │
-│                    Axum Web Server                           │
-└───────────┬───────────────┬───────────────┬───────────────┘
-   │              │              │
-   ▼              ▼              ▼
-Automation      Devices      Messages    Extensions
-   │              │              │
-   └──────────────┴──────────────┘
-                  │ Subscribe to all events
-                  ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    LLM Agent                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │   Chat      │  │   Tools     │  │  Memory     │        │
-│  │  Interface  │  │  Calling    │  │  System     │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘        │
-└─────────────────────────────────────────────────────────────┘
-                  │
-                  ▼
-             Time-Series Storage
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Desktop App / Web UI                                │
+│                       React + TypeScript                                 │
+└─────────────────────────────────┬───────────────────────────────────────┘
+                                  │ REST API / WebSocket / SSE
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           API Gateway                                    │
+│                        Axum Web Server                                   │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
+│  │  Auth    │ │ Devices  │ │Automations│ │Messages │ │Extensions│     │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘     │
+└─────────────────────────────────┬───────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          Event Bus                                       │
+│              Pub/Sub for decoupled component communication               │
+└────────┬───────────────┬───────────────┬───────────────┬────────────────┘
+         │               │               │               │
+         ▼               ▼               ▼               ▼
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐
+│  Devices    │  │ Automation  │  │ LLM Agent   │  │    Extensions       │
+│  (MQTT)     │  │   Engine    │  │             │  │                     │
+│             │  │             │  │ ┌─────────┐ │  │ ┌─────────────────┐ │
+│ ┌─────────┐ │  │ ┌─────────┐ │  │ │  Chat   │ │  │ │ExtensionContext │ │
+│ │Metrics  │ │  │ │  Rules  │ │  │ │         │ │  │ │  (Capability)   │ │
+│ │         │ │  │ │         │ │  │ ├─────────┤ │  │ └────────┬────────┘ │
+│ ├─────────┤ │  │ ├─────────┤ │  │ │  Tools  │ │  │          │          │
+│ │Commands │ │  │ │Transform│ │  │ │         │ │  │          ▼          │
+│ └─────────┘ │  │ └─────────┘ │  │ ├─────────┤ │  │ ┌─────────────────┐ │
+│             │  │             │  │ │ Memory  │ │  │ │  Capabilities   │ │
+└─────────────┘  └─────────────┘  │ └─────────┘ │  │ │ Device/Storage/ │ │
+                                 └─────────────┘  │ │ Event/Rule/...  │ │
+                                                  │ └─────────────────┘ │
+                                                  │                     │
+                                                  │  Process Isolation  │
+                                                  │  (.so/.dylib/.wasm) │
+                                                  └─────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Storage Layer                                     │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐   │
+│  │  Time-Series │ │    State     │ │    LLM       │ │   Vector     │   │
+│  │   (redb)     │ │   (redb)     │ │   Memory     │ │   Search     │   │
+│  └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -414,6 +435,7 @@ neomind/
 | **Tools** | `/api/tools`, `/api/tools/:name/execute` |
 | **Messages** | `/api/messages`, `/api/messages/:id`, `/api/messages/channels` |
 | **Extensions** | `/api/extensions` (dynamic extensions) |
+| **Capabilities** | `/api/capabilities`, `/api/capabilities/:name` |
 | **Events** | `/api/events/stream` (SSE), `/api/events/ws` (WebSocket) |
 | **Stats** | `/api/stats/system`, `/api/stats/devices`, `/api/stats/rules` |
 | **Dashboards** | `/api/dashboards`, `/api/dashboards/:id`, `/api/dashboards/templates` |
@@ -426,6 +448,23 @@ Full API documentation available at `/api/docs` when server is running.
 ## Extension Development
 
 Create dynamic extensions for NeoMind using the Extension SDK V2:
+
+### Capability-Based Access Control
+
+Extensions use a capability-based access control system to interact with system resources:
+
+| Capability | Description |
+|------------|-------------|
+| `device_metrics_read` | Read device metrics and state |
+| `device_metrics_write` | Write device metrics (virtual sensors) |
+| `device_control` | Send commands to devices |
+| `storage_query` | Query telemetry storage |
+| `event_publish` | Publish events to EventBus |
+| `rule_engine` | Access automation rules |
+| `agent_invoke` | Invoke AI agent capabilities |
+| `extension_manage` | Manage other extensions |
+
+### Basic Extension Example
 
 ```rust
 use neomind_extension_sdk::prelude::*;
@@ -479,7 +518,7 @@ impl Extension for MyExtension {
 neomind_extension_sdk::neomind_export!(MyExtension);
 ```
 
-See [Extension Development Guide](docs/guides/zh/16-extension-dev.md) for details.
+See [Extension Development Guide](docs/guides/en/extension-system.md) for details.
 
 ---
 

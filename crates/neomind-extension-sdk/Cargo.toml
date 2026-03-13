@@ -29,10 +29,8 @@ num_cpus = { version = "1", optional = true }
 # WASM-only dependencies
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 base64 = "0.22"
-futures = "0.3"
-
-# For WASM, we don't use chrono - we use a simple timestamp function
-# chrono = { version = "0.4", features = ["serde"], default-features = false }
+# Use pollster for WASM-compatible block_on - it's lightweight and works on wasm32-unknown-unknown
+pollster = "0.4"
 
 [features]
 default = []

@@ -325,8 +325,8 @@ macro_rules! neomind_export_with_constructor {
                 let ext = get_extension();
                 let future = <$extension_type as $crate::Extension>::execute_command(ext, command, &args);
                 
-                // Use futures::executor::block_on for WASM
-                let result = futures::executor::block_on(future);
+                // Use $crate::pollster::block_on for WASM
+                let result = $crate::pollster::block_on(future);
 
                 let response = match result {
                     Ok(value) => serde_json::json!({

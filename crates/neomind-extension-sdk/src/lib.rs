@@ -301,6 +301,11 @@ mod wasm_extension {
 
 #[cfg(target_arch = "wasm32")]
 pub use wasm_extension::Extension;
+
+// Re-export pollster for WASM target (used by macros)
+#[cfg(target_arch = "wasm32")]
+pub use pollster;
+
 // Capabilities module (NEW - 方案3: 混合方案)
 
 // Re-export async_trait for convenience
