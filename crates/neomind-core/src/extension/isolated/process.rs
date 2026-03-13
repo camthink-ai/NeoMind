@@ -30,6 +30,57 @@ use super::{IsolatedExtensionError, IsolatedResult};
 use crate::extension::system::{ExtensionMetadata, ExtensionMetricValue};
 use serde_json::Value;
 
+/// Helper function to send a message to the extension process
+/// Used for sending IpcMessage types (like CapabilityResult)
+fn send_message_to_extension(
+    stdin: &Arc<Mutex<Option<BufWriter<std::process::ChildStdin>>>>,
+    extension_id: &str,
+    message: IpcMessage,
+) {
+    match message.to_bytes() {
+        Ok(bytes) => {
+            let frame = IpcFrame::new(bytes);
+            let encoded = frame.encode();
+
+            // Try to send - use try_lock to avoid blocking the receiver thread
+            if let Ok(mut stdin_guard) = stdin.try_lock() {
+                if let Some(stdin_writer) = stdin_guard.as_mut() {
+                    if let Err(e) = stdin_writer.write_all(&encoded) {
+                        warn!(
+                            extension_id = %extension_id,
+                            error = %e,
+                            "Failed to send message to extension"
+                        );
+                    } else if let Err(e) = stdin_writer.flush() {
+                        warn!(
+                            extension_id = %extension_id,
+                            error = %e,
+                            "Failed to flush message to extension"
+                        );
+                    } else {
+                        debug!(
+                            extension_id = %extension_id,
+                            "Message sent to extension"
+                        );
+                    }
+                }
+            } else {
+                warn!(
+                    extension_id = %extension_id,
+                    "Could not acquire stdin lock to send message"
+                );
+            }
+        }
+        Err(e) => {
+            warn!(
+                extension_id = %extension_id,
+                error = %e,
+                "Failed to serialize message"
+            );
+        }
+    }
+}
+
 /// Helper function to send a response to the extension process
 /// Used in the receiver thread for bidirectional communication
 fn send_response_to_extension(
@@ -598,7 +649,74 @@ impl IsolatedExtension {
                 };
 
                 // Route response to the correct waiting caller
-                if let Some(request_id) = response.request_id() {
+                // IMPORTANT: Check is_capability_request() FIRST, because CapabilityRequest
+                // has a request_id but should NOT be routed to waiting callers
+                if response.is_capability_request() {
+                    // Handle CapabilityRequest from extension (bidirectional)
+                    if let IpcResponse::CapabilityRequest { request_id, capability, params } = response {
+                        debug!(
+                            extension_id = %extension_id,
+                            request_id,
+                            capability = %capability,
+                            "Received CapabilityRequest from extension"
+                        );
+
+                        // Get the capability provider
+                        let provider_opt = capability_provider.read().unwrap().clone();
+
+                        if let Some(provider) = provider_opt {
+                            // Parse capability
+                            let cap = match super::super::context::ExtensionCapability::from_name(&capability) {
+                                Some(c) => c,
+                                None => {
+                                    // Send error response as IpcMessage
+                                    let error_message = IpcMessage::CapabilityResult {
+                                        request_id,
+                                        result: serde_json::json!({}),
+                                        error: Some(format!("Unknown capability: {}", capability)),
+                                    };
+                                    send_message_to_extension(&stdin, &extension_id, error_message);
+                                    continue;
+                                }
+                            };
+
+                            // Invoke capability using block_in_place for async
+                            let result = tokio::task::block_in_place(|| {
+                                rt_handle.block_on(async {
+                                    provider.invoke_capability(cap, &params).await
+                                })
+                            });
+
+                            // Send response back to extension as IpcMessage
+                            let message = match result {
+                                Ok(value) => IpcMessage::CapabilityResult {
+                                    request_id,
+                                    result: value,
+                                    error: None,
+                                },
+                                Err(e) => IpcMessage::CapabilityResult {
+                                    request_id,
+                                    result: serde_json::json!({}),
+                                    error: Some(e.to_string()),
+                                },
+                            };
+
+                            send_message_to_extension(&stdin, &extension_id, message);
+                        } else {
+                            // No capability provider configured
+                            warn!(
+                                extension_id = %extension_id,
+                                "No capability provider configured, sending error response"
+                            );
+                            let error_message = IpcMessage::CapabilityResult {
+                                request_id,
+                                result: serde_json::json!({}),
+                                error: Some("No capability provider configured".to_string()),
+                            };
+                            send_message_to_extension(&stdin, &extension_id, error_message);
+                        }
+                    }
+                } else if let Some(request_id) = response.request_id() {
                     debug!(
                         extension_id = %extension_id,
                         request_id,
@@ -626,71 +744,6 @@ impl IsolatedExtension {
                                     "Failed to forward PushOutput"
                                 );
                             }
-                        }
-                    }
-                } else if response.is_capability_request() {
-                    // Handle CapabilityRequest from extension (bidirectional)
-                    if let IpcResponse::CapabilityRequest { request_id, capability, params } = response {
-                        debug!(
-                            extension_id = %extension_id,
-                            request_id,
-                            capability = %capability,
-                            "Received CapabilityRequest from extension"
-                        );
-
-                        // Get the capability provider
-                        let provider_opt = capability_provider.read().unwrap().clone();
-
-                        if let Some(provider) = provider_opt {
-                            // Parse capability
-                            let cap = match super::super::context::ExtensionCapability::from_name(&capability) {
-                                Some(c) => c,
-                                None => {
-                                    // Send error response
-                                    let error_response = IpcResponse::CapabilityResult {
-                                        request_id,
-                                        result: serde_json::json!({}),
-                                        error: Some(format!("Unknown capability: {}", capability)),
-                                    };
-                                    send_response_to_extension(&stdin, &extension_id, error_response);
-                                    continue;
-                                }
-                            };
-
-                            // Invoke capability using block_in_place for async
-                            let result = tokio::task::block_in_place(|| {
-                                rt_handle.block_on(async {
-                                    provider.invoke_capability(cap, &params).await
-                                })
-                            });
-
-                            // Send response back to extension
-                            let response = match result {
-                                Ok(value) => IpcResponse::CapabilityResult {
-                                    request_id,
-                                    result: value,
-                                    error: None,
-                                },
-                                Err(e) => IpcResponse::CapabilityResult {
-                                    request_id,
-                                    result: serde_json::json!({}),
-                                    error: Some(e.to_string()),
-                                },
-                            };
-
-                            send_response_to_extension(&stdin, &extension_id, response);
-                        } else {
-                            // No capability provider configured
-                            warn!(
-                                extension_id = %extension_id,
-                                "No capability provider configured, sending error response"
-                            );
-                            let error_response = IpcResponse::CapabilityResult {
-                                request_id,
-                                result: serde_json::json!({}),
-                                error: Some("No capability provider configured".to_string()),
-                            };
-                            send_response_to_extension(&stdin, &extension_id, error_response);
                         }
                     }
                 } else {

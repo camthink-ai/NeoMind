@@ -443,6 +443,13 @@ impl UnifiedExtensionService {
         Arc::clone(&self.isolated_manager)
     }
 
+    /// Set the capability provider for isolated extensions
+    ///
+    /// This allows isolated extensions to invoke capabilities on the host process.
+    pub async fn set_capability_provider(&self, provider: Arc<dyn super::context::ExtensionCapabilityProvider>) {
+        self.isolated_manager.set_capability_provider(provider).await;
+    }
+
     /// Get extension as DynExtension for streaming operations
     /// This returns the extension from registry if available
     /// For isolated extensions, they should be registered in both places

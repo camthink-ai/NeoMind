@@ -1074,3 +1074,127 @@ pub async fn register_builtin_providers_with_dispatcher(
 
     tracing::info!("Registered all built-in capability providers (7 providers, 11 capabilities)");
 }
+
+// ============================================================================
+// Composite Capability Provider for Isolated Extensions
+// ============================================================================
+
+use std::collections::HashMap;
+
+/// Composite capability provider that routes to appropriate sub-providers.
+///
+/// This is used for isolated extensions that need to invoke capabilities
+/// on the host process. It routes each capability to the appropriate provider.
+pub struct CompositeCapabilityProvider {
+    providers: HashMap<String, Arc<dyn ExtensionCapabilityProvider>>,
+}
+
+impl CompositeCapabilityProvider {
+    /// Create a new composite provider
+    pub fn new() -> Self {
+        Self {
+            providers: HashMap::new(),
+        }
+    }
+
+    /// Add a provider for a specific package
+    pub fn with_provider(mut self, package_name: String, provider: Arc<dyn ExtensionCapabilityProvider>) -> Self {
+        self.providers.insert(package_name, provider);
+        self
+    }
+
+    /// Create composite provider with all built-in providers
+    pub fn with_all_providers(
+        services: CapabilityServices,
+        event_bus: Arc<EventBus>,
+        event_dispatcher: Option<std::sync::Arc<neomind_core::extension::EventDispatcher>>,
+    ) -> Self {
+        let mut composite = Self::new();
+
+        let device_provider = Arc::new(DeviceCapabilityProvider::new(services.clone()));
+        composite.providers.insert("neomind-api::device".to_string(), device_provider);
+
+        let event_provider = if let Some(dispatcher) = event_dispatcher {
+            Arc::new(EventCapabilityProvider::with_dispatcher(event_bus, dispatcher))
+        } else {
+            Arc::new(EventCapabilityProvider::new(event_bus))
+        };
+        composite.providers.insert("neomind-api::event".to_string(), event_provider);
+
+        let telemetry_provider = Arc::new(TelemetryCapabilityProvider::new(services.clone()));
+        composite.providers.insert("neomind-api::telemetry".to_string(), telemetry_provider);
+
+        let rule_provider = Arc::new(RuleCapabilityProvider::new(services.clone()));
+        composite.providers.insert("neomind-api::rule".to_string(), rule_provider);
+
+        let extension_provider = Arc::new(ExtensionCallCapabilityProvider::new(services.clone()));
+        composite.providers.insert("neomind-api::extension".to_string(), extension_provider);
+
+        let storage_provider = Arc::new(StorageCapabilityProvider::new(services.clone()));
+        composite.providers.insert("neomind-api::storage".to_string(), storage_provider);
+
+        let agent_provider = Arc::new(AgentCapabilityProvider::new(services));
+        composite.providers.insert("neomind-api::agent".to_string(), agent_provider);
+
+        composite
+    }
+}
+
+#[async_trait]
+impl ExtensionCapabilityProvider for CompositeCapabilityProvider {
+    fn capability_manifest(&self) -> CapabilityManifest {
+        let mut all_capabilities = Vec::new();
+
+        for provider in self.providers.values() {
+            let manifest = provider.capability_manifest();
+            all_capabilities.extend(manifest.capabilities);
+        }
+
+        CapabilityManifest {
+            capabilities: all_capabilities,
+            api_version: "v1".to_string(),
+            min_core_version: "0.5.0".to_string(),
+            package_name: "neomind-api::composite".to_string(),
+        }
+    }
+
+    async fn invoke_capability(
+        &self,
+        capability: ExtensionCapability,
+        params: &Value,
+    ) -> Result<Value, CapabilityError> {
+        // Route to appropriate provider based on capability
+        let provider_name = capability_to_provider(&capability);
+
+        if let Some(provider) = self.providers.get(provider_name) {
+            provider.invoke_capability(capability, params).await
+        } else {
+            Err(CapabilityError::ProviderNotFound(capability))
+        }
+    }
+}
+
+/// Map capability to provider package name
+fn capability_to_provider(capability: &ExtensionCapability) -> &'static str {
+    match capability {
+        ExtensionCapability::DeviceMetricsRead
+        | ExtensionCapability::DeviceMetricsWrite
+        | ExtensionCapability::DeviceControl => "neomind-api::device",
+
+        ExtensionCapability::EventPublish
+        | ExtensionCapability::EventSubscribe => "neomind-api::event",
+
+        ExtensionCapability::TelemetryHistory
+        | ExtensionCapability::MetricsAggregate => "neomind-api::telemetry",
+
+        ExtensionCapability::RuleTrigger => "neomind-api::rule",
+
+        ExtensionCapability::ExtensionCall => "neomind-api::extension",
+
+        ExtensionCapability::StorageQuery => "neomind-api::storage",
+
+        ExtensionCapability::AgentTrigger => "neomind-api::agent",
+
+        ExtensionCapability::Custom(_) => "neomind-api::custom",
+    }
+}

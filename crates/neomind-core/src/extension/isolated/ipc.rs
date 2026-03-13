@@ -203,6 +203,17 @@ pub enum IpcMessage {
         /// Event timestamp
         timestamp: i64,
     },
+
+    /// Capability result from host to extension
+    /// This is the response to a CapabilityRequest from the extension
+    CapabilityResult {
+        /// Request ID (matches the CapabilityRequest)
+        request_id: u64,
+        /// Result of the capability invocation
+        result: serde_json::Value,
+        /// Error message if failed
+        error: Option<String>,
+    },
 }
 
 /// Stream client info (for IPC transfer)

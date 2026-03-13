@@ -149,6 +149,14 @@ impl ExtensionState {
         Some(self.unified_service.get_event_dispatcher())
     }
 
+    /// Set the capability provider for isolated extensions.
+    ///
+    /// This allows isolated extensions to invoke capabilities on the host process,
+    /// such as writing virtual metrics to devices.
+    pub async fn set_capability_provider(&self, provider: Arc<dyn neomind_core::extension::context::ExtensionCapabilityProvider>) {
+        self.unified_service.set_capability_provider(provider).await;
+    }
+
     /// Create a new extension state with process isolation enabled by default.
     pub fn new(
         registry: Arc<ExtensionRegistry>,

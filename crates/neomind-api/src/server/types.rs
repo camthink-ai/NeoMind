@@ -335,6 +335,30 @@ impl ServerState {
         // ========== Build AUTOMATION STATE ==========
         let rule_engine = Arc::new(RuleEngine::new(value_provider.clone()));
 
+        // Set up capability provider for isolated extensions
+        // This allows isolated extensions to invoke capabilities on the host process
+        {
+            use crate::capability_providers::CompositeCapabilityProvider;
+            use neomind_core::extension::CapabilityServices;
+
+            let services = CapabilityServices::new()
+                .with_service(neomind_core::extension::keys::DEVICE_SERVICE, devices.service.clone())
+                .with_service(neomind_core::extension::keys::TELEMETRY_STORAGE, devices.telemetry.clone())
+                .with_service(neomind_core::extension::keys::RULE_ENGINE, rule_engine.clone())
+                .with_service(neomind_core::extension::keys::EXTENSION_REGISTRY, extensions.registry.clone())
+                .with_service(neomind_core::extension::keys::EVENT_BUS, event_bus.clone().unwrap_or_else(|| Arc::new(neomind_core::EventBus::new())));
+
+            let event_dispatcher = extensions.get_event_dispatcher();
+            let composite_provider = Arc::new(CompositeCapabilityProvider::with_all_providers(
+                services,
+                event_bus.clone().unwrap_or_else(|| Arc::new(neomind_core::EventBus::new())),
+                event_dispatcher,
+            ));
+
+            extensions.set_capability_provider(composite_provider).await;
+            tracing::info!("Capability provider set for isolated extensions");
+        }
+
         // Wire rule engine to message manager
         rule_engine
             .set_message_manager(core.message_manager.clone())

@@ -73,46 +73,6 @@ pub use neomind_core::extension::context::*;
 #[cfg(not(target_arch = "wasm32"))]
 pub use neomind_core::event::NeoMindEvent;
 
-// ============================================================================
-// Global Capability Invocation (for isolated extensions)
-// ============================================================================
-
-/// Type alias for the global capability invoker function
-type CapabilityInvoker = std::sync::Arc<std::sync::RwLock<Option<Box<dyn Fn(&str, &serde_json::Value) -> serde_json::Value + Send + Sync>>>>;
-
-/// Global capability invoker for isolated extensions
-/// This is set by the extension runner when the extension is loaded
+// Re-export CapabilityContext for extensions
 #[cfg(not(target_arch = "wasm32"))]
-static GLOBAL_CAPABILITY_INVOKER: std::sync::OnceLock<CapabilityInvoker> = std::sync::OnceLock::new();
-
-/// Set the global capability invoker (called by extension runner)
-#[cfg(not(target_arch = "wasm32"))]
-pub fn set_global_capability_invoker(invoker: Box<dyn Fn(&str, &serde_json::Value) -> serde_json::Value + Send + Sync>) {
-    let container = GLOBAL_CAPABILITY_INVOKER.get_or_init(|| {
-        std::sync::Arc::new(std::sync::RwLock::new(None))
-    });
-    *container.write().unwrap() = Some(invoker);
-}
-
-/// Invoke a capability using the global invoker
-/// This is useful for isolated extensions that don't have access to ExtensionContext
-#[cfg(not(target_arch = "wasm32"))]
-pub fn invoke_global_capability(capability: &str, params: &serde_json::Value) -> Option<serde_json::Value> {
-    if let Some(container) = GLOBAL_CAPABILITY_INVOKER.get() {
-        if let Some(invoker) = container.read().unwrap().as_ref() {
-            return Some(invoker(capability, params));
-        }
-    }
-    None
-}
-
-/// Check if global capability invoker is available
-#[cfg(not(target_arch = "wasm32"))]
-pub fn has_global_capability_invoker() -> bool {
-    if let Some(container) = GLOBAL_CAPABILITY_INVOKER.get() {
-        if let Ok(guard) = container.read() {
-            return guard.is_some();
-        }
-    }
-    false
-}
+pub use neomind_core::extension::system::CapabilityContext;

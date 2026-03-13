@@ -372,6 +372,36 @@ pub trait Extension: Send + Sync + 'static {
     }
 
     // =========================================================================
+    // Capability Invocation Support (for isolated extensions)
+    // =========================================================================
+
+    /// Handle an event with capability context
+    ///
+    /// This method provides a `CapabilityContext` for invoking host capabilities
+    /// (like writing virtual metrics). Extensions that need to call host capabilities
+    /// should override this method.
+    ///
+    /// Default implementation delegates to `handle_event` for backward compatibility.
+    ///
+    /// # Parameters
+    /// - `event_type`: The type of event (e.g., "DeviceMetric", "DeviceOnline")
+    /// - `payload`: The event payload as JSON
+    /// - `ctx`: Capability context for invoking host capabilities
+    ///
+    /// # Returns
+    /// - `Ok(())` if the event was handled successfully
+    /// - `Err(ExtensionError)` if there was an error handling the event
+    fn handle_event_with_context(
+        &self,
+        event_type: &str,
+        payload: &serde_json::Value,
+        _ctx: &CapabilityContext,
+    ) -> Result<()> {
+        // Default implementation delegates to handle_event for backward compatibility
+        self.handle_event(event_type, payload)
+    }
+
+    // =========================================================================
     // Streaming Support (Optional)
     // =========================================================================
 
@@ -844,6 +874,153 @@ pub enum ExtensionError {
 
 /// Result type for extension operations
 pub type Result<T> = std::result::Result<T, ExtensionError>;
+
+// ============================================================================
+// Capability Context (for isolated extensions)
+// ============================================================================
+
+/// Capability context for invoking host capabilities
+///
+/// This struct is passed to `handle_event_with_context` and provides
+/// a unified API for extensions to invoke host capabilities like
+/// writing virtual metrics, regardless of whether the extension is
+/// running in-process or in isolated mode.
+///
+/// # Example
+/// ```rust,ignore
+/// fn handle_event_with_context(
+///     &self,
+///     event_type: &str,
+///     payload: &serde_json::Value,
+///     ctx: &CapabilityContext,
+/// ) -> Result<()> {
+///     // Write a virtual metric
+///     ctx.write_virtual_metric("device-1", "virtual.status", &json!("active"))?;
+///
+///     // Or invoke any capability directly
+///     let result = ctx.invoke_capability("device_metrics_read", &json!({"device_id": "device-1"}));
+///
+///     Ok(())
+/// }
+/// ```
+#[derive(Clone)]
+pub struct CapabilityContext {
+    invoker: Arc<dyn Fn(&str, &serde_json::Value) -> serde_json::Value + Send + Sync>,
+}
+
+impl CapabilityContext {
+    /// Create a new capability context with an invoker function
+    pub fn new(invoker: Box<dyn Fn(&str, &serde_json::Value) -> serde_json::Value + Send + Sync>) -> Self {
+        Self {
+            invoker: Arc::from(invoker),
+        }
+    }
+
+    /// Create a no-op capability context (for testing or when no capabilities are needed)
+    pub fn noop() -> Self {
+        Self {
+            invoker: Arc::new(|_capability: &str, _params: &serde_json::Value| {
+                serde_json::json!({"success": false, "error": "No capability invoker available"})
+            }),
+        }
+    }
+
+    /// Invoke a capability by name
+    ///
+    /// # Parameters
+    /// - `capability`: The capability name (e.g., "device_metrics_write")
+    /// - `params`: The parameters as JSON
+    ///
+    /// # Returns
+    /// The result as JSON
+    pub fn invoke_capability(&self, capability: &str, params: &serde_json::Value) -> serde_json::Value {
+        (self.invoker)(capability, params)
+    }
+
+    /// Write a virtual metric to a device
+    ///
+    /// Virtual metrics are computed values that are stored on a device
+    /// but are not sent by the device itself. They must start with
+    /// `transform.`, `virtual.`, `computed.`, `derived.`, or `aggregated.`
+    ///
+    /// # Parameters
+    /// - `device_id`: The device ID to write the metric to
+    /// - `metric`: The metric name (must start with virtual metric prefix)
+    /// - `value`: The metric value
+    ///
+    /// # Returns
+    /// - `Ok(())` if successful
+    /// - `Err(ExtensionError)` if failed
+    pub fn write_virtual_metric(
+        &self,
+        device_id: &str,
+        metric: &str,
+        value: &serde_json::Value,
+    ) -> Result<()> {
+        let params = serde_json::json!({
+            "device_id": device_id,
+            "metric": metric,
+            "value": value,
+            "is_virtual": true,
+        });
+
+        let result = self.invoke_capability("device_metrics_write", &params);
+
+        if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+            Ok(())
+        } else {
+            let error = result.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error");
+            Err(ExtensionError::ExecutionFailed(format!("Failed to write virtual metric: {}", error)))
+        }
+    }
+
+    /// Write a typed virtual metric to a device
+    ///
+    /// Convenience method that serializes the value to JSON before writing.
+    pub fn write_virtual_metric_typed<T: serde::Serialize>(
+        &self,
+        device_id: &str,
+        metric: &str,
+        value: T,
+    ) -> Result<()> {
+        let value_json = serde_json::to_value(value)
+            .map_err(|e| ExtensionError::InvalidFormat(e.to_string()))?;
+        self.write_virtual_metric(device_id, metric, &value_json)
+    }
+
+    /// Get metrics from a device
+    ///
+    /// # Parameters
+    /// - `device_id`: The device ID
+    ///
+    /// # Returns
+    /// The device metrics as JSON
+    pub fn get_device_metrics(&self, device_id: &str) -> serde_json::Value {
+        let params = serde_json::json!({
+            "device_id": device_id,
+        });
+        self.invoke_capability("device_metrics_read", &params)
+    }
+
+    /// Get a specific metric from a device
+    ///
+    /// # Parameters
+    /// - `device_id`: The device ID
+    /// - `metric`: The metric name
+    ///
+    /// # Returns
+    /// The metric value as JSON, or null if not found
+    pub fn get_device_metric(&self, device_id: &str, metric: &str) -> serde_json::Value {
+        let params = serde_json::json!({
+            "device_id": device_id,
+            "metric": metric,
+        });
+        let result = self.invoke_capability("device_metrics_read", &params);
+        result.get("value").cloned().unwrap_or(serde_json::Value::Null)
+    }
+}
 
 /// Type alias for dynamic extension
 /// Uses tokio::sync::RwLock for async compatibility.

@@ -877,7 +877,8 @@ impl TransformEngine {
     ) -> Result<TransformResult> {
         let mut metrics = Vec::new();
         let mut warnings = Vec::new();
-        let timestamp = Utc::now().timestamp();
+        // Use milliseconds for consistency with device metrics storage
+        let timestamp = Utc::now().timestamp_millis();
 
         // Build the actual output prefix based on scope to avoid naming conflicts
         // - Global: "transform.{metric}"
@@ -1734,7 +1735,8 @@ impl TransformEngine {
         let values: Vec<f64> = data_points.iter().map(|p| p.value).collect();
         let result = self.compute_aggregation(&values, aggregation)?;
 
-        let timestamp = Utc::now().timestamp();
+        // Use milliseconds for consistency with device metrics storage
+        let timestamp = Utc::now().timestamp_millis();
 
         Ok(TransformedMetric {
             device_id: device_id.to_string(),
@@ -2251,7 +2253,8 @@ impl TimeSeriesCache {
     /// Get data points within a time window
     fn get_window(&self, device_id: &str, metric: &str, window_secs: u64) -> Vec<DataPoint> {
         let key = (device_id.to_string(), metric.to_string());
-        let cutoff = Utc::now().timestamp() - window_secs as i64;
+        // Use milliseconds for consistency with stored timestamps
+        let cutoff = Utc::now().timestamp_millis() - (window_secs as i64 * 1000);
 
         self.data
             .get(&key)

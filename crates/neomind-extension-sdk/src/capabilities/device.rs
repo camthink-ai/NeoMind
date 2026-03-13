@@ -249,49 +249,6 @@ pub fn write_virtual_metrics(
 }
 
 // ============================================================================
-// Global Virtual Metric Write (for isolated extensions without context)
-// ============================================================================
-
-/// Write a virtual metric using the global capability invoker
-/// This is useful for isolated extensions that don't have access to ExtensionContext
-#[cfg(not(target_arch = "wasm32"))]
-pub fn write_virtual_metric_global(
-    device_id: &str,
-    metric: &str,
-    value: &Value,
-) -> Result<Value, CapabilityError> {
-    let params = json!({
-        "device_id": device_id,
-        "metric": metric,
-        "value": value,
-        "is_virtual": true,
-    });
-    
-    super::invoke_global_capability("device_metrics_write", &params)
-        .ok_or_else(|| "Global capability invoker not available".to_string())
-}
-
-/// Write a typed virtual metric using the global capability invoker
-#[cfg(not(target_arch = "wasm32"))]
-pub fn write_virtual_metric_global_typed<T>(
-    device_id: &str,
-    metric: &str,
-    value: T,
-) -> Result<Value, CapabilityError>
-where
-    T: Serialize,
-{
-    let value_json = serde_json::to_value(value).map_err(|e| e.to_string())?;
-    write_virtual_metric_global(device_id, metric, &value_json)
-}
-
-/// Check if global capability invoker is available for virtual metric writing
-#[cfg(not(target_arch = "wasm32"))]
-pub fn has_global_virtual_metric_support() -> bool {
-    super::has_global_capability_invoker()
-}
-
-// ============================================================================
 // Device Control (Commands)
 // ============================================================================
 

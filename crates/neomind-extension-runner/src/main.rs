@@ -22,9 +22,10 @@
 //! All messages are framed with a 4-byte length prefix (little-endian).
 
 use std::collections::HashMap;
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use clap::Parser;
 use serde_json::json;
@@ -39,6 +40,127 @@ use neomind_core::extension::loader::NativeExtensionLoader;
 use neomind_core::extension::system::DynExtension;
 // Import capability name constants from Core for consistency
 use neomind_core::extension::context::capabilities as cap;
+
+// ============================================================================
+// Message routing for capability invocation
+// ============================================================================
+// A background thread reads all stdin messages and routes them to:
+// 1. Pending capability requests (via PENDING_REQUESTS)
+// 2. Main event queue (via EVENT_QUEUE)
+
+use std::sync::mpsc::{Sender, Receiver, channel};
+
+type ResponseSender = Sender<IpcResponse>;
+
+/// Pending capability requests: request_id -> response sender
+static PENDING_REQUESTS: std::sync::OnceLock<Mutex<HashMap<u64, ResponseSender>>> = std::sync::OnceLock::new();
+
+/// Event queue for main loop
+static EVENT_QUEUE: std::sync::OnceLock<Mutex<Vec<IpcMessage>>> = std::sync::OnceLock::new();
+
+fn get_pending_requests() -> &'static Mutex<HashMap<u64, ResponseSender>> {
+    PENDING_REQUESTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn get_event_queue() -> &'static Mutex<Vec<IpcMessage>> {
+    EVENT_QUEUE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Register a pending request and return the response receiver
+fn register_pending_request(request_id: u64) -> Receiver<IpcResponse> {
+    let (tx, rx) = channel();
+    get_pending_requests().lock().unwrap().insert(request_id, tx);
+    rx
+}
+
+/// Complete a pending request with the response
+fn complete_pending_request(request_id: u64, response: IpcResponse) {
+    if let Some(tx) = get_pending_requests().lock().unwrap().remove(&request_id) {
+        let _ = tx.send(response);
+    }
+}
+
+/// Push an event to the queue for main loop processing
+fn push_event(message: IpcMessage) {
+    get_event_queue().lock().unwrap().push(message);
+}
+
+/// Pop an event from the queue
+fn pop_event() -> Option<IpcMessage> {
+    get_event_queue().lock().unwrap().pop()
+}
+
+/// Start the stdin reader thread
+/// This thread reads all messages from stdin and routes them appropriately
+fn start_stdin_reader() -> std::thread::JoinHandle<()> {
+    std::thread::spawn(|| {
+        eprintln!("[StdinReader] Started");
+
+        loop {
+            // Read length prefix
+            let mut len_bytes = [0u8; 4];
+            match std::io::stdin().read_exact(&mut len_bytes) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    eprintln!("[StdinReader] stdin closed");
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("[StdinReader] Error reading length: {}", e);
+                    break;
+                }
+            }
+
+            let len = u32::from_le_bytes(len_bytes) as usize;
+            if len > 10 * 1024 * 1024 {
+                eprintln!("[StdinReader] Message too large: {}", len);
+                continue;
+            }
+
+            // Read payload
+            let mut payload = vec![0u8; len];
+            if let Err(e) = std::io::stdin().read_exact(&mut payload) {
+                eprintln!("[StdinReader] Error reading payload: {}", e);
+                continue;
+            }
+
+            // Parse message
+            let message: IpcMessage = match IpcMessage::from_bytes(&payload) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("[StdinReader] Failed to parse message: {}", e);
+                    continue;
+                }
+            };
+
+            // Route message
+            match &message {
+                IpcMessage::CapabilityResult { request_id, .. } => {
+                    // Convert to IpcResponse and route to waiting invoke()
+                    let response = IpcResponse::CapabilityResult {
+                        request_id: *request_id,
+                        result: match message {
+                            IpcMessage::CapabilityResult { ref result, .. } => result.clone(),
+                            _ => json!({}),
+                        },
+                        error: match message {
+                            IpcMessage::CapabilityResult { ref error, .. } => error.clone(),
+                            _ => None,
+                        },
+                    };
+                    complete_pending_request(*request_id, response);
+                    eprintln!("[StdinReader] Routed CapabilityResult to request_id={}", request_id);
+                }
+                _ => {
+                    // Push to event queue for main loop
+                    push_event(message);
+                }
+            }
+        }
+
+        eprintln!("[StdinReader] Exiting");
+    })
+}
 
 /// Global event state for WASM extensions
 struct GlobalEventState {
@@ -138,19 +260,16 @@ struct Runner {
     extension_type: ExtensionType,
     /// Shared runtime for native async extension calls
     runtime: tokio::runtime::Runtime,
-    /// Stdin reader
-    stdin: BufReader<std::io::Stdin>,
-    /// Stdout writer
-    stdout: BufWriter<std::io::Stdout>,
-    /// Extension context (capabilities, permissions, etc.)
     /// Running flag
     running: bool,
     /// IPC client for WASM capability forwarding
     ipc_client: Option<Arc<SyncIpcClient>>,
-    /// IPC request receiver (for forwarding to main process)
+    /// IPC request receiver (for forwarding to main process) - no longer used
     ipc_request_rx: Option<std::sync::mpsc::Receiver<SyncIpcRequest>>,
-    /// IPC response sender (for returning results to WASM)
+    /// IPC response sender (for returning results to WASM) - no longer used
     ipc_response_tx: Option<std::sync::mpsc::SyncSender<SyncIpcResponse>>,
+    /// Capability context for invoking host capabilities
+    capability_context: Option<neomind_core::extension::system::CapabilityContext>,
 }
 
 /// WASM runtime state
@@ -727,18 +846,7 @@ struct HostState {
     ipc_client: Option<Arc<SyncIpcClient>>,
 }
 
-/// Synchronous IPC client for WASM host functions
-///
-/// This client uses synchronous channels to allow WASM host functions
-/// to invoke capabilities via IPC without async runtime.
-pub struct SyncIpcClient {
-    /// Request sender (sends to main process via stdout)
-    request_tx: std::sync::mpsc::SyncSender<SyncIpcRequest>,
-    /// Response receiver (receives from main process via stdin)
-    response_rx: std::sync::Mutex<std::sync::mpsc::Receiver<SyncIpcResponse>>,
-}
-
-/// Synchronous IPC request
+/// Synchronous IPC request (for compatibility with existing code)
 #[derive(Debug, Clone)]
 pub struct SyncIpcRequest {
     pub request_id: u64,
@@ -746,7 +854,7 @@ pub struct SyncIpcRequest {
     pub params: serde_json::Value,
 }
 
-/// Synchronous IPC response
+/// Synchronous IPC response (for compatibility with existing code)
 #[derive(Debug, Clone)]
 pub struct SyncIpcResponse {
     pub request_id: u64,
@@ -754,51 +862,114 @@ pub struct SyncIpcResponse {
     pub error: Option<String>,
 }
 
+/// Synchronous IPC client for capability invocation
+///
+/// This client sends CapabilityRequest messages via stdout and waits for
+/// CapabilityResult responses via the pending requests queue (routed by main loop).
+pub struct SyncIpcClient {}
+
 impl SyncIpcClient {
     /// Create a new sync IPC client
     pub fn new() -> (Self, std::sync::mpsc::Receiver<SyncIpcRequest>, std::sync::mpsc::SyncSender<SyncIpcResponse>) {
+        // Return dummy channels for compatibility with existing code
         let (request_tx, request_rx) = std::sync::mpsc::sync_channel(16);
         let (response_tx, response_rx) = std::sync::mpsc::sync_channel(16);
-        
+
+        // Drop the channels we don't need
+        drop(request_tx);
+        drop(response_rx);
+
         (
-            Self {
-                request_tx,
-                response_rx: std::sync::Mutex::new(response_rx),
-            },
+            Self {},
             request_rx,
             response_tx,
         )
     }
 
     /// Invoke a capability synchronously
+    /// 
+    /// Sends CapabilityRequest via stdout and waits for CapabilityResult
+    /// via the pending requests queue (routed by main loop).
     pub fn invoke(&self, capability: &str, params: &serde_json::Value) -> serde_json::Value {
         use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
-        
+
         static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
         let request_id = REQUEST_ID_COUNTER.fetch_add(1, AtomicOrdering::SeqCst);
 
-        let request = SyncIpcRequest {
+        eprintln!("[SyncIpcClient] invoke called: capability={}, request_id={}", capability, request_id);
+
+        // Register pending request BEFORE sending
+        let response_rx = register_pending_request(request_id);
+
+        // Send CapabilityRequest via stdout
+        let request = IpcResponse::CapabilityRequest {
             request_id,
             capability: capability.to_string(),
             params: params.clone(),
         };
 
-        // Send request
-        if let Err(e) = self.request_tx.send(request) {
-            return json!({"success": false, "error": format!("Failed to send IPC request: {}", e)});
+        let payload = match request.to_bytes() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[SyncIpcClient] Failed to serialize request: {}", e);
+                // Remove pending request on error
+                get_pending_requests().lock().unwrap().remove(&request_id);
+                return json!({"success": false, "error": format!("Failed to serialize request: {}", e)});
+            }
+        };
+
+        let frame = IpcFrame::new(payload);
+        let bytes = frame.encode();
+
+        // Write to stdout
+        {
+            let mut stdout = std::io::stdout();
+            if let Err(e) = stdout.write_all(&bytes) {
+                eprintln!("[SyncIpcClient] Failed to write request: {}", e);
+                get_pending_requests().lock().unwrap().remove(&request_id);
+                return json!({"success": false, "error": format!("Failed to write request: {}", e)});
+            }
+            if let Err(e) = stdout.flush() {
+                eprintln!("[SyncIpcClient] Failed to flush request: {}", e);
+                get_pending_requests().lock().unwrap().remove(&request_id);
+                return json!({"success": false, "error": format!("Failed to flush request: {}", e)});
+            }
         }
 
-        // Wait for response (blocking)
-        let response_rx = self.response_rx.lock().unwrap();
-        match response_rx.recv() {
+        eprintln!("[SyncIpcClient] Request sent, waiting for response via queue...");
+
+        // Wait for response from the pending requests queue (with timeout)
+        match response_rx.recv_timeout(std::time::Duration::from_secs(30)) {
             Ok(response) => {
-                if let Some(err) = response.error {
-                    json!({"success": false, "error": err})
-                } else {
-                    response.result
+                eprintln!("[SyncIpcClient] Received response: {:?}", response);
+                match response {
+                    IpcResponse::CapabilityResult { request_id: resp_id, result, error } => {
+                        if resp_id != request_id {
+                            eprintln!("[SyncIpcClient] Request ID mismatch: expected {}, got {}", request_id, resp_id);
+                            return json!({"success": false, "error": "Request ID mismatch"});
+                        }
+                        if let Some(err) = error {
+                            json!({"success": false, "error": err})
+                        } else {
+                            result
+                        }
+                    }
+                    _ => {
+                        eprintln!("[SyncIpcClient] Unexpected response type: {:?}", response);
+                        json!({"success": false, "error": format!("Unexpected response type")})
+                    }
                 }
             }
-            Err(e) => json!({"success": false, "error": format!("Failed to receive IPC response: {}", e)}),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                eprintln!("[SyncIpcClient] Timeout waiting for response");
+                get_pending_requests().lock().unwrap().remove(&request_id);
+                json!({"success": false, "error": "Timeout waiting for response"})
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                eprintln!("[SyncIpcClient] Response channel disconnected");
+                get_pending_requests().lock().unwrap().remove(&request_id);
+                json!({"success": false, "error": "Response channel disconnected"})
+            }
         }
     }
 }
@@ -1271,18 +1442,22 @@ impl Runner {
         let (ipc_client, ipc_request_rx, ipc_response_tx) = {
             let (client, request_rx, response_tx) = SyncIpcClient::new();
             let client_arc = Arc::new(client);
-            
-            // For Native extensions, set the global capability invoker
-            if extension_type == ExtensionType::Native {
+            (Some(client_arc), Some(request_rx), Some(response_tx))
+        };
+
+        // Create CapabilityContext for Native extensions
+        let capability_context = if extension_type == ExtensionType::Native {
+            if let Some(ref client_arc) = ipc_client {
                 let client_for_invoker = client_arc.clone();
                 let invoker = Box::new(move |capability: &str, params: &serde_json::Value| -> serde_json::Value {
                     client_for_invoker.invoke(capability, params)
                 });
-                neomind_extension_sdk::capabilities::set_global_capability_invoker(invoker);
-                info!("Global capability invoker set for Native extension");
+                Some(neomind_core::extension::system::CapabilityContext::new(invoker))
+            } else {
+                None
             }
-            
-            (Some(client_arc), Some(request_rx), Some(response_tx))
+        } else {
+            None
         };
 
         Ok(Self {
@@ -1291,12 +1466,11 @@ impl Runner {
             descriptor,
             extension_type,
             runtime,
-            stdin: BufReader::new(std::io::stdin()),
-            stdout: BufWriter::new(std::io::stdout()),
             running: true,
             ipc_client,
             ipc_request_rx,
             ipc_response_tx,
+            capability_context,
         })
     }
 
@@ -1492,23 +1666,25 @@ impl Runner {
 
         debug!("Waiting for Init message from host");
 
+        // Start stdin reader thread (reads all stdin messages and routes them)
+        let _stdin_reader_handle = start_stdin_reader();
+        eprintln!("[Runner] Stdin reader thread started");
+
         // Start IPC capability forwarder thread for WASM extensions
         let ipc_forwarder_handle = self.start_ipc_forwarder();
 
         while self.running {
             debug!("Waiting for IPC message...");
-            match self.receive_message() {
-                Ok(Some(message)) => {
-                    debug!("Received IPC message: {:?}", std::mem::discriminant(&message));
+
+            // Poll event queue with a small timeout
+            match pop_event() {
+                Some(message) => {
+                    debug!("Received IPC message from queue: {:?}", std::mem::discriminant(&message));
                     self.handle_message(message);
                 }
-                Ok(None) => {
-                    debug!("stdin closed, exiting");
-                    break;
-                }
-                Err(e) => {
-                    error!(error = %e, "Failed to receive message");
-                    break;
+                None => {
+                    // No message, sleep briefly to avoid busy loop
+                    std::thread::sleep(std::time::Duration::from_millis(1));
                 }
             }
         }
@@ -1670,7 +1846,7 @@ impl Runner {
     fn receive_message(&mut self) -> Result<Option<IpcMessage>, String> {
         debug!("Reading length prefix from stdin...");
         let mut len_bytes = [0u8; 4];
-        match self.stdin.read_exact(&mut len_bytes) {
+        match std::io::stdin().read_exact(&mut len_bytes) {
             Ok(()) => {
                 debug!("Read length prefix successfully");
             }
@@ -1691,7 +1867,7 @@ impl Runner {
 
         debug!("Reading payload of {} bytes", len);
         let mut payload = vec![0u8; len];
-        self.stdin.read_exact(&mut payload)
+        std::io::stdin().read_exact(&mut payload)
             .map_err(|e| {
                 error!(error = %e, "Failed to read payload");
                 format!("Failed to read payload: {}", e)
@@ -1726,7 +1902,7 @@ impl Runner {
 
         debug!(frame_len = bytes.len(), "Frame encoded");
 
-        match self.stdout.write_all(&bytes) {
+        match std::io::stdout().write_all(&bytes) {
             Ok(_) => {
                 debug!("Response written to stdout");
             }
@@ -1736,7 +1912,7 @@ impl Runner {
             }
         }
 
-        match self.stdout.flush() {
+        match std::io::stdout().flush() {
             Ok(_) => {
                 debug!("Stdout flushed successfully");
             }
@@ -1778,12 +1954,12 @@ impl Runner {
         let frame = IpcFrame::new(payload);
         let bytes = frame.encode();
 
-        if let Err(e) = self.stdout.write_all(&bytes) {
+        if let Err(e) = std::io::stdout().write_all(&bytes) {
             error!(error = %e, "Failed to write CapabilityRequest");
             return json!({"success": false, "error": "Failed to write request"});
         }
 
-        if let Err(e) = self.stdout.flush() {
+        if let Err(e) = std::io::stdout().flush() {
             error!(error = %e, "Failed to flush CapabilityRequest");
             return json!({"success": false, "error": "Failed to flush request"});
         }
@@ -1793,7 +1969,7 @@ impl Runner {
         // Read response from host
         // Read length prefix (4 bytes)
         let mut len_bytes = [0u8; 4];
-        match self.stdin.read_exact(&mut len_bytes) {
+        match std::io::stdin().read_exact(&mut len_bytes) {
             Ok(_) => {}
             Err(e) => {
                 error!(error = %e, "Failed to read response length");
@@ -1809,7 +1985,7 @@ impl Runner {
 
         // Read payload
         let mut payload_buf = vec![0u8; len];
-        match self.stdin.read_exact(&mut payload_buf) {
+        match std::io::stdin().read_exact(&mut payload_buf) {
             Ok(_) => {}
             Err(e) => {
                 error!(error = %e, "Failed to read response payload");
@@ -2031,26 +2207,47 @@ impl Runner {
                     "Received event push from host"
                 );
 
-                // For native extensions, directly call handle_event method
+                // For native extensions, directly call handle_event_with_context method
                 if let Some(extension) = &self.extension {
                     info!(
                         event_type = %event_type,
                         "Calling handle_event on extension"
                     );
                     let ext_guard = extension.blocking_read();
-                    match ext_guard.handle_event(&event_type, &payload) {
-                        Ok(_) => {
-                            info!(
-                                event_type = %event_type,
-                                "Event handled successfully by extension"
-                            );
+
+                    // Use handle_event_with_context if capability context is available
+                    if let Some(ref ctx) = self.capability_context {
+                        match ext_guard.handle_event_with_context(&event_type, &payload, ctx) {
+                            Ok(_) => {
+                                info!(
+                                    event_type = %event_type,
+                                    "Event handled successfully by extension"
+                                );
+                            }
+                            Err(e) => {
+                                error!(
+                                    event_type = %event_type,
+                                    error = %e,
+                                    "Failed to handle event in extension"
+                                );
+                            }
                         }
-                        Err(e) => {
-                            error!(
-                                event_type = %event_type,
-                                error = %e,
-                                "Failed to handle event in extension"
-                            );
+                    } else {
+                        // Fallback to handle_event for backward compatibility
+                        match ext_guard.handle_event(&event_type, &payload) {
+                            Ok(_) => {
+                                info!(
+                                    event_type = %event_type,
+                                    "Event handled successfully by extension"
+                                );
+                            }
+                            Err(e) => {
+                                error!(
+                                    event_type = %event_type,
+                                    error = %e,
+                                    "Failed to handle event in extension"
+                                );
+                            }
                         }
                     }
                 } else {
@@ -2067,6 +2264,23 @@ impl Runner {
                         "Pushed event to WASM global event state"
                     );
                 }
+            }
+
+            IpcMessage::CapabilityResult { request_id, result, error } => {
+                // Handle capability result from host (response to our CapabilityRequest)
+                debug!(
+                    request_id,
+                    has_error = error.is_some(),
+                    "Received CapabilityResult from host"
+                );
+
+                // Route to waiting invoke() call via pending requests queue
+                let response = IpcResponse::CapabilityResult {
+                    request_id,
+                    result,
+                    error,
+                };
+                complete_pending_request(request_id, response);
             }
         }
     }
