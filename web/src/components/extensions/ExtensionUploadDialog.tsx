@@ -24,7 +24,7 @@ interface UploadProgress {
   filename: string
   loaded: number
   total: number
-  status: 'idle' | 'uploading' | 'processing' | 'success' | 'error'
+  status: 'idle' | 'uploading' | 'processing' | 'error'
   message?: string
   extensionId?: string
 }
@@ -130,7 +130,7 @@ export function ExtensionUploadDialog({
       // Simulate progress
       interval = setInterval(() => {
         setProgress(prev => {
-          if (!prev || prev.status === 'success' || prev.status === 'error') {
+          if (!prev || prev.status === 'error') {
             if (interval) clearInterval(interval)
             return prev
           }
@@ -179,14 +179,6 @@ export function ExtensionUploadDialog({
         extensionId = result.extension_id
       }
 
-      setProgress({
-        filename: file.name,
-        loaded: file.size,
-        total: file.size,
-        status: 'success',
-        extensionId,
-      })
-
       toast({
         title: t('extensions:installSuccess'),
         description: result.name || file.name.replace('.nep', ''),
@@ -202,10 +194,9 @@ export function ExtensionUploadDialog({
         console.warn('Failed to sync extension components:', e)
       }
 
-      setTimeout(() => {
-        onOpenChange(false)
-        resetForm()
-      }, 1500)
+      // Close dialog immediately on success
+      onOpenChange(false)
+      resetForm()
 
       setUploading(false)
       onUploadComplete?.(extensionId || file.name)
@@ -258,7 +249,7 @@ export function ExtensionUploadDialog({
               onChange={handleFileInputChange}
               disabled={uploading}
             />
-            {progress && (uploading || progress.status === 'error' || progress.status === 'success') ? (
+            {progress && (uploading || progress.status === 'error') ? (
               <div className="space-y-3">
                 {progress.status === 'error' ? (
                   // Error state - show error with retry option
@@ -277,12 +268,6 @@ export function ExtensionUploadDialog({
                       {t('extensions:clickToRetry')}
                     </p>
                   </>
-                ) : progress.status === 'success' ? (
-                  // Success state
-                  <div className="flex items-center justify-center gap-2 text-green-600">
-                    <File className="h-4 w-4" />
-                    <span>{t('extensions:installComplete')}</span>
-                  </div>
                 ) : (
                   // Uploading/Processing state
                   <>
