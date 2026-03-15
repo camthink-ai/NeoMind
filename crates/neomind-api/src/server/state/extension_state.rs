@@ -278,6 +278,20 @@ impl ExtensionState {
                 continue;
             }
             
+            // Skip large/heavy extensions during auto-start to prevent OOM
+            // YOLO extensions have large binaries (38MB+) and models (200MB+ total) that cause OOM
+            // They should be loaded manually via the Web UI or API after system startup
+            if record.id.contains("yolo") {
+                tracing::warn!(
+                    extension_id = %record.id,
+                    "Skipping heavy YOLO extension during auto-start to prevent OOM"
+                );
+                tracing::info!(
+                    "To load this extension, use the Web UI or API after server startup"
+                );
+                continue;
+            }
+            
             current += 1;
             tracing::info!(
                 "Loading extension {}/{}: {}",
