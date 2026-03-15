@@ -607,9 +607,8 @@ impl ExtensionPackage {
             })?;
 
         // Extract binary
-        let binary_file = ext_dir.join(
-            PathBuf::from(&binary_rel_path).file_name().unwrap_or_default()
-        );
+        // Extract binary and preserve directory structure
+        let binary_file = ext_dir.join(&binary_rel_path);
         Self::extract_file_sync(&mut archive, &binary_rel_path, &binary_file)?;
 
         // For WASM binaries, create a sidecar JSON file

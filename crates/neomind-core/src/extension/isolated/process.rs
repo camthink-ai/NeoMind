@@ -136,6 +136,105 @@ fn send_response_to_extension(
 const IPC_BUFFER_POOL_SIZE: usize = 4;  // Reduced from 8 to minimize memory footprint
 const IPC_MAX_BUFFER_SIZE: usize = 10 * 1024 * 1024;  // 10MB 最大缓冲区
 
+// Tiered buffer pool configuration
+const TIERED_POOL_SMALL_SIZE: usize = 4 * 1024;      // 4KB - 控制消息
+const TIERED_POOL_MEDIUM_SIZE: usize = 64 * 1024;    // 64KB - 小数据
+const TIERED_POOL_LARGE_SIZE: usize = 1024 * 1024;   // 1MB - 大数据/视频帧
+const TIERED_POOL_SMALL_COUNT: usize = 16;
+const TIERED_POOL_MEDIUM_COUNT: usize = 8;
+const TIERED_POOL_LARGE_COUNT: usize = 4;
+const TIERED_POOL_MAX_SIZE: usize = 16;  // Maximum buffers per tier
+
+/// Tiered IPC buffer pool for optimal memory management
+/// Uses different buffer sizes based on payload requirements
+#[derive(Debug)]
+struct TieredBufferPool {
+    small: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,   // 4KB - 控制消息
+    medium: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,  // 64KB - 小数据
+    large: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,   // 1MB - 大数据/视频帧
+}
+
+impl TieredBufferPool {
+    /// Create a new tiered buffer pool
+    fn new() -> Self {
+        Self {
+            small: Arc::new(std::sync::Mutex::new(Self::init_pool(TIERED_POOL_SMALL_SIZE, TIERED_POOL_SMALL_COUNT))),
+            medium: Arc::new(std::sync::Mutex::new(Self::init_pool(TIERED_POOL_MEDIUM_SIZE, TIERED_POOL_MEDIUM_COUNT))),
+            large: Arc::new(std::sync::Mutex::new(Self::init_pool(TIERED_POOL_LARGE_SIZE, TIERED_POOL_LARGE_COUNT))),
+        }
+    }
+
+    /// Initialize a buffer pool with pre-allocated buffers
+    fn init_pool(capacity: usize, count: usize) -> Vec<Vec<u8>> {
+        (0..count)
+            .map(|_| Vec::with_capacity(capacity))
+            .collect()
+    }
+
+    /// Acquire a buffer suitable for the given size
+    /// Returns a ReusableBuffer that will automatically return to the pool when dropped
+    fn acquire(&self, size: usize) -> ReusableBuffer {
+        let (pool, capacity) = if size < TIERED_POOL_SMALL_SIZE {
+            (&self.small, TIERED_POOL_SMALL_SIZE)
+        } else if size < TIERED_POOL_MEDIUM_SIZE {
+            (&self.medium, TIERED_POOL_MEDIUM_SIZE)
+        } else {
+            (&self.large, TIERED_POOL_LARGE_SIZE)
+        };
+
+        let mut buffers = pool.lock().unwrap();
+        let data = buffers.pop()
+            .unwrap_or_else(|| Vec::with_capacity(capacity));
+
+        ReusableBuffer {
+            data,
+            pool: pool.clone(),
+            max_size: TIERED_POOL_MAX_SIZE,
+        }
+    }
+}
+
+/// RAII wrapper for reusable buffers
+/// Automatically returns the buffer to the pool when dropped
+#[derive(Debug)]
+struct ReusableBuffer {
+    data: Vec<u8>,
+    pool: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    max_size: usize,
+}
+
+impl ReusableBuffer {
+    /// Get mutable reference to the underlying data
+    fn as_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.data
+    }
+
+    /// Get reference to the underlying data
+    fn as_ref(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Convert into the underlying data (consumes the wrapper)
+    fn into_inner(mut self) -> Vec<u8> {
+        // Prevent the buffer from being returned to pool
+        self.data = Vec::new();
+        std::mem::take(&mut self.data)
+    }
+}
+
+impl Drop for ReusableBuffer {
+    fn drop(&mut self) {
+        if !self.data.is_empty() {
+            // Clear and return to pool
+            self.data.clear();
+            let mut buffers = self.pool.lock().unwrap();
+            if buffers.len() < self.max_size {
+                buffers.push(std::mem::take(&mut self.data));
+            }
+        }
+    }
+}
+
 /// Configuration for isolated extension
 #[derive(Debug, Clone)]
 pub struct IsolatedExtensionConfig {
@@ -215,8 +314,8 @@ pub struct IsolatedExtension {
     /// Push output channel for receiving PushOutput messages from extension
     /// Uses std::sync::Mutex for thread safety in receiver thread
     push_output_tx: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<super::ipc::PushOutputData>>>>,
-    /// ✨ FIX: IPC receive buffer pool (reusable buffers) - use std::sync::Mutex for thread safety
-    ipc_buffer_pool: Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
+    /// ✨ FIX: Tiered IPC buffer pool for optimal memory management
+    ipc_buffer_pool: Arc<TieredBufferPool>,
     /// ✨ FIX: Active stream sessions - used to notify clients when extension restarts
     active_sessions: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
     /// ✨ FIX: Session invalidation callback - called when extension restarts
@@ -232,11 +331,8 @@ impl IsolatedExtension {
         extension_path: impl Into<std::path::PathBuf>,
         config: IsolatedExtensionConfig,
     ) -> Self {
-        // ✨ FIX: Pre-allocate IPC buffer pool
-        let mut buffer_pool = Vec::with_capacity(IPC_BUFFER_POOL_SIZE);
-        for _ in 0..IPC_BUFFER_POOL_SIZE {
-            buffer_pool.push(Vec::with_capacity(4096));  // Start with 4KB buffers
-        }
+        // ✨ FIX: Use tiered IPC buffer pool for optimal performance
+        let ipc_buffer_pool = Arc::new(TieredBufferPool::new());
 
         Self {
             extension_id: extension_id.into(),
@@ -255,7 +351,7 @@ impl IsolatedExtension {
             last_resource_check: Mutex::new(None),
             event_push_tx: Mutex::new(None),
             push_output_tx: Arc::new(std::sync::Mutex::new(None)),
-            ipc_buffer_pool: Arc::new(std::sync::Mutex::new(buffer_pool)),
+            ipc_buffer_pool,
             active_sessions: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
             session_invalidation_tx: Mutex::new(None),
             capability_provider: Arc::new(std::sync::RwLock::new(None)),
@@ -605,45 +701,23 @@ impl IsolatedExtension {
                     break;
                 }
 
-                // ✨ FIX: Get buffer from pool instead of allocating new one
-                let mut payload = {
-                    let mut pool = ipc_buffer_pool.lock().unwrap();
-                    // Find a buffer that's large enough
-                    if let Some(idx) = pool.iter().position(|b| b.capacity() >= len) {
-                        let mut buf = pool.remove(idx);
-                        buf.clear();
-                        buf.resize(len, 0);
-                        buf
-                    } else {
-                        // No suitable buffer, allocate new one (but still use pool later)
-                        vec![0u8; len]
-                    }
-                };
+                // ✨ FIX: Get buffer from tiered pool instead of allocating
+                let mut payload = ipc_buffer_pool.acquire(len);
+                payload.as_mut().resize(len, 0);
 
-                if let Err(e) = stdout.read_exact(&mut payload) {
+                if let Err(e) = stdout.read_exact(payload.as_mut()) {
                     error!(extension_id = %extension_id, error = %e, "Failed to read response payload");
-                    // Return buffer to pool before breaking
-                    let mut pool = ipc_buffer_pool.lock().unwrap();
-                    if pool.len() < IPC_BUFFER_POOL_SIZE {
-                        payload.clear();
-                        pool.push(payload);
-                    }
+                    // Buffer automatically returned to pool when dropped
                     running.store(false, Ordering::SeqCst);
                     break;
                 }
 
                 // Parse response
-                let response = match IpcResponse::from_bytes(&payload) {
+                let response = match IpcResponse::from_bytes(payload.as_ref()) {
                     Ok(r) => r,
                     Err(e) => {
                         warn!(extension_id = %extension_id, error = %e, "Failed to parse response");
-                        // ✨ FIX: Return buffer to pool even on error
-                        let mut pool = ipc_buffer_pool.lock().unwrap();
-                        if pool.len() < IPC_BUFFER_POOL_SIZE {
-                            let mut buf = payload;
-                            buf.clear();
-                            pool.push(buf);
-                        }
+                        // Buffer automatically returned to pool when dropped
                         continue;
                     }
                 };
@@ -757,15 +831,7 @@ impl IsolatedExtension {
                         in_flight.complete(0, response).await;
                     });
                 }
-
-                // ✨ FIX: Return buffer to pool after processing
-                let mut pool = ipc_buffer_pool.lock().unwrap();
-                if pool.len() < IPC_BUFFER_POOL_SIZE {
-                    let mut buf = payload;
-                    buf.clear();
-                    pool.push(buf);
-                }
-                // If pool is full, let the buffer be dropped (GC will reclaim)
+                // Note: payload is automatically returned to pool when dropped (RAII)
             }
 
             // Cancel any pending requests on exit
