@@ -172,11 +172,10 @@ export function createExtensionCardComponent<TProps extends Record<string, unkno
     return (
       <ExtensionCardWrapper
         extensionId={extensionId}
-        component Name={componentName}
-        title={title || defaultTitle}
-        className={className || defaultClassName || ''}
+        componentName={componentName}
+        title={(title as string | undefined) || defaultTitle}
+        className={(className as string | undefined) || (defaultClassName as string | undefined) || ''}
         componentProps={componentProps}
-        ref={ref}
       />
     )
   })
