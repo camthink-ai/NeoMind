@@ -786,10 +786,29 @@ impl IsolatedExtension {
                 match stdout.read_exact(&mut len_bytes) {
                     Ok(()) => {}
                     Err(e) => {
-                        // Process likely terminated or stdout closed
-                        if running.load(Ordering::SeqCst) {
-                            warn!(extension_id = %extension_id, error = %e, "Failed to read from extension stdout");
-                        }
+                        // 🔧 Phase 1: Structured crash detection
+                        let crash_event = if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                            CrashEvent::UnexpectedExit { exit_code: None, signal: None }
+                        } else if e.kind() == std::io::ErrorKind::BrokenPipe {
+                            CrashEvent::IpcFailure {
+                                reason: "Broken pipe".to_string(),
+                                stage: IpcFailureStage::ReadLength,
+                            }
+                        } else {
+                            CrashEvent::IpcFailure {
+                                reason: format!("{}: {}", e.kind(), e),
+                                stage: IpcFailureStage::ReadLength,
+                            }
+                        };
+
+                        warn!(
+                            extension_id = %extension_id,
+                            crash_event = %crash_event.description(),
+                            error_kind = ?e.kind(),
+                            error = %e,
+                            "Extension process crashed"
+                        );
+                        
                         running.store(false, Ordering::SeqCst);
                         // Send death notification to manager
                         if let Ok(tx_guard) = death_tx.try_lock() {

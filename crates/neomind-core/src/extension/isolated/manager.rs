@@ -177,6 +177,38 @@ impl IsolatedExtensionManager {
                         drop(extensions);
                         
                         for ext_id in dead_extensions {
+                            // 🔧 Phase 1: Check restart policy before attempting restart
+                            let should_restart = {
+                                let info_cache = self.info_cache.read();
+                                info_cache.get(&ext_id)
+                                    .map(|info| {
+                                        let config = &self.config.extension_config;
+                                        let can_restart = config.restart_on_crash;
+                                        let within_limit = info.runtime.restart_count < config.max_restart_attempts as u64;
+
+                                        // Check cooldown period
+                                        let past_cooldown = if let Some(last_restart) = info.runtime.last_restart_at {
+                                            let now = chrono::Utc::now().timestamp();
+                                            (now - last_restart) >= config.restart_cooldown_secs as i64
+                                        } else {
+                                            true
+                                        };
+
+                                        can_restart && within_limit && past_cooldown
+                                    })
+                                    .unwrap_or(false)
+                            };
+
+                            if !should_restart {
+                                tracing::warn!(
+                                    extension_id = %ext_id,
+                                    "Auto-restart skipped: policy limit reached (max_attempts={}, cooldown={}s)",
+                                    self.config.extension_config.max_restart_attempts,
+                                    self.config.extension_config.restart_cooldown_secs
+                                );
+                                continue;
+                            }
+
                             tracing::warn!(extension_id = %ext_id, "Extension died, attempting auto-restart...");
                             
                             // Get the extension path from info cache
@@ -195,7 +227,23 @@ impl IsolatedExtensionManager {
                                 // Reload the extension
                                 match self.load(&path).await {
                                     Ok(_) => {
-                                        tracing::info!(extension_id = %ext_id, "Successfully restarted extension after crash");
+                                        // 🔧 Phase 1: Update restart tracking
+                                        {
+                                            let mut info_cache = self.info_cache.write();
+                                            if let Some(info) = info_cache.get_mut(&ext_id) {
+                                                info.runtime.last_restart_at = Some(chrono::Utc::now().timestamp());
+                                                info.runtime.restart_count += 1;
+                                            }
+                                        }
+                                        let restart_count = {
+                                            let info_cache = self.info_cache.read();
+                                            info_cache.get(&ext_id).map(|i| i.runtime.restart_count).unwrap_or(0)
+                                        };
+                                        tracing::info!(
+                                            extension_id = %ext_id,
+                                            restart_count,
+                                            "Successfully restarted extension after crash"
+                                        );
                                     }
                                     Err(e) => {
                                         tracing::error!(extension_id = %ext_id, error = %e, "Failed to restart extension after crash");
