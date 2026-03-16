@@ -288,6 +288,43 @@ impl Default for IsolatedExtensionConfig {
     }
 }
 
+/// 🔧 Phase 1: Detailed crash event information
+#[derive(Debug, Clone)]
+pub enum CrashEvent {
+    UnexpectedExit { exit_code: Option<i32>, signal: Option<i32> },
+    IpcFailure { reason: String, stage: IpcFailureStage },
+    Timeout { operation: String, duration_secs: u64 },
+}
+
+/// 🔧 Phase 1: IPC failure stage categorization
+#[derive(Debug, Clone, Copy)]
+pub enum IpcFailureStage {
+    ReadLength,
+    ReadPayload,
+    ParseResponse,
+    ChannelClosed,
+}
+
+impl CrashEvent {
+    pub fn description(&self) -> String {
+        match self {
+            CrashEvent::UnexpectedExit { exit_code, signal } => {
+                match (exit_code, signal) {
+                    (Some(code), None) => format!("Process exited with code {}", code),
+                    (None, Some(sig)) => format!("Process terminated by signal {}", sig),
+                    _ => "Process exited unexpectedly".to_string(),
+                }
+            }
+            CrashEvent::IpcFailure { reason, stage } => {
+                format!("IPC failure during {:?}: {}", stage, reason)
+            }
+            CrashEvent::Timeout { operation, duration_secs } => {
+                format!("Operation '{}' timed out after {}s", operation, duration_secs)
+            }
+        }
+    }
+}
+
 /// 🔧 Phase 2: Detailed extension health information
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ExtensionHealthInfo {
@@ -2280,35 +2317,39 @@ impl IsolatedExtension {
 
 impl Drop for IsolatedExtension {
     fn drop(&mut self) {
-        // ✅ FIX: Clean up child process to prevent zombies
         if let Ok(mut child) = self.process.try_lock() {
             if let Some(mut proc) = child.take() {
-                // Try to kill the process
+                // Send SIGKILL to ensure process terminates
                 let _ = proc.kill();
-                
-                // Try to wait for the process to exit (non-blocking)
-                // This prevents zombie processes from accumulating
-                match proc.try_wait() {
-                    Ok(Some(_status)) => {
-                        // Process exited successfully
+
+                // Spawn background thread to handle blocking wait
+                let extension_id = self.extension_id.clone();
+                std::thread::spawn(move || {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+                    loop {
+                        match proc.try_wait() {
+                            Ok(Some(_)) => {
+                                tracing::debug!(
+                                    extension_id = %extension_id,
+                                    "Extension process reaped successfully"
+                                );
+                                return;
+                            }
+                            Ok(None) => {
+                                if std::time::Instant::now() >= deadline {
+                                    tracing::error!(
+                                        extension_id = %extension_id,
+                                        "Process did not exit after SIGKILL, may become zombie"
+                                    );
+                                    return;
+                                }
+                                std::thread::sleep(std::time::Duration::from_millis(100));
+                            }
+                            Err(_) => return, // Already reaped
+                        }
                     }
-                    Ok(None) => {
-                        // Process still running, will become a zombie
-                        // We can't do much in Drop without blocking
-                        tracing::warn!(
-                            extension_id = %self.extension_id,
-                            "Extension process still running at drop time, may become zombie"
-                        );
-                    }
-                    Err(e) => {
-                        // Process already reaped or error
-                        tracing::debug!(
-                            extension_id = %self.extension_id,
-                            error = %e,
-                            "Process wait error during drop"
-                        );
-                    }
-                }
+                });
             }
         }
     }
@@ -2325,5 +2366,45 @@ mod tests {
         assert_eq!(config.command_timeout_secs, 30);
         assert_eq!(config.max_memory_mb, 2048);  // Updated for YOLO extensions
         assert!(config.restart_on_crash);
+    }
+
+    #[test]
+    fn test_crash_event_description() {
+        // Test UnexpectedExit with exit code
+        let event = CrashEvent::UnexpectedExit {
+            exit_code: Some(1),
+            signal: None,
+        };
+        assert_eq!(event.description(), "Process exited with code 1");
+
+        // Test UnexpectedExit with signal
+        let event = CrashEvent::UnexpectedExit {
+            exit_code: None,
+            signal: Some(9),
+        };
+        assert_eq!(event.description(), "Process terminated by signal 9");
+
+        // Test UnexpectedExit with no info
+        let event = CrashEvent::UnexpectedExit {
+            exit_code: None,
+            signal: None,
+        };
+        assert_eq!(event.description(), "Process exited unexpectedly");
+
+        // Test IpcFailure
+        let event = CrashEvent::IpcFailure {
+            reason: "Broken pipe".to_string(),
+            stage: IpcFailureStage::ReadLength,
+        };
+        assert!(event.description().contains("IPC failure during ReadLength"));
+        assert!(event.description().contains("Broken pipe"));
+
+        // Test Timeout
+        let event = CrashEvent::Timeout {
+            operation: "execute_command".to_string(),
+            duration_secs: 30,
+        };
+        assert!(event.description().contains("execute_command"));
+        assert!(event.description().contains("30s"));
     }
 }

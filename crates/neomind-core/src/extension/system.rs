@@ -733,6 +733,9 @@ pub struct ExtensionRuntimeState {
     /// Number of times the extension has been restarted
     pub restart_count: u64,
 
+    /// When the extension was last restarted (Unix timestamp)
+    pub last_restart_at: Option<i64>,
+
     /// Number of times the extension has been started
     pub start_count: u64,
 
@@ -753,6 +756,7 @@ impl Default for ExtensionRuntimeState {
             is_isolated: false,
             loaded_at: None,
             restart_count: 0,
+            last_restart_at: None,
             start_count: 0,
             stop_count: 0,
             error_count: 0,
