@@ -97,7 +97,11 @@ logs/
 *.temp
 *.bak
 *.bak2
+*.bak3
+*.bak4
+*.bak5
 *.backup
+*.backup2
 :memory:
 -L
 -o
