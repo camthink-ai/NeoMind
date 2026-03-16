@@ -264,57 +264,21 @@ fn set_cpu_affinity_unix(cores: &[usize]) -> Result<(), ResourceLimitError> {
 
 #[cfg(windows)]
 fn setup_windows_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLimitError> {
-    use windows::Win32::System::JobObjects::*;
     use windows::Win32::System::Threading::*;
-    use windows::Win32::Foundation::*;
 
-    // Memory limit on Windows requires creating a Job Object
-    if let Some(limit_mb) = config.memory_limit_mb {
-        info!("Setting up Windows Job Object with memory limit: {} MB", limit_mb);
+    // Note: Memory limiting on Windows is not implemented due to API limitations.
+    // The windows crate v0.58 does not provide CreateJobObject in Win32_System_JobObjects.
+    // Memory limiting is still available on Unix/Linux via setrlimit.
 
-        unsafe {
-            // Create a job object
-            let job = CreateJobObject(None, None)?;
-
-            // Set memory limit using extended information
-            let mut extended_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-                ..Default::default()
-            };
-
-            extended_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_JOB_MEMORY;
-            extended_info.JobMemoryLimit = (limit_mb * 1024 * 1024) as usize;
-
-            let result = SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                &extended_info as *const _ as *const _,
-                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            );
-
-            if result.is_ok() {
-                info!("Job object memory limit set successfully");
-            } else {
-                let err = io::Error::last_os_error();
-                error!("Failed to set job object limits: {}", err);
-                return Err(ResourceLimitError::SystemError(format!(
-                    "SetInformationJobObject failed: {}",
-                    err
-                )));
-            }
-
-            // Assign current process to the job
-            let assign_result = AssignProcessToJobObject(job, GetCurrentProcess());
-
-            if assign_result.is_ok() {
-                info!("Process assigned to job object with memory limit");
-            } else {
-                let err = io::Error::last_os_error();
-                warn!("Failed to assign process to job object: {} (continuing anyway)", err);
-            }
-        }
+    // Log if memory limit was requested but not applied
+    if config.memory_limit_mb.is_some() {
+        warn!(
+            "Memory limits are not supported on Windows in this version. \
+             Use Unix/Linux for memory limiting or monitor memory usage externally."
+        );
     }
 
-    // Set process priority on Windows
+    // Set process priority on Windows (this works)
     if let Some(_nice) = config.nice_level {
         info!("Setting process priority on Windows");
 
