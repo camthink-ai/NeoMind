@@ -19,7 +19,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use tokio::sync::Mutex;
 use tokio::sync::broadcast;
@@ -253,6 +253,12 @@ pub struct IsolatedExtensionConfig {
     pub restart_cooldown_secs: u64,
     /// Maximum concurrent requests (0 = unlimited)
     pub max_concurrent_requests: usize,
+    /// 🔧 Phase 2: IPC read timeout in seconds
+    pub ipc_read_timeout_secs: u64,
+    /// 🔧 Phase 2: Maximum IPC retry attempts
+    pub ipc_max_retries: usize,
+    /// 🔧 Phase 2: IPC retry base delay in milliseconds
+    pub ipc_retry_delay_ms: u64,
 }
 
 impl Default for IsolatedExtensionConfig {
@@ -274,6 +280,46 @@ impl Default for IsolatedExtensionConfig {
             max_restart_attempts: 3,
             restart_cooldown_secs: 5,
             max_concurrent_requests: 100,
+            // 🔧 Phase 2: IPC robustness settings
+            ipc_read_timeout_secs: 10,     // 10 second timeout for IPC reads
+            ipc_max_retries: 2,             // Retry failed IPC calls twice
+            ipc_retry_delay_ms: 100,        // Start with 100ms delay, exponential backoff
+        }
+    }
+}
+
+/// 🔧 Phase 2: Detailed extension health information
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ExtensionHealthInfo {
+    pub extension_id: String,
+    pub is_alive: bool,
+    pub is_healthy: bool,
+    pub pid: Option<u32>,
+    pub uptime_seconds: Option<u64>,
+    pub active_requests: u64,
+    pub memory_mb: Option<f64>,
+    pub last_error: Option<String>,
+    pub status: ExtensionHealthStatus,
+}
+
+/// 🔧 Phase 2: Extension health status
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum ExtensionHealthStatus {
+    Healthy,
+    Degraded,
+    Unhealthy,
+    Crashed,
+    Unknown,
+}
+
+impl ExtensionHealthStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExtensionHealthStatus::Healthy => "healthy",
+            ExtensionHealthStatus::Degraded => "degraded",
+            ExtensionHealthStatus::Unhealthy => "unhealthy",
+            ExtensionHealthStatus::Crashed => "crashed",
+            ExtensionHealthStatus::Unknown => "unknown",
         }
     }
 }
@@ -302,6 +348,8 @@ pub struct IsolatedExtension {
     #[allow(dead_code)]
     /// Last restart time
     last_restart: Mutex<Option<Instant>>,
+    /// 🔧 Phase 2: Process start time for health monitoring
+    start_time: Mutex<Option<SystemTime>>,
     /// Running state (shared with background receiver thread)
     running: Arc<AtomicBool>,
     /// Process ID for resource monitoring
@@ -359,6 +407,7 @@ impl IsolatedExtension {
             session_invalidation_tx: Mutex::new(None),
             death_tx: Arc::new(Mutex::new(None)),
             capability_provider: Arc::new(std::sync::RwLock::new(None)),
+            start_time: Mutex::new(None),
         }
     }
 
@@ -531,6 +580,7 @@ impl IsolatedExtension {
         *self.stdin.lock().await = Some(stdin);
         *self.process_id.lock().await = Some(pid);
         self.running.store(true, Ordering::SeqCst);
+        *self.start_time.lock().await = Some(SystemTime::now());
 
         // Start the background receiver thread
         let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
@@ -981,8 +1031,8 @@ impl IsolatedExtension {
             "Sending execute command"
         );
 
-        // Send the request
-        self.send_message(&IpcMessage::ExecuteCommand {
+        // Send the request with retry logic
+        self.send_message_with_retry(&IpcMessage::ExecuteCommand {
             command: command.to_string(),
             args: args.clone(),
             request_id,
@@ -1256,6 +1306,59 @@ impl IsolatedExtension {
         {
             Ok(IpcResponse::Health { healthy, .. }) => Ok(healthy),
             _ => Ok(false),
+        }
+    }
+
+    /// 🔧 Phase 2: Get detailed health information for monitoring
+    pub async fn get_health_info(&self) -> ExtensionHealthInfo {
+        let is_alive = self.is_alive();
+        let pid = self.process_id.lock().await.clone();
+        let active_requests = self.active_requests.load(Ordering::SeqCst);
+        let uptime = self.start_time.lock().await
+            .and_then(|start| {
+                SystemTime::now()
+                    .duration_since(start)
+                    .ok()
+                    .map(|d| d.as_secs())
+            });
+
+        // Try to get memory usage
+        // Note: Cross-platform memory reading is complex and requires additional dependencies
+        // For now, we'll return None. In production, this could use:
+        // - sysinfo crate (Linux/Windows/macOS)
+        // - /proc filesystem (Linux)
+        // - task_info API (macOS)
+        let memory_mb = None;
+
+        // Perform health check
+        let is_healthy = if is_alive {
+            self.health_check().await.unwrap_or(false)
+        } else {
+            false
+        };
+
+        // Determine status
+        let status = if !is_alive {
+            ExtensionHealthStatus::Crashed
+        } else if !is_healthy {
+            ExtensionHealthStatus::Unhealthy
+        } else if active_requests > 50 {
+            // Heuristic: high request count might indicate overload
+            ExtensionHealthStatus::Degraded
+        } else {
+            ExtensionHealthStatus::Healthy
+        };
+
+        ExtensionHealthInfo {
+            extension_id: self.extension_id.clone(),
+            is_alive,
+            is_healthy,
+            pid,
+            uptime_seconds: uptime,
+            active_requests: active_requests as u64,
+            memory_mb,
+            last_error: None, // Could be populated from error tracking
+            status,
         }
     }
 
@@ -1864,6 +1967,37 @@ impl IsolatedExtension {
             .map_err(|e| IsolatedExtensionError::IpcError(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// 🔧 Phase 2: Send message with retry logic for transient failures
+    async fn send_message_with_retry(&self, msg: &IpcMessage) -> IsolatedResult<()> {
+        let mut retries = 0;
+        let max_retries = self.config.ipc_max_retries;
+        let base_delay = self.config.ipc_retry_delay_ms;
+
+        loop {
+            match self.send_message(msg).await {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if retries >= max_retries {
+                        return Err(e);
+                    }
+
+                    // Exponential backoff: 100ms, 200ms, 400ms...
+                    let delay_ms = base_delay * (2_u64.pow(retries as u32));
+                    warn!(
+                        extension_id = %self.extension_id,
+                        error = %e,
+                        retries,
+                        next_retry_in_ms = delay_ms,
+                        "IPC send failed, retrying with exponential backoff"
+                    );
+
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    retries += 1;
+                }
+            }
+        }
     }
 
     /// Push an event to the extension
