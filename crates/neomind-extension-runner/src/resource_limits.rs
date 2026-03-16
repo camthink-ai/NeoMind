@@ -274,7 +274,7 @@ fn setup_windows_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLim
 
         unsafe {
             // Create a job object
-            let job = CreateJobObjectW(None, None)?;
+            let job = CreateJobObject(None, None)?;
 
             // Set memory limit using extended information
             let mut extended_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
@@ -282,7 +282,7 @@ fn setup_windows_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLim
             };
 
             extended_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_JOB_MEMORY;
-            extended_info.JobMemoryLimit = (limit_mb * 1024 * 1024) as u64;
+            extended_info.JobMemoryLimit = (limit_mb * 1024 * 1024) as usize;
 
             let result = SetInformationJobObject(
                 job,
