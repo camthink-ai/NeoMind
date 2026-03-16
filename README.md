@@ -445,6 +445,115 @@ Full API documentation available at `/api/docs` when server is running.
 
 ---
 
+
+## CLI Tools
+
+NeoMind provides a command-line interface for service management and operations.
+
+### Installation
+
+The CLI is included with NeoMind. Run it using:
+
+```bash
+cargo run -p neomind-cli -- <command>
+```
+
+Or build and install it system-wide:
+
+```bash
+cargo build --release -p neomind-cli
+cargo install --path crates/neomind-cli
+```
+
+### Available Commands
+
+#### Health Check
+
+Check system health status:
+
+```bash
+neomind health
+```
+
+This checks:
+- Server status
+- Database connection
+- LLM backend availability
+- Extensions directory
+
+#### Log Viewing
+
+View and filter system logs:
+
+```bash
+# View all logs
+neomind logs
+
+# View logs for specific extension
+neomind logs --extension my-extension
+
+# Filter by log level (debug, info, warn, error)
+neomind logs --level error
+
+# Follow logs in real-time
+neomind logs --follow
+
+# Show last N lines
+neomind logs --tail 100
+```
+
+#### Extension Management
+
+Manage NeoMind extensions:
+
+```bash
+# List installed extensions
+neomind extension list
+
+# Install a .nep package
+neomind extension install my-extension-1.0.0.nep
+
+# Uninstall an extension
+neomind extension uninstall my-extension
+
+# Validate package format
+neomind extension validate my-extension-1.0.0.nep
+
+# Get extension info
+neomind extension info my-extension
+```
+
+#### Server Management
+
+Start and manage the NeoMind server:
+
+```bash
+# Start server
+neomind serve
+
+# Start with custom configuration
+neomind serve --config /path/to/config.toml
+
+# Start on specific host/port
+neomind serve --host 0.0.0.0 --port 9375
+
+# Enable debug logging
+neomind serve --log-level debug
+```
+
+### Environment Variables
+
+The CLI respects these environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `NEOMIND_SERVER_URL` | Server API URL | `http://localhost:9375` |
+| `NEOMIND_CONFIG` | Config file path | `~/.neomind/config.toml` |
+| `NEOMIND_LOG_LEVEL` | Log level | `info` |
+| `NEOMIND_DATA_DIR` | Data directory | `~/.neomind` |
+
+---
+
 ## Extension Development
 
 Create dynamic extensions for NeoMind using the Extension SDK V2:

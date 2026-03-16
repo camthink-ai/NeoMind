@@ -422,6 +422,115 @@ neomind/
 | **仪表板** | `/api/dashboards`、`/api/dashboards/:id`、`/api/dashboards/templates` |
 | **搜索** | `/api/search` |
 
+
+## CLI 工具
+
+NeoMind 提供命令行界面用于服务管理和操作。
+
+### 安装
+
+CLI 已包含在 NeoMind 中。使用方式：
+
+```bash
+cargo run -p neomind-cli -- <命令>
+```
+
+或构建并安装到系统：
+
+```bash
+cargo build --release -p neomind-cli
+cargo install --path crates/neomind-cli
+```
+
+### 可用命令
+
+#### 健康检查
+
+检查系统健康状态：
+
+```bash
+neomind health
+```
+
+检查内容包括：
+- 服务器状态
+- 数据库连接
+- LLM 后端可用性
+- 扩展目录
+
+#### 日志查看
+
+查看和过滤系统日志：
+
+```bash
+# 查看所有日志
+neomind logs
+
+# 查看特定扩展的日志
+neomind logs --extension my-extension
+
+# 按日志级别过滤（debug、info、warn、error）
+neomind logs --level error
+
+# 实时跟踪日志
+neomind logs --follow
+
+# 显示最后 N 行
+neomind logs --tail 100
+```
+
+#### 扩展管理
+
+管理 NeoMind 扩展：
+
+```bash
+# 列出已安装扩展
+neomind extension list
+
+# 安装 .nep 包
+neomind extension install my-extension-1.0.0.nep
+
+# 卸载扩展
+neomind extension uninstall my-extension
+
+# 验证包格式
+neomind extension validate my-extension-1.0.0.nep
+
+# 获取扩展信息
+neomind extension info my-extension
+```
+
+#### 服务器管理
+
+启动和管理 NeoMind 服务器：
+
+```bash
+# 启动服务器
+neomind serve
+
+# 使用自定义配置启动
+neomind serve --config /path/to/config.toml
+
+# 在特定主机/端口启动
+neomind serve --host 0.0.0.0 --port 9375
+
+# 启用调试日志
+neomind serve --log-level debug
+```
+
+### 环境变量
+
+CLI 遵守以下环境变量：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `NEOMIND_SERVER_URL` | 服务器 API URL | `http://localhost:9375` |
+| `NEOMIND_CONFIG` | 配置文件路径 | `~/.neomind/config.toml` |
+| `NEOMIND_LOG_LEVEL` | 日志级别 | `info` |
+| `NEOMIND_DATA_DIR` | 数据目录 | `~/.neomind` |
+
+---
+
 ## 扩展开发
 
 使用扩展 SDK V2 为 NeoMind 创建动态扩展：
