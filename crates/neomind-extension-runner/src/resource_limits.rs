@@ -143,55 +143,49 @@ pub enum ResourceLimitError {
 
 #[cfg(unix)]
 fn setup_unix_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLimitError> {
-    use libc::{c_int, setrlimit, rlimit, setpriority, PRIO_PROCESS};
-    #[cfg(target_os = "linux")]
-    use libc::RLIMIT_AS;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    use libc::RLIMIT_DATA;
+    use libc::{c_int, setrlimit, rlimit, RLIMIT_AS, RLIMIT_DATA, setpriority, PRIO_PROCESS};
 
     // 1. Set memory limit
     if let Some(soft_mb) = config.memory_limit_mb {
-        #[cfg(target_os = "linux")]
-        {
-            let soft = soft_mb * 1024 * 1024;
-            let hard = config.memory_limit_hard_mb
-                .unwrap_or(soft_mb * 2) * 1024 * 1024;
+        let soft = soft_mb * 1024 * 1024;
+        let hard = config.memory_limit_hard_mb
+            .unwrap_or(soft_mb * 2) * 1024 * 1024;
 
-            info!(
-                "Setting memory limit: soft={}MB, hard={}MB",
-                soft_mb,
-                config.memory_limit_hard_mb.unwrap_or(soft_mb * 2)
-            );
+        info!(
+            "Setting memory limit: soft={}MB, hard={}MB",
+            soft_mb,
+            config.memory_limit_hard_mb.unwrap_or(soft_mb * 2)
+        );
 
-            let limits = rlimit {
-                rlim_cur: soft,
-                rlim_max: hard,
-            };
+        // Try RLIMIT_AS first (address space), fall back to RLIMIT_DATA (data segment)
+        let limits = rlimit {
+            rlim_cur: soft,
+            rlim_max: hard,
+        };
 
-            let result = unsafe {
-                // Linux: Use RLIMIT_AS (address space limit)
-                setrlimit(RLIMIT_AS, &limits)
-            };
+        let result = unsafe {
+            // Try RLIMIT_AS (address space limit) first
+            let mut result = setrlimit(RLIMIT_AS, &limits);
 
+            // If that fails, try RLIMIT_DATA (data segment limit)
             if result != 0 {
-                let err = io::Error::last_os_error();
-                warn!("Failed to set memory limit: {}. Continuing anyway.", err);
-            } else {
-                info!("Memory limit set successfully on Linux");
+                warn!("RLIMIT_AS failed, trying RLIMIT_DATA");
+                result = setrlimit(RLIMIT_DATA, &limits);
             }
+
+            result
+        };
+
+        if result != 0 {
+            let err = io::Error::last_os_error();
+            error!("Failed to set memory limit: {}", err);
+            return Err(ResourceLimitError::SystemError(format!(
+                "setrlimit failed: {}",
+                err
+            )));
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            // macOS: RLIMIT_DATA/RLIMIT_AS have limited support
-            // macOS uses JetSam (Low Memory Monitor) for memory management
-            // We'll just log the requested limit for monitoring purposes
-            info!(
-                "Memory limit requested: {}MB (note: macOS does not support rlimit-based memory limits, using JetSam instead)",
-                soft_mb
-            );
-            info!("The system will manage memory via its native Low Memory Monitor");
-        }
+        info!("Memory limit set successfully");
     }
 
     // 2. Set process priority (nice level)
@@ -271,29 +265,24 @@ fn set_cpu_affinity_unix(cores: &[usize]) -> Result<(), ResourceLimitError> {
 #[cfg(windows)]
 fn setup_windows_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLimitError> {
     use windows::Win32::System::JobObjects::*;
-    use windows::Win32::Foundation::*;
     use windows::Win32::System::Threading::*;
+    use windows::Win32::Foundation::*;
 
     // Memory limit on Windows requires creating a Job Object
-    if let Some(_limit_mb) = config.memory_limit_mb {
-        info!("Setting up Windows Job Object with memory limit");
+    if let Some(limit_mb) = config.memory_limit_mb {
+        info!("Setting up Windows Job Object with memory limit: {} MB", limit_mb);
 
         unsafe {
             // Create a job object
             let job = CreateJobObjectW(None, None)?;
 
-            // Set memory limit
-            let mut info = JOBOBJECT_BASIC_LIMIT_INFORMATION {
-                ..Default::default()
-            };
-
-            info.LimitFlags = JOB_OBJECT_LIMIT_JOB_MEMORY;
-            info.JobMemoryLimit = (_limit_mb * 1024 * 1024) as usize;
-
+            // Set memory limit using extended information
             let mut extended_info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
-                BasicLimitInformation: info,
                 ..Default::default()
             };
+
+            extended_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_JOB_MEMORY;
+            extended_info.JobMemoryLimit = (limit_mb * 1024 * 1024) as u64;
 
             let result = SetInformationJobObject(
                 job,
@@ -302,7 +291,9 @@ fn setup_windows_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLim
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
             );
 
-            if !result.as_bool() {
+            if result.is_ok() {
+                info!("Job object memory limit set successfully");
+            } else {
                 let err = io::Error::last_os_error();
                 error!("Failed to set job object limits: {}", err);
                 return Err(ResourceLimitError::SystemError(format!(
@@ -312,13 +303,13 @@ fn setup_windows_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLim
             }
 
             // Assign current process to the job
-            let result = AssignProcessToJobObject(job, GetCurrentProcess());
+            let assign_result = AssignProcessToJobObject(job, GetCurrentProcess());
 
-            if !result.as_bool() {
+            if assign_result.is_ok() {
+                info!("Process assigned to job object with memory limit");
+            } else {
                 let err = io::Error::last_os_error();
                 warn!("Failed to assign process to job object: {} (continuing anyway)", err);
-            } else {
-                info!("Process assigned to job object with memory limit");
             }
         }
     }
@@ -331,11 +322,11 @@ fn setup_windows_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLim
             let priority = BELOW_NORMAL_PRIORITY_CLASS;
             let result = SetPriorityClass(GetCurrentProcess(), priority);
 
-            if !result.as_bool() {
+            if result.is_ok() {
+                info!("Process priority set to BELOW_NORMAL");
+            } else {
                 let err = io::Error::last_os_error();
                 warn!("Failed to set process priority: {} (continuing anyway)", err);
-            } else {
-                info!("Process priority set to BELOW_NORMAL");
             }
         }
     }
