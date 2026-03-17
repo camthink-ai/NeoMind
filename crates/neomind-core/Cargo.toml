@@ -38,7 +38,7 @@ tiktoken-rs = { version = "0.6", optional = true }
 # Extension system
 semver = { version = "1", features = ["serde"] }
 libloading = "0.8"
-zip = "2.1"
+zip = { version = "2.1", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 scopeguard = "1.2"
 
