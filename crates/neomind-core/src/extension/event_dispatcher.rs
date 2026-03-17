@@ -22,7 +22,7 @@ pub struct EventDispatcher {
     /// Registered in-process extensions: extension_id -> extension
     in_process_extensions: RwLock<std::collections::HashMap<String, DynExtension>>,
     /// Event push channels for isolated extensions: extension_id -> sender
-    isolated_event_senders: RwLock<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<(String, Value)>>>,
+    isolated_event_senders: RwLock<std::collections::HashMap<String, tokio::sync::mpsc::Sender<(String, Value)>>>,
 }
 
 impl EventDispatcher {
@@ -73,7 +73,7 @@ impl EventDispatcher {
         &self,
         extension_id: String,
         event_types: Vec<String>,
-        event_sender: tokio::sync::mpsc::UnboundedSender<(String, Value)>,
+        event_sender: tokio::sync::mpsc::Sender<(String, Value)>,
     ) {
         // Store the event push channel
         self.isolated_event_senders.write().insert(extension_id.clone(), event_sender);
@@ -182,7 +182,7 @@ impl EventDispatcher {
                     );
 
                     // Send event to isolated extension via channel
-                    match sender.send((event_type.to_string(), payload.clone())) {
+                    match sender.send((event_type.to_string(), payload.clone())).await {
                         Ok(_) => {
                             info!(
                                 extension_id = %extension_id,

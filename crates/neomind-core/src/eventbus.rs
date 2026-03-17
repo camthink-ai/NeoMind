@@ -109,8 +109,6 @@ impl EventBus {
     }
 
     /// Publish an event with custom metadata.
-
-    /// Publish an event with custom metadata.
     pub async fn publish_with_metadata(
         &self,
         event: NeoMindEvent,

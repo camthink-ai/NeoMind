@@ -76,10 +76,12 @@ impl SdkExtensionMetadata {
 /// Metric data types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SdkMetricDataType {
     Float,
     Integer,
     Boolean,
+    #[default]
     String,
     Binary,
     /// Enum type with a list of allowed options
@@ -88,11 +90,6 @@ pub enum SdkMetricDataType {
     },
 }
 
-impl Default for SdkMetricDataType {
-    fn default() -> Self {
-        Self::String
-    }
-}
 
 /// Metric definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,20 +156,17 @@ impl SdkMetricDefinition {
 /// Metric value (enum for parameters)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
+#[derive(Default)]
 pub enum SdkMetricValue {
     Float(f64),
     Integer(i64),
     Boolean(bool),
     String(String),
     Binary(Vec<u8>),
+    #[default]
     Null,
 }
 
-impl Default for SdkMetricValue {
-    fn default() -> Self {
-        Self::Null
-    }
-}
 
 impl From<f64> for SdkMetricValue {
     fn from(v: f64) -> Self { Self::Float(v) }
@@ -318,6 +312,7 @@ impl SdkParameterDefinition {
 
 /// Command definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct SdkCommandDefinition {
     /// Command name
     pub name: String,
@@ -360,20 +355,6 @@ pub struct SdkParameterGroup {
     pub parameters: Vec<String>,
 }
 
-impl Default for SdkCommandDefinition {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            display_name: String::new(),
-            payload_template: String::new(),
-            description: String::new(),
-            parameters: Vec::new(),
-            fixed_values: std::collections::HashMap::new(),
-            samples: Vec::new(),
-            parameter_groups: Vec::new(),
-        }
-    }
-}
 
 impl SdkCommandDefinition {
     /// Create a new command definition

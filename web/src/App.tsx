@@ -189,7 +189,7 @@ function PageLoading() {
 }
 
 function App() {
-  const extensionComponents = useExtensionComponents({ autoSync: false, syncInterval: 60000 })
+  const extensionComponents = useExtensionComponents({ autoSync: true, syncInterval: 60000 })
   const extensionSyncRef = useRef(extensionComponents.sync)
   
   // 更新 ref 当 sync 函数变化时
@@ -295,7 +295,7 @@ function App() {
           // ✨ FIX: Auto-sync extension components when WebSocket reconnects
           // This ensures extension UI components are available after backend restart
           if (connected && isReconnect) {
-            console.log('[App] WebSocket reconnected, syncing extension components...')
+      console.log('[App] User authenticated, syncing extension components...')
             extensionSyncRef.current?.()
           }
         })
@@ -346,6 +346,17 @@ function App() {
 
     return () => clearInterval(interval)
   }, [isAuthenticated, currentPath])
+
+
+  // Auto-sync extension dashboard components immediately when authenticated
+  // This ensures components are available right away without waiting for the timer
+  useEffect(() => {
+    if (isAuthenticated && currentPath !== '/setup') {
+      console.log('[App] User authenticated, syncing extension components...')
+      extensionSyncRef.current?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated])
 
 
   // Auto-sync extension dashboard components when authenticated

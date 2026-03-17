@@ -37,7 +37,7 @@
         "img-src": "'self' asset: http://asset.localhost blob: data: https: http:",
         "media-src": "'self' blob: data: https: http: mediastream:",
         "style-src": "'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "script-src": "'self' 'wasm-unsafe-eval'"
+        "script-src": "'self' 'wasm-unsafe-eval' http://localhost:9375 https://localhost:9375"
       }
     },
     "withGlobalTauri": true
@@ -88,7 +88,10 @@
       },
       "nsis": {
         "displayLanguageSelector": false,
-        "languages": ["English", "SimpChinese"]
+        "languages": [
+          "English",
+          "SimpChinese"
+        ]
       }
     },
     "linux": {

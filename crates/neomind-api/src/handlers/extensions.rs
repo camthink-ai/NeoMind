@@ -2298,7 +2298,7 @@ pub async fn install_marketplace_extension_handler(
                                     downloaded: true,
                                     installed: false,
                                     path: None,
-                                    error: Some(format!("JSON checksum verification failed")),
+                                    error: Some("JSON checksum verification failed".to_string()),
                                 });
                             }
                         }
@@ -2362,14 +2362,14 @@ pub async fn install_marketplace_extension_handler(
 
                 tracing::info!("Extension {} installed successfully", req.id);
 
-                return ok(MarketplaceInstallResponse {
+                ok(MarketplaceInstallResponse {
                     success: true,
                     extension_id: req.id,
                     downloaded: true,
                     installed: true,
                     path: Some(file_path.to_string_lossy().to_string()),
                     error: None,
-                });
+                })
             }
             Err(e) => {
                 // Clean up the downloaded file(s) on failure
@@ -2378,14 +2378,14 @@ pub async fn install_marketplace_extension_handler(
                     let _ = std::fs::remove_file(jp);
                 }
 
-                return ok(MarketplaceInstallResponse {
+                ok(MarketplaceInstallResponse {
                     success: false,
                     extension_id: req.id,
                     downloaded: true,
                     installed: false,
                     path: None,
                     error: Some(format!("Failed to load extension: {}", e)),
-                });
+                })
             }
         }
     }
@@ -2911,21 +2911,13 @@ impl From<SizeConstraints> for SizeConstraintsDto {
 
 /// Data binding DTO.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct DataBindingDto {
     pub extension_metric: Option<String>,
     pub extension_command: Option<String>,
     pub required_fields: Vec<String>,
 }
 
-impl Default for DataBindingDto {
-    fn default() -> Self {
-        Self {
-            extension_metric: None,
-            extension_command: None,
-            required_fields: Vec::new(),
-        }
-    }
-}
 
 impl From<DataBindingConfig> for DataBindingDto {
     fn from(c: DataBindingConfig) -> Self {
@@ -3474,7 +3466,7 @@ pub async fn uninstall_extension_handler(
     ok(serde_json::json!({
         "message": "Extension uninstalled completely",
         "extension_id": id,
-        "name": ext_info.and_then(|info| Some(info.metadata.name)),
+        "name": ext_info.map(|info| info.metadata.name),
         "removed_files": removed_files,
         "note": "All extension files, including frontend components, have been removed"
     }))

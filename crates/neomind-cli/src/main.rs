@@ -1,7 +1,6 @@
 //! Command-line interface for NeoMind.
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::io::Read;
 
 use anyhow::Result;
@@ -496,7 +495,7 @@ async fn run_server(host: String, port: u16) -> Result<()> {
 
 /// Run health check command.
 async fn run_health() -> Result<()> {
-    use std::process::Command;
+    
     
     println!("NeoMind System Health Check");
     println!("==========================\n");
@@ -709,7 +708,7 @@ async fn validate_nep_package(path: &std::path::PathBuf, verbose: bool) -> Resul
         anyhow::bail!("Extension package not found: {}", path.display());
     }
     
-    if !path.extension().is_some_and(|e| e == "nep") {
+    if path.extension().is_none_or(|e| e != "nep") {
         anyhow::bail!("Invalid extension package. Expected .nep file, got: {}", 
                       path.extension().unwrap_or_default().display());
     }
@@ -1023,8 +1022,8 @@ fn read_nep_manifest(path: &std::path::PathBuf) -> Result<serde_json::Value> {
         .map(|s| s.to_string())
         .collect();
     
-    for name in manifest_names {
-        let mut manifest_file = archive.by_name(&name)?;
+    if let Some(name) = manifest_names.into_iter().next() {
+        let manifest_file = archive.by_name(&name)?;
         let mut content = String::new();
         let mut reader = std::io::BufReader::new(manifest_file);
         reader.read_to_string(&mut content)?;

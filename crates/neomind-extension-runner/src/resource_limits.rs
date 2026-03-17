@@ -143,7 +143,7 @@ pub enum ResourceLimitError {
 
 #[cfg(unix)]
 fn setup_unix_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLimitError> {
-    use libc::{c_int, setrlimit, rlimit, RLIMIT_AS, RLIMIT_DATA, setpriority, PRIO_PROCESS};
+    use libc::{setrlimit, rlimit, RLIMIT_AS, RLIMIT_DATA, setpriority, PRIO_PROCESS};
 
     // 1. Set memory limit
     if let Some(soft_mb) = config.memory_limit_mb {
@@ -213,7 +213,7 @@ fn setup_unix_limits(config: &ResourceLimitsConfig) -> Result<(), ResourceLimitE
 }
 
 #[cfg(unix)]
-fn set_cpu_affinity_unix(cores: &[usize]) -> Result<(), ResourceLimitError> {
+fn set_cpu_affinity_unix(_cores: &[usize]) -> Result<(), ResourceLimitError> {
     #[cfg(target_os = "linux")]
     {
         use libc::{cpu_set_t, sched_setaffinity, CPU_SET, CPU_ZERO};
@@ -247,8 +247,7 @@ fn set_cpu_affinity_unix(cores: &[usize]) -> Result<(), ResourceLimitError> {
 
     #[cfg(target_os = "macos")]
     {
-        use libc::{thread_policy_t, thread_affinity_policy_data_t, thread_policy_set,
-                   mach_thread_self, THREAD_AFFINITY_POLICY, THREAD_AFFINITY_POLICY_COUNT};
+        
 
         // macOS has different CPU affinity API
         // For now, just log that we're skipping this

@@ -22,11 +22,11 @@ anyhow = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
 
 # Local workspace crates - relative to web/src-tauri/ directory
-edge-api = { path = "../../crates/neomind-api", package = "neomind-api" }
+edge-api = { path = "../../crates/neomind-api", package = "neomind-api", features = ["embedded-broker"] }
 edge-core = { path = "../../crates/neomind-core", package = "neomind-core" }
 edge-llm = { path = "../../crates/neomind-llm", package = "neomind-llm" }
 edge-agent = { path = "../../crates/neomind-agent", package = "neomind-agent" }
-edge-devices = { path = "../../crates/neomind-devices", package = "neomind-devices" }
+edge-devices = { path = "../../crates/neomind-devices", package = "neomind-devices", features = ["embedded-broker"] }
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

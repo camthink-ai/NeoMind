@@ -35,7 +35,7 @@ async fn process_stream_to_channel(
     mut stream: Pin<Box<dyn Stream<Item = AgentEvent> + Send>>,
     session_id: String,
     user_message: String,
-    tx: mpsc::UnboundedSender<StreamEvent>,
+    tx: mpsc::Sender<StreamEvent>,
     state: super::ServerState,
 ) {
     let mut end_event_sent = false;
@@ -314,7 +314,7 @@ async fn process_stream_to_channel(
                 };
 
                 // Try to send, but don't block if channel is closed
-                if tx.send(stream_event).is_err() {
+                if tx.send(stream_event).await.is_err() {
                     tracing::warn!("Failed to send stream event through channel");
                     break;
                 }
@@ -817,7 +817,7 @@ async fn handle_ws_socket(
 
     // Channel for receiving LLM stream events from spawned tasks
     // This keeps the main event loop responsive to WebSocket pings
-    let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<StreamEvent>();
+    let (stream_tx, mut stream_rx) = mpsc::channel::<StreamEvent>(100);
 
     // Send welcome message
     let welcome = json!({

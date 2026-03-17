@@ -164,7 +164,7 @@ pub async fn list_devices_handler(
         };
 
         let last_seen_dt = chrono::DateTime::from_timestamp(last_seen_ts, 0)
-            .unwrap_or_else(|| chrono::Utc::now());
+            .unwrap_or_else(chrono::Utc::now);
         let instance = config_to_device_instance(&config, status, last_seen_dt);
 
         // Get template info for metric/command counts
@@ -260,7 +260,7 @@ pub async fn get_device_handler(
             
     };
     let last_seen_dt = chrono::DateTime::from_timestamp(device_status.last_seen, 0)
-        .unwrap_or_else(|| chrono::Utc::now());
+        .unwrap_or_else(chrono::Utc::now);
     let instance = config_to_device_instance(&config, status, last_seen_dt);
 
     // Get plugin info for display
@@ -323,7 +323,7 @@ pub async fn get_device_current_handler(
             
     };
     let last_seen_dt = chrono::DateTime::from_timestamp(device_status.last_seen, 0)
-        .unwrap_or_else(|| chrono::Utc::now());
+        .unwrap_or_else(chrono::Utc::now);
     let instance = config_to_device_instance(&config, status, last_seen_dt);
 
     // Get plugin info

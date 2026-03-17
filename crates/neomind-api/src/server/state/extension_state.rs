@@ -261,7 +261,7 @@ impl ExtensionState {
         tracing::info!("Found {} auto-start extension(s) in storage", records.len());
 
         let mut loaded_count = 0;
-        let mut total = records.len();
+        let total = records.len();
         let mut current = 0;
 
 

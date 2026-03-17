@@ -9,18 +9,15 @@ use neomind_rules::dsl::{ComparisonOperator, ParsedRule, RuleAction, RuleConditi
 
 /// Supported languages for translation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum Language {
     /// Chinese (Simplified)
     Chinese,
     /// English
+    #[default]
     English,
 }
 
-impl Default for Language {
-    fn default() -> Self {
-        Self::English  // Default to English, but LLM responds in user's language
-    }
-}
 
 impl Language {
     /// Get language code.

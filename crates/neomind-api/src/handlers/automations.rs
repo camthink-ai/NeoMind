@@ -776,24 +776,24 @@ pub async fn convert_automation_handler(
     // Perform conversion - only Transform <-> Rule conversion is supported
     match (existing, req.r#type) {
         (Automation::Transform(_), AutomationType::Transform) => {
-            return Err(ErrorResponse::bad_request(
+            Err(ErrorResponse::bad_request(
                 "Cannot convert to the same type",
-            ));
+            ))
         }
         (Automation::Rule(_), AutomationType::Rule) => {
-            return Err(ErrorResponse::bad_request(
+            Err(ErrorResponse::bad_request(
                 "Cannot convert to the same type",
-            ));
+            ))
         }
         (Automation::Transform(_), AutomationType::Rule) => {
-            return Err(ErrorResponse::bad_request(
+            Err(ErrorResponse::bad_request(
                 "Transform to Rule conversion is not directly supported. Create a new Rule based on the Transform's output metrics.",
-            ));
+            ))
         }
         (Automation::Rule(_), AutomationType::Transform) => {
-            return Err(ErrorResponse::bad_request(
+            Err(ErrorResponse::bad_request(
                 "Rule to Transform conversion is not supported. Transforms are for data processing, not reactive automation.",
-            ));
+            ))
         }
     }
 }

@@ -742,8 +742,8 @@ impl LlmRuntime for CloudRuntime {
                                                     }
 
                                                     // Check for finish reason - flush tool calls
-                                                    if choice.finish_reason.as_deref() == Some("tool_calls") {
-                                                        if !accumulated_tool_calls.is_empty() {
+                                                    if choice.finish_reason.as_deref() == Some("tool_calls")
+                                                        && !accumulated_tool_calls.is_empty() {
                                                             let tool_calls_json: Vec<serde_json::Value> = accumulated_tool_calls
                                                                 .values()
                                                                 .map(|tc| {
@@ -760,7 +760,6 @@ impl LlmRuntime for CloudRuntime {
                                                             let _ = tx.send(Ok((json_str, false))).await;
                                                             accumulated_tool_calls.clear();
                                                         }
-                                                    }
                                                 }
                                             }
                                         }

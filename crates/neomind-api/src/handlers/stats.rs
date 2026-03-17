@@ -4,7 +4,9 @@ use super::{
     common::{ok, HandlerResult},
     ServerState,
 };
+use crate::models::ErrorResponse;
 use axum::extract::State;
+use axum::Json;
 use serde_json::json;
 
 // Re-export ConnectionStatus from mdl_format for DeviceInstance
@@ -129,6 +131,17 @@ pub struct SystemInfo {
 pub async fn get_system_stats_handler(
     State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
+    use std::time::Duration;
+
+    // Try to get from cache first (5 second TTL)
+    let cache_key = "stats:system";
+    if let Some(cached) = state.response_cache.get(cache_key) {
+        // Return cached response
+        let cached_value: serde_json::Value = serde_json::from_str(&cached.body)
+            .map_err(|e| crate::models::ErrorResponse::internal(format!("Failed to parse cached response: {}", e)))?;
+        return Ok(Json(crate::models::common::ApiResponse::success(cached_value)));
+    }
+
     // Calculate start of today (UTC midnight)
     let now = chrono::Utc::now();
     let start_of_today = now
@@ -293,7 +306,8 @@ pub async fn get_system_stats_handler(
     };
 
     // Detect GPUs
-    let gpus = detect_gpus();
+    // Get cached GPU info (detected at startup)
+    let gpus = state.gpu_info.get().cloned().unwrap_or(vec![]);
 
     // Version from env or default
     let version = env!("CARGO_PKG_VERSION");
@@ -319,7 +333,7 @@ pub async fn get_system_stats_handler(
         system: system_info.clone(),
     };
 
-    ok(json!({
+    let response = ok(json!({
         "stats": stats,
         "version": system_info.version,
         "uptime": system_info.uptime,
@@ -331,11 +345,23 @@ pub async fn get_system_stats_handler(
         "free_memory": system_info.free_memory,
         "available_memory": system_info.available_memory,
         "gpus": system_info.gpus,
-    }))
+    }))?;
+
+    // Cache the response for 5 seconds
+    state.response_cache.put(
+        cache_key.to_string(),
+        crate::cache::CachedResponse {
+            body: serde_json::to_string(&response.0 .data).unwrap_or_default(),
+            content_type: "application/json".to_string(),
+        },
+        Some(Duration::from_secs(5)),
+    );
+
+    Ok(response)
 }
 
 /// Detect GPUs on the system.
-fn detect_gpus() -> Vec<GpuInfo> {
+pub fn detect_gpus() -> Vec<GpuInfo> {
     let mut gpus = Vec::new();
 
     // Try to detect NVIDIA GPUs using nvidia-smi

@@ -79,6 +79,9 @@ pub struct ServerState {
     /// Server start timestamp.
     pub started_at: i64,
 
+    /// Cached GPU information (detected once at startup).
+    pub gpu_info: Arc<std::sync::OnceLock<Vec<crate::handlers::stats::GpuInfo>>>,
+
     /// Flag to track if agent events have been initialized (prevents duplicate subscribers).
     agent_events_initialized: Arc<std::sync::atomic::AtomicBool>,
 
@@ -523,10 +526,21 @@ impl ServerState {
 
         let auto_onboard_manager = Arc::new(tokio::sync::RwLock::new(None));
 
+
+        // ========== Detect and cache GPU info (once at startup) ==========
+        let gpu_info = {
+            use crate::handlers::stats::detect_gpus;
+            let lock = Arc::new(std::sync::OnceLock::new());
+            let gpus = detect_gpus();
+            lock.set(gpus).ok();
+            tracing::info!("GPU information cached at startup: {} GPU(s) detected", lock.get().map(|g| g.len()).unwrap_or(0));
+            lock
+        };
         let dashboard_store = match DashboardStore::open("data/dashboards.redb") {
             Ok(store) => store,
             Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open dashboard store, using in-memory");
+
+        // ========== Detect and cache GPU info (once at startup) ==========
                 DashboardStore::memory().unwrap_or_else(|e| {
                     tracing::error!(category = "storage", error = %e, "Failed to create in-memory dashboard store");
                     std::process::exit(1);
@@ -546,6 +560,7 @@ impl ServerState {
             auto_onboard_manager,
             dashboard_store,
             started_at,
+            gpu_info,
             agent_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_event_service: Arc::new(tokio::sync::Mutex::new(None)),
@@ -693,6 +708,9 @@ impl ServerState {
         let auto_onboard_manager = Arc::new(tokio::sync::RwLock::new(None));
         let dashboard_store = DashboardStore::memory().unwrap();
 
+        // Empty GPU info for testing
+        let gpu_info = Arc::new(std::sync::OnceLock::from(vec![]));
+
         Self {
             core,
             devices,
@@ -705,6 +723,7 @@ impl ServerState {
             auto_onboard_manager,
             dashboard_store,
             started_at,
+            gpu_info,
             agent_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_event_service: Arc::new(tokio::sync::Mutex::new(None)),

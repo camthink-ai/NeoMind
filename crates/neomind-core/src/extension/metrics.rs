@@ -9,13 +9,12 @@
  * - Resource usage
  */
 
+use tracing::{info, error, warn};
 use prometheus::{
     IntCounter, Histogram, IntGauge, Registry,
     register_int_counter, register_histogram, register_int_gauge,
 };
 use once_cell::sync::Lazy;
-use std::sync::Arc;
-use tracing::{info, error, warn};
 
 // =============================================================================
 // Extension Command Metrics
