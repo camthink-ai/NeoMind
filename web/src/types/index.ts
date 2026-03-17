@@ -174,13 +174,20 @@ export interface ParameterGroup {
   order?: number
 }
 
+// MetricValue matches backend Rust enum serialization format
+// The backend MetricValue enum serializes to direct JSON values:
+// - MetricValue::Integer(42) -> 42
+// - MetricValue::Float(3.14) -> 3.14
+// - MetricValue::String("hello") -> "hello"
+// - MetricValue::Boolean(true) -> true
+// - MetricValue::Array([...]) -> [...]
+// - MetricValue::Null -> null
 export type MetricValue =
-  | { Integer: number }
-  | { Float: number }
-  | { String: string }
-  | { Boolean: boolean }
-  | { Array: MetricValue[] }
-  | { Null: null }
+  | number    // Integer or Float (backend discriminates via JSON number type)
+  | string    // String
+  | boolean   // Boolean
+  | MetricValue[]  // Array (heterogeneous arrays supported)
+  | null      // Null
 
 // Alert type - must match backend AlertDto (crates/api/src/handlers/alerts.rs)
 export interface Alert {

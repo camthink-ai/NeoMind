@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/tabs"
 import {
   MoreHorizontal,
-  Trash2,
+  Trash,
   Settings,
   Code2,
   Terminal,
@@ -43,7 +43,7 @@ import { api } from "@/lib/api"
 
 interface ExtensionCardProps {
   extension: Extension
-  onUnregister?: () => void
+  onUninstall?: () => void
   onConfigure?: () => void
   onReload?: () => void
 }
@@ -433,7 +433,7 @@ function ExtensionCapabilitiesDialog({
 
 export function ExtensionCard({
   extension,
-  onUnregister,
+  onUninstall,
   onConfigure,
   onReload,
 }: ExtensionCardProps) {
@@ -500,9 +500,9 @@ export function ExtensionCard({
                   <RefreshCw className="mr-2 h-4 w-4" />
                   {t('card.reload', { defaultValue: 'Reload' })}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onUnregister?.()} className="text-destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  {t('card.unregister')}
+                <DropdownMenuItem onClick={() => onUninstall?.()} className="text-destructive">
+                  <Trash className="mr-2 h-4 w-4" />
+                  {t('card.uninstall', { defaultValue: "Uninstall" })}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

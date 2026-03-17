@@ -161,6 +161,7 @@ pub use system_tools::{
 // ============================================================================
 
 pub use agent_tools::{
+    UpdateAgentTool,
     AgentMemoryTool, ControlAgentTool, CreateAgentTool, ExecuteAgentTool, GetAgentConversationTool,
     GetAgentExecutionDetailTool, GetAgentExecutionsTool, GetAgentTool, ListAgentsTool,
 };

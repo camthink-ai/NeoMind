@@ -239,6 +239,16 @@ export function MarketplaceDialog({
         // Refresh extensions list
         await fetchExtensions()
 
+        // Sync extension components to dashboard registry
+        // This ensures the new extension's components appear in the component library immediately
+        try {
+          const { syncExtensionComponents } = await import('@/hooks/useExtensionComponents')
+          await syncExtensionComponents()
+          console.log('[Marketplace] Extension components synced successfully')
+        } catch (e) {
+          console.warn('[Marketplace] Failed to sync extension components:', e)
+        }
+
         // Call completion callback
         onInstallComplete?.(id)
 

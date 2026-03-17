@@ -1,3 +1,5 @@
+// Prevents additional console window on Windows in release builds
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! NeoMind Extension Runner
 //!
 //! This is a standalone process that loads and runs a single extension.
@@ -277,7 +279,7 @@ struct Runner {
     /// Extension type
     extension_type: ExtensionType,
     /// Shared runtime for native async extension calls
-    runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Handle,
     /// Running flag
     running: bool,
     /// IPC client for WASM capability forwarding
@@ -329,14 +331,12 @@ impl WasmRuntime {
         let engine = self.engine.clone();
         let module = self.module.clone();
 
-        // Create a new store for this operation
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-
-        rt.block_on(async {
-            self.get_descriptor_async(&engine, &module).await
+        let runtime_handle = tokio::runtime::Handle::try_current()
+            .map_err(|e| format!("Failed to get runtime handle: {}", e))?;
+        tokio::task::block_in_place(|| {
+            runtime_handle.block_on(async {
+                self.get_descriptor_async(&engine, &module).await
+            })
         })
     }
 
@@ -1446,10 +1446,8 @@ impl Runner {
             "Extension loaded successfully"
         );
 
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed to create runner runtime: {}", e))?;
+        let runtime_handle = tokio::runtime::Handle::try_current()
+            .map_err(|e| format!("Failed to get current runtime handle: {}", e))?;
 
         // Create IPC client for capability forwarding (both Native and WASM)
         let (ipc_client, ipc_request_rx, ipc_response_tx) = {
@@ -1478,7 +1476,7 @@ impl Runner {
             wasm_runtime,
             descriptor,
             extension_type,
-            runtime,
+            runtime: runtime_handle,
             running: true,
             ipc_client,
             ipc_request_rx,
@@ -2379,30 +2377,28 @@ impl Runner {
 
         let ipc_client = self.ipc_client.clone();
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("Failed to create runtime: {}", e))?;
-
-        rt.block_on(async {
-            // Try new execute_command API first
-            match runtime.execute_command(command, args, ipc_client).await {
-                Ok(result) => {
-                    // Extract the actual result from the response
-                    if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
-                        Ok(result.get("result").cloned().unwrap_or(result))
-                    } else {
-                        Err(result.get("error")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown error")
-                            .to_string())
+        let runtime_handle = self.runtime.clone();
+        tokio::task::block_in_place(|| {
+            runtime_handle.block_on(async {
+                // Try new execute_command API first
+                match runtime.execute_command(command, args, ipc_client).await {
+                    Ok(result) => {
+                        // Extract the actual result from the response
+                        if result.get("success").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            Ok(result.get("result").cloned().unwrap_or(result))
+                        } else {
+                            Err(result.get("error")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Unknown error")
+                                .to_string())
+                        }
+                    }
+                    Err(_) => {
+                        // Fallback to legacy execute function
+                        runtime.execute(command, args).await
                     }
                 }
-                Err(_) => {
-                    // Fallback to legacy execute function
-                    runtime.execute(command, args).await
-                }
-            }
+            })
         })
     }
 
@@ -2496,9 +2492,13 @@ impl Runner {
 
         let ext_clone = Arc::clone(ext);
 
-        self.runtime.block_on(async {
-            let ext_guard = ext_clone.read().await;
-            ext_guard.health_check().await.unwrap_or(false)
+        tokio::task::block_in_place(|| {
+            let handle = self.runtime.clone();
+            handle.block_on(async move {
+                let ext_clone = Arc::clone(ext);
+                let ext_guard = ext_clone.read().await;
+                ext_guard.health_check().await.unwrap_or(false)
+            })
         })
     }
 
@@ -2508,16 +2508,14 @@ impl Runner {
             None => return false,
         };
 
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
+        let runtime_handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
             Err(_) => return false,
         };
-
-        rt.block_on(async {
-            runtime.health_check().await
+        tokio::task::block_in_place(|| {
+            runtime_handle.block_on(async {
+                runtime.health_check().await
+            })
         })
     }
 
@@ -2705,7 +2703,7 @@ impl Runner {
 
         let ext_clone = Arc::clone(ext);
         let session_id_owned = session_id.to_string();
-let handle = self.runtime.handle().clone();
+let handle = self.runtime.clone().clone();
 
         // Use spawn_blocking to avoid runtime conflicts
         // This moves the async operation to a separate thread pool
@@ -2775,7 +2773,7 @@ let handle = self.runtime.handle().clone();
         //
         // spawn_blocking moves the closure to a dedicated blocking thread pool,
         // which is safe and won't conflict with the async runtime.
-        let handle = self.runtime.handle();
+        let handle = self.runtime.clone();
         
         tokio::task::block_in_place(|| {
             handle.block_on(async move {
@@ -3033,4 +3031,5 @@ async fn main() {
     runner.run().await;
 
     debug!("Extension runner exiting normally");
+    std::process::exit(0);
 }

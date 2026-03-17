@@ -79,6 +79,29 @@ jobs:
         working-directory: ./web
         run: npm ci
 
+      - name: Build extension runner binary
+        shell: bash
+        run: |
+          # Build the extension runner for the target platform
+          cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
+
+          # Prepare platform-specific binary for Tauri bundling
+          mkdir -p web/src-tauri/binaries
+
+          # Tauri expects: neomind-extension-runner-{target_triple}
+          # Note: Tauri uses the exact target triple (with hyphens)
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp target/${{ matrix.target }}/release/neomind-extension-runner.exe \
+               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}.exe
+          else
+            cp target/${{ matrix.target }}/release/neomind-extension-runner \
+               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
+            chmod +x web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
+          fi
+
+          echo "✅ Extension runner ready for ${{ matrix.target }}"
+          ls -la web/src-tauri/binaries/
+
       - name: Build frontend
         working-directory: ./web
         shell: bash
@@ -117,20 +140,21 @@ jobs:
         shell: bash
         run: |
           # Build the extension runner for the target platform
-          # Ensure binaries directory exists
+          # Use unified name across all platforms
           mkdir -p web/src-tauri/binaries
           cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
-          
-          # Determine the binary name based on platform
+
+          # Copy with unified name (same for all platforms)
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            BINARY_NAME="neomind-extension-runner-${{ matrix.target }}.exe"
-            cp target/${{ matrix.target }}/release/neomind-extension-runner.exe web/src-tauri/binaries/$BINARY_NAME
+            cp target/${{ matrix.target }}/release/neomind-extension-runner.exe \
+               web/src-tauri/binaries/neomind-extension-runner.exe
           else
-            BINARY_NAME="neomind-extension-runner-${{ matrix.target }}"
-            cp target/${{ matrix.target }}/release/neomind-extension-runner web/src-tauri/binaries/$BINARY_NAME
+            cp target/${{ matrix.target }}/release/neomind-extension-runner \
+               web/src-tauri/binaries/neomind-extension-runner
+            chmod +x web/src-tauri/binaries/neomind-extension-runner
           fi
-          
-          echo "Built extension runner: $BINARY_NAME"
+
+          echo "✅ Extension runner ready for ${{ matrix.target }}"
           ls -la web/src-tauri/binaries/
 
       - name: Build and bundle app

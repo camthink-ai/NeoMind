@@ -25,7 +25,6 @@
   "start": "Start",
   "stop": "Stop",
   "configure": "Configure",
-  "unregister": "Unregister",
   "discover": "Discover Extensions",
   "discovering": "Discovering...",
   "discovered": "Discovered {{count}} new extensions",
@@ -131,7 +130,7 @@
   "selectCommandPlaceholder": "Choose a command...",
   "selectExtensionAndCommand": "Please select an extension and command",
   "noTransformExtensions": "No extensions with transform capabilities found",
-  "noCommands": "No commands available",
+  "noCommands": "No extension commands available",
   "noMetrics": "No metrics available",
   "metrics": "Metrics",
   "viewHistory": "View History",
@@ -167,7 +166,6 @@
   "metricsDesc": "Data metrics provided by extensions",
   "commandsDesc": "Commands that can be executed on extensions",
   "noDataSources": "No extension data sources available",
-  "noCommands": "No extension commands available",
   "outputs": "Outputs",
   "execute": "Execute",
   "commandExecuted": "Command executed successfully",
@@ -191,7 +189,6 @@
     "stop": "Stop",
     "start": "Start",
     "configure": "Configure",
-    "unregister": "Unregister",
     "running": "Running",
     "stopped": "Stopped",
     "byAuthor": "By {{author}}",
@@ -214,7 +211,9 @@
       "Running": "Running",
       "Stopped": "Stopped",
       "Error": "Error"
-    }
+    },
+    "uninstall": "Uninstall",
+    "unregister": "Unregister"
   },
   "marketplace": "Marketplace",
   "market": {
@@ -250,5 +249,10 @@
     "confirmUnregister": "Unregister Extension",
     "confirmUnregisterDescription": "Are you sure you want to unregister \"{{name}}\"? This will remove the extension from the system but keep the source file.",
     "extensionUnregistered": "Extension unregistered successfully"
-  }
+  },
+  "uninstall": "Uninstall",
+  "confirmUninstall": "Completely Uninstall Extension",
+  "confirmUninstallDescription": "Are you sure you want to completely uninstall \"{{name}}\"? This will remove ALL extension files including source code, and this action CANNOT be undone.",
+  "extensionUninstalled": "Extension completely uninstalled",
+  "extensionUninstalledDesc": "All extension files have been removed"
 }

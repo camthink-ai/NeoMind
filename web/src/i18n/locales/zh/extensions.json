@@ -25,7 +25,6 @@
   "start": "启动",
   "stop": "停止",
   "configure": "配置",
-  "unregister": "注销",
   "discover": "发现扩展",
   "discovering": "发现中...",
   "discovered": "发现 {{count}} 个新扩展",
@@ -131,7 +130,7 @@
   "selectCommandPlaceholder": "选择一个命令...",
   "selectExtensionAndCommand": "请选择扩展和命令",
   "noTransformExtensions": "未找到支持转换的扩展",
-  "noCommands": "无可用命令",
+  "noCommands": "无可用扩展命令",
   "noMetrics": "无可用指标",
   "metrics": "指标",
   "viewHistory": "查看历史",
@@ -167,7 +166,6 @@
   "metricsDesc": "扩展提供的数据指标",
   "commandsDesc": "可以在扩展上执行的命令",
   "noDataSources": "无可用扩展数据源",
-  "noCommands": "无可用扩展命令",
   "outputs": "输出",
   "execute": "执行",
   "commandExecuted": "命令执行成功",
@@ -191,7 +189,6 @@
     "stop": "停止",
     "start": "启动",
     "configure": "配置",
-    "unregister": "注销",
     "running": "运行中",
     "stopped": "已停止",
     "byAuthor": "作者：{{author}}",
@@ -214,7 +211,9 @@
       "Running": "运行中",
       "Stopped": "已停止",
       "Error": "错误"
-    }
+    },
+    "uninstall": "完全卸载",
+    "unregister": "注销"
   },
   "marketplace": "扩展市场",
   "market": {
@@ -250,5 +249,10 @@
     "confirmUnregister": "卸载扩展",
     "confirmUnregisterDescription": "确定要卸载 \"{{name}}\" 吗？这将从系统中移除扩展，但保留源文件。",
     "extensionUnregistered": "扩展卸载成功"
-  }
+  },
+  "uninstall": "完全卸载",
+  "confirmUninstall": "完全卸载扩展",
+  "confirmUninstallDescription": "确定要完全卸载 \"{{name}}\" 吗？这将删除所有扩展文件（包括源代码），此操作**无法撤销**。",
+  "extensionUninstalled": "扩展已完全卸载",
+  "extensionUninstalledDesc": "所有扩展文件已被删除"
 }

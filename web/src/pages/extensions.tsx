@@ -38,7 +38,7 @@ export function ExtensionsPage() {
 
   // Confirmation dialogs state
   const [reloadConfirmOpen, setReloadConfirmOpen] = useState(false)
-  const [unregisterConfirmOpen, setUnregisterConfirmOpen] = useState(false)
+  const [uninstallConfirmOpen, setUninstallConfirmOpen] = useState(false)
   const [pendingActionExtension, setPendingActionExtension] = useState<Extension | null>(null)
 
   // Fetch extensions on mount
@@ -56,16 +56,16 @@ export function ExtensionsPage() {
   }
 
   // Extension action handlers
-  const handleUnregister = async (id: string): Promise<boolean> => {
+  const handleUninstall = async (id: string): Promise<boolean> => {
     const ext = extensions.find(e => e.id === id)
     if (!ext) return false
 
     setPendingActionExtension(ext)
-    setUnregisterConfirmOpen(true)
+    setUninstallConfirmOpen(true)
     return false // Will be handled by confirmation
   }
 
-  const confirmUnregister = async () => {
+  const confirmUninstall = async () => {
     if (!pendingActionExtension) return
     const id = pendingActionExtension.id
 
@@ -75,7 +75,7 @@ export function ExtensionsPage() {
       dynamicRegistry.unregisterExtension(id)
 
       toast({
-        title: t("extensions:extensionUnregistered"),
+        title: t("extensions:extensionUninstalled"),
       })
     } else {
       toast({
@@ -83,7 +83,7 @@ export function ExtensionsPage() {
         variant: "destructive",
       })
     }
-    setUnregisterConfirmOpen(false)
+    setUninstallConfirmOpen(false)
     setPendingActionExtension(null)
   }
 
@@ -172,7 +172,7 @@ export function ExtensionsPage() {
         <ExtensionGrid
           extensions={extensions}
           loading={extensionsLoading}
-          onUnregister={handleUnregister}
+          onUninstall={handleUninstall}
           onConfigure={handleConfigure}
           onReload={handleReload}
         />
@@ -228,13 +228,13 @@ export function ExtensionsPage() {
       </AlertDialog>
 
       {/* Unregister Confirmation Dialog */}
-      <AlertDialog open={unregisterConfirmOpen} onOpenChange={setUnregisterConfirmOpen}>
+      <AlertDialog open={uninstallConfirmOpen} onOpenChange={setUninstallConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("extensions:confirmUnregister", { defaultValue: "Unregister Extension" })}</AlertDialogTitle>
+            <AlertDialogTitle>{t("extensions:confirmUninstall", { defaultValue: "Completely Uninstall Extension" })}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t("extensions:confirmUnregisterDescription", {
-                defaultValue: `Are you sure you want to unregister "${pendingActionExtension?.name}"? This will remove the extension from the system but keep the source file.`,
+              {t("extensions:confirmUninstallDescription", {
+                defaultValue: `Are you sure you want to completely uninstall "${pendingActionExtension?.name}"? This will remove ALL extension files including source code, and this action CANNOT be undone.`,
               })}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -243,10 +243,10 @@ export function ExtensionsPage() {
               {t("common:cancel", { defaultValue: "Cancel" })}
             </AlertDialogCancel>
             <AlertDialogAction
-              onClick={confirmUnregister}
+              onClick={confirmUninstall}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {t("extensions:unregister", { defaultValue: "Unregister" })}
+              {t("extensions:uninstall", { defaultValue: "Uninstall" })}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -538,7 +538,7 @@ impl ServerState {
         };
         let dashboard_store = match DashboardStore::open("data/dashboards.redb") {
             Ok(store) => store,
-            Err(e) => {
+            Err(_e) => {
 
         // ========== Detect and cache GPU info (once at startup) ==========
                 DashboardStore::memory().unwrap_or_else(|e| {
@@ -765,6 +765,55 @@ impl ServerState {
                 );
             }
         }
+
+        // Spawn background task to sync extension packages
+        // This doesn't block server startup
+        //
+        // Path strategy:
+        // - install_dir: $NEOMIND_DATA_DIR/extensions/ (where extensions are unpacked)
+        // - nep_cache_dir: $NEOMIND_DATA_DIR/extensions/packages/ (where .nep files are cached)
+        //
+        // This ensures all extension data is in the app data directory, avoiding
+        // path inconsistencies between development and production modes.
+        let data_dir = std::env::var("NEOMIND_DATA_DIR")
+            .unwrap_or_else(|_| "data".to_string());
+        let install_dir = std::path::PathBuf::from(data_dir.clone()).join("extensions");
+        let nep_cache_dir = std::path::PathBuf::from(data_dir).join("extensions").join("packages");
+
+        tracing::info!(
+            install_dir = %install_dir.display(),
+            nep_cache_dir = %nep_cache_dir.display(),
+            "Extension sync paths configured"
+        );
+
+        tokio::spawn(async move {
+            use crate::server::ExtensionInstallService;
+
+            // Move paths into the async block instead of borrowing
+            let install_service = ExtensionInstallService::new(install_dir, nep_cache_dir);
+
+            match install_service.sync_nep_cache().await {
+                Ok(report) => {
+                    if report.scanned > 0 {
+                        tracing::info!(
+                            category = "extensions",
+                            scanned = report.scanned,
+                            installed = report.installed,
+                            upgraded = report.upgraded,
+                            skipped = report.skipped,
+                            "Extension sync completed"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        category = "extensions",
+                        error = %e,
+                        "Failed to sync extension packages from cache directory"
+                    );
+                }
+            }
+        });
     }
 
     /// Initialize LLM backend using the unified config loader.
@@ -1533,16 +1582,10 @@ impl ServerState {
             return Ok(mgr.clone());
         }
 
-        // Create or open TimeSeriesStore for agent data collection
-        // Use the same telemetry.redb as DeviceService to access device telemetry data
-        let time_series_store = match neomind_storage::TimeSeriesStore::open("data/telemetry.redb")
-        {
-            Ok(store) => Some(store),
-            Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open TimeSeriesStore, agents will not collect data");
-                None
-            }
-        };
+        // Reuse the TimeSeriesStore that's already opened by DeviceService
+        // We can't reopen telemetry.redb because redb doesn't support opening the same
+        // file multiple times in the same process
+        let time_series_store = Some(self.devices.telemetry.inner_store());
 
         // Get LLM runtime from SessionManager if available
         let llm_runtime = if let Ok(Some(backend)) =

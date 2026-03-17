@@ -20,6 +20,8 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 anyhow = "1"
 reqwest = { version = "0.12", features = ["blocking"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 # Local workspace crates - relative to web/src-tauri/ directory
 edge-api = { path = "../../crates/neomind-api", package = "neomind-api", features = ["embedded-broker"] }

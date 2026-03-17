@@ -249,15 +249,6 @@ export function AddDeviceTypeDialog({
     }
   }
 
-  // Skip current step (for optional steps)
-  const handleSkip = () => {
-    const steps: Step[] = ['basic', 'data', 'commands', 'review', 'finish']
-    const currentIndex = steps.indexOf(currentStep)
-    if (currentIndex < steps.length - 1) {
-      setCurrentStep(steps[currentIndex + 1])
-    }
-  }
-
   // Final save
   const handleSave = async () => {
     const definition: DeviceType = {
@@ -460,13 +451,6 @@ export function AddDeviceTypeDialog({
             )}
 
             <div className="flex-1 sm:flex-1" />
-
-            {/* Skip button for optional steps */}
-            {(currentStep === 'data' || currentStep === 'commands') && (
-              <Button variant="ghost" size={isMobile ? "default" : "sm"} className={isMobile ? "h-12 min-w-[100px]" : ""}>
-                Skip
-              </Button>
-            )}
 
             {currentStep === 'review' ? (
               <Button variant="outline" size={isMobile ? "default" : "sm"} onClick={handleSave} disabled={adding} className={isMobile ? "h-12 min-w-[100px]" : ""}>
@@ -898,7 +882,7 @@ function DataDefinitionStep({
           display_name: finalDisplayName,
           data_type: dataType,
           unit: '',
-          ...(allowedValues && { allowed_values: allowedValues.map(v => ({ String: v })) }),
+          ...(allowedValues && { allowed_values: allowedValues }),
         })
       }
 
@@ -1711,7 +1695,7 @@ function CommandEditorCompact({
         display_name: t('devices:commandEditor.templates.toggle.displayName'),
         payload_template: '{"state": "${state}"}',
         parameters: [
-          { name: 'state', display_name: t('devices:commandEditor.templates.toggle.stateParam'), data_type: 'string', allowed_values: [{ String: 'on' }, { String: 'off' }], required: true }
+          { name: 'state', display_name: t('devices:commandEditor.templates.toggle.stateParam'), data_type: 'string', allowed_values: ['on', 'off'], required: true }
         ]
       }
     },
@@ -2115,12 +2099,10 @@ function CommandEditorCompact({
                             <span className="text-muted-foreground text-xs">{t('devices:commandEditor.yesNo')}</span>
                           ) : (
                             <Input
-                              value={(param.allowed_values || []).map((v: unknown) =>
-                                typeof v === 'string' ? v : (v as { String: string }).String
-                              ).join(',')}
+                              value={(param.allowed_values || []).join(',')}
                               onChange={(e) => {
                                 const values = e.target.value.split(',').map(v => v.trim()).filter(v => v)
-                                updateParameter(pIdx, { allowed_values: values.length > 0 ? values.map(v => ({ String: v })) : undefined })
+                                updateParameter(pIdx, { allowed_values: values.length > 0 ? values : undefined })
                               }}
                               placeholder={t('devices:commandEditor.allowedValuesPlaceholder')}
                               className="h-6 text-xs"

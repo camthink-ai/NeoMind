@@ -1851,14 +1851,20 @@ async fn install_nep_package(
         .map_err(|e| ErrorResponse::internal(format!("Failed to load package: {}", e)))?;
 
     // Create extensions directory
-    let extensions_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".neomind")
-        .join("extensions");
+    // Create extensions directory using NEOMIND_DATA_DIR for consistency
+    // All extensions must be installed to the same directory that the API reads from
+    let data_dir = std::env::var("NEOMIND_DATA_DIR")
+        .unwrap_or_else(|_| "data".to_string());
+    let extensions_dir = PathBuf::from(data_dir).join("extensions");
 
     std::fs::create_dir_all(&extensions_dir).map_err(|e| {
         ErrorResponse::internal(format!("Failed to create extensions directory: {}", e))
     })?;
+
+    tracing::info!(
+        extensions_dir = %extensions_dir.display(),
+        "Installing extension from .nep package"
+    );
 
     // Install the package
     let install_result = package.install(&extensions_dir).await
@@ -2251,15 +2257,19 @@ pub async fn install_marketplace_extension_handler(
             ("", String::new(), String::new())
         };
 
-        // Create extensions directory
-        let extensions_dir = dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".neomind")
-            .join("extensions");
+        // Create extensions directory using NEOMIND_DATA_DIR for consistency
+        let data_dir = std::env::var("NEOMIND_DATA_DIR")
+            .unwrap_or_else(|_| "data".to_string());
+        let extensions_dir = PathBuf::from(data_dir).join("extensions");
 
         std::fs::create_dir_all(&extensions_dir).map_err(|e| {
             ErrorResponse::internal(format!("Failed to create extensions directory: {}", e))
         })?;
+
+        tracing::info!(
+            extensions_dir = %extensions_dir.display(),
+            "Installing extension from legacy binary format"
+        );
 
         // Write the extension file(s)
         let (file_path, json_path) = if is_wasm {
@@ -2995,9 +3005,19 @@ pub async fn get_extension_components_handler(
 
 /// Load dashboard components from extension manifest.
 fn load_extension_components(
+    // Log path configuration for debugging
     extension_id: &str,
     file_path: Option<&std::path::PathBuf>,
 ) -> Option<Vec<DashboardComponentDto>> {
+
+    // Log path configuration for debugging
+    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "./data".to_string());
+    tracing::debug!(
+        extension_id = %extension_id,
+        data_dir = %data_dir,
+        "Loading extension components (NEOMIND_DATA_DIR set)"
+    );
+
     // If no file_path provided, try to find extension in data directory
     let file_path = if let Some(fp) = file_path {
         fp.clone()
@@ -3677,5 +3697,84 @@ pub async fn upload_extension_file_handler(
             "category": c.category
         })).collect::<Vec<_>>(),
         "replaced": is_registered
+    }))
+}
+
+/// POST /api/extensions/sync
+///
+/// Manually trigger extension synchronization from /extensions/ directory.
+pub async fn sync_extensions_handler(
+    State(_state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    use crate::server::ExtensionInstallService;
+
+    let data_dir = std::env::var("NEOMIND_DATA_DIR")
+        .unwrap_or_else(|_| "data".to_string());
+    let install_dir = std::path::PathBuf::from(data_dir).join("extensions");
+    let nep_cache_dir = std::path::PathBuf::from("extensions");
+
+    let install_service = ExtensionInstallService::new(&install_dir, &nep_cache_dir);
+
+    let report = install_service.sync_nep_cache().await
+        .map_err(|e| ErrorResponse::internal(format!("Sync failed: {}", e)))?;
+
+    ok(serde_json::json!({
+        "message": "Extensions synchronized",
+        "scanned": report.scanned,
+        "installed": report.installed,
+        "upgraded": report.upgraded,
+        "skipped": report.skipped,
+    }))
+}
+
+/// GET /api/extensions/sync-status
+pub async fn get_sync_status_handler(
+    State(_state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_core::extension::package::ExtensionPackage;
+
+    let nep_cache_dir = std::path::PathBuf::from("extensions");
+    let data_dir = std::env::var("NEOMIND_DATA_DIR")
+        .unwrap_or_else(|_| "data".to_string());
+    let install_dir = std::path::PathBuf::from(data_dir).join("extensions");
+
+    let mut nep_packages = Vec::new();
+
+    if nep_cache_dir.exists() {
+        if let Ok(mut entries) = std::fs::read_dir(&nep_cache_dir) {
+            while let Some(Ok(entry)) = entries.next() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("nep") {
+                    continue;
+                }
+
+                let package_info = match ExtensionPackage::load(&path).await {
+                    Ok(package) => {
+                        let ext_id = package.manifest.id.clone();
+                        serde_json::json!({
+                            "filename": path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                            "extension_id": ext_id,
+                            "version": package.manifest.version,
+                            "name": package.manifest.name,
+                            "installed": install_dir.join(&ext_id).exists(),
+                            "size": path.metadata().map(|m| m.len()).unwrap_or(0),
+                        })
+                    }
+                    Err(_) => {
+                        serde_json::json!({
+                            "filename": path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown"),
+                            "error": "Failed to load package",
+                        })
+                    }
+                };
+                nep_packages.push(package_info);
+            }
+        }
+    }
+
+    ok(serde_json::json!({
+        "nep_packages": nep_packages,
+        "nep_cache_dir": nep_cache_dir.to_string_lossy().to_string(),
+        "install_dir": install_dir.to_string_lossy().to_string(),
     }))
 }

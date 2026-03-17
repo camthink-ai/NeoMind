@@ -19,7 +19,7 @@ interface ExtensionGridProps {
   extensions: Extension[]
   loading?: boolean
   onConfigure?: (id: string) => void
-  onUnregister?: (id: string) => Promise<boolean>
+  onUninstall?: (id: string) => void
   onReload?: (id: string) => Promise<boolean>
 }
 
@@ -35,7 +35,7 @@ export function ExtensionGrid({
   extensions,
   loading = false,
   onConfigure,
-  onUnregister,
+  onUninstall,
   onReload,
 }: ExtensionGridProps) {
   const { t } = useTranslation(["extensions", "common"])
@@ -249,7 +249,7 @@ export function ExtensionGrid({
             key={extension.id}
             extension={extension}
             onConfigure={() => onConfigure?.(extension.id)}
-            onUnregister={() => onUnregister?.(extension.id)}
+            onUninstall={() => onUninstall?.(extension.id)}
             onReload={() => onReload?.(extension.id)}
           />
         ))}

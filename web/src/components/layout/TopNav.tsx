@@ -359,7 +359,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                         variant="destructive"
                         className="absolute -top-0.5 -right-0.5 h-5 min-w-5 px-1 flex items-center justify-center text-xs"
                       >
-                        {unreadCount > 9 ? '9+' : unreadCount}
+                        {unreadCount > 99 ? '99+' : unreadCount}
                       </Badge>
                     )}
                   </Button>

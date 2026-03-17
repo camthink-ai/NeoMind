@@ -208,9 +208,14 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
           supports_tools: existingCaps.supports_tools ?? true,
           max_context: existingCaps.max_context ?? 8192,
         })
-        // If it's Ollama and we're editing, also fetch models
+        // If it's Ollama and we're editing, also fetch models using the instance's endpoint
         if (pluginType.id === "ollama") {
-          fetchOllamaModels()
+          const instanceEndpoint = editingInstance?.config?.endpoint as string | undefined
+          fetchOllamaModels(instanceEndpoint)
+          // Also update the local endpoint state if editing
+          if (instanceEndpoint) {
+            setOllamaEndpoint(instanceEndpoint)
+          }
         }
       } else if (pluginType.type === "llm_backend") {
         // Reset to default capabilities for new instances
@@ -291,6 +296,8 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
           capabilities: detectedCapabilities,
           // For Ollama, include the selected model from the dropdown
           ...(isOllamaBackend && selectedModel ? { model: selectedModel } : {}),
+          // For Ollama, include the endpoint from the input field
+          ...(isOllamaBackend ? { endpoint: ollamaEndpoint } : {}),
         }
       }
 

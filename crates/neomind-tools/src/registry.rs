@@ -410,6 +410,13 @@ impl ToolRegistryBuilder {
     }
 
     /// Add the create agent tool.
+
+    /// Add the update agent tool.
+    pub fn with_update_agent_tool(self, agent_store: Arc<neomind_storage::AgentStore>) -> Self {
+        self.with_tool(Arc::new(super::agent_tools::UpdateAgentTool::new(
+            agent_store,
+        )))
+    }
     pub fn with_create_agent_tool(self, agent_store: Arc<neomind_storage::AgentStore>) -> Self {
         self.with_tool(Arc::new(super::agent_tools::CreateAgentTool::new(
             agent_store,
@@ -485,6 +492,7 @@ impl ToolRegistryBuilder {
             .with_execute_agent_tool(agent_store.clone())
             .with_control_agent_tool(agent_store.clone())
             .with_create_agent_tool(agent_store.clone())
+            .with_update_agent_tool(agent_store.clone())
             .with_agent_memory_tool(agent_store.clone())
             .with_get_agent_executions_tool(agent_store.clone())
             .with_get_agent_execution_detail_tool(agent_store.clone())
@@ -505,6 +513,7 @@ impl ToolRegistryBuilder {
                 agent_store.clone(),
                 device_service,
             )
+            .with_update_agent_tool(agent_store.clone())
             .with_agent_memory_tool(agent_store.clone())
             .with_get_agent_executions_tool(agent_store.clone())
             .with_get_agent_execution_detail_tool(agent_store.clone())

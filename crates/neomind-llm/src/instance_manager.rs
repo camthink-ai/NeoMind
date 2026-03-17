@@ -168,12 +168,21 @@ impl LlmBackendInstanceManager {
     ) -> Result<Arc<dyn LlmRuntime>, LlmError> {
         use crate::backends::create_backend;
 
-        let config = serde_json::json!({
-            "backend": instance.backend_name(),
-            "base_url": instance.endpoint,
-            "model": instance.model,
-            "api_key": instance.api_key,
-        });
+        // Build config based on backend type
+        // Ollama uses "endpoint" field, CloudConfig uses "base_url" field
+        let config = if matches!(instance.backend_type, LlmBackendType::Ollama) {
+            serde_json::json!({
+                "endpoint": instance.endpoint.clone().unwrap_or_else(|| "http://localhost:11434".to_string()),
+                "model": instance.model,
+                "timeout_secs": 180,
+            })
+        } else {
+            serde_json::json!({
+                "base_url": instance.endpoint,
+                "model": instance.model,
+                "api_key": instance.api_key,
+            })
+        };
 
         create_backend(instance.backend_name(), &config)
             .map_err(|e| LlmError::BackendUnavailable(e.to_string()))

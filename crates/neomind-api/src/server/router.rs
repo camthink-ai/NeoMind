@@ -127,7 +127,8 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // Extension-specific routes ( :id must come after specific paths)
         .route(
             "/api/extensions/:id",
-            get(extensions::get_extension_handler),
+            get(extensions::get_extension_handler)
+            .delete(extensions::unregister_extension_handler),
         )
         .route(
             "/api/extensions/:id/health",
@@ -850,10 +851,6 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         //     post(extensions::upload_extension_multipart_handler),
         // )
         .route(
-            "/api/extensions/:id",
-            delete(extensions::unregister_extension_handler),
-        )
-        .route(
             "/api/extensions/:id/uninstall",
             delete(extensions::uninstall_extension_handler),
         )
@@ -878,6 +875,15 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/extensions/market/install",
             post(extensions::install_marketplace_extension_handler),
+        )
+        // Extension sync (protected - manual sync from /extensions/ directory)
+        .route(
+            "/api/extensions/sync",
+            post(extensions::sync_extensions_handler),
+        )
+        .route(
+            "/api/extensions/sync-status",
+            get(extensions::get_sync_status_handler),
         )
         // LLM Backends API (write operations - protected)
         .route(
