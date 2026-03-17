@@ -1,3 +1,5 @@
+// Prevents additional console window on Windows in release builds
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 //! NeoMind Extension Runner
 //!
 //! This is a standalone process that loads and runs a single extension.
