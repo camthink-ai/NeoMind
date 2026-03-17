@@ -42,11 +42,11 @@ impl DeviceCapabilityProvider {
 
         let device_service: Arc<DeviceService> = self.services
             .get::<DeviceService>(keys::DEVICE_SERVICE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::DeviceMetricsRead))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::DeviceMetricsRead))?;
 
         let telemetry_storage: Arc<TimeSeriesStorage> = self.services
             .get::<TimeSeriesStorage>(keys::TELEMETRY_STORAGE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::DeviceMetricsRead))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::DeviceMetricsRead))?;
 
         let device = device_service.get_device(device_id).await
             .ok_or_else(|| CapabilityError::InvalidParameters(
@@ -103,7 +103,7 @@ impl DeviceCapabilityProvider {
 
         let telemetry_storage: Arc<TimeSeriesStorage> = self.services
             .get::<TimeSeriesStorage>(keys::TELEMETRY_STORAGE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::DeviceMetricsWrite))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::DeviceMetricsWrite))?;
 
         use neomind_devices::mdl::MetricValue;
         let metric_value = if value.is_number() {
@@ -149,7 +149,7 @@ impl DeviceCapabilityProvider {
 
         let device_service: Arc<DeviceService> = self.services
             .get::<DeviceService>(keys::DEVICE_SERVICE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::DeviceControl))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::DeviceControl))?;
 
         let params_map: std::collections::HashMap<String, Value> = if cmd_params.is_object() {
             cmd_params.as_object()
@@ -297,7 +297,7 @@ impl EventCapabilityProvider {
         // This enables dynamic event subscription at runtime
         if let Some(dispatcher) = &self.event_dispatcher {
             // Create a channel for receiving events (for isolated extensions)
-            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, _rx) = tokio::sync::mpsc::channel(100);
             
             // Register the subscription with the dispatcher
             // Note: For in-process extensions, they should use event_subscriptions() method
@@ -409,7 +409,7 @@ impl TelemetryCapabilityProvider {
 
         let telemetry_storage: Arc<TimeSeriesStorage> = self.services
             .get::<TimeSeriesStorage>(keys::TELEMETRY_STORAGE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::TelemetryHistory))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::TelemetryHistory))?;
 
         let points = telemetry_storage
             .query(device_id, metric, start, end)
@@ -449,7 +449,7 @@ impl TelemetryCapabilityProvider {
 
         let telemetry_storage: Arc<TimeSeriesStorage> = self.services
             .get::<TimeSeriesStorage>(keys::TELEMETRY_STORAGE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::MetricsAggregate))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::MetricsAggregate))?;
 
         let aggregated = telemetry_storage
             .aggregate(device_id, metric, start, end)
@@ -525,7 +525,7 @@ impl RuleCapabilityProvider {
 
         let rule_engine: Arc<RuleEngine> = self.services
             .get::<RuleEngine>(keys::RULE_ENGINE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::RuleTrigger))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::RuleTrigger))?;
 
         let rule_id = RuleId::from_string(rule_id)
             .map_err(|e| CapabilityError::InvalidParameters(format!("Invalid rule ID: {}", e)))?;
@@ -554,7 +554,7 @@ impl RuleCapabilityProvider {
 
         let rule_engine: Arc<RuleEngine> = self.services
             .get::<RuleEngine>(keys::RULE_ENGINE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::RuleTrigger))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::RuleTrigger))?;
 
         let rule_id = RuleId::from_string(rule_id)
             .map_err(|e| CapabilityError::InvalidParameters(format!("Invalid rule ID: {}", e)))?;
@@ -576,7 +576,7 @@ impl RuleCapabilityProvider {
     async fn handle_rule_list(&self) -> Result<Value, CapabilityError> {
         let rule_engine: Arc<RuleEngine> = self.services
             .get::<RuleEngine>(keys::RULE_ENGINE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::RuleTrigger))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::RuleTrigger))?;
 
         let rules = rule_engine.list_rules().await;
 
@@ -656,7 +656,7 @@ impl ExtensionCallCapabilityProvider {
 
         let registry: Arc<ExtensionRegistry> = self.services
             .get::<ExtensionRegistry>(keys::EXTENSION_REGISTRY)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::ExtensionCall))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::ExtensionCall))?;
 
         registry
             .execute_command(extension_id, command, &args)
@@ -711,7 +711,7 @@ impl StorageCapabilityProvider {
 
         let telemetry_storage: Arc<TimeSeriesStorage> = self.services
             .get::<TimeSeriesStorage>(keys::TELEMETRY_STORAGE)
-            .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::StorageQuery))?;
+            .ok_or(CapabilityError::NotAvailable(ExtensionCapability::StorageQuery))?;
 
         // Parse query type
         match query {
@@ -748,7 +748,7 @@ impl StorageCapabilityProvider {
                     // Query all metrics for device
                     let device_service: Arc<DeviceService> = self.services
                         .get::<DeviceService>(keys::DEVICE_SERVICE)
-                        .ok_or_else(|| CapabilityError::NotAvailable(ExtensionCapability::StorageQuery))?;
+                        .ok_or(CapabilityError::NotAvailable(ExtensionCapability::StorageQuery))?;
 
                     let device = device_service.get_device(device_id).await
                         .ok_or_else(|| CapabilityError::InvalidParameters(
@@ -862,7 +862,7 @@ impl AgentCapabilityProvider {
             .and_then(|v| v.as_str())
             .ok_or_else(|| CapabilityError::InvalidParameters("Missing agent_id".to_string()))?;
 
-        let input = params.get("input").cloned().unwrap_or(json!({}));
+        let _input = params.get("input").cloned().unwrap_or(json!({}));
 
         // Try to get the agent manager
         let agent_manager: Option<std::sync::Arc<AiAgentManager>> = self.services

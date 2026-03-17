@@ -917,16 +917,22 @@ pub async fn get_resources_handler(
 
     // Get all devices with their templates
     let all_devices = state.devices.service.list_devices().await;
-    for device in all_devices {
-        // Try to get the template for this device type
-        let template = state
-            .devices
-            .service
-            .get_template(&device.device_type)
-            .await;
-
-        let (metrics, commands) = if let Some(tpl) = template {
-            // Convert from DeviceTypeTemplate (MDL definition)
+    
+    // ✅ 优化：收集唯一的 device_type，批量获取并预转换模板
+    // 这样可以避免在循环中重复调用 get_template() 和重复转换
+    use std::collections::{HashMap, HashSet};
+    
+    let unique_types: HashSet<_> = all_devices
+        .iter()
+        .map(|d| &d.device_type)
+        .collect();
+    
+    // 预转换所有模板为 (metrics, commands) 对
+    let mut template_data_map: HashMap<String, (Vec<MetricInfo>, Vec<CommandInfo>)> = HashMap::new();
+    
+    for device_type in unique_types {
+        if let Some(tpl) = state.devices.service.get_template(device_type).await {
+            // 预转换 metrics
             let metrics: Vec<MetricInfo> = tpl
                 .metrics
                 .into_iter()
@@ -942,7 +948,8 @@ pub async fn get_resources_handler(
                     max_value: m.max,
                 })
                 .collect();
-
+    
+            // 预转换 commands
             let commands: Vec<CommandInfo> = tpl
                 .commands
                 .into_iter()
@@ -959,40 +966,48 @@ pub async fn get_resources_handler(
                         .map(|p| ParameterInfo {
                             name: p.name,
                             param_type: format!("{:?}", p.data_type),
-                            required: true, // MDL doesn't have required flag, assume required
-                            default_value: p
-                                .default_value
+                            required: true,
+                            default_value: p.default_value
                                 .and_then(|v| serde_json::to_value(v).ok()),
                         })
                         .collect(),
                 })
                 .collect();
-
-            (metrics, commands)
-        } else {
-            // Fallback to generic metrics if no template found
-            (
-                vec![MetricInfo {
-                    name: "value".to_string(),
-                    data_type: RulesMetricDataType::Number,
-                    unit: None,
-                    min_value: None,
-                    max_value: None,
-                }],
-                vec![
-                    CommandInfo {
-                        name: "on".to_string(),
-                        description: "Turn on".to_string(),
-                        parameters: vec![],
-                    },
-                    CommandInfo {
-                        name: "off".to_string(),
-                        description: "Turn off".to_string(),
-                        parameters: vec![],
-                    },
-                ],
-            )
-        };
+    
+            template_data_map.insert(device_type.clone(), (metrics, commands));
+        }
+    }
+    
+    // 现在循环中直接查找预转换的数据
+    for device in all_devices {
+        // ✅ 从预转换的缓存中获取数据（避免重复转换）
+        let (metrics, commands) = template_data_map
+            .get(&device.device_type)
+            .cloned()
+            .unwrap_or_else(|| {
+                // Fallback to generic metrics if no template found
+                (
+                    vec![MetricInfo {
+                        name: "value".to_string(),
+                        data_type: RulesMetricDataType::Number,
+                        unit: None,
+                        min_value: None,
+                        max_value: None,
+                    }],
+                    vec![
+                        CommandInfo {
+                            name: "on".to_string(),
+                            description: "Turn on".to_string(),
+                            parameters: vec![],
+                        },
+                        CommandInfo {
+                            name: "off".to_string(),
+                            description: "Turn off".to_string(),
+                            parameters: vec![],
+                        },
+                    ],
+                )
+            });
 
         // Check device online status
         let status = state

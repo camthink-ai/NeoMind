@@ -262,8 +262,7 @@ pub fn compact_conversation(
 
         // Create a synthetic summary message
         let timestamp = messages
-            .first()
-            .and_then(|m| Some(m.timestamp))
+            .first().map(|m| m.timestamp)
             .unwrap_or_else(|| chrono::Utc::now().timestamp());
 
         compressed_older.push(AgentMessage {
@@ -2278,7 +2277,7 @@ impl Agent {
             }
 
             // Clone tool_calls for parallel execution within this batch
-            let batch_clone: Vec<_> = batch.iter().cloned().collect();
+            let batch_clone: Vec<_> = batch.to_vec();
 
             // Use futures for parallel execution within batch
             let futures: Vec<_> = batch_clone

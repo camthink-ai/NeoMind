@@ -396,7 +396,7 @@ pub struct IsolatedExtension {
     /// Last resource check time
     last_resource_check: Mutex<Option<Instant>>,
     /// Event push channel for sending events to extension process
-    event_push_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<(String, Value)>>>,
+    event_push_tx: Mutex<Option<tokio::sync::mpsc::Sender<(String, Value)>>>,
     /// Push output channel for receiving PushOutput messages from extension
     /// Uses std::sync::Mutex for thread safety in receiver thread
     push_output_tx: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedSender<super::ipc::PushOutputData>>>>,
@@ -592,7 +592,7 @@ impl IsolatedExtension {
             extension_dir.to_path_buf()
         } else {
             std::env::current_dir()
-                .map(|cwd| cwd.join(&extension_dir))
+                .map(|cwd| cwd.join(extension_dir))
                 .unwrap_or_else(|_| extension_dir.to_path_buf())
         };
         let mut child = Command::new(&runner_path)
@@ -642,7 +642,7 @@ impl IsolatedExtension {
 
         // Spawn event push task to send events to extension process
         let mut event_push_rx = {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let (tx, rx) = tokio::sync::mpsc::channel(100);
             *self.event_push_tx.lock().await = Some(tx);
             rx
         };
@@ -2308,7 +2308,7 @@ impl IsolatedExtension {
     ///
     /// This method is called by the EventDispatcher to get the channel
     /// for pushing events to the isolated extension process.
-    pub async fn get_event_push_channel(&self) -> Option<tokio::sync::mpsc::UnboundedSender<(String, Value)>> {
+    pub async fn get_event_push_channel(&self) -> Option<tokio::sync::mpsc::Sender<(String, Value)>> {
         self.event_push_tx.lock().await.clone()
     }
 

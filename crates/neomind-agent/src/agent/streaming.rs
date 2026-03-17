@@ -705,7 +705,7 @@ pub fn format_tool_results(tool_results: &[(String, String)]) -> String {
                                         .push_str(&format!("- {}: {} units\n", device_type, count));
                                         }
                                     }
-                                    response.push_str("\n");
+                                    response.push('\n');
                                 }
                             }
 

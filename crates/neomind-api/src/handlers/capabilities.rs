@@ -128,7 +128,7 @@ pub async fn get_capability_handler(
         }
     }
 
-    Err(ErrorResponse::not_found(&format!(
+    Err(ErrorResponse::not_found(format!(
         "Capability '{}' not found",
         capability_name
     )))
@@ -152,7 +152,7 @@ pub async fn write_virtual_metric_handler(
         .registry
         .get_device(&device_id)
         .await
-        .ok_or_else(|| ErrorResponse::not_found(&format!("Device {} not found", device_id)))?;
+        .ok_or_else(|| ErrorResponse::not_found(format!("Device {} not found", device_id)))?;
 
     let timestamp = chrono::Utc::now().timestamp();
 
@@ -181,7 +181,7 @@ pub async fn write_virtual_metric_handler(
         }
         Err(e) => {
             tracing::error!("Failed to write virtual metric: {}", e);
-            return Err(ErrorResponse::internal(&format!("Failed to write virtual metric: {}", e)));
+            return Err(ErrorResponse::internal(format!("Failed to write virtual metric: {}", e)));
         }
     }
 
@@ -226,7 +226,7 @@ pub async fn aggregate_metrics_handler(
         .registry
         .get_device(&device_id)
         .await
-        .ok_or_else(|| ErrorResponse::not_found(&format!("Device {} not found", device_id)))?;
+        .ok_or_else(|| ErrorResponse::not_found(format!("Device {} not found", device_id)))?;
 
     let now = chrono::Utc::now();
 
@@ -265,7 +265,7 @@ pub async fn aggregate_metrics_handler(
         }
         Err(e) => {
             tracing::error!("Failed to aggregate metrics: {}", e);
-            Err(ErrorResponse::internal(&format!("Failed to aggregate metrics: {}", e)))
+            Err(ErrorResponse::internal(format!("Failed to aggregate metrics: {}", e)))
         }
     }
 }

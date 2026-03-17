@@ -157,13 +157,13 @@ impl JsTransformExecutor {
                             && after_open
                                 .chars()
                                 .nth(parse_pos)
-                                .map_or(false, |c| c.is_whitespace())
+                                .is_some_and(|c| c.is_whitespace())
                         {
                             parse_pos += 1;
                         }
 
                         // Try to find extension_id (single or double quoted)
-                        if let Some(_) = after_open[parse_pos..].find(|c| c == '\'' || c == '"') {
+                        if after_open[parse_pos..].find(['\'', '"']).is_some() {
                             let quote_char = after_open.chars().nth(parse_pos).unwrap();
                             let ext_id_start = parse_pos + 1;
                             parse_pos = ext_id_start;
@@ -187,14 +187,13 @@ impl JsTransformExecutor {
                                     && after_open
                                         .chars()
                                         .nth(parse_pos)
-                                        .map_or(false, |c| c.is_whitespace() || c == ',')
+                                        .is_some_and(|c| c.is_whitespace() || c == ',')
                                 {
                                     parse_pos += 1;
                                 }
 
                                 // Find command quote
-                                if let Some(_) =
-                                    after_open[parse_pos..].find(|c| c == '\'' || c == '"')
+                                if after_open[parse_pos..].find(['\'', '"']).is_some()
                                 {
                                     let cmd_quote_char = after_open.chars().nth(parse_pos).unwrap();
                                     let cmd_start = parse_pos + 1;
@@ -222,7 +221,7 @@ impl JsTransformExecutor {
                                                 && after_open
                                                     .chars()
                                                     .nth(parse_pos)
-                                                    .map_or(false, |c| {
+                                                    .is_some_and(|c| {
                                                         c.is_whitespace() || c == ','
                                                     })
                                             {
@@ -382,8 +381,7 @@ impl JsTransformExecutor {
             // Provide extensions.invoke() function that looks up pre-computed results
             let invoke_fn = boa_engine::NativeFunction::from_copy_closure(
                 |_this, args: &[JsValue], context: &mut Context<'_>| {
-                    let extension_id = args
-                        .get(0)
+                    let extension_id = args.first()
                         .and_then(|v| v.as_string())
                         .map(|s| s.to_std_string_escaped())
                         .unwrap_or_default();

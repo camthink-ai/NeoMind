@@ -3955,7 +3955,7 @@ Respond in JSON format:
         let collected: Vec<_> = results
             .into_iter()
             .filter_map(|r| r.ok())
-            .filter_map(|v| v)
+            .flatten()
             .collect();
 
         tracing::debug!(
@@ -4137,7 +4137,7 @@ Respond in JSON format:
                 ResourceType::Command => {
                     // Parse device_id from resource_id (format: "device_id:command_name")
                     let parts: Vec<&str> = resource.resource_id.split(':').collect();
-                    let device_id = if parts.len() >= 1 {
+                    let device_id = if !parts.is_empty() {
                         parts[0]
                     } else {
                         "unknown"
@@ -4291,7 +4291,7 @@ Respond in JSON format:
                 ResourceType::Metric => {
                     // Parse device_id from resource_id (format: "device_id:metric_name")
                     let parts: Vec<&str> = resource.resource_id.split(':').collect();
-                    let device_id = if parts.len() >= 1 {
+                    let device_id = if !parts.is_empty() {
                         parts[0]
                     } else {
                         "unknown"
@@ -4914,18 +4914,16 @@ Respond in JSON format:
                     role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
                 )
             }
+        } else if is_chinese {
+            format!(
+                "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"情况分析\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"步骤\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"描述\", \"action\": \"log或device:command\", \"rationale\": \"理由\", \"confidence\": 0.8}}],\n  \"conclusion\": \"结论\"\n}}\n\n{}\n{}",
+                role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
+            )
         } else {
-            if is_chinese {
-                format!(
-                    "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"情况分析\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"步骤\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"描述\", \"action\": \"log或device:command\", \"rationale\": \"理由\", \"confidence\": 0.8}}],\n  \"conclusion\": \"结论\"\n}}\n\n{}\n{}",
-                    role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
-                )
-            } else {
-                format!(
-                    "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"Situation analysis\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"Step\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"Description\", \"action\": \"log or device:command\", \"rationale\": \"Rationale\", \"confidence\": 0.8}}],\n  \"conclusion\": \"Conclusion\"\n}}\n\n{}\n{}",
-                    role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
-                )
-            }
+            format!(
+                "{}\n\n{}\n\n{}\n{{\n  \"situation_analysis\": \"Situation analysis\",\n  \"reasoning_steps\": [{{\"step\": 1, \"description\": \"Step\", \"confidence\": 0.9}}],\n  \"decisions\": [{{\"decision_type\": \"info|alert|command\", \"description\": \"Description\", \"action\": \"log or device:command\", \"rationale\": \"Rationale\", \"confidence\": 0.8}}],\n  \"conclusion\": \"Conclusion\"\n}}\n\n{}\n{}",
+                role_prompt, resources_info, output_format_header, user_instruction_header, agent.user_prompt
+            )
         };
 
         // === CONTEXT MANAGEMENT ===
@@ -5629,7 +5627,7 @@ Respond in JSON format:
             r.resource_type == ResourceType::Command && r.resource_id == command_resource_id
         });
 
-        let parameters = if let Some(ref res) = resource {
+        let parameters = if let Some(res) = resource {
             res.config
                 .get("parameters")
                 .and_then(|v| v.as_object())
@@ -5787,7 +5785,7 @@ Respond in JSON format:
         if action.contains("device:") || action.contains("设备:") {
             // Extract device:command pattern using regex-like parsing
             let parts: Vec<&str> = action
-                .split(|c| c == ':' || c == '：')
+                .split([':', '：'])
                 .map(|s| s.trim())
                 .collect();
             if parts.len() >= 3 {

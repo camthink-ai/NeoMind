@@ -204,7 +204,7 @@ impl GlobalEventState {
                     "event_type": event_type,
                     "payload": payload,
                 });
-                queues.entry(*id).or_insert_with(Vec::new).push(event);
+                queues.entry(*id).or_default().push(event);
             }
         }
     }
@@ -217,7 +217,7 @@ impl GlobalEventState {
 static GLOBAL_EVENT_STATE: std::sync::OnceLock<GlobalEventState> = std::sync::OnceLock::new();
 
 fn get_global_event_state() -> &'static GlobalEventState {
-    GLOBAL_EVENT_STATE.get_or_init(|| GlobalEventState::new())
+    GLOBAL_EVENT_STATE.get_or_init(GlobalEventState::new)
 }
 
 /// Extension type detected from file
@@ -835,15 +835,11 @@ impl WasmRuntime {
                     value: b.into(),
                     timestamp: chrono::Utc::now().timestamp_millis(),
                 })
-            } else if let Some(s) = value.as_str() {
-                Some(ExtensionMetricValue {
+            } else { value.as_str().map(|s| ExtensionMetricValue {
                     name: name.clone(),
                     value: s.into(),
                     timestamp: chrono::Utc::now().timestamp_millis(),
-                })
-            } else {
-                None
-            };
+                }) };
 
             if let Some(v) = metric_value {
                 result.push(v);
