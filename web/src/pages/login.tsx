@@ -61,6 +61,8 @@ export function LoginPage() {
   const [error, setError] = useState("")
   const [isFirstSetup, setIsFirstSetup] = useState<boolean | null>(null)
   const [checkingAuth, setCheckingAuth] = useState(true)
+  // Track if we've loaded credentials to avoid overwriting user's choice
+  const [hasLoadedCredentials, setHasLoadedCredentials] = useState(false)
 
   // Check if already authenticated on mount
   useEffect(() => {
@@ -125,33 +127,63 @@ export function LoginPage() {
         if (credentials.rememberMe !== undefined) {
           setRememberMe(credentials.rememberMe)
         }
+        setHasLoadedCredentials(true)
       }
     } catch {
       // Ignore parsing errors
     }
+
+    // Also check for token in localStorage (Tauri compatibility)
+    // In Tauri, sessionStorage may persist, but we should prioritize localStorage
+    const localToken = localStorage.getItem('neomind_token')
+    if (localToken) {
+      // If we have a token in localStorage, try to restore auth
+      ;(async () => {
+        try {
+          await checkAuthStatus()
+          navigate('/', { replace: true })
+        } catch {
+          // Token invalid, continue to login form
+          tokenManager.clearToken()
+        }
+      })()
+    }
   }, [checkingAuth, navigate])
 
-  // Save credentials when rememberMe changes
+  // Save credentials when rememberMe changes (but not during initial load)
   useEffect(() => {
-    if (rememberMe && username) {
-      try {
+    // Don't save if we just loaded credentials - this avoids overwriting
+    // the user's saved choice with the initial state
+    if (!hasLoadedCredentials) return
+
+    // Always save the rememberMe choice when user explicitly changes it
+    try {
+      const saved = localStorage.getItem(CREDENTIALS_KEY)
+      let existing: any = {}
+      if (saved) {
+        try {
+          existing = JSON.parse(saved)
+        } catch {
+          // Invalid JSON, start fresh
+        }
+      }
+
+      if (rememberMe) {
+        // Save or update credentials
+        const newPassword = existing.password || '' // Keep existing password if available
         localStorage.setItem(CREDENTIALS_KEY, JSON.stringify({
-          username,
-          password: '', // Only save password when logging in successfully
+          username: username || existing.username, // Keep existing username if current is empty
+          password: newPassword,
           rememberMe: true,
         }))
-      } catch {
-        // Ignore localStorage errors
-      }
-    } else if (!rememberMe) {
-      // Clear saved credentials when unchecked
-      try {
+      } else {
+        // Clear saved credentials when unchecked
         localStorage.removeItem(CREDENTIALS_KEY)
-      } catch {
-        // Ignore localStorage errors
       }
+    } catch {
+      // Ignore localStorage errors
     }
-  }, [rememberMe, username])
+  }, [rememberMe, username, hasLoadedCredentials])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -180,6 +212,9 @@ export function LoginPage() {
           // Ignore localStorage errors
         }
       }
+
+      // Update loaded credentials flag to prevent overwriting
+      setHasLoadedCredentials(true)
 
       // Navigate to dashboard after successful login
       forceViewportReset() // Ensure keyboard state is reset

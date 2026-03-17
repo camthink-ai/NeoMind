@@ -74,6 +74,9 @@ bcrypt = { workspace = true }
 redb = { workspace = true }
 bincode = { workspace = true }
 
+# Version comparison
+semver = "1"
+
 # Static file embedding (optional, requires 'static' feature)
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }

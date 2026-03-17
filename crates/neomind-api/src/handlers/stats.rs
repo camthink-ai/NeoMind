@@ -4,7 +4,6 @@ use super::{
     common::{ok, HandlerResult},
     ServerState,
 };
-use crate::models::ErrorResponse;
 use axum::extract::State;
 use axum::Json;
 use serde_json::json;

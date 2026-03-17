@@ -879,6 +879,15 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/extensions/market/install",
             post(extensions::install_marketplace_extension_handler),
         )
+        // Extension sync (protected - manual sync from /extensions/ directory)
+        .route(
+            "/api/extensions/sync",
+            post(extensions::sync_extensions_handler),
+        )
+        .route(
+            "/api/extensions/sync-status",
+            get(extensions::get_sync_status_handler),
+        )
         // LLM Backends API (write operations - protected)
         .route(
             "/api/llm-backends",

@@ -347,10 +347,381 @@ impl Tool for GetAgentTool {
 }
 
 // ============================================================================
-// Agent Execution Tools
+// Agent Update Tools
 // ============================================================================
 
-/// Tool for manually executing an agent.
+/// Tool for updating an existing agent.
+
+// ============================================================================
+// Agent Update Tools
+// ============================================================================
+
+/// Tool for updating an existing agent.
+
+// ============================================================================
+// Agent Update Tools
+// ============================================================================
+
+/// Tool for updating an existing agent.
+pub struct UpdateAgentTool {
+    agent_store: Arc<AgentStore>,
+}
+
+impl UpdateAgentTool {
+    /// Create a new update agent tool.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+#[async_trait]
+impl Tool for UpdateAgentTool {
+    fn name(&self) -> &str {
+        "update_agent"
+    }
+
+    fn description(&self) -> &str {
+        "修改现有AI Agent的配置。支持更新名称、描述、提示词、状态和调度方式。调度方式支持：interval（间隔执行）、cron（定时执行）、event（事件触发）。事件触发支持：device.metric（设备指标更新时触发）、manual（手动触发）。更新后立即生效。"
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "要修改的Agent ID"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "可选，新的Agent名称"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "可选，新的Agent描述"
+                },
+                "user_prompt": {
+                    "type": "string",
+                    "description": "可选，新的用户提示词"
+                },
+                "status": {
+                    "type": "string",
+                    "description": "可选，Agent状态：active（激活）、paused（暂停）",
+                    "enum": ["active", "paused", "error"]
+                },
+                "schedule_type": {
+                    "type": "string",
+                    "description": "可选，调度类型：interval（间隔执行）、cron（定时执行）、event（事件触发）",
+                    "enum": ["interval", "cron", "event"]
+                },
+                "interval_seconds": {
+                    "type": "number",
+                    "description": "可选，间隔秒数（当schedule_type为interval时）。例如：300=5分钟，600=10分钟，3600=1小时"
+                },
+                "cron_expression": {
+                    "type": "string",
+                    "description": "可选，Cron表达式（当schedule_type为cron时）。例如：'0 0 * * *' = 每天0点执行，'0 8 * * *' = 每天早上8点执行"
+                },
+                "event_filter": {
+                    "type": "string",
+                    "description": "可选，事件过滤器（当schedule_type为event时）。JSON格式字符串，支持两种类型：1) 设备指标更新触发：'{\"event_type\": \"device.metric\", \"device_id\": \"all\"}' （all表示所有设备，也可以指定具体设备ID如\"ne101\"）；2) 手动触发：'{\"event_type\": \"manual\"}'。注意：设备指标更新触发时，Agent会从配置的Resources中获取数据"
+                }
+            },
+            "required": ["agent_id"]
+        })
+    }
+
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            parameters: self.parameters(),
+            example: Some(ToolExample {
+                arguments: serde_json::json!({
+                    "agent_id": "agent_1",
+                    "name": "温度监控Agent（已更新）",
+                    "interval_seconds": 600
+                }),
+                result: serde_json::json!({
+                    "agent_id": "agent_1",
+                    "status": "updated",
+                    "message": "Agent配置已更新",
+                    "changes": {
+                        "name": "温度监控Agent（已更新）",
+                        "interval_seconds": 600
+                    }
+                }),
+                description: "修改Agent调度间隔为10分钟".to_string(),
+            }),
+            category: ToolCategory::Agent,
+            scenarios: vec![
+                UsageScenario {
+                    description: "修改Agent名称".to_string(),
+                    example_query: "把agent_1改名叫温度监控Agent".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "name": "温度监控Agent"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "修改间隔调度频率".to_string(),
+                    example_query: "把温度检查改为每10分钟一次".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "interval_seconds": 600}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "修改为定时调度".to_string(),
+                    example_query: "改为每天早上8点执行".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "schedule_type": "cron", "cron_expression": "0 8 * * *"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "修改为设备指标事件触发".to_string(),
+                    example_query: "改为当设备指标更新时触发（所有设备）".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "schedule_type": "event", "event_filter": "{\"event_type\": \"device.metric\", \"device_id\": \"all\"}"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "修改为特定设备事件触发".to_string(),
+                    example_query: "改为当ne101设备数据更新时触发".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "schedule_type": "event", "event_filter": "{\"event_type\": \"device.metric\", \"device_id\": \"ne101\"}"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "修改为手动触发".to_string(),
+                    example_query: "改为手动触发，不自动执行".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "schedule_type": "event", "event_filter": "{\"event_type\": \"manual\"}"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "暂停Agent".to_string(),
+                    example_query: "暂停这个Agent".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "status": "paused"}}"#.to_string()),
+                },
+                UsageScenario {
+                    description: "更新提示词".to_string(),
+                    example_query: "更新agent_1的提示词为：检查温度如果超过25度就告警".to_string(),
+                    suggested_call: Some(r#"{"tool": "update_agent", "arguments": {"agent_id": "agent_1", "user_prompt": "检查温度如果超过25度就告警"}}"#.to_string()),
+                },
+            ],
+            relationships: ToolRelationships {
+                call_after: vec!["list_agents".to_string(), "get_agent".to_string()],
+                output_to: vec!["get_agent".to_string(), "list_agents".to_string()],
+                exclusive_with: vec![],
+            },
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".to_string(),
+            examples: vec![],
+            response_format: Some("detailed".to_string()),
+            namespace: Some("agent".to_string()),
+        }
+    }
+
+    fn namespace(&self) -> Option<&str> {
+        Some("agent")
+    }
+
+    async fn execute(&self, args: Value) -> Result<ToolOutput> {
+        let agent_id = args["agent_id"]
+            .as_str()
+            .ok_or_else(|| ToolError::InvalidArguments("agent_id is required".to_string()))?;
+
+        // Get existing agent
+        let mut agent = self
+            .agent_store
+            .get_agent(agent_id)
+            .await
+            .map_err(|e| ToolError::Execution(format!("Failed to get agent: {}", e)))?
+            .ok_or_else(|| ToolError::Execution(format!("Agent '{}' not found", agent_id)))?;
+
+        // Track changes for response
+        let mut changes = serde_json::json!({});
+
+        // Update basic fields
+        if let Some(name) = args["name"].as_str() {
+            changes["name"] = serde_json::json!({
+                "old": agent.name,
+                "new": name
+            });
+            agent.name = name.to_string();
+        }
+
+        if let Some(description) = args["description"].as_str() {
+            changes["description"] = serde_json::json!({
+                "old": agent.description,
+                "new": description
+            });
+            agent.description = Some(description.to_string());
+        }
+
+        if let Some(user_prompt) = args["user_prompt"].as_str() {
+            changes["user_prompt"] = serde_json::json!({
+                "old": agent.user_prompt,
+                "new": user_prompt
+            });
+            agent.user_prompt = user_prompt.to_string();
+        }
+
+        if let Some(status_str) = args["status"].as_str() {
+            let new_status = match status_str {
+                "active" => AgentStatus::Active,
+                "paused" => AgentStatus::Paused,
+                "error" => AgentStatus::Error,
+                _ => {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "Invalid status: {}. Must be active, paused, or error",
+                        status_str
+                    )));
+                }
+            };
+            changes["status"] = serde_json::json!({
+                "old": format!("{:?}", agent.status).to_lowercase(),
+                "new": status_str
+            });
+            agent.status = new_status;
+        }
+
+        // Update schedule if provided
+        let mut schedule_updated = false;
+        let mut new_schedule = agent.schedule.clone();
+
+        if let Some(schedule_type_str) = args["schedule_type"].as_str() {
+            let schedule_type = match schedule_type_str {
+                "interval" => ScheduleType::Interval,
+                "cron" => ScheduleType::Cron,
+                "event" => ScheduleType::Event,
+                _ => {
+                    return Err(ToolError::InvalidArguments(format!(
+                        "Invalid schedule_type: {}",
+                        schedule_type_str
+                    )));
+                }
+            };
+            new_schedule.schedule_type = schedule_type;
+            schedule_updated = true;
+        }
+
+        if let Some(interval) = args["interval_seconds"].as_i64() {
+            new_schedule.interval_seconds = Some(interval as u64);
+            new_schedule.schedule_type = ScheduleType::Interval;
+            schedule_updated = true;
+        }
+
+        if let Some(cron_expr) = args["cron_expression"].as_str() {
+            new_schedule.cron_expression = Some(cron_expr.to_string());
+            new_schedule.schedule_type = ScheduleType::Cron;
+            schedule_updated = true;
+        }
+
+        if let Some(event_filter) = args["event_filter"].as_str() {
+            new_schedule.event_filter = Some(event_filter.to_string());
+            new_schedule.schedule_type = ScheduleType::Event;
+            schedule_updated = true;
+        }
+
+        if schedule_updated {
+            changes["schedule"] = serde_json::json!({
+                "old": {
+                    "schedule_type": format!("{:?}", agent.schedule.schedule_type).to_lowercase(),
+                    "interval_seconds": agent.schedule.interval_seconds,
+                    "cron_expression": agent.schedule.cron_expression,
+                    "event_filter": agent.schedule.event_filter
+                },
+                "new": {
+                    "schedule_type": format!("{:?}", new_schedule.schedule_type).to_lowercase(),
+                    "interval_seconds": new_schedule.interval_seconds,
+                    "cron_expression": new_schedule.cron_expression,
+                    "event_filter": new_schedule.event_filter
+                }
+            });
+            agent.schedule = new_schedule;
+        }
+
+        // Update timestamp
+        agent.updated_at = chrono::Utc::now().timestamp();
+
+        // Save the updated agent
+        self.agent_store
+            .save_agent(&agent)
+            .await
+            .map_err(|e| ToolError::Execution(format!("Failed to save agent: {}", e)))?;
+
+        // Build schedule description
+        let schedule_description = match agent.schedule.schedule_type {
+            ScheduleType::Interval => {
+                if let Some(interval) = agent.schedule.interval_seconds {
+                    if interval == 300 {
+                        "每5分钟执行一次".to_string()
+                    } else if interval == 600 {
+                        "每10分钟执行一次".to_string()
+                    } else if interval == 3600 {
+                        "每小时执行一次".to_string()
+                    } else {
+                        format!("每{}秒执行一次", interval)
+                    }
+                } else {
+                    "间隔执行（未配置间隔）".to_string()
+                }
+            }
+            ScheduleType::Cron => {
+                if let Some(ref cron) = agent.schedule.cron_expression {
+                    format!("Cron定时执行: {}", cron)
+                } else {
+                    "Cron定时执行（未配置表达式）".to_string()
+                }
+            }
+            ScheduleType::Event => {
+                if let Some(ref filter) = agent.schedule.event_filter {
+                    // Parse event_filter to provide better description
+                    if let Ok(filter_obj) = serde_json::from_str::<Value>(filter) {
+                        let event_type = filter_obj.get("event_type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        
+                        match event_type {
+                            "device.metric" => {
+                                let device_id = filter_obj.get("device_id")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("all");
+                                
+                                if device_id == "all" {
+                                    "设备指标更新触发：所有设备".to_string()
+                                } else {
+                                    format!("设备指标更新触发：设备 {}", device_id)
+                                }
+                            }
+                            "manual" => "手动触发（不自动执行）".to_string(),
+                            _ => format!("事件触发: {}", filter)
+                        }
+                    } else {
+                        format!("事件触发: {}", filter)
+                    }
+                } else {
+                    "事件触发（未配置过滤器）".to_string()
+                }
+            }
+        };
+
+        // Build response
+        let response = serde_json::json!({
+            "agent_id": agent_id,
+            "agent_name": agent.name,
+            "status": "updated",
+            "message": format!("Agent '{}' 配置已更新", agent.name),
+            "changes": changes,
+            "current_config": {
+                "name": agent.name,
+                "description": agent.description,
+                "user_prompt": agent.user_prompt,
+                "agent_status": format!("{:?}", agent.status).to_lowercase(),
+                "schedule": {
+                    "schedule_type": format!("{:?}", agent.schedule.schedule_type).to_lowercase(),
+                    "interval_seconds": agent.schedule.interval_seconds,
+                    "cron_expression": agent.schedule.cron_expression,
+                    "event_filter": agent.schedule.event_filter,
+                    "description": schedule_description
+                },
+                "resources_count": agent.resources.len()
+            },
+            "next_action": "使用 get_agent 查看完整配置，使用 execute_agent 立即执行"
+        });
+
+        Ok(ToolOutput::success(response))
+    }
+}
 pub struct ExecuteAgentTool {
     agent_store: Arc<AgentStore>,
 }

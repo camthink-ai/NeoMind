@@ -6,9 +6,10 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Listener, Manager, image::Image};
 use tauri::tray::TrayIconEvent;
+use tauri::{image::Image, AppHandle, Listener, Manager};
 use tokio::runtime::Runtime;
+use tracing::info;
 
 // Global state for the Axum server
 struct ServerState {
@@ -88,17 +89,26 @@ fn create_tray_menu(app: &tauri::App) -> Result<tauri::tray::TrayIcon, Box<dyn s
     // Load tray icon from embedded resource
     let tray_icon = Image::from_bytes(include_bytes!("../icons/icon.png"))?;
 
-    // Try to load tray icon at compile time
+    // Build tray icon with proper Windows support
     let tray = TrayIconBuilder::new()
         .icon(tray_icon)
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false) // Only show menu on right-click
+        .tooltip("NeoMind - Edge AI Platform") // Add tooltip for better UX
         .on_tray_icon_event(move |_app, event| match event {
-            TrayIconEvent::Click { .. } => {
-                show_main_window(&app_handle_for_tray);
+            // Only handle left-click events - right-click shows the context menu automatically
+            TrayIconEvent::Click { button, .. } => {
+                // Only show window on left-click (right-click shows menu automatically)
+                if button == tauri::tray:: MouseButton::Left {
+                    show_main_window(&app_handle_for_tray);
+                }
+                // Right-click is handled automatically by Tauri to show the menu
             }
-            TrayIconEvent::DoubleClick { .. } => {
-                show_main_window(&app_handle_for_tray);
+            TrayIconEvent::DoubleClick { button, .. } => {
+                // Only show window on left-double-click
+                if button == tauri::tray:: MouseButton::Left {
+                    show_main_window(&app_handle_for_tray);
+                }
             }
             _ => {}
         })
@@ -219,7 +229,43 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // This ensures extensions are installed to the correct directory
     let data_dir = app_data_dir.join("data");
     fs::create_dir_all(&data_dir)?;
+
+    // Unified data directory strategy for both development and production
+    //
+    // CRITICAL: Always use app data directory to ensure extension paths are consistent
+    // Extensions are installed to $NEOMIND_DATA_DIR/extensions/, and the API reads from
+    // the same location. Using different paths causes "extensions not found" errors.
+    //
+    // Development mode considerations:
+    // - Database files (redb) should still be in app data directory
+    // - Use RUST_LOG or environment variables for debugging if needed
+    // - Do NOT use ./data in development as it causes path inconsistencies
     env::set_var("NEOMIND_DATA_DIR", &data_dir);
+
+    #[cfg(debug_assertions)]
+    {
+        info!(
+            data_dir = %data_dir.display(),
+            extensions_dir = %data_dir.join("extensions").display(),
+            "Data directory configured (development mode)"
+        );
+
+        // Log a warning if ./data exists (might cause confusion)
+        let project_data_dir = std::path::PathBuf::from("./data");
+        if project_data_dir.exists() {
+            info!(
+                "Project ./data directory detected but will NOT be used. All data (including extensions) is stored in app data directory to ensure consistency."
+            );
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        info!(
+            data_dir = %data_dir.display(),
+            "Data directory configured (production mode)"
+        );
+    }
 
     // Create tray menu (don't fail if tray creation fails)
     if let Ok(tray) = create_tray_menu(app) {

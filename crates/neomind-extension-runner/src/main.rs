@@ -2498,9 +2498,13 @@ impl Runner {
 
         let ext_clone = Arc::clone(ext);
 
-        self.runtime.block_on(async {
-            let ext_guard = ext_clone.read().await;
-            ext_guard.health_check().await.unwrap_or(false)
+        tokio::task::block_in_place(|| {
+            let handle = self.runtime.handle();
+            handle.block_on(async move {
+                let ext_clone = Arc::clone(ext);
+                let ext_guard = ext_clone.read().await;
+                ext_guard.health_check().await.unwrap_or(false)
+            })
         })
     }
 
