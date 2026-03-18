@@ -33,6 +33,9 @@ env:
   CARGO_TERM_COLOR: always
   # 使用优化的 profile
   CARGO_PROFILE: ci-release
+  # 禁用 sccache（CI 环境中不可用）
+  SCACHE_CACHE_SIZE: 0
+  RUSTC_WRAPPER: ""
 
 jobs:
   # ========== 前端构建（只构建一次）==========
