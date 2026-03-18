@@ -32,7 +32,7 @@ tokio = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = "0.8"
+toml = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -41,27 +41,23 @@ reqwest = { workspace = true }
 # Web framework
 axum = { workspace = true, features = ["ws", "multipart", "macros"] }
 tower-http = { workspace = true }
-http-body-util = "0.1"
-multer = "3.1.0"
 
 # Utils
 uuid = { workspace = true }
 chrono = { workspace = true }
-chrono-tz = "0.10"
-async-trait = "0.1"
+chrono-tz = { workspace = true }
+async-trait = { workspace = true }
 get_if_addrs = "0.5"
-hostname = "0.4"
 base64 = { workspace = true }
-async-stream = "0.3"
+async-stream = { workspace = true }
 utoipa = "5"
 utoipa-swagger-ui = { version = "8", features = ["axum"] }
 atty = "0.2"
 sysinfo = "0.32"
-dirs = "5.0"
-tempfile = "3"
+tempfile = { workspace = true }
 
 # Concurrent data structures
-dashmap = "6"
+dashmap = { workspace = true }
 
 # Encryption
 aes-gcm = { workspace = true }
@@ -80,4 +76,3 @@ semver = "1"
 # Static file embedding (optional, requires 'static' feature)
 rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
-bytes = "1.11.1"

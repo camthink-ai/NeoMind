@@ -139,7 +139,7 @@ export function ExtensionsPage() {
         borderedHeader={false}
       >
         {/* Header Actions */}
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex justify-between items-center mb-4">
           <div className="flex gap-2">
             <Button
               variant="outline"

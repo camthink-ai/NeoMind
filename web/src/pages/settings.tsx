@@ -2,7 +2,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { PageTabs, PageTabsContent } from "@/components/shared"
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav } from "@/components/shared"
 import { AboutTab } from "./settings/AboutTab"
 import { PreferencesTab } from "./settings/PreferencesTab"
 import { UnifiedLLMBackendsTab } from "@/components/llm/UnifiedLLMBackendsTab"
@@ -31,15 +31,18 @@ export function SettingsPage() {
   ]
 
   return (
-    <PageLayout
-      title={t('settings:title')}
-      subtitle={t('settings:description')}
-      borderedHeader={false}
-    >
-      <PageTabs
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(v) => setActiveTab(v as SettingsTabValue)}
+    <>
+      <PageLayout
+        title={t('settings:title')}
+        subtitle={t('settings:description')}
+        borderedHeader={false}
+        headerContent={
+          <PageTabsBar
+            tabs={tabs}
+            activeTab={activeTab}
+            onTabChange={(v) => setActiveTab(v as SettingsTabValue)}
+          />
+        }
       >
         {/* LLM Backends Tab */}
         <PageTabsContent value="llm" activeTab={activeTab}>
@@ -70,7 +73,14 @@ export function SettingsPage() {
         <PageTabsContent value="about" activeTab={activeTab}>
           <AboutTab />
         </PageTabsContent>
-      </PageTabs>
-    </PageLayout>
+      </PageLayout>
+
+      {/* Mobile Bottom Navigation */}
+      <PageTabsBottomNav
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={(v) => setActiveTab(v as SettingsTabValue)}
+      />
+    </>
   )
 }

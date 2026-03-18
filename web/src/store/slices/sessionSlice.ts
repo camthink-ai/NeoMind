@@ -256,9 +256,8 @@ export const createSessionSlice: StateCreator<
       return
     }
 
-    // Set loading state with minimum display time for better UX
+    // Set loading state immediately for responsive UI
     set({ isLoadingSession: true })
-    const minLoadingTime = new Promise(resolve => setTimeout(resolve, 300))
 
     // IMPORTANT: Update WebSocket FIRST before any API calls
     // This ensures any subsequent messages go to the correct session
@@ -266,11 +265,8 @@ export const createSessionSlice: StateCreator<
     ws.setSessionId(sessionId)
 
     try {
-      // Fetch the session history and wait for minimum loading time
-      const [historyResult] = await Promise.all([
-        api.getSessionHistory(sessionId),
-        minLoadingTime
-      ])
+      // Fetch the session history
+      const historyResult = await api.getSessionHistory(sessionId)
 
       // Validate the response before processing
       if (!historyResult) {

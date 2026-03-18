@@ -1,0 +1,27 @@
+{
+  "version": "0.6.0",
+  "notes": "## New Features\n\n- Auto-update support\n- Performance improvements\n\n## Fixes\n\n- Fixed memory leak",
+  "pub_date": "2026-03-20T00:00:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "SIGNATURE_HERE",
+      "url": "https://github.com/camthink-ai/NeoMind/releases/download/v0.6.0/neomind-app-aarch64-apple-darwin.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "SIGNATURE_HERE",
+      "url": "https://github.com/camthink-ai/NeoMind/releases/download/v0.6.0/neomind-app-x86_64-apple-darwin.tar.gz"
+    },
+    "windows-x86_64": {
+      "signature": "SIGNATURE_HERE",
+      "url": "https://github.com/camthink-ai/NeoMind/releases/download/v0.6.0/neomind-app-x86_64-pc-windows-msvc.zip"
+    },
+    "linux-x86_64": {
+      "signature": "SIGNATURE_HERE",
+      "url": "https://github.com/camthink-ai/NeoMind/releases/download/v0.6.0/neomind-app-x86_64-unknown-linux-gnu.tar.gz"
+    },
+    "linux-aarch64": {
+      "signature": "SIGNATURE_HERE",
+      "url": "https://github.com/camthink-ai/NeoMind/releases/download/v0.6.0/neomind-app-aarch64-unknown-linux-gnu.tar.gz"
+    }
+  }
+}

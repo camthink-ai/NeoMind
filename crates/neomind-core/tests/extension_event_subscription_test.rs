@@ -571,7 +571,7 @@ async fn test_extension_event_subscription_isolated_extension() {
     let service = ExtensionEventSubscriptionService::new(event_bus.clone(), event_dispatcher.clone());
 
     // Create event channel for isolated extension
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<(String, serde_json::Value)>();
+    let (event_tx, mut event_rx) = mpsc::channel::<(String, serde_json::Value)>(100);
 
     // Register isolated extension
     event_dispatcher.register_isolated_extension(

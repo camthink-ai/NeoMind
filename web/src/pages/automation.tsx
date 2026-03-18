@@ -10,7 +10,7 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate, useLocation } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { PageTabs, PageTabsContent, Pagination } from "@/components/shared"
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination } from "@/components/shared"
 import { Sparkles, GitBranch, Download, Upload, MoreVertical } from "lucide-react"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -588,89 +588,95 @@ export function AutomationPage() {
     }
   }
 
+  const tabs = [
+    { value: 'rules' as AutomationTab, label: tAuto('tabs.rules'), icon: <Sparkles className="h-4 w-4" /> },
+    { value: 'transforms' as AutomationTab, label: tAuto('tabs.transforms'), icon: <GitBranch className="h-4 w-4" /> },
+  ]
+
+  const actions = [
+    {
+      label: tCommon('create'),
+      onClick: handleCreate,
+    },
+    {
+      label: tCommon('refresh'),
+      variant: 'outline' as const,
+      onClick: loadItems,
+      disabled: loading,
+    },
+  ]
+
   return (
-    <PageLayout
-      title={tAuto('title')}
-      subtitle={tAuto('pageDescription')}
-      hideFooterOnMobile
-      footer={
-        activeTab === 'rules' && rules.length > RULES_ITEMS_PER_PAGE ? (
-          <Pagination
-            total={rules.length}
-            pageSize={RULES_ITEMS_PER_PAGE}
-            currentPage={rulesPage}
-            onPageChange={setRulesPage}
+    <>
+      <PageLayout
+        title={tAuto('title')}
+        subtitle={tAuto('pageDescription')}
+        hideFooterOnMobile
+        headerContent={
+          <PageTabsBar
+            tabs={tabs}
+            activeTab={activeTab}
+            onTabChange={(v) => handleTabChange(v as AutomationTab)}
+            actions={actions}
+            actionsExtra={
+              activeTab === 'rules' ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 gap-1">
+                      <Download className="h-4 w-4" />
+                      {tAuto('importExport')}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={handleExportRules}>
+                      <Download className="h-4 w-4 mr-2" />
+                      {tAuto('export')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleImportRules}>
+                      <Upload className="h-4 w-4 mr-2" />
+                      {tAuto('import')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : activeTab === 'transforms' ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm" className="h-9 gap-1">
+                      <Download className="h-4 w-4" />
+                      {tAuto('importExport')}
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={handleExportTransforms}>
+                      <Download className="h-4 w-4 mr-2" />
+                      {tAuto('export')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleImportTransforms}>
+                      <Upload className="h-4 w-4 mr-2" />
+                      {tAuto('import')}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : null
+            }
           />
-        ) : activeTab === 'transforms' && transforms.length > TRANSFORMS_ITEMS_PER_PAGE ? (
-          <Pagination
-            total={transforms.length}
-            pageSize={TRANSFORMS_ITEMS_PER_PAGE}
-            currentPage={transformsPage}
-            onPageChange={setTransformsPage}
-          />
-        ) : undefined
-      }
-    >
-      {/* Tabs with Actions */}
-      <PageTabs
-        tabs={[
-          { value: 'rules', label: tAuto('tabs.rules'), icon: <Sparkles className="h-4 w-4" /> },
-          { value: 'transforms', label: tAuto('tabs.transforms'), icon: <GitBranch className="h-4 w-4" /> },
-        ]}
-        activeTab={activeTab}
-        onTabChange={(v) => handleTabChange(v as AutomationTab)}
-        actions={[
-          {
-            label: tCommon('create'),
-            onClick: handleCreate,
-          },
-          {
-            label: tCommon('refresh'),
-            variant: 'outline',
-            onClick: loadItems,
-            disabled: loading,
-          },
-        ]}
-        actionsExtra={
-          activeTab === 'rules' ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-9 gap-1">
-                  <Download className="h-4 w-4" />
-                  {tAuto('importExport')}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleExportRules}>
-                  <Download className="h-4 w-4 mr-2" />
-                  {tAuto('export')}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleImportRules}>
-                  <Upload className="h-4 w-4 mr-2" />
-                  {tAuto('import')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : activeTab === 'transforms' ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-9 gap-1">
-                  <Download className="h-4 w-4" />
-                  {tAuto('importExport')}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleExportTransforms}>
-                  <Download className="h-4 w-4 mr-2" />
-                  {tAuto('export')}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleImportTransforms}>
-                  <Upload className="h-4 w-4 mr-2" />
-                  {tAuto('import')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null
+        }
+        footer={
+          activeTab === 'rules' && rules.length > RULES_ITEMS_PER_PAGE ? (
+            <Pagination
+              total={rules.length}
+              pageSize={RULES_ITEMS_PER_PAGE}
+              currentPage={rulesPage}
+              onPageChange={setRulesPage}
+            />
+          ) : activeTab === 'transforms' && transforms.length > TRANSFORMS_ITEMS_PER_PAGE ? (
+            <Pagination
+              total={transforms.length}
+              pageSize={TRANSFORMS_ITEMS_PER_PAGE}
+              currentPage={transformsPage}
+              onPageChange={setTransformsPage}
+            />
+          ) : undefined
         }
       >
         {/* Rules Tab */}
@@ -702,7 +708,14 @@ export function AutomationPage() {
             onExport={handleExportSingleTransform}
           />
         </PageTabsContent>
-      </PageTabs>
+      </PageLayout>
+
+      {/* Mobile Bottom Navigation */}
+      <PageTabsBottomNav
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={(v) => handleTabChange(v as AutomationTab)}
+      />
 
       {/* Rule Builder Dialog */}
       <SimpleRuleBuilderSplit
@@ -731,7 +744,7 @@ export function AutomationPage() {
         onChange={handleFileChange}
         className="hidden"
       />
-    </PageLayout>
+    </>
   )
 }
 

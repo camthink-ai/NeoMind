@@ -9,6 +9,8 @@ import { StartupLoading } from "@/components/StartupLoading"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useExtensionComponents } from "@/hooks/useExtensionComponents"
+import { UpdateDialog } from '@/components/update'
+import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 
 // Performance optimization: Lazy load route components to reduce initial bundle size
 // Each page is loaded on-demand, reducing Time to Interactive by ~70%
@@ -196,7 +198,14 @@ function App() {
   useEffect(() => {
     extensionSyncRef.current = extensionComponents.sync
   }, [extensionComponents.sync])
-  const { isAuthenticated, checkAuthStatus, setWsConnected } = useStore()
+  const { isAuthenticated, checkAuthStatus, setWsConnected, updateDialogOpen } = useStore()
+  
+  // Global auto-update check with system notification
+  useUpdateCheck({
+    autoCheck: true,
+    checkInterval: 24 * 60 * 60 * 1000, // 24 hours
+    showNotification: true,
+  })
   const location = useLocation()
   const [backendReady, setBackendReady] = useState(false)
   const [isTauri, setIsTauri] = useState(false)
@@ -404,7 +413,7 @@ function App() {
                 <div className="flex flex-col bg-background" style={{height: 'var(--app-height, 100vh)'}}>
                   <TopNav />
                   <main className="flex flex-1 min-h-0 overflow-hidden" style={{paddingTop: 'var(--topnav-height, 4rem)'}}>
-                    <div className="w-full h-full overflow-auto" id="main-scroll-container">
+                    <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <Routes>
                       <Route path="/" element={<ChatPage />} />
                       <Route path="/chat" element={<ChatPage />} />
@@ -445,6 +454,11 @@ function App() {
       {/* Show toaster and confirmer on login page too */}
       <Toaster />
       <Confirmer />
+      {/* Global Update Dialog */}
+      <UpdateDialog
+        open={updateDialogOpen}
+        onClose={() => useStore.setState({ updateDialogOpen: false })}
+      />
     </>
   )
 }

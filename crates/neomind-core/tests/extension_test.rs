@@ -153,7 +153,6 @@ fn test_extension_command() {
         }],
         fixed_values,
         samples: vec![],
-        llm_hints: "Detect objects in an image using YOLO".to_string(),
         parameter_groups: vec![],
     };
 
@@ -172,7 +171,6 @@ fn test_extension_command_serialization() {
         parameters: vec![],
         fixed_values: HashMap::new(),
         samples: vec![],
-        llm_hints: "Get current weather".to_string(),
         parameter_groups: vec![],
     };
 

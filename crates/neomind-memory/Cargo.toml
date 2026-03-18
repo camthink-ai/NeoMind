@@ -21,10 +21,10 @@ thiserror = { workspace = true }
 reqwest = { workspace = true }
 
 # LRU cache for embeddings
-lru = "0.12"
+lru = { workspace = true }
 
 # Concurrent data structures
-dashmap = "6"
+dashmap = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }

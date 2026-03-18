@@ -1,24 +1,29 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { BrandName } from "@/components/shared/BrandName"
+import { UpdateDialog } from "@/components/update"
 import {
-  Bot,
   Server,
   Clock,
   Cpu,
   HardDrive,
   Database,
   Layers,
-  Globe,
+  Github,
   RefreshCw,
   Activity,
   Monitor,
+  Download,
+  Loader2,
 } from "lucide-react"
 import { api } from "@/lib/api"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
+import { useUpdateCheck } from "@/hooks/useUpdateCheck"
+import { useAppStore } from "@/store"
+import { useToast } from "@/hooks/use-toast"
 
 interface GpuInfo {
   name: string
@@ -42,10 +47,35 @@ interface SystemInfo {
 
 export function AboutTab() {
   const { t } = useTranslation(["common", "settings"])
-  const { handleError } = useErrorHandler()
+  const { handleError, showSuccess } = useErrorHandler()
+  const { toast } = useToast()
+  const { updateInfo, setUpdateStatus, setError } = useAppStore()
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false)
+
+  // Use useCallback to prevent infinite loop - this function reference stays stable
+  const handleUpdateAvailable = useCallback((info: { version?: string }) => {
+    setUpdateDialogOpen(true)
+    toast({
+      title: t('settings:newVersionAvailable'),
+      description: info.version
+        ? t('settings:updateAvailableWithVersion', { version: info.version })
+        : t('settings:updateAvailableDesc'),
+    })
+  }, [toast, t])
+
+  const handleUpToDate = useCallback(() => {
+    showSuccess(t('settings:alreadyUpToDate'))
+  }, [showSuccess, t])
+
+  const { checkUpdate, getAppVersion } = useUpdateCheck({
+    autoCheck: false, // Only check manually when user clicks button
+    onUpdateAvailable: handleUpdateAvailable,
+    onUpToDate: handleUpToDate,
+  })
 
   const loadSystemInfo = async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true)
@@ -57,6 +87,23 @@ export function AboutTab() {
     } finally {
       setLoading(false)
       if (showRefreshing) setRefreshing(false)
+    }
+  }
+
+  const handleCheckForUpdates = async () => {
+    setCheckingUpdate(true)
+    try {
+      await checkUpdate()
+      // If update is available, dialog will open automatically via onUpdateAvailable
+      // If no update is available, show a message
+      if (!updateInfo?.available) {
+        // You could show a toast here
+      }
+    } catch (error) {
+      console.error('[AboutTab] checkUpdate error:', error)
+      handleError(error, { operation: 'Check for updates' })
+    } finally {
+      setCheckingUpdate(false)
     }
   }
 
@@ -98,9 +145,7 @@ export function AboutTab() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-gray-900 to-gray-700 dark:from-white dark:to-gray-300 text-white dark:text-gray-900 shadow-lg">
-            <Bot className="w-6 h-6" />
-          </div>
+          <img src="/logo-square.png" alt="NeoMind Logo" className="w-12 h-12" />
           <div>
             <h1 className="text-2xl font-bold"><BrandName /></h1>
             <p className="text-sm text-muted-foreground">
@@ -257,11 +302,18 @@ export function AboutTab() {
         <CardContent className="space-y-3 text-sm">
           <div className="flex items-center justify-between border-b pb-2">
             <span className="text-muted-foreground">{t("settings:version")}</span>
-            <Badge variant="secondary">{systemInfo?.version || "v0.1.0"}</Badge>
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary">{systemInfo?.version || "v0.1.0"}</Badge>
+              {updateInfo?.available && updateInfo.version !== systemInfo?.version && (
+                <Badge variant="default" className="text-xs">
+                  v{updateInfo.version} {t("settings:update")}
+                </Badge>
+              )}
+            </div>
           </div>
           <div className="flex items-center justify-between border-b pb-2">
             <span className="text-muted-foreground">{t("settings:license")}</span>
-            <span>MIT</span>
+            <span>Apache-2.0</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">{t("settings:repository")}</span>
@@ -271,17 +323,48 @@ export function AboutTab() {
               rel="noopener noreferrer"
               className="text-blue-500 hover:underline flex items-center gap-1"
             >
-              <Globe className="h-3 w-3" />
+              <Github className="h-3 w-3" />
               github.com/camthink-ai/NeoMind
             </a>
+          </div>
+          <div className="pt-2">
+            <Button
+              variant={updateInfo?.available ? "default" : "outline"}
+              className="w-full"
+              onClick={() => updateInfo?.available ? setUpdateDialogOpen(true) : handleCheckForUpdates()}
+              disabled={checkingUpdate}
+            >
+              {checkingUpdate ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {t("settings:checkingForUpdates")}
+                </>
+              ) : updateInfo?.available ? (
+                <>
+                  <Download className="w-4 h-4 mr-2" />
+                  {t("settings:updateNow")}
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4 mr-2" />
+                  {t("settings:checkForUpdates")}
+                </>
+              )}
+            </Button>
           </div>
         </CardContent>
       </Card>
 
       {/* Footer */}
       <div className="text-center text-sm text-muted-foreground">
-        © 2025 <BrandName />
+        © 2025 CamThink
       </div>
+
+      {/* Update Dialog */}
+      <UpdateDialog
+        open={updateDialogOpen}
+        onClose={() => setUpdateDialogOpen(false)}
+      />
     </div>
   )
 }

@@ -1,0 +1,62 @@
+# CI/CD 优化的 Cargo 配置
+# 使用方法: 在 CI 中设置 CARGO_CONFIG=.cargo/config-ci.toml
+
+[build]
+# CI 环境中使用更多并行任务
+jobs = 4
+
+# 启用 pipelined compilation
+pipelining = true
+
+# CI 中禁用 incremental compilation（因为是干净环境）
+incremental = false
+
+[profile.ci-release]
+# 继承自 release，但优化编译速度
+inherits = "release"
+# 增加 codegen-units 以并行编译（会略微增加二进制大小）
+codegen-units = 256
+# 使用 thin LTO（比 full LTO 快）
+lto = "thin"
+# 只生成 1 个 panic 确保不会影响 release 行为
+panic = "abort"
+
+[profile.ci-release.package."*"]
+# 对于依赖包使用更激进的优化
+opt-level = 3
+
+# 针对大型依赖的特定优化
+[profile.ci-release.package.tokio]
+opt-level = 3
+
+[profile.ci-release.package.regex]
+opt-level = 3
+
+[profile.ci-release.package.serde]
+opt-level = 3
+
+[profile.ci-release.package.serde_json]
+opt-level = 3
+
+[profile.ci-release.package.chrono]
+opt-level = 3
+
+[profile.ci-release.package.axum]
+opt-level = 3
+
+# 快速检查用的 profile（用于 PR 检查）
+[profile.ci-check]
+inherits = "dev"
+# 快速编译，不做优化
+opt-level = 0
+# 最少的 debug 信息
+debug = 0
+# 关闭 overflow checks
+overflow-checks = false
+[profile.ci-check.package."*"]
+opt-level = 0
+
+# 网络优化
+[net]
+git-fetch-with-cli = true
+retry = 10

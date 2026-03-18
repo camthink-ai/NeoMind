@@ -10,7 +10,7 @@ NeoMind is a Rust-based edge AI platform that enables autonomous device manageme
 
 [![Build Status](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg)](https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-[![Version: 0.5.11](https://img.shields.io/badge/v-0.5.11-information.svg)](https://github.com/camthink-ai/NeoMind/releases)
+[![Version: 0.6.0](https://img.shields.io/badge/v-0.6.0-information.svg)](https://github.com/camthink-ai/NeoMind/releases)
 [![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://www.rust-lang.org)
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg)](https://github.com/camthink-ai/NeoMind/releases)
 
@@ -152,6 +152,10 @@ On first launch, a setup wizard will guide you through:
 
 > **✨ Out of the Box**: The server binary has the Web UI embedded. Just download and run - no additional frontend deployment needed!
 
+**What's included:**
+- **neomind** - Main server binary with embedded Web UI (~50 MB)
+- **neomind-extension-runner** - Extension process for sandboxed extensions (~8 MB)
+
 **One-line installation (Linux & macOS):**
 
 ```bash
@@ -161,7 +165,7 @@ curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/in
 **Install specific version:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.5.11 sh
+curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.6.0 sh
 ```
 
 **Custom installation:**
@@ -188,19 +192,47 @@ curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/in
 **Manual installation:**
 
 ```bash
-# Download binary (replace VERSION and PLATFORM)
+# 1. Download binary (replace VERSION and PLATFORM)
 # PLATFORM: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64
-wget https://github.com/camthink-ai/NeoMind/releases/download/v0.5.11/neomind-server-linux-amd64.tar.gz
-tar xzf neomind-server-linux-amd64.tar.gz
+wget https://github.com/camthink-ai/NeoMind/releases/download/v0.6.0/neomind-server-linux-amd64.tar.gz
 
-# Run directly - Web UI included!
-./neomind
+# 2. Extract package (contains neomind + neomind-extension-runner)
+tar xzf neomind-server-linux-amd64.tar.gz
+ls -lh
+# neomind                      # Main server (~50 MB, with embedded Web UI)
+# neomind-extension-runner     # Extension process (~8 MB)
+
+# 3. Run directly - Web UI included!
+./neomind serve
 
 # Or install system-wide
 sudo install -m 755 neomind /usr/local/bin/
+sudo install -m 755 neomind-extension-runner /usr/local/bin/
 
-# Create systemd service (Linux)
-sudo cp scripts/neomind.service /etc/systemd/system/
+# 4. (Optional) Create systemd service (Linux)
+sudo useradd -r -s /bin/false -d /var/lib/neomind neomind 2>/dev/null || true
+sudo mkdir -p /var/lib/neomind
+sudo chown -R neomind:neomind /var/lib/neomind
+
+sudo tee /etc/systemd/system/neomind.service >/dev/null <<'EOT'
+[Unit]
+Description=NeoMind Edge AI Platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=neomind
+Group=neomind
+WorkingDirectory=/var/lib/neomind
+ExecStart=/usr/local/bin/neomind serve
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOT
+
 sudo systemctl daemon-reload
 sudo systemctl enable neomind
 sudo systemctl start neomind

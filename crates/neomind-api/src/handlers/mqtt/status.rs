@@ -52,12 +52,7 @@ fn get_server_ip() -> String {
     }
 
     // Last fallback: return hostname or localhost
-    std::env::var("HOSTNAME").unwrap_or_else(|_| {
-        hostname::get()
-            .ok()
-            .and_then(|n| n.into_string().ok())
-            .unwrap_or_else(|| "localhost".to_string())
-    })
+    std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string())
 }
 
 /// Get MQTT connection status.

@@ -9,7 +9,7 @@ neomind-devices = { path = "../neomind-devices" }
 neomind-messages = { path = "../neomind-messages" }
 
 tokio = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -17,15 +17,15 @@ tracing = { workspace = true }
 async-trait = { workspace = true }
 
 # Utils
-uuid = { workspace = true, features = ["v4", "serde"] }
-chrono = { workspace = true, features = ["serde"] }
+uuid = { workspace = true }
+chrono = { workspace = true }
 url = "2.5"
 
 # HTTP client
 reqwest = { workspace = true }
 
 # Storage
-redb = "2.1"
+redb = { workspace = true }
 
 [features]
 default = []

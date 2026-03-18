@@ -5,7 +5,7 @@ import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { PageLayout } from '@/components/layout/PageLayout'
-import { PageTabs, PageTabsContent, EmptyStateInline, Pagination, ResponsiveTable } from '@/components/shared'
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav, EmptyStateInline, Pagination, ResponsiveTable } from '@/components/shared'
 import { MessageSquare, Network } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
@@ -467,165 +467,172 @@ export default function MessagesPage() {
     { value: 'channels' as TabValue, label: t('messages.tabs.channels'), icon: <Network className="h-4 w-4" /> },
   ]
 
+  const actions = [
+    ...(activeTab === 'messages' ? [
+      { label: t('messages.create'), onClick: () => setCreateDialogOpen(true) },
+    ] : []),
+    { label: t('refresh'), variant: 'outline' as const, onClick: activeTab === 'messages' ? fetchMessages : fetchChannels, disabled: loading },
+  ]
+
+  // Filter dropdown for actionsExtra
+  const filterExtra = activeTab === 'messages' ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" size="sm" className="h-9 gap-2">
+          <Filter className="h-4 w-4" />
+          {t('messages.filter.title')}
+          {getActiveFilterCount() > 0 && (
+            <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+              {getActiveFilterCount()}
+            </Badge>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56 max-h-[70vh] overflow-y-auto">
+        {/* Severity Filter */}
+        <div className="px-2 py-1.5">
+          <p className="text-xs font-medium text-muted-foreground mb-1">{t('messages.severity.label')}</p>
+          {(['info', 'warning', 'critical', 'emergency'] as MessageSeverity[]).map((sev) => (
+            <DropdownMenuCheckboxItem
+              key={sev}
+              checked={selectedSeverities.has(sev)}
+              onCheckedChange={() => toggleSeverity(sev)}
+            >
+              <div className="flex items-center gap-2">
+                {sev === 'info' && <Info className="h-3.5 w-3.5 text-blue-500" />}
+                {sev === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />}
+                {sev === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-orange-500" />}
+                {sev === 'emergency' && <ShieldAlert className="h-3.5 w-3.5 text-red-500" />}
+                {t(`messages.severity.${sev}`)}
+              </div>
+            </DropdownMenuCheckboxItem>
+          ))}
+        </div>
+
+        <DropdownMenuSeparator />
+
+        {/* Status Filter */}
+        <div className="px-2 py-1.5">
+          <p className="text-xs font-medium text-muted-foreground mb-1">{t('messages.status.label')}</p>
+          {(['active', 'acknowledged', 'resolved', 'archived'] as MessageStatus[]).map((stat) => (
+            <DropdownMenuCheckboxItem
+              key={stat}
+              checked={selectedStatuses.has(stat)}
+              onCheckedChange={() => toggleStatus(stat)}
+            >
+              {t(`messages.status.${stat}`)}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </div>
+
+        <DropdownMenuSeparator />
+
+        {/* Category Filter */}
+        <div className="px-2 py-1.5">
+          <p className="text-xs font-medium text-muted-foreground mb-1">{t('messages.category.label')}</p>
+          {(['alert', 'system', 'business'] as MessageCategory[]).map((cat) => (
+            <DropdownMenuCheckboxItem
+              key={cat}
+              checked={selectedCategories.has(cat)}
+              onCheckedChange={() => toggleCategory(cat)}
+            >
+              <div className="flex items-center gap-2">
+                {cat === 'alert' && <AlertCircle className="h-3.5 w-3.5" />}
+                {cat === 'system' && <Bell className="h-3.5 w-3.5" />}
+                {cat === 'business' && <Megaphone className="h-3.5 w-3.5" />}
+                {t(`messages.category.${cat}`)}
+              </div>
+            </DropdownMenuCheckboxItem>
+          ))}
+        </div>
+
+        {hasActiveFilters && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={clearAllFilters}>
+              <X className="h-4 w-4 mr-2" />
+              {t('messages.filter.clear')}
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : null
+
   return (
-    <PageLayout
-      title={t('messages.title')}
-      subtitle={t('messages.description')}
-      hideFooterOnMobile
-      footer={
-        activeTab === 'messages' && messages.length > messagesPerPage ? (
-          <Pagination
-            total={messages.length}
-            pageSize={messagesPerPage}
-            currentPage={messagePage}
-            onPageChange={setMessagePage}
+    <>
+      <PageLayout
+        title={t('messages.title')}
+        subtitle={t('messages.description')}
+        hideFooterOnMobile
+        headerContent={
+          <PageTabsBar
+            tabs={tabs}
+            activeTab={activeTab}
+            onTabChange={(v) => handleTabChange(v as TabValue)}
+            actions={actions}
+            actionsExtra={filterExtra}
           />
-        ) : undefined
-      }
-    >
-      <PageTabs
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={(v) => handleTabChange(v as TabValue)}
-        actions={[
-          ...(activeTab === 'messages' ? [
-            { label: t('messages.create'), onClick: () => setCreateDialogOpen(true) },
-          ] : []),
-          { label: t('refresh'), variant: 'outline' as const, onClick: activeTab === 'messages' ? fetchMessages : fetchChannels, disabled: loading },
-        ]}
+        }
+        footer={
+          activeTab === 'messages' && messages.length > messagesPerPage ? (
+            <Pagination
+              total={messages.length}
+              pageSize={messagesPerPage}
+              currentPage={messagePage}
+              onPageChange={setMessagePage}
+            />
+          ) : undefined
+        }
       >
         {/* Messages Tab */}
         <PageTabsContent value="messages" activeTab={activeTab} className="flex flex-col overflow-hidden">
-          {/* Filters */}
-          <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
-            {/* Filter Button with Dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2">
-                  <Filter className="h-4 w-4" />
-                  {t('messages.filter.title')}
-                  {getActiveFilterCount() > 0 && (
-                    <Badge variant="secondary" className="h-5 px-1.5 text-xs">
-                      {getActiveFilterCount()}
-                    </Badge>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56 max-h-[70vh] overflow-y-auto">
-                {/* Severity Filter */}
-                <div className="px-2 py-1.5">
-                  <p className="text-xs font-medium text-muted-foreground mb-1">{t('messages.severity.label')}</p>
-                  {(['info', 'warning', 'critical', 'emergency'] as MessageSeverity[]).map((sev) => (
-                    <DropdownMenuCheckboxItem
-                      key={sev}
-                      checked={selectedSeverities.has(sev)}
-                      onCheckedChange={() => toggleSeverity(sev)}
-                    >
-                      <div className="flex items-center gap-2">
-                        {sev === 'info' && <Info className="h-3.5 w-3.5 text-blue-500" />}
-                        {sev === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />}
-                        {sev === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-orange-500" />}
-                        {sev === 'emergency' && <ShieldAlert className="h-3.5 w-3.5 text-red-500" />}
-                        {t(`messages.severity.${sev}`)}
-                      </div>
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </div>
+          {/* Active Filter Chips */}
+          {hasActiveFilters && (
+            <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
+              {Array.from(selectedSeverities).map((sev) => (
+                <Badge
+                  key={`sev-${sev}`}
+                  variant="secondary"
+                  className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80"
+                  onClick={() => toggleSeverity(sev)}
+                >
+                  {sev === 'info' && <Info className="h-3 w-3 text-blue-500" />}
+                  {sev === 'warning' && <AlertTriangle className="h-3 w-3 text-yellow-500" />}
+                  {sev === 'critical' && <AlertCircle className="h-3 w-3 text-orange-500" />}
+                  {sev === 'emergency' && <ShieldAlert className="h-3 w-3 text-red-500" />}
+                  {t(`messages.severity.${sev}`)}
+                  <X className="h-3 w-3 ml-1 text-muted-foreground" />
+                </Badge>
+              ))}
 
-                <DropdownMenuSeparator />
+              {Array.from(selectedStatuses).map((stat) => (
+                <Badge
+                  key={`stat-${stat}`}
+                  variant="secondary"
+                  className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80"
+                  onClick={() => toggleStatus(stat)}
+                >
+                  {t(`messages.status.${stat}`)}
+                  <X className="h-3 w-3 ml-1 text-muted-foreground" />
+                </Badge>
+              ))}
 
-                {/* Status Filter */}
-                <div className="px-2 py-1.5">
-                  <p className="text-xs font-medium text-muted-foreground mb-1">{t('messages.status.label')}</p>
-                  {(['active', 'acknowledged', 'resolved', 'archived'] as MessageStatus[]).map((stat) => (
-                    <DropdownMenuCheckboxItem
-                      key={stat}
-                      checked={selectedStatuses.has(stat)}
-                      onCheckedChange={() => toggleStatus(stat)}
-                    >
-                      {t(`messages.status.${stat}`)}
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </div>
+              {Array.from(selectedCategories).map((cat) => (
+                <Badge
+                  key={`cat-${cat}`}
+                  variant="secondary"
+                  className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80"
+                  onClick={() => toggleCategory(cat)}
+                >
+                  {cat === 'alert' && <AlertCircle className="h-3 w-3" />}
+                  {cat === 'system' && <Bell className="h-3 w-3" />}
+                  {cat === 'business' && <Megaphone className="h-3 w-3" />}
+                  {t(`messages.category.${cat}`)}
+                  <X className="h-3 w-3 ml-1 text-muted-foreground" />
+                </Badge>
+              ))}
 
-                <DropdownMenuSeparator />
-
-                {/* Category Filter */}
-                <div className="px-2 py-1.5">
-                  <p className="text-xs font-medium text-muted-foreground mb-1">{t('messages.category.label')}</p>
-                  {(['alert', 'system', 'business'] as MessageCategory[]).map((cat) => (
-                    <DropdownMenuCheckboxItem
-                      key={cat}
-                      checked={selectedCategories.has(cat)}
-                      onCheckedChange={() => toggleCategory(cat)}
-                    >
-                      <div className="flex items-center gap-2">
-                        {cat === 'alert' && <AlertCircle className="h-3.5 w-3.5" />}
-                        {cat === 'system' && <Bell className="h-3.5 w-3.5" />}
-                        {cat === 'business' && <Megaphone className="h-3.5 w-3.5" />}
-                        {t(`messages.category.${cat}`)}
-                      </div>
-                    </DropdownMenuCheckboxItem>
-                  ))}
-                </div>
-
-                {hasActiveFilters && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={clearAllFilters}>
-                      <X className="h-4 w-4 mr-2" />
-                      {t('messages.filter.clear')}
-                    </DropdownMenuItem>
-                  </>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* Active Filter Chips */}
-            {Array.from(selectedSeverities).map((sev) => (
-              <Badge
-                key={`sev-${sev}`}
-                variant="secondary"
-                className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80"
-                onClick={() => toggleSeverity(sev)}
-              >
-                {sev === 'info' && <Info className="h-3 w-3 text-blue-500" />}
-                {sev === 'warning' && <AlertTriangle className="h-3 w-3 text-yellow-500" />}
-                {sev === 'critical' && <AlertCircle className="h-3 w-3 text-orange-500" />}
-                {sev === 'emergency' && <ShieldAlert className="h-3 w-3 text-red-500" />}
-                {t(`messages.severity.${sev}`)}
-                <X className="h-3 w-3 ml-1 text-muted-foreground" />
-              </Badge>
-            ))}
-
-            {Array.from(selectedStatuses).map((stat) => (
-              <Badge
-                key={`stat-${stat}`}
-                variant="secondary"
-                className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80"
-                onClick={() => toggleStatus(stat)}
-              >
-                {t(`messages.status.${stat}`)}
-                <X className="h-3 w-3 ml-1 text-muted-foreground" />
-              </Badge>
-            ))}
-
-            {Array.from(selectedCategories).map((cat) => (
-              <Badge
-                key={`cat-${cat}`}
-                variant="secondary"
-                className="gap-1 pr-1 cursor-pointer hover:bg-secondary/80"
-                onClick={() => toggleCategory(cat)}
-              >
-                {cat === 'alert' && <AlertCircle className="h-3 w-3" />}
-                {cat === 'system' && <Bell className="h-3 w-3" />}
-                {cat === 'business' && <Megaphone className="h-3 w-3" />}
-                {t(`messages.category.${cat}`)}
-                <X className="h-3 w-3 ml-1 text-muted-foreground" />
-              </Badge>
-            ))}
-
-            {hasActiveFilters && (
               <Button
                 variant="ghost"
                 size="sm"
@@ -634,8 +641,8 @@ export default function MessagesPage() {
               >
                 {t('messages.filter.clearAll')}
               </Button>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Messages Table - Responsive (Desktop: Table, Mobile: Cards) */}
           <div className="overflow-auto h-full">
@@ -911,7 +918,14 @@ export default function MessagesPage() {
             }
           />
         </PageTabsContent>
-      </PageTabs>
+      </PageLayout>
+
+      {/* Mobile Bottom Navigation */}
+      <PageTabsBottomNav
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={(v) => handleTabChange(v as TabValue)}
+      />
 
       <CreateMessageDialog
         open={createDialogOpen}
@@ -942,6 +956,6 @@ export default function MessagesPage() {
           }
         }}
       />
-    </PageLayout>
+    </>
   )
 }

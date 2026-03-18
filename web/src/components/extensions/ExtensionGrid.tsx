@@ -159,9 +159,9 @@ export function ExtensionGrid({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Enhanced Search and Filter Bar */}
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
         {/* Search Bar */}
         <div className="flex gap-3">
           <div className="relative flex-1">
@@ -227,7 +227,7 @@ export function ExtensionGrid({
 
       {/* Results Summary */}
       {!hasActiveFilters && (
-        <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center justify-between text-sm pt-1">
           <div className="flex items-center gap-4">
             <span className="text-muted-foreground">
               {t("showingResults", { count: filteredExtensions.length, defaultValue: "Showing {{count}} extensions" }).replace("{{count}}", String(filteredExtensions.length))}

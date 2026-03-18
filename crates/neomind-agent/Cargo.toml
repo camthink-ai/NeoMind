@@ -8,7 +8,6 @@ repository.workspace = true
 
 [features]
 default = []
-sysinfo = ["dep:sysinfo"]
 
 [dependencies]
 neomind-core = { path = "../neomind-core" }
@@ -21,28 +20,27 @@ neomind-messages = { path = "../neomind-messages" }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
-toml = "0.8"
+toml = { workspace = true }
 glob = "0.3"
-regex = "1"
+regex = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-chrono-tz = "0.10"
+chrono-tz = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }
-async-stream = "0.3"
+async-stream = { workspace = true }
 tracing = { workspace = true }
 rand = { workspace = true }
 base64 = "0.22"
 # Cron scheduling libraries
 cron = "0.12"
 # Optional system info dependency
-sysinfo = { version = "0.33", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tempfile = "3.4"
+tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
 anyhow = "1.0"
 criterion = { version = "0.5", features = ["async_tokio"] }

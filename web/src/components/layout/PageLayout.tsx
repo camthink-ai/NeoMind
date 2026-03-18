@@ -13,6 +13,8 @@ export interface PageLayoutProps {
   actions?: ReactNode
   /** Optional footer content (e.g., pagination bar fixed at bottom) */
   footer?: ReactNode
+  /** Optional fixed header content (e.g., tabs) - rendered between title and scrollable content */
+  headerContent?: ReactNode
   maxWidth?: 'md' | 'lg' | 'xl' | '2xl' | 'full'
   className?: string
   /** Whether to render a subtle bottom border under the header */
@@ -54,6 +56,7 @@ export function PageLayout({
   subtitle,
   actions,
   footer,
+  headerContent,
   maxWidth = 'full',
   className,
   borderedHeader = false,
@@ -69,7 +72,7 @@ export function PageLayout({
     <div className="flex flex-col h-full">
       {title && (
         <div className="shrink-0 bg-background">
-          <div className={cn('w-full px-4 py-4 sm:px-6 sm:py-5 md:px-8 md:py-6', maxWidthClass[maxWidth], className)}>
+          <div className={cn('w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3', maxWidthClass[maxWidth], className)}>
             <PageHeader
               title={title}
               description={subtitle}
@@ -77,6 +80,12 @@ export function PageLayout({
               variant={borderedHeader ? 'bordered' : 'default'}
             />
           </div>
+        </div>
+      )}
+      {/* Fixed header content (e.g., tabs) - outside scroll container */}
+      {headerContent && (
+        <div className="shrink-0 bg-background">
+          {headerContent}
         </div>
       )}
       {/* Content area - uses flex-col to push sticky elements to bottom when content is short */}
@@ -89,7 +98,7 @@ export function PageLayout({
           )}
           data-page-scroll-container
         >
-          <div className={cn('mx-auto w-full space-y-6', maxWidthClass[maxWidth])}>
+          <div className={cn('mx-auto w-full', maxWidthClass[maxWidth])}>
             {children}
           </div>
         </div>

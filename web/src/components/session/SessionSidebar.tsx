@@ -137,8 +137,9 @@ export function SessionSidebar({
 
     // Only switch if it's a different session
     if (sessionId !== currentSessionId) {
-      await switchSession(sessionId)
-      // Navigate to the session URL
+      // Navigate first - this will trigger URL-based session loading
+      // The chat page will handle calling switchSession via its useEffect
+      // This prevents double-switching and eliminates UI flicker
       navigate(`/chat/${sessionId}`)
     }
   }

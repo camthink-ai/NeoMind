@@ -1,59 +1,92 @@
-# Cargo build acceleration configuration
+# Cargo build acceleration configuration for NeoMind
 
 [build]
-# Use parallel compilation
+# Use parallel compilation (8 cores for now, can be increased)
 jobs = 8
 
 # Use pipelined compilation for faster builds
-# This allows crates to be compiled in parallel
 pipelining = true
 
+# Enable incremental compilation
+incremental = true
+
+# Note: To enable sccache, uncomment the following line and ensure sccache is installed
+#rustc-wrapper = "/usr/local/bin/sccache"
+
 # Note: lld linker requires installation via `brew install llvm` and clang wrapper
-# For macOS, the default ld64 linker is recommended unless you have specific needs
+# Uncomment to use lld on macOS (faster linking)
 # [target.x86_64-apple-darwin]
-# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-# [target.aarch64-apple-darwin]
-# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
-
-# Alternative: Use mold linker on Linux (much faster than default)
-# [target.x86_64-unknown-linux-gnu]
-# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+#rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/opt/llvm/bin/ld64.lld"]
 
 [profile.dev]
-# Optimize debug info for faster compilation
-split-debuginfo = "unpacked"
-strip = false
-debug = "line-tables-only"
+# Fastest compilation for development
+debug = 0                    # Minimal debug info (fastest)
+opt-level = 0                # No optimization (fastest)
+overflow-checks = false     # Turn off overflow checks in dev
 
-# Optimize dependencies even in dev builds for faster compilation
+# Optimize dependencies even in dev builds for better performance
 [profile.dev.package."*"]
 opt-level = 2
 
-# Optimize key dependencies for better dev performance
+# Optimize key dependencies that benefit from optimization even in dev
+[profile.dev.package.tokio]
+opt-level = 2
+
 [profile.dev.package.regex]
 opt-level = 3
+
 [profile.dev.package.serde]
 opt-level = 3
+
 [profile.dev.package.serde_json]
 opt-level = 3
+
 [profile.dev.package.chrono]
 opt-level = 3
 
-[profile.release]
-# Enable LTO for better optimization
-lto = "thin"
-# Keep debug symbols for profiling
-debug = "line-tables-only"
-# Optimize for speed
-codegen-units = 1
+[profile.dev.package.axum]
+opt-level = 3
 
-[profile.release-lto]
-inherits = "release"
-lto = "fat"
-codegen-units = 1
+[profile.dev.package.async-trait]
+opt-level = 3
 
 # Network optimization for faster dependency downloads
 [net]
 git-fetch-with-cli = true
-offline = false
+retry = 10
+
+[alias]
+# Quick commands for faster development
+q = "check --workspace"
+qc = "check -p neomind-core"
+qa = "check -p neomind-api"
+qd = "check -p neomind-devices"
+ql = "check -p neomind-llm"
+qag = "check -p neomind-agent"
+tc = "test -p neomind-core --lib"
+ta = "test -p neomind-agent --lib"
+cl = "clean"
+
+# ========== CI/CD Optimizations ==========
+
+[profile.ci-release]
+# CI 环境优化的 release profile
+inherits = "release"
+# 增加 codegen-units 以并行编译（会略微增加二进制大小）
+codegen-units = 256
+# 使用 thin LTO（比 full LTO 快）
+lto = "thin"
+panic = "abort"
+
+[profile.ci-release.package."*"]
+# 对于依赖包使用更激进的优化
+opt-level = 3
+
+# 快速检查用的 profile（用于 PR 检查）
+[profile.ci-check]
+inherits = "dev"
+opt-level = 0
+debug = 0
+overflow-checks = false
+[profile.ci-check.package."*"]
+opt-level = 0

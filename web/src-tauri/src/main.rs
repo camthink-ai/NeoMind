@@ -1,6 +1,8 @@
 // Prevents additional console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod update;
+
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -187,12 +189,24 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        // Notification plugin - system tray notifications
+        .plugin(tauri_plugin_notification::init())
+        // Updater plugin - handles application updates
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Single instance plugin - prevents multiple app instances
         // When a second instance is launched, focus the existing window
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
         .manage(server_state)
+        .invoke_handler(tauri::generate_handler![
+            update::check_update,
+            update::download_and_install,
+            update::get_app_version,
+            update::relaunch_app,
+            update::show_update_notification,
+        ])
         .setup(setup_app)
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {

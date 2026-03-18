@@ -109,7 +109,6 @@ impl Extension for LifecycleTrackingExtension {
                     parameters: vec![],
                     fixed_values: Default::default(),
                     samples: vec![],
-                    llm_hints: String::new(),
                     parameter_groups: vec![],
                 },
                 ExtensionCommand {
@@ -120,7 +119,6 @@ impl Extension for LifecycleTrackingExtension {
                     parameters: vec![],
                     fixed_values: Default::default(),
                     samples: vec![],
-                    llm_hints: String::new(),
                     parameter_groups: vec![],
                 },
             ]

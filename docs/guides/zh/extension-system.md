@@ -1144,7 +1144,7 @@ impl Extension for SensorStreamExtension {
   "name": "Weather Forecast",
   "version": "1.0.0",
   "description": "Weather forecast extension",
-  "author": "NeoMind Team",
+  "author": "CamThink Team",
   "license": "MIT",
   "type": "native",
   "binaries": {
@@ -1492,5 +1492,5 @@ NeoMind 扩展 SDK 采用 MIT 许可证。
 
 ---
 
-**文档维护者**: NeoMind Team  
+**文档维护者**: CamThink Team  
 **最后更新**: 2026-03-12

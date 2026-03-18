@@ -7,7 +7,7 @@ edition.workspace = true
 neomind-core = { path = "../neomind-core" }
 
 tokio = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
@@ -17,18 +17,18 @@ tracing = { workspace = true }
 redb = { workspace = true }
 
 # LRU cache for hot data
-lru = "0.12"
+lru = { workspace = true }
 
 # Concurrent data structures
-dashmap = "6"
+dashmap = { workspace = true }
 
 # Async utilities for parallel operations
-futures = "0.3"
+futures = { workspace = true }
 
 # Utils
 bincode = { workspace = true }
-uuid = { workspace = true, features = ["v4", "serde"] }
-chrono = { workspace = true, features = ["serde"] }
+uuid = { workspace = true }
+chrono = { workspace = true }
 rand = { workspace = true }
 
 [features]
@@ -50,4 +50,4 @@ type_complexity = "allow"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["async_tokio"] }
-tempfile = "3"
+tempfile = { workspace = true }

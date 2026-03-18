@@ -21,7 +21,7 @@ async-trait = { workspace = true }
 reqwest = { workspace = true, optional = true }
 
 # Concurrent data structures
-dashmap = "6"
+dashmap = { workspace = true }
 
 [features]
 default = ["ollama"]
@@ -40,7 +40,7 @@ xai = ["cloud"]
 all = ["ollama", "cloud", "openai", "anthropic", "google", "xai"]
 
 [dev-dependencies]
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { workspace = true }
 
 [lints.clippy]
 # Temporarily suppress clippy warnings for neomind-llm

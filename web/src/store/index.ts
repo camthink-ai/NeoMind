@@ -19,6 +19,7 @@ import { createSettingsSlice } from './slices/settingsSlice'
 import { createExtensionSlice } from './slices/extensionSlice'
 import { createLlmBackendSlice } from './slices/llmBackendSlice'
 import { createDashboardSlice } from './slices/dashboardSlice'
+import { createUpdateSlice } from './slices/updateSlice'
 
 // Import types
 import type { AuthSlice } from './slices/authSlice'
@@ -30,6 +31,7 @@ import type { SettingsSlice } from './slices/settingsSlice'
 import type { ExtensionSlice } from './slices/extensionSlice'
 import type { LlmBackendSlice } from './slices/llmBackendSlice'
 import type { DashboardState } from './slices/dashboardSlice'
+import type { UpdateSlice } from './slices/updateSlice'
 
 // ============================================================================
 // Combined Store Type
@@ -44,6 +46,7 @@ export type NeoMindStore = AuthSlice
   & ExtensionSlice
   & LlmBackendSlice
   & DashboardState
+  & UpdateSlice
 
 // ============================================================================
 // Create Store
@@ -63,6 +66,7 @@ export const useStore = create<NeoMindStore>()(
         ...createExtensionSlice(set, get, api),
         ...createLlmBackendSlice(set, get, api),
         ...createDashboardSlice(set, get, api),
+        ...createUpdateSlice(set, get, api),
       }),
       {
         name: 'neomind-store',
@@ -77,6 +81,9 @@ export const useStore = create<NeoMindStore>()(
     { enabled: import.meta.env.DEV }
   )
 )
+
+// Re-export the store as useAppStore for convenience
+export const useAppStore = useStore
 
 // Performance optimization: Only expose store globally in development
 if (typeof window !== 'undefined' && import.meta.env.DEV) {

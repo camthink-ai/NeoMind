@@ -1,0 +1,130 @@
+name: Release Alpha (Automated)
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Alpha version (e.g., v0.6.0-alpha.20250318)'
+        required: true
+        default: 'auto'
+
+# Prevent concurrent releases
+concurrency:
+  group: alpha-release
+  cancel-in-progress: true
+
+jobs:
+  release-alpha:
+    name: Create Alpha Release
+    runs-on: ubuntu-latest
+    if: contains(github.repository, 'camthink-ai/NeoMind')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version info
+        id: version
+        run: |
+          # Get latest stable version
+          STABLE_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.6.0")
+
+          # Generate alpha version
+          if [ "${{ github.event.inputs.version }}" = "auto" ] || [ -z "${{ github.event.inputs.version }}" ]; then
+            ALPHA_VERSION="${STABLE_VERSION}-alpha.$(date +%Y%m%d.%H%M%S)"
+          else
+            ALPHA_VERSION="${{ github.event.inputs.version }}"
+          fi
+
+          echo "stable=${STABLE_VERSION}" >> $GITHUB_OUTPUT
+          echo "alpha=${ALPHA_VERSION}" >> $GITHUB_OUTPUT
+          echo "📦 Alpha version: ${ALPHA_VERSION}"
+
+      - name: Download artifacts from previous build
+        uses: actions/download-artifact@v4
+        with:
+          pattern: neomind-*
+          path: artifacts/
+          merge-multiple: false
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          cat > release_notes.md << 'EOF'
+          # 🚀 NeoMind Alpha Build
+
+          **Version**: ${{ steps.version.outputs.alpha }}
+          **Branch**: develop
+          **Date**: $(date +%Y-%m-%d)
+
+          ## 📋 What's New
+
+          This is an automated alpha release from the `develop` branch.
+
+          ### Changes since last release:
+          $(git log --pretty=format:"- %s" $(git describe --tags --abbrev=0 HEAD^)..HEAD | head -20)
+
+          ## ⚠️ Important Notes
+
+          - This is an **alpha build** for testing purposes
+          - Not recommended for production use
+          - May contain bugs and incomplete features
+          - No automatic updates from this version
+
+          ## 🧪 Testing
+
+          Please test and report issues:
+          - GitHub Issues: https://github.com/camthink-ai/NeoMind/issues
+          - Discord: [your Discord link]
+
+          ## 📥 Installation
+
+          ### macOS (Apple Silicon)
+          Download `.dmg` file and install normally.
+
+          ### Windows
+          Download `.msi` installer or `.exe` portable version.
+
+          ### Linux
+          Download `.AppImage` (universal) or `.deb` (Debian/Ubuntu).
+
+          ## 🔗 Links
+
+          - Full Changelog: https://github.com/camthink-ai/NeoMind/compare/${{ steps.version.outputs.stable }}...${{ steps.version.outputs.alpha }}
+          - Report Bugs: https://github.com/camthink-ai/NeoMind/issues/new
+          EOF
+
+          cat release_notes.md
+
+      - name: Create Alpha Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.alpha }}
+          name: "Alpha ${{ steps.version.outputs.alpha }}"
+          body_path: release_notes.md
+          prerelease: true
+          draft: false
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/updater/*.tar.gz
+            artifacts/**/updater/*.sig
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "✅ Alpha release ${{ steps.version.outputs.alpha }} created successfully!"
+          echo "🔗 Release URL: https://github.com/camthink-ai/NeoMind/releases/tag/${{ steps.version.outputs.alpha }}"

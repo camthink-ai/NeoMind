@@ -90,9 +90,22 @@ export function useDeviceType(): DeviceType {
 
 /**
  * Hook to detect if we're in mobile view
+ * Based on screen width only (not touch capability) to support desktop browser simulation
  */
 export function useIsMobile(): boolean {
-  return useDeviceType() === 'mobile'
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768)
+    }
+
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
+  return isMobile
 }
 
 /**
