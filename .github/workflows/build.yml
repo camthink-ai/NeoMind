@@ -89,7 +89,7 @@ jobs:
           path: web/dist/
           retention-days: 1
 
-  # ========== 桌面应用构建（使用 sccache 和并行策略）==========
+  # ========== 桌面应用构建（使用并行策略）==========
   build-desktop:
     name: Desktop (${{ matrix.platform }})
     needs: build-frontend
@@ -132,21 +132,6 @@ jobs:
       - name: Verify frontend build
         run: test -f web/dist/index.html && echo "✅ Frontend ready"
 
-      # ========== 新增：sccache 配置 ==========
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.5
-        with:
-          version: 'v0.8.1'
-
-      - name: Setup sccache cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/sccache
-          key: sccache-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            sccache-${{ matrix.target }}-
-            sccache-
-
       # 更激进的 Rust 缓存策略
       - name: Setup Rust cache
         uses: actions/cache@v4
@@ -165,14 +150,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      # 配置使用 sccache
-      - name: Configure Rust to use sccache
-        shell: bash
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_CACHE_SIZE=2G" >> $GITHUB_ENV
-          echo "SCCACHE_DIR=~/.cache/sccache" >> $GITHUB_ENV
 
       - name: Install additional macOS target
         if: matrix.os == 'macos-latest'
@@ -224,10 +201,6 @@ jobs:
 
           echo "✅ Extension runner built for ${{ matrix.target }}"
           ls -lh web/src-tauri/binaries/
-
-      # 显示 sccache 统计
-      - name: Show sccache stats
-        run: sccache --show-stats
 
       - name: Build Tauri app
         working-directory: ./web
@@ -303,32 +276,10 @@ jobs:
           cp -r web/dist/* crates/neomind-api/static/
           echo "✅ Static assets embedded"
 
-      # ========== 新增：sccache 配置 ==========
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.5
-        with:
-          version: 'v0.8.1'
-
-      - name: Setup sccache cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/sccache
-          key: sccache-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            sccache-${{ matrix.target }}-
-            sccache-
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      # 配置使用 sccache
-      - name: Configure Rust to use sccache
-        shell: bash
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_CACHE_SIZE=2G" >> $GITHUB_ENV
 
       - name: Install additional macOS targets
         if: matrix.os == 'darwin'
@@ -387,10 +338,6 @@ jobs:
           cargo build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static &
           cargo build --release -p neomind-extension-runner --target ${{ matrix.target }} &
           wait
-
-      # 显示 sccache 统计
-      - name: Show sccache stats
-        run: sccache --show-stats
 
       - name: Create release archive
         run: |
