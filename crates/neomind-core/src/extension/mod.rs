@@ -19,7 +19,6 @@ pub mod executor;
 pub mod extension_event_subscription;
 pub mod isolated;
 pub mod loader;
-pub mod metrics;
 pub mod package;
 pub mod proxy;
 pub mod registry;
@@ -50,12 +49,6 @@ pub use system::{
 };
 pub use types::{DynExtension, ExtensionError, Result};
 pub use event_subscription::{EventSubscription, EventFilter};
-pub use metrics::{
-    gather_metrics, get_registry, record_extension_unload, track_extension_command,
-    track_extension_load, track_ipc_message, update_extension_resource_metrics,
-    update_ipc_buffer_pool_utilization, ExtensionCommandTracker, ExtensionLoadTracker,
-    IpcMessageTracker,
-};
 pub use tracing::{
     current_span_id, current_trace_id, extract_trace_context, inject_trace_context,
     instrumented_command, instrumented_ipc, instrumented_load, ipc_communication_span,

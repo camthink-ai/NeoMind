@@ -91,7 +91,6 @@ fn test_extension_descriptor_with_capabilities() {
             parameters: vec![],
             fixed_values: Default::default(),
             samples: vec![],
-            llm_hints: String::new(),
             parameter_groups: vec![],
         },
     ];

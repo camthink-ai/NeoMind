@@ -7,7 +7,7 @@ import { useIsMobile } from "@/hooks/useMobile"
 import { confirm } from "@/hooks/use-confirm"
 import { useNavigate, useLocation, useParams } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { PageTabs, PageTabsContent, Pagination } from "@/components/shared"
+import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination } from "@/components/shared"
 import { Upload, Download, Settings, Server, Layers, FileEdit, Cloud } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -691,65 +691,215 @@ export function DevicesPage() {
   }
 
   return (
-    <PageLayout
-      title={deviceDetailView ? undefined : t('devices:title')}
-      subtitle={deviceDetailView ? undefined : t('devices:subtitle')}
-      hideFooterOnMobile
-      footer={
-        !deviceDetailView && (
-          activeTab === 'devices' && devices.length > devicesPerPage ? (
-            <Pagination
-              total={devices.length}
-              pageSize={devicesPerPage}
-              currentPage={devicePage}
-              onPageChange={setDevicePage}
-            />
-          ) : activeTab === 'types' && deviceTypes.length > deviceTypesPerPage ? (
-            <Pagination
-              total={deviceTypes.length}
-              pageSize={deviceTypesPerPage}
-              currentPage={deviceTypePage}
-              onPageChange={setDeviceTypePage}
-            />
-          ) : activeTab === 'drafts' && draftsCount > draftsPerPage ? (
-            <Pagination
-              total={draftsCount}
-              pageSize={draftsPerPage}
-              currentPage={draftPage}
-              onPageChange={setDraftPage}
+    <>
+      <PageLayout
+        title={deviceDetailView ? undefined : t('devices:title')}
+        subtitle={deviceDetailView ? undefined : t('devices:subtitle')}
+        hideFooterOnMobile
+        headerContent={
+          !deviceDetailView ? (
+            <PageTabsBar
+              tabs={[
+                { value: 'devices', label: t('devices:deviceList'), icon: <Server className="h-4 w-4" /> },
+                { value: 'types', label: t('devices:deviceTypes'), icon: <Layers className="h-4 w-4" /> },
+                { value: 'drafts', label: t('devices:pending.tab'), icon: <FileEdit className="h-4 w-4" /> },
+              ]}
+              activeTab={activeTab}
+              onTabChange={(v) => handleTabChange(v as DeviceTabValue)}
+              actions={
+                activeTab === 'devices'
+                  ? [
+                      {
+                        label: t('devices:addDevice'),
+                        onClick: () => setAddDeviceDialogOpen(true),
+                      },
+                      {
+                        label: t('devices:localNetworkScan'),
+                        variant: 'outline',
+                        onClick: () => setDiscoveryOpen(true),
+                      },
+                    ]
+                  : activeTab === 'types'
+                  ? [
+                      {
+                        label: t('common:import'),
+                        icon: <Upload className="h-4 w-4" />,
+                        variant: 'outline',
+                        onClick: handleDeviceTypeImportClick,
+                        disabled: importingDeviceType,
+                      },
+                      {
+                        label: t('devices:cloud.fromCloud'),
+                        icon: <Cloud className="h-4 w-4" />,
+                        variant: 'outline',
+                        onClick: () => setCloudImportOpen(true),
+                      },
+                      {
+                        label: t('common:export') + ' All',
+                        icon: <Download className="h-4 w-4" />,
+                        variant: 'outline',
+                        onClick: handleDeviceTypeExportAll,
+                        disabled: deviceTypes.length === 0,
+                      },
+                      {
+                        label: t('devices:addDeviceType'),
+                        onClick: () => setAddDeviceTypeOpen(true),
+                      },
+                    ]
+                  : activeTab === 'drafts'
+                  ? [
+                      {
+                        label: t('devices:pending.config'),
+                        icon: <Settings className="h-4 w-4" />,
+                        variant: 'outline',
+                        onClick: openOnboardConfigDialog,
+                      },
+                    ]
+                  : []
+              }
             />
           ) : undefined
-        )
-      }
-    >
-      {deviceDetailView ? (
-        // Device Detail View
-        deviceDetails ? (
-          <DeviceDetail
-            device={deviceDetails}
-            deviceType={deviceTypeDetails}
-            deviceCurrentState={deviceCurrentState}
-            telemetryData={telemetryData}
-            telemetryLoading={telemetryLoading}
-            selectedMetric={selectedMetric}
-            onBack={handleCloseDeviceDetail}
-            onRefresh={handleRefreshDeviceDetail}
-            onMetricClick={handleMetricClick}
-            onMetricBack={() => setSelectedMetric(null)}
-            onSendCommand={handleSendCommand}
-          />
-        ) : (
-          // Loading state for device detail
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent" />
-              <p className="mt-4 text-muted-foreground">Loading device details...</p>
+        }
+        footer={
+          !deviceDetailView && (
+            activeTab === 'devices' && devices.length > devicesPerPage ? (
+              <Pagination
+                total={devices.length}
+                pageSize={devicesPerPage}
+                currentPage={devicePage}
+                onPageChange={setDevicePage}
+              />
+            ) : activeTab === 'types' && deviceTypes.length > deviceTypesPerPage ? (
+              <Pagination
+                total={deviceTypes.length}
+                pageSize={deviceTypesPerPage}
+                currentPage={deviceTypePage}
+                onPageChange={setDeviceTypePage}
+              />
+            ) : activeTab === 'drafts' && draftsCount > draftsPerPage ? (
+              <Pagination
+                total={draftsCount}
+                pageSize={draftsPerPage}
+                currentPage={draftPage}
+                onPageChange={setDraftPage}
+              />
+            ) : undefined
+          )
+        }
+      >
+        {deviceDetailView ? (
+          // Device Detail View
+          deviceDetails ? (
+            <DeviceDetail
+              device={deviceDetails}
+              deviceType={deviceTypeDetails}
+              deviceCurrentState={deviceCurrentState}
+              telemetryData={telemetryData}
+              telemetryLoading={telemetryLoading}
+              selectedMetric={selectedMetric}
+              onBack={handleCloseDeviceDetail}
+              onRefresh={handleRefreshDeviceDetail}
+              onMetricClick={handleMetricClick}
+              onMetricBack={() => setSelectedMetric(null)}
+              onSendCommand={handleSendCommand}
+            />
+          ) : (
+            // Loading state for device detail
+            <div className="flex items-center justify-center h-64">
+              <div className="text-center">
+                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-primary border-r-transparent" />
+                <p className="mt-4 text-muted-foreground">Loading device details...</p>
+              </div>
             </div>
-          </div>
-        )
-      ) : (
-        // Tabbed View
-        <PageTabs
+          )
+        ) : (
+          // Tabbed View - Content only (tabs are in headerContent)
+          <>
+            {/* Devices Tab */}
+            <PageTabsContent value="devices" activeTab={activeTab}>
+              <DeviceList
+                devices={devices}
+                loading={devicesLoading}
+                paginatedDevices={paginatedDevices}
+                devicePage={devicePage}
+                devicesPerPage={devicesPerPage}
+                onRefresh={fetchDevices}
+                onViewDetails={handleOpenDeviceDetails}
+                onEdit={handleEditDevice}
+                onDelete={handleDeleteDevice}
+                onPageChange={setDevicePage}
+                onAddDevice={() => setAddDeviceDialogOpen(true)}
+                discoveryDialogOpen={discoveryOpen}
+                onDiscoveryOpenChange={setDiscoveryOpen}
+                discoveryDialog={
+                  <DiscoveryDialog
+                    open={discoveryOpen}
+                    onOpenChange={setDiscoveryOpen}
+                    discovering={discovering}
+                    discoveredDevices={discoveredDevices}
+                    deviceTypes={deviceTypes}
+                    onDiscover={discoverDevices}
+                    onAddDiscovered={handleAddDiscoveredDevice}
+                  />
+                }
+                addDeviceDialog={
+                  <AddDeviceDialog
+                    open={addDeviceDialogOpen}
+                    onOpenChange={setAddDeviceDialogOpen}
+                    deviceTypes={deviceTypes}
+                    onAdd={handleAddDevice}
+                    adding={addingDevice}
+                  />
+                }
+              />
+            </PageTabsContent>
+
+            {/* Device Types Tab */}
+            <PageTabsContent value="types" activeTab={activeTab}>
+              <DeviceTypeList
+                deviceTypes={deviceTypes}
+                loading={deviceTypesLoading}
+                paginatedDeviceTypes={paginatedDeviceTypes}
+                deviceTypePage={deviceTypePage}
+                deviceTypesPerPage={deviceTypesPerPage}
+                onRefresh={handleRefreshDeviceTypes}
+                onViewDetails={handleViewDeviceType}
+                onEdit={handleEditDeviceType}
+                onDelete={handleDeleteDeviceType}
+                onPageChange={setDeviceTypePage}
+                addTypeDialog={
+                  <AddDeviceTypeDialog
+                    open={addDeviceTypeOpen}
+                    onOpenChange={setAddDeviceTypeOpen}
+                    onAdd={handleAddDeviceType}
+                    onValidate={handleValidateDeviceType}
+                    adding={addingType}
+                    validating={validatingType}
+                  />
+                }
+              />
+            </PageTabsContent>
+
+            {/* Draft Devices Tab (Auto-onboarding) */}
+            <PageTabsContent value="drafts" activeTab={activeTab}>
+              <PendingDevicesList
+                page={draftPage}
+                onPageChange={setDraftPage}
+                itemsPerPage={draftsPerPage}
+                onDraftsCountChange={setDraftsCount}
+                onRefresh={() => {
+                  fetchDevices()
+                  fetchDeviceTypes()
+                }}
+              />
+            </PageTabsContent>
+          </>
+        )}
+      </PageLayout>
+
+      {/* Mobile: Bottom navigation bar */}
+      {!deviceDetailView && (
+        <PageTabsBottomNav
           tabs={[
             { value: 'devices', label: t('devices:deviceList'), icon: <Server className="h-4 w-4" /> },
             { value: 'types', label: t('devices:deviceTypes'), icon: <Layers className="h-4 w-4" /> },
@@ -757,137 +907,7 @@ export function DevicesPage() {
           ]}
           activeTab={activeTab}
           onTabChange={(v) => handleTabChange(v as DeviceTabValue)}
-          actions={
-            activeTab === 'devices'
-              ? [
-                  {
-                    label: t('devices:addDevice'),
-                    onClick: () => setAddDeviceDialogOpen(true),
-                  },
-                  {
-                    label: t('devices:localNetworkScan'),
-                    variant: 'outline',
-                    onClick: () => setDiscoveryOpen(true),
-                  },
-                ]
-              : activeTab === 'types'
-              ? [
-                  {
-                    label: t('common:import'),
-                    icon: <Upload className="h-4 w-4" />,
-                    variant: 'outline',
-                    onClick: handleDeviceTypeImportClick,
-                    disabled: importingDeviceType,
-                  },
-                  {
-                    label: t('devices:cloud.fromCloud'),
-                    icon: <Cloud className="h-4 w-4" />,
-                    variant: 'outline',
-                    onClick: () => setCloudImportOpen(true),
-                  },
-                  {
-                    label: t('common:export') + ' All',
-                    icon: <Download className="h-4 w-4" />,
-                    variant: 'outline',
-                    onClick: handleDeviceTypeExportAll,
-                    disabled: deviceTypes.length === 0,
-                  },
-                  {
-                    label: t('devices:addDeviceType'),
-                    onClick: () => setAddDeviceTypeOpen(true),
-                  },
-                ]
-              : activeTab === 'drafts'
-              ? [
-                  {
-                    label: t('devices:pending.config'),
-                    icon: <Settings className="h-4 w-4" />,
-                    variant: 'outline',
-                    onClick: openOnboardConfigDialog,
-                  },
-                ]
-              : []
-          }
-        >
-          {/* Devices Tab */}
-          <PageTabsContent value="devices" activeTab={activeTab}>
-            <DeviceList
-              devices={devices}
-              loading={devicesLoading}
-              paginatedDevices={paginatedDevices}
-              devicePage={devicePage}
-              devicesPerPage={devicesPerPage}
-              onRefresh={fetchDevices}
-              onViewDetails={handleOpenDeviceDetails}
-              onEdit={handleEditDevice}
-              onDelete={handleDeleteDevice}
-              onPageChange={setDevicePage}
-              onAddDevice={() => setAddDeviceDialogOpen(true)}
-              discoveryDialogOpen={discoveryOpen}
-              onDiscoveryOpenChange={setDiscoveryOpen}
-              discoveryDialog={
-                <DiscoveryDialog
-                  open={discoveryOpen}
-                  onOpenChange={setDiscoveryOpen}
-                  discovering={discovering}
-                  discoveredDevices={discoveredDevices}
-                  deviceTypes={deviceTypes}
-                  onDiscover={discoverDevices}
-                  onAddDiscovered={handleAddDiscoveredDevice}
-                />
-              }
-              addDeviceDialog={
-                <AddDeviceDialog
-                  open={addDeviceDialogOpen}
-                  onOpenChange={setAddDeviceDialogOpen}
-                  deviceTypes={deviceTypes}
-                  onAdd={handleAddDevice}
-                  adding={addingDevice}
-                />
-              }
-            />
-          </PageTabsContent>
-
-          {/* Device Types Tab */}
-          <PageTabsContent value="types" activeTab={activeTab}>
-            <DeviceTypeList
-              deviceTypes={deviceTypes}
-              loading={deviceTypesLoading}
-              paginatedDeviceTypes={paginatedDeviceTypes}
-              deviceTypePage={deviceTypePage}
-              deviceTypesPerPage={deviceTypesPerPage}
-              onRefresh={handleRefreshDeviceTypes}
-              onViewDetails={handleViewDeviceType}
-              onEdit={handleEditDeviceType}
-              onDelete={handleDeleteDeviceType}
-              onPageChange={setDeviceTypePage}
-              addTypeDialog={
-                <AddDeviceTypeDialog
-                  open={addDeviceTypeOpen}
-                  onOpenChange={setAddDeviceTypeOpen}
-                  onAdd={handleAddDeviceType}
-                  onValidate={handleValidateDeviceType}
-                  adding={addingType}
-                  validating={validatingType}
-                />
-              }
-            />
-          </PageTabsContent>
-
-          {/* Draft Devices Tab (Auto-onboarding) */}
-          <PageTabsContent value="drafts" activeTab={activeTab}>
-            <PendingDevicesList
-              page={draftPage}
-              onPageChange={setDraftPage}
-              itemsPerPage={draftsPerPage}
-              onDraftsCountChange={setDraftsCount}
-              onRefresh={() => {
-                fetchDevices()
-                fetchDeviceTypes()
-              }}
-            />
-          </PageTabsContent>
-        </PageTabs>
+        />
       )}
 
       {/* Device Edit Dialog */}
@@ -1040,6 +1060,6 @@ export function DevicesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </PageLayout>
+    </>
   )
 }

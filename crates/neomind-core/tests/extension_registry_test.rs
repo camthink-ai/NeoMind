@@ -98,7 +98,6 @@ impl Extension for MockExtension {
                     ],
                     fixed_values: Default::default(),
                     samples: vec![],
-                    llm_hints: String::new(),
                     parameter_groups: vec![],
                 },
                 ExtensionCommand {
@@ -109,7 +108,6 @@ impl Extension for MockExtension {
                     parameters: vec![],
                     fixed_values: Default::default(),
                     samples: vec![],
-                    llm_hints: String::new(),
                     parameter_groups: vec![],
                 },
             ]

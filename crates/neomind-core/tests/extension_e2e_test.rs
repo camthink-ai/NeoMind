@@ -98,7 +98,7 @@ impl Extension for WeatherExtension {
                 ExtensionCommand {
                     name: "get_forecast".to_string(),
                     display_name: "Get Forecast".to_string(),
-                    description: "Get weather forecast for a city".to_string(),
+                    description: "Get weather forecast for a specific city".to_string(),
                     payload_template: r#"{"city": "{{city}}"}"#.to_string(),
                     parameters: vec![
                         ParameterDefinition {
@@ -126,13 +126,12 @@ impl Extension for WeatherExtension {
                     ],
                     fixed_values: Default::default(),
                     samples: vec![json!({"city": "Beijing", "days": 3})],
-                    llm_hints: "Get weather forecast for a specific city".to_string(),
                     parameter_groups: vec![],
                 },
                 ExtensionCommand {
                     name: "get_current".to_string(),
                     display_name: "Get Current Weather".to_string(),
-                    description: "Get current weather for a city".to_string(),
+                    description: "Get current weather conditions".to_string(),
                     payload_template: r#"{"city": "{{city}}"}"#.to_string(),
                     parameters: vec![
                         ParameterDefinition {
@@ -149,7 +148,6 @@ impl Extension for WeatherExtension {
                     ],
                     fixed_values: Default::default(),
                     samples: vec![json!({"city": "Shanghai"})],
-                    llm_hints: "Get current weather conditions".to_string(),
                     parameter_groups: vec![],
                 },
             ]
@@ -237,7 +235,7 @@ impl Extension for WeatherExtension {
             }
             "Alert" => {
                 // React to alert events
-                tracing::info!("Weather extension received alert: {:?}", payload);
+                ::tracing::info!("Weather extension received alert: {:?}", payload);
             }
             _ => {}
         }
@@ -319,18 +317,17 @@ impl Extension for SensorExtension {
                 ExtensionCommand {
                     name: "read_all".to_string(),
                     display_name: "Read All Sensors".to_string(),
-                    description: "Read all sensor values".to_string(),
+                    description: "Read all environmental sensors".to_string(),
                     payload_template: "{}".to_string(),
                     parameters: vec![],
                     fixed_values: Default::default(),
                     samples: vec![],
-                    llm_hints: "Read all environmental sensors".to_string(),
                     parameter_groups: vec![],
                 },
                 ExtensionCommand {
                     name: "read_sensor".to_string(),
                     display_name: "Read Sensor".to_string(),
-                    description: "Read a specific sensor".to_string(),
+                    description: "Read a specific environmental sensor".to_string(),
                     payload_template: r#"{"sensor": "{{sensor}}"}"#.to_string(),
                     parameters: vec![
                         ParameterDefinition {
@@ -349,7 +346,6 @@ impl Extension for SensorExtension {
                     ],
                     fixed_values: Default::default(),
                     samples: vec![json!({"sensor": "temperature"})],
-                    llm_hints: "Read a specific environmental sensor".to_string(),
                     parameter_groups: vec![],
                 },
             ]

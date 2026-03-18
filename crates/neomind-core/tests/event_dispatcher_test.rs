@@ -152,7 +152,7 @@ async fn test_register_multiple_in_process_extensions() {
 #[test]
 fn test_register_isolated_extension() {
     let dispatcher = EventDispatcher::new();
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, _rx) = tokio::sync::mpsc::channel(100);
 
     dispatcher.register_isolated_extension(
         "isolated.ext".to_string(),
@@ -168,7 +168,7 @@ fn test_register_isolated_extension() {
 #[test]
 fn test_register_isolated_extension_no_subscriptions() {
     let dispatcher = EventDispatcher::new();
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, _rx) = tokio::sync::mpsc::channel(100);
 
     dispatcher.register_isolated_extension(
         "isolated.ext".to_string(),
@@ -308,7 +308,7 @@ async fn test_mixed_in_process_and_isolated() {
     dispatcher.register_in_process_extension("inprocess.ext".to_string(), ext).await;
 
     // Register isolated extension
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, _rx) = tokio::sync::mpsc::channel(100);
     dispatcher.register_isolated_extension(
         "isolated.ext".to_string(),
         vec!["DeviceMetric".to_string()],

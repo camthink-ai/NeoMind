@@ -71,10 +71,9 @@ export function SessionSidebar({ onNewChat, onClose, mode = 'full', onNewChatFro
 
   const handleSwitchSession = async (id: string) => {
     if (id === sessionId) return
-    setLoading(true)
-    await switchSession(id)
+    // Navigate first - the chat page will handle session loading
+    // This prevents double-switching and eliminates UI flicker
     navigate(`/chat/${id}`)
-    setLoading(false)
   }
 
   const handleDeleteClick = (e: React.MouseEvent, id: string) => {
