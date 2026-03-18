@@ -1,0 +1,351 @@
+name: Build NeoMind (Optimized)
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  release:
+    types: [published]
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ========== NEW: Frontend build job (runs once) ==========
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    outputs:
+      frontend-sha: ${{ steps.build.outputs.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Cache frontend build
+        uses: actions/cache@v4
+        with:
+          path: |
+            web/node_modules
+            web/dist
+            ~/.npm
+          key: frontend-${{ hashFiles('web/package-lock.json', 'web/**/src/**', 'web/vite.config.ts', 'web/index.html', 'web/tsconfig.json') }}
+          restore-keys: |
+            frontend-${{ hashFiles('web/package-lock.json') }}-
+            frontend-
+
+      - name: Install dependencies
+        working-directory: ./web
+        run: npm ci
+
+      - name: Build frontend
+        id: build
+        working-directory: ./web
+        run: |
+          npm run build
+          echo "sha=$(shasum web/dist/index.html | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "✅ Frontend built successfully"
+          ls -lh dist/
+
+      - name: Upload frontend artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 1
+
+  # ========== OPTIMIZED: Desktop app builds ==========
+  build-desktop:
+    name: Desktop (${{ matrix.platform }})
+    needs: build-frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-aarch64'
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - platform: 'windows-x86_64'
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: 'linux-x86_64'
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - platform: 'linux-aarch64'
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+
+      - name: Verify frontend build
+        run: test -f web/dist/index.html && echo "✅ Frontend ready"
+
+      - name: Setup Rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+            web/src-tauri/target/
+          # More aggressive cache key - only depends on Cargo.lock
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install additional macOS target
+        if: matrix.os == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Install frontend dependencies (for Tauri CLI)
+        working-directory: ./web
+        run: npm ci
+
+      - name: Install system dependencies (Ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            xdg-utils \
+            liblzma-dev
+
+      - name: Build extension runner (optimized)
+        shell: bash
+        run: |
+          # Build with parallel jobs
+          CARGO_BUILD_JOBS=4 cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
+
+          # Prepare binaries for Tauri
+          mkdir -p web/src-tauri/binaries
+
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            cp target/${{ matrix.target }}/release/neomind-extension-runner.exe \
+               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}.exe
+          else
+            cp target/${{ matrix.target }}/release/neomind-extension-runner \
+               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
+            chmod +x web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
+          fi
+
+          echo "✅ Extension runner built for ${{ matrix.target }}"
+          ls -lh web/src-tauri/binaries/
+
+      - name: Build Tauri app
+        working-directory: ./web
+        run: npm run tauri build -- --target ${{ matrix.target }}
+        env:
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: neomind-desktop-${{ matrix.platform }}
+          path: |
+            web/src-tauri/target/${{ matrix.target }}/release/bundle/
+            web/src-tauri/target/${{ matrix.target }}/release/bundle/updater/*.tar.gz
+            web/src-tauri/target/${{ matrix.target }}/release/bundle/updater/*.sig
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload updater artifacts separately
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: neomind-updater-${{ matrix.platform }}
+          path: |
+            web/src-tauri/target/${{ matrix.target }}/release/bundle/updater/*.tar.gz
+            web/src-tauri/target/${{ matrix.target }}/release/bundle/updater/*.sig
+          retention-days: 90
+          if-no-files-found: ignore
+
+  # ========== OPTIMIZED: Server binary builds ==========
+  build-server:
+    name: Server (${{ matrix.os }}-${{ matrix.arch }})
+    needs: build-frontend
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            target: x86_64-unknown-linux-gnu
+            arch: amd64
+            runner: ubuntu-latest
+          - os: linux
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
+            runner: ubuntu-latest
+          - os: darwin
+            target: aarch64-apple-darwin
+            arch: arm64
+            runner: macos-latest
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+
+      - name: Prepare static assets for embedding
+        run: |
+          mkdir -p crates/neomind-api/static
+          cp -r web/dist/* crates/neomind-api/static/
+          echo "✅ Static assets embedded"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install additional macOS targets
+        if: matrix.os == 'darwin'
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Setup Rust cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/
+            ~/.cargo/git/
+            target/
+          key: server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            server-${{ matrix.target }}-
+            server-
+
+      - name: Cache cross-compilation tool
+        if: matrix.os == 'linux'
+        uses: actions/cache@v4
+        id: cache-cross
+        with:
+          path: ~/.cargo/bin/cross
+          key: cross-${{ runner.os }}-v1
+
+      - name: Install cross-compilation tool
+        if: matrix.os == 'linux' && steps.cache-cross.outputs.cache-hit != 'true'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build server and extension runner (Linux)
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          # Build both in parallel
+          cross build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static &
+          cross build --release -p neomind-extension-runner --target ${{ matrix.target }} &
+          wait
+
+      - name: Build server and extension runner (macOS)
+        if: matrix.os == 'darwin'
+        shell: bash
+        run: |
+          # Build both in parallel
+          cargo build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static &
+          cargo build --release -p neomind-extension-runner --target ${{ matrix.target }} &
+          wait
+
+      - name: Create release archive
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz neomind neomind-extension-runner
+
+      - name: Upload server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: neomind-server-${{ matrix.os }}-${{ matrix.arch }}
+          path: neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+          retention-days: 30
+
+  # ========== Release job (unchanged) ==========
+  release:
+    needs: [build-desktop, build-server]
+    runs-on: ubuntu-latest
+    if: contains(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/updater/*.tar.gz
+            artifacts/**/updater/*.sig
+            artifacts/neomind-server-linux-amd64/*.tar.gz
+            artifacts/neomind-server-linux-arm64/*.tar.gz
+            artifacts/neomind-server-darwin-arm64/*.tar.gz
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

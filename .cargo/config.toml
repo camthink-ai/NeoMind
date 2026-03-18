@@ -48,6 +48,16 @@ debug = "line-tables-only"
 # Optimize for speed
 codegen-units = 1
 
+# CI-optimized release profile (faster compilation, slightly larger binary)
+# Use this in GitHub Actions by setting PROFILE=ci-release
+[profile.ci-release]
+inherits = "release"
+# Trade off some runtime performance for faster builds
+lto = "off"
+codegen-units = 256
+# Still strip to reduce binary size
+strip = true
+
 [profile.release-lto]
 inherits = "release"
 lto = "fat"
@@ -57,3 +67,4 @@ codegen-units = 1
 [net]
 git-fetch-with-cli = true
 offline = false
+retry = 10
