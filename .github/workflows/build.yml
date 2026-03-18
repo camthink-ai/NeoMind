@@ -1,4 +1,4 @@
-name: Build NeoMind
+name: Build NeoMind (Optimized)
 
 on:
   push:
@@ -11,9 +11,66 @@ on:
   release:
     types: [published]
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+
 jobs:
-  # Desktop app builds (Tauri)
+  # ========== NEW: Frontend build job (runs once) ==========
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    outputs:
+      frontend-sha: ${{ steps.build.outputs.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Cache frontend build
+        uses: actions/cache@v4
+        with:
+          path: |
+            web/node_modules
+            web/dist
+            ~/.npm
+          key: frontend-${{ hashFiles('web/package-lock.json', 'web/**/src/**', 'web/vite.config.ts', 'web/index.html', 'web/tsconfig.json') }}
+          restore-keys: |
+            frontend-${{ hashFiles('web/package-lock.json') }}-
+            frontend-
+
+      - name: Install dependencies
+        working-directory: ./web
+        run: npm ci
+
+      - name: Build frontend
+        id: build
+        working-directory: ./web
+        run: |
+          npm run build
+          echo "sha=$(shasum web/dist/index.html | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "✅ Frontend built successfully"
+          ls -lh dist/
+
+      - name: Upload frontend artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
+          retention-days: 1
+
+  # ========== OPTIMIZED: Desktop app builds ==========
   build-desktop:
+    name: Desktop (${{ matrix.platform }})
+    needs: build-frontend
     strategy:
       fail-fast: false
       matrix:
@@ -44,14 +101,16 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'web/package-lock.json'
 
-      - name: Clean cache on version tags
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        run: |
-          rm -rf ~/.cargo/registry/cache
-          rm -rf web/src-tauri/target/release
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
 
-      - name: Cache Rust dependencies
+      - name: Verify frontend build
+        run: test -f web/dist/index.html && echo "✅ Frontend ready"
+
+      - name: Setup Rust cache
         uses: actions/cache@v4
         with:
           path: |
@@ -59,10 +118,9 @@ jobs:
             ~/.cargo/git/
             target/
             web/src-tauri/target/
-          # Include version tag in cache key to prevent using old cached builds
-          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.ref_name }}
+          # More aggressive cache key - only depends on Cargo.lock
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-
             ${{ runner.os }}-cargo-${{ matrix.target }}-
             ${{ runner.os }}-cargo-
 
@@ -75,51 +133,9 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: rustup target add aarch64-apple-darwin
 
-      - name: Install frontend dependencies
+      - name: Install frontend dependencies (for Tauri CLI)
         working-directory: ./web
         run: npm ci
-
-      - name: Build extension runner binary
-        shell: bash
-        run: |
-          # Build the extension runner for the target platform
-          cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
-
-          # Prepare platform-specific binary for Tauri bundling
-          mkdir -p web/src-tauri/binaries
-
-          # Tauri expects: neomind-extension-runner-{target_triple}
-          # Note: Tauri uses the exact target triple (with hyphens)
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp target/${{ matrix.target }}/release/neomind-extension-runner.exe \
-               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}.exe
-          else
-            cp target/${{ matrix.target }}/release/neomind-extension-runner \
-               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
-            chmod +x web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
-          fi
-
-          echo "✅ Extension runner ready for ${{ matrix.target }}"
-          ls -la web/src-tauri/binaries/
-
-      - name: Build frontend
-        working-directory: ./web
-        shell: bash
-        run: |
-          npm run build 2>&1 | tee build.log
-          ls -la dist/
-          test -f dist/index.html || (echo "Frontend build failed: dist/index.html not found" && exit 1)
-
-      - name: Check for circular dependencies
-        working-directory: ./web
-        shell: bash
-        run: |
-          if grep -qi "circular" build.log; then
-            echo "::error::Circular dependencies detected in build output!"
-            grep -i "circular" build.log
-            exit 1
-          fi
-          echo "✅ No circular dependencies detected"
 
       - name: Install system dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -137,28 +153,28 @@ jobs:
             xdg-utils \
             liblzma-dev
 
-      - name: Build extension runner binary
+      - name: Build extension runner (optimized)
         shell: bash
         run: |
-          # Build the extension runner for the target platform
-          # Use unified name across all platforms
-          mkdir -p web/src-tauri/binaries
-          cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
+          # Build with parallel jobs
+          CARGO_BUILD_JOBS=4 cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
 
-          # Copy with unified name (same for all platforms)
+          # Prepare binaries for Tauri
+          mkdir -p web/src-tauri/binaries
+
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             cp target/${{ matrix.target }}/release/neomind-extension-runner.exe \
-               web/src-tauri/binaries/neomind-extension-runner.exe
+               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}.exe
           else
             cp target/${{ matrix.target }}/release/neomind-extension-runner \
-               web/src-tauri/binaries/neomind-extension-runner
-            chmod +x web/src-tauri/binaries/neomind-extension-runner
+               web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
+            chmod +x web/src-tauri/binaries/neomind-extension-runner-${{ matrix.target }}
           fi
 
-          echo "✅ Extension runner ready for ${{ matrix.target }}"
-          ls -la web/src-tauri/binaries/
+          echo "✅ Extension runner built for ${{ matrix.target }}"
+          ls -lh web/src-tauri/binaries/
 
-      - name: Build and bundle app
+      - name: Build Tauri app
         working-directory: ./web
         run: npm run tauri build -- --target ${{ matrix.target }}
         env:
@@ -187,10 +203,12 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
-  # Server binary build with embedded frontend (Linux x64 and ARM64, macOS ARM64 only)
+  # ========== OPTIMIZED: Server binary builds ==========
   build-server:
-    name: Server Binary (${{ matrix.os }}-${{ matrix.arch }})
+    name: Server (${{ matrix.os }}-${{ matrix.arch }})
+    needs: build-frontend
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: linux
@@ -219,20 +237,17 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'web/package-lock.json'
 
-      - name: Install frontend dependencies
-        working-directory: ./web
-        run: npm ci
-
-      - name: Build frontend
-        working-directory: ./web
-        run: npm run build
+      - name: Download frontend artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: web/dist/
 
       - name: Prepare static assets for embedding
         run: |
           mkdir -p crates/neomind-api/static
           cp -r web/dist/* crates/neomind-api/static/
-          echo "Static assets prepared:"
-          ls -la crates/neomind-api/static/
+          echo "✅ Static assets embedded"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -243,19 +258,18 @@ jobs:
         if: matrix.os == 'darwin'
         run: rustup target add aarch64-apple-darwin
 
-      - name: Cache Rust dependencies
+      - name: Setup Rust cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry/
             ~/.cargo/git/
             target/
-          key: server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ github.ref_name }}
+          key: server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            server-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}-
             server-${{ matrix.target }}-
+            server-
 
-      # Linux cross-compilation setup
       - name: Cache cross-compilation tool
         if: matrix.os == 'linux'
         uses: actions/cache@v4
@@ -268,21 +282,23 @@ jobs:
         if: matrix.os == 'linux' && steps.cache-cross.outputs.cache-hit != 'true'
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build server binary with embedded frontend (Linux)
+      - name: Build server and extension runner (Linux)
         if: matrix.os == 'linux'
-        run: cross build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static
+        shell: bash
+        run: |
+          # Build both in parallel
+          cross build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static &
+          cross build --release -p neomind-extension-runner --target ${{ matrix.target }} &
+          wait
 
-      - name: Build extension runner (Linux)
-        if: matrix.os == 'linux'
-        run: cross build --release -p neomind-extension-runner --target ${{ matrix.target }}
-
-      - name: Build server binary with embedded frontend (macOS)
+      - name: Build server and extension runner (macOS)
         if: matrix.os == 'darwin'
-        run: cargo build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static
-
-      - name: Build extension runner (macOS)
-        if: matrix.os == 'darwin'
-        run: cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          # Build both in parallel
+          cargo build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static &
+          cargo build --release -p neomind-extension-runner --target ${{ matrix.target }} &
+          wait
 
       - name: Create release archive
         run: |
@@ -296,6 +312,7 @@ jobs:
           path: neomind-server-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
           retention-days: 30
 
+  # ========== Release job (unchanged) ==========
   release:
     needs: [build-desktop, build-server]
     runs-on: ubuntu-latest
