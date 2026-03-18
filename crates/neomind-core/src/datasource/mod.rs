@@ -195,6 +195,7 @@ impl DataSourceId {
     ///
     /// # Examples
     /// ```
+    /// use neomind_core::datasource::{DataSourceId, DataSourceType};
     /// let id = DataSourceId::extension_command("weather", "get_current_weather", "temperature_c");
     /// assert_eq!(id.source_type, DataSourceType::Extension);
     /// assert_eq!(id.source_id, "weather");
@@ -222,6 +223,7 @@ impl DataSourceId {
     ///
     /// # Examples
     /// ```
+    /// use neomind_core::datasource::DataSourceId;
     /// let id = DataSourceId::parse_extension_command("extension:weather:get_current_weather:temperature_c");
     /// assert!(id.is_some());
     /// let id = id.unwrap();

@@ -289,6 +289,10 @@ export function ChatPage() {
   const sessions = useStore((state) => state.sessions)
 
   // Load session from URL parameter (only when on /chat/:sessionId)
+  // This effect handles all session switches triggered by URL changes:
+  // - Initial page load with sessionId in URL
+  // - Browser back/forward navigation
+  // - Click events in SessionSidebar (which navigate to the URL)
   useEffect(() => {
     if (urlSessionId && urlSessionId !== sessionId) {
       // Only switch if it's a different session
@@ -877,14 +881,40 @@ export function ChatPage() {
             <WelcomeArea className="min-h-full" onQuickAction={handleQuickAction} />
           </div>
         ) : isLoadingSession ? (
-          /* Loading State - shown when switching sessions */
-          <div className="flex-1 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <div 
-                className="h-8 w-8 rounded-full border-[3px] border-muted-foreground border-t-transparent animate-spin"
-                style={{ animationDuration: '1.2s', animationTimingFunction: 'linear' }}
-              />
-              <p className="text-sm text-muted-foreground">{t('chat:loading')}</p>
+          /* Loading State - shown when switching sessions, with skeleton messages */
+          <div className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4">
+            <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
+              {/* Skeleton message - user */}
+              <div className="flex gap-2 sm:gap-3 justify-end animate-pulse">
+                <div className="max-w-[85%] sm:max-w-[80%]">
+                  <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-foreground/20">
+                    <div className="h-4 w-48 bg-foreground/10 rounded" />
+                  </div>
+                </div>
+                <div className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-muted" />
+              </div>
+              {/* Skeleton message - assistant */}
+              <div className="flex gap-2 sm:gap-3 justify-start animate-pulse">
+                <div className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-foreground/20" />
+                <div className="max-w-[85%] sm:max-w-[80%]">
+                  <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-muted">
+                    <div className="space-y-2">
+                      <div className="h-4 w-full bg-muted-foreground/10 rounded" />
+                      <div className="h-4 w-3/4 bg-muted-foreground/10 rounded" />
+                      <div className="h-4 w-1/2 bg-muted-foreground/10 rounded" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {/* Another skeleton message - user */}
+              <div className="flex gap-2 sm:gap-3 justify-end animate-pulse">
+                <div className="max-w-[85%] sm:max-w-[80%]">
+                  <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-foreground/20">
+                    <div className="h-4 w-32 bg-foreground/10 rounded" />
+                  </div>
+                </div>
+                <div className="flex-shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-muted" />
+              </div>
             </div>
           </div>
         ) : hasMessages ? (

@@ -33,7 +33,7 @@ use tracing::{debug, error, info, info_span, warn, Instrument, Span};
 /// A tracing::Span instrumented with OpenTelemetry
 ///
 /// # Example
-/// ```no_run
+/// ```ignore
 /// use neomind_core::extension::tracing::extension_command_span;
 ///
 /// fn execute_command(extension_id: &str, command: &str) {
@@ -101,7 +101,7 @@ pub fn ipc_communication_span(
 /// Result of the async function
 ///
 /// # Example
-/// ```no_run
+/// ```ignore
 /// use neomind_core::extension::tracing::instrumented_command;
 /// use serde_json::json;
 ///

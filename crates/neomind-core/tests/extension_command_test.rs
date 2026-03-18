@@ -100,7 +100,6 @@ impl Extension for ConfigurableExtension {
                 ],
                 fixed_values: Default::default(),
                 samples: vec![],
-                llm_hints: String::new(),
                 parameter_groups: vec![],
             },
             ExtensionCommand {
@@ -111,7 +110,6 @@ impl Extension for ConfigurableExtension {
                 parameters: vec![],
                 fixed_values: Default::default(),
                 samples: vec![],
-                llm_hints: String::new(),
                 parameter_groups: vec![],
             },
             ExtensionCommand {
@@ -134,7 +132,6 @@ impl Extension for ConfigurableExtension {
                     ],
                     fixed_values: Default::default(),
                     samples: vec![],
-                    llm_hints: String::new(),
                     parameter_groups: vec![],
                 },
             ]

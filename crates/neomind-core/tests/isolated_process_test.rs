@@ -45,6 +45,7 @@ fn test_isolated_extension_config_custom() {
         max_restart_attempts: 5,
         restart_cooldown_secs: 10,
         max_concurrent_requests: 200,
+        ..Default::default()
     };
 
     assert_eq!(config.startup_timeout_secs, 60);
@@ -367,6 +368,7 @@ fn test_isolated_extension_with_custom_config() {
         max_restart_attempts: 5,
         restart_cooldown_secs: 10,
         max_concurrent_requests: 50,
+        ..Default::default()
     };
 
     let isolated = IsolatedExtension::new(
@@ -501,6 +503,7 @@ fn test_full_config_scenario() {
         max_restart_attempts: 5,
         restart_cooldown_secs: 15,
         max_concurrent_requests: 200,
+        ..Default::default()
     };
 
     // Validate all settings
@@ -524,6 +527,7 @@ fn test_development_config_scenario() {
         max_restart_attempts: 1,
         restart_cooldown_secs: 1,
         max_concurrent_requests: 10,
+        ..Default::default()
     };
 
     // Validate development settings

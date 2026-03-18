@@ -413,7 +413,7 @@ function App() {
                 <div className="flex flex-col bg-background" style={{height: 'var(--app-height, 100vh)'}}>
                   <TopNav />
                   <main className="flex flex-1 min-h-0 overflow-hidden" style={{paddingTop: 'var(--topnav-height, 4rem)'}}>
-                    <div className="w-full h-full overflow-auto" id="main-scroll-container">
+                    <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <Routes>
                       <Route path="/" element={<ChatPage />} />
                       <Route path="/chat" element={<ChatPage />} />

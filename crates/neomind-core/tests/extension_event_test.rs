@@ -163,7 +163,7 @@ async fn test_dispatcher_register_in_process() {
 #[test]
 fn test_dispatcher_register_isolated() {
     let dispatcher = EventDispatcher::new();
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, _rx) = tokio::sync::mpsc::channel(100);
 
     dispatcher.register_isolated_extension(
         "isolated.1".to_string(),
@@ -327,7 +327,7 @@ async fn test_event_bus_publish() {
 #[tokio::test]
 async fn test_isolated_event_channel() {
     let dispatcher = EventDispatcher::new();
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
 
     dispatcher.register_isolated_extension(
         "isolated.1".to_string(),
@@ -353,7 +353,7 @@ async fn test_isolated_event_channel() {
 #[tokio::test]
 async fn test_isolated_event_channel_no_match() {
     let dispatcher = EventDispatcher::new();
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
 
     dispatcher.register_isolated_extension(
         "isolated.1".to_string(),
