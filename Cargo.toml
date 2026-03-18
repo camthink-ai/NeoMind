@@ -79,3 +79,17 @@ sha2 = "0.10"
 pbkdf2 = "0.12"
 hmac = "0.12"
 bcrypt = "0.15"
+
+# Optimized profiles for faster CI/CD builds
+# See: https://doc.rust-lang.org/cargo/reference/profiles.html
+
+[profile.dev]
+incremental = true
+
+# Release profile with optimizations for faster builds
+[profile.release]
+incremental = true           # Enable incremental compilation
+codegen-units = 256          # Use all CPU cores for codegen
+lto = "thin"                 # Link-time optimization (thin = faster than fat, still good optimizations)
+strip = true                 # Remove debug info from binaries
+panic = "abort"              # Reduce binary size

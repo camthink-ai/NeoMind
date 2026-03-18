@@ -77,7 +77,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: ./web
-        run: npm ci
+        run: npm run build -- --mode production
 
       - name: Build extension runner binary
         shell: bash
@@ -102,11 +102,23 @@ jobs:
           echo "✅ Extension runner ready for ${{ matrix.target }}"
           ls -la web/src-tauri/binaries/
 
+      # Cache Vite build for faster incremental builds
+      - name: Cache Vite build
+        uses: actions/cache@v4
+        with:
+          path: |
+            web/node_modules/.vite
+            web/.vite
+          key: ${{ runner.os }}-vite-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-vite-${{ hashFiles('**/package-lock.json') }}-
+            ${{ runner.os }}-vite-
+
       - name: Build frontend
         working-directory: ./web
         shell: bash
         run: |
-          npm run build 2>&1 | tee build.log
+          npm run build -- --mode production 2>&1 | tee build.log
           ls -la dist/
           test -f dist/index.html || (echo "Frontend build failed: dist/index.html not found" && exit 1)
 
@@ -221,7 +233,19 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: ./web
-        run: npm ci
+        run: npm run build -- --mode production
+
+      # Cache Vite build for server builds
+      - name: Cache Vite build
+        uses: actions/cache@v4
+        with:
+          path: |
+            web/node_modules/.vite
+            web/.vite
+          key: ${{ runner.os }}-vite-server-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-vite-server-${{ hashFiles('**/package-lock.json') }}-
+            ${{ runner.os }}-vite-server-
 
       - name: Build frontend
         working-directory: ./web
