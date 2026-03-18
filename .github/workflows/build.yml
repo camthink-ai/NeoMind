@@ -315,29 +315,33 @@ jobs:
         if: matrix.os == 'linux'
         shell: bash
         run: |
-          # 使用环境变量启用并行编译
-          export CARGO_BUILD_JOBS=4
-          export CARGO_PROFILE_RELEASE_LTO=thin
-          export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256
-
-          # Build both in parallel
-          cross build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static &
-          cross build --release -p neomind-extension-runner --target ${{ matrix.target }} &
-          wait
+          # Build with proper error handling
+          set -e
+          
+          # Build server binary
+          cross build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static
+          
+          # Build extension runner
+          cross build --release -p neomind-extension-runner --target ${{ matrix.target }}
+          
+          # Verify binaries exist
+          ls -la target/${{ matrix.target }}/release/neomind target/${{ matrix.target }}/release/neomind-extension-runner
 
       - name: Build server and extension runner (macOS)
         if: matrix.os == 'darwin'
         shell: bash
         run: |
-          # 使用环境变量启用并行编译
-          export CARGO_BUILD_JOBS=4
-          export CARGO_PROFILE_RELEASE_LTO=thin
-          export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=256
-
-          # Build both in parallel
-          cargo build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static &
-          cargo build --release -p neomind-extension-runner --target ${{ matrix.target }} &
-          wait
+          # Build with proper error handling
+          set -e
+          
+          # Build server binary
+          cargo build --release -p neomind-cli --target ${{ matrix.target }} --features neomind-api/static
+          
+          # Build extension runner
+          cargo build --release -p neomind-extension-runner --target ${{ matrix.target }}
+          
+          # Verify binaries exist
+          ls -la target/${{ matrix.target }}/release/neomind target/${{ matrix.target }}/release/neomind-extension-runner
 
       - name: Create release archive
         run: |
