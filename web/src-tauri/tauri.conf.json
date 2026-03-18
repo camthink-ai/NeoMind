@@ -112,12 +112,12 @@
       "open": true
     },
     "updater": {
-      "active": false,
+      "active": true,
       "endpoints": [
         "https://github.com/camthink-ai/NeoMind/releases/latest/download/latest-update.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU3RjYyMDAzMDY3MENGNUIKUldSYnozQUdBeUQyVjhDWDRjc1FHdm9XYWRSU0x1em54ZkRGcnBpN2JWcUxkaVI4azVIK25vUlkK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxMDdDQTU3MTBFOTlDMkQKUldRdG5Pa1FWOG9ISVVjbDdVT1dqTGxRSXJFWTdINGlpTXRaaFRJRVBJenlhenJPWXg0cDVsMEkK"
     }
   }
 }
