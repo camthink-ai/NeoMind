@@ -1,13 +1,28 @@
 name: Build NeoMind (Optimized for Speed)
 
+# 手动触发构建
+# 在 GitHub Actions 页面点击 "Run workflow" 按钮
 on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '构建原因（例如: test release, bug fix, etc.）'
+        required: false
+        default: 'Manual build'
+      build_type:
+        description: '构建类型'
+        required: true
+        type: choice
+        options:
+          - test
+          - release
+          - debug
+        default: test
+
+# 正式发布时自动触发（创建 tag 或 release 时）
   push:
-    branches: [main]
     tags:
       - 'v*'
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
   release:
     types: [published]
 
