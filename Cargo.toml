@@ -35,7 +35,10 @@ async-trait = "0.1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# IMPORTANT: preserve_order feature is required for ABI compatibility between
+# extension-runner and extension binaries. This ensures serde_json::Value uses
+# IndexMap instead of HashMap, which has a stable memory layout across versions.
+serde_json = { version = "1", features = ["preserve_order"] }
 bincode = "1.3"
 base64 = "0.22"
 hex = "0.4"
