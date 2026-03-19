@@ -217,6 +217,7 @@ jobs:
 
       - name: Build Tauri app
         working-directory: ./web
+        shell: bash
         run: |
           # Try building with DMG first, fall back to app bundle only if DMG fails
           npm run tauri build -- --target ${{ matrix.target }} || {
