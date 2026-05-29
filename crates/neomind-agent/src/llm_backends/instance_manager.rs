@@ -218,7 +218,7 @@ impl LlmBackendInstanceManager {
                         updated.capabilities.supports_multimodal = caps.supports_multimodal;
                         updated.capabilities.supports_thinking = caps.supports_thinking;
                         updated.capabilities.supports_tools = caps.supports_tools;
-                        updated.capabilities.max_context = caps.max_context;
+                        let cap = std::env::var("NEOMIND_MAX_CONTEXT").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(usize::MAX); updated.capabilities.max_context = caps.max_context.min(cap);
                         let _ = self.storage.save_instance(&updated);
                         self.instances.insert(instance.id.clone(), updated);
                     }
