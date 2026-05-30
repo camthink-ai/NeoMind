@@ -520,7 +520,7 @@ impl LlmRuntime for OllamaRuntime {
         // from /api/show. Never hardcode — the API returns the accurate value (e.g., 131072 for qwen3.5).
         let num_ctx = input.params.max_context.or({
             if caps.max_context > 0 {
-                Some(caps.max_context)
+                { let cap = std::env::var("NEOMIND_MAX_CONTEXT").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(usize::MAX); Some(caps.max_context.min(cap)) }
             } else {
                 None // Let Ollama use its default
             }
@@ -750,7 +750,7 @@ impl LlmRuntime for OllamaRuntime {
         // from /api/show. Never hardcode — the API returns the accurate value (e.g., 131072 for qwen3.5).
         let num_ctx = input.params.max_context.or({
             if caps.max_context > 0 {
-                Some(caps.max_context)
+                { let cap = std::env::var("NEOMIND_MAX_CONTEXT").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(usize::MAX); Some(caps.max_context.min(cap)) }
             } else {
                 None // Let Ollama use its default
             }
