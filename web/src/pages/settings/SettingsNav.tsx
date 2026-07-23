@@ -29,7 +29,9 @@ interface SettingsNavProps {
 export function SettingsNav({ sections, activeSection, onSectionChange }: SettingsNavProps) {
   return (
     <nav
-      className="w-52 shrink-0 hidden md:block"
+      // w-60 (240px) — within the 240–300px sidebar range recommended by UX
+      // best practices; the old w-52 (208px) felt cramped.
+      className="w-60 shrink-0 hidden md:block"
       role="tablist"
       aria-label="Settings sections"
     >
@@ -43,15 +45,21 @@ export function SettingsNav({ sections, activeSection, onSectionChange }: Settin
               aria-selected={isActive}
               onClick={() => onSectionChange(section.value)}
               className={cn(
-                "flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                "border-l-2",
+                "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 "focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2",
                 isActive
-                  ? "bg-muted border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:bg-muted-50 hover:text-foreground"
+                  ? "bg-muted text-foreground"
+                  : "text-muted-foreground hover:bg-muted-50 hover:text-foreground"
               )}
             >
-              <span className="shrink-0">{section.icon}</span>
+              <span
+                className={cn(
+                  "shrink-0 transition-colors",
+                  isActive ? "text-primary" : "text-muted-foreground"
+                )}
+              >
+                {section.icon}
+              </span>
               <span>{section.label}</span>
             </button>
           )

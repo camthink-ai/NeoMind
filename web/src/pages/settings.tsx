@@ -73,7 +73,6 @@ export function SettingsPage() {
     <>
       <PageLayout
         title={t("settings:title")}
-        subtitle={!isMobile ? t("settings:description") : undefined}
         borderedHeader={false}
         hasBottomNav={isMobile}
       >
@@ -92,7 +91,7 @@ export function SettingsPage() {
             <PageTabsContent value="about" activeTab={activeSection}>{aboutEl}</PageTabsContent>
           </div>
         ) : (
-          // Desktop: sidebar + content (unchanged)
+          // Desktop: sidebar + content
           <div className="flex gap-6 h-full overflow-hidden">
             <SettingsNav
               sections={sections}

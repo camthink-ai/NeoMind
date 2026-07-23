@@ -460,7 +460,7 @@
   },
   "llm": {
     "providers": {
-      "ollama": "Local Model",
+      "ollama": "Ollama",
       "openai": "OpenAI",
       "anthropic": "Anthropic",
       "google": "Google",
