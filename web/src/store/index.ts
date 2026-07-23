@@ -139,7 +139,7 @@ export const useStore = create<NeoMindStore>()(
       }),
       {
         name: 'neomind-store',
-        version: 2,
+        version: 3,
         storage: safeStorage,
         partialize: (state) => ({
           // NOTE: Do NOT persist messages to LocalStorage!
@@ -149,24 +149,33 @@ export const useStore = create<NeoMindStore>()(
           sessionId: state.sessionId,
           // Only persist essential UI state
           sidebarOpen: state.sidebarOpen,
-          // Persist update state so users are reminded after app restart
-          updateInfo: state.updateInfo,
-          updateDialogOpen: state.updateDialogOpen,
+          // NOTE: updateInfo / updateDialogOpen are intentionally NOT persisted.
+          // They are transient per-check UI state. Persisting updateDialogOpen
+          // meant a dialog left open (true) in the old version was read back
+          // after an OTA update, so "New Version Available" re-appeared on the
+          // freshly installed version. Restart-time re-check is driven by the
+          // autoCheck in useUpdateCheck, not by persisted dialog state.
           // NOTE: currentInstanceId is NOT persisted here — it's managed
           // separately via localStorage('currentInstanceId') in instanceSlice
           // so that applyPendingSwitch() and the initial state stay in sync.
         }),
         migrate: (persisted, version) => {
+          const old = persisted as Record<string, unknown>
           if (version < 2) {
             // v0/v1→v2: remove stale currentInstanceId that overrides
             // the one managed by instanceSlice's own localStorage key.
             // This fixes instances where the old persisted data caused
             // isRemoteInstance() to return true, skipping API calls.
-            const old = persisted as Record<string, unknown>
             delete old.currentInstanceId
-            return old
           }
-          return persisted
+          if (version < 3) {
+            // v2→v3: drop transient update UI state (see partialize note).
+            // Clears updateDialogOpen=true left over from earlier builds so
+            // the update dialog does not re-appear after an OTA install.
+            delete old.updateDialogOpen
+            delete old.updateInfo
+          }
+          return old
         },
       }
     ),

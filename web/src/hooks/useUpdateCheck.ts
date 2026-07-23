@@ -138,8 +138,11 @@ export function useUpdateCheck(options: UpdateCheckOptions = {}): UseUpdateCheck
           t('settings:newVersionAvailable')
         )
 
-        // Skip server check — we just updated, no need to re-check immediately
+        // Skip server check — we just updated, no need to re-check immediately.
+        // Force-close any persisted/lingering dialog: after a successful OTA
+        // the "New Version Available" dialog must NOT re-appear.
         setUpdateStatus('up-to-date')
+        setUpdateDialogOpen(false)
         onUpToDateRef.current?.()
         return
       }
@@ -158,6 +161,7 @@ export function useUpdateCheck(options: UpdateCheckOptions = {}): UseUpdateCheck
         onUpdateAvailableRef.current?.(info)
       } else {
         setUpdateStatus('up-to-date')
+        setUpdateDialogOpen(false)
         onUpToDateRef.current?.()
       }
     } catch (error) {
