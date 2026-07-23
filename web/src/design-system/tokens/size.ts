@@ -322,6 +322,20 @@ export const interactiveCard = [
 ].join(' ')
 
 /**
+ * Interactive card hover effect — the lift/shadow transition only.
+ *
+ * Use this on cards that already carry their own surface styles (e.g. the
+ * `<Card>` component which includes `cardBase`, or cards with a non-default
+ * radius like `rounded-xl`) but should share the same hover interaction.
+ * This avoids re-declaring `hover:shadow-md hover:-translate-y-0.5
+ * transition-all duration-200` at every call site.
+ */
+export const interactiveCardHover = [
+  'transition-all duration-200',
+  'hover:shadow-md hover:-translate-y-0.5',
+].join(' ')
+
+/**
  * Card with padding — most common card pattern (card + standard padding)
  */
 export const cardPadded = [

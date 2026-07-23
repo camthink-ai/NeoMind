@@ -18,6 +18,7 @@ import {
   Trash2,
   Settings,
   Filter,
+  Loader2,
   Search,
   Cloud,
   Share2,
@@ -302,7 +303,7 @@ export function PageTabs({
                       className=""
                     >
                       {action.loading ? (
-                        <span className="mr-2 h-4 w-4 animate-spin">⟳</span>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       ) : (
                         action.icon && <span className="mr-2 shrink-0 h-4 w-4">{action.icon}</span>
                       )}
@@ -328,7 +329,7 @@ export function PageTabs({
                 disabled={action.disabled || action.loading}
               >
                 {action.loading ? (
-                  <span className="mr-1 h-3.5 w-3.5 animate-spin">⟳</span>
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
                 ) : action.icon ? (
                   <span className="mr-1 shrink-0 h-3.5 w-3.5">{action.icon}</span>
                 ) : null}
@@ -526,7 +527,7 @@ export function PageTabsGrid({
                   className="min-h-11 shrink-0 px-4 md:min-h-9"
                 >
                   {action.loading ? (
-                    <span className="mr-2 h-4 w-4 animate-spin">⟳</span>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
                     action.icon && <span className="mr-2 shrink-0">{action.icon}</span>
                   )}

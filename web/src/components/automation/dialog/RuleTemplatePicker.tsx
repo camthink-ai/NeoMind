@@ -7,6 +7,7 @@ import {
 } from '@/components/automation/dialog/FullScreenDialog'
 import { RULE_TEMPLATES } from '../ruleTemplates'
 import { cn } from '@/lib/utils'
+import { interactiveCardHover } from '@/design-system/tokens/size'
 
 interface Props {
   open: boolean
@@ -47,8 +48,8 @@ export function RuleTemplatePicker({ open, onOpenChange, onSelectTemplate }: Pro
                   onClick={() => onSelectTemplate(tpl.id)}
                   className={cn(
                     'group text-left bg-card rounded-xl border shadow-sm p-5',
-                    'card-sheen transition-all duration-200',
-                    'hover:shadow-md hover:-translate-y-0.5',
+                    'card-sheen',
+                    interactiveCardHover,
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                   )}
                 >

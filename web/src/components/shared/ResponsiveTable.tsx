@@ -15,6 +15,7 @@ import { MoreVertical, Loader2, Inbox } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyStateCompact } from '@/components/shared/EmptyState'
 import { cn } from '@/lib/utils'
+import { interactiveCardHover } from '@/design-system/tokens/size'
 import { textMini } from "@/design-system/tokens/typography"
 
 export interface TableColumn {
@@ -316,7 +317,8 @@ export function ResponsiveTable({
               <Card
                 key={rowKey(rowData)}
                 className={cn(
-                  'overflow-hidden border-border shadow-sm animate-fade-in-up hover:shadow-md hover:-translate-y-0.5 transition-all duration-200',
+                  'overflow-hidden border-border shadow-sm animate-fade-in-up',
+                  interactiveCardHover,
                   onRowClick && 'cursor-pointer active:scale-[0.99]',
                   rowClass
                 )}

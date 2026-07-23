@@ -70,12 +70,14 @@ interface Suggestion {
   context?: string
 }
 
-// Fallback suggestions (minimal, used only when API completely fails)
+// Fallback suggestions (minimal, used only when API completely fails).
+// The prompt is localized at render time (see allSuggestions memo) — the
+// constant keeps an empty placeholder so a raw value is never sent.
 const FALLBACK_SUGGESTIONS: BackendSuggestion[] = [
   {
     id: "help",
     label: "help", // Will be translated via getCategoryName
-    prompt: "你能做什么",
+    prompt: "",
     icon: "Lightbulb",
     category: "general",
     priority: 50
@@ -163,14 +165,16 @@ export function InputSuggestions({ input, onSelect, visible }: InputSuggestionsP
       return {
         id: s.id,
         label: s.label,
-        prompt: s.prompt,
+        // Localize the fallback "help" prompt (API failure path); real
+        // backend suggestions carry their own prompt as-is.
+        prompt: s.id === "help" && !s.prompt ? t("chat:input.fallbackHelpPrompt") : s.prompt,
         icon: <IconComponent className="h-4 w-4" />,
         category: s.category,
         priority: s.priority,
         context: s.context,
       }
     })
-  }, [backendSuggestions])
+  }, [backendSuggestions, t])
 
   // Group suggestions by priority tier for visual distinction
   const highPrioritySuggestions = useMemo(() =>

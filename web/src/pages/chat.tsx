@@ -5,20 +5,19 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Settings, Send, Sparkles, PanelLeft, MessageSquare, Zap, ChevronDown, X, Image as ImageIcon, Loader2, Eye, Brain, Wrench, RotateCcw, Plus, Check, ArrowUp } from "lucide-react"
+import { Settings, Send, Sparkles, PanelLeft, MessageSquare, Zap, ChevronDown, X, Image as ImageIcon, Loader2, Eye, Wrench, RotateCcw, Plus, Check, ArrowUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
-  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
 import { MarkdownMessage } from "@/components/chat/MarkdownMessage"
 import { ThinkingBlock } from "@/components/chat/ThinkingBlock"
+import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
 import { ToolProcessBlock, isThinkingDuplicate } from "@/components/chat/ToolCallVisualization"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -1315,6 +1314,19 @@ export function ChatPage() {
           style={isDesktop ? undefined : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 12px))' }}
         >
           <div className="max-w-3xl mx-auto">
+            {/* Connection status — only surfaces when the WebSocket is not
+                connected, so a healthy connection adds zero visual noise.
+                Reuses the already-subscribed connectionState and the
+                previously-dead handleManualReconnect. */}
+            {connectionState.status !== 'connected' && (
+              <div className="flex justify-center mb-2">
+                <ConnectionStatus
+                  state={connectionState}
+                  onManualReconnect={handleManualReconnect}
+                />
+              </div>
+            )}
+
             {/* Image previews */}
             {attachedImages.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mb-1">
@@ -1416,48 +1428,55 @@ export function ChatPage() {
                         <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-64 max-h-[50vh] overflow-y-auto">
-                      <DropdownMenuLabel className="text-xs text-muted-foreground">
-                        {t('chat:input.selectLLMModel')}
-                      </DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      {llmBackends.map((backend) => (
+                    <DropdownMenuContent align="start" className="w-72 max-h-[50vh] overflow-y-auto p-0">
+                      <div className="sticky top-0 z-10 bg-popover px-3 py-2 border-b border-border">
+                        <span className="font-semibold text-sm">{t('chat:input.selectLLMModel')}</span>
+                      </div>
+                      <div className="p-1">
+                      {llmBackends.map((backend) => {
+                        const isActive = backend.id === activeBackendId
+                        return (
                         <DropdownMenuItem
                           key={backend.id}
                           onClick={() => activateBackend(backend.id)}
-                          className={cn(
-                            "flex items-center gap-2 py-2",
-                            backend.id === activeBackendId && "bg-muted"
-                          )}
+                          className="gap-2.5 py-2"
                         >
-                          <div className={cn(
-                            "w-1.5 h-1.5 rounded-full shrink-0",
-                            backend.healthy ? "bg-success" : "bg-muted-foreground"
-                          )} />
+                          {/* Left slot: active → Check, else health dot (symmetrical) */}
+                          <div className="w-4 flex items-center justify-center shrink-0">
+                            {isActive ? (
+                              <Check className="h-4 w-4 text-primary" />
+                            ) : (
+                              <span className={cn(
+                                "w-1.5 h-1.5 rounded-full",
+                                backend.healthy ? "bg-success" : "bg-muted-foreground"
+                              )} />
+                            )}
+                          </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5">
-                              <p className="text-sm truncate">{backend.name || backend.model}</p>
+                              <p className={cn("text-sm truncate", isActive && "font-medium")}>
+                                {backend.name || backend.model}
+                              </p>
                               <div className="flex items-center gap-1 shrink-0">
                                 {backend.capabilities?.supports_multimodal && (
-                                  <span title={t('chat:model.supportsVision')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-muted-30 text-muted-foreground", textMicro)}>{t('chat:capability.vision', { defaultValue: 'Vision' })}</span>
+                                  <span title={t('chat:model.supportsVision')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-info-light text-info", textMicro)}>{t('chat:capability.vision', { defaultValue: 'Vision' })}</span>
                                 )}
                                 {backend.capabilities?.supports_tools && (
-                                  <span title={t('chat:model.supportsTools')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-muted-30 text-muted-foreground", textMicro)}>{t('chat:capability.tools', { defaultValue: 'Tools' })}</span>
+                                  <span title={t('chat:model.supportsTools')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-accent-orange-light text-accent-orange", textMicro)}>{t('chat:capability.tools', { defaultValue: 'Tools' })}</span>
                                 )}
                                 {backend.capabilities?.supports_thinking && (
-                                  <span title={t('chat:model.supportsThinking')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-muted-30 text-muted-foreground", textMicro)}>{t('chat:capability.thinking', { defaultValue: 'Thinking' })}</span>
+                                  <span title={t('chat:model.supportsThinking')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-accent-purple-light text-accent-purple", textMicro)}>{t('chat:capability.thinking', { defaultValue: 'Thinking' })}</span>
                                 )}
                               </div>
                             </div>
-                            <p className={cn(textNano, "text-muted-foreground truncate")}>
+                            <p className={cn(textNano, "text-muted-foreground truncate mt-0.5")}>
                               {backend.backend_type} · {backend.model}
                             </p>
                           </div>
-                          {backend.id === activeBackendId && (
-                            <Check className="h-4 w-4 text-primary shrink-0" />
-                          )}
                         </DropdownMenuItem>
-                      ))}
+                        )
+                      })}
+                      </div>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}

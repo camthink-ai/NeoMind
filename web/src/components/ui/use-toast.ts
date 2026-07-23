@@ -3,6 +3,9 @@ import type { ToastActionElement, ToastProps } from "@/components/ui/toast"
 
 const TOAST_LIMIT = 3
 const TOAST_REMOVE_DELAY = 1000
+// Error/warning toasts stay longer so users can read them. Applied only when
+// the caller doesn't pass an explicit `duration`. Radix default is 5000ms.
+const DESTRUCTIVE_DURATION = 7000
 
 type ToasterToast = ToastProps & {
   id: string
@@ -146,6 +149,11 @@ function toast({ ...props }: Toast) {
   dispatch({
     type: "ADD_TOAST",
     toast: {
+      // Give destructive (error) toasts more time to read, unless the caller
+      // specified an explicit duration.
+      ...(props.variant === "destructive" && props.duration === undefined
+        ? { duration: DESTRUCTIVE_DURATION }
+        : {}),
       ...props,
       id,
       open: true,

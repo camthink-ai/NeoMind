@@ -926,6 +926,41 @@ impl LargeDataCache {
         best.map(|(key, entry)| (Self::extract_image_data(&entry.data, data_dir), key.clone()))
     }
 
+    /// Seed the cache with the agent's bound device image so the existing
+    /// `$cached:` reference resolution + auto-inject machinery
+    /// (`resolve_cached_arguments`) can hand the FULL image to image-aware
+    /// tool calls — including extension tools (e.g. YOLO / grounding) whose
+    /// `image`/`image_base64` arg the LLM cannot fill with real bytes.
+    ///
+    /// Why this exists: scheduled/event agents inject their bound image
+    /// directly into the multimodal user message (`build_tool_messages`)
+    /// rather than via `store()`. Without seeding, `get_latest_image()`
+    /// returns `None`, the auto-inject never fires, and tools receive the
+    /// LLM's truncated base64 fragment (a recognizable JPEG header + junk
+    /// body) → the extension decodes garbage and returns `null`.
+    ///
+    /// `data_url` must be a `data:image/<mime>;base64,<...>` string. Unlike
+    /// `store()`, this bypasses the 32KB size threshold — even a small bound
+    /// image must be injectable. Keyed as `agent_image` so it is distinct from
+    /// chat's `user_image` and surfaced by `get_latest_image()`'s image scan.
+    pub fn seed_bound_image(&mut self, data_url: &str) {
+        if !data_url.starts_with("data:image/") {
+            tracing::warn!(
+                len = data_url.len(),
+                "seed_bound_image: ignoring non-image data URL"
+            );
+            return;
+        }
+        let cached = CachedLargeResult {
+            content_type: Self::detect_content_type(data_url),
+            data: data_url.to_string(),
+            size_bytes: data_url.len(),
+            cached_at: chrono::Utc::now().timestamp(),
+        };
+        self.entries.insert("agent_image".to_string(), cached);
+        self.evict_if_needed();
+    }
+
     /// Detect content type from content heuristics.
     fn detect_content_type(content: &str) -> String {
         // Check for data URL images (data:image/png;base64,...)

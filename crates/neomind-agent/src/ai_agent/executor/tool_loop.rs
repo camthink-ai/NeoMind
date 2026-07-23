@@ -34,6 +34,7 @@ impl AgentExecutor {
         execution_id: &str,
         max_rounds: usize, // Made implicitly mutable by continuation mechanism below
         tool_name_map: &std::collections::HashMap<String, String>,
+        bound_image: Option<&str>,
     ) -> ToolLoopOutput {
         use crate::agent::tool_parser::parse_tool_calls;
         use neomind_core::llm::backend::{GenerationParams, LlmInput};
@@ -63,6 +64,15 @@ impl AgentExecutor {
         // full data so image-aware tools (vision/image_edit) receive it transparently.
         // Mirrors the chat-agent streaming layer (stream_core/stream_multimodal).
         let mut large_data_cache = LargeDataCache::new();
+        // Seed the cache with the agent's bound device image (if any) so the
+        // `$cached:` auto-inject path (`resolve_cached_arguments`) can hand the
+        // FULL image to image-shaped tool args — including extension tools
+        // (YOLO / grounding) whose `image` arg the LLM cannot fill with real
+        // bytes. Without this, extensions receive the LLM's truncated base64
+        // fragment and return `null` (task #50).
+        if let Some(url) = bound_image {
+            large_data_cache.seed_bound_image(url);
+        }
 
         // Cross-round tool deduplication: track tool signatures to avoid re-executing
         // the same tool with the same arguments across rounds.

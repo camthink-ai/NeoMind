@@ -243,4 +243,64 @@ mod tests {
         // `image` should NOT be auto-added.
         assert!(resolved.get("image").is_none());
     }
+
+    /// Regression (task #50, "Garbage Monitoring"): a scheduled/event agent
+    /// receives its bound device image ONLY as a multimodal vision part. The
+    /// LLM cannot reproduce base64 from a vision embedding, so it emits a
+    /// truncated/fragmentary `data:image/jpeg;base64,...` (recognizable JPEG
+    /// header, junk body) into an extension tool's `image` arg — the extension
+    /// then decodes garbage and returns `null`.
+    ///
+    /// When the cache is seeded with the real bound image (`seed_bound_image`),
+    /// the existing present-arg overwrite path must replace that fragment with
+    /// the full image, for ANY tool whose arg name is image-shaped (extension
+    /// tools are deliberately NOT in IMAGE_AWARE_TOOLS, but the present-arg
+    /// branch is name-based, not tool-gated).
+    #[test]
+    fn seeded_bound_image_replaces_llm_fragment_for_extension_tool() {
+        let mut cache = LargeDataCache::new();
+        // The real bound image (a data URL the agent injects into the cache).
+        let real_b64 = "U".repeat(8192);
+        let bound_url = format!("data:image/jpeg;base64,{}", real_b64);
+        cache.seed_bound_image(&bound_url);
+
+        // What the LLM actually emitted — a fragment starting with the
+        // well-known JPEG data-URI header, but NOT the real image bytes.
+        let llm_fragment = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD";
+        let args = serde_json::json!({ "image": llm_fragment });
+
+        // Extension tool name — not in IMAGE_AWARE_TOOLS.
+        let resolved =
+            resolve_cached_arguments(&args, &cache, "yolo-device-inference:analyze_image");
+
+        let got = resolved["image"].as_str().expect("image arg present");
+        assert_ne!(
+            got, llm_fragment,
+            "LLM's truncated fragment must not pass through to the extension"
+        );
+        assert!(
+            got.contains(&real_b64),
+            "extension should receive the real bound image, got: {}...",
+            &got[..got.len().min(80)]
+        );
+    }
+
+    /// `seed_bound_image` must work even for a small bound image (the regular
+    /// `store()` skips anything under the 32KB threshold, which would leave
+    /// small device images uninjected — the exact task #50 failure mode).
+    #[test]
+    fn seed_bound_image_bypasses_size_threshold() {
+        let mut cache = LargeDataCache::new();
+        // ~1KB — well under CACHE_THRESHOLD_BYTES (32KB).
+        let small_b64 = "Q".repeat(1024);
+        let bound_url = format!("data:image/png;base64,{}", small_b64);
+        cache.seed_bound_image(&bound_url);
+
+        // get_latest_image must surface it despite being tiny.
+        let (data, _key) = cache.get_latest_image().expect("small bound image seeded");
+        assert!(
+            data.contains(&small_b64),
+            "seeded small image should be retrievable via get_latest_image"
+        );
+    }
 }

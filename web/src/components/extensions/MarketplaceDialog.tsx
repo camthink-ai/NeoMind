@@ -682,7 +682,7 @@ function ExtensionDetailView({
                 remarkPlugins={[remarkGfm]}
                 components={{
                   img: ({ node: _node, ...props }) => (
-                    <img {...props} src={resolveReadmeUrl(props.src)} />
+                    <img {...props} src={resolveReadmeUrl(props.src)} alt={props.alt || 'image'} />
                   ),
                   a: ({ node: _node, ...props }) => (
                     <a

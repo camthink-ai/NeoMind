@@ -838,6 +838,19 @@ html {
     display: none;
   }
 
+  /* Subtle dot-grid backdrop used by full-screen loading/switching screens.
+     Replaces a duplicated inline `radial-gradient(circle, #80808015 ...)`
+     in StartupLoading & InstanceSwitchOverlay. Uses a theme-aware muted
+     tint via color-mix so it adapts to dark mode. */
+  .dot-grid {
+    background-image: radial-gradient(
+      circle,
+      color-mix(in oklch, var(--muted-foreground) 8%, transparent) 1px,
+      transparent 1px
+    );
+    background-size: 32px 32px;
+  }
+
   /* ============================================================================
    * CARD SURFACE QUALITY
    * A 1px top highlight via box-shadow inset, giving opaque cards a subtle

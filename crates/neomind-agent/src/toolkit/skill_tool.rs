@@ -46,6 +46,51 @@ impl SkillTool {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     }
 
+    /// Score a skill against a query string.
+    ///
+    /// Shared relevance scoring for `search` and `load` fuzzy resolution so the
+    /// two actions never drift apart. Signals (strongest first): id substring,
+    /// keyword substring, full-name containment, category substring. Returns
+    /// 0.0 for no match. Case-insensitive; empty query scores 0.0.
+    fn score_skill_query(skill: &skills::Skill, query: &str) -> f32 {
+        let query_lower = query.to_lowercase();
+        if query_lower.is_empty() {
+            return 0.0;
+        }
+        let mut score = 0.0f32;
+
+        // ID match (strongest signal) — bidirectional substring
+        let id_lower = skill.metadata.id.to_lowercase();
+        if id_lower.contains(&query_lower) || query_lower.contains(&id_lower) {
+            score += 2.0;
+        }
+
+        // Keyword match — bidirectional substring (each matching keyword adds up)
+        for keyword in &skill.metadata.triggers.keywords {
+            let kw_lower = keyword.to_lowercase();
+            if query_lower.contains(&kw_lower) || kw_lower.contains(&query_lower) {
+                score += 1.0;
+            }
+        }
+
+        // Name match — only when the query contains the full name. We skip the
+        // reverse (name contains query): skill names are long descriptive phrases
+        // that almost always contain short queries, so the reverse would just
+        // double-count the id signal.
+        let name_lower = skill.metadata.name.to_lowercase();
+        if !name_lower.is_empty() && query_lower.contains(&name_lower) {
+            score += 1.0;
+        }
+
+        // Category match
+        let category_lower = format!("{:?}", skill.metadata.category).to_lowercase();
+        if category_lower.contains(&query_lower) {
+            score += 0.5;
+        }
+
+        score
+    }
+
     /// Persist a skill file to disk.
     fn persist(&self, id: &str, content: &str) {
         if let Some(ref dir) = self.data_dir {
@@ -84,12 +129,12 @@ IMPORTANT: Skills are NOT in your system prompt. You MUST call this tool to load
 
 Actions:
 - search: Search skills by query keywords — returns matching skill IDs and descriptions. Use this first to find the right skill.
-- load: Load a skill's full guide content by ID — returns the complete step-by-step guide. Call this after search, or when you know the skill ID.
+- load: Load a skill's full guide by ID. The ID auto-resolves from a partial/keyword/domain name (e.g. 'dashboard' → dashboard-management, '设备接入' → device-onboarding), so you can load by domain without remembering the exact ID.
 - create: Create a new user skill (requires 'content' with YAML frontmatter + Markdown body)
 - update: Update an existing skill by ID (full content replacement)
 - delete: Delete a user skill by ID
 
-Available skill IDs (load these when relevant):
+Available skill IDs (load these when relevant) — any of these also auto-resolves from a partial/keyword/domain name, so `load id="dashboard"` matches dashboard-management:
 - device-onboarding: Device connection, MQTT, webhook, drafts
 - dashboard-management: Dashboard CRUD, widget layout, data binding
 - rule-management: Rule DSL, triggers, actions, CRUD
@@ -150,30 +195,11 @@ When to load a skill:
                     .unwrap_or("");
 
                 let registry_guard = self.registry.read().await;
-                let query_lower = query.to_lowercase();
 
-                // Score all skills against the query
+                // Score all skills against the query (shared with `load` fuzzy resolution)
                 let mut results: Vec<(String, String, f32)> = Vec::new();
                 for skill in registry_guard.list() {
-                    let mut score = 0.0f32;
-                    // Keyword match
-                    for keyword in &skill.metadata.triggers.keywords {
-                        let kw_lower = keyword.to_lowercase();
-                        if query_lower.contains(&kw_lower) || kw_lower.contains(&query_lower) {
-                            score += 1.0;
-                        }
-                    }
-                    // ID/name match
-                    if skill.metadata.id.to_lowercase().contains(&query_lower)
-                        || query_lower.contains(&skill.metadata.id.to_lowercase())
-                    {
-                        score += 2.0;
-                    }
-                    // Category match
-                    if format!("{:?}", skill.metadata.category).to_lowercase().contains(&query_lower) {
-                        score += 0.5;
-                    }
-
+                    let score = Self::score_skill_query(skill, query);
                     if score > 0.0 {
                         // Extract first non-empty line from body as description
                         let desc = skill.body
@@ -229,22 +255,85 @@ When to load a skill:
                         })))
                     }
                     None => {
-                        // Suggest similar skills
-                        let suggestions: Vec<String> = registry_guard.list()
+                        // Fuzzy resolution: when an exact id misses, try to resolve a
+                        // unique best match (e.g. "dashboard" → "dashboard-management").
+                        // Domain tools get this self-healing via the tool-name mapper;
+                        // without it a model that guesses a partial id gets stuck after
+                        // the first miss — especially small models, which rarely act on
+                        // a plain-text "Did you mean" hint.
+                        let mut candidates: Vec<(&skills::Skill, f32)> = registry_guard
+                            .list()
                             .iter()
-                            .filter(|s| {
-                                let sid = s.metadata.id.to_lowercase();
-                                let qid = id.to_lowercase();
-                                sid.contains(&qid) || qid.contains(&sid)
-                            })
-                            .map(|s| s.metadata.id.clone())
-                            .take(3)
+                            .map(|s| (*s, Self::score_skill_query(s, id)))
+                            .filter(|(_, sc)| *sc > 0.0)
                             .collect();
-                        let mut msg = format!("Skill '{}' not found.", id);
-                        if !suggestions.is_empty() {
-                            msg.push_str(&format!(" Did you mean: {}?", suggestions.join(", ")));
+                        candidates
+                            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+                        // Auto-resolve only when a single match strictly leads the
+                        // runner-up — never silently pick among ties (e.g. "management"
+                        // matching every *-management skill).
+                        let resolved = match candidates.len() {
+                            0 => None,
+                            1 => Some(candidates[0].0),
+                            _ if candidates[0].1 > candidates[1].1 => Some(candidates[0].0),
+                            _ => None,
+                        };
+
+                        if let Some(skill) = resolved {
+                            tracing::debug!(
+                                requested = %id,
+                                resolved = %skill.metadata.id,
+                                "skill load fuzzy-resolved"
+                            );
+                            Ok(ToolOutput::success(serde_json::json!({
+                                "id": skill.metadata.id,
+                                "name": skill.metadata.name,
+                                "guide": skill.body,
+                                // Surface that the id was fuzzy-matched, not exact.
+                                "resolved_from": id,
+                            })))
+                        } else {
+                            // Structured candidates (mirror the CLI `suggestion`/`n`
+                            // field) so the caller can pick — not just a text hint.
+                            let ids: Vec<String> = candidates
+                                .iter()
+                                .take(5)
+                                .map(|(s, _)| s.metadata.id.clone())
+                                .collect();
+                            let cands: Vec<serde_json::Value> = candidates
+                                .iter()
+                                .take(5)
+                                .map(|(s, sc)| {
+                                    serde_json::json!({
+                                        "id": s.metadata.id,
+                                        "name": s.metadata.name,
+                                        "relevance": format!("{:.1}", sc),
+                                    })
+                                })
+                                .collect();
+                            let msg = if ids.is_empty() {
+                                format!(
+                                    "Skill '{}' not found. No close match — use action='search' \
+                                     to find skills, or action='load' with an exact ID.",
+                                    id
+                                )
+                            } else {
+                                format!(
+                                    "Skill '{}' not found. Did you mean: {}?",
+                                    id,
+                                    ids.join(", ")
+                                )
+                            };
+                            Ok(ToolOutput::error_with_metadata(
+                                msg,
+                                serde_json::json!({
+                                    "requested_id": id,
+                                    "candidates": cands,
+                                    "hint": "Use action='load' with one of these exact IDs.",
+                                }),
+                            ))
                         }
-                        Ok(ToolOutput::error(msg))
                     }
                 }
             }
@@ -385,5 +474,83 @@ mod tests {
              skills/registry.rs (include_str!) AND skill_tool.rs description().",
             registry_ids, listed_ids
         );
+    }
+
+    /// Build a SkillTool over the builtin skills (no user skills / data dir).
+    fn builtin_tool() -> SkillTool {
+        let registry = SkillRegistry::load_all(None);
+        SkillTool::new(Arc::new(RwLock::new(registry)))
+    }
+
+    #[tokio::test]
+    async fn test_load_exact_id() {
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "load", "id": "dashboard-management"}))
+            .await
+            .unwrap();
+        assert!(out.success);
+        assert_eq!(out.data["id"], "dashboard-management");
+        // Exact match must not set resolved_from.
+        assert!(out.data.get("resolved_from").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_load_fuzzy_resolves_partial_id() {
+        // "dashboard" is not an exact id, but uniquely resolves to dashboard-management.
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "load", "id": "dashboard"}))
+            .await
+            .unwrap();
+        assert!(
+            out.success,
+            "fuzzy load should auto-resolve: {:?}",
+            out.error
+        );
+        assert_eq!(out.data["id"], "dashboard-management");
+        assert_eq!(out.data["resolved_from"], "dashboard");
+        assert!(!out.data["guide"].as_str().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_load_fuzzy_ambiguous_returns_candidates() {
+        // "management" matches multiple *-management skills — must NOT auto-pick.
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "load", "id": "management"}))
+            .await
+            .unwrap();
+        assert!(!out.success);
+        assert!(out.error.as_ref().unwrap().contains("Did you mean"));
+        // Structured candidates are present and there are several.
+        let cands = out.data["candidates"].as_array().unwrap();
+        assert!(
+            cands.len() > 1,
+            "expected multiple candidates, got {:?}",
+            cands
+        );
+        // Every returned candidate must be a *-management skill (the only thing
+        // "management" matches). Exact member depends on HashMap iteration order
+        // since all tie at the same score, so don't pin a specific id.
+        assert!(
+            cands
+                .iter()
+                .all(|c| c["id"].as_str().unwrap().contains("management")),
+            "candidates should all be *-management skills, got {:?}",
+            cands
+        );
+    }
+
+    #[tokio::test]
+    async fn test_load_no_match() {
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "load", "id": "zzz-not-a-skill"}))
+            .await
+            .unwrap();
+        assert!(!out.success);
+        let cands = out.data["candidates"].as_array().unwrap();
+        assert!(cands.is_empty());
     }
 }

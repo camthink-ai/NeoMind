@@ -255,7 +255,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                       )}
                       onClick={() => startTransition(() => navigate(item.path))}
                     >
-                      <Icon className={cn("h-5 w-5", isActive && "brand-icon-stroke")} />
+                      <Icon className={cn("h-5 w-5", isActive && "dark:brand-icon-stroke")} />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-xs px-2 py-1">

@@ -516,6 +516,14 @@ impl AgentExecutor {
         );
         let mut messages = tool_prompt::build_tool_messages(&system_prompt, data_collected);
 
+        // The bound device image is injected into the multimodal user message
+        // above, so the LLM SEES it — but it cannot reproduce the base64 to
+        // pass it to an extension tool (YOLO / grounding). Seed the per-execution
+        // LargeDataCache with the real image so `resolve_cached_arguments`
+        // auto-injects it into image-shaped tool args instead of the LLM's
+        // truncated fragment (task #50: extensions returned `null`).
+        let bound_image = tool_prompt::bound_image_data_url(data_collected);
+
         let mut loop_output = self
             .run_tool_loop(
                 agent,
@@ -526,6 +534,7 @@ impl AgentExecutor {
                 execution_id,
                 tool_config.max_rounds,
                 &tool_name_map,
+                bound_image.as_deref(),
             )
             .await;
 

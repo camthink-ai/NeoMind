@@ -1,4 +1,5 @@
 import { Card, CardContent } from "@/components/ui/card"
+import { interactiveCardHover } from "@/design-system/tokens/size"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -59,8 +60,8 @@ export function ExtensionCard({
       onClick={() => onDetails?.()}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDetails?.() } }}
       className={cn(
-        "group h-full transition-all duration-200 overflow-hidden flex flex-col cursor-pointer",
-        "hover:shadow-md hover:-translate-y-0.5",
+        "group h-full overflow-hidden flex flex-col cursor-pointer",
+        interactiveCardHover,
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
       )}
     >

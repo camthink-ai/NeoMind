@@ -54,17 +54,6 @@ export function ConnectionStatus({ state, className, onManualReconnect }: Connec
       {info.icon}
       <span>{info.text}</span>
 
-      {/* Show retry count and countdown when reconnecting */}
-      {state.status === 'reconnecting' && state.retryCount && state.retryCount > 0 && (
-        <span className="text-xs opacity-75">
-          ({t('connection.retryProgress', {
-            retry: state.retryCount,
-            max: 10,
-            seconds: state.nextRetryIn !== undefined ? t('connection.retrySeconds', { seconds: state.nextRetryIn }) : ''
-          })})
-        </span>
-      )}
-
       {/* Show manual reconnect button when max retries reached */}
       {state.status === 'error' && onManualReconnect && (
         <Button

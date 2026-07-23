@@ -435,6 +435,82 @@ pub(crate) fn build_free_resource_section(
     section
 }
 
+/// Clean + validate a collected image's base64 payload into standard
+/// base64 + mime. Returns `None` when absent or undecodable. Shared by
+/// `build_tool_messages` (multimodal vision part) and `bound_image_data_url`
+/// (cache seed for image-aware tool auto-inject), so the two paths can never
+/// diverge on how device images are normalized.
+fn clean_collected_image_base64(d: &DataCollected) -> Option<(String, String)> {
+    let base64 = d.values.get("image_base64")?.as_str()?;
+    if base64.is_empty() {
+        return None;
+    }
+    // Prefer stored mime → fall back to magic-prefix inference → jpeg.
+    let mime = d
+        .values
+        .get("image_mime_type")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            crate::image_utils::infer_mime_from_base64_prefix(base64).map(|s| s.to_string())
+        })
+        .unwrap_or_else(|| "image/jpeg".to_string());
+    // Clean base64: handle URL-safe chars, strip whitespace, fix padding.
+    let cleaned: String = base64
+        .chars()
+        .filter_map(|c| match c {
+            '-' => Some('+'),
+            '_' => Some('/'),
+            c if c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' => Some(c),
+            _ => None, // skip whitespace/newlines
+        })
+        .collect();
+    let padded_len = (cleaned.len() + 3) & !3;
+    let padded = if cleaned.len() < padded_len {
+        let mut s = cleaned;
+        while s.len() < padded_len {
+            s.push('=');
+        }
+        s
+    } else {
+        cleaned
+    };
+    // Decode + re-encode to guarantee clean standard base64.
+    match base64::engine::general_purpose::STANDARD.decode(&padded) {
+        Ok(bytes) => {
+            let clean = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            Some((clean, mime))
+        }
+        Err(e) => {
+            tracing::warn!(
+                source = %d.source,
+                len = base64.len(),
+                error = %e,
+                "Invalid base64 image data in collected data, skipping"
+            );
+            None
+        }
+    }
+}
+
+/// Build a `data:image/<mime>;base64,<...>` URL for the first bound device
+/// image in `data_collected`. Used to seed the per-execution `LargeDataCache`
+/// (`LargeDataCache::seed_bound_image`) so image-aware tool calls — including
+/// extension tools (YOLO / grounding) whose `image` arg the LLM cannot fill
+/// with real bytes — receive the FULL image via `resolve_cached_arguments`
+/// instead of the LLM's truncated base64 fragment. Returns `None` when there
+/// is no bound image or its base64 is undecodable.
+pub(crate) fn bound_image_data_url(data_collected: &[DataCollected]) -> Option<String> {
+    let d = data_collected.iter().find(|d| {
+        d.values
+            .get("_is_image")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    })?;
+    let (b64, mime) = clean_collected_image_base64(d)?;
+    Some(format!("data:{};base64,{}", mime, b64))
+}
+
 /// Build initial messages (system + user) with multimodal image support.
 pub(crate) fn build_tool_messages(
     system_prompt: &str,
@@ -450,66 +526,14 @@ pub(crate) fn build_tool_messages(
                 .unwrap_or(false)
         })
         .filter_map(|d| {
+            // HTTP(S) image URL form → pass through as an image_url part.
             if let Some(url) = d.values.get("image_url").and_then(|v| v.as_str()) {
                 if !url.is_empty() {
                     return Some(ContentPart::image_url(url.to_string()));
                 }
             }
-            if let Some(base64) = d.values.get("image_base64").and_then(|v| v.as_str()) {
-                if !base64.is_empty() {
-                    // Prefer stored mime → fall back to magic-prefix
-                    // inference → final jpeg fallback.
-                    let mime = d
-                        .values
-                        .get("image_mime_type")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .or_else(|| {
-                            crate::image_utils::infer_mime_from_base64_prefix(base64)
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_else(|| "image/jpeg".to_string());
-                    // Clean base64: handle URL-safe chars, strip whitespace, fix padding
-                    let cleaned: String = base64
-                        .chars()
-                        .filter_map(|c| match c {
-                            '-' => Some('+'),
-                            '_' => Some('/'),
-                            c if c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' => {
-                                Some(c)
-                            }
-                            _ => None, // skip whitespace/newlines
-                        })
-                        .collect();
-                    let padded_len = (cleaned.len() + 3) & !3;
-                    let padded = if cleaned.len() < padded_len {
-                        let mut s = cleaned;
-                        while s.len() < padded_len {
-                            s.push('=');
-                        }
-                        s
-                    } else {
-                        cleaned
-                    };
-                    // Decode + re-encode to guarantee clean standard base64
-                    match base64::engine::general_purpose::STANDARD.decode(&padded) {
-                        Ok(bytes) => {
-                            let clean = base64::engine::general_purpose::STANDARD.encode(&bytes);
-                            return Some(ContentPart::image_base64(clean, mime));
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                source = %d.source,
-                                len = base64.len(),
-                                error = %e,
-                                "Invalid base64 image data in build_tool_messages, skipping"
-                            );
-                            return None;
-                        }
-                    }
-                }
-            }
-            None
+            // base64 form → clean + validate (shared with bound_image_data_url).
+            clean_collected_image_base64(d).map(|(b64, mime)| ContentPart::image_base64(b64, mime))
         })
         .collect();
 
@@ -530,4 +554,72 @@ pub(crate) fn build_tool_messages(
         Message::new(MessageRole::System, Content::text(system_prompt)),
         user_msg,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use neomind_storage::DataCollected;
+
+    /// `bound_image_data_url` must turn a collected device image (base64 form)
+    /// into a `data:image/<mime>;base64,<...>` URL whose payload round-trips
+    /// to the original bytes. This URL seeds the per-execution LargeDataCache
+    /// so image-aware tool calls — incl. extensions — receive the real image
+    /// instead of the LLM's truncated fragment (task #50).
+    #[test]
+    fn bound_image_data_url_round_trips_collected_image() {
+        let raw: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        let dc = DataCollected {
+            source: "device:cam1:values.image".to_string(),
+            data_type: "image".to_string(),
+            values: serde_json::json!({
+                "_is_image": true,
+                "image_base64": b64,
+                "image_mime_type": "image/png",
+            }),
+            timestamp: 0,
+        };
+        let url = bound_image_data_url(&[dc]).expect("bound image present");
+        assert!(
+            url.starts_with("data:image/png;base64,"),
+            "expected data URL, got: {}",
+            url
+        );
+        let payload = url.strip_prefix("data:image/png;base64,").unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(payload)
+            .expect("payload decodes");
+        assert_eq!(decoded, raw, "cleaned base64 must round-trip to original bytes");
+    }
+
+    /// Non-image collected data must yield no bound image URL.
+    #[test]
+    fn bound_image_data_url_none_when_no_image() {
+        let dc = DataCollected {
+            source: "device:temp".to_string(),
+            data_type: "metric".to_string(),
+            values: serde_json::json!({"value": 23.5}),
+            timestamp: 0,
+        };
+        assert!(bound_image_data_url(&[dc]).is_none());
+    }
+
+    /// A collected image whose base64 is undecodable must not yield a URL
+    /// (avoids seeding garbage into the cache).
+    #[test]
+    fn bound_image_data_url_none_when_base64_invalid() {
+        let dc = DataCollected {
+            source: "device:cam1:values.image".to_string(),
+            data_type: "image".to_string(),
+            values: serde_json::json!({
+                "_is_image": true,
+                "image_base64": "!!!not-base64!!!",
+                "image_mime_type": "image/jpeg",
+            }),
+            timestamp: 0,
+        };
+        assert!(bound_image_data_url(&[dc]).is_none());
+    }
 }

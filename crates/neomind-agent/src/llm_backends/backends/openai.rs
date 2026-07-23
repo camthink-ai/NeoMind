@@ -593,6 +593,25 @@ impl CloudRuntime {
             self.config.provider.chat_path()
         );
 
+        // === SFT trace hook ===
+        // When NEOMIND_TRACE_DIR is set, dump the full Anthropic request
+        // (system prompt + messages + tools) the LLM actually received, so
+        // SFT training data can be reconstructed with exact input fidelity.
+        // Zero overhead when the env var is unset. See memory: minicpm5-neomind-baseline.
+        if let Ok(dir) = std::env::var("NEOMIND_TRACE_DIR") {
+            if let Ok(json) = serde_json::to_string(&request) {
+                let path = std::path::Path::new(&dir).join("anthropic_trace.jsonl");
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{}", json);
+                }
+            }
+        }
+
         (request, url)
     }
 

@@ -27,6 +27,7 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { formatTimestamp } from "@/lib/utils/format"
+import { interactiveCard } from "@/design-system/tokens/size"
 import type { AiAgent } from "@/types"
 
 interface AgentCardProps {
@@ -91,8 +92,8 @@ export function AgentCard({
   return (
     <div
       className={cn(
-        "group relative bg-card rounded-lg border transition-all cursor-pointer p-4 h-full",
-        "hover:shadow-md hover:-translate-y-0.5"
+        "group relative p-4 h-full",
+        interactiveCard,
       )}
       onClick={onClick}
     >

@@ -22,6 +22,7 @@
     "moreOptions": "More options",
     "newChat": "New chat",
     "startNewConversation": "Start typing to chat with AI assistant",
+    "fallbackHelpPrompt": "What can you do?",
     "skills": "Skills",
     "selectSkills": "Select skills",
     "noSkills": "No skills available",

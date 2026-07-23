@@ -3,7 +3,17 @@
 use super::registry::SkillRegistry;
 use super::types::*;
 
-/// Score a single skill against user input.
+/// Score a skill for **automatic system-prompt injection** (`match_skills`).
+///
+/// Deliberately a DIFFERENT signal set from
+/// `toolkit::skill_tool::SkillTool::score_skill_query` (the `search`/`load` tool
+/// actions) — do NOT merge the two. This scorer weights `tool_target` +
+/// `anti_triggers` + `priority`: auto-injection must AVOID loading a skill in
+/// the wrong scenario (e.g. exclude the "delete/update rule" skill when the
+/// user wants to *create* a rule, via the `anti_triggers` −1.0). The
+/// tool-action scorer is id/name/keyword-centric — when the model actively
+/// loads a skill it already knows the domain and needs fuzzy id resolution,
+/// not anti-trigger exclusion.
 fn score_skill(skill: &Skill, user_input: &str) -> f32 {
     let input_lower = user_input.to_lowercase();
     let mut score: f32 = 0.0;

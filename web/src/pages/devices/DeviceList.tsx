@@ -7,6 +7,7 @@ import { ResponsiveTable, StatusBadge, EmptyState } from "@/components/shared"
 import { DeviceStatusBadge } from "@/components/shared/DeviceStatusBadge"
 import { Eye, MoreVertical, Trash2, Cpu, Database, Waves, Pencil } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { interactiveCardHover } from "@/design-system/tokens/size"
 import { textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import type { Device } from "@/types"
@@ -92,7 +93,10 @@ export function DeviceList({
             return (
               <Card
                 key={device.id}
-                className="overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99] hover:shadow-md hover:-translate-y-0.5 transition-all duration-200"
+                className={cn(
+                  "overflow-hidden border-border shadow-sm cursor-pointer active:scale-[0.99]",
+                  interactiveCardHover,
+                )}
                 onClick={() => onViewDetails(device)}
               >
                 <div className="px-3 py-2.5">
