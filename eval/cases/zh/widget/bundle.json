@@ -1,0 +1,27 @@
+{
+  "id": "widget-bundle",
+  "lang": "zh",
+  "category": "widget",
+  "workflow": "widget-management",
+  "scenario_type": "single_turn",
+  "description": "Bundle a widget for distribution (covers `neomind widget bundle`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为 wg-bundle 的 widget,然后把它打包以便分发。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Bundle a widget for distribution (covers `neomind widget bundle`)"
+    ],
+    "overall": "Bundle a widget for distribution (covers `neomind widget bundle`)"
+  }
+}

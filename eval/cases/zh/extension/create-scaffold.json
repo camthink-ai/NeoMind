@@ -1,0 +1,27 @@
+{
+  "id": "extension-create-scaffold",
+  "lang": "zh",
+  "category": "extension",
+  "workflow": "extension-management",
+  "scenario_type": "single_turn",
+  "description": "Scaffold a new extension (covers `neomind extension create`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为 my-ext 的扩展脚手架。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Scaffold a new extension (covers `neomind extension create`)"
+    ],
+    "overall": "Scaffold a new extension (covers `neomind extension create`)"
+  }
+}

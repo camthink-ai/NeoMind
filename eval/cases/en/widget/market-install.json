@@ -1,0 +1,27 @@
+{
+  "id": "widget-market-install",
+  "lang": "en",
+  "category": "widget",
+  "workflow": "widget-management",
+  "scenario_type": "single_turn",
+  "description": "Install a widget from the market (covers `neomind widget market-install`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Install the gauge widget from the community market."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Install a widget from the market (covers `neomind widget market-install`)"
+    ],
+    "overall": "Install a widget from the market (covers `neomind widget market-install`)"
+  }
+}

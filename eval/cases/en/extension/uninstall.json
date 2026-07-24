@@ -1,0 +1,27 @@
+{
+  "id": "extension-uninstall",
+  "lang": "en",
+  "category": "extension",
+  "workflow": "extension-management",
+  "scenario_type": "single_turn",
+  "description": "Uninstall an extension (covers `neomind extension uninstall`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Uninstall the weather extension."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Uninstall an extension (covers `neomind extension uninstall`)"
+    ],
+    "overall": "Uninstall an extension (covers `neomind extension uninstall`)"
+  }
+}

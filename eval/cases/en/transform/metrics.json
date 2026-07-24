@@ -1,0 +1,34 @@
+{
+  "id": "transform-metrics",
+  "lang": "en",
+  "category": "transform",
+  "workflow": "transform-management",
+  "scenario_type": "single_turn",
+  "description": "Create a transform then list its output metrics (covers `neomind transform metrics`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a transform named tf-out that converts sensor-001 temperature to fahrenheit, then list its output metrics."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a transform then list its output metrics (covers `neomind transform metrics`)"
+    ],
+    "overall": "Create a transform then list its output metrics (covers `neomind transform metrics`)"
+  },
+  "state_queries": [
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

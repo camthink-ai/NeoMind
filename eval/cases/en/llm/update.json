@@ -1,0 +1,27 @@
+{
+  "id": "llm-update",
+  "lang": "en",
+  "category": "llm",
+  "workflow": "llm-management",
+  "scenario_type": "single_turn",
+  "description": "Update an LLM backend (covers `neomind llm update`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Update the active LLM backend's display name to 'primary'."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Update an LLM backend (covers `neomind llm update`)"
+    ],
+    "overall": "Update an LLM backend (covers `neomind llm update`)"
+  }
+}

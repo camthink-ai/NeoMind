@@ -1,0 +1,27 @@
+{
+  "id": "extension-build",
+  "lang": "en",
+  "category": "extension",
+  "workflow": "extension-management",
+  "scenario_type": "single_turn",
+  "description": "Build an extension (covers `neomind extension build`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Build the my-ext extension into a .nep package."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Build an extension (covers `neomind extension build`)"
+    ],
+    "overall": "Build an extension (covers `neomind extension build`)"
+  }
+}

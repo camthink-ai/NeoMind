@@ -1,0 +1,27 @@
+{
+  "id": "message-channel-type-schema",
+  "lang": "zh",
+  "category": "message",
+  "workflow": "message-management",
+  "scenario_type": "single_turn",
+  "description": "Show a channel type's config schema (covers `neomind message channel-type-schema`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "展示 webhook 通道类型的配置 schema。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Show a channel type's config schema (covers `neomind message channel-type-schema`)"
+    ],
+    "overall": "Show a channel type's config schema (covers `neomind message channel-type-schema`)"
+  }
+}

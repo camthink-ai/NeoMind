@@ -1,0 +1,36 @@
+{
+  "id": "device-create-explicit-id",
+  "lang": "en",
+  "category": "device",
+  "workflow": "device-management",
+  "scenario_type": "single_turn",
+  "description": "Create a device with an EXPLICIT id (fixes the create-camera case bug; covers `neomind device create --id`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Add a new device. Set its id to cam-lobby, name it 'Lobby Camera', device type ne101_camera, connect via MQTT."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a device with an EXPLICIT id (fixes the create-camera case bug; covers `neomind device create --id`)"
+    ],
+    "overall": "Create a device with an EXPLICIT id (fixes the create-camera case bug; covers `neomind device create --id`)"
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": {
+        "id": "cam-lobby"
+      },
+      "expected": true
+    }
+  ]
+}

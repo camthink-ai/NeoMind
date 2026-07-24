@@ -1,0 +1,34 @@
+{
+  "id": "transform-disable",
+  "lang": "zh",
+  "category": "transform",
+  "workflow": "transform-management",
+  "scenario_type": "single_turn",
+  "description": "Create a transform then disable it (covers `neomind transform disable`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为 tf-fast 的 transform 处理 sensor-001 的温度,然后禁用它。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a transform then disable it (covers `neomind transform disable`)"
+    ],
+    "overall": "Create a transform then disable it (covers `neomind transform disable`)"
+  },
+  "state_queries": [
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

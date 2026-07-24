@@ -1,0 +1,27 @@
+{
+  "id": "llm-delete",
+  "lang": "en",
+  "category": "llm",
+  "workflow": "llm-management",
+  "scenario_type": "single_turn",
+  "description": "Delete an LLM backend (covers `neomind llm delete`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Delete the LLM backend named 'old-backend'."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Delete an LLM backend (covers `neomind llm delete`)"
+    ],
+    "overall": "Delete an LLM backend (covers `neomind llm delete`)"
+  }
+}

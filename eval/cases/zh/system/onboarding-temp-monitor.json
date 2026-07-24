@@ -1,0 +1,50 @@
+{
+  "id": "onboarding-temp-monitor",
+  "lang": "zh",
+  "category": "system",
+  "workflow": "onboarding",
+  "scenario_type": "single_turn",
+  "description": "End-to-end: create device + rule + dashboard for a temperature monitor (multi-step cross-domain)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "为一个新摄像头搭建温度监控:新增设备 temp-cam(ne101_camera,MQTT),创建规则「temp-high」在 temp-cam 的 values.temperature > 35 时通知,再创建看板「温度总览」展示 temp-cam 的温度。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: End-to-end: create device + rule + dashboard for a temperature monitor (multi-step cross-domain)"
+    ],
+    "overall": "End-to-end: create device + rule + dashboard for a temperature monitor (multi-step cross-domain)"
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": {
+        "id": "temp-cam"
+      },
+      "expected": true
+    },
+    {
+      "type": "rule_exists",
+      "params": {
+        "id": "temp-high"
+      },
+      "expected": true
+    },
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "id": "Temp Overview"
+      },
+      "expected": true
+    }
+  ]
+}

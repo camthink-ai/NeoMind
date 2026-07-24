@@ -1,0 +1,27 @@
+{
+  "id": "extension-market-install",
+  "lang": "zh",
+  "category": "extension",
+  "workflow": "extension-management",
+  "scenario_type": "single_turn",
+  "description": "Install an extension from the market (covers `neomind extension market-install`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "从官方市场安装 ocr 扩展。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Install an extension from the market (covers `neomind extension market-install`)"
+    ],
+    "overall": "Install an extension from the market (covers `neomind extension market-install`)"
+  }
+}

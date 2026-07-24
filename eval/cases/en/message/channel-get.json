@@ -1,0 +1,36 @@
+{
+  "id": "message-channel-get",
+  "lang": "en",
+  "category": "message",
+  "workflow": "message-management",
+  "scenario_type": "single_turn",
+  "description": "Create a webhook channel then read its detail (covers `neomind message channel-get`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a webhook channel named wh-1, then show its configuration details."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a webhook channel then read its detail (covers `neomind message channel-get`)"
+    ],
+    "overall": "Create a webhook channel then read its detail (covers `neomind message channel-get`)"
+  },
+  "state_queries": [
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "wh-1"
+      },
+      "expected": true
+    }
+  ]
+}

@@ -187,7 +187,7 @@ def run_case(case_path: str) -> dict:
     srv = server.TestServer()
     try:
         try:
-            srv.spawn()
+            srv.spawn(case_id=case.get("id"))
         except Exception as e:
             return _error_record(case, "seed_failure", f"spawn failed: {e}")
 
@@ -214,7 +214,8 @@ def run_case(case_path: str) -> dict:
         for turn in case.get("turns", []):
             t0 = time.monotonic()
             try:
-                resp = srv.chat(sid, turn["user"])
+                resp = srv.chat(sid, turn["user"],
+                                images=turn.get("images") or case.get("images"))
             except Exception as e:
                 # Record the turn we have so far, then bail with timeout-style
                 # status so the judge can mark it as agent error.

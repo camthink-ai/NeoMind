@@ -649,7 +649,7 @@ impl CloudRuntime {
             None
         };
 
-        ChatCompletionRequest {
+        let request = ChatCompletionRequest {
             model,
             messages: self.messages_to_api(&input.messages),
             temperature: input.params.temperature,
@@ -670,7 +670,33 @@ impl CloudRuntime {
                 None
             },
             enable_thinking,
+        };
+
+        // === SFT trace hook (OpenAI-compatible path) ===
+        // Mirror of `build_anthropic_request`: when NEOMIND_TRACE_DIR is set,
+        // dump the full ChatCompletionRequest the LLM received so SFT training
+        // data can be reconstructed for OpenAI-compatible backends too. The
+        // system prompt rides as `messages[0]` (role "system") on this path —
+        // distinct from Anthropic's top-level `system` field. Written to a
+        // SEPARATE file (`openai_trace.jsonl`) so teacher (Anthropic = golden
+        // traces) and student (e.g. MiniCPM5 served via llama.cpp's /v1)
+        // never collide. Zero overhead when the env var is unset.
+        // See memory: minicpm5-neomind-baseline.
+        if let Ok(dir) = std::env::var("NEOMIND_TRACE_DIR") {
+            if let Ok(json) = serde_json::to_string(&request) {
+                let path = std::path::Path::new(&dir).join("openai_trace.jsonl");
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{}", json);
+                }
+            }
         }
+
+        request
     }
 
     /// OpenAI-compatible non-streaming generation path.
@@ -2463,6 +2489,73 @@ mod tests {
                 .map(|v| v.is_null())
                 .unwrap_or(true),
             "non-Qwen providers must not receive enable_thinking field"
+        );
+    }
+
+    /// SFT contract — OpenAI-compatible path. The `openai_trace.jsonl` hook
+    /// dumps the ChatCompletionRequest; the system prompt MUST survive as
+    /// `messages[0]` (role "system"). Without it, student traces (MiniCPM5
+    /// via llama.cpp's /v1 endpoint) can't be used to diagnose why the model
+    /// grabs file_write/skill/memory instead of shell. See memory:
+    /// minicpm5-neomind-baseline.
+    #[test]
+    fn openai_request_carries_system_prompt_as_message_for_sft() {
+        let runtime =
+            CloudRuntime::new(CloudConfig::openai("sk-test").with_model("gpt-test"))
+                .expect("runtime builds");
+
+        let input = LlmInput {
+            messages: vec![
+                Message::new(MessageRole::System, Content::text("You are NeoMind.")),
+                Message::new(MessageRole::User, Content::text("hi")),
+            ],
+            params: GenerationParams::default(),
+            model: None,
+            stream: false,
+            tools: None,
+        };
+
+        let request = runtime.build_chat_request(input, false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        let msgs = json["messages"].as_array().expect("messages array");
+        assert!(!msgs.is_empty(), "messages must not be empty");
+        assert_eq!(msgs[0]["role"], "system", "system prompt must be messages[0]");
+        assert_eq!(msgs[0]["content"], "You are NeoMind.");
+    }
+
+    /// SFT contract — Anthropic path (= golden teacher traces). The
+    /// `anthropic_trace.jsonl` hook dumps the AnthropicRequest; the system
+    /// prompt MUST survive serialization as a top-level `system` field. This
+    /// is the entire reason the hook exists — history previously stored zero
+    /// system messages, so SFT data had no prompt to train against.
+    /// See memory: minicpm5-neomind-baseline.
+    #[test]
+    fn anthropic_request_carries_system_prompt_as_field_for_sft() {
+        let runtime = CloudRuntime::new(
+            CloudConfig::anthropic("sk-test").with_model("claude-test"),
+        )
+        .expect("runtime builds");
+
+        let input = LlmInput {
+            messages: vec![
+                Message::new(
+                    MessageRole::System,
+                    Content::text("You are NeoMind. Use the shell tool."),
+                ),
+                Message::new(MessageRole::User, Content::text("create a device")),
+            ],
+            params: GenerationParams::default(),
+            model: None,
+            stream: false,
+            tools: None,
+        };
+
+        let (request, _url) = runtime.build_anthropic_request(&input, false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(
+            json["system"].as_str().unwrap(),
+            "You are NeoMind. Use the shell tool.",
+            "Anthropic trace must carry the system prompt as a top-level field"
         );
     }
 }

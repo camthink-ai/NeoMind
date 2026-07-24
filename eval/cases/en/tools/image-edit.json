@@ -1,0 +1,30 @@
+{
+  "id": "tools-image-edit",
+  "lang": "en",
+  "category": "tools",
+  "workflow": "tool-use",
+  "scenario_type": "single_turn",
+  "description": "Exercise the image_edit tool with a real attached image (covers the only agent tool with zero golden demos; needs multimodal input the text-only cases can't provide)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Use the image_edit tool to crop the attached image down to the center 16x16 square, then tell me the result."
+    }
+  ],
+  "images": [
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR42mOwqThBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULAPgC8ExV99tHAAAAAElFTkSuQmCC"
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Agent calls the image_edit tool on the attached image (crop operation)"
+    ],
+    "overall": "image_edit must be invoked on the provided image"
+  }
+}

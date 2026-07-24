@@ -1,0 +1,27 @@
+{
+  "id": "device-webhook-url",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "device-management",
+  "scenario_type": "single_turn",
+  "description": "Read a device's webhook ingest URL (covers `neomind device webhook-url`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "设备 sensor-001 的 webhook 上行采集地址是什么?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Read a device's webhook ingest URL (covers `neomind device webhook-url`)"
+    ],
+    "overall": "Read a device's webhook ingest URL (covers `neomind device webhook-url`)"
+  }
+}

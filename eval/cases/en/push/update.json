@@ -1,0 +1,27 @@
+{
+  "id": "push-update",
+  "lang": "en",
+  "category": "push",
+  "workflow": "push-management",
+  "scenario_type": "single_turn",
+  "description": "Create a push config then update it (covers `neomind push update`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a data-push config named push-2, then update its target endpoint to https://example.com/hook."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a push config then update it (covers `neomind push update`)"
+    ],
+    "overall": "Create a push config then update it (covers `neomind push update`)"
+  }
+}
