@@ -1458,34 +1458,6 @@ html {
   }
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
-   View Transitions — cross-fade for in-app page switches. App.tsx wraps route
-   changes in document.startViewTransition(); the UA default is already a
-   cross-fade, we just pin it to the design-system duration. The global
-   prefers-reduced-motion `*` rule does NOT reach ::view-transition
-   pseudo-elements, so they are silenced explicitly here. ─────────────────── */
-/* Fixed chrome (TopNav, aurora bg) stays put — only #main-content cross-fades.
-   root animation:none freezes everything outside page-content; page-content
-   gets the tokenized cross-fade. This is what keeps the nav from flickering
-   on route change. */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-}
-::view-transition-old(page-content),
-::view-transition-new(page-content) {
-  animation-duration: var(--duration-normal);
-  animation-timing-function: var(--ease-out);
-}
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-old(root),
-  ::view-transition-new(root),
-  ::view-transition-old(page-content),
-  ::view-transition-new(page-content) {
-    animation: none !important;
-  }
-}
-
 /* Tabular numerals app-wide — IoT/data app: device IDs, telemetry values,
    timestamps align in columns without digit-width jitter (1 vs 7 vs 0 no
    longer shift width). Linear-style default; override with the
