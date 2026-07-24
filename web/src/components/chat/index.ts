@@ -1,4 +1,3 @@
-export { SessionSidebar } from './SessionSidebar'
 export { MarkdownMessage } from './MarkdownMessage'
 export { ConnectionStatus } from './ConnectionStatus'
 export { ThinkingBlock } from './ThinkingBlock'

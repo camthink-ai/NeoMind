@@ -1606,10 +1606,14 @@ export const api = {
    * Execute a command on an extension (legacy endpoint)
    * POST /api/extensions/:id/command
    */
-  executeExtensionCommand: (id: string, command: string, args?: Record<string, unknown>) =>
+  executeExtensionCommand: (id: string, command: string, args?: Record<string, unknown>, opts?: { skipErrorToast?: boolean }) =>
     fetchAPI<Record<string, unknown>>(`/extensions/${id}/command`, {
       method: 'POST',
       body: JSON.stringify({ command, args }),
+      // Background fetches (e.g. dashboard auto-refresh) may invoke commands that
+      // fail legitimately (required param not yet configured). Suppress the global
+      // error toast there — callers already fall back to queryData/empty data.
+      skipErrorToast: opts?.skipErrorToast,
     }),
 
   /**
