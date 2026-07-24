@@ -190,7 +190,7 @@ export interface ExtensionStreamResult {
 }
 
 /**
- * Options for useExtensionStream hook
+ * Options for extension stream hooks (formerly consumed by useExtensionStream).
  */
 export interface UseExtensionStreamOptions {
   /**

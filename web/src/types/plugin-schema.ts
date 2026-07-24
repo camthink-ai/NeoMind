@@ -484,7 +484,7 @@ export const COMMON_FIELDS = {
 // ============================================================================
 
 /**
- * Check if a field type is supported by the SchemaConfigForm
+ * Check if a field type is supported by the schema config form
  */
 export function isFieldTypeSupported(type: FieldType): boolean {
   const supportedTypes: FieldType[] = [

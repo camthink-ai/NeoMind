@@ -148,7 +148,10 @@ export function useExtensionSource(
 
                 if (command !== 'produce' && !needsTimeRange) {
                   try {
-                    const result = await api.executeExtensionCommand(extensionId, command, {})
+                    // skipErrorToast: this is a background pull for dashboard data; a command
+                    // with unmet required params (e.g. get_weather w/o a default city) should
+                    // not spam the user — fall through to queryData silently (catch below).
+                    const result = await api.executeExtensionCommand(extensionId, command, {}, { skipErrorToast: true })
                     const resultData = (result as Record<string, unknown>).result ?? result
 
                     if (field === 'result') return { data: resultData, success: true }
@@ -192,7 +195,7 @@ export function useExtensionSource(
                 // (some extensions don't store in time-series DB but respond to commands)
                 if (command !== 'produce') {
                   try {
-                    const cmdResult = await api.executeExtensionCommand(extensionId, command, {})
+                    const cmdResult = await api.executeExtensionCommand(extensionId, command, {}, { skipErrorToast: true })
                     const resultData = (cmdResult as Record<string, unknown>).result ?? cmdResult
                     if (field === 'result') return { data: resultData, success: true }
                     if (typeof resultData === 'object' && resultData !== null) {
