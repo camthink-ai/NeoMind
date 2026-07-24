@@ -35,6 +35,7 @@ fn code_block_obj_re() -> &'static Regex {
 /// 1. JSON array: `[{"id": "call_123", "name": "tool1", "arguments": {...}}]`
 /// 2. JSON object: `{"id": "call_123", "name": "tool_name", "arguments": {...}}`
 /// 3. XML (fallback): `<tool_calls><invoke name="tool_name">...</invoke></tool_calls>`
+/// 4. Hermes (fallback): `<function name="tool_name"><param name="key">value</param></function>`
 ///
 /// Returns the remaining text along with any parsed tool calls.
 pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
@@ -51,6 +52,14 @@ pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
 
     // === PRIORITY 3: XML format (fallback for models without native tool support) ===
     if let Some(result) = try_parse_xml(text) {
+        return result;
+    }
+
+    // === PRIORITY 4: Hermes format ===
+    // Fallback for Hermes-finetuned models (e.g. MiniCPM5-1B-Agentic-Tooluse) that
+    // write the tool call into the response text instead of producing structured
+    // `tool_calls`. Without this the call is shown to the user as plain text.
+    if let Some(result) = try_parse_hermes(text) {
         return result;
     }
 
@@ -223,6 +232,132 @@ fn try_parse_xml(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
     }
 
     Some(Ok((content.trim().to_string(), tool_calls)))
+}
+
+/// Try to parse Hermes-style tool calls emitted as *text* (rather than
+/// structured `tool_calls`) by Hermes-finetuned models such as
+/// MiniCPM5-1B-Agentic-Tooluse or Mistral-Nemo.
+///
+/// Format: `<function name="tool_name"><param name="key">value</param>...</function>`
+///
+/// Multiple sibling `<function>` blocks are treated as parallel tool calls. Any
+/// text outside the `<function>` spans is preserved as response content.
+fn try_parse_hermes(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
+    // Fast path: no function-call markers at all.
+    if !text.contains("<function") {
+        return None;
+    }
+
+    let mut tool_calls = Vec::new();
+    // Byte ranges of matched `<function>...</function>` spans, stripped from content.
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut cursor = 0usize;
+
+    while cursor < text.len() {
+        let Some(rel) = text[cursor..].find("<function") else {
+            break;
+        };
+        let func_start = cursor + rel;
+
+        // End of the opening tag `<function ...>`.
+        let Some(open_end_rel) = text[func_start..].find('>') else {
+            break;
+        };
+        let open_end = func_start + open_end_rel;
+
+        // Matching `</function>` closing this block.
+        let body_start = open_end + 1;
+        let Some(close_rel) = text[body_start..].find("</function>") else {
+            break;
+        };
+        let func_end = body_start + close_rel + "</function>".len();
+
+        let open_tag = &text[func_start..=open_end];
+        let body = &text[body_start..body_start + close_rel];
+
+        spans.push((func_start, func_end));
+
+        // A `<function>` without a name is unusable — drop the span from content
+        // but don't emit a tool call for it.
+        if let Some(name) = extract_xml_attr(open_tag, "name") {
+            tool_calls.push(ToolCall {
+                name,
+                id: Uuid::new_v4().to_string(),
+                arguments: Value::Object(parse_hermes_params(body)),
+                result: None,
+                round: None,
+            });
+        }
+
+        cursor = func_end;
+    }
+
+    if tool_calls.is_empty() {
+        return None;
+    }
+
+    // Rebuild content by removing every matched `<function>...</function>` span.
+    let mut content = String::with_capacity(text.len());
+    let mut prev = 0usize;
+    for (start, end) in &spans {
+        content.push_str(&text[prev..*start]);
+        prev = *end;
+    }
+    content.push_str(&text[prev..]);
+
+    Some(Ok((content.trim().to_string(), tool_calls)))
+}
+
+/// Extract the value of a `name="value"` style attribute from an XML/HTML-ish
+/// opening tag. Returns `None` when the attribute is absent.
+fn extract_xml_attr(tag: &str, attr: &str) -> Option<String> {
+    let needle = format!("{attr}=\"");
+    let start = tag.find(&needle)? + needle.len();
+    let rest = &tag[start..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// Parse every `<param name="key">value</param>` entry from a `<function>` body
+/// into a JSON object. Self-closing `<param name="key"/>` maps to an empty string.
+fn parse_hermes_params(body: &str) -> serde_json::Map<String, Value> {
+    let mut args = serde_json::Map::new();
+    let mut cursor = 0usize;
+
+    while cursor < body.len() {
+        let Some(rel) = body[cursor..].find("<param") else {
+            break;
+        };
+        let p_start = cursor + rel;
+
+        let Some(tag_end_rel) = body[p_start..].find('>') else {
+            break;
+        };
+        let tag_end = p_start + tag_end_rel;
+        let tag = &body[p_start..=tag_end];
+
+        let Some(name) = extract_xml_attr(tag, "name") else {
+            cursor = tag_end + 1;
+            continue;
+        };
+
+        if tag.trim_end().ends_with("/>") {
+            args.insert(name, Value::String(String::new()));
+            cursor = tag_end + 1;
+            continue;
+        }
+
+        let val_start = tag_end + 1;
+        if let Some(close_rel) = body[val_start..].find("</param>") {
+            let value = body[val_start..val_start + close_rel].trim().to_string();
+            args.insert(name, Value::String(value));
+            cursor = val_start + close_rel + "</param>".len();
+        } else {
+            cursor = tag_end + 1;
+        }
+    }
+
+    args
 }
 
 /// Parse a single <invoke> element from XML.
@@ -523,6 +658,86 @@ mod tests {
         assert_eq!(calls[0].name, "device.query");
         assert_eq!(calls[0].arguments["device_id"], "sensor1");
         // XML format generates UUID
+        assert!(!calls[0].id.is_empty());
+    }
+
+    #[test]
+    fn test_parse_hermes_function_format() {
+        // Hermes-style tool call, emitted as *text* by Hermes-finetuned models
+        // (e.g. MiniCPM5-1B-Agentic-Tooluse) when the model writes the call into
+        // content instead of producing structured `tool_calls`. Without a parser
+        // for this format the call is shown to the user as plain text.
+        let text = r#"<function name="get_weather_by_city_zone"><param name="city_zone">US</param></function>"#;
+        let (content, calls) = parse_tool_calls(text).unwrap();
+
+        assert!(
+            content.is_empty(),
+            "no leading prose → content should be empty, got: {content:?}"
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather_by_city_zone");
+        assert_eq!(calls[0].arguments["city_zone"], "US");
+        // Hermes text format carries no tool id → a UUID must be generated.
+        assert!(!calls[0].id.is_empty());
+    }
+
+    #[test]
+    fn test_parse_hermes_multiple_params() {
+        let text = r#"<function name="set_thermostat"><param name="device_id">living-room</param><param name="temperature">22</param><param name="unit">celsius</param></function>"#;
+        let (_content, calls) = parse_tool_calls(text).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "set_thermostat");
+        assert_eq!(calls[0].arguments["device_id"], "living-room");
+        assert_eq!(calls[0].arguments["temperature"], "22");
+        assert_eq!(calls[0].arguments["unit"], "celsius");
+    }
+
+    #[test]
+    fn test_parse_hermes_parallel_functions() {
+        // Two sibling <function> blocks = parallel tool calls.
+        let text = r#"<function name="get_weather"><param name="city">北京</param></function><function name="get_time"><param name="zone">UTC</param></function>"#;
+        let (_content, calls) = parse_tool_calls(text).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[0].arguments["city"], "北京"); // multibyte value
+        assert_eq!(calls[1].name, "get_time");
+        assert_eq!(calls[1].arguments["zone"], "UTC");
+    }
+
+    #[test]
+    fn test_parse_hermes_preserves_surrounding_text_and_trims_values() {
+        let text = "Let me check the weather.\n<function name=\"get_weather\"><param name=\"city\">  北京  </param></function>\nDone.";
+        let (content, calls) = parse_tool_calls(text).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_weather");
+        assert_eq!(calls[0].arguments["city"], "北京"); // value trimmed
+        assert!(
+            content.contains("Let me check the weather."),
+            "leading prose must survive as content, got: {content:?}"
+        );
+        assert!(
+            content.contains("Done."),
+            "trailing prose must survive as content, got: {content:?}"
+        );
+        assert!(
+            !content.contains("<function"),
+            "function span must be stripped from content, got: {content:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_hermes_no_params() {
+        // Real emission from MiniCPM5-1B-Agentic in NeoMind chat (2026-07-24):
+        // user asked "今天是什么日子？", model wrote a parameter-less call as text.
+        let text = r#"<function name="get_datetime"></function>"#;
+        let (content, calls) = parse_tool_calls(text).unwrap();
+        assert!(content.is_empty(), "got: {content:?}");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "get_datetime");
+        assert!(
+            calls[0].arguments.as_object().unwrap().is_empty(),
+            "no <param> → empty arguments object"
+        );
         assert!(!calls[0].id.is_empty());
     }
 
