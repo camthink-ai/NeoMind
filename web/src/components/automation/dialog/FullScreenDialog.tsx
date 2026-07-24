@@ -162,7 +162,7 @@ export function FullScreenDialogHeader({
           onClick={onClose}
           className={cn(
             "shrink-0 flex items-center justify-center",
-            "w-8 h-8 md:w-9 lg:h-10",
+            "w-8 h-8 md:w-9 md:h-9 lg:w-10 lg:h-10",
             "rounded-lg md:rounded-xl",
             "text-muted-foreground hover:text-foreground",
             "bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10",

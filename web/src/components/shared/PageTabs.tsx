@@ -131,7 +131,7 @@ export function PageTabsBar({
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div
             className={cn(
-              'inline-flex w-auto flex-wrap overflow-visible rounded-lg border border-border bg-card p-1',
+              'inline-flex w-auto flex-wrap overflow-visible rounded-lg border border-border bg-card p-1 gap-1',
               tabsClassName
             )}
           >
