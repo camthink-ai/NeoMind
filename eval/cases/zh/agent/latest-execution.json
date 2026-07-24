@@ -1,0 +1,36 @@
+{
+  "id": "agent-latest-execution",
+  "lang": "zh",
+  "category": "agent",
+  "workflow": "agent-management",
+  "scenario_type": "single_turn",
+  "description": "Create an agent, execute it, then show latest execution (covers `neomind agent latest-execution`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为 probe-two 的 agent 监视 sensor-001,立即执行一次,然后查看它的最近一次执行记录。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create an agent, execute it, then show latest execution (covers `neomind agent latest-execution`)"
+    ],
+    "overall": "Create an agent, execute it, then show latest execution (covers `neomind agent latest-execution`)"
+  },
+  "state_queries": [
+    {
+      "type": "agent_exists",
+      "params": {
+        "id": "probe-two"
+      },
+      "expected": true
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "widget-get-detail",
+  "lang": "zh",
+  "category": "widget",
+  "workflow": "widget-management",
+  "scenario_type": "single_turn",
+  "description": "Create a widget then read it (covers `neomind widget get`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为 wg-1 的自定义 widget,然后查看它的详情。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a widget then read it (covers `neomind widget get`)"
+    ],
+    "overall": "Create a widget then read it (covers `neomind widget get`)"
+  }
+}

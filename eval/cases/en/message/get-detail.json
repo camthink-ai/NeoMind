@@ -1,0 +1,27 @@
+{
+  "id": "message-get-detail",
+  "lang": "en",
+  "category": "message",
+  "workflow": "message-management",
+  "scenario_type": "single_turn",
+  "description": "Send a message then read it back (covers `neomind message get`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Send a message 'hello from eval' then show the details of that message."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Send a message then read it back (covers `neomind message get`)"
+    ],
+    "overall": "Send a message then read it back (covers `neomind message get`)"
+  }
+}

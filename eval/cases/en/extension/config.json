@@ -1,0 +1,27 @@
+{
+  "id": "extension-config",
+  "lang": "en",
+  "category": "extension",
+  "workflow": "extension-management",
+  "scenario_type": "single_turn",
+  "description": "Show/set extension config (covers `neomind extension config`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Show the current configuration of the weather extension."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Show/set extension config (covers `neomind extension config`)"
+    ],
+    "overall": "Show/set extension config (covers `neomind extension config`)"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "transform-get-detail",
+  "lang": "en",
+  "category": "transform",
+  "workflow": "transform-management",
+  "scenario_type": "single_turn",
+  "description": "Create a transform then read its detail (covers `neomind transform get`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a transform named tf-avg that averages sensor-001 temperature, then show its full details."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a transform then read its detail (covers `neomind transform get`)"
+    ],
+    "overall": "Create a transform then read its detail (covers `neomind transform get`)"
+  },
+  "state_queries": [
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

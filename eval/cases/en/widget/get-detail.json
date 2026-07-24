@@ -1,0 +1,27 @@
+{
+  "id": "widget-get-detail",
+  "lang": "en",
+  "category": "widget",
+  "workflow": "widget-management",
+  "scenario_type": "single_turn",
+  "description": "Create a widget then read it (covers `neomind widget get`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a custom widget named wg-1, then show its details."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a widget then read it (covers `neomind widget get`)"
+    ],
+    "overall": "Create a widget then read it (covers `neomind widget get`)"
+  }
+}

@@ -157,7 +157,7 @@ class TestServer:
         self._err_thread = None
         self.port: int = 0
 
-    def spawn(self, startup_timeout: float = 30.0) -> "TestServer":
+    def spawn(self, startup_timeout: float = 30.0, case_id: Optional[str] = None) -> "TestServer":
         self.tmpdir = tempfile.TemporaryDirectory(prefix="neomind-eval-")
         tmpdir_path = Path(self.tmpdir.name)
         data_dir = tmpdir_path / "data"
@@ -181,6 +181,18 @@ class TestServer:
         env["NEOMIND_DATA_DIR"] = str(tmpdir_path)
         env["NEOMIND_API_BASE"] = self.api_base
         env["NEOMIND_API_KEY"] = self.api_key
+        # Per-case SFT trace isolation: when NEOMIND_TRACE_ROOT is set, route
+        # each case's LLM traces into its own subdir so a batch run's traces
+        # stay grouped by case. The SFT renderer then joins one case's trace
+        # dir with its CaseRecord. Opt-in — unset => unchanged behavior.
+        trace_root = os.environ.get("NEOMIND_TRACE_ROOT")
+        if trace_root and case_id:
+            case_trace_dir = Path(trace_root) / case_id
+            case_trace_dir.mkdir(parents=True, exist_ok=True)
+            # MUST be absolute: the subprocess runs with CWD=tmpdir, so a
+            # relative path would route the trace into the tmpdir (deleted
+            # after the case) — silently losing every trace.
+            env["NEOMIND_TRACE_DIR"] = str(case_trace_dir.resolve())
 
         self.process = subprocess.Popen(
             [bin_path, "serve", "--host", "127.0.0.1", "--port", str(self.port)],
@@ -329,7 +341,8 @@ class TestServer:
         data = body.get("data", body)
         return data.get("messages", []) or []
 
-    def chat(self, session_id: str, message: str, timeout: float = 900.0) -> dict:
+    def chat(self, session_id: str, message: str, timeout: float = 900.0,
+             images: list[str] | None = None) -> dict:
         """One chat turn via WebSocket (production chat UI path).
 
         Routes through `ws://.../api/chat?api_key=...` →
@@ -373,6 +386,7 @@ class TestServer:
             timeout=timeout,
             history_before=history_before,
             history_fetch=lambda sid: self.get_history(sid),
+            images=images,
         )
         while _is_transient_stall(result) and retry_count < len(backoffs):
             retry_count += 1
@@ -449,6 +463,7 @@ def _ws_chat(
     timeout: float,
     history_before: int,
     history_fetch,
+    images: list[str] | None = None,
 ) -> dict:
     """Synchronous wrapper around the async WS chat. Runs an event loop just
     for the duration of one chat call."""
@@ -462,6 +477,7 @@ def _ws_chat(
             timeout=timeout,
             history_before=history_before,
             history_fetch=history_fetch,
+            images=images,
         )
     )
 
@@ -475,6 +491,7 @@ async def _ws_chat_async(
     timeout: float,
     history_before: int,
     history_fetch,
+    images: list[str] | None = None,
 ) -> dict:
     """Connect to /api/chat, send the message, drain events until terminal."""
     import websockets
@@ -517,7 +534,11 @@ async def _ws_chat_async(
                     break  # welcome received
 
             # Send the chat message.
-            payload = json.dumps({"message": message, "sessionId": session_id})
+            payload_obj = {"message": message, "sessionId": session_id}
+            # Multimodal: optional images (data URLs) — ChatImage{data, mimeType?}.
+            if images:
+                payload_obj["images"] = [{"data": u} for u in images]
+            payload = json.dumps(payload_obj)
             await ws.send(payload)
 
             # Drain events until terminal.

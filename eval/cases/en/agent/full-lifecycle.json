@@ -1,0 +1,27 @@
+{
+  "id": "agent-full-lifecycle",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-management",
+  "scenario_type": "single_turn",
+  "description": "Create an agent, execute it, then delete it (multi-step lifecycle)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create an agent named lifecycle-probe that checks sensor-001 every 10 minutes, execute it once, then delete it."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create an agent, execute it, then delete it (multi-step lifecycle)"
+    ],
+    "overall": "Create an agent, execute it, then delete it (multi-step lifecycle)"
+  }
+}

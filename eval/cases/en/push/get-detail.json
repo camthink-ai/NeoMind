@@ -1,0 +1,27 @@
+{
+  "id": "push-get-detail",
+  "lang": "en",
+  "category": "push",
+  "workflow": "push-management",
+  "scenario_type": "single_turn",
+  "description": "Create a push config then read it (covers `neomind push get`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a data-push config named push-1, then show its details."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a push config then read it (covers `neomind push get`)"
+    ],
+    "overall": "Create a push config then read it (covers `neomind push get`)"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "id": "agent-memory-read",
+  "lang": "en",
+  "category": "agent",
+  "workflow": "agent-management",
+  "scenario_type": "single_turn",
+  "description": "Create an agent then read its memory journal (covers `neomind agent memory`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create an agent named probe-one that checks sensor-001 every 5 minutes, then read its memory journal."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create an agent then read its memory journal (covers `neomind agent memory`)"
+    ],
+    "overall": "Create an agent then read its memory journal (covers `neomind agent memory`)"
+  },
+  "state_queries": [
+    {
+      "type": "agent_exists",
+      "params": {
+        "id": "probe-one"
+      },
+      "expected": true
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "id": "message-channel-types",
+  "lang": "zh",
+  "category": "message",
+  "workflow": "message-management",
+  "scenario_type": "single_turn",
+  "description": "List supported channel types (covers `neomind message channel-types`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "NeoMind 支持哪些通知通道类型?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: List supported channel types (covers `neomind message channel-types`)"
+    ],
+    "overall": "List supported channel types (covers `neomind message channel-types`)"
+  }
+}

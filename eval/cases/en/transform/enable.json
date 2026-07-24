@@ -1,0 +1,34 @@
+{
+  "id": "transform-enable",
+  "lang": "en",
+  "category": "transform",
+  "workflow": "transform-management",
+  "scenario_type": "single_turn",
+  "description": "Create a transform then enable it (covers `neomind transform enable`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a NeoMind transform (a data automation) named tf-rolling that computes the average of sensor-001's values.humidity metric, then enable it."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a transform then enable it (covers `neomind transform enable`)"
+    ],
+    "overall": "Create a transform then enable it (covers `neomind transform enable`)"
+  },
+  "state_queries": [
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

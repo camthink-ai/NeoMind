@@ -1,0 +1,27 @@
+{
+  "id": "message-channel-types",
+  "lang": "en",
+  "category": "message",
+  "workflow": "message-management",
+  "scenario_type": "single_turn",
+  "description": "List supported channel types (covers `neomind message channel-types`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "What notification channel types does NeoMind support?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: List supported channel types (covers `neomind message channel-types`)"
+    ],
+    "overall": "List supported channel types (covers `neomind message channel-types`)"
+  }
+}

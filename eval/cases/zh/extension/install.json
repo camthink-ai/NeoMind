@@ -1,0 +1,27 @@
+{
+  "id": "extension-install",
+  "lang": "zh",
+  "category": "extension",
+  "workflow": "extension-management",
+  "scenario_type": "single_turn",
+  "description": "Install an extension (covers `neomind extension install`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "从本地包 weather.nep 安装 weather 扩展。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Install an extension (covers `neomind extension install`)"
+    ],
+    "overall": "Install an extension (covers `neomind extension install`)"
+  }
+}

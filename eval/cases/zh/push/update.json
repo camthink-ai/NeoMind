@@ -1,0 +1,27 @@
+{
+  "id": "push-update",
+  "lang": "zh",
+  "category": "push",
+  "workflow": "push-management",
+  "scenario_type": "single_turn",
+  "description": "Create a push config then update it (covers `neomind push update`)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个名为 push-2 的数据推送配置,然后把它的目标端点改成 https://example.com/hook。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Create a push config then update it (covers `neomind push update`)"
+    ],
+    "overall": "Create a push config then update it (covers `neomind push update`)"
+  }
+}
