@@ -317,7 +317,7 @@ export const cardBase = [
  */
 export const interactiveCard = [
   'bg-card rounded-lg border shadow-sm',
-  'cursor-pointer transition-all duration-200',
+  'cursor-pointer transition-all duration-fast ease-spring-soft',
   'hover:shadow-md hover:-translate-y-0.5',
 ].join(' ')
 
@@ -328,10 +328,10 @@ export const interactiveCard = [
  * `<Card>` component which includes `cardBase`, or cards with a non-default
  * radius like `rounded-xl`) but should share the same hover interaction.
  * This avoids re-declaring `hover:shadow-md hover:-translate-y-0.5
- * transition-all duration-200` at every call site.
+ * transition-all duration-fast ease-spring-soft` at every call site.
  */
 export const interactiveCardHover = [
-  'transition-all duration-200',
+  'transition-all duration-fast ease-spring-soft',
   'hover:shadow-md hover:-translate-y-0.5',
 ].join(' ')
 

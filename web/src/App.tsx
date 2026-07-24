@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useState, useRef } from "react"
+import { lazy, Suspense, useEffect, useLayoutEffect, useState, useRef } from "react"
+import { flushSync } from "react-dom"
 import { Routes, Route, Navigate, useLocation } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
@@ -264,6 +265,28 @@ function App() {
     showNotification: true,
   })
   const location = useLocation()
+  // Deferred location for View Transitions: keep rendering the PREVIOUS
+  // location until startViewTransition() has snapshotted it, then swap to the
+  // new one inside its callback. flushSync makes the swap synchronous so the
+  // "new" snapshot is correct. Skips the transition on cross-region edges
+  // (login/setup/share) to avoid flashing a stale page.
+  const [renderLocation, setRenderLocation] = useState(location)
+  useLayoutEffect(() => {
+    if (location.pathname === renderLocation.pathname) return
+    const isExternal = (p: string) =>
+      p === '/login' || p.startsWith('/setup') || p.startsWith('/share')
+    const startVT = (
+      document as Document & { startViewTransition?: (cb: () => void) => void }
+    ).startViewTransition
+    if (!startVT || isExternal(location.pathname) || isExternal(renderLocation.pathname)) {
+      setRenderLocation(location)
+      return
+    }
+    startVT.call(document, () => {
+      flushSync(() => setRenderLocation(location))
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location])
   const [backendReady, setBackendReady] = useState(false)
   const [isTauri, setIsTauri] = useState(false)
   const [initialCheckDone, setInitialCheckDone] = useState(false)
@@ -550,8 +573,8 @@ function App() {
                     style={{paddingTop: 'var(--topnav-height, calc(4rem + env(safe-area-inset-top, 0px)))'}}>
                     <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <ErrorBoundary>
-                    <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">
-                    <Routes>
+                    <div key={renderLocation.pathname.split('/')[1] || 'root'} className="w-full h-full overflow-hidden" style={{ viewTransitionName: 'page-content' }}>
+                    <Routes location={renderLocation}>
                       <Route path="/" element={<ChatPage />} />
                       <Route path="/chat" element={<ChatPage />} />
                       {/* Session-based routes */}

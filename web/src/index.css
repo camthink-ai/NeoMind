@@ -356,11 +356,18 @@ html {
     --duration-fast: 150ms;
     --duration-normal: 200ms;
     --duration-slow: 300ms;
+    /* Stagger: list-entrance cascade step (consumed by ResponsiveTable inline calc) */
+    --stagger-step: 50ms;
 
-    /* Easing functions */
-    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
-    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    /* Easing functions — Linear-style motion language.
+       Two families: standard (no overshoot) + spring (overshoot that
+       approximates physical bounce; single-overshoot cubic-bezier, NOT
+       multi-bounce inertia — a known limit of the pure-CSS approach). */
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);            /* emphasized decelerate: element entrance */
+    --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);          /* symmetric standard transition */
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);          /* Linear standard: crisp linear motion */
+    --ease-spring-snappy: cubic-bezier(0.5, 1.5, 0.5, 1); /* light overshoot: micro-interactions, toggles, small elements */
+    --ease-spring-soft: cubic-bezier(0.34, 1.4, 0.64, 1); /* soft overshoot: large elements, dialog/sheet entrance */
 
     /* Semantic colors */
     --color-success: oklch(0.55 0.17 155);
@@ -1089,7 +1096,7 @@ html {
 .tab-indicator {
   @apply transition-all;
   transition-duration: var(--duration-normal);
-  transition-timing-function: var(--ease-spring);
+  transition-timing-function: var(--ease-spring-snappy);
 }
 
 /* Events bar marquee effect */
@@ -1431,5 +1438,60 @@ html {
    icons — on small icons the 3% press-and-release reads as jitter. */
 .no-press-scale:active {
   transform: none !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Global reduced-motion backstop (DESIGN_SPEC §33 a11y). When the user has
+   "reduce motion" on at the OS level, collapse every animation/transition to
+   near-instantaneous so nothing moves unexpectedly. Individual components do
+   NOT need to opt in — this covers them all. Linear-style motion is already
+   restrained, so this mostly just removes the last bit of movement.
+   !important is intentional: must win over per-component timings. ──────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   View Transitions — cross-fade for in-app page switches. App.tsx wraps route
+   changes in document.startViewTransition(); the UA default is already a
+   cross-fade, we just pin it to the design-system duration. The global
+   prefers-reduced-motion `*` rule does NOT reach ::view-transition
+   pseudo-elements, so they are silenced explicitly here. ─────────────────── */
+/* Fixed chrome (TopNav, aurora bg) stays put — only #main-content cross-fades.
+   root animation:none freezes everything outside page-content; page-content
+   gets the tokenized cross-fade. This is what keeps the nav from flickering
+   on route change. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+}
+::view-transition-old(page-content),
+::view-transition-new(page-content) {
+  animation-duration: var(--duration-normal);
+  animation-timing-function: var(--ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root),
+  ::view-transition-old(page-content),
+  ::view-transition-new(page-content) {
+    animation: none !important;
+  }
+}
+
+/* Tabular numerals app-wide — IoT/data app: device IDs, telemetry values,
+   timestamps align in columns without digit-width jitter (1 vs 7 vs 0 no
+   longer shift width). Linear-style default; override with the
+   `proportional-nums` Tailwind utility where proportional digits are wanted
+   (e.g. large display numerals). */
+html {
+  font-variant-numeric: tabular-nums;
 }
 

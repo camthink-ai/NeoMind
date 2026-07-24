@@ -198,16 +198,20 @@ export default {
         },
       },
       animation: {
-        "slide-in": "slide-in 0.2s ease-out",
-        "slide-in-from-top": "slide-in-from-top 0.3s ease-out",
-        "slide-in-from-bottom": "slide-in-from-bottom 0.3s ease-out",
-        "slide-in-from-left": "slide-in-from-left 0.3s ease-out",
-        "slide-in-from-right": "slide-in-from-right 0.3s ease-out",
-        "fade-in": "fade-in 0.2s ease-out",
-        "fade-in-up": "fade-in-up 0.3s ease-out",
-        "fade-out": "fade-out 0.2s ease-out",
-        "scale-in": "scale-in 0.2s ease-out",
-        "scale-out": "scale-out 0.2s ease-out",
+        // Entrance/exit animations reference the motion tokens
+        // (var(--duration-*) / var(--ease-*)) so tuning a token propagates
+        // everywhere. Loops (pulse/spin/shimmer/…) keep literal periods —
+        // those are cycle lengths, not transition durations.
+        "slide-in": "slide-in var(--duration-normal) var(--ease-out)",
+        "slide-in-from-top": "slide-in-from-top var(--duration-slow) var(--ease-out)",
+        "slide-in-from-bottom": "slide-in-from-bottom var(--duration-slow) var(--ease-out)",
+        "slide-in-from-left": "slide-in-from-left var(--duration-slow) var(--ease-out)",
+        "slide-in-from-right": "slide-in-from-right var(--duration-slow) var(--ease-out)",
+        "fade-in": "fade-in var(--duration-normal) var(--ease-out)",
+        "fade-in-up": "fade-in-up var(--duration-slow) var(--ease-out)",
+        "fade-out": "fade-out var(--duration-normal) var(--ease-out)",
+        "scale-in": "scale-in var(--duration-normal) var(--ease-spring-soft)",
+        "scale-out": "scale-out var(--duration-normal) var(--ease-standard)",
         "pulse-slow": "pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite",
         "spin-slow": "spin-slow 3s linear infinite",
         "bounce-subtle": "bounce-subtle 2s ease-in-out infinite",
@@ -224,6 +228,23 @@ export default {
         300: "300ms",
         400: "400ms",
         500: "500ms",
+      },
+      // Motion tokens as first-class transition utilities.
+      // Overriding `out`/`in-out` re-points Tailwind's default ease-out /
+      // ease-in-out at the design-system curves, so every existing
+      // `ease-out`/`ease-in-out` across the app is tokenized for free.
+      transitionDuration: {
+        fast: "var(--duration-fast)",
+        normal: "var(--duration-normal)",
+        slow: "var(--duration-slow)",
+      },
+      transitionTimingFunction: {
+        out: "var(--ease-out)",
+        "in-out": "var(--ease-in-out)",
+        standard: "var(--ease-standard)",
+        spring: "var(--ease-spring-soft)",
+        "spring-snappy": "var(--ease-spring-snappy)",
+        "spring-soft": "var(--ease-spring-soft)",
       },
     },
   },

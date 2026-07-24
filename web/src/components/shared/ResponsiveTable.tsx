@@ -233,7 +233,7 @@ export function ResponsiveTable({
                       onRowClick && 'cursor-pointer',
                       rowClass
                     )}
-                    style={{ animationDelay: `${index * 30}ms`, animationFillMode: 'both' }}
+                    style={{ animationDelay: `calc(${index} * var(--stagger-step))`, animationFillMode: 'both' }}
                     onClick={() => onRowClick?.(rowData)}
                   >
                     {columns.map((column) => (
@@ -322,7 +322,7 @@ export function ResponsiveTable({
                   onRowClick && 'cursor-pointer active:scale-[0.99]',
                   rowClass
                 )}
-                style={{ animationDelay: `${index * 40}ms`, animationFillMode: 'both' }}
+                style={{ animationDelay: `calc(${index} * var(--stagger-step))`, animationFillMode: 'both' }}
                 onClick={() => onRowClick?.(rowData)}
               >
                 {/* Card Header - First column as title */}
