@@ -310,6 +310,19 @@ export class ChatWebSocket {
     }
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      // Never had a successful connection = the backend never came up at all
+      // (port conflict, crashed at startup, wrong endpoint). Stop silently
+      // spinning "Reconnecting" forever and surface a clear error so the user
+      // knows to act (manualReconnect stays available). A backend that was up
+      // and briefly dropped (server restart) still gets slow-polling recovery
+      // below so it auto-reconnects when it returns.
+      if (!this.wasConnected) {
+        this.setState({
+          status: 'error',
+          retryCount: this.reconnectAttempts,
+        })
+        return
+      }
       // Switch to slow polling mode - keep retrying every 30s indefinitely
       // instead of giving up permanently
       this.reconnectAttempts++ // Keep incrementing to track total attempts

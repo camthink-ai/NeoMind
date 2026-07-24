@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState, useRef } from "react"
 import { Routes, Route, Navigate, useLocation } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
 import { BrandGradientDef } from "@/components/shared/BrandGradientDef"
 import { useStore } from "@/store"
@@ -20,6 +21,9 @@ import { UpdateDialog } from '@/components/update'
 import { InstanceSwitchOverlay } from '@/components/layout/InstanceSwitchOverlay'
 import { GlobalChatFab } from '@/components/chat/GlobalChatFab'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
+import { listen } from "@tauri-apps/api/event"
+import type { ConnectionState } from "@/lib/websocket"
+import { BackendUnavailableOverlay } from "@/components/BackendUnavailableOverlay"
 
 // Performance optimization: Lazy load route components to reduce initial bundle size
 // Each page is loaded on-demand, reducing Time to Interactive by ~70%
@@ -213,6 +217,7 @@ function PageLoading() {
 
 function App() {
   const isMobile = useIsMobile()
+  const { t } = useTranslation("common")
   const extensionComponents = useExtensionComponents({ autoSync: true, syncInterval: 60000 })
   const extensionSyncRef = useRef(extensionComponents.sync)
   
@@ -263,6 +268,41 @@ function App() {
   const [isTauri, setIsTauri] = useState(false)
   const [initialCheckDone, setInitialCheckDone] = useState(false)
   const [setupRequired, setSetupRequired] = useState<boolean | null>(null)
+  // Backend startup failure surfaced from Rust (Tauri "backend-start-failed"
+  // event, e.g. port 9375 already in use). null while healthy.
+  const [backendError, setBackendError] = useState<{ error: string; port_conflict: boolean } | null>(null)
+  // WebSocket connection state, used for the fallback error overlay (web build
+  // or a missed Tauri event).
+  const [wsConnectionState, setWsConnectionState] = useState<ConnectionState>({ status: 'disconnected' })
+
+  // Surface a backend startup failure (port conflict, crash at startup) as a
+  // clear error page instead of letting the user stare at endless
+  // "Reconnecting". Tauri-only — the web build relies on the WS fallback below.
+  useEffect(() => {
+    if (!isTauriEnv()) return
+    let unlisten: (() => void) | undefined
+    listen<{ error: string; port_conflict: boolean }>("backend-start-failed", (e) => {
+      setBackendError(e.payload)
+    }).then((fn) => {
+      unlisten = fn
+    })
+    return () => {
+      unlisten?.()
+    }
+  }, [])
+
+  // Subscribe to WS state for the fallback path: if the socket never connected
+  // and gave up retrying, show the same error overlay (covers web/non-Tauri
+  // and the case where the Tauri event was missed).
+  useEffect(() => {
+    let unsub: (() => void) | undefined
+    import("@/lib/websocket").then(({ ws }) => {
+      unsub = ws.onStateChange(setWsConnectionState)
+    })
+    return () => {
+      unsub?.()
+    }
+  }, [])
 
   // Reset viewport and scroll when route changes (fix mobile keyboard dismissal issues)
   useEffect(() => {
@@ -429,6 +469,24 @@ function App() {
   }, [isAuthenticated, setWsConnected, currentPath])
 
 
+  // Backend never came up — show a clear error page above everything else
+  // (overrides startup loading / login) so the user knows to act instead of
+  // waiting on an endless "Reconnecting".
+  if (backendError || (wsConnectionState.status === "error" && !wsConnectionState.wasConnected)) {
+    return (
+      <BackendUnavailableOverlay
+        portConflict={backendError?.port_conflict}
+        error={backendError?.error}
+        onRetry={() => {
+          setBackendError(null)
+          import("@/lib/websocket").then(({ ws }) => {
+            ws.manualReconnect()
+          })
+        }}
+      />
+    )
+  }
+
   // Show loading screen in Tauri until backend is ready
   if (isTauri && !backendReady) {
     return <StartupLoading onReady={() => setBackendReady(true)} />
@@ -477,7 +535,19 @@ function App() {
                   <div className="aurora-bg" />
                   {!isMobile && <TopNav />}
                   <MobileNav />
-                  <main className="relative z-10 flex flex-1 min-h-0 overflow-hidden" style={{paddingTop: 'var(--topnav-height, calc(4rem + env(safe-area-inset-top, 0px)))'}}>
+                  {/* Skip link — keyboard users tab past the nav straight to content.
+                      Visually hidden until focused. */}
+                  <a
+                    href="#main-content"
+                    className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[400] focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-lg focus:border focus:border-border"
+                  >
+                    {t("skipToContent")}
+                  </a>
+                  <main
+                    id="main-content"
+                    tabIndex={-1}
+                    className="relative z-10 flex flex-1 min-h-0 overflow-hidden focus:outline-none"
+                    style={{paddingTop: 'var(--topnav-height, calc(4rem + env(safe-area-inset-top, 0px)))'}}>
                     <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">

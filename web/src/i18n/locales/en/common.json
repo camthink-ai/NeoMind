@@ -330,6 +330,7 @@
   "save": "Save",
   "cancel": "Cancel",
   "skip": "Skip",
+  "skipToContent": "Skip to content",
   "confirm": "Confirm",
   "search": "Search",
   "refresh": "Refresh",
@@ -841,6 +842,12 @@
     "backendDisconnected": "Backend Disconnected",
     "devicesOnline": "{{online}}/{{total}} Devices Online",
     "unreadAlerts": "{{count}} Unread Alerts"
+  },
+  "backendUnavailable": {
+    "title": "Backend Service Unavailable",
+    "portConflict": "Port 9375 is already in use by another NeoMind instance. Close any other running NeoMind (including a manually started 'neomind serve'), then restart this app.",
+    "message": "Cannot connect to the backend service. The backend may have failed to start — please restart the app. If the problem persists, check whether another NeoMind instance is using the port.",
+    "retry": "Retry connection"
   },
   "system": {
     "pageTitle": "System",

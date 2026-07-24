@@ -279,6 +279,12 @@ fn start_axum_server(
     // Clone the Arc before moving into the closure
     let runtime_arc = Arc::clone(&state.runtime);
     let server_thread = Arc::clone(&state.server_thread);
+    // Clone the AppHandle so the server thread can emit a "backend-start-failed"
+    // event if start_server() errors (e.g. port 9375 already in use). Without
+    // this the failure is only eprintln'd to stderr, the Tauri window stays open
+    // with no backend, and the user stares at an endless "Reconnecting" with no
+    // clue why. Symmetric to the "backend-ready" event emitted on success.
+    let app_handle_for_errors = app_handle.clone();
 
     let thread_handle = std::thread::spawn(move || {
         let rt = match runtime_arc.lock() {
@@ -294,9 +300,22 @@ fn start_axum_server(
             return;
         };
 
-        rt.block_on(async {
+        rt.block_on(async move {
             if let Err(e) = edge_api::start_server().await {
-                eprintln!("Failed to start server: {}", e);
+                let err_str = e.to_string();
+                eprintln!("Failed to start server: {}", err_str);
+                // Surface the failure to the frontend so the user sees a clear
+                // error page instead of an endless "Reconnecting". Detect the
+                // common case (port already in use) to give targeted guidance.
+                let port_conflict = err_str.contains("AddrInUse")
+                    || err_str.to_lowercase().contains("address already in use");
+                let _ = app_handle_for_errors.emit(
+                    "backend-start-failed",
+                    serde_json::json!({
+                        "error": err_str,
+                        "port_conflict": port_conflict,
+                    }),
+                );
             }
         });
     });

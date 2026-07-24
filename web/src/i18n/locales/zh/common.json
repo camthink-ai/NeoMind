@@ -330,6 +330,7 @@
   "save": "保存",
   "cancel": "取消",
   "skip": "跳过",
+  "skipToContent": "跳到主要内容",
   "confirm": "确定",
   "search": "搜索",
   "refresh": "刷新",
@@ -841,6 +842,12 @@
     "backendDisconnected": "后端未连接",
     "devicesOnline": "{{online}}/{{total}} 设备在线",
     "unreadAlerts": "{{count}} 条未读告警"
+  },
+  "backendUnavailable": {
+    "title": "后端服务不可用",
+    "portConflict": "端口 9375 已被其他 NeoMind 实例占用。请关闭其他正在运行的 NeoMind(包括手动执行的 neomind serve),然后重启本应用。",
+    "message": "无法连接后端服务。后端可能启动失败,请重启应用;若问题持续,请检查是否有其他 NeoMind 实例占用了端口。",
+    "retry": "重试连接"
   },
   "system": {
     "pageTitle": "系统",
