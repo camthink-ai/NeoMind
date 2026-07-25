@@ -142,6 +142,30 @@ def hard_pass_rate(agg: dict) -> dict:
     }
 
 
+def compare(base_agg: dict, new_agg: dict) -> dict:
+    """Per-category hard pass-rate delta (new vs base).
+
+    Used by `run_eval.py compare` to spot regressions vs a committed baseline
+    (e.g. did SFT/help hurt a category?). Returns base/new overall hard rates
+    + one row per category.
+    """
+    bh = hard_pass_rate(base_agg)
+    nh = hard_pass_rate(new_agg)
+    cats = sorted(set(base_agg["by_category_hard"]) | set(new_agg["by_category_hard"]))
+    rows = []
+    for cat in cats:
+        b = base_agg["by_category_hard"].get(cat, {"n": 0, "pass": 0})
+        n = new_agg["by_category_hard"].get(cat, {"n": 0, "pass": 0})
+        rows.append({
+            "category": cat,
+            "base_pct": (100.0 * b["pass"] / b["n"]) if b["n"] else None,
+            "new_pct": (100.0 * n["pass"] / n["n"]) if n["n"] else None,
+            "base_n": b["n"],
+            "new_n": n["n"],
+        })
+    return {"base": bh, "new": nh, "rows": rows}
+
+
 def write_grade_card(agg: dict, out_path: Path):
     md = ["# NeoMind Chat Eval Report", ""]
 

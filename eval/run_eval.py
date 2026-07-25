@@ -468,6 +468,31 @@ def cmd_report(args):
     return 0
 
 
+def cmd_compare(args):
+    """Per-category hard pass-rate delta: new run vs a committed baseline."""
+    base_agg = report.aggregate(Path(args.baseline).read_text())
+    new_agg = report.aggregate(Path(args.run).read_text())
+    cmp = report.compare(base_agg, new_agg)
+    bh, nh = cmp["base"], cmp["new"]
+    print(f"baseline: hard {bh['passed']}/{bh['denom']} ({bh['pct']:.0f}%)  "
+          f"wrong_tool={bh['wrong_tool']}  unasserted={bh['unasserted']}")
+    print(f"new:      hard {nh['passed']}/{nh['denom']} ({nh['pct']:.0f}%)  "
+          f"wrong_tool={nh['wrong_tool']}  unasserted={nh['unasserted']}")
+    print(f"overall hard delta: {nh['pct'] - bh['pct']:+.0f} pct pts")
+    print()
+    print(f"{'category':<14}{'base':>12}{'new':>12}{'delta':>8}")
+    print("-" * 46)
+    for r in cmp["rows"]:
+        bp = f"{r['base_pct']:.0f}%/{r['base_n']}" if r["base_pct"] is not None else "—"
+        np_ = f"{r['new_pct']:.0f}%/{r['new_n']}" if r["new_pct"] is not None else "—"
+        if r["base_pct"] is not None and r["new_pct"] is not None:
+            d = f"{r['new_pct'] - r['base_pct']:+.0f}"
+        else:
+            d = "—"
+        print(f"{r['category']:<14}{bp:>12}{np_:>12}{d:>8}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(prog="run_eval")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -498,6 +523,13 @@ def main():
     p.add_argument("--scores", required=True)
     p.add_argument("--out", default="grade-card.md")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("compare",
+                       help="per-category hard pass-rate delta vs a baseline")
+    p.add_argument("--baseline", required=True,
+                   help="baseline scores.jsonl (e.g. eval/baselines/glm-5.2/scores.jsonl)")
+    p.add_argument("--run", required=True, help="new run scores.jsonl")
+    p.set_defaults(func=cmd_compare)
 
     args = ap.parse_args()
     sys.exit(args.func(args))
