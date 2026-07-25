@@ -93,6 +93,25 @@ def test_widget_and_llm_backend_dispatch():
     assert rw["passed"] is True and rl["passed"] is True
 
 
+def test_device_type_has_metric_present():
+    body = {"success": True, "data": {"device_type": "x",
+            "metrics": [{"name": "rpm"}, {"name": "vibration_mm_s"}]}}
+    with _Patch({"/device-types/x": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "device_type_has_metric", "params": {"id": "x", "metric": "rpm"},
+             "expected": True}, "http://b", "k")
+    assert r["actual"] is True and r["passed"] is True
+
+
+def test_device_type_has_metric_absent():
+    body = {"success": True, "data": {"device_type": "x", "metrics": [{"name": "rpm"}]}}
+    with _Patch({"/device-types/x": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "device_type_has_metric", "params": {"id": "x", "metric": "temp"},
+             "expected": True}, "http://b", "k")
+    assert r["passed"] is False
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

@@ -33,6 +33,7 @@ KNOWN_QUERY_TYPES = {
     "widget_exists",
     "llm_backend_exists",
     "settings_value",
+    "device_type_has_metric",
 }
 
 

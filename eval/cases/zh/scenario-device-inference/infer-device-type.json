@@ -1,0 +1,23 @@
+{
+  "id": "infer-device-type-from-samples",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-device-inference",
+  "scenario_type": "single_turn",
+  "description": "AI 推断设备类型(差异化能力):喂未知设备的原始 telemetry 样本(设备社会结构),agent 推断指标结构 + 用 `neomind device types create` 定义模板。新维度:template-inference correctness(建出的模板含对的指标)。",
+  "setup": { "fixture": "seed-empty" },
+  "turns": [
+    { "user": "我们刚接入一台未知设备,它持续上报这样的原始 JSON 数据(3 条样本):\n{\"rpm\":3250,\"vibration_mm_s\":4.2,\"bearing_temp_c\":55,\"timestamp\":\"2026-07-25T10:00:00Z\"}\n{\"rpm\":3300,\"vibration_mm_s\":4.5,\"bearing_temp_c\":57,\"timestamp\":\"2026-07-25T10:01:00Z\"}\n{\"rpm\":3280,\"vibration_mm_s\":4.3,\"bearing_temp_c\":56,\"timestamp\":\"2026-07-25T10:02:00Z\"}\n帮我创建一个设备类型模板,id 叫 mystery-vibration-sensor,把这些指标都定义好(每个指标的 name/data_type/unit)。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 从样本推断出 rpm / vibration_mm_s / bearing_temp_c 三个指标,调用 `neomind device types create --id mystery-vibration-sensor --metrics '[...]'` 创建模板"],
+    "overall": "模板必须真实创建,metrics 含 rpm、vibration_mm_s、bearing_temp_c(timestamp 是元数据,不是指标)"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device types create"] },
+  "state_queries": [
+    { "type": "device_type_has_metric", "params": { "id": "mystery-vibration-sensor", "metric": "rpm" }, "expected": true },
+    { "type": "device_type_has_metric", "params": { "id": "mystery-vibration-sensor", "metric": "vibration_mm_s" }, "expected": true },
+    { "type": "device_type_has_metric", "params": { "id": "mystery-vibration-sensor", "metric": "bearing_temp_c" }, "expected": true }
+  ]
+}

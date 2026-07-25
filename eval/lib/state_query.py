@@ -246,6 +246,18 @@ def run_query(q: dict, base: str, key: str) -> dict:
             actual = v.get(params["field"])
         else:
             actual = v
+    elif t == "device_type_has_metric":
+        # GET /device-types/:id → metrics[].name includes params.metric?
+        # For the "AI infers a device-type template from raw samples and
+        # creates it" scenario: assert the created template defines the metric.
+        dt = _sid(params, "id")
+        v = _get_json(base, key, f"/device-types/{dt}")
+        names = []
+        if isinstance(v, dict):
+            ms = v.get("metrics")
+            if isinstance(ms, list):
+                names = [m.get("name") for m in ms if isinstance(m, dict)]
+        actual = params.get("metric") in names
     else:
         raise ValueError(f"unknown state_query type: {t}")
 
