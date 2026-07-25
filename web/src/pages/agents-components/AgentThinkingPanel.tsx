@@ -156,12 +156,13 @@ export function AgentThinkingPanel({ agentId, isExecuting }: AgentThinkingPanelP
           )}
           <button
             type="button"
+            aria-label={t('common:close')}
             onClick={(e) => {
               e.stopPropagation()
               setShowPanel(false)
               setDismissed(true)
             }}
-            className="text-muted-foreground hover:text-foreground transition-colors"
+            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           >
             <X className="h-4 w-4" />
           </button>

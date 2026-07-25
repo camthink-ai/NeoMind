@@ -181,6 +181,7 @@ function MessageBubble({ message, onDelete }: MessageBubbleProps) {
     <Card className="p-3 relative group">
       <button
         onClick={onDelete}
+        aria-label={t('common:delete')}
         className={cn(
           "absolute top-2 right-2 opacity-0 group-hover:opacity-100",
           "transition-opacity p-1 rounded hover:bg-muted",

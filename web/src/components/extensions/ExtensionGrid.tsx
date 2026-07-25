@@ -273,6 +273,7 @@ export function ExtensionGrid({
         {searchQuery && (
           <button
             onClick={() => setSearchQuery("")}
+            aria-label={t('common:clear')}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
           >
             <X className="h-4 w-4" />
