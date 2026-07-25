@@ -1,13 +1,23 @@
 """Aggregate scores.jsonl -> grade-card.md.
 
-Ported from crates/eval-runner/src/report.rs. Weights renormalize over the
-`applies[]` subset per case.
+Two headlines:
+  - **Hard Pass Rate** (PRIMARY, reliable): state_query pass + tool_match,
+    broken down by category. From hard_signal.compute() under each score's
+    `hard` key.
+  - **Soft Judge Grade** (SECONDARY, inflation-prone): weighted dimension
+    scores from the LLM judge.
+
+Per project calibration (2026-07-20): trust the hard signals; the judge grade
+is soft and reads high. Old runs without a `hard` key degrade gracefully
+(hard stats stay empty).
 """
 from __future__ import annotations
 
 import json
 from collections import defaultdict
 from pathlib import Path
+
+import hard_signal
 
 WEIGHTS = {
     "tool_accuracy": 25.0,
@@ -48,6 +58,15 @@ def aggregate(scores_jsonl: str) -> dict:
         "by_dimension": defaultdict(list),
         "by_lang": defaultdict(list),
         "overall_per_case": [],
+        # hard signals
+        "hard_passed": 0,
+        "hard_denom": 0,
+        "wrong_tool": 0,
+        "unasserted": 0,
+        "agent_failed": 0,
+        "by_category_hard": defaultdict(
+            lambda: {"n": 0, "pass": 0, "wrong": 0, "unasserted": 0}
+        ),
     }
 
     for line in (scores_jsonl or "").splitlines():
@@ -66,6 +85,26 @@ def aggregate(scores_jsonl: str) -> dict:
         if s.get("status") in ERROR_STATUSES:
             agg["agent_errors"] += 1
 
+        # --- hard signals (primary) ---
+        hard = s.get("hard")
+        cat = s.get("category") or "?"
+        if isinstance(hard, dict):
+            if hard.get("agent_failed"):
+                agg["agent_failed"] += 1
+            elif hard.get("unasserted"):
+                agg["unasserted"] += 1
+                agg["by_category_hard"][cat]["unasserted"] += 1
+            else:
+                agg["hard_denom"] += 1
+                agg["by_category_hard"][cat]["n"] += 1
+                if hard_signal.pass_for_case(hard) is True:
+                    agg["hard_passed"] += 1
+                    agg["by_category_hard"][cat]["pass"] += 1
+                if hard.get("wrong_tool"):
+                    agg["wrong_tool"] += 1
+                    agg["by_category_hard"][cat]["wrong"] += 1
+
+        # --- soft judge (secondary) ---
         scores = s.get("scores") or {}
         if not isinstance(scores, dict):
             continue
@@ -90,10 +129,77 @@ def overall(agg: dict) -> float:
     return sum(v) / len(v) if v else 0.0
 
 
+def hard_pass_rate(agg: dict) -> dict:
+    denom = agg["hard_denom"]
+    pct = (100.0 * agg["hard_passed"] / denom) if denom else 0.0
+    return {
+        "passed": agg["hard_passed"],
+        "denom": denom,
+        "pct": pct,
+        "wrong_tool": agg["wrong_tool"],
+        "unasserted": agg["unasserted"],
+        "agent_failed": agg["agent_failed"],
+    }
+
+
+def compare(base_agg: dict, new_agg: dict) -> dict:
+    """Per-category hard pass-rate delta (new vs base).
+
+    Used by `run_eval.py compare` to spot regressions vs a committed baseline
+    (e.g. did SFT/help hurt a category?). Returns base/new overall hard rates
+    + one row per category.
+    """
+    bh = hard_pass_rate(base_agg)
+    nh = hard_pass_rate(new_agg)
+    cats = sorted(set(base_agg["by_category_hard"]) | set(new_agg["by_category_hard"]))
+    rows = []
+    for cat in cats:
+        b = base_agg["by_category_hard"].get(cat, {"n": 0, "pass": 0})
+        n = new_agg["by_category_hard"].get(cat, {"n": 0, "pass": 0})
+        rows.append({
+            "category": cat,
+            "base_pct": (100.0 * b["pass"] / b["n"]) if b["n"] else None,
+            "new_pct": (100.0 * n["pass"] / n["n"]) if n["n"] else None,
+            "base_n": b["n"],
+            "new_n": n["n"],
+        })
+    return {"base": bh, "new": nh, "rows": rows}
+
+
 def write_grade_card(agg: dict, out_path: Path):
-    grade = grade_letter(overall(agg))
     md = ["# NeoMind Chat Eval Report", ""]
-    md.append(f"## Overall Grade: **{grade} ({overall(agg):.1f})**")
+
+    # --- PRIMARY: hard pass rate ---
+    hp = hard_pass_rate(agg)
+    md.append(
+        f"## Hard Pass Rate (primary): **{hp['passed']}/{hp['denom']} "
+        f"({hp['pct']:.0f}%)**"
+    )
+    md.append("")
+    md.append(
+        f"_wrong_tool cases: {hp['wrong_tool']} · unasserted: {hp['unasserted']} "
+        f"· agent_failed: {hp['agent_failed']}_"
+    )
+    md.append("")
+
+    if agg["by_category_hard"]:
+        md.append("### Hard Pass by Category")
+        md.append("")
+        md.append("| Category | Pass / N | wrong_tool | unasserted |")
+        md.append("|---|---|---|---|")
+        for cat in sorted(agg["by_category_hard"]):
+            d = agg["by_category_hard"][cat]
+            md.append(
+                f"| {cat} | {d['pass']} / {d['n']} | {d['wrong']} | {d['unasserted']} |"
+            )
+        md.append("")
+
+    # --- SECONDARY: soft judge grade ---
+    grade = grade_letter(overall(agg))
+    md.append(
+        f"## Soft Judge Grade (secondary, inflation-prone): **{grade} "
+        f"({overall(agg):.1f})**"
+    )
     md.append("")
 
     denom = agg["total_cases"] + agg["malformed"]
@@ -112,9 +218,7 @@ def write_grade_card(agg: dict, out_path: Path):
 
     md.append("| Dimension | Avg (0-10) |")
     md.append("|---|---|")
-    dim_avg = {
-        k: sum(v) / len(v) for k, v in agg["by_dimension"].items() if v
-    }
+    dim_avg = {k: sum(v) / len(v) for k, v in agg["by_dimension"].items() if v}
     for dim, avg in dim_avg.items():
         md.append(f"| {dim} | {avg:.2f} |")
 

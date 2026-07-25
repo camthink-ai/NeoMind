@@ -38,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 import fallback  # noqa: E402
+import hard_signal  # noqa: E402
 import judge  # noqa: E402
 import report  # noqa: E402
 import seed  # noqa: E402
@@ -382,41 +383,71 @@ def cmd_run(args):
             rec = run_case(str(p))
             cf.write(json.dumps(rec, ensure_ascii=False) + "\n")
             cf.flush()
+
+            # Hard signals are ALWAYS computed — no judge, no LLM, no API cost.
+            # They are the reliable metric (the judge is soft/inflation-prone)
+            # and enable judge-free local-model iteration.
+            case = _load_case(p)
+            hard = hard_signal.compute(case, rec)
+            score = {
+                "case_id": case.get("id"),
+                "lang": case.get("lang"),
+                "category": case.get("category"),
+                "hard": hard,
+                "suspected_fallback": bool(rec.get("suspected_fallback")),
+                "status": rec.get("status"),
+                "message": rec.get("message", ""),
+            }
             if args.judge:
                 try:
-                    case = _load_case(p)
-                    score = judge.judge_case(case, rec)
+                    jscore = judge.judge_case(case, rec)
                 except Exception as e:
                     print(f"  JUDGE ERROR: {e}", file=sys.stderr)
-                    score = _error_record(case, "judge_error", str(e))
-                    score["scores"] = {}
-                    score["judge"] = "claude-opus-4-6"
-                    score["duration_ms"] = 0
-                sf.write(json.dumps(score, ensure_ascii=False) + "\n")
-                sf.flush()
-                print(
-                    f"  case_id={score.get('case_id')} overall_reasoning="
-                    f"{(score.get('overall_reasoning') or '')[:100]}",
-                    file=sys.stderr,
-                )
+                    jscore = {
+                        "scores": {},
+                        "overall_reasoning": f"judge error: {e}",
+                        "judge": "claude-opus-4-6",
+                        "duration_ms": 0,
+                    }
+                score["scores"] = jscore.get("scores", {})
+                score["overall_reasoning"] = jscore.get("overall_reasoning", "")
+                score["judge"] = jscore.get("judge")
+                score["duration_ms"] = jscore.get("duration_ms", 0)
+            sf.write(json.dumps(score, ensure_ascii=False) + "\n")
+            sf.flush()
+            verdict = hard_signal.pass_for_case(hard)
+            vtag = {True: "HARD_PASS", False: "HARD_FAIL", None: "n/a"}[verdict]
+            tail = ""
+            if hard.get("wrong_tool"):
+                tail += f" wrong_tool={hard['wrong_tools_used']}"
+            if args.judge:
+                tail += " (+judge)"
+            print(f"  case_id={score.get('case_id')} {vtag}{tail}", file=sys.stderr)
 
     print(f"\nRun dir: {run_dir}", file=sys.stderr)
 
+    scores_text = scores_jsonl_path.read_text()
+    agg = report.aggregate(scores_text)
+    hp = report.hard_pass_rate(agg)
+    print(
+        f"HARD PASS RATE: {hp['passed']}/{hp['denom']} ({hp['pct']:.0f}%)  "
+        f"wrong_tool={hp['wrong_tool']}  unasserted={hp['unasserted']}  "
+        f"agent_failed={hp['agent_failed']}",
+        file=sys.stderr,
+    )
     if args.judge:
-        scores_text = scores_jsonl_path.read_text()
-        agg = report.aggregate(scores_text)
         grade = report.grade_letter(report.overall(agg))
         print(
-            f"grade: {grade} ({report.overall(agg):.1f}/100), "
-            f"{agg['total_cases']} cases, "
-            f"{agg['malformed']} malformed, "
+            f"soft judge grade: {grade} ({report.overall(agg):.1f}/100), "
+            f"{agg['total_cases']} cases, {agg['malformed']} malformed, "
             f"{agg['agent_errors']} agent errors",
             file=sys.stderr,
         )
-        report.write_grade_card(agg, run_dir / "grade-card.md")
-        print(f"wrote {run_dir / 'grade-card.md'}", file=sys.stderr)
     else:
-        print("(skipped judge — pass --judge to score)", file=sys.stderr)
+        print("(no judge — hard signals only; pass --judge for soft scores)",
+              file=sys.stderr)
+    report.write_grade_card(agg, run_dir / "grade-card.md")
+    print(f"wrote {run_dir / 'grade-card.md'}", file=sys.stderr)
 
     return 0
 
@@ -434,6 +465,31 @@ def cmd_report(args):
         f"{agg['agent_errors']} agent errors"
     )
     print(f"wrote {out}")
+    return 0
+
+
+def cmd_compare(args):
+    """Per-category hard pass-rate delta: new run vs a committed baseline."""
+    base_agg = report.aggregate(Path(args.baseline).read_text())
+    new_agg = report.aggregate(Path(args.run).read_text())
+    cmp = report.compare(base_agg, new_agg)
+    bh, nh = cmp["base"], cmp["new"]
+    print(f"baseline: hard {bh['passed']}/{bh['denom']} ({bh['pct']:.0f}%)  "
+          f"wrong_tool={bh['wrong_tool']}  unasserted={bh['unasserted']}")
+    print(f"new:      hard {nh['passed']}/{nh['denom']} ({nh['pct']:.0f}%)  "
+          f"wrong_tool={nh['wrong_tool']}  unasserted={nh['unasserted']}")
+    print(f"overall hard delta: {nh['pct'] - bh['pct']:+.0f} pct pts")
+    print()
+    print(f"{'category':<14}{'base':>12}{'new':>12}{'delta':>8}")
+    print("-" * 46)
+    for r in cmp["rows"]:
+        bp = f"{r['base_pct']:.0f}%/{r['base_n']}" if r["base_pct"] is not None else "—"
+        np_ = f"{r['new_pct']:.0f}%/{r['new_n']}" if r["new_pct"] is not None else "—"
+        if r["base_pct"] is not None and r["new_pct"] is not None:
+            d = f"{r['new_pct'] - r['base_pct']:+.0f}"
+        else:
+            d = "—"
+        print(f"{r['category']:<14}{bp:>12}{np_:>12}{d:>8}")
     return 0
 
 
@@ -467,6 +523,13 @@ def main():
     p.add_argument("--scores", required=True)
     p.add_argument("--out", default="grade-card.md")
     p.set_defaults(func=cmd_report)
+
+    p = sub.add_parser("compare",
+                       help="per-category hard pass-rate delta vs a baseline")
+    p.add_argument("--baseline", required=True,
+                   help="baseline scores.jsonl (e.g. eval/baselines/glm-5.2/scores.jsonl)")
+    p.add_argument("--run", required=True, help="new run scores.jsonl")
+    p.set_defaults(func=cmd_compare)
 
     args = ap.parse_args()
     sys.exit(args.func(args))

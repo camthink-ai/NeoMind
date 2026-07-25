@@ -231,6 +231,21 @@ def run_query(q: dict, base: str, key: str) -> dict:
         v = _get_with_name_fallback(base, key, "/dashboards", "/dashboards/{id}", "dashboards", params)
         comps = v.get("components") if isinstance(v, dict) else None
         actual = len(comps) if isinstance(comps, list) else 0
+    elif t == "extension_installed":
+        actual = _id_or_name_exists(base, key, "/extensions", "/extensions/{id}", params)
+    elif t == "widget_exists":
+        actual = _id_or_name_exists(base, key, "/frontend-components",
+                                    "/frontend-components/{id}", params)
+    elif t == "llm_backend_exists":
+        actual = _id_or_name_exists(base, key, "/llm-backends", "/llm-backends/{id}", params)
+    elif t == "settings_value":
+        # GET /settings/<key> → {success, data}; extract a sub-field if `field`
+        # param given, else compare the whole value.
+        v = _get_json(base, key, f"/settings/{_sid(params, 'key')}")
+        if isinstance(v, dict) and params.get("field"):
+            actual = v.get(params["field"])
+        else:
+            actual = v
     else:
         raise ValueError(f"unknown state_query type: {t}")
 

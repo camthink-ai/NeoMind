@@ -29,6 +29,10 @@ KNOWN_QUERY_TYPES = {
     "channel_exists",
     "message_count",
     "push_enabled",
+    "extension_installed",
+    "widget_exists",
+    "llm_backend_exists",
+    "settings_value",
 }
 
 
