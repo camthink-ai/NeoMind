@@ -3,6 +3,49 @@ use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
 
+/// Resolve an agent identifier (id OR name) to its UUID.
+///
+/// Agent CLI commands accept a human-readable name as well as a UUID: if the
+/// given id isn't valid (GET /agents/{id} 404s), list agents and return the
+/// UUID of the one whose `name` matches (case-insensitive). If nothing
+/// matches, return the input unchanged so the downstream call surfaces the
+/// real error (no silent masking). Agents are created with auto-generated
+/// UUIDs; users and the AI agent naturally refer to them by name.
+async fn resolve_agent_id(client: &ApiClient, id_or_name: &str) -> Result<String> {
+    // Fast path: already a valid id.
+    if client.get(&format!("/agents/{}", id_or_name)).await.is_ok() {
+        return Ok(id_or_name.to_string());
+    }
+    // Slow path: list + match by name.
+    if let Ok(data) = client.get("/agents").await {
+        let agents = data
+            .as_array()
+            .or_else(|| data.get("agents").and_then(|v| v.as_array()))
+            .or_else(|| data.get("data").and_then(|d| d.as_array()))
+            .or_else(|| {
+                data.get("data")
+                    .and_then(|d| d.get("agents"))
+                    .and_then(|v| v.as_array())
+            });
+        if let Some(agents) = agents {
+            let want = id_or_name.to_lowercase();
+            for a in agents {
+                let name_matches = a
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_lowercase() == want)
+                    .unwrap_or(false);
+                if name_matches {
+                    if let Some(id) = a.get("id").and_then(|i| i.as_str()) {
+                        return Ok(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    Ok(id_or_name.to_string())
+}
+
 /// List all agents with compact summary.
 ///
 /// Returns id, name, status, schedule type, execution mode, and stats per agent.
@@ -51,6 +94,7 @@ pub async fn list_agents(client: &ApiClient) -> Result<CliResponse> {
 
 /// Get agent by ID
 pub async fn get_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let data = client.get(&format!("/agents/{}", id)).await?;
     Ok(CliResponse::success(data, "Agent retrieved"))
 }
@@ -213,6 +257,7 @@ pub async fn update_agent(
     priority: Option<u8>,
     context_window_size: Option<usize>,
 ) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let mut body = json!({});
     if let Some(n) = name {
         body["name"] = json!(n);
@@ -293,12 +338,14 @@ pub async fn update_agent(
 
 /// Delete agent
 pub async fn delete_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     client.delete(&format!("/agents/{}", id)).await?;
     Ok(CliResponse::success(json!({ "id": id }), "Agent deleted"))
 }
 
 /// Control agent status (active/paused)
 pub async fn control_agent(client: &ApiClient, id: &str, status: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let body = json!({ "status": status });
     let data = client
         .post(&format!("/agents/{}/status", id), &body)
@@ -308,6 +355,7 @@ pub async fn control_agent(client: &ApiClient, id: &str, status: &str) -> Result
 
 /// Invoke agent with input
 pub async fn invoke_agent(client: &ApiClient, id: &str, input: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let body = json!({ "input": input });
     let data = client
         .post(&format!("/agents/{}/invoke", id), &body)
@@ -317,12 +365,14 @@ pub async fn invoke_agent(client: &ApiClient, id: &str, input: &str) -> Result<C
 
 /// Get agent memory
 pub async fn get_agent_memory(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let data = client.get(&format!("/agents/{}/memory", id)).await?;
     Ok(CliResponse::success(data, "Agent memory retrieved"))
 }
 
 /// Clear agent memory
 pub async fn clear_agent_memory(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     client.delete(&format!("/agents/{}/memory", id)).await?;
     Ok(CliResponse::success(json!({}), "Agent memory cleared"))
 }
@@ -334,6 +384,7 @@ pub async fn get_agent_executions(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let mut path = format!("/agents/{}/executions", id);
     let mut params = Vec::new();
     if let Some(l) = limit {
@@ -353,6 +404,7 @@ pub async fn get_agent_executions(
 
 /// Get latest agent execution
 pub async fn get_latest_execution(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let path = format!("/agents/{}/executions?limit=1", id);
     let data = client.get(&path).await?;
     Ok(CliResponse::success(data, "Latest execution retrieved"))
@@ -364,6 +416,7 @@ pub async fn get_conversation(
     id: &str,
     limit: Option<usize>,
 ) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let mut path = format!("/agents/{}/messages", id);
     if let Some(l) = limit {
         path.push_str(&format!("?limit={}", l));
@@ -379,6 +432,7 @@ pub async fn send_message(
     message: &str,
     message_type: Option<&str>,
 ) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
     let mut body = json!({
         "content": message,
     });
