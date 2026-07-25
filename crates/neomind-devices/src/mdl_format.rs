@@ -383,6 +383,11 @@ pub struct CommandDefinition {
     /// Display name
     #[serde(default)]
     pub display_name: String,
+    /// Description (optional — defaults to empty). A command without a
+    /// description is valid; this matches the tolerance of every other field
+    /// here and of MetricDefinition. Previously required, which 422'd valid
+    /// template-registration payloads missing it.
+    #[serde(default)]
     pub description: String,
 
     /// Payload template (supports ${param} variables)

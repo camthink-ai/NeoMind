@@ -150,7 +150,9 @@ fn convert_parameter_group_from_storage(
 #[serde(rename_all = "lowercase")]
 pub enum DeviceTypeMode {
     #[default]
+    #[serde(alias = "Simple")]
     Simple,
+    #[serde(alias = "Full")]
     Full,
 }
 
