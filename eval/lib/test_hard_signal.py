@@ -186,6 +186,33 @@ def test_compute_skill_is_distractor_not_wrong_tool():
 
 # --------------------------------------------------------------------- runner
 
+def test_derive_non_shell_tool_not_forced_to_shell():
+    """A case about file_write must expect file_write, not shell."""
+    case = {"description": "通过 file_write 工具落盘一个 JSON 配置文件"}
+    e = hs.derive_expected(case)
+    assert e["tools"] == ["file_write"]
+    assert e["commands"] == []
+
+
+def test_derive_memory_tool_with_context_cue():
+    case = {"description": "通过 memory 工具持久化一条用户偏好"}
+    e = hs.derive_expected(case)
+    assert e["tools"] == ["memory"]
+
+
+def test_compute_tools_case_passes_when_correct():
+    """tools-file-write case: agent used file_write correctly → PASS, not wrong_tool."""
+    case = {"description": "通过 file_write 工具落盘一个 JSON 配置文件并确认写入成功"}
+    record = {"turn_records": [_turn(
+        {"name": "file_write", "arguments": {"path": "/tmp/x.json", "content": "{}"}, "result": ""},
+    )], "state_queries": []}
+    h = hs.compute(case, record)
+    assert h["wrong_tool"] is False   # file_write is the EXPECTED tool here
+    assert h["tool_ok"] is True
+    assert h["tool_match_pass"] is True
+    assert hs.pass_for_case(h) is True
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

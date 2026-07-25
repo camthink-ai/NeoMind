@@ -35,6 +35,14 @@ import re
 WRONG_TOOLS = {"file_write", "file_edit", "web_fetch", "image_edit"}
 DISTRACTOR_TOOLS = {"skill", "memory"}
 
+# Non-shell tools whose unambiguous name in case text means the case is ABOUT
+# that tool (not a neomind op). derive_expected uses this to avoid wrongly
+# defaulting expected tool to `shell` — which would both false-fail tool_match
+# AND false-flag the legit tool as wrong_tool (the tools-file-write/memory/
+# web-fetch cases regressed exactly this way before this guard). `memory` and
+# `skill` are detected via a tool-context cue (too ambiguous as bare words).
+_NON_SHELL_TOOLS = ("file_write", "file_edit", "web_fetch", "image_edit", "vision")
+
 # `neomind <sub> [<entity>] ...` inside backticks — high-precision extraction.
 _BACKTICK_CMD = re.compile(r"`neomind\s+([^`]+)`", re.IGNORECASE)
 
@@ -126,8 +134,19 @@ def derive_expected(case: dict) -> dict:
     found = [f"neomind {m.group(1).strip()}" for m in _BACKTICK_CMD.finditer(blob)]
     derived_cmds = _dedup_norm(found)
 
+    # Detect explicit non-shell tool mentions. A case about file_write / memory
+    # / web_fetch must NOT default expected tool to shell (else the legit tool
+    # use false-fails tool_match and gets flagged as wrong_tool).
+    mentioned = [t for t in _NON_SHELL_TOOLS if t in blob_l]
+    if re.search(r"memory\s*(?:工具|tool|action)", blob_l) and "memory" not in mentioned:
+        mentioned.append("memory")
+    if re.search(r"skill\s*(?:工具|tool|action)", blob_l) and "skill" not in mentioned:
+        mentioned.append("skill")
+
     derived_tools: list[str] = []
-    if derived_cmds or any(v in blob_l for v in _ACTION_VERBS):
+    if mentioned:
+        derived_tools = mentioned
+    elif derived_cmds or any(v in blob_l for v in _ACTION_VERBS):
         derived_tools = ["shell"]
 
     return {"tools": derived_tools, "commands": derived_cmds, "derived": True}
