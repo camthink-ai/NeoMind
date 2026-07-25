@@ -14,6 +14,26 @@ def _post(server, path: str, body):
     return server.post(path, body)
 
 
+def _seed_device_types(server, items: list):
+    """Register custom device-type templates (POST /device-types) BEFORE devices.
+
+    Required for vertical-scenario fixtures whose devices use domain types
+    (soil_moisture_probe, irrigation_valve, …) that aren't built-in. A
+    re-register of an existing type returns a conflict — treat as success so
+    re-seeding the same server is idempotent.
+    """
+    for t in items or []:
+        r = _post(server, "/device-types", t)
+        if not r.ok:
+            tlow = (r.text or "").lower()
+            if "exist" in tlow or "duplicate" in tlow or "already" in tlow:
+                continue
+            raise RuntimeError(
+                f"seed device_type {t.get('device_type')} -> "
+                f"{r.status_code}: {r.text}"
+            )
+
+
 def _is_template_race(resp_text: str) -> bool:
     """True for the startup-race signature: 'template ... not found'.
 
@@ -71,6 +91,10 @@ def _seed_simple(server, items: list, path: str, kind: str):
 
 
 def seed_fixture(server, fixture: dict):
+    # Register custom device-type templates FIRST — devices below reference
+    # them, and a missing template 500s the device POST (see _seed_devices
+    # race-retry for the built-in seeding window).
+    _seed_device_types(server, fixture.get("device_types"))
     _seed_devices(server, fixture.get("devices"))
     _seed_metrics(server, fixture.get("metrics"))
     _seed_simple(server, fixture.get("rules"), "/rules", "rule")

@@ -1,0 +1,21 @@
+{
+  "id": "agri-auto-irrigate-north",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-agriculture",
+  "scenario_type": "single_turn",
+  "description": "农业域·变异:为干旱的 north-field 创建自动灌溉告警规则(soil_moisture_probe 模板真实暴露 soil_moisture_pct 指标)。测域规则创建 + 正确指标/触发器接线。新维度:domain tool-select over realistic devices。",
+  "setup": { "fixture": "scenario-agriculture" },
+  "turns": [
+    { "user": "north-field-probe-01 这块地太干了,土壤湿度只有 12%。帮我建一个自动灌溉告警规则,名字叫 agri-irrigate-north:当 north-field-probe-01 的土壤湿度(soil_moisture_pct)低于 20 时触发通知。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 调用 `neomind rule create` 创建名为 agri-irrigate-north 的规则,条件基于 north-field-probe-01 的 soil_moisture_pct"],
+    "overall": "规则必须真实创建并通过校验(soil_moisture_pct 来自 soil_moisture_probe 模板)"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind rule create"] },
+  "state_queries": [
+    { "type": "rule_exists", "params": { "name": "agri-irrigate-north" }, "expected": true }
+  ]
+}

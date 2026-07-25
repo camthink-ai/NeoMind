@@ -1,0 +1,18 @@
+{
+  "id": "agri-query-driest",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-agriculture",
+  "scenario_type": "single_turn",
+  "description": "农业域·遥测查询:列出所有 soil_moisture_pct 低于 25 的探头并报数值。测 agent 会不会查对域指标。新维度:telemetry-query correctness(查对设备/指标)。",
+  "setup": { "fixture": "scenario-agriculture" },
+  "turns": [
+    { "user": "查一下所有土壤湿度探头,告诉我哪些的 soil_moisture_pct 低于 25?分别报一下当前数值。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 先 `neomind device list` 找到土壤探头,再查每个的 soil_moisture_pct(device get/history --metric)"],
+    "overall": "必须基于真实工具结果作答(north-field-probe-01=12、north-field-probe-02=14、greenhouse-probe-01=22 在 25 以下;south 不在),不能凭空猜"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device list"] }
+}

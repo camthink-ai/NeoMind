@@ -78,6 +78,32 @@ def test_success_first_try():
     assert srv.calls == 1
 
 
+def test_seed_device_types_posts_each_template():
+    srv = FakeServer([FakeResp(True, 201, '{"success":true}')])
+    seed._seed_device_types(srv, [
+        {"device_type": "soil_moisture_probe", "name": "Probe"},
+        {"device_type": "irrigation_valve", "name": "Valve"},
+    ])
+    assert srv.calls == 2, f"expected 2 register POSTs, got {srv.calls}"
+
+
+def test_seed_device_types_re_register_conflict_is_idempotent():
+    # Re-seeding an existing type returns a conflict — must NOT raise.
+    srv = FakeServer([FakeResp(False, 400, "device type already exists")])
+    seed._seed_device_types(srv, [{"device_type": "x", "name": "X"}])
+    assert srv.calls == 1
+
+
+def test_seed_device_types_real_error_raises():
+    srv = FakeServer([FakeResp(False, 400, "invalid metric definition")])
+    raised = False
+    try:
+        seed._seed_device_types(srv, [{"device_type": "x"}])
+    except RuntimeError:
+        raised = True
+    assert raised, "non-conflict errors must raise"
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

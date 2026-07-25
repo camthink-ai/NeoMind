@@ -1,0 +1,65 @@
+{
+  "name": "scenario-agriculture",
+  "description": "Agriculture vertical: 3 domain device-type templates (soil_moisture_probe / irrigation_valve / weather_station), 9 devices across north/south/greenhouse zones, and seeded telemetry with a clear 'north dry, south wet, greenhouse borderline' moisture distribution. Lets domain-reasoning cases (driest-zone detection, auto-irrigation rules, dry-spell workflows) be evaluated with deterministic, hard-checkable outcomes.",
+  "device_types": [
+    {
+      "device_type": "soil_moisture_probe",
+      "name": "Soil Moisture Probe",
+      "categories": ["agriculture"],
+      "mode": "Simple",
+      "metrics": [
+        {"name": "soil_moisture_pct", "display_name": "Soil Moisture", "data_type": "Float", "unit": "%"},
+        {"name": "soil_temp_c", "display_name": "Soil Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "battery_pct", "display_name": "Battery", "data_type": "Float", "unit": "%"}
+      ]
+    },
+    {
+      "device_type": "irrigation_valve",
+      "name": "Irrigation Valve",
+      "categories": ["agriculture"],
+      "mode": "Simple",
+      "metrics": [
+        {"name": "valve_open", "display_name": "Valve Open", "data_type": "Boolean", "unit": ""},
+        {"name": "flow_rate_lpm", "display_name": "Flow Rate", "data_type": "Float", "unit": "L/min"}
+      ],
+      "commands": [
+        {"id": "set_valve", "name": "Set Valve", "params": []}
+      ]
+    },
+    {
+      "device_type": "weather_station",
+      "name": "Weather Station",
+      "categories": ["agriculture"],
+      "mode": "Simple",
+      "metrics": [
+        {"name": "rainfall_mm", "display_name": "Rainfall", "data_type": "Float", "unit": "mm"},
+        {"name": "air_temp_c", "display_name": "Air Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "humidity_pct", "display_name": "Humidity", "data_type": "Float", "unit": "%"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "north-field-probe-01", "name": "North Field Probe A", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "north-field-probe-02", "name": "North Field Probe B", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "south-field-probe-01", "name": "South Field Probe A", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "south-field-probe-02", "name": "South Field Probe B", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "greenhouse-probe-01", "name": "Greenhouse Probe", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "north-valve-01", "name": "North Field Irrigation Valve", "device_type": "irrigation_valve", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "south-valve-01", "name": "South Field Irrigation Valve", "device_type": "irrigation_valve", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "greenhouse-valve-01", "name": "Greenhouse Irrigation Valve", "device_type": "irrigation_valve", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "ws-main-01", "name": "Main Weather Station", "device_type": "weather_station", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "north-field-probe-01", "metric": "soil_moisture_pct", "value": 12},
+    {"device_id": "north-field-probe-01", "metric": "soil_temp_c", "value": 26},
+    {"device_id": "north-field-probe-02", "metric": "soil_moisture_pct", "value": 14},
+    {"device_id": "north-field-probe-02", "metric": "soil_temp_c", "value": 25},
+    {"device_id": "south-field-probe-01", "metric": "soil_moisture_pct", "value": 46},
+    {"device_id": "south-field-probe-02", "metric": "soil_moisture_pct", "value": 48},
+    {"device_id": "greenhouse-probe-01", "metric": "soil_moisture_pct", "value": 22},
+    {"device_id": "greenhouse-probe-01", "metric": "soil_temp_c", "value": 30},
+    {"device_id": "ws-main-01", "metric": "rainfall_mm", "value": 0},
+    {"device_id": "ws-main-01", "metric": "air_temp_c", "value": 33},
+    {"device_id": "ws-main-01", "metric": "humidity_pct", "value": 35}
+  ]
+}
