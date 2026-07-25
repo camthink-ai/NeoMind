@@ -38,6 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "lib"))
 
 import fallback  # noqa: E402
+import hard_signal  # noqa: E402
 import judge  # noqa: E402
 import report  # noqa: E402
 import seed  # noqa: E402
@@ -382,41 +383,71 @@ def cmd_run(args):
             rec = run_case(str(p))
             cf.write(json.dumps(rec, ensure_ascii=False) + "\n")
             cf.flush()
+
+            # Hard signals are ALWAYS computed — no judge, no LLM, no API cost.
+            # They are the reliable metric (the judge is soft/inflation-prone)
+            # and enable judge-free local-model iteration.
+            case = _load_case(p)
+            hard = hard_signal.compute(case, rec)
+            score = {
+                "case_id": case.get("id"),
+                "lang": case.get("lang"),
+                "category": case.get("category"),
+                "hard": hard,
+                "suspected_fallback": bool(rec.get("suspected_fallback")),
+                "status": rec.get("status"),
+                "message": rec.get("message", ""),
+            }
             if args.judge:
                 try:
-                    case = _load_case(p)
-                    score = judge.judge_case(case, rec)
+                    jscore = judge.judge_case(case, rec)
                 except Exception as e:
                     print(f"  JUDGE ERROR: {e}", file=sys.stderr)
-                    score = _error_record(case, "judge_error", str(e))
-                    score["scores"] = {}
-                    score["judge"] = "claude-opus-4-6"
-                    score["duration_ms"] = 0
-                sf.write(json.dumps(score, ensure_ascii=False) + "\n")
-                sf.flush()
-                print(
-                    f"  case_id={score.get('case_id')} overall_reasoning="
-                    f"{(score.get('overall_reasoning') or '')[:100]}",
-                    file=sys.stderr,
-                )
+                    jscore = {
+                        "scores": {},
+                        "overall_reasoning": f"judge error: {e}",
+                        "judge": "claude-opus-4-6",
+                        "duration_ms": 0,
+                    }
+                score["scores"] = jscore.get("scores", {})
+                score["overall_reasoning"] = jscore.get("overall_reasoning", "")
+                score["judge"] = jscore.get("judge")
+                score["duration_ms"] = jscore.get("duration_ms", 0)
+            sf.write(json.dumps(score, ensure_ascii=False) + "\n")
+            sf.flush()
+            verdict = hard_signal.pass_for_case(hard)
+            vtag = {True: "HARD_PASS", False: "HARD_FAIL", None: "n/a"}[verdict]
+            tail = ""
+            if hard.get("wrong_tool"):
+                tail += f" wrong_tool={hard['wrong_tools_used']}"
+            if args.judge:
+                tail += " (+judge)"
+            print(f"  case_id={score.get('case_id')} {vtag}{tail}", file=sys.stderr)
 
     print(f"\nRun dir: {run_dir}", file=sys.stderr)
 
+    scores_text = scores_jsonl_path.read_text()
+    agg = report.aggregate(scores_text)
+    hp = report.hard_pass_rate(agg)
+    print(
+        f"HARD PASS RATE: {hp['passed']}/{hp['denom']} ({hp['pct']:.0f}%)  "
+        f"wrong_tool={hp['wrong_tool']}  unasserted={hp['unasserted']}  "
+        f"agent_failed={hp['agent_failed']}",
+        file=sys.stderr,
+    )
     if args.judge:
-        scores_text = scores_jsonl_path.read_text()
-        agg = report.aggregate(scores_text)
         grade = report.grade_letter(report.overall(agg))
         print(
-            f"grade: {grade} ({report.overall(agg):.1f}/100), "
-            f"{agg['total_cases']} cases, "
-            f"{agg['malformed']} malformed, "
+            f"soft judge grade: {grade} ({report.overall(agg):.1f}/100), "
+            f"{agg['total_cases']} cases, {agg['malformed']} malformed, "
             f"{agg['agent_errors']} agent errors",
             file=sys.stderr,
         )
-        report.write_grade_card(agg, run_dir / "grade-card.md")
-        print(f"wrote {run_dir / 'grade-card.md'}", file=sys.stderr)
     else:
-        print("(skipped judge — pass --judge to score)", file=sys.stderr)
+        print("(no judge — hard signals only; pass --judge for soft scores)",
+              file=sys.stderr)
+    report.write_grade_card(agg, run_dir / "grade-card.md")
+    print(f"wrote {run_dir / 'grade-card.md'}", file=sys.stderr)
 
     return 0
 

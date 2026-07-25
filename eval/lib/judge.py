@@ -67,12 +67,16 @@ def _truncate_for_judge(s, n: int = 600) -> str:
     return s if len(s) <= n else s[:n] + f"... (+{len(s) - n} chars)"
 
 
-def _format_case_record(rec: dict) -> str:
+def _format_case_record(rec: dict, blind: bool = True) -> str:
     """Render CaseRecord compactly for the judge prompt.
 
     Includes the LLM's thinking, tool arguments, and tool results (truncated)
     — without these the judge cannot distinguish "system lost the args" from
     "model decided not to act".
+
+    ``blind=True`` (default) hides the state_query pass/fail results so the
+    judge can't anchor its task_completion score on a hard pass/fail flag —
+    it must judge from the trace. This removes the known anchoring bias.
     """
     out = []
     for i, t in enumerate(rec.get("turn_records", []), 1):
@@ -100,7 +104,9 @@ def _format_case_record(rec: dict) -> str:
             out.append("Tools called: (none)")
         out.append(f"Processing time: {t.get('processing_time_ms', 0)} ms")
     sqs = rec.get("state_queries", [])
-    if sqs:
+    if sqs and not blind:
+        # Only shown when blind=False. Hiding pass/fail prevents the judge from
+        # anchoring task_completion on the hard signal (it must read the trace).
         out.append("\n--- State Queries ---")
         for sq in sqs:
             out.append(
@@ -117,8 +123,12 @@ def _format_case_record(rec: dict) -> str:
     return "\n".join(out)
 
 
-def judge_case(case: dict, case_record: dict) -> dict:
-    """Score one case. Returns a ScoreLine dict."""
+def judge_case(case: dict, case_record: dict, blind: bool = True) -> dict:
+    """Score one case. Returns a ScoreLine dict.
+
+    ``blind=True`` (default) hides state_query results from the judge prompt
+    to remove the pass/fail anchoring bias.
+    """
     if anthropic is None:
         raise RuntimeError(
             "anthropic package not installed — pip install -r eval/requirements.txt"
@@ -156,7 +166,7 @@ def judge_case(case: dict, case_record: dict) -> dict:
         f"## Expectations (per_turn)\n"
         + "\n".join(f"- {e}" for e in per_turn)
         + f"\n\n## Expectations (overall)\n{overall}\n\n"
-        f"## Agent Trace\n\n{_format_case_record(case_record)}\n\n"
+        f"## Agent Trace\n\n{_format_case_record(case_record, blind=blind)}\n\n"
         f"## Your Task\n{RUBRIC}\n"
     )
 
