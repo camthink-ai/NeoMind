@@ -198,6 +198,7 @@ function DashboardSidebarContent({
               autoFocus
             />
             <button
+              aria-label={t('common:confirm')}
               className="h-6 w-6 shrink-0 flex items-center justify-center rounded-md text-success hover:bg-success-light transition-colors"
               onClick={() => {
                 if (newDashboardName.trim()) {
@@ -210,6 +211,7 @@ function DashboardSidebarContent({
               <Check className="h-3.5 w-3.5" />
             </button>
             <button
+              aria-label={t('common:cancel')}
               className="h-6 w-6 shrink-0 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
               onClick={() => { setShowCreateInput(false); setNewDashboardName('') }}
             >

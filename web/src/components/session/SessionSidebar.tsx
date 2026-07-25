@@ -456,6 +456,7 @@ export function SessionSidebar({
                               disabled={isUpdating}
                             />
                             <button
+                              aria-label={t('common:confirm')}
                               className="h-6 w-6 shrink-0 flex items-center justify-center rounded-md text-success hover:bg-success-light transition-colors"
                               onClick={() => handleEditSave(session.sessionId)}
                               disabled={isUpdating || !editingTitle.trim()}
@@ -463,6 +464,7 @@ export function SessionSidebar({
                               <Check className="h-3.5 w-3.5" />
                             </button>
                             <button
+                              aria-label={t('common:cancel')}
                               className="h-6 w-6 shrink-0 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
                               onClick={handleEditCancel}
                               disabled={isUpdating}
@@ -502,6 +504,7 @@ export function SessionSidebar({
                             <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
                                 onClick={(e) => handleEditClick(e, session)}
+                                aria-label={t('common:edit')}
                                 className="h-6 w-6 flex items-center justify-center rounded hover:bg-muted transition-colors"
                                 title={t('session.rename')}
                               >
@@ -509,6 +512,7 @@ export function SessionSidebar({
                               </button>
                               <button
                                 onClick={(e) => handleDeleteClick(e, session.sessionId)}
+                                aria-label={t('common:delete')}
                                 disabled={isDeleting}
                                 className={cn(
                                   "h-6 w-6 flex items-center justify-center rounded hover:bg-error-light text-muted-foreground hover:text-error transition-colors",
