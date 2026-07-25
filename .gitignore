@@ -6,9 +6,10 @@
 target/
 # Cargo.lock committed for reproducible builds (binary crates should track lockfile)
 docs/superpowers/.superpowers/
-# Extension binaries (compiled libraries)
-# Extensions are loaded at runtime, not part of source code
-extensions/
+# Runtime-installed extensions (binaries loaded at runtime, not source).
+# Scoped: bare `extensions/` also matched src/components/extensions/ (source),
+# silently hiding new files there (ExtensionGrid.tsx needed `git add -f`).
+data/extensions/
 
 # =============================================================================
 # Runtime Data
