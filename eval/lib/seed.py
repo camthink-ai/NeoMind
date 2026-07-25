@@ -5,6 +5,8 @@ crates/neomind-api/src/server/router.rs.
 """
 from __future__ import annotations
 
+import time
+
 import requests
 
 
@@ -12,10 +14,30 @@ def _post(server, path: str, body):
     return server.post(path, body)
 
 
+def _is_template_race(resp_text: str) -> bool:
+    """True for the startup-race signature: 'template ... not found'.
+
+    `spawn()` returns as soon as /health goes green, but the backend seeds
+    built-in device-type templates slightly after — a device POST landing in
+    that window 500s with "Device type template 'ne101_camera' not found".
+    Flaky across runs (same fixture passes/fails). Retry just this signature.
+    """
+    t = (resp_text or "").lower()
+    return "not found" in t and "template" in t
+
+
 def _seed_devices(server, items: list):
     for d in items or []:
-        r = _post(server, "/devices", d)
-        if not r.ok:
+        # Bounded retry on the template-seeding race (see _is_template_race).
+        # Other failures (real 400/500) raise immediately.
+        deadline = time.monotonic() + 5.0
+        while True:
+            r = _post(server, "/devices", d)
+            if r.ok:
+                break
+            if _is_template_race(r.text) and time.monotonic() < deadline:
+                time.sleep(0.5)
+                continue
             raise RuntimeError(
                 f"seed device {d.get('device_id') or d.get('id')} -> "
                 f"{r.status_code}: {r.text}"
