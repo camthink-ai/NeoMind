@@ -94,21 +94,27 @@ def test_widget_and_llm_backend_dispatch():
 
 
 def test_device_type_has_metric_present():
-    body = {"success": True, "data": {"device_type": "x",
-            "metrics": [{"name": "rpm"}, {"name": "vibration_mm_s"}]}}
-    with _Patch({"/device-types/x": FakeResp(200, body)}):
+    # Normalized name match: asserted 'mystery-vibration-sensor' matches an
+    # auto-generated device_type 'mystery_wibration_sensor' / name with spaces.
+    body = {"success": True, "data": {"device_types": [
+        {"device_type": "mystery_wibration_sensor", "name": "Mystery Vibration Sensor",
+         "metrics": [{"name": "rpm"}, {"name": "vibration_mm_s"}]}]}}
+    with _Patch({"/device-types": FakeResp(200, body)}):
         r = sq.run_query(
-            {"type": "device_type_has_metric", "params": {"id": "x", "metric": "rpm"},
+            {"type": "device_type_has_metric",
+             "params": {"id": "mystery-vibration-sensor", "metric": "rpm"},
              "expected": True}, "http://b", "k")
     assert r["actual"] is True and r["passed"] is True
 
 
 def test_device_type_has_metric_absent():
-    body = {"success": True, "data": {"device_type": "x", "metrics": [{"name": "rpm"}]}}
-    with _Patch({"/device-types/x": FakeResp(200, body)}):
+    body = {"success": True, "data": {"device_types": [
+        {"device_type": "x", "name": "X", "metrics": [{"name": "rpm"}]}]}}
+    with _Patch({"/device-types": FakeResp(200, body)}):
         r = sq.run_query(
-            {"type": "device_type_has_metric", "params": {"id": "x", "metric": "temp"},
-             "expected": True}, "http://b", "k")
+            {"type": "device_type_has_metric",
+             "params": {"id": "x", "metric": "temp"}, "expected": True},
+            "http://b", "k")
     assert r["passed"] is False
 
 

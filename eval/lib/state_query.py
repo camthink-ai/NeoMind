@@ -247,14 +247,36 @@ def run_query(q: dict, base: str, key: str) -> dict:
         else:
             actual = v
     elif t == "device_type_has_metric":
-        # GET /device-types/:id → metrics[].name includes params.metric?
-        # For the "AI infers a device-type template from raw samples and
-        # creates it" scenario: assert the created template defines the metric.
-        dt = _sid(params, "id")
-        v = _get_json(base, key, f"/device-types/{dt}")
+        # A device-type template defining params.metric exists, matched by id
+        # OR name (normalized — ignores case and -/_/space separators, so an
+        # auto-generated id like 'mystery_wibration_sensor' matches an asserted
+        # 'mystery-vibration-sensor' / name 'Mystery Vibration Sensor').
+        # For the "AI infers a template from raw samples and creates it"
+        # scenario: assert the created template defines the expected metric.
+        import re as _re
+        want = _re.sub(r"[^a-z0-9]", "", _sid(params, "id").lower())
+        v = _get_json(base, key, "/device-types")
+        templates = []
+        if isinstance(v, list):
+            templates = v
+        elif isinstance(v, dict):
+            arr = v.get("device_types") or v.get("data") or []
+            if isinstance(arr, list):
+                templates = arr
+        tpl = None
+        for tm in templates:
+            if not isinstance(tm, dict):
+                continue
+            for key_field in ("device_type", "name"):
+                val = _re.sub(r"[^a-z0-9]", "", str(tm.get(key_field, "")).lower())
+                if val and val == want:
+                    tpl = tm
+                    break
+            if tpl:
+                break
         names = []
-        if isinstance(v, dict):
-            ms = v.get("metrics")
+        if isinstance(tpl, dict):
+            ms = tpl.get("metrics")
             if isinstance(ms, list):
                 names = [m.get("name") for m in ms if isinstance(m, dict)]
         actual = params.get("metric") in names
