@@ -6,7 +6,6 @@
       "device_type": "soil_moisture_probe",
       "name": "Soil Moisture Probe",
       "categories": ["agriculture"],
-      "mode": "Simple",
       "metrics": [
         {"name": "soil_moisture_pct", "display_name": "Soil Moisture", "data_type": "Float", "unit": "%"},
         {"name": "soil_temp_c", "display_name": "Soil Temperature", "data_type": "Float", "unit": "°C"},
@@ -17,20 +16,15 @@
       "device_type": "irrigation_valve",
       "name": "Irrigation Valve",
       "categories": ["agriculture"],
-      "mode": "Simple",
       "metrics": [
         {"name": "valve_open", "display_name": "Valve Open", "data_type": "Boolean", "unit": ""},
         {"name": "flow_rate_lpm", "display_name": "Flow Rate", "data_type": "Float", "unit": "L/min"}
-      ],
-      "commands": [
-        {"id": "set_valve", "name": "Set Valve", "params": []}
       ]
     },
     {
       "device_type": "weather_station",
       "name": "Weather Station",
       "categories": ["agriculture"],
-      "mode": "Simple",
       "metrics": [
         {"name": "rainfall_mm", "display_name": "Rainfall", "data_type": "Float", "unit": "mm"},
         {"name": "air_temp_c", "display_name": "Air Temperature", "data_type": "Float", "unit": "°C"},
