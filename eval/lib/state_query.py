@@ -303,6 +303,61 @@ def run_query(q: dict, base: str, key: str) -> dict:
             for c in records if isinstance(c, dict)
         ]
         actual = str(params.get("command", "")).lower() in names
+    elif t == "rule_references_source":
+        # Depth assertion: does a rule's condition reference the expected data
+        # source (e.g. a transform output, or a specific device metric)?
+        # Walks comparison.source + recurses logical.conditions.
+        rule = _get_with_name_fallback(base, key, "/rules", "/rules/{id}", "rules", params)
+        want = str(params.get("source", "")).lower()
+        sources = []
+
+        def _walk(cond):
+            if isinstance(cond, dict):
+                s = cond.get("source")
+                if isinstance(s, str):
+                    sources.append(s.lower())
+                for sub in cond.get("conditions") or []:
+                    _walk(sub)
+
+        _walk(rule.get("condition") if isinstance(rule, dict) else None)
+        actual = (any(want in s for s in sources) if want else len(sources) > 0)
+    elif t == "rule_action_type":
+        # Depth assertion: does a rule have an action of the expected type
+        # (notify / execute / trigger_agent)? For the rule→agent handoff case.
+        rule = _get_with_name_fallback(base, key, "/rules", "/rules/{id}", "rules", params)
+        want = str(params.get("action_type", "")).lower()
+        acts = rule.get("actions") if isinstance(rule, dict) else None
+        types = [
+            str(a.get("type", "")).lower()
+            for a in acts if isinstance(a, dict)
+        ] if isinstance(acts, list) else []
+        actual = (want in types) if want else (len(types) > 0)
+    elif t == "transform_has_output_prefix":
+        # Depth assertion: was a transform created with the expected
+        # output_prefix (the virtual-metric namespace it produces)?
+        want = str(params.get("output_prefix", "")).lower()
+        name = params.get("id") or params.get("name")
+        v = _get_json(base, key, "/automations")
+        items = []
+        if isinstance(v, list):
+            items = v
+        elif isinstance(v, dict):
+            for k in ("automations", "transforms", "data"):
+                arr = v.get(k)
+                if isinstance(arr, list):
+                    items = arr
+                    break
+                if isinstance(arr, dict):
+                    a2 = arr.get("automations") or arr.get("transforms")
+                    if isinstance(a2, list):
+                        items = a2
+                        break
+        op = ""
+        for it in items:
+            if isinstance(it, dict) and (it.get("name") == name or it.get("id") == name):
+                op = str(it.get("output_prefix", "")).lower()
+                break
+        actual = (want in op) if want else bool(op)
     else:
         raise ValueError(f"unknown state_query type: {t}")
 

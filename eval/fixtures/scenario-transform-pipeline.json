@@ -1,0 +1,22 @@
+{
+  "name": "scenario-transform-pipeline",
+  "description": "Cross-feature pipeline fixture: temperature sensors whose raw temp_c feeds a transform (C→F virtual metric) that a rule then alerts on. Tests the device→transform→rule data pipeline — a core NeoMind capability (compute virtual metrics, automate on them).",
+  "device_types": [
+    {
+      "device_type": "temp_sensor",
+      "name": "Temperature Sensor",
+      "categories": ["general"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "temp-sensor-1", "name": "Indoor Temp Sensor", "device_type": "temp_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "temp-sensor-2", "name": "Outdoor Temp Sensor", "device_type": "temp_sensor", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "temp-sensor-1", "metric": "temp_c", "value": 25.0},
+    {"device_id": "temp-sensor-2", "metric": "temp_c", "value": 31.0}
+  ]
+}

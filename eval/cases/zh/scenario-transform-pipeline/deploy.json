@@ -1,0 +1,23 @@
+{
+  "id": "transform-pipeline-deploy",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-transform-pipeline",
+  "scenario_type": "single_turn",
+  "description": "跨功能·设备→transform→规则 数据管道。测 NeoMind 数据加工→自动化核心链路:建一个 C→F transform(虚拟指标)+ 一条基于 transform 输出的规则(华氏度>85 告警)+ 路由频道。新维度:transform→rule 管道正确性(规则 source 指向 transform 输出,非原始指标)。",
+  "setup": { "fixture": "scenario-transform-pipeline" },
+  "turns": [
+    { "user": "给温度传感器建一个数据管道:\n① 建一个 transform,把 temp_c 摄氏度转华氏度(code 用 `return input * 1.8 + 32`,output-prefix 用 fahrenheit,scope 设 global);\n② 建一条规则(名字叫 temp-f-high):当华氏度(transform 输出)> 85 时告警——规则的 source 必须指向 transform 的输出(含 fahrenheit),不能直接用原始 temp_c;\n③ 告警路由到 temp-f-alerts webhook 频道(URL: https://example.com/t)。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `transform create`(C→F, output-prefix fahrenheit)+ `rule create temp-f-high`(source 指向 transform 输出,>85)+ `channel-create temp-f-alerts`"],
+    "overall": "transform 建成 + 规则 source 指向 transform 输出(含 fahrenheit)+ 频道建成"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind transform create", "neomind rule create", "neomind message channel-create"] },
+  "state_queries": [
+    { "type": "transform_count", "expected_min": 1 },
+    { "type": "rule_references_source", "params": { "name": "temp-f-high" }, "source": "fahrenheit", "expected": true },
+    { "type": "channel_exists", "params": { "name": "temp-f-alerts" }, "expected": true }
+  ]
+}

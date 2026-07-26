@@ -153,6 +153,43 @@ def test_rule_count_uses_expected_min():
     assert r["passed"] is False
 
 
+def test_rule_references_source_found():
+    body = {"success": True, "data": {"rule": {
+        "name": "r1",
+        "condition": {"condition_type": "comparison",
+                      "source": "transform:t1:fahrenheit.temp_c"},
+        "actions": []}}}
+    with _Patch({"/rules/r1": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "rule_references_source",
+             "params": {"id": "r1", "source": "fahrenheit"}, "expected": True},
+            "http://b", "k")
+    assert r["actual"] is True and r["passed"] is True
+
+
+def test_rule_action_type_trigger_agent():
+    body = {"success": True, "data": {"rule": {
+        "name": "r1", "condition": {"condition_type": "comparison", "source": "device:d:x"},
+        "actions": [{"type": "trigger_agent", "agent_id": "a1"}]}}}
+    with _Patch({"/rules/r1": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "rule_action_type",
+             "params": {"id": "r1", "action_type": "trigger_agent"}, "expected": True},
+            "http://b", "k")
+    assert r["actual"] is True and r["passed"] is True
+
+
+def test_transform_has_output_prefix():
+    body = {"success": True, "data": {"automations": [
+        {"name": "c-to-f", "output_prefix": "fahrenheit"}]}}
+    with _Patch({"/automations": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "transform_has_output_prefix",
+             "params": {"name": "c-to-f", "output_prefix": "fahrenheit"}, "expected": True},
+            "http://b", "k")
+    assert r["actual"] is True and r["passed"] is True
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

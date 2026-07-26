@@ -1,0 +1,22 @@
+{
+  "id": "transform-testcode-create",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-transform-testcode",
+  "scenario_type": "single_turn",
+  "description": "转换深度·test-code 干跑 + 创建。测 transform 的 test-code(生产上线必用,此前 0 覆盖):写 C→F 转换,先 test-code 验证 25→77,再保存启用。新维度:transform test-code 工作流 + output-prefix 正确性。",
+  "setup": { "fixture": "seed-empty" },
+  "turns": [
+    { "user": "写一个摄氏转华氏的 transform,名字叫 c-to-f:code 用 `return input * 1.8 + 32`,output-prefix 用 fahrenheit,scope global。先用 `neomind transform test-code` 验证输入 25 应输出 77(77.0),验证通过再保存并启用。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `transform test-code`(验证 25→77)+ `transform create --name c-to-f --output-prefix fahrenheit --enabled true`"],
+    "overall": "test-code 调用 + transform 建成且 output_prefix=fahrenheit"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind transform test-code", "neomind transform create"] },
+  "state_queries": [
+    { "type": "transform_exists", "params": { "name": "c-to-f" }, "expected": true },
+    { "type": "transform_has_output_prefix", "params": { "name": "c-to-f", "output_prefix": "fahrenheit" }, "expected": true }
+  ]
+}

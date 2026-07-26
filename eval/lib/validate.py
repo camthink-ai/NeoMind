@@ -36,6 +36,9 @@ KNOWN_QUERY_TYPES = {
     "settings_value",
     "device_type_has_metric",
     "device_command_sent",
+    "rule_references_source",
+    "rule_action_type",
+    "transform_has_output_prefix",
 }
 
 
