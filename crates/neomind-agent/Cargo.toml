@@ -16,6 +16,10 @@ anthropic = ["cloud"]
 google = ["cloud"]
 xai = ["cloud"]
 all = ["ollama", "cloud", "llamacpp", "openai", "anthropic", "google", "xai"]
+# Exposes test doubles (MockLlmRuntime) for use in this crate's integration
+# tests and downstream test crates. Off by default so it never ships in a
+# release binary. Enable via `--features test-utils`.
+test-utils = []
 
 [dependencies]
 neomind-core = { path = "../neomind-core" }
