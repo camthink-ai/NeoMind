@@ -4,25 +4,25 @@
   "category": "rule",
   "workflow": "rule-runtime",
   "scenario_type": "single_turn",
-  "description": "运行时验证·规则触发执行(NeoMind 自动化核心链):agent 建规则(battery<20→notify),eval 注入触发性遥测(battery=10<20),验证规则真 fire 产生了告警消息。从'能配置'升级到'配了真管用'。新维度:runtime rule firing。用 sensor-002 避开 seed-default 里已有的 sensor-001 规则。",
-  "setup": { "fixture": "seed-default" },
+  "description": "运行时验证·规则触发执行(NeoMind 自动化核心链):agent 建规则(battery_level<20→notify),eval 通过 webhook 摄取路径注入触发性遥测(battery_level=10<20,webhook 发 DeviceMetric 事件触发规则引擎),验证规则真 fire 产生了告警消息。从'能配置'升级到'配了真管用'。新维度:runtime rule firing。",
+  "setup": { "fixture": "scenario-rule-runtime" },
   "turns": [
-    { "user": "建一条规则,名字叫 sensor-002-low-battery:当 sensor-002 的 values.battery 低于 20 时,发一条告警通知。" }
+    { "user": "建一条规则,名字叫 low-battery-alert:当 webhook-sensor 的 battery_level 低于 20 时,发一条告警通知。" }
   ],
   "applies": ["tool_accuracy", "task_completion", "language_adherence"],
   "expectations": {
-    "per_turn": ["Turn 1: `neomind rule create` 建规则 sensor-002-low-battery(condition: device:sensor-002:values.battery < 20, action: notify)"],
-    "overall": "规则建成 + runtime 注入 battery=10 后规则 fire 产生告警消息"
+    "per_turn": ["Turn 1: `neomind rule create` 建规则 low-battery-alert(condition: device:webhook-sensor:battery_level < 20, action: notify)"],
+    "overall": "规则建成 + runtime webhook 注入 battery_level=10 后规则 fire 产生告警消息"
   },
   "expect": { "tools": ["shell"], "commands": ["neomind rule create"] },
   "state_queries": [
-    { "type": "rule_exists", "params": { "name": "sensor-002-low-battery" }, "expected": true }
+    { "type": "rule_exists", "params": { "name": "low-battery-alert" }, "expected": true }
   ],
   "runtime": {
     "trigger": [
-      { "type": "telemetry", "device_id": "sensor-002", "metric": "values.battery", "value": 10 }
+      { "type": "webhook", "device_id": "webhook-sensor", "metric": "battery_level", "value": 10 }
     ],
-    "wait_ms": 2500,
+    "wait_ms": 3000,
     "expect": [
       { "type": "message_count", "expected_min": 1 }
     ]

@@ -269,6 +269,14 @@ def run_case(case_path: str) -> dict:
                         )
                     except Exception as e:
                         print(f"  runtime inject error: {e}", file=sys.stderr)
+                elif trig.get("type") == "webhook":
+                    # Webhook ingestion publishes DeviceMetric events (fires
+                    # rules/transforms); HTTP /devices/:id/metrics does NOT.
+                    try:
+                        body = trig.get("body") or {trig.get("metric"): trig.get("value")}
+                        srv.post(f"/devices/{trig['device_id']}/webhook", body)
+                    except Exception as e:
+                        print(f"  runtime webhook inject error: {e}", file=sys.stderr)
             time.sleep(int(runtime.get("wait_ms") or 2000) / 1000.0)
             for q in runtime.get("expect") or []:
                 try:

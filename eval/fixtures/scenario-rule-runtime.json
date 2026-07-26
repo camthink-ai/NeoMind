@@ -1,0 +1,17 @@
+{
+  "name": "scenario-rule-runtime",
+  "description": "Runtime rule-firing fixture: a webhook-adapter device (webhook_sensor type with battery_level metric) so the eval can inject telemetry via the webhook ingestion path (which publishes DeviceMetric events → fires rules). HTTP /devices/:id/metrics does NOT publish events; only webhook/MQTT ingestion do.",
+  "device_types": [
+    {
+      "device_type": "webhook_sensor",
+      "name": "Webhook Sensor",
+      "categories": ["general"],
+      "metrics": [
+        {"name": "battery_level", "display_name": "Battery Level", "data_type": "Float", "unit": "%"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "webhook-sensor", "name": "Webhook Test Sensor", "device_type": "webhook_sensor", "adapter_type": "webhook", "connection_config": {}}
+  ]
+}
