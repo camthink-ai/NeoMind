@@ -274,7 +274,12 @@ def run_case(case_path: str) -> dict:
                     # rules/transforms); HTTP /devices/:id/metrics does NOT.
                     try:
                         body = trig.get("body") or {trig.get("metric"): trig.get("value")}
-                        srv.post(f"/devices/{trig['device_id']}/webhook", body)
+                        resp = srv.post(f"/devices/{trig['device_id']}/webhook", body)
+                        print(
+                            f"  [runtime] webhook inject → {resp.status_code}: "
+                            f"{resp.text[:200]}",
+                            file=sys.stderr,
+                        )
                     except Exception as e:
                         print(f"  runtime webhook inject error: {e}", file=sys.stderr)
             time.sleep(int(runtime.get("wait_ms") or 2000) / 1000.0)
