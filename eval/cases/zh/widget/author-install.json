@@ -1,0 +1,21 @@
+{
+  "id": "widget-author-install",
+  "lang": "zh",
+  "category": "widget",
+  "workflow": "widget-management",
+  "scenario_type": "single_turn",
+  "description": "前端组件编写·完整 author→deploy:脚手架生成 widget → 打包 .tgz → 安装到系统 → 确认安装成功。比 widget-create 更深一层:widget_exists 硬断言生成的组件真装进去了(代码有效到 install 级),不只验证跑了 create 命令。",
+  "setup": { "fixture": "seed-empty" },
+  "turns": [
+    { "user": "帮我创建一个自定义 widget:名字叫 Custom Gauge,类型 gauge。先用 neomind widget create 生成脚手架,把它打包成 .tgz 文件(widget CLI 没有 bundle 打包子命令,用 tar),然后用 neomind widget install 安装到系统里,最后确认它已经装上能用了。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `widget create` 脚手架 → tar 打包 .tgz → `widget install` 安装 → list/get 确认"],
+    "overall": "widget 真正安装进系统,widget_exists 能查到 Custom Gauge"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind widget create", "neomind widget install"] },
+  "state_queries": [
+    { "type": "widget_exists", "params": { "name": "Custom Gauge" }, "expected": true }
+  ]
+}
