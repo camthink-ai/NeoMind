@@ -1693,12 +1693,12 @@ impl TransformEngine {
             let rendered = self.render_template(template, raw_data, Some(item), index);
             let rendered_output = self.render_template(output_pattern, raw_data, Some(item), index);
 
-            // Try to parse as number, otherwise use as string (convert to f64 via hash for now)
-            let value = if let Ok(num) = rendered.trim().parse::<f64>() {
-                num
+            // Try to parse as number; if not numeric, store as a Text metric
+            // (previously hashed to a bogus float — silent data corruption).
+            let value: MetricValue = if let Ok(num) = rendered.trim().parse::<f64>() {
+                num.into()
             } else {
-                // Use a simple hash for non-numeric values
-                rendered.chars().map(|c| c as u32 as f64).sum::<f64>() % 10000.0
+                rendered.clone().into()
             };
 
             metrics.push(TransformedMetric {
@@ -1755,12 +1755,11 @@ impl TransformEngine {
 
         let rendered = self.render_template(template, &data, None, 0);
 
-        // Try to parse as number, otherwise use hash
-        let value = if let Ok(num) = rendered.trim().parse::<f64>() {
-            num
+        // Try to parse as number; if not numeric, store as Text (not a bogus hash).
+        let value: MetricValue = if let Ok(num) = rendered.trim().parse::<f64>() {
+            num.into()
         } else {
-            // Use hash for string values
-            rendered.chars().map(|c| c as u32 as f64).sum::<f64>() % 10000.0
+            rendered.clone().into()
         };
 
         Ok(TransformedMetric {
@@ -2455,9 +2454,11 @@ impl TransformEngine {
             Value::String(decoded.clone())
         };
 
-        // Convert to f64 (use hash for non-numeric)
-        let value = value_as_f64(&json_value)
-            .unwrap_or_else(|| decoded.chars().map(|c| c as u32 as f64).sum::<f64>() % 10000.0);
+        // Try numeric first; if not numeric, store the decoded string as Text
+        // (previously hashed to a bogus float — silent data corruption).
+        let value: MetricValue = value_as_f64(&json_value)
+            .map(MetricValue::from)
+            .unwrap_or_else(|| decoded.clone().into());
 
         Ok(vec![TransformedMetric {
             device_id: device_id.to_string(),
@@ -2499,8 +2500,10 @@ impl TransformEngine {
             crate::automation::types::DecodeFormat::Csv => to_encode,
         };
 
-        // Use hash for encoded string value
-        let value = encoded.chars().map(|c| c as u32 as f64).sum::<f64>() % 10000.0;
+        // Store the encoded string as Text (previously hashed to a bogus float).
+        let value: MetricValue = encoded.trim().parse::<f64>()
+            .map(MetricValue::from)
+            .unwrap_or_else(|_| encoded.clone().into());
 
         Ok(vec![TransformedMetric {
             device_id: device_id.to_string(),
