@@ -1,0 +1,37 @@
+{
+  "name": "scenario-rule-execute-runtime",
+  "description": "Runtime rule→Execute(downlink) fixture: webhook device with battery_level + set_alarm command, pre-seeded rule(battery_level<20→Execute set_alarm). Tests the rule fire→Execute action→device command chain at runtime.",
+  "device_types": [
+    {
+      "device_type": "webhook_sensor",
+      "name": "Webhook Sensor",
+      "categories": ["general"],
+      "metrics": [
+        {"name": "battery_level", "display_name": "Battery Level", "data_type": "Float", "unit": "%"}
+      ],
+      "commands": [
+        {"name": "set_alarm", "display_name": "Set Alarm", "description": "Raise the device alarm"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "webhook-sensor", "name": "Webhook Test Sensor", "device_type": "webhook_sensor", "adapter_type": "webhook", "connection_config": {}}
+  ],
+  "rules": [
+    {
+      "name": "low-battery-execute",
+      "enabled": true,
+      "trigger": {"trigger_type": "data_change"},
+      "condition": {
+        "condition_type": "comparison",
+        "source": "device:webhook-sensor:battery_level",
+        "operator": "less_than",
+        "threshold": 20.0
+      },
+      "actions": [
+        {"type": "execute", "target": "webhook-sensor", "target_type": "device", "command": "set_alarm", "params": {}}
+      ],
+      "cooldown": 60000
+    }
+  ]
+}

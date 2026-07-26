@@ -1,0 +1,28 @@
+{
+  "id": "rule-execute-runtime",
+  "lang": "zh",
+  "category": "rule",
+  "workflow": "rule-runtime",
+  "scenario_type": "single_turn",
+  "description": "运行时验证·规则→Execute(下行命令):规则 fire 时执行设备命令(set_alarm),不只发通知。测 rule fire→Execute action→device command 链。与 rule-fire-runtime(Notify→message)互补:这验证规则能触发下行控制。",
+  "setup": { "fixture": "scenario-rule-execute-runtime" },
+  "turns": [
+    { "user": "查一下 webhook-sensor 的 battery_level 当前是多少?" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device get webhook-sensor` 查 battery_level"],
+    "overall": "(runtime 注入 battery_level=10 后)规则 fire → Execute set_alarm → 设备命令发出"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device get"] },
+  "runtime": {
+    "pre_wait_ms": 12000,
+    "trigger": [
+      { "type": "webhook", "device_id": "webhook-sensor", "metric": "battery_level", "value": 10 }
+    ],
+    "wait_ms": 3000,
+    "expect": [
+      { "type": "device_command_sent", "params": { "id": "webhook-sensor", "command": "set_alarm" }, "expected": true }
+    ]
+  }
+}
