@@ -1804,21 +1804,15 @@ impl TransformEngine {
     async fn execute_pipeline(
         &self,
         _steps: &[TransformOperation],
-        final_output: &str,
-        device_id: &str,
-        timestamp: i64,
+        _final_output: &str,
+        _device_id: &str,
+        _timestamp: i64,
         _raw_data: &Value,
     ) -> Result<Vec<TransformedMetric>> {
-        // Simplified: Pipeline is not fully implemented yet
-        // Just return a placeholder metric
-        Ok(vec![TransformedMetric {
-            device_id: device_id.to_string(),
-            transform_id: None,
-            metric: final_output.to_string(),
-            value: 0.0.into(),
-            timestamp,
-            quality: Some(1.0),
-        }])
+        Err(AutomationError::TransformError {
+            operation: "Pipeline".to_string(),
+            message: "Pipeline operation is not yet implemented".to_string(),
+        })
     }
 
     /// Execute Fork operation - parallel branches
@@ -1829,8 +1823,10 @@ impl TransformEngine {
         _timestamp: i64,
         _raw_data: &Value,
     ) -> Result<Vec<TransformedMetric>> {
-        // Simplified: Fork is not fully implemented yet
-        Ok(vec![])
+        Err(AutomationError::TransformError {
+            operation: "Fork".to_string(),
+            message: "Fork operation is not yet implemented".to_string(),
+        })
     }
 
     /// Execute If operation - conditional execution
@@ -1839,20 +1835,15 @@ impl TransformEngine {
         _condition: &str,
         _then_op: &TransformOperation,
         _else_op: Option<&TransformOperation>,
-        output: &str,
-        device_id: &str,
-        timestamp: i64,
+        _output: &str,
+        _device_id: &str,
+        _timestamp: i64,
         _raw_data: &Value,
     ) -> Result<Vec<TransformedMetric>> {
-        // Simplified: If is not fully implemented yet
-        Ok(vec![TransformedMetric {
-            device_id: device_id.to_string(),
-            transform_id: None,
-            metric: output.to_string(),
-            value: 0.0.into(),
-            timestamp,
-            quality: Some(1.0),
-        }])
+        Err(AutomationError::TransformError {
+            operation: "If".to_string(),
+            message: "If operation is not yet implemented".to_string(),
+        })
     }
 
     /// Render a template string with variable substitution
