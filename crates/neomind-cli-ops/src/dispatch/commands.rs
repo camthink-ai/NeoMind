@@ -1933,13 +1933,19 @@ pub enum WidgetCommand {
         /// Output directory (defaults to widget ID).
         #[arg(long)]
         output: Option<String>,
+        /// Scaffold AND install in one step — register the widget immediately
+        /// after scaffolding, no separate `widget install` needed.
+        #[arg(long)]
+        install: bool,
     },
-    /// Install widget from file.
+    /// Install widget from a scaffolded directory or .zip package.
     ///
-    /// Installs a widget from a .tgz package file.
-    /// Example: `neomind widget install ./my-chart.tgz`
+    /// Accepts a directory containing manifest.json + bundle.js (as `widget
+    /// create` produces) OR a .zip package. Or use `widget create --install`
+    /// to scaffold+install in one step.
+    /// Example: `neomind widget install ./my-chart/`
     Install {
-        /// Path to widget file (.tgz).
+        /// Path to widget directory or .zip file.
         #[arg(required = true)]
         file: String,
     },

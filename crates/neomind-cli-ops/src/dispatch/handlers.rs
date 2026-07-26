@@ -874,8 +874,30 @@ pub async fn run_widget_cmd(cmd: WidgetCommand) -> Result<(CliResponse, OutputFo
             name,
             widget_type,
             output,
+            install,
         } => {
             let resp = create_widget(&name, &widget_type, output.as_deref())?;
+            let resp = if install {
+                // `widget create` wrote manifest.json + bundle.js under
+                // `directory`; register them via the install path — no manual
+                // packaging/tar needed (the create→install gap with a manual
+                // tar step was agent friction even strong models stumbled on).
+                let dir = resp
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.get("directory"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                if dir.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "widget create --install: could not resolve scaffold directory"
+                    ));
+                }
+                install_widget_file(&client, &dir).await?
+            } else {
+                resp
+            };
             (resp, output_format)
         }
         WidgetCommand::Install { file } => (install_widget_file(&client, &file).await?, output_format),
