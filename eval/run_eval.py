@@ -254,6 +254,35 @@ def run_case(case_path: str) -> dict:
                     "passed": False,
                 })
 
+        # Runtime verification: inject triggers (telemetry that should FIRE the
+        # just-configured rule/transform/agent), wait for the async engine,
+        # then run runtime.expect. Appended to state_results so the hard
+        # signal covers "did it actually fire" — not just "does it exist".
+        runtime = case.get("runtime")
+        if runtime:
+            for trig in runtime.get("trigger") or []:
+                if trig.get("type") == "telemetry":
+                    try:
+                        srv.post(
+                            f"/devices/{trig['device_id']}/metrics",
+                            {"metric": trig.get("metric"), "value": trig.get("value")},
+                        )
+                    except Exception as e:
+                        print(f"  runtime inject error: {e}", file=sys.stderr)
+            time.sleep(int(runtime.get("wait_ms") or 2000) / 1000.0)
+            for q in runtime.get("expect") or []:
+                try:
+                    r = state_query.run_query(q, srv.api_base, srv.api_key)
+                    r["_runtime"] = True
+                    state_results.append(r)
+                except Exception as e:
+                    state_results.append({
+                        "type": q.get("type"),
+                        "error": str(e),
+                        "passed": False,
+                        "_runtime": True,
+                    })
+
         suspected = fallback.detect_suspected_fallback(
             turn_records,
             (case.get("expectations") or {}).get("per_turn", []),
