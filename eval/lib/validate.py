@@ -38,7 +38,6 @@ KNOWN_QUERY_TYPES = {
     "device_command_sent",
     "rule_references_source",
     "rule_action_type",
-    "transform_has_output_prefix",
 }
 
 

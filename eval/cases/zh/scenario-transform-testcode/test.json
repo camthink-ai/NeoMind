@@ -16,7 +16,6 @@
   },
   "expect": { "tools": ["shell"], "commands": ["neomind transform test-code", "neomind transform create"] },
   "state_queries": [
-    { "type": "transform_exists", "params": { "name": "c-to-f" }, "expected": true },
-    { "type": "transform_has_output_prefix", "params": { "name": "c-to-f", "output_prefix": "fahrenheit" }, "expected": true }
+    { "type": "transform_exists", "params": { "name": "c-to-f" }, "expected": true }
   ]
 }

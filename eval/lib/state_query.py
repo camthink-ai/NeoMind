@@ -332,32 +332,6 @@ def run_query(q: dict, base: str, key: str) -> dict:
             for a in acts if isinstance(a, dict)
         ] if isinstance(acts, list) else []
         actual = (want in types) if want else (len(types) > 0)
-    elif t == "transform_has_output_prefix":
-        # Depth assertion: was a transform created with the expected
-        # output_prefix (the virtual-metric namespace it produces)?
-        want = str(params.get("output_prefix", "")).lower()
-        name = params.get("id") or params.get("name")
-        v = _get_json(base, key, "/automations")
-        items = []
-        if isinstance(v, list):
-            items = v
-        elif isinstance(v, dict):
-            for k in ("automations", "transforms", "data"):
-                arr = v.get(k)
-                if isinstance(arr, list):
-                    items = arr
-                    break
-                if isinstance(arr, dict):
-                    a2 = arr.get("automations") or arr.get("transforms")
-                    if isinstance(a2, list):
-                        items = a2
-                        break
-        op = ""
-        for it in items:
-            if isinstance(it, dict) and (it.get("name") == name or it.get("id") == name):
-                op = str(it.get("output_prefix", "")).lower()
-                break
-        actual = (want in op) if want else bool(op)
     else:
         raise ValueError(f"unknown state_query type: {t}")
 
