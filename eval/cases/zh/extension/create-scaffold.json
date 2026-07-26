@@ -23,5 +23,6 @@
       "Turn 1: Scaffold a new extension (covers `neomind extension create`)"
     ],
     "overall": "Scaffold a new extension (covers `neomind extension create`)"
-  }
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind extension create"] }
 }

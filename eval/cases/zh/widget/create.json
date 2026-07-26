@@ -15,5 +15,6 @@
       "Turn 1: Agent 调用 `neomind widget create 'Custom Gauge' --widget-type gauge --output /tmp/eval-widget`，并确认生成了 manifest.json + bundle.js"
     ],
     "overall": "必须实际执行 create，不能仅复述"
-  }
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind widget create"] }
 }
