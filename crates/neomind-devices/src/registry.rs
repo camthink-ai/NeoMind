@@ -999,7 +999,14 @@ impl DeviceRegistry {
                             last_seen: updated.last_seen,
                             offline_timeout_secs: updated.offline_timeout_secs,
                         };
-                        let _ = storage.save_device(&sc);
+                        if let Err(e) = storage.save_device(&sc) {
+                            tracing::error!(
+                                device_id = %device_id,
+                                error = %e,
+                                "Failed to persist device re-registration — \
+                                 in-memory updated but change will be lost on restart"
+                            );
+                        }
                     }
                 }
             }
