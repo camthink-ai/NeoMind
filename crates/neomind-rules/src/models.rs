@@ -235,6 +235,25 @@ pub enum LogicalOperator {
 /// A rule condition.
 ///
 /// Use [`RuleCondition::extract_sources`] to discover which DataSourceIds
+/// Accepts a number (f64) OR a boolean as a comparison threshold. Boolean
+/// metrics are ingested as Number(0/1), so a boolean threshold maps naturally
+/// (true→1.0, false→0.0) — lets users/agents write `compressor_running ==
+/// false` instead of hacking `!= 1`. (Surfaced by the solution-level
+/// cold-chain scenario: the rule API rejected a boolean threshold.)
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ThresholdNumOrBool {
+    Num(f64),
+    Bool(bool),
+}
+
+fn deserialize_threshold<'de, D: Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    match ThresholdNumOrBool::deserialize(d)? {
+        ThresholdNumOrBool::Num(n) => Ok(n),
+        ThresholdNumOrBool::Bool(b) => Ok(if b { 1.0 } else { 0.0 }),
+    }
+}
+
 /// the condition references (needed for the subscription index).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "condition_type", rename_all = "snake_case")]
@@ -245,7 +264,7 @@ pub enum RuleCondition {
         #[serde(with = "datasource_id_serde")]
         source: DataSourceId,
         operator: ComparisonOperator,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_threshold")]
         threshold: f64,
         /// String threshold for string comparison operators (contains, starts_with, etc.).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -662,6 +681,35 @@ mod tests {
         assert_eq!(json, "\"online\"");
         let back: RuleValue = serde_json::from_str(&json).unwrap();
         assert_eq!(back, RuleValue::Text("online".into()));
+    }
+
+    #[test]
+    fn comparison_threshold_accepts_boolean() {
+        // Boolean threshold → 0.0/1.0 (boolean metrics are ingested as
+        // Number(0/1)), so `compressor_running == false` parses. Surfaced by
+        // the solution-level cold-chain scenario (rule API rejected bool).
+        let c: RuleCondition = serde_json::from_str(
+            r#"{"condition_type":"comparison","source":"device:d:compressor_running","operator":"equal","threshold":false}"#,
+        ).unwrap();
+        match c {
+            RuleCondition::Comparison { threshold, .. } => assert_eq!(threshold, 0.0),
+            _ => panic!("expected Comparison"),
+        }
+        let c: RuleCondition = serde_json::from_str(
+            r#"{"condition_type":"comparison","source":"device:d:on","operator":"equal","threshold":true}"#,
+        ).unwrap();
+        match c {
+            RuleCondition::Comparison { threshold, .. } => assert_eq!(threshold, 1.0),
+            _ => panic!("expected Comparison"),
+        }
+        // Numeric thresholds still parse (backward compat).
+        let c: RuleCondition = serde_json::from_str(
+            r#"{"condition_type":"comparison","source":"device:d:t","operator":"greater_than","threshold":4.5}"#,
+        ).unwrap();
+        match c {
+            RuleCondition::Comparison { threshold, .. } => assert_eq!(threshold, 4.5),
+            _ => panic!("expected Comparison"),
+        }
     }
 
     #[test]
