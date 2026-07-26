@@ -184,9 +184,32 @@ impl ComparisonOperator {
             Self::Contains => left.contains(right),
             Self::StartsWith => left.starts_with(right),
             Self::EndsWith => left.ends_with(right),
-            Self::Regex => regex::Regex::new(right)
-                .map(|r| r.is_match(left))
-                .unwrap_or(false),
+            Self::Regex => {
+                // Cache compiled regexes — Regex::new is expensive and was
+                // re-run on every condition evaluation (hot path for
+                // high-frequency string rules). Read-locked on cache hits;
+                // write only on first sighting of a pattern.
+                static REGEX_CACHE: std::sync::OnceLock<
+                    std::sync::RwLock<std::collections::HashMap<String, regex::Regex>>,
+                > = std::sync::OnceLock::new();
+                let cache = REGEX_CACHE
+                    .get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+                if let Ok(guard) = cache.read() {
+                    if let Some(r) = guard.get(right) {
+                        return r.is_match(left);
+                    }
+                }
+                match regex::Regex::new(right) {
+                    Ok(r) => {
+                        let matched = r.is_match(left);
+                        if let Ok(mut guard) = cache.write() {
+                            guard.entry(right.to_string()).or_insert(r);
+                        }
+                        matched
+                    }
+                    Err(_) => false,
+                }
+            }
             // Numeric-only operators always return false for string comparison
             Self::GreaterThan | Self::LessThan | Self::GreaterEqual | Self::LessEqual => false,
         }
@@ -240,7 +263,10 @@ impl<'de> Deserialize<'de> for LogicalOperator {
             "and" => Ok(Self::And),
             "or" => Ok(Self::Or),
             "not" => Ok(Self::Not),
-            other => Err(serde::de::Error::unknown_variant(other, &["and", "or", "not"])),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["and", "or", "not"],
+            )),
         }
     }
 }
@@ -732,19 +758,37 @@ mod tests {
     #[test]
     fn operators_case_insensitive() {
         // LogicalOperator: OR / And / NOT (any case) accepted.
-        let c: RuleCondition = serde_json::from_str(
-            r#"{"condition_type":"logical","operator":"OR","conditions":[]}"#,
-        ).unwrap();
-        assert!(matches!(c, RuleCondition::Logical { operator: LogicalOperator::Or, .. }));
+        let c: RuleCondition =
+            serde_json::from_str(r#"{"condition_type":"logical","operator":"OR","conditions":[]}"#)
+                .unwrap();
+        assert!(matches!(
+            c,
+            RuleCondition::Logical {
+                operator: LogicalOperator::Or,
+                ..
+            }
+        ));
         // ComparisonOperator word forms case-insensitive; symbols unaffected.
         let c: RuleCondition = serde_json::from_str(
             r#"{"condition_type":"comparison","source":"device:d:x","operator":"Equal","threshold":1}"#,
         ).unwrap();
-        assert!(matches!(c, RuleCondition::Comparison { operator: ComparisonOperator::Equal, .. }));
+        assert!(matches!(
+            c,
+            RuleCondition::Comparison {
+                operator: ComparisonOperator::Equal,
+                ..
+            }
+        ));
         let c: RuleCondition = serde_json::from_str(
             r#"{"condition_type":"comparison","source":"device:d:x","operator":"GREATER_THAN","threshold":1}"#,
         ).unwrap();
-        assert!(matches!(c, RuleCondition::Comparison { operator: ComparisonOperator::GreaterThan, .. }));
+        assert!(matches!(
+            c,
+            RuleCondition::Comparison {
+                operator: ComparisonOperator::GreaterThan,
+                ..
+            }
+        ));
     }
 
     #[test]
