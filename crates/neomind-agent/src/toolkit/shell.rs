@@ -151,6 +151,54 @@ impl ShellTool {
         timeout: Duration,
     ) -> Option<CommandOutput> {
         let trimmed = command.trim();
+
+        // `&&` sequencing of multiple neomind commands (the agent naturally
+        // batches, e.g. `neomind device get a && neomind device get b`).
+        // Handle in-process when ALL parts are neomind commands; otherwise
+        // fall through to the subprocess path (which supports && via /bin/sh).
+        if trimmed.contains("&&") {
+            let parts: Vec<&str> = trimmed
+                .split("&&")
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let all_neomind = parts.len() > 1
+                && parts
+                    .iter()
+                    .all(|p| p.starts_with("neomind ") || *p == "neomind");
+            if all_neomind {
+                let mut outputs: Vec<String> = Vec::new();
+                for part in parts {
+                    // Boxed: the recursive async call needs indirection (the
+                    // && chain length is runtime-variable → unbounded future).
+                    match Box::pin(self.try_in_process_dispatch(part, timeout)).await {
+                        Some(out) => {
+                            let code = out.exit_code.unwrap_or(1);
+                            outputs.push(out.stdout);
+                            if code != 0 {
+                                // `&&` semantics: stop at first failure.
+                                return Some(CommandOutput {
+                                    exit_code: Some(code),
+                                    stdout: outputs.join("\n--- && ---\n"),
+                                    stderr: String::new(),
+                                    timed_out: false,
+                                });
+                            }
+                        }
+                        None => return None, // a part isn't in-processable → subprocess
+                    }
+                }
+                return Some(CommandOutput {
+                    exit_code: Some(0),
+                    stdout: outputs.join("\n--- && ---\n"),
+                    stderr: String::new(),
+                    timed_out: false,
+                });
+            }
+            // Mixed neomind/non-neomind with && → let /bin/sh handle it.
+            return None;
+        }
+
         // Only intercept commands that start with `neomind ` (or are exactly
         // `neomind`). Anything else goes to the subprocess path.
         if !trimmed.starts_with("neomind ") && trimmed != "neomind" {

@@ -122,7 +122,9 @@ impl Serialize for ComparisonOperator {
 
 impl<'de> Deserialize<'de> for ComparisonOperator {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
+        // Case-insensitive on the word forms (symbols unaffected): the agent
+        // authored "Equal"/"Greater_Than" etc. and lowercase-only rejected them.
+        let s = String::deserialize(deserializer)?.to_lowercase();
         match s.as_str() {
             ">" | "greater_than" | "gt" => Ok(Self::GreaterThan),
             "<" | "less_than" | "lt" => Ok(Self::LessThan),
@@ -220,12 +222,27 @@ impl ComparisonOperator {
 // ---------------------------------------------------------------------------
 
 /// Logical operators for combining conditions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LogicalOperator {
     And,
     Or,
     Not,
+}
+
+impl<'de> Deserialize<'de> for LogicalOperator {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Case-insensitive: AND / And / and all accepted. Rule conditions are
+        // agent-authored and the strict lowercase-only form caused needless
+        // failures (e.g. "OR" rejected, had to be "or").
+        let s = String::deserialize(deserializer)?.to_lowercase();
+        match s.as_str() {
+            "and" => Ok(Self::And),
+            "or" => Ok(Self::Or),
+            "not" => Ok(Self::Not),
+            other => Err(serde::de::Error::unknown_variant(other, &["and", "or", "not"])),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +727,24 @@ mod tests {
             RuleCondition::Comparison { threshold, .. } => assert_eq!(threshold, 4.5),
             _ => panic!("expected Comparison"),
         }
+    }
+
+    #[test]
+    fn operators_case_insensitive() {
+        // LogicalOperator: OR / And / NOT (any case) accepted.
+        let c: RuleCondition = serde_json::from_str(
+            r#"{"condition_type":"logical","operator":"OR","conditions":[]}"#,
+        ).unwrap();
+        assert!(matches!(c, RuleCondition::Logical { operator: LogicalOperator::Or, .. }));
+        // ComparisonOperator word forms case-insensitive; symbols unaffected.
+        let c: RuleCondition = serde_json::from_str(
+            r#"{"condition_type":"comparison","source":"device:d:x","operator":"Equal","threshold":1}"#,
+        ).unwrap();
+        assert!(matches!(c, RuleCondition::Comparison { operator: ComparisonOperator::Equal, .. }));
+        let c: RuleCondition = serde_json::from_str(
+            r#"{"condition_type":"comparison","source":"device:d:x","operator":"GREATER_THAN","threshold":1}"#,
+        ).unwrap();
+        assert!(matches!(c, RuleCondition::Comparison { operator: ComparisonOperator::GreaterThan, .. }));
     }
 
     #[test]

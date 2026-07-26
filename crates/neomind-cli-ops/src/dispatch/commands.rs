@@ -699,6 +699,7 @@ pub enum DeviceCommand {
     ///   2. `device control <ID> <command> --params '<json>'`
     ///
     /// Example: `neomind device control <ID> toggle --params '{"state":true}'`
+    #[command(alias = "command")]
     Control {
         /// Device ID.
         #[arg(required = true)]
