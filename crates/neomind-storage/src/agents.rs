@@ -105,11 +105,19 @@ pub struct AiAgent {
 /// Tool configuration for AI Agent function calling mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentToolConfig {
-    /// Whether tool mode is enabled
+    /// Whether tool mode is enabled (default true). When false, the agent gets
+    /// NO tools (forced to text-only responses).
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Allowed tool names (empty = all available tools)
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+}
+
+/// Serde default helper: `true`. Used by `AgentToolConfig::enabled` so clients
+/// can omit it (tools on by default) instead of getting a 400 "missing field".
+fn default_true() -> bool {
+    true
 }
 
 /// Default value for context window size.

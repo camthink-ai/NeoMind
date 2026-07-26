@@ -1201,7 +1201,7 @@ impl SessionManager {
                     session_id = %session_id,
                     "Loaded memory snapshot for session (REST path)"
                 );
-                agent.set_memory_snapshot(snapshot);
+                agent.set_memory_snapshot(snapshot).await;
             }
         }
 
@@ -1265,7 +1265,7 @@ impl SessionManager {
                     session_id = %session_id,
                     "Loaded memory snapshot for session"
                 );
-                agent.set_memory_snapshot(snapshot);
+                agent.set_memory_snapshot(snapshot).await;
             }
         }
 

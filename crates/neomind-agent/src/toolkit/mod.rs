@@ -9,6 +9,7 @@ pub mod file_write;
 pub mod image_edit;
 pub mod memory_tool;
 pub mod path_validator;
+pub mod policy;
 pub mod registry;
 pub mod shell;
 pub mod skill_tool;

@@ -131,6 +131,7 @@ mod intent;
 mod llm_runtime;
 mod memory;
 mod response_parser;
+pub(crate) mod stuck_detector;
 mod tool_loop;
 mod tool_prompt;
 mod tool_result;
@@ -414,6 +415,12 @@ impl AgentExecutor {
         // Both Focused and Free get the same tool set.
         // Focused JSON path: execute_decisions whitelist enforces scope.
         // Free mode (tool calling): all tools available, agent decides what to use.
+        // Tool mode explicitly disabled → no tools at all (text-only responses).
+        if let Some(config) = tool_config {
+            if !config.enabled {
+                return (Vec::new(), std::collections::HashMap::new());
+            }
+        }
         let filtered = match tool_config {
             Some(config) if !config.allowed_tools.is_empty() => {
                 let allowed: std::collections::HashSet<&str> =
@@ -1363,9 +1370,11 @@ impl AgentExecutor {
                     })?;
 
                 // Extract learned patterns into system memory
-                // DISABLED: The memory scheduler already runs periodic extraction.
-                // Per-execution extraction is redundant, wastes tokens, and uses the wrong model.
-                // See: memory/scheduler.rs for the scheduled extraction path.
+                // DISABLED: per-execution memory extraction was turned off (token
+                // cost, wrong model). The memory scheduler (memory/scheduler.rs)
+                // does NOT compensate — it only does temp-file cleanup. So agents
+                // currently learn only via explicit memory-tool calls. Proper
+                // extraction is tracked as follow-up work (Mem0 single-pass).
 
                 tracing::debug!(
                     agent_id = %agent_id,
@@ -1514,9 +1523,11 @@ impl AgentExecutor {
                     })?;
 
                 // Bridge: extract learned patterns into system memory
-                // DISABLED: The memory scheduler already runs periodic extraction.
-                // Per-execution extraction is redundant, wastes tokens, and uses the wrong model.
-                // See: memory/scheduler.rs for the scheduled extraction path.
+                // DISABLED: per-execution memory extraction was turned off (token
+                // cost, wrong model). The memory scheduler (memory/scheduler.rs)
+                // does NOT compensate — it only does temp-file cleanup. So agents
+                // currently learn only via explicit memory-tool calls. Proper
+                // extraction is tracked as follow-up work (Mem0 single-pass).
 
                 // Calculate confidence from reasoning
                 let confidence = if reasoning_steps.is_empty() {

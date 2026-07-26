@@ -1298,8 +1298,16 @@ impl Agent {
     }
 
     /// Set the frozen memory snapshot for this session.
-    /// Called once when memory is enabled for the session.
-    pub fn set_memory_snapshot(&self, snapshot: crate::memory::MemorySnapshot) {
+    /// Called once when memory is enabled for the session. Also pushes the
+    /// snapshot's prompt section to the LLM interface so the chat path
+    /// (`build_system_prompt_with_tools`) includes it — previously the chat
+    /// prompt discarded it while `system_prompt.md` told the LLM memory was
+    /// "auto-loaded", which was false.
+    pub async fn set_memory_snapshot(&self, snapshot: crate::memory::MemorySnapshot) {
+        let section = snapshot.to_prompt_section();
+        if !section.is_empty() {
+            self.llm_interface.set_memory_context(Some(section)).await;
+        }
         let _ = self.memory_snapshot.set(Some(snapshot));
     }
 

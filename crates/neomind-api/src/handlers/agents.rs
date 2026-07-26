@@ -200,6 +200,9 @@ struct AgentDetailDto {
     /// Custom system prompt override
     #[serde(skip_serializing_if = "Option::is_none")]
     system_prompt: Option<String>,
+    /// Tool scoping (None = all tools; allowed_tools empty = all tools)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_config: Option<neomind_storage::AgentToolConfig>,
 }
 
 /// Agent resource for API responses.
@@ -422,6 +425,11 @@ pub struct CreateAgentRequest {
     /// Custom system prompt override (replaces default IoT role prompt)
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Tool scoping: restrict which tools this agent may call. Omit (or set
+    /// `allowed_tools: []`) for all tools — the default. Scoping the tool set
+    /// per task is the highest-leverage fix for small-model tool selection.
+    #[serde(default)]
+    pub tool_config: Option<neomind_storage::AgentToolConfig>,
 }
 
 /// Resource request in the new unified format.
@@ -509,6 +517,10 @@ pub struct UpdateAgentRequest {
     /// Custom system prompt override (replaces default IoT role prompt)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt: Option<String>,
+    /// Tool scoping override. Send an object to set/replace it; omit to leave
+    /// unchanged. Set `allowed_tools: []` to mean "all tools".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_config: Option<neomind_storage::AgentToolConfig>,
 }
 
 /// Resource in update request (new format).
@@ -643,6 +655,7 @@ impl From<&AiAgent> for AgentDetailDto {
             context_window_size: Some(agent.context_window_size),
             execution_mode: execution_mode_to_string(&agent.execution_mode).to_string(),
             system_prompt: agent.system_prompt.clone(),
+            tool_config: agent.tool_config.clone(),
         }
     }
 }
@@ -1075,7 +1088,7 @@ pub async fn create_agent(
         context_window_size: request.context_window_size.unwrap_or(10),
         enable_tool_chaining: request.enable_tool_chaining.unwrap_or(false),
         max_chain_depth: request.max_chain_depth.unwrap_or(3),
-        tool_config: None,
+        tool_config: request.tool_config,
         execution_mode,
     };
 
@@ -1309,6 +1322,11 @@ pub async fn update_agent(
     // system_prompt update: non-empty string sets it, empty/null clears it
     if let Some(system_prompt) = request.system_prompt {
         agent.system_prompt = Some(system_prompt);
+    }
+    // Tool scoping override: Some replaces; omit leaves unchanged. Send
+    // `{allowed_tools: []}` to clear scoping (meaning "all tools").
+    if let Some(tool_config) = request.tool_config {
+        agent.tool_config = Some(tool_config);
     }
     if let Some(status_str) = request.status {
         agent.status = match status_str.as_str() {

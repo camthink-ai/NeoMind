@@ -69,7 +69,7 @@ Read these first — each one has caused real bugs:
 5. **`update_device_handler` uses direct assignment** `req.offline_timeout_secs` (NOT `.or(existing)`). This is intentional so JSON `null` clears the override. Don't "fix" it to `.or()`.
 6. **Ollama**: use `/api/chat` (native), NOT `/v1/chat/completions`.
 7. **Thinking models** (qwen3.x, deepseek-r1): set `thinking_enabled: Some(false)` for non-chat LLM calls (memory extraction, compression) — otherwise wasted tokens.
-8. **Agent memory journal truncation** must match write↔read: outcome 300 chars; `action_taken` 150 chars/action × max 5 joined; read 600 chars total. Mismatch loses Chinese text silently.
+8. **Agent memory journal truncation** must match write↔read: outcome 300 chars; `action_taken` 150 chars/action × max 5 joined; read outcome 300 + action_taken 800 chars (write caps 300/~758, so read never truncates). Mismatch loses Chinese text silently.
 9. **`web/src-tauri/` API base** is `http://localhost:9375/api` (already includes `/api`); WebSocket uses `ws://`. In frontend, `getApiBase()` already includes `/api` → call `/settings/retention`, NOT `/api/settings/retention`.
 10. **Error-path journal writes**: failed agent executions MUST write a `success: false` journal entry in the outer `Err(e)` branch — otherwise the agent can't learn from failures across runs.
 11. **Extension ComponentRenderer**: do NOT add `mountedRef` patterns or wrap with ErrorBoundary in `renderDashboardComponent` — React 18 StrictMode double-mount + async loading breaks. Do NOT reject builtIn type names in DynamicRegistry (extensions may use similar names).

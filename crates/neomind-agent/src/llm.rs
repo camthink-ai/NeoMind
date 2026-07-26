@@ -277,6 +277,10 @@ pub struct LlmInterface {
     /// Pinned skill IDs selected by the user for this session.
     /// These skills are injected as full guides (not just hints) into the system prompt.
     pinned_skills: Arc<RwLock<Vec<String>>>,
+    /// Frozen memory-snapshot prompt section (user.md/knowledge.md/procedures),
+    /// injected into the chat system prompt so the base prompt's "auto-loaded
+    /// memory" promise is truthful. Set by `Agent::set_memory_snapshot`.
+    memory_context: Arc<RwLock<Option<String>>>,
 }
 
 impl LlmInterface {
@@ -304,6 +308,7 @@ impl LlmInterface {
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
+            memory_context: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -334,6 +339,7 @@ impl LlmInterface {
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
+            memory_context: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -770,6 +776,14 @@ impl LlmInterface {
         *self.pinned_skills.write().await = skills;
     }
 
+    /// Set the frozen memory-snapshot prompt section for this session (or None
+    /// to clear). Injected into the chat system prompt by
+    /// `build_system_prompt_with_tools` so the base prompt's "auto-loaded
+    /// memory" instruction is truthful.
+    pub async fn set_memory_context(&self, section: Option<String>) {
+        *self.memory_context.write().await = section;
+    }
+
     /// Get pinned skill IDs for this session.
     pub async fn get_pinned_skills(&self) -> Vec<String> {
         self.pinned_skills.read().await.clone()
@@ -897,6 +911,20 @@ impl LlmInterface {
                         ));
                     }
                 }
+            }
+        }
+
+        // Inject frozen memory snapshot (user.md/knowledge.md/procedures) —
+        // stable per session. The base prompt promises this is "auto-loaded";
+        // this injection makes that truthful on the chat path (previously the
+        // chat builder discarded the snapshot that only the dead Path-A
+        // assembler used).
+        let memory_section = self.memory_context.read().await.clone();
+        if let Some(section) = memory_section {
+            if !section.is_empty() {
+                prompt.push('\n');
+                prompt.push_str(&section);
+                prompt.push('\n');
             }
         }
 
