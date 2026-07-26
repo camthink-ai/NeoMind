@@ -1,0 +1,22 @@
+{
+  "id": "retail-coldchain-workflow",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-retail",
+  "scenario_type": "single_turn",
+  "description": "零售·异常→动作工作流(冷链合规闭环):违规冷柜→发 set_alarm + 告警规则。新维度:cross-device anomaly response(检测违规→下行告警→规则)。",
+  "setup": { "fixture": "scenario-retail" },
+  "turns": [
+    { "user": "检查所有冷柜,把温度(temp_c)违反冷链(>=4°C)的,给它发 set_alarm 命令打开告警,并创建一个名叫 retail-fridge-3-coldchain-alert 的告警规则。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 识别 fridge-3(8.2>=4)→ `device control fridge-3 set_alarm` → `rule create retail-fridge-3-coldchain-alert`"],
+    "overall": "set_alarm 发到 fridge-3 + 告警规则创建,两件都落地"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device control"] },
+  "state_queries": [
+    { "type": "device_command_sent", "params": { "id": "fridge-3", "command": "set_alarm" }, "expected": true },
+    { "type": "rule_exists", "params": { "name": "retail-fridge-3-coldchain-alert" }, "expected": true }
+  ]
+}

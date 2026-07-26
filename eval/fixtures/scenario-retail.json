@@ -1,0 +1,37 @@
+{
+  "name": "scenario-retail",
+  "description": "Retail cold-chain compliance vertical (grocery). display_fridge devices report temperature; fridge-3 violates the cold-chain (<4°C food-safety) — temp 8.2°C AND compressor off (root-cause hint). Downlink commands: set_target_temp / trigger_defrost / set_alarm, asserted via command history. Tests domain-specific threshold reasoning (cold chain) + corrective command — distinct from building HVAC and industrial vibration.",
+  "device_types": [
+    {
+      "device_type": "display_fridge",
+      "name": "Display Fridge",
+      "categories": ["retail"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "door_open_secs", "display_name": "Door Open", "data_type": "Integer", "unit": "s"},
+        {"name": "compressor_running", "display_name": "Compressor", "data_type": "Boolean", "unit": ""}
+      ],
+      "commands": [
+        {"name": "set_target_temp", "display_name": "Set Target Temp", "description": "Set fridge target temperature"},
+        {"name": "trigger_defrost", "display_name": "Trigger Defrost", "description": "Trigger a defrost cycle"},
+        {"name": "set_alarm", "display_name": "Set Alarm", "description": "Raise the fridge alarm"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "fridge-1", "name": "Dairy Fridge 1", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "fridge-2", "name": "Dairy Fridge 2", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "fridge-3", "name": "Beverage Fridge 3", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "fridge-1", "metric": "temp_c", "value": 3.5},
+    {"device_id": "fridge-1", "metric": "door_open_secs", "value": 0},
+    {"device_id": "fridge-1", "metric": "compressor_running", "value": true},
+    {"device_id": "fridge-2", "metric": "temp_c", "value": 3.8},
+    {"device_id": "fridge-2", "metric": "door_open_secs", "value": 0},
+    {"device_id": "fridge-2", "metric": "compressor_running", "value": true},
+    {"device_id": "fridge-3", "metric": "temp_c", "value": 8.2},
+    {"device_id": "fridge-3", "metric": "door_open_secs", "value": 0},
+    {"device_id": "fridge-3", "metric": "compressor_running", "value": false}
+  ]
+}

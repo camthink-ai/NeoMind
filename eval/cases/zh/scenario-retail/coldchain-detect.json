@@ -1,0 +1,18 @@
+{
+  "id": "retail-coldchain-detect",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-retail",
+  "scenario_type": "single_turn",
+  "description": "零售·上行异常检测(冷链合规):查所有冷柜温度,定位违反冷链(<4°C)的。新维度:domain-specific threshold reasoning(食品安全阈值)。",
+  "setup": { "fixture": "scenario-retail" },
+  "turns": [
+    { "user": "查一下所有冷柜的温度(temp_c),冷链要求低于 4°C。哪个冷柜违规了?报一下各台温度。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device list` 找冷柜,逐个查 temp_c,识别 fridge-3(8.2°C 违反 <4°C 冷链)"],
+    "overall": "基于真实工具结果(fridge-3 8.2 违规;fridge-1 3.5、fridge-2 3.8 合规),不能凭空猜"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device list"] }
+}
