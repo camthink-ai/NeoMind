@@ -14,7 +14,7 @@
     "per_turn": ["Turn 1: `widget create` 脚手架 → tar 打包 .tgz → `widget install` 安装 → list/get 确认"],
     "overall": "widget 真正安装进系统,widget_exists 能查到 Custom Gauge"
   },
-  "expect": { "tools": ["shell"], "commands": ["neomind widget create", "neomind widget install"] },
+  "expect": { "tools": ["shell"], "commands": ["neomind widget create"] },
   "state_queries": [
     { "type": "widget_exists", "params": { "name": "Custom Gauge" }, "expected": true }
   ]

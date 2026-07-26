@@ -77,8 +77,15 @@ def _find_by_name(base: str, key: str, list_path: str, name: str) -> bool:
                 items = arr
                 break
     for it in items:
-        if isinstance(it, dict) and it.get("name") == name:
+        if not isinstance(it, dict):
+            continue
+        n = it.get("name")
+        if isinstance(n, str) and n == name:
             return True
+        if isinstance(n, dict):
+            # Localized name {en: "...", zh: "..."} — match any locale value.
+            if any(v == name for v in n.values() if isinstance(v, str)):
+                return True
     return False
 
 
