@@ -7,14 +7,14 @@
   "description": "农业域·跨设备工作流:干旱期(rainfall=0)给所有湿度<25 的地块配灌溉规则 + 建通知频道。测多实体串联。新维度:cross-device workflow(多条 state_query 全部落地)。",
   "setup": { "fixture": "scenario-agriculture" },
   "turns": [
-    { "user": "最近完全没下雨。把所有 soil_moisture_pct 低于 25 的地块都配上灌溉告警规则——north 那条叫 agri-irrigate-north,greenhouse 那条叫 agri-irrigate-greenhouse。另外建一个名叫 agri-alerts 的通知频道用来收这些告警。" }
+    { "user": "最近完全没下雨。把所有 soil_moisture_pct 低于 25 的地块都配上灌溉告警规则——north 那条叫 agri-irrigate-north,greenhouse 那条叫 agri-irrigate-greenhouse。另外建一个名叫 agri-alerts 的 webhook 通知频道,URL 用 https://example.com/agri-alerts,用来收这些告警。" }
   ],
   "applies": ["tool_accuracy", "task_completion", "language_adherence"],
   "expectations": {
-    "per_turn": ["Turn 1: 创建 2 条灌溉规则(north + greenhouse)+ 1 个 agri-alerts 频道,全部基于真实设备/指标"],
+    "per_turn": ["Turn 1: 创建 2 条灌溉规则(north + greenhouse)+ 1 个 webhook agri-alerts 频道(`message channel-create --name agri-alerts --type webhook --config '{\"url\":\"https://example.com/agri-alerts\"}'`)"],
     "overall": "三条产物全部落地:agri-irrigate-north、agri-irrigate-greenhouse、agri-alerts 频道"
   },
-  "expect": { "tools": ["shell"], "commands": ["neomind rule create"] },
+  "expect": { "tools": ["shell"], "commands": ["neomind rule create", "neomind message channel-create"] },
   "state_queries": [
     { "type": "rule_exists", "params": { "name": "agri-irrigate-north" }, "expected": true },
     { "type": "rule_exists", "params": { "name": "agri-irrigate-greenhouse" }, "expected": true },
