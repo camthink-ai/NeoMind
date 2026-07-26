@@ -134,7 +134,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     fetchDashboards: s.fetchDashboards, fetchDevices: s.fetchDevices,
     fetchDeviceTypes: s.fetchDeviceTypes, fetchDevicesCurrentBatch: s.fetchDevicesCurrentBatch,
     sendCommand: s.sendCommand, duplicateDashboard: s.duplicateDashboard,
-  }))
+  }), shallow)
 
   // Marketplace store selectors — single subscription
   const {
@@ -147,7 +147,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     fetchInstalled: s.fetchInstalled, installFromMarket: s.installFromMarket,
     uninstall: s.uninstall, refreshComponent: s.refreshComponent,
     updatesAvailable: s.updatesAvailable, checkUpdates: s.checkUpdates,
-  }))
+  }), shallow)
 
   // Extension lifecycle management for hot updates
   const { refreshVersion } = useExtensionLifecycle({
