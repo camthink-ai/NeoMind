@@ -1,0 +1,21 @@
+{
+  "id": "industrial-reduce-speed",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-industrial",
+  "scenario_type": "single_turn",
+  "description": "工业·下行命令(预测性维护动作):给异常泵降速。新维度:downlink command correctness(device control + 命令历史断言)。",
+  "setup": { "fixture": "scenario-industrial" },
+  "turns": [
+    { "user": "pump-A 振动太高(18mm/s),有故障风险。用 set_speed 命令把 pump-A 的转速降到 50%。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device control pump-A set_speed --params '{\"speed\":50}'` 降速"],
+    "overall": "set_speed 命令必须真发到 pump-A(command history 有记录)"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device control pump-A set_speed"] },
+  "state_queries": [
+    { "type": "device_command_sent", "params": { "id": "pump-A", "command": "set_speed" }, "expected": true }
+  ]
+}

@@ -118,6 +118,28 @@ def test_device_type_has_metric_absent():
     assert r["passed"] is False
 
 
+def test_device_command_sent_found():
+    body = {"success": True, "data": [
+        {"command_name": "set_speed", "status": "success"},
+        {"command_name": "stop", "status": "failed"}]}
+    with _Patch({"/devices/pump-A/commands": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "device_command_sent",
+             "params": {"id": "pump-A", "command": "set_speed"}, "expected": True},
+            "http://b", "k")
+    assert r["actual"] is True and r["passed"] is True
+
+
+def test_device_command_sent_absent():
+    body = {"success": True, "data": [{"command_name": "stop"}]}
+    with _Patch({"/devices/pump-A/commands": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "device_command_sent",
+             "params": {"id": "pump-A", "command": "set_speed"}, "expected": True},
+            "http://b", "k")
+    assert r["passed"] is False
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

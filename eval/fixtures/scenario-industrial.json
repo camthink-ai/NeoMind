@@ -1,0 +1,41 @@
+{
+  "name": "scenario-industrial",
+  "description": "Industrial predictive-maintenance vertical, grounded in real IIoT (vibration/temp/current sensors + set_speed/stop/calibrate downlink commands). pump-A is the anomaly (vibration 18mm/s + high temp/current) for uplink anomaly-detection; machines accept downlink commands asserted via command history (recorded before routing, so works on offline sims).",
+  "device_types": [
+    {
+      "device_type": "industrial_machine",
+      "name": "Industrial Machine",
+      "categories": ["industrial"],
+      "metrics": [
+        {"name": "vibration_mm_s", "display_name": "Vibration (RMS)", "data_type": "Float", "unit": "mm/s"},
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "current_a", "display_name": "Current", "data_type": "Float", "unit": "A"},
+        {"name": "speed_pct", "display_name": "Speed", "data_type": "Float", "unit": "%"}
+      ],
+      "commands": [
+        {"name": "set_speed", "display_name": "Set Speed", "description": "Set machine speed 0-100%"},
+        {"name": "stop", "display_name": "Stop", "description": "Stop the machine"},
+        {"name": "calibrate", "display_name": "Calibrate", "description": "Trigger sensor calibration"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "pump-A", "name": "Coolant Pump A", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "pump-B", "name": "Coolant Pump B", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "compressor-1", "name": "Air Compressor 1", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "pump-A", "metric": "vibration_mm_s", "value": 18.0},
+    {"device_id": "pump-A", "metric": "temp_c", "value": 72.0},
+    {"device_id": "pump-A", "metric": "current_a", "value": 12.0},
+    {"device_id": "pump-A", "metric": "speed_pct", "value": 90},
+    {"device_id": "pump-B", "metric": "vibration_mm_s", "value": 4.0},
+    {"device_id": "pump-B", "metric": "temp_c", "value": 55.0},
+    {"device_id": "pump-B", "metric": "current_a", "value": 8.0},
+    {"device_id": "pump-B", "metric": "speed_pct", "value": 80},
+    {"device_id": "compressor-1", "metric": "vibration_mm_s", "value": 5.0},
+    {"device_id": "compressor-1", "metric": "temp_c", "value": 60.0},
+    {"device_id": "compressor-1", "metric": "current_a", "value": 9.0},
+    {"device_id": "compressor-1", "metric": "speed_pct", "value": 85}
+  ]
+}

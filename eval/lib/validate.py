@@ -34,6 +34,7 @@ KNOWN_QUERY_TYPES = {
     "llm_backend_exists",
     "settings_value",
     "device_type_has_metric",
+    "device_command_sent",
 }
 
 

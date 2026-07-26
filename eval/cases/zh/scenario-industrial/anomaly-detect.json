@@ -1,0 +1,18 @@
+{
+  "id": "industrial-anomaly-detect",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-industrial",
+  "scenario_type": "single_turn",
+  "description": "工业·上行异常检测(预测性维护):查所有机器振动(vibration_mm_s),定位异常泵。新维度:telemetry anomaly detection over realistic IIoT metrics。",
+  "setup": { "fixture": "scenario-industrial" },
+  "turns": [
+    { "user": "查一下所有机器的振动(vibration_mm_s),哪台振动异常偏高?报一下各台的数值。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device list` 找机器,逐个查 vibration_mm_s(device get/history),识别 pump-A(18mm/s 异常)"],
+    "overall": "必须基于真实工具结果作答(pump-A 18mm/s 异常;pump-B 4、compressor-1 5 正常),不能凭空猜"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device list"] }
+}

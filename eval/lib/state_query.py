@@ -280,6 +280,27 @@ def run_query(q: dict, base: str, key: str) -> dict:
             if isinstance(ms, list):
                 names = [m.get("name") for m in ms if isinstance(m, dict)]
         actual = params.get("metric") in names
+    elif t == "device_command_sent":
+        # GET /devices/:id/commands → command history; does it include
+        # params.command? Downlink assertion. The platform records every
+        # command in history BEFORE routing (service.rs send_command), so this
+        # works even for offline simulated devices.
+        want_id = _sid(params, "id")
+        v = _get_json(base, key, f"/devices/{want_id}/commands")
+        records = []
+        if isinstance(v, list):
+            records = v
+        elif isinstance(v, dict):
+            for k in ("commands", "data", "history", "items"):
+                arr = v.get(k)
+                if isinstance(arr, list):
+                    records = arr
+                    break
+        names = [
+            str(c.get("command_name") or c.get("command") or c.get("name") or "").lower()
+            for c in records if isinstance(c, dict)
+        ]
+        actual = str(params.get("command", "")).lower() in names
     else:
         raise ValueError(f"unknown state_query type: {t}")
 

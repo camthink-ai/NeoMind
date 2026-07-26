@@ -1,0 +1,22 @@
+{
+  "id": "industrial-anomaly-workflow",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-industrial",
+  "scenario_type": "single_turn",
+  "description": "工业·异常→动作工作流(预测性维护闭环):振动超阈值的机器自动降速+告警。新维度:cross-device anomaly response(检测+下行命令+告警)。",
+  "setup": { "fixture": "scenario-industrial" },
+  "turns": [
+    { "user": "检查所有机器,把振动(vibration_mm_s)超过 15 的立刻用 set_speed 降到 50%,并创建一个名叫 industrial-pump-a-alert 的告警规则。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 识别 pump-A(振动 18>15)→ `device control pump-A set_speed` 降速 → `rule create industrial-pump-a-alert`"],
+    "overall": "set_speed 发到 pump-A + 告警规则创建,两件都落地"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device control"] },
+  "state_queries": [
+    { "type": "device_command_sent", "params": { "id": "pump-A", "command": "set_speed" }, "expected": true },
+    { "type": "rule_exists", "params": { "name": "industrial-pump-a-alert" }, "expected": true }
+  ]
+}
