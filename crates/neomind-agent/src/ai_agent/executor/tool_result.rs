@@ -335,10 +335,17 @@ pub(crate) fn build_tool_result(
 ) -> (DecisionProcess, neomind_storage::ExecutionResult) {
     let ToolLoopOutput {
         final_text,
+        stop_reason,
         all_tool_results,
         round_data_list_raw,
         last_llm_error: _,
     } = loop_output;
+
+    tracing::info!(
+        agent_id = %agent.id,
+        stop_reason = stop_reason.label(),
+        "Tool loop ended"
+    );
 
     // === Free mode: LLM natural language response is the primary output ===
     // Tool calls already executed all actions. The final_text is the LLM's

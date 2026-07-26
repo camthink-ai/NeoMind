@@ -13,8 +13,8 @@ use neomind_storage::AiAgent;
 use super::super::AgentExecutor;
 use super::stuck_detector::{observation_fingerprint, StuckDetector, StuckEvent};
 use super::{
-    compact, summarize_tool_output, truncate_to, DedupOutcome, RoundData, ToolCallRecord,
-    ToolLoopOutput,
+    compact, summarize_tool_output, truncate_to, DedupOutcome, RoundData, StopReason,
+    ToolCallRecord, ToolLoopOutput,
 };
 use crate::agent::streaming::resolve_cached_arguments;
 use crate::agent::types::{LargeDataCache, ToolCall};
@@ -50,6 +50,8 @@ impl AgentExecutor {
         let mut all_tool_results: Vec<crate::toolkit::ToolResult> = Vec::new();
         let mut round_data_list: Vec<RoundData> = Vec::new();
         let mut final_text = String::new();
+        // Why the loop ended — set at every break, surfaced via ToolLoopOutput.
+        let mut stop_reason = StopReason::NaturalCompletion;
         let mut last_llm_error: Option<LlmError> = None;
         let mut step_num = 1u32;
         // Accumulate skill tool results separately — inject as concise prompt, not full history
@@ -92,6 +94,7 @@ impl AgentExecutor {
                     max_rounds,
                     "Reached round budget — breaking to Phase 2 summary"
                 );
+                stop_reason = StopReason::MaxRounds;
                 break;
             }
 
@@ -111,6 +114,7 @@ impl AgentExecutor {
                     ),
                 )
                 .await;
+                stop_reason = StopReason::Stuck;
                 break;
             }
             // Inject accumulated skill reference into system prompt once, after first tool round
@@ -211,6 +215,7 @@ impl AgentExecutor {
                             );
                             last_llm_error = Some(e);
                             final_text = "LLM generation failed during tool execution.".to_string();
+                            stop_reason = StopReason::LlmError;
                             break;
                         }
                     }
@@ -427,6 +432,7 @@ impl AgentExecutor {
                         "All tool calls were duplicates — synthesizing from results so far",
                     )
                     .await;
+                    stop_reason = StopReason::AllDuplicate;
                     break;
                 }
                 messages.push(Message::new(
@@ -547,6 +553,7 @@ impl AgentExecutor {
                         Ok(p) => p,
                         Err(e) => {
                             tracing::error!("Tool concurrency semaphore closed: {}", e);
+                            stop_reason = StopReason::Cancelled;
                             break;
                         }
                     };
@@ -573,6 +580,7 @@ impl AgentExecutor {
                             Ok(p) => p,
                             Err(e) => {
                                 tracing::error!("Tool concurrency semaphore closed: {}", e);
+                                stop_reason = StopReason::Cancelled;
                                 break;
                             }
                         };
@@ -740,6 +748,7 @@ impl AgentExecutor {
 
         ToolLoopOutput {
             final_text,
+            stop_reason,
             all_tool_results,
             round_data_list_raw: round_data_list
                 .into_iter()

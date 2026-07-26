@@ -23,7 +23,7 @@ use neomind_storage::{
     ExecutionMode, ScheduleType,
 };
 
-use crate::ai_agent::executor::{AgentExecutor, AgentExecutorConfig};
+use crate::ai_agent::executor::{AgentExecutor, AgentExecutorConfig, StopReason};
 use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
 use crate::toolkit::error::ToolError;
 use crate::toolkit::registry::ToolRegistry;
@@ -161,6 +161,7 @@ async fn normal_completion_returns_final_text() {
 
     assert_eq!(out.final_text, "all done");
     assert_eq!(rt.call_count(), 2);
+    assert_eq!(out.stop_reason, StopReason::NaturalCompletion);
 }
 
 #[tokio::test]
@@ -202,6 +203,7 @@ async fn all_duplicate_breaks_to_phase2() {
         "Phase 2 summary should produce final text, got: {:?}",
         out.final_text
     );
+    assert_eq!(out.stop_reason, StopReason::AllDuplicate);
 }
 
 #[tokio::test]
@@ -240,4 +242,5 @@ async fn max_rounds_graceful_exit_runs_phase2() {
         rt.call_count()
     );
     assert_eq!(out.final_text, "synthesized conclusion");
+    assert_eq!(out.stop_reason, StopReason::MaxRounds);
 }

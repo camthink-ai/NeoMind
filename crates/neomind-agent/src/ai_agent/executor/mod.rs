@@ -49,8 +49,43 @@ pub(crate) struct RoundData {
     pub(crate) tool_calls: Vec<ToolCallRecord>,
 }
 
+/// Why the tool-calling loop stopped. Set at every exit path in `run_tool_loop`
+/// and surfaced via `ToolLoopOutput::stop_reason`, so callers (journaling,
+/// metrics, debugging) know the reason without parsing sentinel strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopReason {
+    /// LLM produced a final text answer (no further tool calls).
+    NaturalCompletion,
+    /// Hit the round budget (`max_rounds`); Phase 2 synthesized a summary.
+    MaxRounds,
+    /// StuckDetector flagged a pathological loop pattern.
+    Stuck,
+    /// Every tool call this round was a cross-round duplicate (results in hand).
+    AllDuplicate,
+    /// LLM generation failed (after transient retries).
+    LlmError,
+    /// Runtime shutdown — tool-concurrency semaphore closed.
+    Cancelled,
+}
+
+impl StopReason {
+    /// Stable machine label for journaling / telemetry.
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            StopReason::NaturalCompletion => "natural-completion",
+            StopReason::MaxRounds => "max-rounds",
+            StopReason::Stuck => "stuck",
+            StopReason::AllDuplicate => "all-duplicate",
+            StopReason::LlmError => "llm-error",
+            StopReason::Cancelled => "cancelled",
+        }
+    }
+}
+
 pub(crate) struct ToolLoopOutput {
     pub(crate) final_text: String,
+    /// Why the loop ended (replaces ad-hoc sentinel-string comparisons).
+    pub(crate) stop_reason: StopReason,
     pub(crate) all_tool_results: Vec<crate::toolkit::ToolResult>,
     /// (thought, tool_calls) per round
     pub(crate) round_data_list_raw: Vec<(Option<String>, Vec<ToolCallRecord>)>,
