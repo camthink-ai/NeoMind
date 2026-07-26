@@ -13,10 +13,6 @@ import { useStore } from '@/store'
 import { getApiBase } from '@/lib/api'
 import type { DashboardComponent, Dashboard } from '@/types/dashboard'
 
-// In Tauri, we need to use the full URL since the backend runs on port 9375
-// In development/web, we can use relative path
-const API_BASE = getApiBase()
-
 export interface UseExtensionLifecycleOptions {
   /** Auto-sync extension components on register (default: true) */
   autoSyncOnRegister?: boolean
@@ -57,7 +53,7 @@ export function useExtensionLifecycle(
     syncingRef.current = true
     try {
       // Fetch new components from API
-      const response = await fetch(`${API_BASE}/extensions/${extensionId}/components`)
+      const response = await fetch(`${getApiBase()}/extensions/${extensionId}/components`)
       if (response.ok) {
         const result = await response.json()
         const components = result.data?.components || result.components || []
@@ -163,7 +159,7 @@ export function useExtensionLifecycle(
     syncingRef.current = true
 
     try {
-      const response = await fetch(`${API_BASE}/extensions/dashboard-components`)
+      const response = await fetch(`${getApiBase()}/extensions/dashboard-components`)
       if (response.ok) {
         const result = await response.json()
         const components = result.data || result || []
