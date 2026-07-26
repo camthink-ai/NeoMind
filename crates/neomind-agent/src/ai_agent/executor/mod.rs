@@ -1659,6 +1659,9 @@ fn is_transient_failure(error: Option<&str>) -> bool {
     // or "too many requests" as the human-readable message instead.
 }
 
+#[cfg(all(test, feature = "test-utils"))]
+mod behavior_tests;
+
 #[cfg(test)]
 mod tests {
     use super::{classify_tool_call_text, is_transient_failure};
