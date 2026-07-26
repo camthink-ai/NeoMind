@@ -1,0 +1,18 @@
+{
+  "id": "building-co2-anomaly",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-building",
+  "scenario_type": "single_turn",
+  "description": "楼宇·上行异常检测(按需通风):查各房间 CO2,定位超标房间。新维度:telemetry anomaly detection(室内空气品质)。",
+  "setup": { "fixture": "scenario-building" },
+  "turns": [
+    { "user": "查一下所有房间的 CO2(co2_ppm),哪个房间超标(>1000ppm)?报一下各房间数值。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device list` 找环境传感器,逐个查 co2_ppm,识别 meeting-room-A(1200ppm 超标)"],
+    "overall": "基于真实工具结果(room-a 1200 超标;room-b 600 正常),不能凭空猜"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device list"] }
+}

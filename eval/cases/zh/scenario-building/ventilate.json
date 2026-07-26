@@ -1,0 +1,21 @@
+{
+  "id": "building-ventilate",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-building",
+  "scenario_type": "single_turn",
+  "description": "楼宇·下行命令(按需通风动作):给超标房间对应的 HVAC 发通风指令。新维度:downlink command + 跨设备(读传感器→控独立 HVAC)。",
+  "setup": { "fixture": "scenario-building" },
+  "turns": [
+    { "user": "meeting-room-A(传感器 room-a-env)的 CO2 太高了。给它对应的 HVAC(hvac-a)发 set_mode 命令,把模式设成 ventilate(通风)。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device control hvac-a set_mode --params '{\"mode\":\"ventilate\"}'`"],
+    "overall": "set_mode 命令必须真发到 hvac-a(command history 有记录)"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device control hvac-a set_mode"] },
+  "state_queries": [
+    { "type": "device_command_sent", "params": { "id": "hvac-a", "command": "set_mode" }, "expected": true }
+  ]
+}

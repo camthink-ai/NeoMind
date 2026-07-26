@@ -1,0 +1,48 @@
+{
+  "name": "scenario-building",
+  "description": "Smart building (BMS) vertical, grounded in real BMS (occupancy/CO2/temp sensors + HVAC set_mode/set_setpoint/set_fan_speed downlink commands). meeting-room-A is the anomaly (CO2 1200ppm > 1000 + high occupancy) for uplink detection; HVAC units accept downlink commands asserted via command history. Tests sensor→separate-actuator cross-device flow (read room sensor, command its HVAC).",
+  "device_types": [
+    {
+      "device_type": "room_environment_sensor",
+      "name": "Room Environment Sensor",
+      "categories": ["building"],
+      "metrics": [
+        {"name": "co2_ppm", "display_name": "CO2", "data_type": "Float", "unit": "ppm"},
+        {"name": "occupancy", "display_name": "Occupancy", "data_type": "Integer", "unit": "people"},
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"}
+      ]
+    },
+    {
+      "device_type": "hvac_unit",
+      "name": "HVAC Unit",
+      "categories": ["building"],
+      "metrics": [
+        {"name": "fan_speed_pct", "display_name": "Fan Speed", "data_type": "Float", "unit": "%"},
+        {"name": "mode", "display_name": "Mode", "data_type": "String", "unit": ""}
+      ],
+      "commands": [
+        {"name": "set_mode", "display_name": "Set Mode", "description": "Set HVAC mode: cool/heat/ventilate/auto"},
+        {"name": "set_setpoint", "display_name": "Set Setpoint", "description": "Set target temperature"},
+        {"name": "set_fan_speed", "display_name": "Set Fan Speed", "description": "Set fan speed 0-100%"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "room-a-env", "name": "Meeting Room A Sensor", "device_type": "room_environment_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "room-b-env", "name": "Meeting Room B Sensor", "device_type": "room_environment_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "hvac-a", "name": "HVAC Unit A (serves Room A)", "device_type": "hvac_unit", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "hvac-b", "name": "HVAC Unit B (serves Room B)", "device_type": "hvac_unit", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "room-a-env", "metric": "co2_ppm", "value": 1200.0},
+    {"device_id": "room-a-env", "metric": "occupancy", "value": 12},
+    {"device_id": "room-a-env", "metric": "temp_c", "value": 26.0},
+    {"device_id": "room-b-env", "metric": "co2_ppm", "value": 600.0},
+    {"device_id": "room-b-env", "metric": "occupancy", "value": 3},
+    {"device_id": "room-b-env", "metric": "temp_c", "value": 23.0},
+    {"device_id": "hvac-a", "metric": "fan_speed_pct", "value": 40},
+    {"device_id": "hvac-a", "metric": "mode", "value": "auto"},
+    {"device_id": "hvac-b", "metric": "fan_speed_pct", "value": 40},
+    {"device_id": "hvac-b", "metric": "mode", "value": "auto"}
+  ]
+}

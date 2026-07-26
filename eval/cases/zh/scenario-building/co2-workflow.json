@@ -1,0 +1,22 @@
+{
+  "id": "building-co2-workflow",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-building",
+  "scenario_type": "single_turn",
+  "description": "楼宇·异常→动作工作流(按需通风闭环):CO2 超标的房间→对应 HVAC 通风+告警。新维度:cross-device anomaly response(检测 CO2→控 HVAC→告警)。",
+  "setup": { "fixture": "scenario-building" },
+  "turns": [
+    { "user": "检查所有房间,把 CO2(co2_ppm)超过 1000 的房间,给它对应的 HVAC 发 set_mode ventilate 命令,并创建一个名叫 building-room-a-co2-alert 的告警规则。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 识别 room-a(1200>1000)→ `device control hvac-a set_mode` 通风 → `rule create building-room-a-co2-alert`"],
+    "overall": "set_mode 发到 hvac-a + 告警规则创建,两件都落地"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device control"] },
+  "state_queries": [
+    { "type": "device_command_sent", "params": { "id": "hvac-a", "command": "set_mode" }, "expected": true },
+    { "type": "rule_exists", "params": { "name": "building-room-a-co2-alert" }, "expected": true }
+  ]
+}
