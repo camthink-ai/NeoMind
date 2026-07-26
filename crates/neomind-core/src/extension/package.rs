@@ -461,6 +461,20 @@ impl ExtensionPackage {
                 "Extension ID is required".to_string(),
             ));
         }
+        // Reject path-traversal characters — the id is joined directly into the
+        // install path (`target_dir.join(ext_id)`), so an id like
+        // "../../etc/cron.d/x" would write files outside the install dir
+        // (RCE-equivalent once the marketplace opens to third-party packages).
+        if manifest.id.contains("..")
+            || manifest.id.contains('/')
+            || manifest.id.contains('\\')
+            || manifest.id.contains('\0')
+        {
+            return Err(PackageError::InvalidManifest(format!(
+                "Extension ID contains invalid path characters: {:?}",
+                manifest.id
+            )));
+        }
 
         // Validate version
         if manifest.version.is_empty() {
