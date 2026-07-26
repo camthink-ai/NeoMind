@@ -260,6 +260,13 @@ def run_case(case_path: str) -> dict:
         # signal covers "did it actually fire" — not just "does it exist".
         runtime = case.get("runtime")
         if runtime:
+            # Pre-inject wait: let the server's background init (adapters —
+            # webhook takes ~10s, after the slow MQTT adapter) complete before
+            # we POST the trigger. Without this, the webhook adapter isn't
+            # registered yet → 500 "not initialized".
+            pre_wait = int(runtime.get("pre_wait_ms") or 0)
+            if pre_wait > 0:
+                time.sleep(pre_wait / 1000.0)
             for trig in runtime.get("trigger") or []:
                 if trig.get("type") == "telemetry":
                     try:

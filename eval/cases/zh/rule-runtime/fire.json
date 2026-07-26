@@ -16,10 +16,11 @@
   },
   "expect": { "tools": ["shell"], "commands": ["neomind device get"] },
   "runtime": {
+    "pre_wait_ms": 12000,
     "trigger": [
       { "type": "webhook", "device_id": "webhook-sensor", "metric": "battery_level", "value": 10 }
     ],
-    "wait_ms": 10000,
+    "wait_ms": 3000,
     "expect": [
       { "type": "message_count", "expected_min": 1 }
     ]
