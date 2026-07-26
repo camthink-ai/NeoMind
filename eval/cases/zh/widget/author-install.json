@@ -16,6 +16,6 @@
   },
   "expect": { "tools": ["shell"], "commands": ["neomind widget create"] },
   "state_queries": [
-    { "type": "widget_exists", "params": { "name": "Custom Gauge" }, "expected": true }
+    { "type": "widget_exists", "params": { "id": "custom-gauge" }, "expected": true }
   ]
 }
