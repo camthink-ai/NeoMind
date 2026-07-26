@@ -1,7 +1,7 @@
 //! Tests for auth_users handlers.
 
 use axum::extract::{Extension, Path, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use neomind_api::auth_users::{
     ChangePasswordRequest, LoginRequest, RegisterRequest, SessionInfo, UserRole,
@@ -98,7 +98,12 @@ mod tests {
             created_at: now,
             expires_at: now + 3600,
         };
-        let result = logout_handler(State(state), Extension(user_info)).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "authorization",
+            "Bearer dummy-token".parse().expect("valid header value"),
+        );
+        let result = logout_handler(State(state), Extension(user_info), headers).await;
         assert!(result.is_ok());
         let response = result.unwrap();
         let value = response.0;

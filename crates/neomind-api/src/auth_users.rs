@@ -320,6 +320,27 @@ impl AuthUserState {
         Ok(())
     }
 
+    /// Remove a user from the database (mirrors `save_user_to_db`).
+    /// No-op for in-memory storage. Used by `delete_user` so deletions survive
+    /// a restart (previously only the in-memory map was mutated, so deleted
+    /// users — including admins removed for security — resurrected on restart).
+    fn delete_user_from_db(path: &str, username: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if path == ":memory:" {
+            return Ok(());
+        }
+        if !std::path::Path::new(path).exists() {
+            return Ok(());
+        }
+        let db = Database::open(path)?;
+        let write_txn = db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(USERS_TABLE)?;
+            table.remove(username)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
     /// Hash password using bcrypt (secure for production use).
     /// Uses default cost factor (12) which provides good security.
     ///
@@ -519,7 +540,10 @@ impl AuthUserState {
                 created_at: chrono::Utc::now().timestamp(),
                 expires_at: chrono::Utc::now().timestamp() + self.session_duration,
             };
-            self.sessions.write().unwrap().insert(token.clone(), session_info);
+            self.sessions
+                .write()
+                .unwrap()
+                .insert(token.clone(), session_info);
         }
 
         info!(
@@ -622,6 +646,15 @@ impl AuthUserState {
     pub async fn delete_user(&self, username: &str) -> Result<(), AuthError> {
         let mut users = self.users.write().await;
         users.remove(username).ok_or(AuthError::UserNotFound)?;
+        // Persist the deletion so the user doesn't resurrect from `users.redb`
+        // on restart (was previously in-memory only).
+        if let Err(e) = Self::delete_user_from_db(self.db_path, username) {
+            error!(category = "auth", username = username, error = %e, "Failed to persist user deletion");
+            return Err(AuthError::DatabaseError(format!(
+                "Failed to delete user: {}",
+                e
+            )));
+        }
         Ok(())
     }
 
@@ -645,7 +678,20 @@ impl AuthUserState {
             return Err(AuthError::InvalidCredentials);
         }
 
-        user.password_hash = Self::hash_password(new_password)?;
+        let new_hash = Self::hash_password(new_password)?;
+        // Persist FIRST (atomic): if the db write fails, the in-memory password
+        // stays unchanged. Previously the change was in-memory only and silently
+        // reverted on restart.
+        let mut persisted = user.clone();
+        persisted.password_hash = new_hash.clone();
+        if let Err(e) = Self::save_user_to_db(self.db_path, &persisted) {
+            error!(category = "auth", username = username, error = %e, "Failed to persist password change");
+            return Err(AuthError::DatabaseError(format!(
+                "Failed to change password: {}",
+                e
+            )));
+        }
+        user.password_hash = new_hash;
 
         info!(category = "auth", username = username, "Password changed");
 
@@ -706,9 +752,10 @@ impl IntoResponse for AuthError {
             }
             AuthError::InvalidToken(msg) => (HttpStatusCode::UNAUTHORIZED, msg),
             AuthError::ExpiredToken => (HttpStatusCode::UNAUTHORIZED, "Token has expired".into()),
-            AuthError::SessionRevoked => {
-                (HttpStatusCode::UNAUTHORIZED, "Session has been revoked".into())
-            }
+            AuthError::SessionRevoked => (
+                HttpStatusCode::UNAUTHORIZED,
+                "Session has been revoked".into(),
+            ),
             AuthError::InvalidInput(msg) => (HttpStatusCode::BAD_REQUEST, msg),
             AuthError::DatabaseError(msg) => (HttpStatusCode::INTERNAL_SERVER_ERROR, msg),
         };

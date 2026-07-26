@@ -50,11 +50,20 @@ pub async fn register_handler(
 
 /// Logout handler - invalidate the current session.
 pub async fn logout_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
     Extension(user): Extension<SessionInfo>,
+    headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, AuthError> {
-    // Note: In a real implementation, you'd track which token to invalidate
-    // For now, we just acknowledge the logout
+    // Invalidate the session server-side so the bearer token can't be reused.
+    // (Previously a no-op: returned 200 but left the token valid for its full
+    // lifetime — anyone who grabbed the token stayed logged in for days.)
+    if let Some(token) = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    {
+        let _ = state.auth_user_state().logout(token).await;
+    }
     tracing::info!(username = %user.username, "User logged out");
     Ok(Json(
         serde_json::json!({"message": "Logged out successfully"}),
