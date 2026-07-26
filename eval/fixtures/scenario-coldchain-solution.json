@@ -1,0 +1,61 @@
+{
+  "name": "scenario-coldchain-solution",
+  "description": "Solution-level cold-chain compliance deployment (grocery, HACCP). NOT a single-point check — a whole-store system: 6 fridges across 3 categories (dairy/beverage threshold <4°C, frozen <-18°C) + door sensors + compressor state + storefront ambient, each in a realistic different state (temp drift / door-ajar / compressor-failed / normal). Tests whether the agent can DEPLOY a complete monitoring+response solution (per-device category-threshold rules + cross-cutting door/compressor rules + unified alert routing) end-to-end — a system-design probe AND a model-capability benchmark.",
+  "device_types": [
+    {
+      "device_type": "display_fridge",
+      "name": "Display Fridge",
+      "categories": ["retail"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "door_open_secs", "display_name": "Door Open", "data_type": "Integer", "unit": "s"},
+        {"name": "compressor_running", "display_name": "Compressor", "data_type": "Boolean", "unit": ""}
+      ],
+      "commands": [
+        {"name": "set_target_temp", "display_name": "Set Target Temp", "description": "Set fridge target temperature"},
+        {"name": "trigger_defrost", "display_name": "Trigger Defrost", "description": "Trigger a defrost cycle"},
+        {"name": "set_alarm", "display_name": "Set Alarm", "description": "Raise the fridge alarm"}
+      ]
+    },
+    {
+      "device_type": "ambient_sensor",
+      "name": "Ambient Sensor",
+      "categories": ["retail"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "humidity_pct", "display_name": "Humidity", "data_type": "Float", "unit": "%"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "dairy-fridge-1", "name": "Dairy Fridge 1", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "dairy-fridge-2", "name": "Dairy Fridge 2", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "beverage-fridge-1", "name": "Beverage Fridge 1", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "beverage-fridge-2", "name": "Beverage Fridge 2", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "frozen-fridge-1", "name": "Frozen Fridge 1", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "frozen-fridge-2", "name": "Frozen Fridge 2", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "storefront-ambient", "name": "Storefront Ambient Sensor", "device_type": "ambient_sensor", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "dairy-fridge-1", "metric": "temp_c", "value": 3.5},
+    {"device_id": "dairy-fridge-1", "metric": "door_open_secs", "value": 0},
+    {"device_id": "dairy-fridge-1", "metric": "compressor_running", "value": true},
+    {"device_id": "dairy-fridge-2", "metric": "temp_c", "value": 7.8},
+    {"device_id": "dairy-fridge-2", "metric": "door_open_secs", "value": 0},
+    {"device_id": "dairy-fridge-2", "metric": "compressor_running", "value": true},
+    {"device_id": "beverage-fridge-1", "metric": "temp_c", "value": 3.2},
+    {"device_id": "beverage-fridge-1", "metric": "door_open_secs", "value": 75},
+    {"device_id": "beverage-fridge-1", "metric": "compressor_running", "value": true},
+    {"device_id": "beverage-fridge-2", "metric": "temp_c", "value": 3.0},
+    {"device_id": "beverage-fridge-2", "metric": "door_open_secs", "value": 0},
+    {"device_id": "beverage-fridge-2", "metric": "compressor_running", "value": true},
+    {"device_id": "frozen-fridge-1", "metric": "temp_c", "value": -20.0},
+    {"device_id": "frozen-fridge-1", "metric": "door_open_secs", "value": 0},
+    {"device_id": "frozen-fridge-1", "metric": "compressor_running", "value": true},
+    {"device_id": "frozen-fridge-2", "metric": "temp_c", "value": -10.0},
+    {"device_id": "frozen-fridge-2", "metric": "door_open_secs", "value": 0},
+    {"device_id": "frozen-fridge-2", "metric": "compressor_running", "value": false},
+    {"device_id": "storefront-ambient", "metric": "temp_c", "value": 24.0},
+    {"device_id": "storefront-ambient", "metric": "humidity_pct", "value": 55.0}
+  ]
+}

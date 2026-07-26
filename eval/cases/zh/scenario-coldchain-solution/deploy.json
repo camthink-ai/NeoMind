@@ -1,0 +1,22 @@
+{
+  "id": "coldchain-solution-deploy",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-coldchain-solution",
+  "scenario_type": "single_turn",
+  "description": "方案级·冷链合规整体部署(店长视角,HACCP)。测 agent 能否端到端部署一整套监控+响应方案:每台冷柜按品类阈值配规则 + 门开/压缩机跨切规则 + 统一告警路由 + 现状研判+覆盖报告。既是系统设计合理性探针(NeoMind 支不支持真实方案部署),也是模型能力基准(能否完成多实体方案级任务)。",
+  "setup": { "fixture": "scenario-coldchain-solution" },
+  "turns": [
+    { "user": "你是连锁超市店长。按食品安全(HACCP)要求,为门店部署整套冷链合规监控方案:\n① 给每台冷柜配一条温度合规告警规则——dairy 和 beverage 类阈值 4°C(temp_c > 4 即告警),frozen 类阈值 -18°C(temp_c > -18 即告警);\n② 配一条「冷柜门开超过 60 秒」告警规则(door_open_secs > 60);\n③ 配一条「压缩机停机」告警规则(compressor_running == false);\n④ 把所有告警统一路由到一个名叫 manager-alerts 的 webhook 频道(URL: https://example.com/mgr);\n⑤ 部署完报告:当前哪几台冷柜已有合规风险,以及你的监控总共覆盖了几台冷柜。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 部署整套方案——`rule create` 给 6 台冷柜配品类阈值规则 + 门开规则 + 压缩机规则 + `message channel-create manager-alerts webhook`;研判 dairy-fridge-2(7.8>4)、frozen-fridge-2(-10>-18 且压缩机停)、beverage-fridge-1(门开75s)有风险"],
+    "overall": "整套方案落地:至少 7 条规则覆盖全部冷柜 + manager-alerts 频道建成;并正确研判当前 3 台风险设备"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind rule create", "neomind message channel-create"] },
+  "state_queries": [
+    { "type": "rule_count", "expected_min": 7 },
+    { "type": "channel_exists", "params": { "name": "manager-alerts" }, "expected": true }
+  ]
+}
