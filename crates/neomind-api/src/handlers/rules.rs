@@ -1432,12 +1432,38 @@ fn build_validation_context(state: &ServerState) -> neomind_rules::ValidationCon
             name: device.name.clone(),
             device_type: device.device_type.clone(),
             metrics,
-            commands: vec![],
+            commands: build_device_commands_for_validation(
+                &state.devices.service,
+                &device,
+            ),
             online: true,
         });
     }
 
     context
+}
+
+/// Build the command list for rule validation from the device-type template.
+/// Mirrors `build_device_metrics_for_validation` — commands were previously
+/// hardcoded to `vec![]` (the 2026-06-29 metrics fix missed commands),
+/// causing ALL Execute actions on device targets to fail validation with
+/// "Command not supported". Surfaced by the runtime rule→Execute eval case.
+fn build_device_commands_for_validation(
+    service: &neomind_devices::DeviceService,
+    device: &neomind_devices::DeviceConfig,
+) -> Vec<neomind_rules::CommandInfo> {
+    if let Some(template) = service.get_template(&device.device_type) {
+        return template
+            .commands
+            .iter()
+            .map(|c| neomind_rules::CommandInfo {
+                name: c.name.clone(),
+                description: c.description.clone(),
+                parameters: vec![],
+            })
+            .collect();
+    }
+    Vec::new()
 }
 
 /// Build the metric list for rule validation.
