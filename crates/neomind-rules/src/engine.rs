@@ -454,6 +454,18 @@ impl RuleEngine {
             }
         }
 
+        // If ALL actions failed, refund the cooldown so the rule can retry on
+        // the next matching data point instead of waiting the full cooldown
+        // window — critical-sensor rules shouldn't silently miss alerts due to
+        // a transient action failure (device offline, extension down, etc.).
+        if actions_executed.is_empty() && error.is_some() {
+            self.cooldowns.write().remove(id);
+            tracing::warn!(
+                rule_id = %id,
+                "All actions failed — refunded cooldown for retry on next match"
+            );
+        }
+
         // Update state (cooldown already claimed before action execution)
         self.update_rule_state_after_trigger(id).await;
 
