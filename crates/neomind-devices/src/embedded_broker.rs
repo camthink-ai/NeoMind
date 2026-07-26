@@ -363,6 +363,14 @@ impl rmqtt::hook::Handler for DevicePresenceHook {
                 let client_id_str = session.id.client_id.to_string();
                 let device_id = self.resolve_device_id(&session.id.client_id);
                 let cached = device_id != client_id_str;
+                // Clean up cache on disconnect — was never removed, so rotating
+                // client_ids (firmware per-boot UUIDs, transient bridges) leaked
+                // for the process lifetime (slow OOM on long-running edge boxes).
+                if cached {
+                    if let Ok(mut cache) = self.client_id_cache.write() {
+                        cache.remove(&client_id_str);
+                    }
+                }
                 let reason_str = match reason {
                     rmqtt::types::Reason::Unknown => None,
                     other => Some(format!("{:?}", other)),
