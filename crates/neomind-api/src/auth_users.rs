@@ -199,8 +199,25 @@ impl AuthUserState {
         let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
         let db_path: &'static str = Box::leak(format!("{}/users.redb", data_dir).into_boxed_str());
         let jwt_secret = std::env::var("NEOMIND_JWT_SECRET").unwrap_or_else(|_| {
-            // Generate a random secret (warning: changes on restart!)
-            uuid::Uuid::new_v4().to_string().replace("-", "")
+            // No env var: load or create a persisted secret so JWTs survive
+            // restarts. (Previously generated a new random secret every restart
+            // → every user logged out on every server restart.)
+            let secret_path = format!("{}/.jwt_secret", data_dir);
+            if let Ok(persisted) = std::fs::read_to_string(&secret_path) {
+                let trimmed = persisted.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
+            let new_secret = uuid::Uuid::new_v4().to_string().replace("-", "");
+            let _ = std::fs::write(&secret_path, &new_secret);
+            tracing::warn!(
+                category = "auth",
+                secret_path = %secret_path,
+                "NEOMIND_JWT_SECRET not set — generated and persisted a new JWT secret. \
+                 Set NEOMIND_JWT_SECRET env var for multi-instance deployments."
+            );
+            new_secret
         });
 
         // Load users from database
