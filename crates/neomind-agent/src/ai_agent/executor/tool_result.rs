@@ -470,6 +470,7 @@ pub(crate) fn build_tool_result(
         decisions,
         conclusion,
         confidence: final_confidence,
+        stop_reason: stop_reason.label().to_string(),
     };
 
     let actions_executed: Vec<neomind_storage::ActionExecuted> = all_tool_results

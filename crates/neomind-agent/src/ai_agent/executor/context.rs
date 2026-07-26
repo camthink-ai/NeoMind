@@ -127,10 +127,16 @@ pub(crate) fn build_history_context(
             .map(|r| {
                 let ts = format_timestamp(r.timestamp);
                 let status = if r.success { "OK" } else { "FAIL" };
+                let stop_label = if r.stop_reason.is_empty() {
+                    String::new()
+                } else {
+                    format!("[{}]", r.stop_reason)
+                };
                 format!(
-                    "- [{}][{}] {} → {}",
+                    "- [{}][{}]{} {} → {}",
                     ts,
                     status,
+                    stop_label,
                     truncate_to(&r.outcome, 300),
                     truncate_to(&r.action_taken, 800)
                 )

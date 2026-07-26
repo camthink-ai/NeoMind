@@ -290,6 +290,12 @@ pub struct ExecutionRecord {
     /// Actions taken (≤150 chars), e.g. "sent alert" / "no action"
     pub action_taken: String,
     pub success: bool,
+    /// Why the run ended — `StopReason::label()` from the tool loop
+    /// (e.g. "max-rounds", "stuck", "natural-completion"). Empty for legacy
+    /// records or paths without a tool loop. Lets the agent learn stop reasons
+    /// across executions.
+    #[serde(default)]
+    pub stop_reason: String,
 }
 
 /// Execution journal — FIFO ring buffer of recent execution records.
@@ -409,6 +415,10 @@ pub struct DecisionProcess {
     pub conclusion: String,
     /// Confidence level (0-1)
     pub confidence: f32,
+    /// Why the tool loop ended (StopReason label); threaded to the journal so
+    /// the agent can learn from prior stop reasons. Empty when no loop ran.
+    #[serde(default)]
+    pub stop_reason: String,
 }
 
 /// Data collected for decision making.
@@ -1405,6 +1415,7 @@ mod tests {
                 decisions: vec![],
                 conclusion: "No action needed".to_string(),
                 confidence: 0.95,
+                stop_reason: String::new(),
             },
             result: None,
             duration_ms: 150,
@@ -1467,6 +1478,7 @@ mod tests {
             outcome: "Temperature normal".into(),
             action_taken: "no action".into(),
             success: true,
+            stop_reason: String::new(),
         });
 
         store

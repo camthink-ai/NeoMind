@@ -22,6 +22,7 @@ impl AgentExecutor {
         conclusion: &str,
         execution_id: &str,
         success: bool,
+        stop_reason: &str,
     ) -> AgentResult<AgentMemory> {
         // Reload the latest memory from the store rather than reusing the
         // in-memory snapshot on `agent`. The snapshot was taken when the agent
@@ -53,6 +54,7 @@ impl AgentExecutor {
             outcome,
             action_taken,
             success,
+            stop_reason: stop_reason.to_string(),
         });
 
         // FIFO — keep only max_records

@@ -991,6 +991,7 @@ impl AgentExecutor {
                         outcome: error_msg,
                         action_taken: "execution failed".to_string(),
                         success: false,
+                        stop_reason: String::new(),
                     });
                     // FIFO — keep only max_records
                     while memory.journal.records.len() > memory.journal.max_records {
@@ -1019,6 +1020,7 @@ impl AgentExecutor {
                         decisions: vec![],
                         conclusion: format!("Failed: {}", e),
                         confidence: 0.0,
+                        stop_reason: String::new(),
                     },
                     result: None,
                     duration_ms,
@@ -1232,6 +1234,7 @@ impl AgentExecutor {
                 decisions: vec![],
                 conclusion: "Execution skipped: event data was recognized as an image metric but image extraction failed. Check device data format and field names.".to_string(),
                 confidence: 0.0,
+                stop_reason: String::new(),
             };
             let exec_result = neomind_storage::ExecutionResult {
                 actions_executed: vec![],
@@ -1253,6 +1256,7 @@ impl AgentExecutor {
                     "Event skipped: no usable data collected from event trigger",
                     &execution_id,
                     false,
+                    "",
                 )
                 .await
             {
@@ -1363,6 +1367,7 @@ impl AgentExecutor {
                         &decision_process.conclusion,
                         &execution_id,
                         overall_success,
+                        &decision_process.stop_reason,
                     )
                     .await?;
 
@@ -1533,6 +1538,7 @@ impl AgentExecutor {
                         &conclusion,
                         &execution_id,
                         focused_success,
+                        "",
                     )
                     .await?;
 
@@ -1582,6 +1588,7 @@ impl AgentExecutor {
                     decisions,
                     conclusion,
                     confidence,
+                    stop_reason: String::new(),
                 };
 
                 let success_rate = if actions_executed.is_empty() {

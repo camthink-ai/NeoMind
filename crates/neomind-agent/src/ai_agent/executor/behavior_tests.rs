@@ -134,6 +134,30 @@ fn base_messages() -> Vec<Message> {
 }
 
 #[tokio::test]
+async fn update_memory_records_stop_reason() {
+    // The journal must record WHY the run ended so the agent's next execution
+    // can learn from it (e.g. "last time I hit max-rounds / got stuck").
+    let (executor, agent, _registry) = build_harness().await;
+    let mem = executor
+        .update_memory(
+            &agent,
+            &[],
+            "ran out of budget",
+            "exec-sr",
+            true,
+            "max-rounds",
+        )
+        .await
+        .expect("update_memory");
+    let last = mem
+        .journal
+        .records
+        .last()
+        .expect("a journal record was pushed");
+    assert_eq!(last.stop_reason, "max-rounds");
+}
+
+#[tokio::test]
 async fn normal_completion_returns_final_text() {
     // Round 1: tool call. Round 2: final text (no tools) → natural completion.
     let rt = MockLlmRuntime::new(vec![
