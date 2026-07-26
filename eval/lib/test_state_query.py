@@ -140,6 +140,19 @@ def test_device_command_sent_absent():
     assert r["passed"] is False
 
 
+def test_rule_count_uses_expected_min():
+    body = {"success": True, "data": {"rules": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}}
+    with _Patch({"/rules": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "rule_count", "expected_min": 3}, "http://b", "k")
+    assert r["actual"] == 3 and r["passed"] is True
+    # below threshold -> fail
+    with _Patch({"/rules": FakeResp(200, body)}):
+        r = sq.run_query(
+            {"type": "rule_count", "expected_min": 7}, "http://b", "k")
+    assert r["passed"] is False
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

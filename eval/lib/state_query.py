@@ -223,6 +223,8 @@ def run_query(q: dict, base: str, key: str) -> dict:
         actual = _count(base, key, "/devices")
     elif t == "message_count":
         actual = _count(base, key, "/messages")
+    elif t == "rule_count":
+        actual = _count(base, key, "/rules")
     elif t == "transform_count":
         # GET /automations returns all automations (transforms included);
         # the response carries either an `automations` array or a top-level list.

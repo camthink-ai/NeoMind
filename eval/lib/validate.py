@@ -18,6 +18,7 @@ KNOWN_QUERY_TYPES = {
     "device_exists",
     "device_count",
     "rule_exists",
+    "rule_count",
     "rule_enabled",
     "agent_exists",
     "agent_status",
