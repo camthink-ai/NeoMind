@@ -1,0 +1,65 @@
+{
+  "name": "scenario-agriculture-solution",
+  "description": "Solution-level smart irrigation: a whole FARM (4 zones — tomato-field, corn-field, greenhouse, orchard — each with a soil-moisture probe + irrigation valve) + a weather station. tomato-field is dry (moisture 10, tomato needs >40), corn-field borderline (18, corn needs >30), greenhouse & orchard fine; weather shows a dry spell (rainfall 0). Tests deploying a complete irrigation PROGRAM (per-zone crop-threshold moisture rules + weather-aware + auto-open valves on dry zones + farmer-alert routing + assessment), not one valve.",
+  "device_types": [
+    {
+      "device_type": "soil_moisture_probe",
+      "name": "Soil Moisture Probe",
+      "categories": ["agriculture"],
+      "metrics": [
+        {"name": "soil_moisture_pct", "display_name": "Soil Moisture", "data_type": "Float", "unit": "%"},
+        {"name": "soil_temp_c", "display_name": "Soil Temperature", "data_type": "Float", "unit": "°C"}
+      ]
+    },
+    {
+      "device_type": "irrigation_valve",
+      "name": "Irrigation Valve",
+      "categories": ["agriculture"],
+      "metrics": [
+        {"name": "valve_open", "display_name": "Valve Open", "data_type": "Boolean", "unit": ""},
+        {"name": "flow_rate_lpm", "display_name": "Flow Rate", "data_type": "Float", "unit": "L/min"}
+      ],
+      "commands": [
+        {"name": "set_valve", "display_name": "Set Valve", "description": "open/close the valve (on/off)"}
+      ]
+    },
+    {
+      "device_type": "weather_station",
+      "name": "Weather Station",
+      "categories": ["agriculture"],
+      "metrics": [
+        {"name": "rainfall_mm", "display_name": "Rainfall", "data_type": "Float", "unit": "mm"},
+        {"name": "air_temp_c", "display_name": "Air Temperature", "data_type": "Float", "unit": "°C"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "tomato-field-probe", "name": "Tomato Field Probe", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "tomato-field-valve", "name": "Tomato Field Valve", "device_type": "irrigation_valve", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "corn-field-probe", "name": "Corn Field Probe", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "corn-field-valve", "name": "Corn Field Valve", "device_type": "irrigation_valve", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "greenhouse-probe", "name": "Greenhouse Probe", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "greenhouse-valve", "name": "Greenhouse Valve", "device_type": "irrigation_valve", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "orchard-probe", "name": "Orchard Probe", "device_type": "soil_moisture_probe", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "orchard-valve", "name": "Orchard Valve", "device_type": "irrigation_valve", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "farm-weather", "name": "Farm Weather Station", "device_type": "weather_station", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "tomato-field-probe", "metric": "soil_moisture_pct", "value": 10.0},
+    {"device_id": "tomato-field-probe", "metric": "soil_temp_c", "value": 28.0},
+    {"device_id": "tomato-field-valve", "metric": "valve_open", "value": false},
+    {"device_id": "tomato-field-valve", "metric": "flow_rate_lpm", "value": 0.0},
+    {"device_id": "corn-field-probe", "metric": "soil_moisture_pct", "value": 18.0},
+    {"device_id": "corn-field-probe", "metric": "soil_temp_c", "value": 27.0},
+    {"device_id": "corn-field-valve", "metric": "valve_open", "value": false},
+    {"device_id": "corn-field-valve", "metric": "flow_rate_lpm", "value": 0.0},
+    {"device_id": "greenhouse-probe", "metric": "soil_moisture_pct", "value": 35.0},
+    {"device_id": "greenhouse-probe", "metric": "soil_temp_c", "value": 30.0},
+    {"device_id": "greenhouse-valve", "metric": "valve_open", "value": false},
+    {"device_id": "orchard-probe", "metric": "soil_moisture_pct", "value": 40.0},
+    {"device_id": "orchard-probe", "metric": "soil_temp_c", "value": 26.0},
+    {"device_id": "orchard-valve", "metric": "valve_open", "value": false},
+    {"device_id": "farm-weather", "metric": "rainfall_mm", "value": 0.0},
+    {"device_id": "farm-weather", "metric": "air_temp_c", "value": 33.0}
+  ]
+}

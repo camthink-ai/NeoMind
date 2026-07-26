@@ -1,0 +1,23 @@
+{
+  "id": "building-bms-solution-deploy",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-building-solution",
+  "scenario_type": "single_turn",
+  "description": "方案级·整楼 BMS 部署(物业视角)。测 agent 能否端到端部署一整套楼宇自动化:每区按需通风(CO2 驱动)+ 占用驱动照明 + 机房温度保护(下行 set_mode)+ 统一 facilities-alerts 路由 + 现状研判。系统设计探针 + 模型能力基准。",
+  "setup": { "fixture": "scenario-building-solution" },
+  "turns": [
+    { "user": "你是楼宇物业。为整个楼层部署楼宇管理(BMS)自动化方案:\n① 给每个区域配一条 CO2 超标通风规则(co2_ppm > 1000 即告警);\n② 给会议室/办公区配一条「有人占用时照明应开启」的提示规则(occupancy > 0);\n③ 给 server-room 配一条高温保护规则(temp_c > 30),并对 server-room-hvac 立刻下发 set_mode 命令设成 cool(强制制冷);\n④ 把所有告警统一路由到一个名叫 facilities-alerts 的 webhook 频道(URL: https://example.com/fac);\n⑤ 部署完报告:当前哪个区域需要立即处理,以及覆盖了几个区域。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 部署整套 BMS——CO2 规则 ×3 + 占用规则 + server-room 高温规则 + `device control server-room-hvac set_mode cool` + `channel-create facilities-alerts`;研判 meeting-room-a(CO2)与 server-room(高温)"],
+    "overall": "整套方案落地:至少 5 条规则 + facilities-alerts 频道 + server-room-hvac 已下发 set_mode"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind rule create", "neomind device control server-room-hvac set_mode", "neomind message channel-create"] },
+  "state_queries": [
+    { "type": "rule_count", "expected_min": 5 },
+    { "type": "channel_exists", "params": { "name": "facilities-alerts" }, "expected": true },
+    { "type": "device_command_sent", "params": { "id": "server-room-hvac", "command": "set_mode" }, "expected": true }
+  ]
+}

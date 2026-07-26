@@ -1,0 +1,51 @@
+{
+  "name": "scenario-industrial-solution",
+  "description": "Solution-level predictive maintenance: a whole PRODUCTION LINE (5 machines: motor + 2 pumps + conveyor + compressor), each with vibration/temp/current, in varied states — line-motor-1 is CRITICAL (vibration 22 + temp 85 + current 14), line-pump-1 WARNING (vibration 8), rest normal. Tests deploying a complete predictive-maintenance PROGRAM (per-machine thresholds + critical composite rule + auto-reduce-speed on critical + maintenance-alert routing + current-state assessment), not one anomaly check.",
+  "device_types": [
+    {
+      "device_type": "industrial_machine",
+      "name": "Industrial Machine",
+      "categories": ["industrial"],
+      "metrics": [
+        {"name": "vibration_mm_s", "display_name": "Vibration (RMS)", "data_type": "Float", "unit": "mm/s"},
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "current_a", "display_name": "Current", "data_type": "Float", "unit": "A"},
+        {"name": "speed_pct", "display_name": "Speed", "data_type": "Float", "unit": "%"}
+      ],
+      "commands": [
+        {"name": "set_speed", "display_name": "Set Speed", "description": "Set machine speed 0-100%"},
+        {"name": "stop", "display_name": "Stop", "description": "Stop the machine"},
+        {"name": "calibrate", "display_name": "Calibrate", "description": "Trigger calibration"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "line-motor-1", "name": "Main Line Motor", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "line-pump-1", "name": "Coolant Pump 1", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "line-pump-2", "name": "Coolant Pump 2", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "conveyor-1", "name": "Conveyor 1", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "compressor-1", "name": "Air Compressor 1", "device_type": "industrial_machine", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "line-motor-1", "metric": "vibration_mm_s", "value": 22.0},
+    {"device_id": "line-motor-1", "metric": "temp_c", "value": 85.0},
+    {"device_id": "line-motor-1", "metric": "current_a", "value": 14.0},
+    {"device_id": "line-motor-1", "metric": "speed_pct", "value": 95},
+    {"device_id": "line-pump-1", "metric": "vibration_mm_s", "value": 8.0},
+    {"device_id": "line-pump-1", "metric": "temp_c", "value": 68.0},
+    {"device_id": "line-pump-1", "metric": "current_a", "value": 10.0},
+    {"device_id": "line-pump-1", "metric": "speed_pct", "value": 80},
+    {"device_id": "line-pump-2", "metric": "vibration_mm_s", "value": 4.0},
+    {"device_id": "line-pump-2", "metric": "temp_c", "value": 55.0},
+    {"device_id": "line-pump-2", "metric": "current_a", "value": 8.0},
+    {"device_id": "line-pump-2", "metric": "speed_pct", "value": 75},
+    {"device_id": "conveyor-1", "metric": "vibration_mm_s", "value": 5.0},
+    {"device_id": "conveyor-1", "metric": "temp_c", "value": 58.0},
+    {"device_id": "conveyor-1", "metric": "current_a", "value": 9.0},
+    {"device_id": "conveyor-1", "metric": "speed_pct", "value": 70},
+    {"device_id": "compressor-1", "metric": "vibration_mm_s", "value": 6.0},
+    {"device_id": "compressor-1", "metric": "temp_c", "value": 62.0},
+    {"device_id": "compressor-1", "metric": "current_a", "value": 9.0},
+    {"device_id": "compressor-1", "metric": "speed_pct", "value": 85}
+  ]
+}

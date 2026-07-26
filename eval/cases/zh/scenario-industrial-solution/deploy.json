@@ -1,0 +1,23 @@
+{
+  "id": "industrial-pdm-solution-deploy",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "scenario-industrial-solution",
+  "scenario_type": "single_turn",
+  "description": "方案级·整产线预测性维护部署(厂长视角)。测 agent 能否端到端部署一整套 PdM 程序:每台机器振动阈值规则 + critical 复合规则(振动+温度双高)+ critical 自动降速(下行)+ 维护告警统一路由 + 当前状态研判。系统设计探针 + 模型能力基准。",
+  "setup": { "fixture": "scenario-industrial-solution" },
+  "turns": [
+    { "user": "你是工厂厂长。为整条产线部署预测性维护(PdM)方案:\n① 给每台机器配一条振动告警规则(vibration_mm_s > 15 即告警);\n② 给 line-motor-1 配一条 critical 复合规则:振动 > 15 且 temp_c > 80(逻辑 AND);\n③ 对 critical 的 line-motor-1 立刻降速:用 set_speed 把转速设到 50%;\n④ 把所有告警统一路由到一个名叫 maintenance-alerts 的 webhook 频道(URL: https://example.com/maint);\n⑤ 部署完报告:当前哪台机器需要立即维护,以及你的监控覆盖了几台。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: 部署整套 PdM——`rule create` 每台振动规则 + line-motor-1 复合规则 + `device control line-motor-1 set_speed` 降速 + `message channel-create maintenance-alerts webhook`;研判 line-motor-1(critical)"],
+    "overall": "整套方案落地:至少 6 条规则(5 振动 + 1 复合)+ maintenance-alerts 频道 + line-motor-1 已降速;研判 line-motor-1 需立即维护"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind rule create", "neomind device control line-motor-1 set_speed", "neomind message channel-create"] },
+  "state_queries": [
+    { "type": "rule_count", "expected_min": 6 },
+    { "type": "channel_exists", "params": { "name": "maintenance-alerts" }, "expected": true },
+    { "type": "device_command_sent", "params": { "id": "line-motor-1", "command": "set_speed" }, "expected": true }
+  ]
+}

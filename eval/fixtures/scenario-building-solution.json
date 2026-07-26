@@ -1,0 +1,72 @@
+{
+  "name": "scenario-building-solution",
+  "description": "Solution-level BMS: a whole FLOOR (3 zones: open-office + meeting-room-A + server-room), each with an environment sensor (CO2/occupancy/temp) + HVAC + lighting. meeting-room-A is high-CO2+occupied (needs ventilation); server-room is high-temp (unoccupied, equipment risk); open-office normal. Tests deploying a complete BMS automation suite (per-zone demand-controlled ventilation + occupancy-driven lighting + server-room temp protection + unified facilities-alert routing + assessment), not one room.",
+  "device_types": [
+    {
+      "device_type": "room_environment_sensor",
+      "name": "Room Environment Sensor",
+      "categories": ["building"],
+      "metrics": [
+        {"name": "co2_ppm", "display_name": "CO2", "data_type": "Float", "unit": "ppm"},
+        {"name": "occupancy", "display_name": "Occupancy", "data_type": "Integer", "unit": "people"},
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"}
+      ]
+    },
+    {
+      "device_type": "hvac_unit",
+      "name": "HVAC Unit",
+      "categories": ["building"],
+      "metrics": [
+        {"name": "fan_speed_pct", "display_name": "Fan Speed", "data_type": "Float", "unit": "%"},
+        {"name": "mode", "display_name": "Mode", "data_type": "String", "unit": ""}
+      ],
+      "commands": [
+        {"name": "set_mode", "display_name": "Set Mode", "description": "cool/heat/ventilate/auto"},
+        {"name": "set_setpoint", "display_name": "Set Setpoint", "description": "target temperature"},
+        {"name": "set_fan_speed", "display_name": "Set Fan Speed", "description": "fan speed 0-100%"}
+      ]
+    },
+    {
+      "device_type": "lighting_controller",
+      "name": "Lighting Controller",
+      "categories": ["building"],
+      "metrics": [
+        {"name": "level_pct", "display_name": "Light Level", "data_type": "Float", "unit": "%"}
+      ],
+      "commands": [
+        {"name": "set_level", "display_name": "Set Level", "description": "light level 0-100%"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "open-office-env", "name": "Open Office Sensor", "device_type": "room_environment_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "open-office-hvac", "name": "Open Office HVAC", "device_type": "hvac_unit", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "open-office-light", "name": "Open Office Lighting", "device_type": "lighting_controller", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "meeting-room-a-env", "name": "Meeting Room A Sensor", "device_type": "room_environment_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "meeting-room-a-hvac", "name": "Meeting Room A HVAC", "device_type": "hvac_unit", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "meeting-room-a-light", "name": "Meeting Room A Lighting", "device_type": "lighting_controller", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "server-room-env", "name": "Server Room Sensor", "device_type": "room_environment_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "server-room-hvac", "name": "Server Room HVAC", "device_type": "hvac_unit", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "server-room-light", "name": "Server Room Lighting", "device_type": "lighting_controller", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "open-office-env", "metric": "co2_ppm", "value": 650.0},
+    {"device_id": "open-office-env", "metric": "occupancy", "value": 8},
+    {"device_id": "open-office-env", "metric": "temp_c", "value": 23.0},
+    {"device_id": "open-office-hvac", "metric": "fan_speed_pct", "value": 40},
+    {"device_id": "open-office-hvac", "metric": "mode", "value": "auto"},
+    {"device_id": "open-office-light", "metric": "level_pct", "value": 80},
+    {"device_id": "meeting-room-a-env", "metric": "co2_ppm", "value": 1200.0},
+    {"device_id": "meeting-room-a-env", "metric": "occupancy", "value": 15},
+    {"device_id": "meeting-room-a-env", "metric": "temp_c", "value": 25.0},
+    {"device_id": "meeting-room-a-hvac", "metric": "fan_speed_pct", "value": 40},
+    {"device_id": "meeting-room-a-hvac", "metric": "mode", "value": "auto"},
+    {"device_id": "meeting-room-a-light", "metric": "level_pct", "value": 100},
+    {"device_id": "server-room-env", "metric": "co2_ppm", "value": 500.0},
+    {"device_id": "server-room-env", "metric": "occupancy", "value": 0},
+    {"device_id": "server-room-env", "metric": "temp_c", "value": 32.0},
+    {"device_id": "server-room-hvac", "metric": "fan_speed_pct", "value": 60},
+    {"device_id": "server-room-hvac", "metric": "mode", "value": "cool"},
+    {"device_id": "server-room-light", "metric": "level_pct", "value": 0}
+  ]
+}
