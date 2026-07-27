@@ -1,0 +1,21 @@
+{
+  "id": "command-discovery",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "scenario-industrial",
+  "scenario_type": "single_turn",
+  "description": "命令发现意识测试:不给命令名,只说'用它的停机命令'。pump-A(industrial_machine 类型)有 stop/calibrate/set_speed 命令——agent 必须 device get 发现它支持 stop。测 LLM 是否主动查设备命令(查 vs 猜)。",
+  "setup": { "fixture": "scenario-industrial" },
+  "turns": [
+    { "user": "pump-A 振动太高了(22mm/s),有故障风险。用它的停机命令把它停下来。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device get pump-A`(发现支持 stop 命令)→ `neomind device control pump-A stop`(停机)"],
+    "overall": "停机命令 stop 被发到 pump-A(command history 有记录)"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device get", "neomind device control"] },
+  "state_queries": [
+    { "type": "device_command_sent", "params": { "id": "pump-A", "command": "stop" }, "expected": true }
+  ]
+}
