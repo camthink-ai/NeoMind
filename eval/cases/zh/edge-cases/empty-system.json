@@ -1,0 +1,10 @@
+{
+  "id": "edge-empty-system",
+  "lang": "zh", "category": "system", "workflow": "edge-cases", "scenario_type": "single_turn",
+  "description": "边缘场景·空系统:seed-empty(无设备/规则)。用户问'系统状态'。agent 应报告空状态 + 可能建议如何开始(加设备等)。测空状态处理。",
+  "setup": {"fixture": "seed-empty"},
+  "turns": [{"user": "现在系统里有什么？帮我看看状态。"}],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: `neomind device list`(返回空)→ 正确报告'系统当前没有设备'"], "overall": "基于真实数据回答(空就是空,不能编造)"},
+  "expect": {"tools": ["shell"], "commands": ["neomind device list"]}
+}

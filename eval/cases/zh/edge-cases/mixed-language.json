@@ -1,0 +1,11 @@
+{
+  "id": "edge-mixed-language",
+  "lang": "zh", "category": "device", "workflow": "edge-cases", "scenario_type": "single_turn",
+  "description": "语言一致性·混合输入:用户中英混杂('帮我 create 一个 device,id 用 test-001')。agent 应理解+用中文回答。测代码切换+语言一致性。",
+  "setup": {"fixture": "seed-empty"},
+  "turns": [{"user": "帮我 create 一个 device,id 用 test-001,device_type 用 ne101_camera,name 叫 测试摄像头。"}],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: `neomind device create --id test-001 --device-type ne101_camera`(理解混合输入)"], "overall": "设备建成 + 用中文回答"},
+  "expect": {"tools": ["shell"], "commands": ["neomind device create"]},
+  "state_queries": [{"type": "device_exists", "params": {"id": "test-001"}, "expected": true}]
+}

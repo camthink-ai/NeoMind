@@ -1,0 +1,10 @@
+{
+  "id": "ambiguous-vague-monitoring",
+  "lang": "zh", "category": "device", "workflow": "ambiguous-request", "scenario_type": "single_turn",
+  "description": "模糊请求·监控建议:用户说'帮我监控下温度'但不指定设备/指标/阈值。agent 应 device list 发现有哪些设备→查设备指标→建议监控方案。测模糊意图理解+主动建议。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [{"user": "帮我监控下温度吧。"}],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: `neomind device list`(发现设备)→ 查设备指标 → 建议监控方案"], "overall": "基于真实设备数据给建议(不能凭空猜)"},
+  "expect": {"tools": ["shell"], "commands": ["neomind device list"]}
+}
