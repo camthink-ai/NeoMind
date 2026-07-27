@@ -1,7 +1,7 @@
 {
   "name": "neomind-web",
   "private": true,
-  "version": "0.9.11",
+  "version": "0.9.12",
   "type": "module",
   "scripts": {
     "dev": "NODE_OPTIONS='--max-http-header-size=65536' vite",

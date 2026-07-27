@@ -7,6 +7,131 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.12] - 2026-07-27
+
+Agent hardening + security fixes + data integrity + test infrastructure.
+50+ commits across all subsystems, informed by a systematic audit of
+NeoMind against mainstream agent frameworks (OpenHands, LangGraph,
+smolagents, Letta, Mem0, OpenClaw, Hermes) and a full codebase scan
+(devices, rules, core, API, storage, frontend).
+
+### Agent Loop
+- **StopReason enum** — every loop exit now carries a typed reason
+  (NaturalCompletion / MaxRounds / Stuck / AllDuplicate / LlmError /
+  Cancelled). The journal records it so the agent learns why it stopped.
+- **StuckDetector** (OpenHands-inspired, 5 patterns) — catches repeated
+  action+observation, repeated errors, A-B-A-B ping-pong, monologue loops,
+  and context-overflow loops. Wired into both Loop A (scheduled) and Loop B
+  (chat).
+- **Graceful exit** — removed the `max_rounds += 10` continuation hack;
+  the post-loop Phase 2 summary now synthesizes a final answer at the real
+  round cap.
+- **AllDuplicate break** — when all tool calls are cross-round duplicates
+  and results already exist, breaks to Phase 2 instead of burning rounds.
+- **MockLlmRuntime** (`test-utils` feature) — scripted per-call responses,
+  call recording, usable from integration tests. Closes the gap that forced
+  pure-logic-only testing.
+- **Behavior tests** — deterministic end-to-end loop tests (natural
+  completion, AllDuplicate, max-rounds graceful exit) without a real LLM.
+
+### Security
+- **Logout actually invalidates sessions** — was a no-op (returned 200 but
+  left the token valid for 7 days). Now extracts the bearer token from the
+  Authorization header and calls `logout()`.
+- **Password changes + user deletions persist to redb** — were in-memory
+  only; silently reverted on restart. Deleted admins resurrected from disk.
+- **JWT secret persisted** — was regenerated on every restart (all users
+  logged out). Now: env var > file (`data/.jwt_secret`) > generate + persist.
+- **Extension manifest id path-traversal** — `id: "../../etc/cron.d/x"`
+  could write outside the install dir. Now rejects `..`, `/`, `\`, NUL.
+- **Extension zip-bomb defense** — caps per-file (200MB), total (500MB),
+  and file count (10K) on `.nep` extraction.
+- **Shell policy deny-list** (both loops) — `rm -rf /`, `dd of=/dev/`,
+  `mkfs`, `curl|sh`, fork bomb, destructive `neomind` CLI commands blocked
+  before execution. Code-enforced (not just prompt advisory).
+- **SSRF protection** — instance test endpoint blocks loopback / cloud
+  metadata IPs.
+
+### Data Integrity
+- **Transform non-numeric outputs** — string values (OCR text, labels,
+  decoded payloads) were hashed to a bogus float (`chars().sum() % 10000`)
+  and stored as `MetricValue::Float`, indistinguishable from real readings.
+  Now stored as `MetricValue::String`.
+- **Stubbed Pipeline/Fork/If** — returned `Ok(0.0)` placeholder metrics,
+  silently reporting success. Now return `AutomationError::TransformError`.
+- **Rules `condition_since` persisted** — `for_duration` elapsed accumulation
+  was lost on restart, causing premature/missed triggering. Now persists on
+  every state transition.
+- **Rules cooldown refund** — if ALL actions fail, the cooldown is refunded
+  so the rule retries on the next match instead of waiting the full window.
+
+### Reliability
+- **EventBus HOL blocking fixed** — extension event dispatch used
+  `sender.send().await` sequentially; one slow subscriber stalled all.
+  Now `try_send` (non-blocking, drops on full with warn).
+- **block_in_place panic on Tauri** — extension registration used
+  `block_in_place(Handle::current().block_on(...))` which panics on
+  current-thread runtimes. Now `tokio::spawn` (fire-and-forget).
+- **MemorySnapshot mutable** — agent memory writes were invisible until next
+  session (OnceLock frozen). Now re-reads on each user message.
+- **Scheduler priority** — agent priority field (0-255) was stored but
+  ignored (FIFO scheduling). Now sorted by priority at the concurrency limit.
+- **Webhook rate-limit lock** — write lock + full `retain()` scan on every
+  request. Now: retain only when map >1000 entries; per-entry staleness
+  check for expiry.
+- **Device telemetry routing** — `find_device_by_telemetry_topic` was O(N)
+  linear scan on every MQTT publish. Now O(1) via `topic_index` DashMap
+  with fallback scan (auto-repairs stale entries).
+- **metric_cache sweep** — unbounded growth from phantom devices on
+  long-running edge boxes. Periodic sweep every 5 min drops entries >30 min.
+- **client_id_cache cleanup** — rotating MQTT client_ids leaked forever.
+  Now removed on ClientDisconnected.
+- **Mutex poison recovery** — `device_status_emitter` used
+  `.lock().expect("poisoned")`; now `unwrap_or_else(|e| e.into_inner())`.
+- **Sessions reaper** — expired JWT sessions accumulated in the in-memory
+  HashMap. Now piggyback `retain()` sweep on each login.
+- **Device storage write failures** — `let _ = storage.save_device(...)`
+  silently swallowed errors. Now logs at `error!` level.
+
+### Performance
+- **Regex cached** — `ComparisonOperator::evaluate_str` recompiled regex on
+  every condition evaluation. Now cached via `OnceLock<RwLock<HashMap>>`.
+- **Dashboard `.shallow`** — two large object selectors in VisualDashboard
+  were missing the `shallow` equality fn, causing re-renders on every store
+  mutation.
+- **Prompt cache-friendly** — `{{CURRENT_TIME}}` moved from prompt top to
+  end, so the entire stable prefix is reusable by prefix-caching backends.
+
+### Frontend
+- **Stale API_BASE** — `useExtensionLifecycle` captured `getApiBase()` at
+  module load; remote-instance switch still hit the old backend. Now dynamic.
+- **WS reconnect jitter** — pure `2^n` backoff → multi-tab thundering herd.
+  Now `× (0.5 + Math.random() × 0.5)`.
+- **sessionSlice race** — `loadSessions` didn't set `sessionsLoading: true`
+  at start; `loadMoreSessions` could fire concurrently.
+- **JWT error handling** — removed aggressive `window.location.reload()`;
+  aligned with `events.ts` (disconnect, let 401 interceptor handle redirect).
+- **dataPushSlice dedup** — no loading guard → concurrent double-fetches.
+- **frontendComponentSlice fetching flag** — `shouldFetch` ignored in-flight
+  state → concurrent `fetchInstalled` calls.
+
+### Tool Configuration
+- **`allowed_tools` exposed end-to-end** — `AgentToolConfig` existed in
+  storage and `filter_tools` honored it, but the API hardcoded `None` and
+  the UI didn't expose it → every agent saw all ~12 tools. Now wired
+  through create/update handlers + `AgentDetailDto`.
+- **`enabled` defaults to true** — was a required field (400 on partial
+  payloads); now `#[serde(default = "default_true")]` + honored in
+  `filter_tools` (`enabled: false` → no tools).
+
+### Documentation
+- **CLAUDE.md gotcha #8 corrected** — read-side truncation was 300+800, not
+  "600 total".
+- **Stale MemoryScheduler comment removed** — claimed "periodic extraction"
+  that doesn't exist.
+
+---
+
 ## [0.9.11] - 2026-07-22
 
 Security hardening + edge (aarch64 / RK3576) readiness + the reliability
