@@ -51,9 +51,10 @@ export interface FrontendComponentSlice extends FrontendComponentState {
 
 const CACHE_TTL = 10_000 // 10 seconds
 
-function shouldFetch(cache: Record<string, { timestamp: number }>, key: string): boolean {
+function shouldFetch(cache: Record<string, { timestamp: number; fetching?: boolean }>, key: string): boolean {
   const entry = cache[key]
   if (!entry) return true
+  if (entry.fetching) return false
   return Date.now() - entry.timestamp > CACHE_TTL
 }
 
@@ -86,7 +87,7 @@ export const createFrontendComponentSlice: StateCreator<
     const cache = get().fetchCache
     if (!shouldFetch(cache, 'installed')) return
 
-    set({ loading: true, error: null })
+    set({ loading: true, error: null, fetchCache: { ...cache, installed: { timestamp: cache.installed?.timestamp ?? 0, fetching: true } } })
     try {
       const res = await api.get<{ components: FrontendComponentMeta[] }>('/frontend-components')
       const components = res.components || []
@@ -104,6 +105,7 @@ export const createFrontendComponentSlice: StateCreator<
       set({
         installed: [],
         error: error instanceof Error ? error.message : 'Failed to fetch installed components',
+        fetchCache: { ...cache, installed: { timestamp: Date.now() } },
       })
     } finally {
       set({ loading: false })

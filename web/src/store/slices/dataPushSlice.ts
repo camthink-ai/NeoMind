@@ -56,6 +56,7 @@ export const createDataPushSlice: StateCreator<
 
   // Actions
   fetchPushTargets: async () => {
+    if (get().pushTargetsLoading) return
     set({ pushTargetsLoading: true })
     try {
       const response = await api.listPushTargets()
