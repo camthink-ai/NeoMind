@@ -146,8 +146,8 @@ mod tests {
             "must mention devices.list for the device roster"
         );
         assert!(
-            c.contains("$cached"),
-            "must teach the $cached image-cache flow (device get --metric -> vision)"
+            c.contains("/api/images/"),
+            "must teach the /api/images/ URL flow (device get -> vision)"
         );
         assert!(
             c.contains("device get <id> [--metric"),
