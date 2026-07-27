@@ -43,6 +43,7 @@ import judge  # noqa: E402
 import report  # noqa: E402
 import seed  # noqa: E402
 import server  # noqa: E402
+import simulator  # noqa: E402
 import state_query  # noqa: E402
 import validate  # noqa: E402
 
@@ -289,7 +290,27 @@ def run_case(case_path: str) -> dict:
                         )
                     except Exception as e:
                         print(f"  runtime webhook inject error: {e}", file=sys.stderr)
+            # Start continuous-telemetry simulators (run during the wait).
+            # Simulators send telemetry via webhook ingestion at `interval`
+            # seconds, with optional drift (gradual metric change). Rules fire
+            # on CONTINUOUS data — much more realistic than one-shot injection.
+            sim_configs = runtime.get("simulators") or []
+            sims = []
+            if sim_configs:
+                sims = simulator.start_simulators(
+                    srv.api_base, srv.api_key, sim_configs
+                )
+                print(
+                    f"  [runtime] started {len(sims)} device simulator(s)",
+                    file=sys.stderr,
+                )
+
             time.sleep(int(runtime.get("wait_ms") or 2000) / 1000.0)
+
+            # Stop simulators + let last events settle.
+            if sims:
+                simulator.stop_simulators(sims)
+                time.sleep(1.0)
             for q in runtime.get("expect") or []:
                 try:
                     r = state_query.run_query(q, srv.api_base, srv.api_key)

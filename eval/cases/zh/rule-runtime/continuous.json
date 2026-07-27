@@ -1,0 +1,33 @@
+{
+  "id": "rule-fire-continuous",
+  "lang": "zh",
+  "category": "rule",
+  "workflow": "rule-runtime",
+  "scenario_type": "single_turn",
+  "description": "持续遥测模拟·规则在连续数据流上 fire(首个 simulator 测试)。模拟器每 2 秒发一次 battery_level，从 30 开始以 -1/s 漂移(逐渐下降)。预置规则(battery<20→notify)在 battery 跌破 20 时 fire。比一次性注入更真实——模拟真实设备持续上报+渐变触发。新维度:continuous telemetry simulation。",
+  "setup": { "fixture": "scenario-rule-runtime" },
+  "turns": [
+    { "user": "webhook-sensor 的 battery_level 现在多少？" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device get webhook-sensor` 查 battery_level"],
+    "overall": "(模拟器持续发送 battery_level 30→28→26→...→<20)规则在阈值跌破时 fire → message 产生"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device get"] },
+  "runtime": {
+    "pre_wait_ms": 12000,
+    "simulators": [
+      {
+        "device_id": "webhook-sensor",
+        "interval": 2,
+        "metrics": { "battery_level": 30.0 },
+        "drift": { "battery_level": { "rate": -1.0, "min": 0 } }
+      }
+    ],
+    "wait_ms": 15000,
+    "expect": [
+      { "type": "message_count", "expected_min": 1 }
+    ]
+  }
+}
