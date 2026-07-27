@@ -1193,7 +1193,7 @@ impl SessionManager {
         let agent = self.get_session(session_id).await?;
 
         // Load memory snapshot if enabled and not yet loaded (parity with process_message_events)
-        if self.is_memory_enabled(session_id).await && !agent.has_memory_snapshot() {
+        if self.is_memory_enabled(session_id).await {
             let memory_store = neomind_storage::MarkdownMemoryStore::new("data/memory");
             let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
             if !snapshot.is_empty() {
@@ -1257,7 +1257,7 @@ impl SessionManager {
         let agent = self.get_session(session_id).await?;
 
         // Load memory snapshot if enabled and not yet loaded
-        if self.is_memory_enabled(session_id).await && !agent.has_memory_snapshot() {
+        if self.is_memory_enabled(session_id).await {
             let memory_store = neomind_storage::MarkdownMemoryStore::new("data/memory");
             let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
             if !snapshot.is_empty() {

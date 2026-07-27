@@ -743,8 +743,9 @@ pub struct Agent {
     shared_state: Arc<tokio::sync::RwLock<AgentSharedState>>,
     /// Tool result cache - caches recent tool executions to avoid redundant calls
     tool_result_cache: Arc<tokio::sync::RwLock<ToolResultCache>>,
-    /// Frozen memory snapshot for this session (loaded once, never changes)
-    memory_snapshot: std::sync::OnceLock<Option<crate::memory::MemorySnapshot>>,
+    /// Memory snapshot (re-read on each user message so the agent sees its own
+    /// memory writes without restarting the session).
+    memory_snapshot: tokio::sync::RwLock<Option<crate::memory::MemorySnapshot>>,
     /// Semaphore limiting parallel tool executions within a single agent step
     tool_concurrency_limit: Arc<Semaphore>,
 }
@@ -802,7 +803,7 @@ impl Agent {
                 last_injected_context_hash: 0,
             })),
             tool_result_cache: Arc::new(tokio::sync::RwLock::new(ToolResultCache::new())),
-            memory_snapshot: std::sync::OnceLock::new(),
+            memory_snapshot: tokio::sync::RwLock::new(None),
             tool_concurrency_limit: Arc::new(Semaphore::new(
                 std::env::var("NEOMIND_TOOL_CONCURRENCY")
                     .ok()
@@ -1235,8 +1236,8 @@ impl Agent {
             prompt.push_str(&capability);
         }
 
-        // === Memory snapshot injection (frozen, loaded once per session) ===
-        if let Some(snapshot) = self.memory_snapshot.get().and_then(|opt| opt.as_ref()) {
+        // === Memory snapshot injection (re-read each user message) ===
+        if let Some(snapshot) = self.memory_snapshot.read().await.as_ref() {
             let section = snapshot.to_prompt_section();
             if !section.is_empty() {
                 prompt.push_str(&section);
@@ -1297,23 +1298,20 @@ impl Agent {
         &self.session_id
     }
 
-    /// Set the frozen memory snapshot for this session.
-    /// Called once when memory is enabled for the session. Also pushes the
-    /// snapshot's prompt section to the LLM interface so the chat path
-    /// (`build_system_prompt_with_tools`) includes it — previously the chat
-    /// prompt discarded it while `system_prompt.md` told the LLM memory was
-    /// "auto-loaded", which was false.
+    /// Set the memory snapshot for this session. Called on each user message
+    /// (not just the first) so the agent sees memory writes from the previous
+    /// turn. Also pushes the snapshot's prompt section to the LLM interface.
     pub async fn set_memory_snapshot(&self, snapshot: crate::memory::MemorySnapshot) {
         let section = snapshot.to_prompt_section();
         if !section.is_empty() {
             self.llm_interface.set_memory_context(Some(section)).await;
         }
-        let _ = self.memory_snapshot.set(Some(snapshot));
+        *self.memory_snapshot.write().await = Some(snapshot);
     }
 
     /// Check if a memory snapshot has been loaded.
-    pub fn has_memory_snapshot(&self) -> bool {
-        self.memory_snapshot.get().is_some_and(|opt| opt.is_some())
+    pub async fn has_memory_snapshot(&self) -> bool {
+        self.memory_snapshot.read().await.is_some()
     }
 
     /// Get the session state.
