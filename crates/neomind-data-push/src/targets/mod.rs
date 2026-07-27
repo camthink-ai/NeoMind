@@ -27,7 +27,9 @@ impl std::fmt::Display for DeliveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DeliveryError::RateLimited { retry_after } => {
-                let secs = retry_after.unwrap_or_else(|| Duration::from_secs(60)).as_secs();
+                let secs = retry_after
+                    .unwrap_or_else(|| Duration::from_secs(60))
+                    .as_secs();
                 write!(f, "endpoint rate-limited (retry after {}s)", secs)
             }
             DeliveryError::Other(e) => write!(f, "{}", e),

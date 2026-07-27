@@ -155,10 +155,8 @@ impl PushScheduler {
             let mut buffer: Vec<(String, serde_json::Value, i64)> = Vec::new();
             let mut flush_timer = tokio::time::Instant::now() + batch_interval;
             // Per-target dedup of transform's double-published virtual metrics.
-            let mut recent_virtual: std::collections::HashMap<
-                (String, i64),
-                tokio::time::Instant,
-            > = std::collections::HashMap::new();
+            let mut recent_virtual: std::collections::HashMap<(String, i64), tokio::time::Instant> =
+                std::collections::HashMap::new();
 
             loop {
                 tokio::select! {
@@ -275,10 +273,8 @@ impl PushScheduler {
             let mut buffer: Vec<(String, serde_json::Value, i64)> = Vec::new();
             let flush_interval = std::time::Duration::from_secs(interval_secs);
             // Per-target dedup of transform's double-published virtual metrics.
-            let mut recent_virtual: std::collections::HashMap<
-                (String, i64),
-                tokio::time::Instant,
-            > = std::collections::HashMap::new();
+            let mut recent_virtual: std::collections::HashMap<(String, i64), tokio::time::Instant> =
+                std::collections::HashMap::new();
 
             tracing::info!(target_id = %target.id, interval_secs, "Interval push target started");
 
@@ -747,9 +743,9 @@ async fn flush_batch(
                         .render(&target.template, &ctx)
                         .ok()
                         .and_then(|s| serde_json::from_str(&s).ok())
-                        .unwrap_or_else(|| {
-                            json!({"source_id": source_id, "value": value, "timestamp": ts})
-                        })
+                        .unwrap_or_else(
+                            || json!({"source_id": source_id, "value": value, "timestamp": ts}),
+                        )
                 })
                 .collect();
             let batch_payload = json!({
@@ -897,8 +893,16 @@ mod tests {
                 json!(84),
                 1784187637,
             ),
-            ("device:9999:ts".to_string(), json!(1740640441620_i64), 1784187637),
-            ("extension:weather:temp".to_string(), json!(25.5), 1784187640),
+            (
+                "device:9999:ts".to_string(),
+                json!(1740640441620_i64),
+                1784187637,
+            ),
+            (
+                "extension:weather:temp".to_string(),
+                json!(25.5),
+                1784187640,
+            ),
         ];
         let payload = build_nested_batch_payload(&buffer);
         assert_eq!(payload["batch"], json!(true));

@@ -1132,7 +1132,6 @@ pub enum IpcMessage {
     // =========================================================================
     // Capability Stream API (Stage 1.1)
     // =========================================================================
-
     /// Graceful shutdown
     Shutdown,
 
@@ -1573,7 +1572,6 @@ pub enum IpcResponse {
     // =========================================================================
     // Capability Stream API (Stage 1.1)
     // =========================================================================
-
     /// Acknowledgment of shutdown — extension is shutting down gracefully
     ShutdownAck,
 

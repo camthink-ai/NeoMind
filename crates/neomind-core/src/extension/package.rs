@@ -400,7 +400,8 @@ impl ExtensionPackage {
 
         // Parse the manifest only, via a File-backed archive (no full buffer).
         let std_file = std::fs::File::open(path)?;
-        let mut archive = ZipArchive::new(std_file).map_err(|e| PackageError::Zip(e.to_string()))?;
+        let mut archive =
+            ZipArchive::new(std_file).map_err(|e| PackageError::Zip(e.to_string()))?;
 
         // Read manifest.json
         let manifest_content = Self::read_file_from_zip(&mut archive, "manifest.json")?;
@@ -542,8 +543,7 @@ impl ExtensionPackage {
         // extract_file/extract_directory, so the package is never buffered
         // whole. std File is used because ZipArchive needs std Read+Seek.
         let file = std::fs::File::open(&path)?;
-        let mut archive = ZipArchive::new(file)
-            .map_err(|e| PackageError::Zip(e.to_string()))?;
+        let mut archive = ZipArchive::new(file).map_err(|e| PackageError::Zip(e.to_string()))?;
 
         // Extract manifest.json
         let manifest_path = ext_dir.join("manifest.json");
@@ -651,8 +651,7 @@ impl ExtensionPackage {
         );
         let checksum = Self::calculate_checksum(data);
         let cursor = Cursor::new(data.to_vec());
-        let mut archive = ZipArchive::new(cursor)
-            .map_err(|e| PackageError::Zip(e.to_string()))?;
+        let mut archive = ZipArchive::new(cursor).map_err(|e| PackageError::Zip(e.to_string()))?;
         Self::install_from_archive(&mut archive, target_dir, checksum)
     }
 
@@ -688,8 +687,7 @@ impl ExtensionPackage {
         };
 
         let file = std::fs::File::open(data_path)?;
-        let mut archive = ZipArchive::new(file)
-            .map_err(|e| PackageError::Zip(e.to_string()))?;
+        let mut archive = ZipArchive::new(file).map_err(|e| PackageError::Zip(e.to_string()))?;
         Self::install_from_archive(&mut archive, target_dir, checksum)
     }
 
@@ -922,11 +920,7 @@ impl ExtensionPackage {
                                 false
                             }
                             Err(e) => {
-                                tracing::warn!(
-                                    "codesign failed for {}: {}",
-                                    path.display(),
-                                    e
-                                );
+                                tracing::warn!("codesign failed for {}: {}", path.display(), e);
                                 false
                             }
                         }
@@ -996,7 +990,10 @@ impl ExtensionPackage {
     /// and `extract_directory` MUST route every zip entry through this helper.
     /// A malicious `.nep` package could otherwise include an entry such as
     /// `frontend/../../etc/cron.d/backdoor` and write outside the install dir.
-    fn safe_join_within(dst_dir: &Path, rel_path: &str) -> Result<std::path::PathBuf, PackageError> {
+    fn safe_join_within(
+        dst_dir: &Path,
+        rel_path: &str,
+    ) -> Result<std::path::PathBuf, PackageError> {
         let mut resolved = dst_dir.to_path_buf();
         for component in std::path::Path::new(rel_path).components() {
             match component {
@@ -1459,7 +1456,10 @@ mod tests {
 
         // Normal relative path resolves within dst_dir
         let ok = ExtensionPackage::safe_join_within(dst, "frontend/dist/bundle.js").unwrap();
-        assert!(ok.starts_with(dst), "normal path should stay within dst_dir");
+        assert!(
+            ok.starts_with(dst),
+            "normal path should stay within dst_dir"
+        );
 
         // '..' in rel_path must be rejected (zip slip)
         assert!(
@@ -1609,8 +1609,7 @@ mod tests {
         // data (both share install_from_archive) — proves the file-backed
         // path works end-to-end without buffering the archive in memory.
         let zip_bytes = build_test_nep();
-        let tmp =
-            std::env::temp_dir().join(format!("neomind-test-install-{}.nep", unique_nonce()));
+        let tmp = std::env::temp_dir().join(format!("neomind-test-install-{}.nep", unique_nonce()));
         std::fs::write(&tmp, &zip_bytes).unwrap();
 
         let target_sync =
@@ -1678,8 +1677,7 @@ mod tests {
         // Stream-build a ~150 MB Stored (uncompressed) zip: 1 MB buffer in a
         // loop, so the package bytes are never all in memory during build.
         let target_pkg_mb: u64 = 150;
-        let tmp =
-            std::env::temp_dir().join(format!("neomind-memtest-{}.nep", unique_nonce()));
+        let tmp = std::env::temp_dir().join(format!("neomind-memtest-{}.nep", unique_nonce()));
         {
             let file = std::fs::File::create(&tmp).unwrap();
             let mut zw = zip::ZipWriter::new(file);
@@ -1749,10 +1747,8 @@ mod tests {
         );
 
         let target_pkg_mb: u64 = 150;
-        let tmp = std::env::temp_dir().join(format!(
-            "neomind-upload-memtest-{}.nep",
-            unique_nonce()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neomind-upload-memtest-{}.nep", unique_nonce()));
         {
             let file = std::fs::File::create(&tmp).unwrap();
             let mut zw = zip::ZipWriter::new(file);
@@ -1770,15 +1766,18 @@ mod tests {
         let pkg_size = std::fs::metadata(&tmp).unwrap().len();
         let pkg_mb = pkg_size as f64 / 1024.0 / 1024.0;
 
-        let target = std::env::temp_dir().join(format!(
-            "neomind-upload-memtest-target-{}",
-            unique_nonce()
-        ));
+        let target =
+            std::env::temp_dir().join(format!("neomind-upload-memtest-target-{}", unique_nonce()));
         std::fs::create_dir_all(&target).unwrap();
 
         let rss_before = current_rss_kb();
-        let package = ExtensionPackage::load(&tmp).await.expect("load should succeed");
-        let _result = package.install(&target).await.expect("install should succeed");
+        let package = ExtensionPackage::load(&tmp)
+            .await
+            .expect("load should succeed");
+        let _result = package
+            .install(&target)
+            .await
+            .expect("install should succeed");
         let rss_after = current_rss_kb();
 
         let _ = std::fs::remove_file(&tmp);

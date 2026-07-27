@@ -660,10 +660,16 @@ mod tests {
         assert_eq!(capability_constants::EXTENSION_CALL, "extension_call");
         assert_eq!(capability_constants::AGENT_TRIGGER, "agent_trigger");
         assert_eq!(capability_constants::CHAT_STREAM, "chat_stream");
-        assert_eq!(capability_constants::CHAT_STREAM_CANCEL, "chat_stream_cancel");
+        assert_eq!(
+            capability_constants::CHAT_STREAM_CANCEL,
+            "chat_stream_cancel"
+        );
         assert_eq!(capability_constants::CHAT_SESSION_OPEN, "chat_session_open");
         assert_eq!(capability_constants::CHAT_SESSION_SEND, "chat_session_send");
-        assert_eq!(capability_constants::CHAT_SESSION_CLOSE, "chat_session_close");
+        assert_eq!(
+            capability_constants::CHAT_SESSION_CLOSE,
+            "chat_session_close"
+        );
         assert_eq!(
             capability_constants::CHAT_STREAM_CANCEL_TURN,
             "chat_stream_cancel_turn"

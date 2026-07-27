@@ -19,8 +19,8 @@
 //!     SKIP_DRIFT_GEN=1 cargo test -p neomind-cli-ops --test skill_cli_drift
 //! (uses an in-tree fallback manifest committed alongside the skills)
 
-use neomind_cli_ops::dispatch::commands::Args;
 use clap::Parser;
+use neomind_cli_ops::dispatch::commands::Args;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -38,23 +38,27 @@ const NESTED_DOMAINS: &[(&str, &str)] = &[("device", "drafts"), ("device", "type
 fn locate_workspace_root() -> PathBuf {
     // CARGO_MANIFEST_DIR points at crates/neomind-cli-ops/.
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest_dir).parent().unwrap().parent().unwrap().to_path_buf()
+    PathBuf::from(manifest_dir)
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 fn generate_manifest(workspace_root: &Path) -> Option<Manifest> {
     if std::env::var(SKIP_GEN_ENV_VAR).is_ok() {
         return None;
     }
-    let script = workspace_root.join("scripts").join("check_skill_cli_drift.py");
+    let script = workspace_root
+        .join("scripts")
+        .join("check_skill_cli_drift.py");
     let skills_dir = workspace_root.join(SKILLS_DIR_RELATIVE);
     if !script.exists() || !skills_dir.exists() {
         return None;
     }
 
-    let tmp = std::env::temp_dir().join(format!(
-        "neomind_skill_drift_{}.json",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("neomind_skill_drift_{}.json", std::process::id()));
     let output = Command::new("python3")
         .arg(&script)
         .arg("--out")
@@ -150,7 +154,10 @@ fn skill_cli_drift() {
             // Real drift shows up as InvalidSubcommand or UnknownArgument.
             if let Err(err) = try_parse_command(cmd) {
                 let err_str = err.to_string();
-                if err_str.contains("required") && !err_str.contains("InvalidSubcommand") && !err_str.contains("UnknownArgument") {
+                if err_str.contains("required")
+                    && !err_str.contains("InvalidSubcommand")
+                    && !err_str.contains("UnknownArgument")
+                {
                     continue;
                 }
                 if err_str.contains("the following required arguments") {
@@ -162,7 +169,10 @@ fn skill_cli_drift() {
     }
 
     if !failures.is_empty() {
-        eprintln!("\nSkill ↔ CLI drift detected ({}/{checked} commands failed):\n", failures.len());
+        eprintln!(
+            "\nSkill ↔ CLI drift detected ({}/{checked} commands failed):\n",
+            failures.len()
+        );
         for (skill, cmd, err) in &failures {
             eprintln!("  [{skill}] `neomind {}` → {err}", cmd.join(" "));
         }
@@ -170,7 +180,10 @@ fn skill_cli_drift() {
         panic!("skill references commands that don't exist in the CLI; see stderr");
     }
 
-    eprintln!("ok: {checked} skill commands across {} skills all parse", manifest.len());
+    eprintln!(
+        "ok: {checked} skill commands across {} skills all parse",
+        manifest.len()
+    );
 }
 
 #[test]

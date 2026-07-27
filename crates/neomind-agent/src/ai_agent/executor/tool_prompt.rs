@@ -569,7 +569,9 @@ mod tests {
     /// instead of the LLM's truncated fragment (task #50).
     #[test]
     fn bound_image_data_url_round_trips_collected_image() {
-        let raw: Vec<u8> = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03];
+        let raw: Vec<u8> = vec![
+            0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03,
+        ];
         let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
         let dc = DataCollected {
             source: "device:cam1:values.image".to_string(),
@@ -591,7 +593,10 @@ mod tests {
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(payload)
             .expect("payload decodes");
-        assert_eq!(decoded, raw, "cleaned base64 must round-trip to original bytes");
+        assert_eq!(
+            decoded, raw,
+            "cleaned base64 must round-trip to original bytes"
+        );
     }
 
     /// Non-image collected data must yield no bound image URL.

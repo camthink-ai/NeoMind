@@ -56,20 +56,20 @@ pub use manager::MessageManager;
 pub use message::{Message, MessageId, MessageSeverity, MessageStatus};
 
 // Feature-gated channel factories (used by API handler for channel registration)
-#[cfg(feature = "webhook")]
-pub use channels::WebhookChannelFactory;
+#[cfg(feature = "dingtalk")]
+pub use channels::DingTalkChannelFactory;
 #[cfg(feature = "email")]
 pub use channels::EmailChannelFactory;
+#[cfg(feature = "feishu")]
+pub use channels::FeishuChannelFactory;
+#[cfg(feature = "slack")]
+pub use channels::SlackChannelFactory;
 #[cfg(feature = "telegram")]
 pub use channels::TelegramChannelFactory;
 #[cfg(feature = "wecom")]
 pub use channels::WeComChannelFactory;
-#[cfg(feature = "dingtalk")]
-pub use channels::DingTalkChannelFactory;
-#[cfg(feature = "slack")]
-pub use channels::SlackChannelFactory;
-#[cfg(feature = "feishu")]
-pub use channels::FeishuChannelFactory;
+#[cfg(feature = "webhook")]
+pub use channels::WebhookChannelFactory;
 
 /// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

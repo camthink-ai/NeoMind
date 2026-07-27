@@ -305,8 +305,7 @@ impl DynamicMetricsRegistry {
         labels.sort();
         labels.dedup();
 
-        let mut out =
-            Vec::with_capacity(self.templates.len().saturating_mul(labels.len().max(1)));
+        let mut out = Vec::with_capacity(self.templates.len().saturating_mul(labels.len().max(1)));
         for template in &self.templates {
             for label in &labels {
                 out.push(template.to_descriptor(Some(label)));

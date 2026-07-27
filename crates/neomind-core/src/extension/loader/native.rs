@@ -317,10 +317,27 @@ impl NativeExtensionMetadataLoader {
         // include historical spellings for compatibility with any unpacked dirs.
         let platform_dirs: Vec<&str> = match platform.as_str() {
             "darwin_aarch64" => vec!["darwin_aarch64", "darwin-aarch64", "darwin-arm64"],
-            "darwin_x86_64" => vec!["darwin_x86_64", "darwin-x86_64", "darwin-x64", "darwin-amd64"],
-            "linux_amd64" => vec!["linux_amd64", "linux_x64", "linux-x86_64", "linux-x64", "linux-amd64"],
+            "darwin_x86_64" => vec![
+                "darwin_x86_64",
+                "darwin-x86_64",
+                "darwin-x64",
+                "darwin-amd64",
+            ],
+            "linux_amd64" => vec![
+                "linux_amd64",
+                "linux_x64",
+                "linux-x86_64",
+                "linux-x64",
+                "linux-amd64",
+            ],
             "linux_arm64" => vec!["linux_arm64", "linux-arm64", "linux-aarch64"],
-            "windows_amd64" => vec!["windows_amd64", "windows_x86_64", "windows-x86_64", "windows-x64", "windows-amd64"],
+            "windows_amd64" => vec![
+                "windows_amd64",
+                "windows_x86_64",
+                "windows-x86_64",
+                "windows-x64",
+                "windows-amd64",
+            ],
             _ => vec![platform.as_str()],
         };
 

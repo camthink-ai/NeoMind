@@ -581,7 +581,9 @@ mod tests {
             only_changes: false,
         };
 
-        let ctx = latest_context_from_filter(&telemetry, &filter).await.unwrap();
+        let ctx = latest_context_from_filter(&telemetry, &filter)
+            .await
+            .unwrap();
         assert!(ctx.is_none());
     }
 }

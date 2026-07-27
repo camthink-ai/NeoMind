@@ -961,9 +961,18 @@ mod tests {
         // segment; device/metric/ts differ so each URL is still distinct.
         let content_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, &jpeg_bytes);
         let cid = content_id.simple();
-        assert_eq!(url1, format!("/api/images/device-001/metric-a/1000_{cid}.jpg"));
-        assert_eq!(url2, format!("/api/images/device-002/metric-b/1000_{cid}.jpg"));
-        assert_eq!(url3, format!("/api/images/device-001/metric-c/1001_{cid}.jpg"));
+        assert_eq!(
+            url1,
+            format!("/api/images/device-001/metric-a/1000_{cid}.jpg")
+        );
+        assert_eq!(
+            url2,
+            format!("/api/images/device-002/metric-b/1000_{cid}.jpg")
+        );
+        assert_eq!(
+            url3,
+            format!("/api/images/device-001/metric-c/1001_{cid}.jpg")
+        );
 
         // Verify all files exist
         assert!(data_dir

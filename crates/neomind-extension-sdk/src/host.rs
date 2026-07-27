@@ -193,9 +193,7 @@ impl ExtensionCapability {
             | ExtensionCapability::ChatSessionOpen
             | ExtensionCapability::ChatSessionSend
             | ExtensionCapability::ChatSessionClose
-            | ExtensionCapability::ChatStreamCancelTurn => {
-                "agent".to_string()
-            }
+            | ExtensionCapability::ChatStreamCancelTurn => "agent".to_string(),
             ExtensionCapability::RuleTrigger => "rule".to_string(),
             ExtensionCapability::Custom(_) => "custom".to_string(),
         }
@@ -973,7 +971,10 @@ pub struct EventFilter {
     pub agent_id: Option<String>,
     pub rule_id: Option<String>,
     /// Deprecated: workflow engine was removed; field is retained for serde compatibility.
-    #[deprecated(note = "NeoMind no longer ships a workflow engine; this field is unused.", since = "0.8.26")]
+    #[deprecated(
+        note = "NeoMind no longer ships a workflow engine; this field is unused.",
+        since = "0.8.26"
+    )]
     pub workflow_id: Option<String>,
     pub expression: Option<String>,
 }

@@ -1432,10 +1432,7 @@ fn build_validation_context(state: &ServerState) -> neomind_rules::ValidationCon
             name: device.name.clone(),
             device_type: device.device_type.clone(),
             metrics,
-            commands: build_device_commands_for_validation(
-                &state.devices.service,
-                &device,
-            ),
+            commands: build_device_commands_for_validation(&state.devices.service, &device),
             online: true,
         });
     }

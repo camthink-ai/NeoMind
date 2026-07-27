@@ -152,10 +152,7 @@ pub async fn send_message(
 /// Close a chat session subscription. Cancels any in-flight turn and
 /// removes the subscriber from the session.
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn close_session(
-    context: &Context,
-    session_id: &str,
-) -> Result<Value, CapabilityError> {
+pub async fn close_session(context: &Context, session_id: &str) -> Result<Value, CapabilityError> {
     let params = json!({ "session_id": session_id });
     context
         .invoke_capability(ExtensionCapability::ChatSessionClose, &params)

@@ -872,13 +872,17 @@ impl TimeSeriesStore {
             if let Err(e) = self.write_batch_sync(&source_id, &metric, &points) {
                 tracing::error!(
                     "Failed to flush batch for {}/{}: {} — isolating per-point",
-                    source_id, metric, e
+                    source_id,
+                    metric,
+                    e
                 );
                 let failed = self.write_points_isolated(&source_id, &metric, points);
                 if !failed.is_empty() {
                     tracing::error!(
                         "Per-point isolation {}/{}: {} poison point(s) failed and were re-queued",
-                        source_id, metric, failed.len()
+                        source_id,
+                        metric,
+                        failed.len()
                     );
                     for point in failed {
                         requeue.push(BufferedWrite {
@@ -928,7 +932,10 @@ impl TimeSeriesStore {
             if let Err(e) = self.write_batch_sync(source_id, metric, std::slice::from_ref(&point)) {
                 tracing::error!(
                     "Per-point write failed for {}/{} @{} (poison): {}",
-                    source_id, metric, point.timestamp, e
+                    source_id,
+                    metric,
+                    point.timestamp,
+                    e
                 );
                 failed.push(point);
             }

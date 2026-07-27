@@ -96,9 +96,9 @@ impl PushDestination for MqttTarget {
             .map_err(|e| super::DeliveryError::Other(anyhow!("MQTT connect failed: {}", e)))?;
 
         let client_guard = self.client.lock().await;
-        let client = client_guard.as_ref().ok_or_else(|| {
-            super::DeliveryError::Other(anyhow!("MQTT client not initialized"))
-        })?;
+        let client = client_guard
+            .as_ref()
+            .ok_or_else(|| super::DeliveryError::Other(anyhow!("MQTT client not initialized")))?;
 
         let qos = match self.config.qos {
             0 => rumqttc::QoS::AtMostOnce,

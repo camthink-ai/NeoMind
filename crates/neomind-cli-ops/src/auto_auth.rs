@@ -72,7 +72,11 @@ fn read_credential_from_path(path: &std::path::Path) -> Option<String> {
 fn write_credential_to_path(path: &std::path::Path, key: &str) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!("Failed to create config directory {}: {}", parent.display(), e)
+            anyhow::anyhow!(
+                "Failed to create config directory {}: {}",
+                parent.display(),
+                e
+            )
         })?;
     }
     std::fs::write(path, key).map_err(|e| {
@@ -289,7 +293,10 @@ mod tests {
         std::env::set_var("NEOMIND_DATA_DIR", "");
         let resolved = resolve_data_dir();
         // Must not be the empty string — should be either "data" or a platform default.
-        assert!(!resolved.is_empty(), "empty env must not yield empty data dir");
+        assert!(
+            !resolved.is_empty(),
+            "empty env must not yield empty data dir"
+        );
         std::env::remove_var("NEOMIND_DATA_DIR");
     }
 
@@ -303,10 +310,7 @@ mod tests {
                 .as_nanos()
         ));
         std::env::set_var("NEOMIND_CONFIG_DIR", tmp.to_str().unwrap());
-        assert_eq!(
-            resolve_cli_config_dir(),
-            Some(tmp.clone())
-        );
+        assert_eq!(resolve_cli_config_dir(), Some(tmp.clone()));
         std::env::remove_var("NEOMIND_CONFIG_DIR");
     }
 
@@ -327,7 +331,10 @@ mod tests {
 
         // Write
         write_credential_to_path(&cred_path, "nmk_testkey123456").unwrap();
-        assert!(cred_path.exists(), "credential file should exist after write");
+        assert!(
+            cred_path.exists(),
+            "credential file should exist after write"
+        );
 
         // Unix permission check
         #[cfg(unix)]
@@ -349,7 +356,10 @@ mod tests {
 
         // Logout (remove file)
         std::fs::remove_file(&cred_path).unwrap();
-        assert!(!cred_path.exists(), "credential file should be gone after logout");
+        assert!(
+            !cred_path.exists(),
+            "credential file should be gone after logout"
+        );
         assert!(read_credential_from_path(&cred_path).is_none());
 
         let _ = std::fs::remove_dir_all(&tmp);

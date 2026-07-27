@@ -59,10 +59,7 @@ pub async fn get_rule(client: &ApiClient, id: &str) -> Result<CliResponse> {
 /// Create a new rule via JSON body.
 ///
 /// Accepts a raw JSON string that is forwarded to the API.
-pub async fn create_rule(
-    client: &ApiClient,
-    json_body: &str,
-) -> Result<CliResponse> {
+pub async fn create_rule(client: &ApiClient, json_body: &str) -> Result<CliResponse> {
     let body: serde_json::Value = match serde_json::from_str(json_body) {
         Ok(v) => v,
         Err(e) => {
@@ -78,7 +75,10 @@ pub async fn create_rule(
     };
 
     let data = client.post("/rules", &body).await?;
-    let rule = data.get("data").and_then(|d| d.get("rule")).unwrap_or(&data);
+    let rule = data
+        .get("data")
+        .and_then(|d| d.get("rule"))
+        .unwrap_or(&data);
     let rule_id = rule["id"].as_str().unwrap_or("unknown").to_string();
     let rule_name = rule["name"].as_str().unwrap_or("(unnamed)").to_string();
 
@@ -94,11 +94,7 @@ pub async fn create_rule(
 }
 
 /// Update rule via JSON body.
-pub async fn update_rule(
-    client: &ApiClient,
-    id: &str,
-    json_body: &str,
-) -> Result<CliResponse> {
+pub async fn update_rule(client: &ApiClient, id: &str, json_body: &str) -> Result<CliResponse> {
     let body: serde_json::Value = match serde_json::from_str(json_body) {
         Ok(v) => v,
         Err(e) => {

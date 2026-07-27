@@ -359,13 +359,14 @@ impl VisionTool {
                 tools: None,
             };
             match runtime.generate(input).await {
-                Ok(output) if !output.text.trim().is_empty()
-                    && !looks_like_vision_failure(&output.text) =>
+                Ok(output)
+                    if !output.text.trim().is_empty()
+                        && !looks_like_vision_failure(&output.text) =>
                 {
                     // Recovered: clear any stale failure record so this
                     // backend is preferred again next time.
                     self.health.write().await.clear(id);
-                    return Ok(output.text)
+                    return Ok(output.text);
                 }
                 Ok(output) => {
                     // Empty, OR a non-empty "I can't see the image" reply —

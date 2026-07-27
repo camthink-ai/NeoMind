@@ -11,6 +11,7 @@
 //! - Memory and resource limits are enforced
 //! - Clean separation of concerns
 
+pub mod accel;
 pub mod capability_services;
 pub mod context;
 pub mod event_dispatcher;
@@ -20,7 +21,6 @@ pub mod extension_event_subscription;
 pub mod isolated;
 pub mod loader;
 pub mod package;
-pub mod accel;
 pub mod proxy;
 pub mod registry;
 pub mod runtime;

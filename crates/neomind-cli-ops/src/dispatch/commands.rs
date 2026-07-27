@@ -270,8 +270,7 @@ pub enum LlmCommand {
     /// Use the ID as --llm-backend value in agent create/update.
     ///
     /// Example: `neomind llm list`
-    List {
-    },
+    List {},
     /// Get LLM backend details.
     ///
     /// Shows full backend config including endpoint, model, and parameters.
@@ -777,8 +776,7 @@ pub enum DraftCommand {
     ///
     /// Shows all unapproved devices that have sent data but aren't registered yet.
     /// Example: `neomind device drafts list`
-    List {
-    },
+    List {},
     /// Get draft details including sample data.
     ///
     /// Shows the device's auto-detected metrics and recent data samples.
@@ -904,8 +902,7 @@ pub enum DashboardCommand {
     /// Workflow: Use this to find dashboard IDs for get/update/delete/share commands.
     ///
     /// Example: `neomind dashboard list`
-    List {
-    },
+    List {},
     /// Get dashboard details.
     ///
     /// Shows full dashboard config including layout and all widget components.
@@ -1898,8 +1895,7 @@ pub enum WidgetCommand {
     ///
     /// Shows widget ID, name, type, and version.
     /// Example: `neomind widget list`
-    List {
-    },
+    List {},
     /// Get widget details.
     ///
     /// Shows widget manifest, config schema, and supported data sources.
@@ -1962,8 +1958,7 @@ pub enum WidgetCommand {
     ///
     /// Shows all widgets available in the marketplace registry.
     /// Example: `neomind widget market-list`
-    MarketList {
-    },
+    MarketList {},
     /// Install widget from marketplace.
     ///
     /// Downloads and installs a widget from the marketplace registry.
@@ -1988,8 +1983,7 @@ pub enum SystemCommand {
     ///
     /// Example: `neomind system info`
     #[command(alias = "status")]
-    Info {
-    },
+    Info {},
 }
 
 /// System settings subcommands (timezone, data retention).
@@ -2000,8 +1994,7 @@ pub enum SettingsCommand {
     /// Returns the IANA timezone used for cron schedule evaluation and timestamp display.
     ///
     /// Example: `neomind settings timezone`
-    Timezone {
-    },
+    Timezone {},
     /// Set the global timezone (IANA format, e.g. Asia/Shanghai).
     ///
     /// Affects cron schedule evaluation and displayed timestamps. Run `settings timezones`
@@ -2018,16 +2011,14 @@ pub enum SettingsCommand {
     /// Shows all IANA timezone identifiers accepted by `settings set-timezone`.
     ///
     /// Example: `neomind settings timezones`
-    Timezones {
-    },
+    Timezones {},
     /// Get data retention configuration.
     ///
     /// Returns whether automatic cleanup is enabled, the cleanup interval, and
     /// retention limits for telemetry and image data. Change with `settings set-retention`.
     ///
     /// Example: `neomind settings retention`
-    Retention {
-    },
+    Retention {},
     /// Update data retention configuration.
     ///
     /// Controls automatic cleanup of telemetry data in `data/telemetry.redb`.
@@ -2053,8 +2044,7 @@ pub enum SettingsCommand {
     /// `settings retention` first.
     ///
     /// Example: `neomind settings cleanup`
-    Cleanup {
-    },
+    Cleanup {},
 }
 
 /// Data connector subcommands (MQTT, webhook, HTTP, etc.).
@@ -2064,8 +2054,7 @@ pub enum ConnectorCommand {
     ///
     /// Shows connector ID, name, host, port, type, and connection status.
     /// Example: `neomind connector list`
-    List {
-    },
+    List {},
     /// Get connector details and connection status.
     ///
     /// Shows connection state, subscriptions, and message statistics.
@@ -2191,8 +2180,7 @@ pub enum ConnectorCommand {
     ///
     /// Shows all active topic subscriptions across all connectors.
     /// Example: `neomind connector subscriptions`
-    Subscriptions {
-    },
+    Subscriptions {},
     /// Subscribe to a custom MQTT topic.
     ///
     /// Adds a new topic subscription to the embedded broker.

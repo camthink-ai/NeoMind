@@ -61,9 +61,8 @@ impl ApiClient {
     /// key. This prevents stale-key lockout when the credential file key has
     /// been revoked or the server was re-initialized.
     fn refresh_api_key(&self) {
-        let new_key = crate::auto_auth::read_default_api_key_from(
-            &crate::auto_auth::resolve_data_dir(),
-        );
+        let new_key =
+            crate::auto_auth::read_default_api_key_from(&crate::auto_auth::resolve_data_dir());
         if new_key.is_some() {
             tracing::debug!(
                 category = "api_client",

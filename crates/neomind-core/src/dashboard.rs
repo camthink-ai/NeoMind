@@ -30,29 +30,101 @@ pub struct BuiltinWidgetType {
 /// friendly (indicators → charts → controls → display → spatial → layout).
 pub const BUILTIN_WIDGET_TYPES: &[BuiltinWidgetType] = &[
     // Indicators — single value display
-    BuiltinWidgetType { type_id: "value-card",     display_name: "Value Card",     category: "indicator" },
-    BuiltinWidgetType { type_id: "counter",        display_name: "Counter",        category: "indicator" },
-    BuiltinWidgetType { type_id: "metric-card",    display_name: "Metric Card",    category: "indicator" },
-    BuiltinWidgetType { type_id: "led-indicator",  display_name: "LED Indicator",  category: "indicator" },
-    BuiltinWidgetType { type_id: "sparkline",      display_name: "Sparkline",      category: "indicator" },
-    BuiltinWidgetType { type_id: "progress-bar",   display_name: "Progress Bar",   category: "indicator" },
+    BuiltinWidgetType {
+        type_id: "value-card",
+        display_name: "Value Card",
+        category: "indicator",
+    },
+    BuiltinWidgetType {
+        type_id: "counter",
+        display_name: "Counter",
+        category: "indicator",
+    },
+    BuiltinWidgetType {
+        type_id: "metric-card",
+        display_name: "Metric Card",
+        category: "indicator",
+    },
+    BuiltinWidgetType {
+        type_id: "led-indicator",
+        display_name: "LED Indicator",
+        category: "indicator",
+    },
+    BuiltinWidgetType {
+        type_id: "sparkline",
+        display_name: "Sparkline",
+        category: "indicator",
+    },
+    BuiltinWidgetType {
+        type_id: "progress-bar",
+        display_name: "Progress Bar",
+        category: "indicator",
+    },
     // Charts — time-series / categorical
-    BuiltinWidgetType { type_id: "line-chart",     display_name: "Line Chart",     category: "chart" },
-    BuiltinWidgetType { type_id: "area-chart",     display_name: "Area Chart",     category: "chart" },
-    BuiltinWidgetType { type_id: "bar-chart",      display_name: "Bar Chart",      category: "chart" },
-    BuiltinWidgetType { type_id: "pie-chart",      display_name: "Pie Chart",      category: "chart" },
+    BuiltinWidgetType {
+        type_id: "line-chart",
+        display_name: "Line Chart",
+        category: "chart",
+    },
+    BuiltinWidgetType {
+        type_id: "area-chart",
+        display_name: "Area Chart",
+        category: "chart",
+    },
+    BuiltinWidgetType {
+        type_id: "bar-chart",
+        display_name: "Bar Chart",
+        category: "chart",
+    },
+    BuiltinWidgetType {
+        type_id: "pie-chart",
+        display_name: "Pie Chart",
+        category: "chart",
+    },
     // Controls — interactive
-    BuiltinWidgetType { type_id: "toggle-switch",  display_name: "Toggle Switch",  category: "control" },
+    BuiltinWidgetType {
+        type_id: "toggle-switch",
+        display_name: "Toggle Switch",
+        category: "control",
+    },
     // Display — static content
-    BuiltinWidgetType { type_id: "image-display",  display_name: "Image Display",  category: "display" },
-    BuiltinWidgetType { type_id: "image-history",  display_name: "Image History",  category: "display" },
-    BuiltinWidgetType { type_id: "web-display",    display_name: "Web Display",    category: "display" },
-    BuiltinWidgetType { type_id: "markdown-display", display_name: "Markdown Display", category: "display" },
+    BuiltinWidgetType {
+        type_id: "image-display",
+        display_name: "Image Display",
+        category: "display",
+    },
+    BuiltinWidgetType {
+        type_id: "image-history",
+        display_name: "Image History",
+        category: "display",
+    },
+    BuiltinWidgetType {
+        type_id: "web-display",
+        display_name: "Web Display",
+        category: "display",
+    },
+    BuiltinWidgetType {
+        type_id: "markdown-display",
+        display_name: "Markdown Display",
+        category: "display",
+    },
     // Spatial — geographic / video
-    BuiltinWidgetType { type_id: "map-display",    display_name: "Map Display",    category: "spatial" },
-    BuiltinWidgetType { type_id: "video-display",  display_name: "Video Display",  category: "spatial" },
+    BuiltinWidgetType {
+        type_id: "map-display",
+        display_name: "Map Display",
+        category: "spatial",
+    },
+    BuiltinWidgetType {
+        type_id: "video-display",
+        display_name: "Video Display",
+        category: "spatial",
+    },
     // Layout — escape hatch
-    BuiltinWidgetType { type_id: "custom-layer",   display_name: "Custom Layer",   category: "layout" },
+    BuiltinWidgetType {
+        type_id: "custom-layer",
+        display_name: "Custom Layer",
+        category: "layout",
+    },
 ];
 
 /// Return the list of built-in widget type identifiers (in catalogue order).

@@ -48,9 +48,7 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
     };
 
     let response = match cmd {
-        ExtensionCommand::List { verbose: _ } => {
-            crate::extension::list_extensions(&client).await?
-        }
+        ExtensionCommand::List { verbose: _ } => crate::extension::list_extensions(&client).await?,
         ExtensionCommand::Status { id } => {
             crate::extension::get_extension_status(&client, &id).await?
         }
@@ -61,19 +59,11 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
             extension_id,
             version,
         } => {
-            crate::extension::install_extension_market(
-                &client,
-                &extension_id,
-                version.as_deref(),
-            )
-            .await?
+            crate::extension::install_extension_market(&client, &extension_id, version.as_deref())
+                .await?
         }
-        ExtensionCommand::MarketList => {
-            crate::extension::list_marketplace(&client).await?
-        }
-        ExtensionCommand::Reload { id } => {
-            crate::extension::reload_extension(&client, &id).await?
-        }
+        ExtensionCommand::MarketList => crate::extension::list_marketplace(&client).await?,
+        ExtensionCommand::Reload { id } => crate::extension::reload_extension(&client, &id).await?,
         ExtensionCommand::Config { id, set } => match set {
             Some(json_str) => {
                 let config = serde_json::from_str(&json_str).unwrap_or(serde_json::json!(json_str));
@@ -171,15 +161,14 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
         DeviceCommand::List {
             device_type,
             status,
-        } => {
-            (
-                list_devices(&client, device_type.as_deref(), status.as_deref()).await?,
-                base_format,
-            )
-        }
-        DeviceCommand::Get { id, metric } => {
-            (get_device(&client, &id, metric.as_deref()).await?, base_format)
-        }
+        } => (
+            list_devices(&client, device_type.as_deref(), status.as_deref()).await?,
+            base_format,
+        ),
+        DeviceCommand::Get { id, metric } => (
+            get_device(&client, &id, metric.as_deref()).await?,
+            base_format,
+        ),
         DeviceCommand::Create {
             name,
             device_type,
@@ -205,11 +194,7 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
                 base_format,
             )
         }
-        DeviceCommand::Update {
-            id,
-            name,
-            config,
-        } => {
+        DeviceCommand::Update { id, name, config } => {
             let connection_config = if let Some(config_str) = config {
                 Some(serde_json::from_str(&config_str)?)
             } else {
@@ -220,32 +205,26 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
                 base_format,
             )
         }
-        DeviceCommand::Delete { id } => {
-            (delete_device(&client, &id).await?, base_format)
-        }
-        DeviceCommand::Latest { id } => {
-            (get_device(&client, &id, None).await?, base_format)
-        }
+        DeviceCommand::Delete { id } => (delete_device(&client, &id).await?, base_format),
+        DeviceCommand::Latest { id } => (get_device(&client, &id, None).await?, base_format),
         DeviceCommand::History {
             id,
             metric,
             time_range,
             compress,
             limit,
-        } => {
-            (
-                get_telemetry_history(
-                    &client,
-                    &id,
-                    metric.as_deref(),
-                    time_range.as_deref(),
-                    compress.unwrap_or(false),
-                    limit,
-                )
-                .await?,
-                base_format,
+        } => (
+            get_telemetry_history(
+                &client,
+                &id,
+                metric.as_deref(),
+                time_range.as_deref(),
+                compress.unwrap_or(false),
+                limit,
             )
-        }
+            .await?,
+            base_format,
+        ),
         DeviceCommand::Control {
             id,
             command,
@@ -304,9 +283,7 @@ pub async fn run_draft_cmd(cmd: DraftCommand) -> Result<(CliResponse, OutputForm
         OutputFormat::Human
     };
     let response = match cmd {
-        DraftCommand::List {} => {
-            (list_drafts(&client).await?, base_format)
-        }
+        DraftCommand::List {} => (list_drafts(&client).await?, base_format),
         DraftCommand::Get { id } => (get_draft(&client, &id).await?, base_format),
         DraftCommand::Approve { id, name, r#type } => (
             approve_draft(&client, &id, name.as_deref(), r#type.as_deref()).await?,
@@ -434,10 +411,7 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             (resp, output_format)
         }
         DashboardCommand::Delete { id } => (delete_dashboard(&client, &id).await?, output_format),
-        DashboardCommand::AddComponents {
-            id,
-            components,
-        } => {
+        DashboardCommand::AddComponents { id, components } => {
             let comps = serde_json::from_str(&components).unwrap_or(serde_json::json!([]));
             let resp = add_components(&client, &id, comps).await?;
             (resp, output_format)
@@ -452,7 +426,8 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             public,
             expires,
         } => {
-            let resp = share_dashboard(&client, &id, public.unwrap_or(false), expires.as_deref()).await?;
+            let resp =
+                share_dashboard(&client, &id, public.unwrap_or(false), expires.as_deref()).await?;
             (resp, output_format)
         }
     };
@@ -483,9 +458,7 @@ pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat
         RuleCommand::List => list_rules(&client).await?,
         RuleCommand::Get { id } => get_rule(&client, &id).await?,
         RuleCommand::Create { body } => create_rule(&client, &body).await?,
-        RuleCommand::Update { id, body } => {
-            update_rule(&client, &id, &body).await?
-        }
+        RuleCommand::Update { id, body } => update_rule(&client, &id, &body).await?,
         RuleCommand::Delete { id } => delete_rule(&client, &id).await?,
         RuleCommand::Enable { id } => enable_rule(&client, &id).await?,
         RuleCommand::Disable { id } => disable_rule(&client, &id).await?,
@@ -900,15 +873,18 @@ pub async fn run_widget_cmd(cmd: WidgetCommand) -> Result<(CliResponse, OutputFo
             };
             (resp, output_format)
         }
-        WidgetCommand::Install { file } => (install_widget_file(&client, &file).await?, output_format),
+        WidgetCommand::Install { file } => {
+            (install_widget_file(&client, &file).await?, output_format)
+        }
         WidgetCommand::Uninstall { id } => (uninstall_widget(&client, &id).await?, output_format),
         WidgetCommand::MarketList {} => {
             let resp = list_marketplace_widgets(&client).await?;
             (resp, output_format)
         }
-        WidgetCommand::MarketInstall { id, version } => {
-            (install_widget_market(&client, &id, version.as_deref()).await?, output_format)
-        }
+        WidgetCommand::MarketInstall { id, version } => (
+            install_widget_market(&client, &id, version.as_deref()).await?,
+            output_format,
+        ),
     };
 
     // Format and print output
@@ -1056,14 +1032,32 @@ pub async fn run_connector_cmd(cmd: ConnectorCommand) -> Result<(CliResponse, Ou
         }
         ConnectorCommand::Enable { id } => {
             let resp = crate::connector::update_connector(
-                &client, &id, None, None, None, None, None, None, None, Some(true),
+                &client,
+                &id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(true),
             )
             .await?;
             (resp, base_format)
         }
         ConnectorCommand::Disable { id } => {
             let resp = crate::connector::update_connector(
-                &client, &id, None, None, None, None, None, None, None, Some(false),
+                &client,
+                &id,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(false),
             )
             .await?;
             (resp, base_format)
@@ -1077,8 +1071,7 @@ pub async fn run_connector_cmd(cmd: ConnectorCommand) -> Result<(CliResponse, Ou
             (resp, base_format)
         }
         ConnectorCommand::Subscribe { topic, qos } => {
-            let resp =
-                crate::connector::subscribe_topic(&client, &topic, Some(qos)).await?;
+            let resp = crate::connector::subscribe_topic(&client, &topic, Some(qos)).await?;
             (resp, base_format)
         }
         ConnectorCommand::Unsubscribe { topic } => {
@@ -1121,4 +1114,3 @@ pub async fn run_whoami_cmd() -> Result<(CliResponse, OutputFormat)> {
     let resp = crate::auth_cmd::run_whoami().await?;
     Ok((resp, fmt))
 }
-

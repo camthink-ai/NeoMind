@@ -2500,9 +2500,8 @@ mod tests {
     /// minicpm5-neomind-baseline.
     #[test]
     fn openai_request_carries_system_prompt_as_message_for_sft() {
-        let runtime =
-            CloudRuntime::new(CloudConfig::openai("sk-test").with_model("gpt-test"))
-                .expect("runtime builds");
+        let runtime = CloudRuntime::new(CloudConfig::openai("sk-test").with_model("gpt-test"))
+            .expect("runtime builds");
 
         let input = LlmInput {
             messages: vec![
@@ -2519,7 +2518,10 @@ mod tests {
         let json = serde_json::to_value(&request).expect("serialize");
         let msgs = json["messages"].as_array().expect("messages array");
         assert!(!msgs.is_empty(), "messages must not be empty");
-        assert_eq!(msgs[0]["role"], "system", "system prompt must be messages[0]");
+        assert_eq!(
+            msgs[0]["role"], "system",
+            "system prompt must be messages[0]"
+        );
         assert_eq!(msgs[0]["content"], "You are NeoMind.");
     }
 
@@ -2531,10 +2533,9 @@ mod tests {
     /// See memory: minicpm5-neomind-baseline.
     #[test]
     fn anthropic_request_carries_system_prompt_as_field_for_sft() {
-        let runtime = CloudRuntime::new(
-            CloudConfig::anthropic("sk-test").with_model("claude-test"),
-        )
-        .expect("runtime builds");
+        let runtime =
+            CloudRuntime::new(CloudConfig::anthropic("sk-test").with_model("claude-test"))
+                .expect("runtime builds");
 
         let input = LlmInput {
             messages: vec![

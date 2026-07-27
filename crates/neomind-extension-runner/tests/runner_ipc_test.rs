@@ -168,7 +168,10 @@ fn test_ipc_response_descriptor_round_trip() {
     assert!(json.contains("\"Descriptor\""));
     let parsed: IpcResponse = serde_json::from_str(&json).unwrap();
     match parsed {
-        IpcResponse::Descriptor { request_id, descriptor } => {
+        IpcResponse::Descriptor {
+            request_id,
+            descriptor,
+        } => {
             assert_eq!(request_id, 7);
             assert_eq!(descriptor.metadata.id, "test-ext");
             assert_eq!(descriptor.metadata.version, "1.0.0");

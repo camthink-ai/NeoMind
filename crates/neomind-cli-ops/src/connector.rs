@@ -39,7 +39,8 @@ pub async fn list_connectors(client: &ApiClient) -> Result<CliResponse> {
 
 /// Helper: extract an array from API response, trying common nesting patterns.
 fn extract_list_array(data: &serde_json::Value, key: &str) -> Option<Vec<serde_json::Value>> {
-    data.as_array().cloned()
+    data.as_array()
+        .cloned()
         .or_else(|| data.get(key).and_then(|v| v.as_array()).cloned())
         .or_else(|| data.get("data").and_then(|d| d.as_array()).cloned())
         .or_else(|| {

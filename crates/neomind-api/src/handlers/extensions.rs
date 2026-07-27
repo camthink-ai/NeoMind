@@ -2242,22 +2242,18 @@ async fn download_to_temp_file(
                 max_size, total
             ));
         }
-        file.write_all(&chunk)
-            .await
-            .map_err(|e| {
-                // Clean up the partial temp file on write failure (disk full,
-                // quota, perms) — the chunk-error and oversize paths already
-                // do this; without it a failed install leaks up to max_size bytes.
-                let _ = std::fs::remove_file(&tmp_path);
-                format!("Failed to write temp file: {}", e)
-            })?;
-    }
-    file.flush()
-        .await
-        .map_err(|e| {
+        file.write_all(&chunk).await.map_err(|e| {
+            // Clean up the partial temp file on write failure (disk full,
+            // quota, perms) — the chunk-error and oversize paths already
+            // do this; without it a failed install leaks up to max_size bytes.
             let _ = std::fs::remove_file(&tmp_path);
-            format!("Failed to flush temp file: {}", e)
+            format!("Failed to write temp file: {}", e)
         })?;
+    }
+    file.flush().await.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        format!("Failed to flush temp file: {}", e)
+    })?;
     tracing::info!("Downloaded {} bytes to {}", total, tmp_path.display());
     Ok(tmp_path)
 }
@@ -2375,7 +2371,8 @@ pub async fn install_marketplace_extension_handler(
     // Build platform-specific .nep package URL from builds metadata
     // The package_url field in metadata is hardcoded to darwin_aarch64, so we ignore it
     // and use the correct URL from builds for the current platform
-    let (package_url, expected_sha256): (Option<String>, Option<String>) = if platform != "unknown" {
+    let (package_url, expected_sha256): (Option<String>, Option<String>) = if platform != "unknown"
+    {
         let available_keys: std::collections::HashSet<&str> =
             metadata.builds.keys().map(|s| s.as_str()).collect();
         select_build_key(&available_keys, platform, variant)
@@ -2393,7 +2390,10 @@ pub async fn install_marketplace_extension_handler(
             })
             .unwrap_or((None, None))
     } else {
-        (metadata.package_url.clone(), metadata.package_sha256.clone())
+        (
+            metadata.package_url.clone(),
+            metadata.package_sha256.clone(),
+        )
     };
 
     // Check if .nep package is available (preferred method)

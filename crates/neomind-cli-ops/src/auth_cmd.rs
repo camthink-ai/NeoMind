@@ -102,7 +102,10 @@ pub async fn run_login(data_dir: Option<String>, force: bool) -> Result<CliRespo
             "key_preview": masked,
             "credential_path": cred_path,
         }),
-        format!("Login successful. API key: {} (saved to {})", masked, cred_path),
+        format!(
+            "Login successful. API key: {} (saved to {})",
+            masked, cred_path
+        ),
     ))
 }
 

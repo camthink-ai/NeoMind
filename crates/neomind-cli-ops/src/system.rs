@@ -105,18 +105,23 @@ pub async fn system_info(client: &ApiClient) -> Result<CliResponse> {
     let server_base = api_base.trim_end_matches("/api");
     let webhook_url = format!("{}/api/devices/{{device_id}}/webhook", server_base);
     let api_url = api_base.to_string();
-    let (url_source, url_hint) =
-        if std::env::var("NEOMIND_API_BASE").map(|s| !s.trim().is_empty()).unwrap_or(false) {
-            ("env", None)
-        } else {
-            ("fallback", Some(
+    let (url_source, url_hint) = if std::env::var("NEOMIND_API_BASE")
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+    {
+        ("env", None)
+    } else {
+        (
+            "fallback",
+            Some(
                 "URL is a localhost placeholder. For HTTPS deployments, set NEOMIND_API_BASE \
                  (CLI) and NEOMIND_SERVER_URL (server) env vars to the public URL, e.g. \
                  `https://your.domain/api`. The HTTP API endpoint /api/devices/:id/webhook-url \
                  additionally respects X-Forwarded-Proto + Host headers when behind a proxy."
                     .to_string(),
-            ))
-        };
+            ),
+        )
+    };
 
     let mut info = json!({
         "mqtt": {

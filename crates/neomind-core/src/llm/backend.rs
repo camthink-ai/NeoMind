@@ -605,10 +605,7 @@ pub trait LlmRuntime: Send + Sync {
     /// can sit silent for 30+ seconds during the reasoning phase under
     /// non-streaming mode, hitting gateway idle timeouts. Routing through
     /// streaming keeps bytes flowing so the connection survives.
-    async fn generate_to_completion(
-        &self,
-        input: LlmInput,
-    ) -> Result<LlmOutput, LlmError> {
+    async fn generate_to_completion(&self, input: LlmInput) -> Result<LlmOutput, LlmError> {
         use futures::StreamExt;
 
         let mut stream = self.generate_stream(input).await?;
@@ -665,10 +662,12 @@ pub trait LlmRuntime: Send + Sync {
         // Estimate completion_tokens via the trait's heuristic (~4 chars/token).
         // Includes thinking chars so reasoning-heavy models are accounted for.
         let usage = if prompt_tokens.is_some() || !text.is_empty() || thinking.is_some() {
-            let completion_chars = text.len()
-                + thinking.as_ref().map(|s| s.len()).unwrap_or(0);
+            let completion_chars = text.len() + thinking.as_ref().map(|s| s.len()).unwrap_or(0);
             let completion_tokens = (completion_chars / 4) as u32;
-            Some(TokenUsage::new(prompt_tokens.unwrap_or(0), completion_tokens))
+            Some(TokenUsage::new(
+                prompt_tokens.unwrap_or(0),
+                completion_tokens,
+            ))
         } else {
             None
         };
@@ -927,7 +926,9 @@ mod tests {
         assert!(out.tool_calls.is_none());
         // No token marker emitted → prompt_tokens unknown (0), completion
         // estimated from "Hello, world!" (13 chars / 4 = 3 tokens).
-        let usage = out.usage.expect("usage should be populated when text exists");
+        let usage = out
+            .usage
+            .expect("usage should be populated when text exists");
         assert_eq!(usage.prompt_tokens, 0);
         assert_eq!(usage.completion_tokens, 3);
     }
@@ -952,7 +953,9 @@ mod tests {
             Some("Let me think...First, I'll do X")
         );
         // completion_tokens should include BOTH text + thinking chars.
-        let usage = out.usage.expect("usage populated when text/thinking exists");
+        let usage = out
+            .usage
+            .expect("usage populated when text/thinking exists");
         // text(12) + thinking(31) = 43 chars / 4 = 10 tokens
         assert_eq!(usage.completion_tokens, 10);
     }
@@ -1027,35 +1030,63 @@ mod error_classification_tests {
         assert!(LlmError::BackendUnavailable("ollama".into()).is_permanent());
         assert!(LlmError::ModelNotFound("qwen3.5:4b".into()).is_permanent());
         assert!(LlmError::InvalidInput("bad request".into()).is_permanent());
+        assert!(LlmError::ContextOverflow {
+            prompt_tokens: 10000,
+            max_context: 8000
+        }
+        .is_permanent());
         assert!(
-            LlmError::ContextOverflow {
-                prompt_tokens: 10000,
-                max_context: 8000
-            }
-            .is_permanent()
-        );
-        assert!(
-            LlmError::Serialization(
-                serde_json::from_str::<i32>("not a number").unwrap_err()
-            )
-            .is_permanent()
+            LlmError::Serialization(serde_json::from_str::<i32>("not a number").unwrap_err())
+                .is_permanent()
         );
     }
 
     #[test]
     fn permanent_http_statuses() {
-        assert!(LlmError::Api { status: 400, body: "".into() }.is_permanent());
-        assert!(LlmError::Api { status: 401, body: "".into() }.is_permanent());
-        assert!(LlmError::Api { status: 403, body: "quota exhausted".into() }.is_permanent());
-        assert!(LlmError::Api { status: 404, body: "".into() }.is_permanent());
+        assert!(LlmError::Api {
+            status: 400,
+            body: "".into()
+        }
+        .is_permanent());
+        assert!(LlmError::Api {
+            status: 401,
+            body: "".into()
+        }
+        .is_permanent());
+        assert!(LlmError::Api {
+            status: 403,
+            body: "quota exhausted".into()
+        }
+        .is_permanent());
+        assert!(LlmError::Api {
+            status: 404,
+            body: "".into()
+        }
+        .is_permanent());
     }
 
     #[test]
     fn transient_http_statuses() {
-        assert!(!LlmError::Api { status: 429, body: "rate limited".into() }.is_permanent());
-        assert!(!LlmError::Api { status: 500, body: "".into() }.is_permanent());
-        assert!(!LlmError::Api { status: 502, body: "".into() }.is_permanent());
-        assert!(!LlmError::Api { status: 503, body: "".into() }.is_permanent());
+        assert!(!LlmError::Api {
+            status: 429,
+            body: "rate limited".into()
+        }
+        .is_permanent());
+        assert!(!LlmError::Api {
+            status: 500,
+            body: "".into()
+        }
+        .is_permanent());
+        assert!(!LlmError::Api {
+            status: 502,
+            body: "".into()
+        }
+        .is_permanent());
+        assert!(!LlmError::Api {
+            status: 503,
+            body: "".into()
+        }
+        .is_permanent());
     }
 
     #[test]

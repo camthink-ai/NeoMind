@@ -200,10 +200,7 @@ impl IsolatedExtensionManager {
             use std::process::Command as StdCommand;
 
             // Locate candidate runner processes via `pgrep -f`.
-            let pgrep_output = StdCommand::new("pgrep")
-                .arg("-f")
-                .arg(runner_name)
-                .output();
+            let pgrep_output = StdCommand::new("pgrep").arg("-f").arg(runner_name).output();
             let candidate_pids: Vec<u32> = match pgrep_output {
                 Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
                     .lines()
@@ -268,9 +265,7 @@ impl IsolatedExtensionManager {
                     _ => None,
                 };
                 if ppid == Some(1) {
-                    let _ = StdCommand::new("kill")
-                        .arg(pid.to_string())
-                        .output();
+                    let _ = StdCommand::new("kill").arg(pid.to_string()).output();
                     killed += 1;
                 }
                 // Some(other_pid): not an orphan — owned by a live parent
@@ -313,21 +308,19 @@ impl IsolatedExtensionManager {
                 .output();
 
             let candidates: Vec<(u32, u32)> = match ps_output {
-                Ok(o) if o.status.success() => {
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .filter_map(|line| {
-                            let parts: Vec<&str> = line.trim().split(',').collect();
-                            if parts.len() == 2 {
-                                let pid = parts[0].parse::<u32>().ok()?;
-                                let ppid = parts[1].parse::<u32>().ok()?;
-                                Some((pid, ppid))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                }
+                Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter_map(|line| {
+                        let parts: Vec<&str> = line.trim().split(',').collect();
+                        if parts.len() == 2 {
+                            let pid = parts[0].parse::<u32>().ok()?;
+                            let ppid = parts[1].parse::<u32>().ok()?;
+                            Some((pid, ppid))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
                 _ => {
                     tracing::debug!(
                         "PowerShell not available for orphan detection, skipping cleanup"

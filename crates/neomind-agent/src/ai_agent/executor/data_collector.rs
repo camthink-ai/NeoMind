@@ -1381,7 +1381,11 @@ pub(crate) fn extract_image_data(
                             url = %url, size = bytes.len(),
                             "[DIAG] extract_image_data: resolved Object image_url (/api/images/) to full base64"
                         );
-                        return (Some(url.to_string()), usable_image_base64(b64), Some(mime.to_string()));
+                        return (
+                            Some(url.to_string()),
+                            usable_image_base64(b64),
+                            Some(mime.to_string()),
+                        );
                     }
                     Err(e) => {
                         tracing::error!(

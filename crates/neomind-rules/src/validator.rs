@@ -229,12 +229,14 @@ impl RuleValidator {
                     });
                 }
             }
-            RuleCondition::Logical { operator, conditions } => {
+            RuleCondition::Logical {
+                operator,
+                conditions,
+            } => {
                 // NOT with multiple children evaluates as NOR (!any), not NAND —
                 // almost certainly not the author's intent. Warn (don't error,
                 // so existing multi-child NOT rules keep their current behavior).
-                if matches!(operator, crate::models::LogicalOperator::Not)
-                    && conditions.len() != 1
+                if matches!(operator, crate::models::LogicalOperator::Not) && conditions.len() != 1
                 {
                     issues.push(ValidationIssue {
                         code: "not_multi_child".to_string(),

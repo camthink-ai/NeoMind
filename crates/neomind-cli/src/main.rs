@@ -15,7 +15,6 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
 
-
 // Clap command types now live in neomind_cli_ops::dispatch::commands
 use neomind_cli_ops::dispatch::commands::*;
 
@@ -29,7 +28,6 @@ mod self_update;
 #[cfg(target_os = "linux")]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-
 
 // Custom runtime with increased worker threads for better concurrent performance
 // Default is num_cpus, but we use more to handle block_in_place alternatives
@@ -135,51 +133,51 @@ async fn main() -> Result<()> {
         Command::Upgrade { version, yes } => self_update::run_upgrade(version, yes).await,
         Command::Uninstall { purge, yes } => self_update::run_uninstall(purge, yes).await,
         Command::ApiKey { key_cmd } => run_api_key_cmd(key_cmd).await,
-        Command::Llm { llm_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_llm_cmd(llm_cmd).await,
-        ),
-        Command::Device { device_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_device_cmd(device_cmd).await,
-        ),
+        Command::Llm { llm_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_llm_cmd(llm_cmd).await)
+        }
+        Command::Device { device_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_device_cmd(device_cmd).await)
+        }
         Command::Dashboard { dashboard_cmd } => print_result(
             neomind_cli_ops::dispatch::handlers::run_dashboard_cmd(dashboard_cmd).await,
         ),
-        Command::Rule { rule_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_rule_cmd(rule_cmd).await,
-        ),
+        Command::Rule { rule_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_rule_cmd(rule_cmd).await)
+        }
         Command::Transform { transform_cmd } => print_result(
             neomind_cli_ops::dispatch::handlers::run_transform_cmd(transform_cmd).await,
         ),
-        Command::Agent { agent_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_agent_cmd(agent_cmd).await,
-        ),
-        Command::Message { message_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_message_cmd(message_cmd).await,
-        ),
-        Command::Push { push_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_push_cmd(push_cmd).await,
-        ),
-        Command::Widget { widget_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_widget_cmd(widget_cmd).await,
-        ),
-        Command::System { system_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_system_cmd(system_cmd).await,
-        ),
+        Command::Agent { agent_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_agent_cmd(agent_cmd).await)
+        }
+        Command::Message { message_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_message_cmd(message_cmd).await)
+        }
+        Command::Push { push_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_push_cmd(push_cmd).await)
+        }
+        Command::Widget { widget_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_widget_cmd(widget_cmd).await)
+        }
+        Command::System { system_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_system_cmd(system_cmd).await)
+        }
         Command::Connector { connector_cmd } => print_result(
             neomind_cli_ops::dispatch::handlers::run_connector_cmd(connector_cmd).await,
         ),
-        Command::Settings { settings_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_settings_cmd(settings_cmd).await,
-        ),
-        Command::Login { data_dir, force } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_login_cmd(data_dir, force).await,
-        ),
-        Command::Logout => print_result(
-            neomind_cli_ops::dispatch::handlers::run_logout_cmd().await,
-        ),
-        Command::Whoami => print_result(
-            neomind_cli_ops::dispatch::handlers::run_whoami_cmd().await,
-        ),
+        Command::Settings { settings_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_settings_cmd(settings_cmd).await)
+        }
+        Command::Login { data_dir, force } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_login_cmd(data_dir, force).await)
+        }
+        Command::Logout => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_logout_cmd().await)
+        }
+        Command::Whoami => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_whoami_cmd().await)
+        }
     }
 }
 
@@ -815,8 +813,7 @@ async fn run_logs(
         std::path::PathBuf::from(&home)
             .join("Library/Application Support/com.neomind.neomind/data/logs"),
         // Linux
-        std::path::PathBuf::from(&home)
-            .join(".local/share/com.neomind.neomind/data/logs"),
+        std::path::PathBuf::from(&home).join(".local/share/com.neomind.neomind/data/logs"),
         // Windows
         std::path::PathBuf::from(&appdata).join("com.neomind.neomind/data/logs"),
         // Legacy Tauri path (≤ 0.9.1): <app_data>/logs/ — kept for one release
@@ -997,9 +994,7 @@ async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<()> {
             unreachable!()
         }
         // API commands — delegate to cli-ops handler (shared with in-process dispatch).
-        _ => print_result(
-            neomind_cli_ops::dispatch::handlers::run_extension_cmd(cmd).await,
-        ),
+        _ => print_result(neomind_cli_ops::dispatch::handlers::run_extension_cmd(cmd).await),
     }
 }
 
@@ -1509,7 +1504,10 @@ fn build_extension(path: &std::path::PathBuf) -> Result<()> {
     let manifest = if manifest_path.exists() {
         let raw = fs::read_to_string(&manifest_path)?;
         serde_json::from_str::<serde_json::Value>(&raw).map_err(|e| {
-            anyhow::anyhow!("Failed to parse manifest.json: {}. Please fix the JSON syntax.", e)
+            anyhow::anyhow!(
+                "Failed to parse manifest.json: {}. Please fix the JSON syntax.",
+                e
+            )
         })?
     } else {
         anyhow::bail!(
@@ -1641,7 +1639,10 @@ fn build_extension(path: &std::path::PathBuf) -> Result<()> {
     println!("✅ Extension packaged successfully!");
     println!("  Package: {}", nep_path.display());
     println!("  Size:    {} bytes", nep_size);
-    println!("  Install: neomind extension install {}", nep_path.display());
+    println!(
+        "  Install: neomind extension install {}",
+        nep_path.display()
+    );
     println!();
     // Structured marker for downstream parsing (agent, scripts).
     println!("NEP_PATH={}", nep_path.display());
@@ -1738,4 +1739,3 @@ async fn run_api_key_cmd(cmd: ApiKeyCommand) -> Result<()> {
     }
     Ok(())
 }
-

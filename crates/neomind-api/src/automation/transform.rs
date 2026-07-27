@@ -2501,7 +2501,9 @@ impl TransformEngine {
         };
 
         // Store the encoded string as Text (previously hashed to a bogus float).
-        let value: MetricValue = encoded.trim().parse::<f64>()
+        let value: MetricValue = encoded
+            .trim()
+            .parse::<f64>()
             .map(MetricValue::from)
             .unwrap_or_else(|_| encoded.clone().into());
 

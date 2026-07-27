@@ -3084,10 +3084,7 @@ impl Runner {
                 ext.get_descriptor_fresh()
             }
             ExtensionType::Wasm => {
-                let runtime = self
-                    .wasm_runtime
-                    .as_ref()
-                    .ok_or("No WASM runtime loaded")?;
+                let runtime = self.wasm_runtime.as_ref().ok_or("No WASM runtime loaded")?;
                 runtime.get_descriptor_blocking()
             }
         }

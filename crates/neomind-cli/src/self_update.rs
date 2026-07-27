@@ -45,7 +45,10 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
         Some(v) => v.trim_start_matches('v').to_string(),
         None => {
             let resp: serde_json::Value = client
-                .get(format!("https://api.github.com/repos/{}/releases/latest", REPO))
+                .get(format!(
+                    "https://api.github.com/repos/{}/releases/latest",
+                    REPO
+                ))
                 .send()
                 .await?
                 .json()
@@ -75,14 +78,15 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
         }
     }
 
-    let arch = if cfg!(target_arch = "aarch64") { "arm64" } else { "amd64" };
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "amd64"
+    };
 
     // 3. Download + extract the server tarball into a temp dir.
-    let tmp = std::env::temp_dir().join(format!(
-        "neomind-upgrade-{}-{}",
-        std::process::id(),
-        target
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("neomind-upgrade-{}-{}", std::process::id(), target));
     if tmp.exists() {
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -176,7 +180,13 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     println!("Installing → {}", cur_bin.display());
     sh(
         sudo.as_deref(),
-        &["install", "-m", "755", path_str(&new_bin)?, path_str(&cur_bin)?],
+        &[
+            "install",
+            "-m",
+            "755",
+            path_str(&new_bin)?,
+            path_str(&cur_bin)?,
+        ],
     )?;
     if new_runner.exists() && cur_runner.exists() {
         sh(
@@ -241,9 +251,7 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
         if active {
             println!("✅ neomind upgraded to v{} (service active)", target);
         } else {
-            eprintln!(
-                "⚠️ service did not come back up — check: sudo systemctl status neomind"
-            );
+            eprintln!("⚠️ service did not come back up — check: sudo systemctl status neomind");
         }
     } else {
         println!(
@@ -319,7 +327,11 @@ pub async fn run_uninstall(purge: bool, yes: bool) -> Result<()> {
     );
     let _ = sh(
         sudo.as_deref(),
-        &["sh", "-c", &format!("rm -f {}/neomind*.bak*", dir.display())],
+        &[
+            "sh",
+            "-c",
+            &format!("rm -f {}/neomind*.bak*", dir.display()),
+        ],
     );
 
     // 4. Optional purge of data + web.
@@ -347,7 +359,12 @@ fn sudo_prefix() -> Option<String> {
         .arg("-u")
         .output()
         .ok()
-        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok())
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<u32>()
+                .ok()
+        })
         .map(|u| u == 0)
         .unwrap_or(false);
     if is_root {
@@ -355,7 +372,9 @@ fn sudo_prefix() -> Option<String> {
     } else if which("sudo") {
         Some("sudo".to_string())
     } else {
-        eprintln!("⚠️ this operation needs root (run as root or with sudo); continuing best-effort");
+        eprintln!(
+            "⚠️ this operation needs root (run as root or with sudo); continuing best-effort"
+        );
         None
     }
 }
@@ -377,9 +396,7 @@ fn sh(sudo: Option<&str>, args: &[&str]) -> Result<()> {
             c
         }
         None => {
-            let (first, rest) = args
-                .split_first()
-                .ok_or_else(|| anyhow!("empty command"))?;
+            let (first, rest) = args.split_first().ok_or_else(|| anyhow!("empty command"))?;
             let mut c = Command::new(first);
             c.args(rest);
             c
@@ -422,7 +439,5 @@ fn semver(v: &str) -> [u64; 3] {
 fn is_newer(target: &str, current: &str) -> bool {
     let t = semver(target);
     let c = semver(current);
-    t[0] > c[0]
-        || (t[0] == c[0] && t[1] > c[1])
-        || (t[0] == c[0] && t[1] == c[1] && t[2] > c[2])
+    t[0] > c[0] || (t[0] == c[0] && t[1] > c[1]) || (t[0] == c[0] && t[1] == c[1] && t[2] > c[2])
 }
