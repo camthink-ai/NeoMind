@@ -1318,7 +1318,7 @@ export function ChatPage() {
                 connected, so a healthy connection adds zero visual noise.
                 Reuses the already-subscribed connectionState and the
                 previously-dead handleManualReconnect. */}
-            {connectionState.status !== 'connected' && (
+            {(connectionState.status === 'error' || connectionState.status === 'disconnected') && (
               <div className="flex justify-center mb-2">
                 <ConnectionStatus
                   state={connectionState}

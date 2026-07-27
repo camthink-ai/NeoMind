@@ -37,10 +37,10 @@ export class ChatWebSocket {
   private countdownTimer: ReturnType<typeof setInterval> | null = null
   private tokenCheckTimer: ReturnType<typeof setInterval> | null = null
   private reconnectAttempts = 0
-  private maxReconnectAttempts = 15  // 快速重连最多15次
+  private maxReconnectAttempts = 30  // More retries before slow mode (IoT edge needs patience for backend startup)
   private baseReconnectDelay = 1000  // 初始重连延迟1秒
-  private maxReconnectDelay = 30000   // 最大重连延迟30秒
-  private slowReconnectDelay = 30000  // 超过上限后每30s轮询一次，无限重试
+  private maxReconnectDelay = 5000   // 最大快速重连延迟5秒（之前30秒→用户体验像卡死）
+  private slowReconnectDelay = 10000  // 超过上限后每10s轮询一次，无限重试（之前30s太慢）
   private isManualDisconnect = false  // 是否用户主动断开
   private wasConnected = false  // 跟踪是否曾经连接过（用于区分初始连接和重连）
   private messageHandlers: Set<MessageHandler> = new Set()
