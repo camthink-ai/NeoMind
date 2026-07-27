@@ -147,6 +147,27 @@ pub async fn test_instance_handler(
 
     let health_url = format!("{}/api/health", instance.url.trim_end_matches('/'));
 
+    // SSRF protection: reject loopback / link-local / cloud-metadata targets.
+    // Without this, an authenticated user can probe internal services.
+    let url_lower = instance.url.to_lowercase();
+    const SSRF_TARGETS: &[&str] = &[
+        "//localhost",
+        "//127.0.0.1",
+        "//[::1]",
+        "//0.0.0.0",
+        "169.254.169.254", // AWS/GCP/Azure cloud metadata
+    ];
+    for target in SSRF_TARGETS {
+        if url_lower.contains(target) {
+            return Err(ErrorResponse::bad_request(format!(
+                "Instance URL targets a blocked address ({}). \
+                 Use the local API for localhost instances.",
+                target
+            ))
+            .into());
+        }
+    }
+
     let start = std::time::Instant::now();
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
