@@ -1,0 +1,36 @@
+{
+  "id": "tools-vision-device-image",
+  "lang": "zh",
+  "category": "tools",
+  "workflow": "tool-use",
+  "scenario_type": "single_turn",
+  "description": "vision 工具的唯一正确触发场景：图像来自设备指标（模型无法内联看到），需先 device 查询拿到 $cached:/api/images/ 引用，再交给 vision 工具分析。覆盖生产摄像头路径，是 vision 工具本身唯一的 eval 覆盖。需要多模态 backend。",
+  "setup": {
+    "fixture": "eval-vision-camera"
+  },
+  "turns": [
+    {
+      "user": "cam-vision-001 这台摄像头的 image 指标存了最新一帧。请先查到这张图，再用 vision 工具分析图像里有什么。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expect": {
+    "tools": [
+      "shell",
+      "vision"
+    ],
+    "commands": [
+      "neomind device"
+    ]
+  },
+  "expectations": {
+    "per_turn": [
+      "Turn 1: 用 `neomind device get/history cam-vision-001 --metric image` 取回图像（得到 $cached: 或 /api/images/ 引用），再调用 vision 工具分析（应报告红色/圆形）。"
+    ],
+    "overall": "考察生产摄像头路径：device 查图 → $cached|/api/images/ → vision 工具。这是 vision 工具唯一正确的触发场景（聊天内联图应直接看，不调 vision）。需要多模态 backend。"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "id": "tools-vision-device-image",
+  "lang": "en",
+  "category": "tools",
+  "workflow": "tool-use",
+  "scenario_type": "single_turn",
+  "description": "The only correct trigger for the vision tool: the image comes from a device metric (not visible inline), so the agent must first query it via device to get a $cached:/api/images/ ref, then hand it to the vision tool. Covers the production camera path — the only eval coverage of the vision tool itself. Requires a multimodal backend.",
+  "setup": {
+    "fixture": "eval-vision-camera"
+  },
+  "turns": [
+    {
+      "user": "The cam-vision-001 camera's `image` metric holds its latest frame. First retrieve that image, then use the vision tool to analyze what's in it."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expect": {
+    "tools": [
+      "shell",
+      "vision"
+    ],
+    "commands": [
+      "neomind device"
+    ]
+  },
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Retrieves the image via `neomind device get/history cam-vision-001 --metric image` (gets a $cached: or /api/images/ ref), then calls the vision tool to analyze it (should report red/circle)."
+    ],
+    "overall": "Tests the production camera path: device query → $cached|/api/images/ → vision tool. This is the only correct trigger for the vision tool (inline chat images should be seen directly, not via vision). Requires a multimodal backend."
+  }
+}
