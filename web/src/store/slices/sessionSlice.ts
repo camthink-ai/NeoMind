@@ -356,6 +356,7 @@ export const createSessionSlice: StateCreator<
   loadSessions: async () => {
     if (!fetchCache.shouldFetch('sessions')) return
     fetchCache.markFetching('sessions')
+    set({ sessionsLoading: true })
     try {
       // Reset pagination and load first page
       const pageSize = 10

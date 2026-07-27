@@ -236,9 +236,9 @@ export class ChatWebSocket {
 
           if (isJwtError || msg.includes('authentication') ||
             msg.includes('unauthorized') || msg.includes('access denied')) {
-            // JWT expired/invalid — reload to redirect to login
+            // JWT expired/invalid — disconnect + let UI handle redirect
+            // (aligned with events.ts: no forced reload that disrupts the user)
             this.disconnect()
-            setTimeout(() => window.location.reload(), 1000)
             return
           }
         }
@@ -366,7 +366,7 @@ export class ChatWebSocket {
     const delay = Math.min(
       this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts),
       this.maxReconnectDelay
-    )
+    ) * (0.5 + Math.random() * 0.5)
     this.reconnectAttempts++
 
     // Set reconnecting state

@@ -604,7 +604,7 @@ export class EventsWebSocket {
     }
 
     // Exponential backoff with jitter: 2^n * 1000ms, capped at 30s
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000) * (0.5 + Math.random() * 0.5)
     this.reconnectAttempts++
 
     this.reconnectTimer = setTimeout(() => {
