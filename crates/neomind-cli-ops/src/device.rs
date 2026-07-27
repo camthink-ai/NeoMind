@@ -325,13 +325,15 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     // Resolve data_dir from env (set by the server/dispatch context)
     let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
     let images_dir = std::path::Path::new(&data_dir).join("images");
-    let device_dir = images_dir.join(device_id);
-    if std::fs::create_dir_all(&device_dir).is_err() {
+    // Create device/metric subdirectory to match the URL structure:
+    // /api/images/{device_id}/{metric_name}/{filename}
+    let metric_dir = images_dir.join(device_id).join(metric_name);
+    if std::fs::create_dir_all(&metric_dir).is_err() {
         return None;
     }
 
-    let filename = format!("{}_{}.{}", metric_name, hash, ext);
-    let filepath = device_dir.join(&filename);
+    let filename = format!("{}.{}", hash, ext);
+    let filepath = metric_dir.join(&filename);
 
     // Dedup: skip write if file already exists with same content hash
     if !filepath.exists() {
@@ -340,18 +342,17 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
         }
     }
 
+    let url = format!("/api/images/{}/{}/{}", device_id, metric_name, filename);
+
     tracing::debug!(
         device_id = device_id,
         metric = metric_name,
         bytes = bytes.len(),
-        url = %format!("/api/images/{}/{}/{}", device_id, metric_name, filename),
+        url = %url,
         "Materialized data URL to image file"
     );
 
-    Some(format!(
-        "/api/images/{}/{}/{}",
-        device_id, metric_name, filename
-    ))
+    Some(url)
 }
 
 /// Extract device array from API response (handles multiple response shapes).
