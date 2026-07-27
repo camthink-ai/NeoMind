@@ -9,14 +9,16 @@
   "turns": [
     { "user": "我刚开了个生鲜超市，有4台冷柜：2台乳制品柜、1台饮料柜、1台冷冻柜。食品安全要求冷链温度持续监控+告警+可追溯。你能帮我设计一套完整的冷链监控方案吗？" },
     { "user": "方案听着不错。按 HACCP 标准：乳制品和饮料柜温度要 5°C 以下，冷冻柜要 -18°C 以下。每台冷柜都建温度告警规则，另外门开超过 30 秒也要告警。帮我建吧。" },
-    { "user": "规则都建好了？太好了。再帮我建个仪表盘，名字叫 HACCP Dashboard，能看到所有冷柜温度总览。另外所有告警统一发到 manager-alerts 的 webhook 频道，URL 是 https://example.com/mgr。" }
+    { "user": "规则都建好了？太好了。再帮我建个仪表盘，名字叫 HACCP Dashboard，能看到所有冷柜温度总览。另外所有告警统一发到 manager-alerts 的 webhook 频道，URL 是 https://example.com/mgr。" },
+    { "user": "直接建吧，不用再确认了。仪表盘和频道都帮我建好。" }
   ],
   "applies": ["tool_accuracy", "task_completion", "language_adherence"],
   "expectations": {
     "per_turn": [
       "T1: device list(发现冷柜)→ 理解 HACCP 要求 → 建议方案(温度规则+门开+仪表盘+通知)",
       "T2: rule create ×N(乳制品/饮料<5°C, 冷冻<-18°C, 门开>30s, 可能含压缩机)",
-      "T3: dashboard create(HACCP Dashboard) + channel create(manager-alerts webhook)"
+      "T3: dashboard create(HACCP Dashboard) + channel create(manager-alerts webhook)",
+      "T4: 直接建仪表盘 + 频道（不用再确认）"
     ],
     "overall": "完整 HACCP 监控方案落地：至少 4 条规则 + 仪表盘 + 通知频道。dairy-fridge-2(6.2°C)应被识别为违规。"
   },
