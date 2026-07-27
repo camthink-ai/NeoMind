@@ -238,6 +238,9 @@ pub struct ScheduledTask {
     pub timezone: Option<String>,
     /// Whether this task is enabled
     pub enabled: bool,
+    /// Agent priority (0-255, higher = more urgent). Used to decide which due
+    /// agents get execution slots when the concurrency limit is reached.
+    pub priority: u8,
 }
 
 /// Agent scheduler for executing agents on schedule.
@@ -342,6 +345,7 @@ impl AgentScheduler {
             cron_schedule,
             timezone: agent.schedule.timezone.clone(),
             enabled: agent.status == neomind_storage::AgentStatus::Active,
+            priority: agent.priority,
         };
 
         let agent_id = agent.id.clone();
@@ -418,37 +422,55 @@ impl AgentScheduler {
                 let (tasks_to_execute, skipped_tasks) = {
                     let mut tasks_guard = tasks.write().await;
                     let mut running_guard = running_executions.write().await;
-                    let mut to_execute = Vec::new();
-                    let mut skipped = Vec::new();
 
-                    for (agent_id, task) in tasks_guard.iter_mut() {
+                    // 1. Collect due agent IDs
+                    let mut due: Vec<String> = Vec::new();
+                    for (agent_id, task) in tasks_guard.iter() {
                         if !task.enabled {
                             continue;
                         }
-
                         if now >= task.next_execution {
-                            // Atomic check-and-insert to prevent exceeding concurrency limit
-                            if running_guard.len() >= max_concurrent {
-                                skipped.push((
-                                    agent_id.clone(),
-                                    task.next_execution,
-                                    now - task.next_execution,
-                                ));
-                                tracing::warn!(
-                                    agent_id = %agent_id,
-                                    running_count = running_guard.len(),
-                                    max_concurrent = max_concurrent,
-                                    overdue_seconds = now - task.next_execution,
-                                    "Scheduler at concurrency limit, skipping agent execution"
-                                );
-                                continue;
-                            }
-
-                            // Reserve slot BEFORE releasing lock
-                            running_guard.insert(agent_id.clone());
-                            to_execute.push((agent_id.clone(), task.cron_schedule.clone()));
-                            Self::update_next_execution(task, now);
+                            due.push(agent_id.clone());
                         }
+                    }
+
+                    // 2. Sort by priority descending — when the concurrency limit
+                    //    is reached, high-priority agents get the slots first
+                    //    (was: random HashMap iteration order → dead priority field).
+                    due.sort_by(|a, b| {
+                        let pa = tasks_guard.get(a).map(|t| t.priority).unwrap_or(0);
+                        let pb = tasks_guard.get(b).map(|t| t.priority).unwrap_or(0);
+                        pb.cmp(&pa)
+                    });
+
+                    // 3. Apply concurrency limit + reserve slots
+                    let mut to_execute = Vec::new();
+                    let mut skipped: Vec<(String, i64, i64)> = Vec::new();
+                    for agent_id in &due {
+                        if running_guard.len() >= max_concurrent {
+                            let next_exec = tasks_guard
+                                .get(agent_id)
+                                .map(|t| t.next_execution)
+                                .unwrap_or(now);
+                            skipped.push((agent_id.clone(), next_exec, now - next_exec));
+                            tracing::warn!(
+                                agent_id = %agent_id,
+                                running_count = running_guard.len(),
+                                max_concurrent = max_concurrent,
+                                overdue_seconds = now - next_exec,
+                                "Scheduler at concurrency limit, skipping agent execution"
+                            );
+                            continue;
+                        }
+                        running_guard.insert(agent_id.clone());
+                        let cron = if let Some(task) = tasks_guard.get_mut(agent_id) {
+                            let cron = task.cron_schedule.clone();
+                            Self::update_next_execution(task, now);
+                            cron
+                        } else {
+                            None
+                        };
+                        to_execute.push((agent_id.clone(), cron));
                     }
 
                     (to_execute, skipped)
@@ -1074,6 +1096,7 @@ mod tests {
             cron_schedule: None,
             timezone: None,
             enabled: true,
+            priority: 128,
         };
 
         // Update next execution (this should use scheduled time, not execution time)
@@ -1106,6 +1129,7 @@ mod tests {
             cron_schedule: None,
             timezone: None,
             enabled: true,
+            priority: 128,
         };
 
         // Simulate first update (scheduled_time -> scheduled_time + 5 min)
@@ -1147,6 +1171,7 @@ mod tests {
             cron_schedule: None,
             timezone: None,
             enabled: true,
+            priority: 128,
         };
 
         // Simulate 10 executions, each with varying delays
