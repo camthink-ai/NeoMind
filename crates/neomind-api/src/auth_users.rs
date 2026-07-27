@@ -623,6 +623,10 @@ impl AuthUserState {
         };
         let mut sessions = self.sessions.write().unwrap();
         sessions.insert(token.clone(), session_info);
+        // Piggyback: reap expired sessions on each login (was: never cleaned →
+        // unbounded growth over months of operation).
+        let now = chrono::Utc::now().timestamp();
+        sessions.retain(|_, info| info.expires_at > now);
         drop(sessions);
 
         info!(category = "auth", username = username, "User logged in");

@@ -111,7 +111,7 @@ impl DeviceStatusEmitter {
 
             // Skip redundant pushes (value unchanged since last tick).
             let push = {
-                let mut last = self.last_pushed.lock().expect("last_pushed poisoned");
+                let mut last = self.last_pushed.lock().unwrap_or_else(|e| e.into_inner());
                 if last.get(&device_id) == Some(&metric_value) {
                     false
                 } else {

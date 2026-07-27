@@ -889,6 +889,22 @@ pub async fn process_stream_events_with_safeguards(
                     let cache_clone = cache.clone();
 
                     async move {
+                        // Shell policy check — same deny-list as Loop A (tool_loop.rs).
+                        // Blocks catastrophic commands (rm -rf /, dd, mkfs, etc.) in chat.
+                        if name == "shell" {
+                            if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
+                                if let Some(reason) = crate::toolkit::policy::deny_reason(cmd) {
+                                    tracing::warn!("Chat tool call blocked by safety policy: {}", reason);
+                                    return (i, name.clone(), ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: Err(crate::toolkit::error::ToolError::Execution(
+                                            format!("Blocked by safety policy: {}", reason),
+                                        )),
+                                    });
+                                }
+                            }
+                        }
                         (i, name.clone(), ToolExecutionResult {
                             _name: name.clone(),
                             arguments: arguments.clone(),
