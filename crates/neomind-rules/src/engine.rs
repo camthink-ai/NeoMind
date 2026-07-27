@@ -777,20 +777,35 @@ impl RuleEngine {
         rule_id: &RuleId,
         condition_met: bool,
     ) -> Option<chrono::DateTime<Utc>> {
-        let mut rules = self.rules.write().await;
-        if let Some(rule) = rules.get_mut(rule_id) {
+        let (result, rule_snapshot) = {
+            let mut rules = self.rules.write().await;
+            let Some(rule) = rules.get_mut(rule_id) else {
+                return None;
+            };
             if condition_met {
                 if rule.state.condition_since.is_none() {
                     rule.state.condition_since = Some(Utc::now());
+                    (rule.state.condition_since, Some(rule.clone()))
+                } else {
+                    (rule.state.condition_since, None) // no state change
                 }
-                rule.state.condition_since
-            } else {
+            } else if rule.state.condition_since.is_some() {
                 rule.state.condition_since = None;
-                None
+                (None, Some(rule.clone()))
+            } else {
+                (None, None) // no state change
             }
-        } else {
-            None
+        };
+        // Persist only when condition_since changed (was missing — for_duration
+        // elapsed accumulation was lost on restart, causing premature triggering).
+        if let Some(rule) = rule_snapshot {
+            if let Some(store) = self.rule_store.read().as_ref() {
+                if let Err(e) = store.save(&rule) {
+                    tracing::warn!(rule_id = %rule_id, error = %e, "Failed to persist condition_since");
+                }
+            }
         }
+        result
     }
 
     async fn update_rule_state_after_trigger(&self, rule_id: &RuleId) {
