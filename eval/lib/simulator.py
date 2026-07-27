@@ -51,9 +51,13 @@ class DeviceSimulator:
         self.interval = interval
         self.metrics: dict = {}
         self._drifts: dict[str, dict] = {}  # name -> {rate, min, max}
+        self._events: list[tuple[float, dict]] = []  # [(at_seconds, {metric: val})]
+        self._offline_at: float | None = None
+        self._reconnect_at: float | None = None
         self._thread: threading.Thread | None = None
         self._running = False
         self._send_count = 0
+        self._offline_count = 0  # sends skipped while "offline"
 
     def set_metric(self, name: str, value):
         """Set a metric to a fixed value."""
@@ -66,6 +70,24 @@ class DeviceSimulator:
         min_val/max_val: optional clamps.
         """
         self._drifts[name] = {"rate": rate, "min": min_val, "max": max_val}
+
+    def add_event(self, at_seconds: float, metrics: dict):
+        """Schedule a discrete metric change at a specific time.
+
+        Enables testing rules on DISCRETE conditions (door opens, compressor
+        stops) rather than just gradual drift. Events fire once and are removed.
+        """
+        self._events.append((at_seconds, dict(metrics)))
+
+    def schedule_offline(self, at_seconds: float, reconnect_at: float | None = None):
+        """Simulate device going offline at a specific time.
+
+        The simulator stops sending telemetry (device "disappears"). If
+        reconnect_at is set, it resumes sending at that time. Tests NeoMind's
+        4-state offline detection.
+        """
+        self._offline_at = at_seconds
+        self._reconnect_at = reconnect_at
 
     def start(self):
         """Start sending telemetry in background."""
@@ -86,11 +108,39 @@ class DeviceSimulator:
         return self._send_count
 
     def _run(self):
-        """Background loop: apply drifts + send telemetry."""
+        """Background loop: apply events/drifts + send telemetry (with offline)."""
+        import time as _time
+
         url = f"{self.api_base}/devices/{self.device_id}/webhook"
         headers = {"Authorization": f"Bearer {self.api_key}"}
+        start = _time.monotonic()
 
         while self._running:
+            elapsed = _time.monotonic() - start
+
+            # Check offline/reconnect schedule
+            is_offline = (
+                self._offline_at is not None
+                and elapsed >= self._offline_at
+                and (
+                    self._reconnect_at is None
+                    or elapsed < self._reconnect_at
+                )
+            )
+            if is_offline:
+                self._offline_count += 1
+                _time.sleep(self.interval)
+                continue  # skip sending — device is "offline"
+
+            # Apply timed events (fire once at scheduled time)
+            remaining = []
+            for at, metrics in self._events:
+                if elapsed >= at:
+                    self.metrics.update(metrics)
+                else:
+                    remaining.append((at, metrics))
+            self._events = remaining
+
             # Apply drifts
             for name, cfg in self._drifts.items():
                 if name in self.metrics:
@@ -107,16 +157,22 @@ class DeviceSimulator:
                 requests.post(url, json=dict(self.metrics), headers=headers, timeout=5)
                 self._send_count += 1
             except Exception:
-                pass  # silently skip failed sends (device "offline" moment)
+                pass
 
-            time.sleep(self.interval)
+            _time.sleep(self.interval)
 
 
 def start_simulators(api_base: str, api_key: str, configs: list) -> list[DeviceSimulator]:
     """Start multiple simulators from runtime config.
 
-    Each config: {device_id, interval, metrics: {name: val}, drift: {name: {rate, min, max}}}
-    Returns the list of started simulators (call stop_simulators() to stop).
+    Each config supports:
+      device_id:           which device to simulate
+      interval:            send frequency (seconds, default 2)
+      metrics:             {name: value} starting values
+      drift:               {name: {rate, min, max}} gradual change per second
+      events:              [{at_seconds, set: {name: val}}] timed discrete changes
+      offline_at:          seconds to go offline (stop sending)
+      reconnect_at:        seconds to reconnect (resume sending)
     """
     sims = []
     for cfg in configs:
@@ -134,6 +190,13 @@ def start_simulators(api_base: str, api_key: str, configs: list) -> list[DeviceS
                 rate=drift["rate"],
                 min_val=drift.get("min"),
                 max_val=drift.get("max"),
+            )
+        for event in (cfg.get("events") or []):
+            sim.add_event(event["at_seconds"], event.get("set") or {})
+        if cfg.get("offline_at") is not None:
+            sim.schedule_offline(
+                cfg["offline_at"],
+                reconnect_at=cfg.get("reconnect_at"),
             )
         sim.start()
         sims.append(sim)

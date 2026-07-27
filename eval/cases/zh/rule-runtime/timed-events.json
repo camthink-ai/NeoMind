@@ -1,0 +1,36 @@
+{
+  "id": "rule-fire-timed-events",
+  "lang": "zh",
+  "category": "rule",
+  "workflow": "rule-runtime",
+  "scenario_type": "single_turn",
+  "description": "定时事件·离散条件触发规则(模拟器扩展测试)。模拟器正常发送(temp=3,door=0,compressor=on)，第5秒门开(door→65)，第10秒压缩机停(compressor→false)。验证规则在离散事件(非渐变漂移)上正确 fire。测两个不同条件(>30 和 ==false)在同一模拟器运行中触发。",
+  "setup": { "fixture": "scenario-timed-events" },
+  "turns": [
+    { "user": "monitor-01 运行正常吗？" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device get monitor-01` 查状态"],
+    "overall": "(模拟器第5秒开门→door>30 规则 fire + 第10秒压缩机停→compressor==false 规则 fire)→ 2 条 message"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device get"] },
+  "runtime": {
+    "pre_wait_ms": 12000,
+    "simulators": [
+      {
+        "device_id": "monitor-01",
+        "interval": 2,
+        "metrics": { "temp_c": 3.0, "door_open_secs": 0, "compressor_running": true },
+        "events": [
+          { "at_seconds": 5, "set": { "door_open_secs": 65 } },
+          { "at_seconds": 10, "set": { "compressor_running": false } }
+        ]
+      }
+    ],
+    "wait_ms": 15000,
+    "expect": [
+      { "type": "message_count", "expected_min": 2 }
+    ]
+  }
+}

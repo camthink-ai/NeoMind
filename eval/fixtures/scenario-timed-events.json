@@ -1,0 +1,37 @@
+{
+  "name": "scenario-timed-events",
+  "description": "Timed-events runtime fixture: monitor device with temp + door + compressor. Pre-seeded rules: door>30s→notify, compressor==false→notify. Tests DISCRETE event-triggered rule firing (not gradual drift). Simulator schedules events: door opens at 5s, compressor stops at 10s.",
+  "device_types": [
+    {
+      "device_type": "monitor_device",
+      "name": "Monitor Device",
+      "categories": ["general"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "door_open_secs", "display_name": "Door Open", "data_type": "Integer", "unit": "s"},
+        {"name": "compressor_running", "display_name": "Compressor", "data_type": "Boolean", "unit": ""}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "monitor-01", "name": "Monitor 01", "device_type": "monitor_device", "adapter_type": "webhook", "connection_config": {}}
+  ],
+  "rules": [
+    {
+      "name": "door-alarm",
+      "enabled": true,
+      "trigger": {"trigger_type": "data_change"},
+      "condition": {"condition_type": "comparison", "source": "device:monitor-01:door_open_secs", "operator": "greater_than", "threshold": 30.0},
+      "actions": [{"type": "notify", "message": "door open too long", "severity": "warning"}],
+      "cooldown": 60000
+    },
+    {
+      "name": "compressor-alarm",
+      "enabled": true,
+      "trigger": {"trigger_type": "data_change"},
+      "condition": {"condition_type": "comparison", "source": "device:monitor-01:compressor_running", "operator": "equal", "threshold": false},
+      "actions": [{"type": "notify", "message": "compressor stopped", "severity": "critical"}],
+      "cooldown": 60000
+    }
+  ]
+}
