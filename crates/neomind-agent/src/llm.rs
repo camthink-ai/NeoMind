@@ -1201,7 +1201,8 @@ impl LlmInterface {
             vec![system_msg, user_msg]
         };
 
-        // Get tool definitions
+        // Get tool definitions — no vision filtering here (chat_internal is
+        // text-only; chat_internal_message handles image filtering separately).
         let tools_input = if has_tools {
             let tools = self.tool_definitions.read().await;
             let result = if tools.is_empty() {
@@ -1407,11 +1408,31 @@ impl LlmInterface {
             vec![system_msg, user_message]
         };
 
-        // Get tool definitions
+        // Get tool definitions — filter out "vision" when the user message
+        // already contains images.  The model is multimodal and can analyse
+        // them directly; the vision tool is only needed for fetching images
+        // from URLs/files.  Mirrors chat_stream_internal_message.  The session
+        // layer guarantees the model is multimodal whenever images are present.
+        //
+        // `messages.last()` is the current user message (system msg + history
+        // are pushed before it); it is `None` only when the user message is
+        // empty, in which case there are no images anyway.
+        let has_user_images = messages.last().is_some_and(|m| m.has_images());
         let tools_input = if has_tools {
             let tools = self.tool_definitions.read().await;
             let result = if tools.is_empty() {
                 None
+            } else if has_user_images {
+                let filtered: Vec<_> = tools
+                    .iter()
+                    .filter(|t| t.name != "vision")
+                    .cloned()
+                    .collect();
+                if filtered.is_empty() {
+                    None
+                } else {
+                    Some(filtered)
+                }
             } else {
                 Some(tools.clone())
             };
