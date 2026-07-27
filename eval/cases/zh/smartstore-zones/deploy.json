@@ -1,0 +1,31 @@
+{
+  "id": "smartstore-zones-deploy",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "smartstore-zones",
+  "scenario_type": "multi_turn",
+  "description": "大规模+物理位置映射·智慧超市分区监控(最高维能力测试)。15台设备跨4区域(dairy/produce/frozen/bakery)，设备名编码区域。3个预置异常(dairy-temp-02=6.5°C超温/produce-hvac-01停机/frozen-door-01=45s门开)。测：规模处理(15设备)+空间推理(4区域)+区域感知规则(品类阈值)+分区仪表盘+跨区域比较+异常发现。HACCP标准：乳制品/生鲜<5°C, 冷冻<-18°C。",
+  "setup": { "fixture": "scenario-smartstore-zones" },
+  "turns": [
+    { "user": "我有个大超市，分4个区域：乳制品区(dairy)、生鲜区(produce)、冷冻区(frozen)、烘焙区(bakery)。每区都有温度传感器、HVAC和门传感器。食品安全要求各区域温度持续监控+告警。帮我设计一套分区监控方案。" },
+    { "user": "方案不错。按食品安全标准：乳制品区和生鲜区温度低于 5°C，冷冻区低于 -18°C。每个区域都建温度告警规则，门开超过 30 秒也要告警。" },
+    { "user": "规则都建好了？再帮我建个仪表盘叫 Store Overview，按区域分组显示所有温度。告警统一发到 store-manager 的 webhook 频道，URL 是 https://example.com/store。" },
+    { "user": "直接建吧，都帮我建好。不用再确认了。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "T1: device list(发现15台设备+4区域) → 设计分区方案",
+      "T2: rule create ×N(乳制品/生鲜<5°C, 冷冻<-18°C, 门开>30s, 按区域部署)",
+      "T3: dashboard create(Store Overview 按区域分组) + channel create(store-manager webhook)",
+      "T4: 直接建仪表盘+频道(完成完整方案)"
+    ],
+    "overall": "完整分区监控方案落地：≥8条规则(每区至少2条) + 分区仪表盘 + 通知频道。应发现 3 个预置异常(dairy-temp-02超温/produce-hvac停机/frozen-door门开)。"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device list", "neomind rule create", "neomind dashboard create", "neomind message channel-create"] },
+  "state_queries": [
+    { "type": "rule_count", "expected_min": 8 },
+    { "type": "dashboard_exists", "params": { "name": "Store Overview" }, "expected": true },
+    { "type": "channel_exists", "params": { "name": "store-manager" }, "expected": true }
+  ]
+}

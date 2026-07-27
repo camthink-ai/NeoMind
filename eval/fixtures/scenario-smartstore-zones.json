@@ -1,0 +1,90 @@
+{
+  "name": "scenario-smartstore-zones",
+  "description": "Large-scale + physical-location-mapped fixture: 15 devices across 4 zones (Dairy/Produce/Frozen/Bakery). Device names encode zone (dairy-*/produce-*/frozen-*/bakery-*). 3 pre-seeded anomalies: dairy-temp-02=6.5°C(violation>5), produce-hvac-01=off(broken), frozen-door-01=45s(door-ajar). Tests scale handling (15 devices) + spatial reasoning (4 zones) + location-aware rule design + cross-zone comparison + cascading-effect understanding.",
+  "device_types": [
+    {
+      "device_type": "zone_sensor",
+      "name": "Zone Sensor",
+      "categories": ["smart-store"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "humidity_pct", "display_name": "Humidity", "data_type": "Float", "unit": "%"}
+      ]
+    },
+    {
+      "device_type": "zone_hvac",
+      "name": "Zone HVAC",
+      "categories": ["smart-store"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "mode", "display_name": "Mode", "data_type": "String", "unit": ""}
+      ],
+      "commands": [
+        {"name": "set_mode", "display_name": "Set Mode", "description": "cool/heat/ventilate/auto"},
+        {"name": "set_target_temp", "display_name": "Set Target", "description": "target temperature"}
+      ]
+    },
+    {
+      "device_type": "door_sensor",
+      "name": "Door Sensor",
+      "categories": ["smart-store"],
+      "metrics": [
+        {"name": "door_open_secs", "display_name": "Door Open", "data_type": "Integer", "unit": "s"}
+      ]
+    },
+    {
+      "device_type": "oven_monitor",
+      "name": "Oven Monitor",
+      "categories": ["smart-store"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "is_on", "display_name": "Running", "data_type": "Boolean", "unit": ""}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "dairy-temp-01", "name": "Dairy Zone Temp 1", "device_type": "zone_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "dairy-temp-02", "name": "Dairy Zone Temp 2", "device_type": "zone_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "dairy-hvac-01", "name": "Dairy Zone HVAC", "device_type": "zone_hvac", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "dairy-door-01", "name": "Dairy Zone Door", "device_type": "door_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "produce-temp-01", "name": "Produce Zone Temp 1", "device_type": "zone_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "produce-temp-02", "name": "Produce Zone Temp 2", "device_type": "zone_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "produce-hvac-01", "name": "Produce Zone HVAC", "device_type": "zone_hvac", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "produce-door-01", "name": "Produce Zone Door", "device_type": "door_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "frozen-temp-01", "name": "Frozen Zone Temp 1", "device_type": "zone_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "frozen-temp-02", "name": "Frozen Zone Temp 2", "device_type": "zone_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "frozen-comp-01", "name": "Frozen Zone Compressor", "device_type": "zone_hvac", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "frozen-door-01", "name": "Frozen Zone Door", "device_type": "door_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "bakery-temp-01", "name": "Bakery Zone Temp", "device_type": "zone_sensor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "bakery-oven-01", "name": "Bakery Oven", "device_type": "oven_monitor", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "bakery-door-01", "name": "Bakery Zone Door", "device_type": "door_sensor", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "dairy-temp-01", "metric": "temp_c", "value": 3.2},
+    {"device_id": "dairy-temp-01", "metric": "humidity_pct", "value": 55},
+    {"device_id": "dairy-temp-02", "metric": "temp_c", "value": 6.5},
+    {"device_id": "dairy-temp-02", "metric": "humidity_pct", "value": 60},
+    {"device_id": "dairy-hvac-01", "metric": "temp_c", "value": 3.5},
+    {"device_id": "dairy-hvac-01", "metric": "mode", "value": "auto"},
+    {"device_id": "dairy-door-01", "metric": "door_open_secs", "value": 0},
+    {"device_id": "produce-temp-01", "metric": "temp_c", "value": 4.0},
+    {"device_id": "produce-temp-01", "metric": "humidity_pct", "value": 70},
+    {"device_id": "produce-temp-02", "metric": "temp_c", "value": 4.5},
+    {"device_id": "produce-temp-02", "metric": "humidity_pct", "value": 72},
+    {"device_id": "produce-hvac-01", "metric": "temp_c", "value": 8.0},
+    {"device_id": "produce-hvac-01", "metric": "mode", "value": "off"},
+    {"device_id": "produce-door-01", "metric": "door_open_secs", "value": 0},
+    {"device_id": "frozen-temp-01", "metric": "temp_c", "value": -15.0},
+    {"device_id": "frozen-temp-01", "metric": "humidity_pct", "value": 40},
+    {"device_id": "frozen-temp-02", "metric": "temp_c", "value": -20.0},
+    {"device_id": "frozen-temp-02", "metric": "humidity_pct", "value": 38},
+    {"device_id": "frozen-comp-01", "metric": "temp_c", "value": -19.0},
+    {"device_id": "frozen-comp-01", "metric": "mode", "value": "cool"},
+    {"device_id": "frozen-door-01", "metric": "door_open_secs", "value": 45},
+    {"device_id": "bakery-temp-01", "metric": "temp_c", "value": 22.0},
+    {"device_id": "bakery-temp-01", "metric": "humidity_pct", "value": 50},
+    {"device_id": "bakery-oven-01", "metric": "temp_c", "value": 180.0},
+    {"device_id": "bakery-oven-01", "metric": "is_on", "value": true},
+    {"device_id": "bakery-door-01", "metric": "door_open_secs", "value": 0}
+  ]
+}
