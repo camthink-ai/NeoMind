@@ -1,0 +1,21 @@
+{
+  "id": "metric-discovery-rule",
+  "lang": "zh",
+  "category": "rule",
+  "workflow": "rule-discovery",
+  "scenario_type": "single_turn",
+  "description": "指标发现意识测试:case 不告诉 agent 指标精确名,只说'电量低于 20'。ne101_camera 的电量指标是嵌套的 values.battery(agent 必须主动 device get 发现,不能猜 battery)。测 LLM 的资源发现意识(查 vs 猜)——system prompt 要求 'NEVER guess metric names. Discover first via device list/get' 但 eval 从没考过。",
+  "setup": { "fixture": "seed-default" },
+  "turns": [
+    { "user": "sensor-001 的电量有点低。帮我建一条规则,名字叫 battery-discovered:当 sensor-001 的电量低于 20 时发告警通知。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device get sensor-001`(发现指标名 values.battery)→ `neomind rule create`(source 用 device:sensor-001:values.battery)"],
+    "overall": "规则 source 正确引用 values.battery(证明 agent 查了而非猜)"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device get", "neomind rule create"] },
+  "state_queries": [
+    { "type": "rule_references_source", "params": { "name": "battery-discovered" }, "source": "battery", "expected": true }
+  ]
+}
