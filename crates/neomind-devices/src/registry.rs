@@ -407,6 +407,8 @@ pub struct DeviceRegistry {
     devices: DashMap<String, DeviceConfig>,
     /// Index: device_type -> set of device_ids
     type_index: DashMap<String, Vec<String>>,
+    /// Reverse index: telemetry_topic → device_id (O(1) lookup for MQTT routing).
+    topic_index: DashMap<String, String>,
     /// Optional persistent storage backend
     storage: Option<Arc<DeviceRegistryStore>>,
     /// Whether to auto-save after modifications
@@ -426,6 +428,7 @@ impl DeviceRegistry {
             templates: DashMap::new(),
             devices: DashMap::new(),
             type_index: DashMap::new(),
+            topic_index: DashMap::new(),
             storage: None,
             auto_save: AtomicBool::new(false),
         }
@@ -466,6 +469,7 @@ impl DeviceRegistry {
             templates: DashMap::new(),
             devices: DashMap::new(),
             type_index: DashMap::new(),
+            topic_index: DashMap::new(),
             storage: Some(store),
             auto_save: AtomicBool::new(true),
         };
@@ -1085,9 +1089,22 @@ impl DeviceRegistry {
     /// Find a device by its telemetry topic
     /// This is used by MQTT adapters to route messages from custom topics
     pub fn find_device_by_telemetry_topic(&self, topic: &str) -> Option<(String, DeviceConfig)> {
+        // Fast path: reverse index (O(1))
+        if let Some(device_id) = self.topic_index.get(topic) {
+            if let Some(config) = self.devices.get(device_id.value()) {
+                return Some((device_id.value().clone(), config.clone()));
+            }
+            // Stale index entry — clean up + fall through to scan
+            drop(device_id);
+            self.topic_index.remove(topic);
+        }
+        // Fallback: linear scan (auto-repairs the index on hit)
         for entry in self.devices.iter() {
             if let Some(ref telemetry_topic) = entry.value().connection_config.telemetry_topic {
                 if telemetry_topic == topic {
+                    // Repair the index for future lookups
+                    self.topic_index
+                        .insert(topic.to_string(), entry.key().clone());
                     return Some((entry.key().clone(), entry.value().clone()));
                 }
             }
@@ -1111,15 +1128,22 @@ impl DeviceRegistry {
 
     /// Unregister a device configuration
     pub fn unregister_device(&self, device_id: &str) -> Result<(), DeviceError> {
-        // Get device to find its type
-        let device_type = self
+        // Get device to find its type + telemetry_topic (for index cleanup)
+        let device = self
             .devices
             .get(device_id)
-            .map(|d| d.device_type.clone())
             .ok_or_else(|| DeviceError::NotFoundStr(device_id.to_string()))?;
+        let device_type = device.device_type.clone();
+        let telemetry_topic = device.connection_config.telemetry_topic.clone();
+        drop(device);
 
         // Remove device
         self.devices.remove(device_id);
+
+        // Clean up topic index
+        if let Some(topic) = telemetry_topic {
+            self.topic_index.remove(&topic);
+        }
 
         // Update type index
         if let Some(mut type_entry) = self.type_index.get_mut(&device_type) {
