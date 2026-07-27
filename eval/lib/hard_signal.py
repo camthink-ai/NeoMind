@@ -153,7 +153,12 @@ def derive_expected(case: dict) -> dict:
 
 
 def _actual_from_record(record: dict) -> tuple[set[str], list[str]]:
-    """Extract actual tool names + normalized shell commands from a CaseRecord."""
+    """Extract actual tool names + normalized shell commands from a CaseRecord.
+
+    Splits compound commands on `;` so that `neomind a; neomind b` registers
+    BOTH commands (not just the first). Without this, the hard signal misses
+    commands that the agent ran as part of a diagnostic batch.
+    """
     tools: set[str] = set()
     commands: list[str] = []
     for turn in record.get("turn_records") or []:
@@ -173,9 +178,14 @@ def _actual_from_record(record: dict) -> tuple[set[str], list[str]]:
                     except Exception:
                         cmd = args
                 if isinstance(cmd, str):
-                    n = normalize_command(cmd)
-                    if n:
-                        commands.append(n)
+                    # Split compound commands on `;` so each part is
+                    # normalized + captured independently.
+                    for part in cmd.split(";"):
+                        part = part.strip()
+                        if part:
+                            n = normalize_command(part)
+                            if n:
+                                commands.append(n)
     return tools, commands
 
 

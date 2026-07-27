@@ -1987,6 +1987,7 @@ pub enum SystemCommand {
     /// Use this to discover connection endpoints for devices and connectors.
     ///
     /// Example: `neomind system info`
+    #[command(alias = "status")]
     Info {
     },
 }

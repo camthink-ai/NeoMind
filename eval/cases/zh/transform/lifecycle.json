@@ -25,5 +25,6 @@
       "Turn 6: Agent 调用 `neomind transform delete <id>`"
     ],
     "overall": "后五轮必须复用第一轮解析的 id"
-  }
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind transform create", "neomind transform delete"] }
 }
