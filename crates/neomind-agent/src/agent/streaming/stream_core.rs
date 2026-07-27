@@ -316,14 +316,52 @@ pub async fn process_stream_events_with_safeguards(
 
         // === MULTI-ROUND TOOL CALLING LOOP ===
         // For complex intents, we may need multiple rounds of tool calling
+        let mut stuck_nudge_given = false;
         'multi_round_loop: loop {
             // Non-destructive stuck detection at the top of each chat round.
             if let Some(pattern) = stuck_detector.check() {
-                tracing::warn!(
-                    "Chat agent stuck loop detected ({}), forcing summary response",
-                    pattern.label()
-                );
-                break 'multi_round_loop;
+                if !stuck_nudge_given {
+                    // First stuck detection: inject a recovery nudge into the
+                    // conversation history and give the agent one more chance
+                    // to try a different approach.
+                    tracing::warn!(
+                        "Chat agent stuck loop detected ({}), injecting recovery nudge",
+                        pattern.label()
+                    );
+                    stuck_nudge_given = true;
+                    // Clear the detector window for a fresh start
+                    stuck_detector.push(StuckEvent::UserMessage);
+                    // Push nudge into conversation history so the next LLM
+                    // call sees it.
+                    {
+                        let mut state = internal_state.write().await;
+                        state.push_message(AgentMessage::user(
+                            "[System] You appear to be stuck repeating the same tool calls \
+                             that keep failing. Try a completely different approach. \
+                             If you're trying to pass large data (like images) between tools, \
+                             use the $cached reference from the original tool result instead \
+                             of re-extracting or re-processing the data with python."
+                        ));
+                    }
+                    yield AgentEvent::progress(
+                        "Detected a stuck pattern — trying a different approach..."
+                            .to_string(),
+                        "recovering",
+                        0,
+                    );
+                    tool_iteration_count += 1;
+                    if tool_iteration_count > MAX_TOOL_ITERATIONS {
+                        break 'multi_round_loop;
+                    }
+                    continue 'multi_round_loop;
+                } else {
+                    // Second stuck detection after nudge — give up gracefully.
+                    tracing::warn!(
+                        "Chat agent still stuck after nudge ({}), forcing summary",
+                        pattern.label()
+                    );
+                    break 'multi_round_loop;
+                }
             }
             if tool_iteration_count > 0 {
                 tracing::debug!("Starting tool iteration round {}", tool_iteration_count + 1);
