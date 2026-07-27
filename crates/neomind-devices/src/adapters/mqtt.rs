@@ -587,6 +587,27 @@ impl MqttAdapter {
             broker_id, broker_addr
         );
 
+        // Spawn a periodic metric_cache sweep to prevent unbounded growth from
+        // phantom auto-onboarded devices. Drops entries older than 30 min.
+        let sweep_cache = Arc::clone(&self.metric_cache);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                let cutoff = chrono::Utc::now() - chrono::Duration::minutes(30);
+                let mut cache = sweep_cache.write().await;
+                let before = cache.len();
+                for metrics in cache.values_mut() {
+                    metrics.retain(|_, (_, ts)| *ts > cutoff);
+                }
+                cache.retain(|_, metrics| !metrics.is_empty());
+                let removed = before.saturating_sub(cache.len());
+                if removed > 0 {
+                    tracing::debug!(removed, remaining = cache.len(), "metric_cache sweep");
+                }
+            }
+        });
+
         tokio::spawn(async move {
             let mut eventloop = eventloop;
             let mut error_count: u32 = 0;
