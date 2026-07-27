@@ -197,12 +197,23 @@ impl EventDispatcher {
                 // This ensures events go to the actual extension process, not the proxy
                 if let Some(sender) = isolated_event_senders.get(extension_id) {
                     // Send event to isolated extension via channel
-                    match sender.send((event_type.to_string(), payload.clone())).await {
+                    match sender.try_send((event_type.to_string(), payload.clone())) {
                         Ok(_) => {
                             debug!(
                                 extension_id = %extension_id,
                                 event_type = %event_type,
                                 "EventDispatcher: delivered to isolated extension"
+                            );
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                            // Channel full — subscriber is too slow. Drop the event
+                            // for THIS subscriber + continue to the next one (was:
+                            // send().await blocked ALL subscribers behind the slow one).
+                            tracing::warn!(
+                                extension_id = %extension_id,
+                                event_type = %event_type,
+                                "EventDispatcher: isolated extension channel full — \
+                                 event dropped (subscriber too slow)"
                             );
                         }
                         Err(e) => {
@@ -293,12 +304,23 @@ impl EventDispatcher {
                 // This ensures events go to the actual extension process, not the proxy
                 if let Some(sender) = isolated_event_senders.get(extension_id) {
                     // Send event to isolated extension via channel
-                    match sender.send((event_type.to_string(), payload.clone())).await {
+                    match sender.try_send((event_type.to_string(), payload.clone())) {
                         Ok(_) => {
                             debug!(
                                 extension_id = %extension_id,
                                 event_type = %event_type,
                                 "EventDispatcher: delivered to isolated extension"
+                            );
+                        }
+                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                            // Channel full — subscriber is too slow. Drop the event
+                            // for THIS subscriber + continue to the next one (was:
+                            // send().await blocked ALL subscribers behind the slow one).
+                            tracing::warn!(
+                                extension_id = %extension_id,
+                                event_type = %event_type,
+                                "EventDispatcher: isolated extension channel full — \
+                                 event dropped (subscriber too slow)"
                             );
                         }
                         Err(e) => {
