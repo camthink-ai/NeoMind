@@ -158,16 +158,16 @@ impl ExtensionRegistry {
         // Register with event dispatcher for event subscriptions
         // This allows in-process extensions to receive events via handle_event()
         if let Some(ref dispatcher) = *self.event_dispatcher.read() {
-            // Note: This is a synchronous context, so we use block_in_place
-            // to allow async operation
+            let dispatcher = std::sync::Arc::clone(dispatcher);
             let extension_clone = extension.clone();
             let id_clone = id.clone();
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    dispatcher
-                        .register_in_process_extension(id_clone, extension_clone)
-                        .await;
-                });
+            // Use spawn instead of block_in_place — block_in_place panics on
+            // current-thread runtimes (Tauri main thread). The registration is
+            // fire-and-forget: the extension starts receiving events within ms.
+            tokio::spawn(async move {
+                dispatcher
+                    .register_in_process_extension(id_clone, extension_clone)
+                    .await;
             });
         }
 
