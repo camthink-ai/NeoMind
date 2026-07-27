@@ -14,7 +14,7 @@
     "per_turn": ["Turn 1: `neomind device get pump-A`(发现支持 stop 命令)→ `neomind device control pump-A stop`(停机)"],
     "overall": "停机命令 stop 被发到 pump-A(command history 有记录)"
   },
-  "expect": { "tools": ["shell"], "commands": ["neomind device get", "neomind device control"] },
+  "expect": { "tools": ["shell"], "commands": ["neomind device get", "neomind device command"] },
   "state_queries": [
     { "type": "device_command_sent", "params": { "id": "pump-A", "command": "stop" }, "expected": true }
   ]
