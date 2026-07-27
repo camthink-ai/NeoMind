@@ -26,7 +26,7 @@ export interface FrontendComponentState {
   marketLoading: boolean
   loading: boolean
   error: string | null
-  fetchCache: Record<string, { timestamp: number }>
+  fetchCache: Record<string, { timestamp: number; fetching?: boolean }>
   /** Map of component id → { current, latest } when a newer version exists on the marketplace. */
   updatesAvailable: Record<string, { current: string; latest: string }>
 }
