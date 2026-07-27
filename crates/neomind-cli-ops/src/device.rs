@@ -1,6 +1,7 @@
 use crate::types::{BuildMeta, CliResponse};
 use crate::ApiClient;
 use anyhow::Result;
+use base64::Engine;
 use serde_json::json;
 use std::collections::BTreeMap;
 
@@ -245,20 +246,112 @@ fn looks_like_base64_blob(s: &str) -> bool {
 }
 
 /// Sanitize the full /devices/{id}/current response to truncate binary metric values.
-fn sanitize_device_current(data: &serde_json::Value) -> serde_json::Value {
+/// Converts inline `data:image/...;base64,...` data URLs to `/api/images/` file URLs
+/// so the agent can pass them directly to `vision(image="/api/images/...")` without
+/// needing $cached or python extraction.
+fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_json::Value {
     let mut result = data.clone();
     // Navigate to data.metrics and sanitize each metric's value
     let metrics = result.pointer_mut("/data/metrics");
     if let Some(m) = metrics.and_then(|v| v.as_object_mut()) {
-        for (_name, info) in m.iter_mut() {
+        for (name, info) in m.iter_mut() {
             if let Some(obj) = info.as_object_mut() {
                 if let Some(val) = obj.get_mut("value") {
                     *val = sanitize_metric_value(val);
+                    // If the value is a data URL, try to materialize it as a file
+                    // so the agent gets a clean /api/images/ URL instead of 60KB
+                    // of base64 it can't pass between tools.
+                    if let Some(s) = val.as_str() {
+                        if let Some(url) = materialize_data_url(s, device_id, name) {
+                            *val = json!(url);
+                        }
+                    }
                 }
             }
         }
     }
     result
+}
+
+/// If `s` is a `data:image/...;base64,...` data URL, save the decoded bytes
+/// to `data/images/{device_id}/{metric_name}/{timestamp}.{ext}` and return the
+/// `/api/images/...` URL. Returns `None` for non-data-URL values or if the
+/// file write fails (caller falls back to the original value).
+///
+/// This completes the v0.9.6 base64→URL migration at the CLI layer: the agent
+/// gets a short URL it can pass directly to `vision(image="/api/images/...")`,
+/// eliminating the $cached / python-extraction loops that broke on every model.
+fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<String> {
+    // Only handle data URLs
+    if !s.starts_with("data:") {
+        return None;
+    }
+    // Parse "data:image/jpeg;base64,/9j/..."
+    let comma_pos = s.find(',')?;
+    let mime_part = &s[5..comma_pos]; // "image/jpeg;base64"
+    let (mime, is_base64) = {
+        let parts: Vec<&str> = mime_part.split(';').collect();
+        let mime = parts.first()?; // "image/jpeg"
+        let is_base64 = parts.iter().any(|p| *p == "base64");
+        (mime.to_string(), is_base64)
+    };
+    if !is_base64 {
+        return None;
+    }
+    let b64_data = &s[comma_pos + 1..];
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64_data)
+        .ok()?;
+
+    // Determine extension from mime
+    let ext = match mime.as_str() {
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/png" => "png",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        "image/bmp" => "bmp",
+        _ => "bin",
+    };
+
+    // Compute content hash for dedup (same image → same file)
+    let hash = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+
+    // Resolve data_dir from env (set by the server/dispatch context)
+    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let images_dir = std::path::Path::new(&data_dir).join("images");
+    let device_dir = images_dir.join(device_id);
+    if std::fs::create_dir_all(&device_dir).is_err() {
+        return None;
+    }
+
+    let filename = format!("{}_{}.{}", metric_name, hash, ext);
+    let filepath = device_dir.join(&filename);
+
+    // Dedup: skip write if file already exists with same content hash
+    if !filepath.exists() {
+        if std::fs::write(&filepath, &bytes).is_err() {
+            return None;
+        }
+    }
+
+    tracing::debug!(
+        device_id = device_id,
+        metric = metric_name,
+        bytes = bytes.len(),
+        url = %format!("/api/images/{}/{}/{}", device_id, metric_name, filename),
+        "Materialized data URL to image file"
+    );
+
+    Some(format!(
+        "/api/images/{}/{}/{}",
+        device_id, metric_name, filename
+    ))
 }
 
 /// Extract device array from API response (handles multiple response shapes).
@@ -343,13 +436,9 @@ fn build_device_list(devs: &[serde_json::Value]) -> serde_json::Value {
 }
 
 /// Get device details (metadata + metrics + commands) via /current endpoint.
-pub async fn get_device(
-    client: &ApiClient,
-    id: &str,
-    metric: Option<&str>,
-) -> Result<CliResponse> {
+pub async fn get_device(client: &ApiClient, id: &str, metric: Option<&str>) -> Result<CliResponse> {
     let data = client.get(&format!("/devices/{}/current", id)).await?;
-    let mut sanitized = sanitize_device_current(&data);
+    let mut sanitized = sanitize_device_current(&data, id);
     if let Some(field) = metric {
         filter_single_metric(&mut sanitized, field);
     }
@@ -362,7 +451,10 @@ pub async fn get_device(
 /// key lookup on `data.metrics`, NOT a JSON-pointer path. If the field is
 /// absent, all metrics are returned with a `_note` explaining the miss.
 fn filter_single_metric(data: &mut serde_json::Value, field: &str) {
-    let Some(metrics) = data.pointer_mut("/data/metrics").and_then(|v| v.as_object_mut()) else {
+    let Some(metrics) = data
+        .pointer_mut("/data/metrics")
+        .and_then(|v| v.as_object_mut())
+    else {
         return;
     };
     if metrics.contains_key(field) {
@@ -452,7 +544,7 @@ pub async fn delete_device(client: &ApiClient, id: &str) -> Result<CliResponse> 
 /// Get latest metrics for a device
 pub async fn get_latest_metrics(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client.get(&format!("/devices/{}/current", id)).await?;
-    let sanitized = sanitize_device_current(&data);
+    let sanitized = sanitize_device_current(&data, id);
     Ok(CliResponse::success(sanitized, "Latest metrics retrieved"))
 }
 
@@ -917,9 +1009,18 @@ mod tests {
         filter_single_metric(&mut resp, "values.battery");
         let metrics = resp["data"]["metrics"].as_object().unwrap();
         assert_eq!(metrics.len(), 1, "only the requested field remains");
-        assert!(metrics.contains_key("values.battery"), "dotted key matched as flat key");
-        assert!(!metrics.contains_key("values.image"), "big inference-ish field dropped");
-        assert_eq!(resp["data"]["device"]["id"], "dev-001", "metadata untouched");
+        assert!(
+            metrics.contains_key("values.battery"),
+            "dotted key matched as flat key"
+        );
+        assert!(
+            !metrics.contains_key("values.image"),
+            "big inference-ish field dropped"
+        );
+        assert_eq!(
+            resp["data"]["device"]["id"], "dev-001",
+            "metadata untouched"
+        );
     }
 
     /// Missing field falls back to all metrics + a `_note`, not an error.
@@ -939,7 +1040,11 @@ mod tests {
             "all metrics kept when field absent"
         );
         let note = resp["data"]["_note"].as_str().unwrap();
-        assert!(note.contains("not found"), "note explains the miss: {}", note);
+        assert!(
+            note.contains("not found"),
+            "note explains the miss: {}",
+            note
+        );
     }
 
     /// No `data.metrics` at all is a no-op (must not panic).
@@ -1161,7 +1266,10 @@ mod tests {
         // data: image URL — the NE301 `device get --metric image_data` case
         // that was being truncated to "<truncated, 42307 bytes total>".
         let data_url = format!("data:image/jpeg;base64,{}", "A".repeat(42_000));
-        let out = sanitize_metric_value(&json!(data_url)).as_str().unwrap().to_string();
+        let out = sanitize_metric_value(&json!(data_url))
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(
             !out.contains("<truncated"),
             "data:image/ must not be truncated: {}",
@@ -1171,7 +1279,10 @@ mod tests {
 
         // Internal file-backed image URL (v0.9.6 storage format).
         let internal = "/api/images/ne301-1/image_data/1700000001.jpg";
-        let out = sanitize_metric_value(&json!(internal)).as_str().unwrap().to_string();
+        let out = sanitize_metric_value(&json!(internal))
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(out, internal);
 
         // External image URL (>80 bytes, image extension).
@@ -1179,7 +1290,10 @@ mod tests {
             "https://cdn.example.com/cam/snapshots/deep-path/signed-token-{}.jpg",
             "a".repeat(100)
         );
-        let out = sanitize_metric_value(&json!(ext)).as_str().unwrap().to_string();
+        let out = sanitize_metric_value(&json!(ext))
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(out, ext);
     }
 
@@ -1188,7 +1302,10 @@ mod tests {
     #[test]
     fn test_sanitize_metric_value_bare_base64_passthrough() {
         let blob = "A".repeat(5_000);
-        let out = sanitize_metric_value(&json!(blob)).as_str().unwrap().to_string();
+        let out = sanitize_metric_value(&json!(blob))
+            .as_str()
+            .unwrap()
+            .to_string();
         assert_eq!(out, blob);
     }
 
@@ -1196,7 +1313,10 @@ mod tests {
     #[test]
     fn test_sanitize_metric_value_truncates_plain_long_text() {
         let long = "ordinary telemetry note with spaces and words ".repeat(50);
-        let out = sanitize_metric_value(&json!(long)).as_str().unwrap().to_string();
+        let out = sanitize_metric_value(&json!(long))
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(
             out.contains("<truncated"),
             "non-image long text should be truncated: {}",
