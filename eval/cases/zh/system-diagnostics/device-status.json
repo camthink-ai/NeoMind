@@ -1,0 +1,12 @@
+{
+  "id": "diagnose-device-status",
+  "lang": "zh", "category": "system", "workflow": "system-diagnostics", "scenario_type": "single_turn",
+  "description": "系统诊断·设备状态巡检:用户问'系统有什么问题吗'。agent 应主动巡检(device list 查状态 + 看有没有离线/异常设备)。测 agent 的主动巡检意识。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [
+    {"user": "系统现在运行正常吗？有没有什么问题需要关注的？"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: `neomind device list`(查所有设备状态)+ 可能 `system info`"], "overall": "主动巡检设备状态,基于真实数据回答"},
+  "expect": {"tools": ["shell"], "commands": ["neomind device list"]}
+}

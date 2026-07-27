@@ -1,0 +1,13 @@
+{
+  "id": "error-recovery-composite",
+  "lang": "zh", "category": "rule", "workflow": "error-recovery", "scenario_type": "single_turn",
+  "description": "错误恢复·复合条件:agent 建一条复合规则(电量<20 AND 电量>5),可能触发 schema 错误(logical operator format/condition shape)。测 agent 读 suggestion 自愈重试的能力。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [
+    {"user": "建条规则,名字叫 recovery-composite:当 sensor-001 的 values.battery 低于 20 且高于 5 时告警。两个条件都要满足。"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: rule create(复合 AND 条件,可能试错后成功)"], "overall": "规则最终建成(含 AND 复合条件)"},
+  "expect": {"tools": ["shell"], "commands": ["neomind rule create"]},
+  "state_queries": [{"type": "rule_exists", "params": {"name": "recovery-composite"}, "expected": true}]
+}

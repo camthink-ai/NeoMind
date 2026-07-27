@@ -1,0 +1,12 @@
+{
+  "id": "analysis-cross-compare",
+  "lang": "zh", "category": "device", "workflow": "data-analysis", "scenario_type": "single_turn",
+  "description": "数据分析·跨设备比较:用户问'哪个设备电量最低',agent 要 device list + 逐个 get 比较。测跨设备数据聚合+比较推理。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [
+    {"user": "现在几个传感器里,哪个电量最低？帮我对比一下。"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: `neomind device list` → 逐个 `device get` 查电量 → 比较回答"], "overall": "基于真实数据比较回答(sensor-001=75 vs sensor-002=82)"},
+  "expect": {"tools": ["shell"], "commands": ["neomind device list"]}
+}

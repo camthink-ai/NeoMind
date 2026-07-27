@@ -1,0 +1,14 @@
+{
+  "id": "multi-turn-threshold-change",
+  "lang": "zh", "category": "rule", "workflow": "multi-turn-context", "scenario_type": "multi_turn",
+  "description": "多轮上下文记忆:第一轮建规则(电量<20告警,名叫 ctx-battery-rule),第二轮'阈值改成10'。agent 必须记住上轮规则并修改。测上下文指代消解。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [
+    {"user": "帮 sensor-001 建条规则,名字叫 ctx-battery-rule:电量低于 20 时告警。"},
+    {"user": "阈值太低了,改成 10。"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: rule create ctx-battery-rule", "T2: rule update ctx-battery-rule(阈值改 10)"], "overall": "规则建成 + 成功修改阈值"},
+  "expect": {"tools": ["shell"], "commands": ["neomind rule create", "neomind rule update"]},
+  "state_queries": [{"type": "rule_exists", "params": {"name": "ctx-battery-rule"}, "expected": true}]
+}

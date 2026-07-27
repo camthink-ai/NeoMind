@@ -1,0 +1,12 @@
+{
+  "id": "diagnose-rule-not-firing",
+  "lang": "zh", "category": "rule", "workflow": "system-diagnostics", "scenario_type": "single_turn",
+  "description": "系统诊断·规则未触发:fixture 预置一条规则(电量<20告警),但 sensor-001 电量=75(不满足条件)。用户问'为什么没触发'。agent 应检查规则配置+设备数据+条件→诊断出'条件未满足'。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [
+    {"user": "我之前建了 rule-battery-low 规则,但它一直没触发过。帮我看看为什么。"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: `neomind rule get rule-battery-low` + `device get sensor-001`(查条件+数据)→ 诊断:电量75>20,条件未满足"], "overall": "正确诊断出规则未触发的原因(条件不满足)"},
+  "expect": {"tools": ["shell"], "commands": ["neomind rule get", "neomind device get"]}
+}

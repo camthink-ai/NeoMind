@@ -1,0 +1,12 @@
+{
+  "id": "error-recovery-unsupported-metric",
+  "lang": "zh", "category": "rule", "workflow": "error-recovery", "scenario_type": "single_turn",
+  "description": "错误恢复·不支持指标:agent 建规则时用了不存在的指标(如 sensor-001 的 humidity),校验器拒收。agent 应读错误→查可用指标→修正。测发现+自适应能力。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [
+    {"user": "建条规则,名字叫 recovery-metric:当 sensor-001 的湿度(humidity)超过 80 时告警。"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: rule create(可能 humidity 不被支持→agent 查 device get→发现可用指标→修正或报告)"], "overall": "agent 正确处理指标不支持的情况(查/修正/告知)"},
+  "expect": {"tools": ["shell"], "commands": ["neomind device get", "neomind rule create"]}
+}

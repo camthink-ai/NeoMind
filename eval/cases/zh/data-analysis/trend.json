@@ -1,0 +1,12 @@
+{
+  "id": "analysis-trend",
+  "lang": "zh", "category": "device", "workflow": "data-analysis", "scenario_type": "single_turn",
+  "description": "数据分析·趋势查询:用户问电量趋势,agent 要用 device history 查历史数据+解读。测 agent 的数据查询+洞察能力(不只是 CRUD,是分析者)。",
+  "setup": {"fixture": "seed-default"},
+  "turns": [
+    {"user": "sensor-001 最近电量趋势怎么样？是上升还是下降？给我看看历史数据。"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {"per_turn": ["T1: `neomind device history sensor-001 --metric values.battery`(查趋势数据)"], "overall": "基于真实历史数据回答趋势(不能凭空猜)"},
+  "expect": {"tools": ["shell"], "commands": ["neomind device history"]}
+}
