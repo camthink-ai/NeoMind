@@ -1,0 +1,40 @@
+{
+  "name": "scenario-haccp-solution",
+  "description": "HACCP cold-chain compliance deep solution fixture. 4 store fridges across 3 categories with realistic states (dairy-fridge-2 is ALREADY violating at 6.2°C > HACCP 5°C limit). Tests the agent as a SOLUTION ARCHITECT: understand business problem → design HACCP-compliant monitoring → deploy across rules + dashboard + channel → guide the user. Grounded in FDA HACCP Principles (cold holding ≤5°C, frozen ≤-18°C, continuous monitoring, corrective action).",
+  "device_types": [
+    {
+      "device_type": "display_fridge",
+      "name": "Display Fridge",
+      "categories": ["retail"],
+      "metrics": [
+        {"name": "temp_c", "display_name": "Temperature", "data_type": "Float", "unit": "°C"},
+        {"name": "door_open_secs", "display_name": "Door Open", "data_type": "Integer", "unit": "s"},
+        {"name": "compressor_running", "display_name": "Compressor", "data_type": "Boolean", "unit": ""}
+      ],
+      "commands": [
+        {"name": "set_target_temp", "display_name": "Set Target Temp", "description": "Set fridge target temperature"},
+        {"name": "set_alarm", "display_name": "Set Alarm", "description": "Raise the fridge alarm"}
+      ]
+    }
+  ],
+  "devices": [
+    {"device_id": "dairy-fridge-1", "name": "Dairy Fridge 1", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "dairy-fridge-2", "name": "Dairy Fridge 2", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "beverage-fridge-1", "name": "Beverage Fridge", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}},
+    {"device_id": "frozen-fridge-1", "name": "Frozen Fridge", "device_type": "display_fridge", "adapter_type": "mqtt", "connection_config": {}}
+  ],
+  "metrics": [
+    {"device_id": "dairy-fridge-1", "metric": "temp_c", "value": 3.5},
+    {"device_id": "dairy-fridge-1", "metric": "door_open_secs", "value": 0},
+    {"device_id": "dairy-fridge-1", "metric": "compressor_running", "value": true},
+    {"device_id": "dairy-fridge-2", "metric": "temp_c", "value": 6.2},
+    {"device_id": "dairy-fridge-2", "metric": "door_open_secs", "value": 0},
+    {"device_id": "dairy-fridge-2", "metric": "compressor_running", "value": true},
+    {"device_id": "beverage-fridge-1", "metric": "temp_c", "value": 3.0},
+    {"device_id": "beverage-fridge-1", "metric": "door_open_secs", "value": 0},
+    {"device_id": "beverage-fridge-1", "metric": "compressor_running", "value": true},
+    {"device_id": "frozen-fridge-1", "metric": "temp_c", "value": -19.0},
+    {"device_id": "frozen-fridge-1", "metric": "door_open_secs", "value": 0},
+    {"device_id": "frozen-fridge-1", "metric": "compressor_running", "value": true}
+  ]
+}

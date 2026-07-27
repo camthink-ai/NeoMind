@@ -1,0 +1,29 @@
+{
+  "id": "haccp-compliance-deploy",
+  "lang": "zh",
+  "category": "scenario",
+  "workflow": "haccp-solution",
+  "scenario_type": "multi_turn",
+  "description": "深度方案级·HACCP 冷链合规(方案架构师测试)。从业务问题出发('刚开了超市需要食品安全监控')，3 轮对话：(1)agent 理解业务+设计方案 (2)按 HACCP 标准部署规则(冷藏≤5°C/冷冻≤-18°C/门开>30s) (3)建仪表盘+告警频道。测 agent 作为方案架构师：领域理解+方案设计+多特性部署+用户引导。参考 FDA HACCP Principles。",
+  "setup": { "fixture": "scenario-haccp-solution" },
+  "turns": [
+    { "user": "我刚开了个生鲜超市，有4台冷柜：2台乳制品柜、1台饮料柜、1台冷冻柜。食品安全要求冷链温度持续监控+告警+可追溯。你能帮我设计一套完整的冷链监控方案吗？" },
+    { "user": "方案听着不错。按 HACCP 标准：乳制品和饮料柜温度要 5°C 以下，冷冻柜要 -18°C 以下。每台冷柜都建温度告警规则，另外门开超过 30 秒也要告警。帮我建吧。" },
+    { "user": "规则都建好了？太好了。再帮我建个仪表盘，名字叫 HACCP Dashboard，能看到所有冷柜温度总览。另外所有告警统一发到 manager-alerts 的 webhook 频道，URL 是 https://example.com/mgr。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "T1: device list(发现冷柜)→ 理解 HACCP 要求 → 建议方案(温度规则+门开+仪表盘+通知)",
+      "T2: rule create ×N(乳制品/饮料<5°C, 冷冻<-18°C, 门开>30s, 可能含压缩机)",
+      "T3: dashboard create(HACCP Dashboard) + channel create(manager-alerts webhook)"
+    ],
+    "overall": "完整 HACCP 监控方案落地：至少 4 条规则 + 仪表盘 + 通知频道。dairy-fridge-2(6.2°C)应被识别为违规。"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device list", "neomind rule create", "neomind dashboard create", "neomind message channel-create"] },
+  "state_queries": [
+    { "type": "rule_count", "expected_min": 4 },
+    { "type": "dashboard_exists", "params": { "name": "HACCP Dashboard" }, "expected": true },
+    { "type": "channel_exists", "params": { "name": "manager-alerts" }, "expected": true }
+  ]
+}
