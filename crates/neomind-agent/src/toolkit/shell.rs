@@ -152,13 +152,25 @@ impl ShellTool {
     ) -> Option<CommandOutput> {
         let trimmed = command.trim();
 
-        // `&&` sequencing of multiple neomind commands (the agent naturally
-        // batches, e.g. `neomind device get a && neomind device get b`).
-        // Handle in-process when ALL parts are neomind commands; otherwise
-        // fall through to the subprocess path (which supports && via /bin/sh).
-        if trimmed.contains("&&") {
+        // Shell sequencing: `&&` (stop on failure) or `;` (always continue).
+        // The agent naturally batches, e.g. `neomind device get a; neomind
+        // device get b` or `neomind system info; echo "---"; neomind device list`.
+        // Handle in-process when ALL parts are neomind commands; mixed
+        // neomind/non-neomind (e.g. with echo) falls through to subprocess.
+        let has_sep = trimmed.contains("&&") || trimmed.contains(";");
+        if has_sep {
+            // Pick the separator that appears first to split on.
+            let sep = if let Some(amp) = trimmed.find("&&") {
+                if let Some(semi) = trimmed.find(';') {
+                    if semi < amp { ";" } else { "&&" }
+                } else {
+                    "&&"
+                }
+            } else {
+                ";"
+            };
             let parts: Vec<&str> = trimmed
-                .split("&&")
+                .split(sep)
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .collect();
@@ -170,13 +182,13 @@ impl ShellTool {
                 let mut outputs: Vec<String> = Vec::new();
                 for part in parts {
                     // Boxed: the recursive async call needs indirection (the
-                    // && chain length is runtime-variable → unbounded future).
+                    // chain length is runtime-variable → unbounded future).
                     match Box::pin(self.try_in_process_dispatch(part, timeout)).await {
                         Some(out) => {
                             let code = out.exit_code.unwrap_or(1);
                             outputs.push(out.stdout);
-                            if code != 0 {
-                                // `&&` semantics: stop at first failure.
+                            // `&&` stops on failure; `;` always continues.
+                            if sep == "&&" && code != 0 {
                                 return Some(CommandOutput {
                                     exit_code: Some(code),
                                     stdout: outputs.join("\n--- && ---\n"),
@@ -190,12 +202,12 @@ impl ShellTool {
                 }
                 return Some(CommandOutput {
                     exit_code: Some(0),
-                    stdout: outputs.join("\n--- && ---\n"),
+                    stdout: outputs.join(format!("\n--- {} ---\n", sep.trim()).as_str()),
                     stderr: String::new(),
                     timed_out: false,
                 });
             }
-            // Mixed neomind/non-neomind with && → let /bin/sh handle it.
+            // Mixed neomind/non-neomind with && or ; → let /bin/sh handle it.
             return None;
         }
 

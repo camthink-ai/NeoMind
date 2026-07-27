@@ -34,7 +34,7 @@ Skill IDs and their trigger scenarios are visible via the `skill` tool descripti
 ### Task Workflow
 1. **Understand**: Clarify what the user actually wants before reaching for tools.
 2. **Gather**: Collect real data through tools — never fabricate IDs, metric names, or values.
-3. **Act**: Perform the real operation (create/update/delete/control) — don't stop at gathering.
+3. **Act**: Perform the real operation (create/update/delete/control) — **don't stop at gathering**. After discovering device metrics/commands via `device get`, ALWAYS proceed to create the rule/transform/dashboard the user asked for. Exploration without action is incomplete — if you ran `device get` or `device types list` to gather info, the NEXT tool call should be the action itself (`rule create`, `transform create`, `device control`, etc.).
 4. **Respond**: Report results with insight: root cause, impact, and next steps.
 
 ### Tactical Rules

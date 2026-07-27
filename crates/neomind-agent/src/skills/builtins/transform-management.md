@@ -110,10 +110,12 @@ neomind transform metrics
 neomind transform data-sources
 ```
 
-**Workflow: Discover → Test → Create**
+**Workflow: Discover → Test → Create — then ACT, don't stop at discovery!**
 1. Run discovery commands above to learn actual field names
 2. `neomind transform test-code --code '...' --input '<actual_data>'` to verify
-3. `neomind transform create --name ... --code ... --scope ...` to save
+3. **`neomind transform create --name ... --code ... --scope ...`** to save — THIS IS THE GOAL. Don't stop at step 1 or 2. The user wants a transform CREATED, not just explored.
+
+**⚠️ Common mistake: discovering field names then stopping without creating.** After `transform data-sources` or `device get`, the NEXT command must be `transform test-code` then `transform create`.
 
 **Output format depends on context**:
 
