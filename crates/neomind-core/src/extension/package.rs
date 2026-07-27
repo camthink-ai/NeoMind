@@ -959,6 +959,17 @@ impl ExtensionPackage {
             .by_name(src_path)
             .map_err(|e| PackageError::MissingFile(format!("{}: {}", src_path, e)))?;
 
+        // Zip-bomb defense: reject oversized entries.
+        const MAX_FILE_SIZE: u64 = 200 * 1024 * 1024; // 200MB
+        if file.size() > MAX_FILE_SIZE {
+            return Err(PackageError::Zip(format!(
+                "File '{}' is {} bytes (exceeds {} byte limit)",
+                src_path,
+                file.size(),
+                MAX_FILE_SIZE
+            )));
+        }
+
         // Create parent directory
         if let Some(parent) = dst_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -1014,9 +1025,21 @@ impl ExtensionPackage {
         src_prefix: &str,
         dst_dir: &Path,
     ) -> Result<(), PackageError> {
+        // Zip-bomb defense caps.
+        const MAX_FILE_SIZE: u64 = 200 * 1024 * 1024; // 200MB per file
+        const MAX_TOTAL_SIZE: u64 = 500 * 1024 * 1024; // 500MB total
+        const MAX_FILE_COUNT: usize = 10_000;
+
         std::fs::create_dir_all(dst_dir)?;
+        let mut total_bytes: u64 = 0;
 
         for i in 0..archive.len() {
+            if i + 1 > MAX_FILE_COUNT {
+                return Err(PackageError::Zip(format!(
+                    "Archive contains more than {} files (zip-bomb suspected)",
+                    MAX_FILE_COUNT
+                )));
+            }
             let mut file = archive
                 .by_index(i)
                 .map_err(|e| PackageError::Zip(format!("Failed to access file {}: {}", i, e)))?;
@@ -1028,6 +1051,22 @@ impl ExtensionPackage {
                 // Remove prefix to get relative path
                 let rel_path = name[src_prefix.len()..].to_string();
                 let dst_path = Self::safe_join_within(dst_dir, &rel_path)?;
+
+                // Per-file + cumulative size caps.
+                let entry_size = file.size();
+                if entry_size > MAX_FILE_SIZE {
+                    return Err(PackageError::Zip(format!(
+                        "File '{}' is {} bytes (exceeds {} byte limit)",
+                        name, entry_size, MAX_FILE_SIZE
+                    )));
+                }
+                total_bytes += entry_size;
+                if total_bytes > MAX_TOTAL_SIZE {
+                    return Err(PackageError::Zip(format!(
+                        "Total extracted size exceeds {} bytes (zip-bomb suspected)",
+                        MAX_TOTAL_SIZE
+                    )));
+                }
 
                 // Create parent directory
                 if let Some(parent) = dst_path.parent() {
