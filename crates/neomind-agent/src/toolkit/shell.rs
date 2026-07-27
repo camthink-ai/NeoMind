@@ -162,7 +162,11 @@ impl ShellTool {
             // Pick the separator that appears first to split on.
             let sep = if let Some(amp) = trimmed.find("&&") {
                 if let Some(semi) = trimmed.find(';') {
-                    if semi < amp { ";" } else { "&&" }
+                    if semi < amp {
+                        ";"
+                    } else {
+                        "&&"
+                    }
                 } else {
                     "&&"
                 }
@@ -328,6 +332,28 @@ impl ShellTool {
             return Ok(output);
         }
 
+        // Detect when the agent wraps `neomind` inside a script (python/bash/etc).
+        // This breaks the $cached mechanism: the script captures neomind's output
+        // internally and only prints metadata, so the LargeDataCache never sees
+        // the full payload (images, large JSON). Inject a hint telling the agent
+        // to call `neomind` directly so $cached works.
+        let wrapped_neomind_hint = if !command.trim().starts_with("neomind ")
+            && command.contains("neomind ")
+            && (command.contains("python") || command.contains("bash") || command.contains("sh "))
+        {
+            Some(
+                "\n\n[Hint: You are calling `neomind` through a script wrapper. \
+                 When called directly (shell(command=\"neomind device get <id>\")), \
+                 large payloads like images are automatically cached as $cached references \
+                 that can be passed directly to vision(image=\"$cached:...\"). \
+                 Script wrappers break this — the image data is lost. \
+                 Try calling neomind directly next time.]"
+                    .to_string(),
+            )
+        } else {
+            None
+        };
+
         let mut cmd = Self::build_command(command);
 
         if let Some(dir) = working_dir {
@@ -418,6 +444,13 @@ impl ShellTool {
                 // bytes before slim could cache them.
                 let (stdout, stderr) =
                     truncate_output(&raw_stdout, &raw_stderr, self.config.max_output_chars);
+                // Append the wrapped-neomind hint (if any) so the agent sees
+                // it in the tool result and adjusts its next call.
+                let stdout = if let Some(hint) = &wrapped_neomind_hint {
+                    format!("{}{}", stdout, hint)
+                } else {
+                    stdout
+                };
                 Ok(CommandOutput {
                     exit_code: status.code(),
                     stdout,
