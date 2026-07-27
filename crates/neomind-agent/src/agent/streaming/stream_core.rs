@@ -26,9 +26,8 @@ use crate::agent::tool_parser::{
     is_degenerate_fence_only_output, parse_tool_calls, remove_tool_calls_from_response,
 };
 use crate::agent::types::{AgentEvent, AgentInternalState, AgentMessage, ToolCall};
-use crate::ai_agent::executor::stuck_detector::{
-    observation_fingerprint, StuckDetector, StuckEvent,
-};
+// StuckDetector is NOT used in the chat path — the user is watching and can
+// abort manually. It remains on the scheduled-agent path (tool_loop.rs).
 use crate::error::{NeoMindError, Result};
 use crate::llm::LlmInterface;
 use neomind_core::llm::compaction::CompactionConfig;
@@ -288,11 +287,6 @@ pub async fn process_stream_events_with_safeguards(
         // === SAFEGUARD: Track multi-round tool calling iterations ===
         let mut tool_iteration_count = 0usize;
         const MAX_TOOL_ITERATIONS: usize = 30;
-        // Rolling stuck-pattern detector (OpenHands-style, 5 patterns). Fed each
-        // chat round's (action, outcome) events and checked at the top of every
-        // iteration so a pathological loop breaks to the summary path instead of
-        // burning the iteration budget.
-        let mut stuck_detector = StuckDetector::new(StuckDetector::DEFAULT_WINDOW);
         // Accumulate ALL tool results across rounds for final summary
         let mut all_round_tool_results: Vec<(String, String)> = Vec::new();
         // Track per-round thinking and content for persistence (round number → text)
@@ -315,54 +309,11 @@ pub async fn process_stream_events_with_safeguards(
         }
 
         // === MULTI-ROUND TOOL CALLING LOOP ===
-        // For complex intents, we may need multiple rounds of tool calling
-        let mut stuck_nudge_given = false;
+        // Chat path: no StuckDetector — the user is watching and can abort.
+        // Safety nets: MAX_TOOL_ITERATIONS (30) + stream timeout (max_stream_duration).
+        // StuckDetector remains on the scheduled-agent path (tool_loop.rs) where
+        // no human is watching.
         'multi_round_loop: loop {
-            // Non-destructive stuck detection at the top of each chat round.
-            if let Some(pattern) = stuck_detector.check() {
-                if !stuck_nudge_given {
-                    // First stuck detection: inject a recovery nudge into the
-                    // conversation history and give the agent one more chance
-                    // to try a different approach.
-                    tracing::warn!(
-                        "Chat agent stuck loop detected ({}), injecting recovery nudge",
-                        pattern.label()
-                    );
-                    stuck_nudge_given = true;
-                    // Clear the detector window for a fresh start
-                    stuck_detector.push(StuckEvent::UserMessage);
-                    // Push nudge into conversation history so the next LLM
-                    // call sees it.
-                    {
-                        let mut state = internal_state.write().await;
-                        state.push_message(AgentMessage::user(
-                            "[System] You appear to be stuck repeating the same tool calls \
-                             that keep failing. Try a completely different approach. \
-                             If you're trying to pass large data (like images) between tools, \
-                             use the $cached reference from the original tool result instead \
-                             of re-extracting or re-processing the data with python."
-                        ));
-                    }
-                    yield AgentEvent::progress(
-                        "Detected a stuck pattern — trying a different approach..."
-                            .to_string(),
-                        "recovering",
-                        0,
-                    );
-                    tool_iteration_count += 1;
-                    if tool_iteration_count > MAX_TOOL_ITERATIONS {
-                        break 'multi_round_loop;
-                    }
-                    continue 'multi_round_loop;
-                } else {
-                    // Second stuck detection after nudge — give up gracefully.
-                    tracing::warn!(
-                        "Chat agent still stuck after nudge ({}), forcing summary",
-                        pattern.label()
-                    );
-                    break 'multi_round_loop;
-                }
-            }
             if tool_iteration_count > 0 {
                 tracing::debug!("Starting tool iteration round {}", tool_iteration_count + 1);
 
@@ -954,21 +905,6 @@ pub async fn process_stream_events_with_safeguards(
                 let mut tool_results_executed: Vec<_> = tool_futures.collect().await;
                 // Restore LLM-emission order (buffer_unordered completes in arbitrary order).
                 tool_results_executed.sort_by_key(|(i, _, _)| *i);
-
-                // Feed this round's (action, outcome) pairs into the stuck detector.
-                for (_, name, execution) in &tool_results_executed {
-                    let args_preview = serde_json::to_string(&execution.arguments).unwrap_or_default();
-                    let bound = args_preview.len().min(100);
-                    let args_short = &args_preview[..args_preview.floor_char_boundary(bound)];
-                    let sig = format!("{}:{}", name, args_short);
-                    match &execution.result {
-                        Ok(output) if output.success => stuck_detector.push(StuckEvent::ActionObs {
-                            sig,
-                            content_key: observation_fingerprint(&output.data),
-                        }),
-                        _ => stuck_detector.push(StuckEvent::ActionError { sig }),
-                    }
-                }
 
                 // Process results
                 let mut tool_calls_with_results: Vec<ToolCall> = Vec::new();
