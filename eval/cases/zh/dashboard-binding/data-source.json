@@ -1,0 +1,22 @@
+{
+  "id": "dashboard-data-binding",
+  "lang": "zh",
+  "category": "dashboard",
+  "workflow": "dashboard-binding",
+  "scenario_type": "single_turn",
+  "description": "仪表盘组件数据绑定 + 指标发现:agent 建仪表盘 + 组件 + 绑定数据源到设备电量指标。不给指标精确名(agent 要自己 device get 发现 values.battery)。新维度:dashboard data_source binding correctness(不只查建了,查绑对了)+ 发现意识。",
+  "setup": { "fixture": "seed-default" },
+  "turns": [
+    { "user": "给 sensor-001 建一个仪表盘,名字叫 Sensor Board。放一个显示当前电量值的组件,数据源绑到 sensor-001 的电量指标。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "expectations": {
+    "per_turn": ["Turn 1: `neomind device get sensor-001`(发现电量指标)→ `neomind dashboard create`(含组件,data_source 绑到 sensor-001 的电量指标)"],
+    "overall": "仪表盘建成 + 组件 data_source 正确引用 sensor-001 的电量指标(battery)"
+  },
+  "expect": { "tools": ["shell"], "commands": ["neomind device get", "neomind dashboard create"] },
+  "state_queries": [
+    { "type": "dashboard_exists", "params": { "name": "Sensor Board" }, "expected": true },
+    { "type": "dashboard_component_bound", "params": { "name": "Sensor Board", "device_id": "sensor-001", "metric": "battery" }, "expected": true }
+  ]
+}

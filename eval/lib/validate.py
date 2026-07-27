@@ -27,6 +27,7 @@ KNOWN_QUERY_TYPES = {
     "transform_count",
     "dashboard_exists",
     "dashboard_component_count",
+    "dashboard_component_bound",
     "channel_exists",
     "message_count",
     "push_enabled",

@@ -240,6 +240,34 @@ def run_query(q: dict, base: str, key: str) -> dict:
         v = _get_with_name_fallback(base, key, "/dashboards", "/dashboards/{id}", "dashboards", params)
         comps = v.get("components") if isinstance(v, dict) else None
         actual = len(comps) if isinstance(comps, list) else 0
+    elif t == "dashboard_component_bound":
+        # Verify a dashboard component's data_source references the expected
+        # device + metric (tests correct data binding, not just existence).
+        # data_source format: {type:"telemetry", source:"device", id:"<dev>",
+        # field:"<metric>", sourceId, metricId, ...} or array for multi-series.
+        v = _get_with_name_fallback(base, key, "/dashboards", "/dashboards/{id}", "dashboards", params)
+        comps = v.get("components") if isinstance(v, dict) else None
+        want_dev = str(params.get("device_id", "")).lower()
+        want_metric = str(params.get("metric", "")).lower()
+        actual = False
+        if isinstance(comps, list):
+            for comp in comps:
+                if not isinstance(comp, dict):
+                    continue
+                ds = comp.get("data_source")
+                sources = ds if isinstance(ds, list) else ([ds] if isinstance(ds, dict) else [])
+                for src in sources:
+                    if not isinstance(src, dict):
+                        continue
+                    src_dev = str(src.get("id") or src.get("sourceId") or "").lower()
+                    src_metric = str(src.get("field") or src.get("metricId") or "").lower()
+                    dev_ok = (not want_dev) or (want_dev in src_dev)
+                    metric_ok = (not want_metric) or (want_metric in src_metric)
+                    if dev_ok and metric_ok:
+                        actual = True
+                        break
+                if actual:
+                    break
     elif t == "extension_installed":
         actual = _id_or_name_exists(base, key, "/extensions", "/extensions/{id}", params)
     elif t == "widget_exists":
