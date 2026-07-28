@@ -1144,7 +1144,14 @@ impl DeviceService {
                     );
                     // No `break`: notify ALL matching adapters so a device with a
                     // custom telemetry_topic is subscribed on every connected broker.
-                    let _ = adapter.subscribe_device(&device_id).await;
+                    if let Err(e) = adapter.subscribe_device(&device_id).await {
+                        tracing::warn!(
+                            device_id = %device_id,
+                            adapter = %adapter_id,
+                            error = %e,
+                            "Adapter failed to subscribe to device during register (continuing)"
+                        );
+                    }
                 }
             }
         } else {

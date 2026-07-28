@@ -38,7 +38,9 @@ If old_string appears multiple times, use replace_all=true or make old_string mo
 If old_string is not found, the tool returns an error with context to help you locate the right text.
 
 Only files within allowed directories are editable (data dir + NEOMIND_ALLOWED_WRITE_DIRS).
-Maximum file size: 10 MB. Use relative paths (e.g., 'skills/my-skill.md') or absolute paths."#
+Maximum file size: 10 MB. Use relative paths (e.g., 'skills/my-skill.md') or absolute paths.
+
+Use `file_write` to create or overwrite a whole file. For the agent's persistent cross-run memory (facts, SOPs), use the `memory` tool."#
     }
 
     fn parameters(&self) -> Value {

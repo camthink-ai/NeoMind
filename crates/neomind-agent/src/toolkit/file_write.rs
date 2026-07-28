@@ -38,7 +38,9 @@ Use relative paths (e.g., 'skills/my-skill.md') or absolute paths within allowed
 Cannot write binary files (.so, .dll, .exe) or security files (.env, .env.*).
 Maximum content size: 1 MB. Parent directories are created automatically by default.
 
-Use this for creating skill files, widget bundles, extension source code, config files, or any data files."#
+Use this for creating skill files, widget bundles, extension source code, config files, or any data files.
+
+For the agent's own cross-run memory (facts, SOPs, preferences), use the `memory` tool instead of writing files. To modify part of an existing file in place, use `file_edit`."#
     }
 
     fn parameters(&self) -> Value {

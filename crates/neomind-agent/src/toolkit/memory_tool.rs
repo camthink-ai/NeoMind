@@ -397,7 +397,7 @@ impl Tool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        r##"Manage persistent memory across sessions. Use this to store and retrieve information that should persist between conversations.
+        r##"Manage persistent memory across sessions. Use this to store and retrieve information that should persist between conversations. This is the agent's own cross-run memory (the targets below); to create or edit arbitrary files (skill files, configs, bundles) use `file_write` or `file_edit` instead.
 
 Actions:
 - add: Append content to a memory target (requires content)

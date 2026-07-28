@@ -410,18 +410,16 @@ impl Tool for VisionTool {
     }
 
     fn description(&self) -> &str {
-        r#"Analyze images from URLs, files, or extension outputs using a vision-language model.
+        r#"Analyze images you CANNOT already see, using a vision-language model. Pass an image source and get back a description/analysis.
 
-DO NOT use this tool for images you can already see — analyze those yourself directly. This includes:
-- Images uploaded by the user in chat
-- Images embedded in the current message (e.g., from bound data sources) — these are already visible to you
-
-Only use this tool when you need to analyze images from OTHER sources:
+Use this tool when you need to analyze images from sources other than the current message:
 - `$cached:xxx` — a cache ref returned by other tools (e.g. `device get --metric <image_field>` output, or extension image outputs). Pass it directly as `image`; it resolves to the full image bytes. Prefer this over base64-decoding/saving files yourself.
 - HTTP/HTTPS image URLs (e.g., camera snapshots, web images) — fetches automatically, private/local URLs blocked
 - /path/to/file.jpg — local image file on disk (must have an image extension)
 - data:image/...;base64,... — base64 data URL from extension outputs
 - raw base64 string — decoded as JPEG by default
+
+Do NOT call this for images you can already see — analyze those yourself directly (e.g. images uploaded by the user in chat, or embedded in the current message from bound data sources — those are already visible to you).
 
 Optional `model` param (e.g. "minicpm-v4.6") forces a specific VLM backend. Use it when the auto-picked model replies it can't see the image (a text-only model wrongly selected). Find available model names via `neomind llm list`."#
     }
