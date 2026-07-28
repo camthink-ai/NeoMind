@@ -55,7 +55,11 @@ cron = "0.12"
 image = { workspace = true }
 # Image drawing/editing operations for the `image_edit` tool.
 # imageproc 0.27 depends on image 0.25 + ab_glyph (verified P1).
-imageproc = "0.27"
+# default-features=false drops imageproc's `image/default` (its default enables
+# image/default-formats, which unifies-on image's avif → rav1e/ravif, a huge AV1
+# encoder we never use). Keep `rayon` (parallel) + `text` (ab_glyph, required by
+# draw_text_mut). image's actual decoders stay governed by the workspace image decl.
+imageproc = { version = "0.27", default-features = false, features = ["rayon", "text"] }
 ab_glyph = "0.2"
 
 # Memory system dependencies (merged from neomind-memory)
