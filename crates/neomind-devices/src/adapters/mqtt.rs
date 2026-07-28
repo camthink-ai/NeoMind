@@ -1090,16 +1090,27 @@ impl MqttAdapter {
             }
             info!("Loaded {} CA certificates", ca_cert_count);
         } else {
-            // Use system's native certificate store
-            let certs = rustls_native_certs::load_native_certs().map_err(|e| {
-                AdapterError::Configuration(format!("Failed to load native certs: {}", e))
-            })?;
-            for cert in certs {
+            // Use system's native certificate store.
+            // rustls-native-certs 0.8: load_native_certs() returns CertificateResult
+            // (not Result); partial failures are collected in `.errors` and don't abort,
+            // so we log them as a warning rather than erroring out.
+            let native = rustls_native_certs::load_native_certs();
+            let cert_count = native.certs.len();
+            for cert in native.certs {
                 root_cert_store.add(cert).map_err(|e| {
                     AdapterError::Configuration(format!("Failed to add native cert: {}", e))
                 })?;
             }
-            info!("Loaded system CA certificates");
+            if native.errors.is_empty() {
+                info!("Loaded {} system CA certificates", cert_count);
+            } else {
+                warn!(
+                    "Loaded {} system CA certs; {} source(s) had errors: {:?}",
+                    cert_count,
+                    native.errors.len(),
+                    native.errors
+                );
+            }
         }
 
         // Build client config
