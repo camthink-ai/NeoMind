@@ -679,15 +679,15 @@ pub async fn event_websocket_handler(
                 recv_result = rx.recv() => {
                     match recv_result {
                         Some((event, metadata)) => {
-                            // Apply event type filter
-                            if !params.event_type.is_empty() {
-                                let event_type = event.type_name().to_string();
-                                if !params.event_type.contains(&event_type) {
-                                    continue;
-                                }
-                            }
-
+                            // Apply event type filter. type_name() returns &'static
+                            // str, so compare directly without allocating a String
+                            // and without calling type_name() twice per event.
                             let event_type = event.type_name();
+                            if !params.event_type.is_empty()
+                                && !params.event_type.iter().any(|t| t.as_str() == event_type)
+                            {
+                                continue;
+                            }
                             let payload = serde_json::json!({
                                 "id": metadata.event_id,
                                 "type": event_type,
