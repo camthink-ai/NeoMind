@@ -861,6 +861,21 @@ impl TimeSeriesStore {
 
         let total_count: usize = groups.values().map(|v| v.len()).sum();
 
+        // Fast path: write ALL groups in a single redb transaction (one fsync)
+        // on the common no-poison path. If it fails for any reason — e.g. a
+        // poison payload (value exceeding redb's max_value_size) in any group —
+        // the whole transaction rolls back and we fall through to the per-group
+        // isolation loop below, so a single bad point still only affects its
+        // own group. Worst case (fast path always fails) behaves exactly like
+        // the previous per-group-only implementation.
+        if self.write_all_groups_sync(&groups).is_ok() {
+            if let Ok(mut stats) = self.stats.try_write() {
+                stats.write_count += total_count as u64;
+                stats.total_write_ns += start.elapsed().as_nanos() as u64;
+            }
+            return;
+        }
+
         // Write each group in a single transaction. On failure, isolate the
         // offending point by retrying per-point in its own transaction —
         // otherwise a single poison payload (e.g. a value exceeding redb's
@@ -941,6 +956,49 @@ impl TimeSeriesStore {
             }
         }
         failed
+    }
+
+    /// Write ALL buffered groups in a single redb transaction — the fast path
+    /// used by `flush_buffer` to turn N per-group fsyncs into one. Updates
+    /// `metrics_info` for every group exactly like `write_batch_sync` would.
+    /// On any error the caller falls back to per-group (then per-point)
+    /// isolation, so poison payloads are still contained to their own group.
+    fn write_all_groups_sync(
+        &self,
+        groups: &std::collections::HashMap<(String, String), Vec<DataPoint>>,
+    ) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
+            for ((source_id, metric), points) in groups.iter() {
+                for point in points.iter() {
+                    let key = (source_id.as_str(), metric.as_str(), point.timestamp);
+                    let value = serde_json::to_vec(point)?;
+                    table.insert(key, value.as_slice())?;
+                }
+            }
+        }
+        write_txn.commit()?;
+
+        // Update metrics info for every group (mirrors write_batch_sync).
+        for ((source_id, metric), points) in groups.iter() {
+            let metric_key = format!("{}:{}", source_id, metric);
+            let last_ts = points.last().map(|p| p.timestamp).unwrap_or(0);
+            let n = points.len() as u64;
+            self.metrics_info
+                .entry(metric_key)
+                .and_modify(|entry| {
+                    entry.last_update = last_ts;
+                    entry.point_count += n;
+                })
+                .or_insert_with(|| MetricInfo {
+                    last_update: last_ts,
+                    point_count: n,
+                });
+        }
+        self.metrics_initialized.store(true, Ordering::Release);
+
+        Ok(())
     }
 
     /// Synchronous batch write (used by flush_buffer).
