@@ -104,7 +104,7 @@ pub struct RuleEngine {
     /// All registered rules.
     rules: Arc<RwLock<HashMap<RuleId, CompiledRule>>>,
     /// Subscription index: DataSourceId → Vec<RuleId>
-    subscription_index: Arc<StdRwLock<HashMap<String, Vec<RuleId>>>>,
+    subscription_index: Arc<StdRwLock<HashMap<String, Arc<Vec<RuleId>>>>>,
     /// Cooldown tracking: RuleId → last trigger Instant
     cooldowns: Arc<StdRwLock<HashMap<RuleId, Instant>>>,
     /// Consecutive all-actions-failed count per rule. Gates the cooldown
@@ -244,6 +244,8 @@ impl RuleEngine {
                         }
                     }
                 }
+                let idx: HashMap<String, Arc<Vec<RuleId>>> =
+                    idx.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
                 *self.subscription_index.write() = idx;
             }
             Err(_) => {
@@ -291,7 +293,7 @@ impl RuleEngine {
         let source_key = source.storage_key();
 
         // 1. Find affected rules
-        let affected: Vec<RuleId> = {
+        let affected: Arc<Vec<RuleId>> = {
             let idx = self.subscription_index.read();
             idx.get(&source_key).cloned().unwrap_or_default()
         };
@@ -300,7 +302,7 @@ impl RuleEngine {
             return;
         }
 
-        for rule_id in &affected {
+        for rule_id in &*affected {
             if let Err(e) = self.evaluate_and_fire(rule_id).await {
                 tracing::warn!(rule_id = %rule_id, error = %e, "Rule evaluation failed");
             }
