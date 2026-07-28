@@ -93,7 +93,7 @@ impl AgentExecutor {
             all_tool_results.push(result.clone());
             let result_text = match &result.result {
                 Ok(output) => {
-                    let raw = serde_json::to_string_pretty(&output.data)
+                    let raw = serde_json::to_string(&output.data)
                         .unwrap_or_else(|_| "Success".to_string());
                     // Slim large/base64 strings into the cache BEFORE sanitize.
                     // Sanitize alone strips `data:image/` to a useless `[image data, N B]`
@@ -111,7 +111,7 @@ impl AgentExecutor {
                                         slimmed_values = n,
                                         "Slimmed large strings from scheduled-agent tool result"
                                     );
-                                    serde_json::to_string_pretty(&v).unwrap_or_else(|_| raw.clone())
+                                    serde_json::to_string(&v).unwrap_or_else(|_| raw.clone())
                                 } else {
                                     raw
                                 }
@@ -226,7 +226,7 @@ impl AgentExecutor {
         for r in all_tool_results {
             let result_text = match &r.result {
                 Ok(output) => {
-                    let raw = serde_json::to_string_pretty(&output.data)
+                    let raw = serde_json::to_string(&output.data)
                         .unwrap_or_else(|_| "Success".to_string());
                     // Sanitize base64/image data to prevent context bloat
                     let sanitized = crate::agent::streaming::sanitize_tool_result_for_prompt(&raw);

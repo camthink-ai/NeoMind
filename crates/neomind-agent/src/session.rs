@@ -1239,11 +1239,21 @@ impl SessionManager {
         message: &str,
         backend_id: Option<&str>,
     ) -> Result<super::agent::AgentResponse> {
-        // If a specific backend is requested, configure the agent with it
+        // If a specific backend is requested, configure the agent with it.
+        // Propagate the error (mirrors process_message_multimodal_with_backend):
+        // if the user explicitly chose a backend and it can't be applied, fail
+        // loud rather than silently running on the previously-configured one.
         if let Some(backend) = backend_id {
-            let _ = self
-                .configure_agent_by_backend_id(session_id, backend)
-                .await;
+            self.configure_agent_by_backend_id(session_id, backend)
+                .await
+                .map_err(|e| {
+                    tracing::error!(
+                        backend_id = %backend,
+                        error = ?e,
+                        "Failed to configure agent with backend"
+                    );
+                    e
+                })?;
         }
         self.process_message(session_id, message).await
     }

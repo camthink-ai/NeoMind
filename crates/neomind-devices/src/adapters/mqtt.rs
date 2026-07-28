@@ -1974,13 +1974,20 @@ impl MqttAdapter {
                                     value: value.clone(),
                                     quality: None,
                                 };
-                                let _ = storage
+                                if let Err(e) = storage
                                     .write(
                                         &format!("device:{}", device_id),
                                         &metric_name,
                                         data_point,
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        device_id = %device_id,
+                                        error = %e,
+                                        "Failed to write telemetry to time-series storage"
+                                    );
+                                }
                             }
 
                             // Emit event to device event channel - event forwarding task will publish to EventBus
@@ -2186,13 +2193,20 @@ impl MqttAdapter {
                                             value: value.clone(),
                                             quality: None,
                                         };
-                                        let _ = storage
+                                        if let Err(e) = storage
                                             .write(
                                                 &format!("device:{}", device_id),
                                                 metric_name,
                                                 data_point,
                                             )
-                                            .await;
+                                            .await
+                                        {
+                                            tracing::warn!(
+                                                device_id = %device_id,
+                                                error = %e,
+                                                "Failed to write telemetry to time-series storage"
+                                            );
+                                        }
                                     }
 
                                     // Emit to device event channel - event forwarding task will publish to EventBus

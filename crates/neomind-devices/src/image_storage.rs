@@ -204,6 +204,17 @@ pub fn try_decode_base64_image(s: &str) -> Option<Vec<u8>> {
     let raw_b64 = if s.starts_with("data:image/") {
         s.split(";base64,").nth(1)?
     } else if s.len() > 100 {
+        // Cheap reject before allocating/decoding: real image base64 begins
+        // with a format magic prefix (/9j/ JPEG, iVBORw0KGgo PNG, R0lGOD GIF,
+        // UklGR WebP). Long non-image strings — JSON telemetry, error text —
+        // hit this path on every ingest and would otherwise pay a Vec alloc
+        // plus up to two full decode passes before detect_extension rejects
+        // them. Prefixes live at the base64 start, so this also matches the
+        // unpadded / whitespace-folded variants real cameras emit (NE301).
+        const IMG_B64_PREFIXES: &[&str] = &["/9j/", "iVBORw0KGgo", "R0lGOD", "UklGR"];
+        if !IMG_B64_PREFIXES.iter().any(|p| s.starts_with(p)) {
+            return None;
+        }
         s
     } else {
         return None;

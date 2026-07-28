@@ -138,11 +138,11 @@ impl ToolLoopConfig {
     }
 
     fn build_focused_recommended_tools(agent: &AiAgent) -> Vec<String> {
-        let mut tools = vec![
-            "device".to_string(),
-            "skill".to_string(),
-            "message".to_string(),
-        ];
+        // Only list REAL tools here. `device` and `message` are not tools —
+        // they are neomind CLI subcommands reached via `shell`. Naming them
+        // made weak models call a non-existent `device(...)` on round 1 and
+        // eat a NotFound + recovery round before the real work starts.
+        let mut tools = vec!["shell".to_string(), "skill".to_string()];
         for r in &agent.resources {
             if matches!(r.resource_type, ResourceType::Command) {
                 tools.push(format!("device:{}", r.resource_id));

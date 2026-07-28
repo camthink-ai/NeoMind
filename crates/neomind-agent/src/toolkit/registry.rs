@@ -117,13 +117,28 @@ impl ToolRegistry {
     /// to show all tools (greyed-out when disabled).
     pub fn definitions_for_llm(&self) -> Vec<ToolDefinition> {
         let disabled = self.disabled.read();
-        if disabled.is_empty() {
-            return self.definitions();
-        }
-        self.definitions()
-            .into_iter()
-            .filter(|d| !disabled.contains(&d.name))
-            .collect()
+        let mut defs: Vec<ToolDefinition> = if disabled.is_empty() {
+            self.definitions()
+        } else {
+            self.definitions()
+                .into_iter()
+                .filter(|d| !disabled.contains(&d.name))
+                .collect()
+        };
+        drop(disabled);
+        // Deterministic order matching the system-prompt tool hierarchy.
+        // self.tools is a HashMap (random iteration order per process start),
+        // so without this the tools:[...] array the LLM sees reshuffles on
+        // every server restart. Small models have strong positional bias
+        // (they favor the first tool they see), so keep `shell` first.
+        // Tools not listed here (e.g. extension tools) sort to the end,
+        // retaining their relative order via stable sort.
+        let order = [
+            "shell", "skill", "memory", "vision", "image_edit", "web_fetch", "file_write",
+            "file_edit",
+        ];
+        defs.sort_by_key(|d| order.iter().position(|n| *n == d.name).unwrap_or(usize::MAX));
+        defs
     }
 
     /// Replace the disabled tool-name set. Called on startup (after extensions
