@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { api } from '@/lib/api'
+import { resolveImageSrc } from '@/lib/imageUtils'
 import { useEvents } from '@/hooks/useEvents'
 import { useVisiblePolling } from '@/hooks/useVisiblePolling'
 import type { ResourceRequest } from '@/types'
@@ -309,11 +310,9 @@ async function loadHistoryMessages(
               || ('value' in record && '_is_event_data' in record)
             if (isStructuredData) {
               const val = record.value
-              if (typeof val === 'string' && val.length > 100 && (
-                val.startsWith('data:image/') || val.startsWith('/9j/') || val.startsWith('iVBOR')
-              )) {
-                const clean = val.replace(/[\s\r\n]+/g, '')
-                allImages.push(clean.startsWith('data:') ? clean : `data:image/png;base64,${clean}`)
+              const imgSrc = typeof val === 'string' ? resolveImageSrc(val) : null
+              if (imgSrc) {
+                allImages.push(imgSrc)
               } else {
                 const s = summarizeData(val)
                 if (s) allLines.push(dataType ? `${dataType}: ${s}` : s)
@@ -333,11 +332,9 @@ async function loadHistoryMessages(
             } else {
               // Generic object: iterate entries, filter metadata
               for (const [key, val] of Object.entries(record)) {
-                if (typeof val === 'string' && val.length > 100 && (
-                  val.startsWith('data:image/') || val.startsWith('/9j/') || val.startsWith('iVBOR')
-                )) {
-                  const clean = val.replace(/[\s\r\n]+/g, '')
-                  allImages.push(clean.startsWith('data:') ? clean : `data:image/png;base64,${clean}`)
+                const imgSrc = typeof val === 'string' ? resolveImageSrc(val) : null
+                if (imgSrc) {
+                  allImages.push(imgSrc)
                 } else if (!isMetaField(key)) {
                   const s = summarizeData(val)
                   if (s) allLines.push(`${key}: ${s}`)

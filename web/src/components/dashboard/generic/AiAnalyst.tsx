@@ -21,6 +21,7 @@ import {
   MessageSquare,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { resolveImageSrc } from '@/lib/imageUtils'
 import { useDataSource } from '@/hooks/useDataSource'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -53,54 +54,6 @@ interface AiAnalystProps {
   contextWindowSize?: number
   /** Persist config changes back to dashboard component (survives refresh) */
   onConfigChange?: (config: Record<string, any>) => void
-}
-
-// ---------------------------------------------------------------------------
-// Image detection utilities
-// ---------------------------------------------------------------------------
-
-const IMAGE_MAGIC_BYTES: Record<string, number[]> = {
-  png: [0x89, 0x50, 0x4e, 0x47],
-  jpeg: [0xff, 0xd8, 0xff],
-  gif: [0x47, 0x49, 0x46],
-  webp: [0x52, 0x49, 0x46, 0x46],
-}
-
-function isBase64Image(str: string): boolean {
-  if (!str || str.length < 100) return false
-  if (str.startsWith('data:image/')) return true
-  if (str.startsWith('http://') || str.startsWith('https://')) return false
-  try {
-    const binary = atob(str.slice(0, 32))
-    return Object.values(IMAGE_MAGIC_BYTES).some((magic) =>
-      magic.every((b, i) => binary.charCodeAt(i) === b),
-    )
-  } catch {
-    return false
-  }
-}
-
-function normalizeToDataUrl(str: string, depth = 0): string {
-  if (depth > 5) return str // guard against infinite recursion
-  if (str.startsWith('data:image/')) {
-    const commaIdx = str.indexOf(',')
-    if (commaIdx === -1) return str
-    let b64 = str.slice(commaIdx + 1).replace(/[\s\r\n]+/g, '')
-    // Unwrap double-prefixed data URLs
-    if (b64.startsWith('data:image/') || b64.startsWith('data:')) return normalizeToDataUrl(b64, depth + 1)
-    return str.slice(0, commaIdx + 1) + b64
-  }
-  const clean = str.replace(/[\s\r\n]+/g, '')
-  try {
-    const binary = atob(clean.slice(0, 32))
-    for (const [format, magic] of Object.entries(IMAGE_MAGIC_BYTES)) {
-      if (magic.every((b, i) => binary.charCodeAt(i) === b)) {
-        return `data:image/${format};base64,${clean}`
-      }
-    }
-  } catch {}
-  // Default to JPEG (camera/vision frames are overwhelmingly JPEG)
-  return `data:image/jpeg;base64,${clean}`
 }
 
 // ---------------------------------------------------------------------------
@@ -282,8 +235,9 @@ export function AiAnalyst({
     if (strVal === lastEnqueuedRef.current || strVal.length < 1) return
     lastEnqueuedRef.current = strVal
 
-    if (typeof latestValue === 'string' && isBase64Image(latestValue)) {
-      sendImage(normalizeToDataUrl(latestValue), dataSourceLabel)
+    const imgSrc = typeof latestValue === 'string' ? resolveImageSrc(latestValue) : null
+    if (imgSrc) {
+      sendImage(imgSrc, dataSourceLabel)
     } else {
       sendData(latestValue, dataSourceLabel)
     }

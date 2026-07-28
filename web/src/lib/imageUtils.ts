@@ -147,7 +147,7 @@ function computeNormalizedImage(trimmed: string, valueStr: string): NormalizedIm
       }
     }
     const commaIdx = trimmed.indexOf(',')
-    let b64 = commaIdx !== -1 ? trimmed.slice(commaIdx + 1).replace(/[\s\r\n]+/g, '') : ''
+    const b64 = commaIdx !== -1 ? trimmed.slice(commaIdx + 1).replace(/[\s\r\n]+/g, '') : ''
     if (b64.startsWith('data:image/') || b64.startsWith('data:')) {
       const unwrapped = normalizeImageUrl(b64)
       return unwrapped
@@ -209,6 +209,36 @@ function computeNormalizedImage(trimmed: string, valueStr: string): NormalizedIm
 /** Extract the src string from a normalized image result (null-safe). */
 export function toNormalizedSrc(value: string | number | undefined | null): string | null {
   return normalizeImageUrl(value)?.src ?? null
+}
+
+/**
+ * Resolve a value to a previewable `<img src>`, or `null` if it isn't an image.
+ *
+ * Unlike `normalizeImageUrl` (which normalizes ANY url-like string and returns
+ * non-null for arbitrary URLs), this is a strict image check used to decide
+ * whether to render an image preview vs. treat the value as text. Only these
+ * qualify:
+ *   - base64 / `data:` URLs
+ *   - backend image-store URLs (`/api/images/...`, relative or absolute)
+ *   - HTTP(S) URLs ending in a common image extension
+ *
+ * Post image-url-migration, device image metrics arrive as `/api/images/` URLs
+ * instead of inline base64, so preview paths must recognise them.
+ */
+export function resolveImageSrc(value: string | number | undefined | null): string | null {
+  if (value === null || value === undefined) return null
+  const v = String(value).trim()
+  if (!v) return null
+  const n = normalizeImageUrl(v)
+  if (!n) return null
+  // base64 / data URL — always an image
+  if (n.isBase64 || n.isDataUrl) return n.src
+  // backend image store (normalizeImageUrl already prepended the server origin
+  // for relative /api/images/ paths; absolute http://host/api/images/ passes through)
+  if (v.includes('/api/images/')) return n.src
+  // HTTP(S) image URL by extension
+  if (/^https?:\/\/[^\s]+\.(png|jpe?g|gif|webp|bmp|svg)([?#]|$)/i.test(v)) return n.src
+  return null
 }
 
 // ============================================================================
