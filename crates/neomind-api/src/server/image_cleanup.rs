@@ -150,9 +150,22 @@ fn collect_expired_files(
                         expired_files.push((path, mtime_secs));
                     }
                 }
-            } else if let Some(timestamp_secs) = extract_timestamp_from_filename(&path) {
-                if timestamp_secs < cutoff_timestamp_secs {
-                    expired_files.push((path, timestamp_secs));
+            } else {
+                // Timestamp-named files (save_image_binary: `<ts>[_<n>].<ext>`)
+                // expire by their filename timestamp. Files whose name carries
+                // no parseable timestamp — e.g. CLI-materialized images named by
+                // content hash (`<hash>.<ext>`, from `device get` on a base64
+                // image metric) — fall back to mtime so they don't leak on disk
+                // forever. Without this, every agent `device get` of a changing
+                // camera image would leak one never-cleaned file (edge boxes
+                // fill over days/weeks). Same cutoff; a dedup-skip leaves mtime
+                // at first materialization, which is the correct expiry point.
+                let file_ts =
+                    extract_timestamp_from_filename(&path).or_else(|| file_mtime_secs(&path));
+                if let Some(timestamp_secs) = file_ts {
+                    if timestamp_secs < cutoff_timestamp_secs {
+                        expired_files.push((path, timestamp_secs));
+                    }
                 }
             }
         }
@@ -478,6 +491,36 @@ mod tests {
         assert!(!expired.exists(), "expired image should be deleted");
         assert!(fresh_tmp.exists(), "fresh .tmp (in-flight) must be kept");
         assert_eq!(result.0, 2);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_removes_hash_named_files_by_mtime() {
+        // Regression: the CLI's materialize_data_url (agent `device get` on a
+        // base64 image metric) writes files named by content hash
+        // (`<hex>.<ext>`) — no parseable timestamp. extract_timestamp_from_filename
+        // returns None for them, so pre-fix they were skipped forever (disk leak
+        // on edge boxes that query changing camera images). collect_expired_files
+        // must fall back to mtime for such files. A fresh one must be kept.
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let images_dir = temp_dir.path().join("images");
+        let metric_dir = images_dir.join("cam").join("image");
+        std::fs::create_dir_all(&metric_dir).unwrap();
+
+        // Old hash-named file — must be deleted via mtime fallback.
+        let stale_hash = create_test_image_file(&metric_dir, "a1b2c3d4e5f6a7b8.jpg");
+        let old = SystemTime::now() - Duration::from_secs(100_000); // ~28h ago
+        let f = std::fs::File::open(&stale_hash).unwrap();
+        f.set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+        drop(f);
+
+        // Fresh hash-named file — must be kept (within retention).
+        let fresh_hash = create_test_image_file(&metric_dir, "0fedcba987654321.jpg");
+
+        let result = cleanup_expired_images(&images_dir, 2).await.unwrap();
+        assert!(!stale_hash.exists(), "old hash-named file should expire by mtime");
+        assert!(fresh_hash.exists(), "fresh hash-named file must be kept");
+        assert_eq!(result.0, 1);
     }
 
     #[tokio::test]

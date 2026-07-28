@@ -17,6 +17,7 @@ export interface ConnectionState {
   nextRetryIn?: number  // seconds
   errorMessage?: string
   wasConnected?: boolean  // true if we ever had a successful connection
+  gaveUp?: boolean  // true once fast-retry exhausts without ever connecting (drives the backend-unavailable overlay; still slow-polls)
 }
 
 // Persistence configuration
@@ -43,6 +44,11 @@ export class ChatWebSocket {
   private slowReconnectDelay = 10000  // 超过上限后每10s轮询一次，无限重试（之前30s太慢）
   private isManualDisconnect = false  // 是否用户主动断开
   private wasConnected = false  // 跟踪是否曾经连接过（用于区分初始连接和重连）
+  // True once fast-retry is exhausted WITHOUT ever connecting — drives the
+  // BackendUnavailableOverlay. Cleared on any successful connect or manual
+  // retry. Spread into every state push (like wasConnected) so it persists
+  // across the replace-semantics setState.
+  private gaveUp = false
   private messageHandlers: Set<MessageHandler> = new Set()
   private connectionHandlers: Set<ConnectionHandler> = new Set()
   private stateChangeHandlers: Set<StateChangeHandler> = new Set()
@@ -310,22 +316,22 @@ export class ChatWebSocket {
     }
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      // Never had a successful connection = the backend never came up at all
-      // (port conflict, crashed at startup, wrong endpoint). Stop silently
-      // spinning "Reconnecting" forever and surface a clear error so the user
-      // knows to act (manualReconnect stays available). A backend that was up
-      // and briefly dropped (server restart) still gets slow-polling recovery
-      // below so it auto-reconnects when it returns.
-      if (!this.wasConnected) {
-        this.setState({
-          status: 'error',
-          retryCount: this.reconnectAttempts,
-        })
-        return
-      }
-      // Switch to slow polling mode - keep retrying every 30s indefinitely
-      // instead of giving up permanently
+      // Fast-retry budget exhausted. Switch to slow polling (every
+      // slowReconnectDelay) INDEFINITELY for both first-connect and reconnect —
+      // we never permanently give up. A slow-booting edge backend (the case
+      // 0d90aea7 explicitly wanted patience for) must auto-recover, not freeze
+      // on a "Backend Unavailable" dead-end after ~140s.
+      //
+      // But if we've NEVER connected (port conflict, crashed at startup, wrong
+      // endpoint), surface it via `gaveUp` so the UI can show a full-screen
+      // overlay — c78d062f's intent of "don't silently spin forever" — while
+      // still retrying in the background so it self-heals the moment the
+      // backend comes up. `gaveUp` is the ONLY thing that shows the overlay;
+      // transient onerror no longer flips it (fixes the per-attempt flash).
       this.reconnectAttempts++ // Keep incrementing to track total attempts
+      // Surface a never-connected state via `gaveUp` (drives the full-screen
+      // overlay in App.tsx) while continuing to slow-poll so it self-heals.
+      this.gaveUp = !this.wasConnected
 
       this.setState({
         status: 'reconnecting',
@@ -425,7 +431,7 @@ export class ChatWebSocket {
   }
 
   private setState(state: ConnectionState) {
-    this.currentState = { ...state, wasConnected: this.wasConnected }
+    this.currentState = { ...state, wasConnected: this.wasConnected, gaveUp: this.gaveUp }
     this.stateChangeHandlers.forEach(handler => handler(this.currentState))
   }
 
@@ -487,6 +493,7 @@ export class ChatWebSocket {
   manualReconnect() {
     this.isManualDisconnect = false
     this.reconnectAttempts = 0
+    this.gaveUp = false // user-initiated retry — dismiss the unavailable overlay
 
     // Clear existing timers
     if (this.reconnectTimer) {
@@ -516,6 +523,7 @@ export class ChatWebSocket {
   private resetReconnectState() {
     this.reconnectAttempts = 0
     this.isManualDisconnect = false
+    this.gaveUp = false
   }
 
   /**

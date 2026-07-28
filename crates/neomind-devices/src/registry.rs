@@ -1091,11 +1091,22 @@ impl DeviceRegistry {
     pub fn find_device_by_telemetry_topic(&self, topic: &str) -> Option<(String, DeviceConfig)> {
         // Fast path: reverse index (O(1))
         if let Some(device_id) = self.topic_index.get(topic) {
-            if let Some(config) = self.devices.get(device_id.value()) {
-                return Some((device_id.value().clone(), config.clone()));
+            let device_id_owned = device_id.value().clone();
+            drop(device_id); // release the DashMap read guard before any write
+            if let Some(config) = self.devices.get(&device_id_owned) {
+                // Verify the device's CURRENT telemetry_topic still matches. The
+                // index is NOT invalidated when update_device changes a device's
+                // telemetry_topic, so without this check a stale entry would
+                // route messages for an old topic to a device that no longer
+                // subscribes to it (silent data corruption + bogus rule fires).
+                if config.connection_config.telemetry_topic.as_deref() == Some(topic) {
+                    return Some((device_id_owned, config.clone()));
+                }
+                drop(config);
             }
-            // Stale index entry — clean up + fall through to scan
-            drop(device_id);
+            // Stale entry — device gone, or its topic changed. Clean up and fall
+            // through to the scan, which returns None (no device owns this topic
+            // anymore) or repairs the index for the new owner if one exists.
             self.topic_index.remove(topic);
         }
         // Fallback: linear scan (auto-repairs the index on hit)

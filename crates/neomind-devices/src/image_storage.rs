@@ -205,14 +205,28 @@ pub fn try_decode_base64_image(s: &str) -> Option<Vec<u8>> {
         s.split(";base64,").nth(1)?
     } else if s.len() > 100 {
         // Cheap reject before allocating/decoding: real image base64 begins
-        // with a format magic prefix (/9j/ JPEG, iVBORw0KGgo PNG, R0lGOD GIF,
-        // UklGR WebP). Long non-image strings — JSON telemetry, error text —
-        // hit this path on every ingest and would otherwise pay a Vec alloc
-        // plus up to two full decode passes before detect_extension rejects
-        // them. Prefixes live at the base64 start, so this also matches the
-        // unpadded / whitespace-folded variants real cameras emit (NE301).
-        const IMG_B64_PREFIXES: &[&str] = &["/9j/", "iVBORw0KGgo", "R0lGOD", "UklGR"];
-        if !IMG_B64_PREFIXES.iter().any(|p| s.starts_with(p)) {
+        // with a format magic prefix. Long non-image strings — JSON telemetry,
+        // error text — hit this path on every ingest and would otherwise pay a
+        // Vec alloc plus up to two full decode passes before detect_extension
+        // rejects them.
+        //
+        // The prefix list MUST stay in sync with detect_extension's accepted
+        // formats (JPEG/PNG/GIF/WebP/BMP/TIFF) — a missing format here silently
+        // drops it (the value is stored as raw base64 instead of a URL, so the
+        // frontend never renders it). Match against leading-whitespace-stripped
+        // input: the decode path below strips all whitespace anyway, and the
+        // magic prefix must lead regardless of a stray leading newline. (MIME-
+        // folded whitespace is internal, so the prefix still leads either way.)
+        const IMG_B64_PREFIXES: &[&str] = &[
+            "/9j/",        // JPEG
+            "iVBORw0KGgo", // PNG
+            "R0lGOD",      // GIF
+            "UklGR",       // WebP (RIFF...)
+            "Qk",          // BMP  (magic "BM")
+            "SUk",         // TIFF little-endian (magic "II*\0")
+            "TU0",         // TIFF big-endian   (magic "MM\0*")
+        ];
+        if !IMG_B64_PREFIXES.iter().any(|p| s.trim_start().starts_with(p)) {
             return None;
         }
         s
@@ -1019,6 +1033,42 @@ mod tests {
         let decoded =
             try_decode_base64_image(&data_url).expect("unpadded standard base64 must decode");
         assert_eq!(decoded, bytes);
+    }
+
+    /// Regression: the magic-prefix fast-reject in try_decode_base64_image must
+    /// whitelist EVERY format detect_extension accepts. The original gate listed
+    /// only JPEG/PNG/GIF/WebP, so BMP ("BM" → base64 "Qk…") and TIFF ("II*\0" →
+    /// "SUk…" / "MM\0*" → "TU0…") were rejected before detect_extension ever saw
+    /// them — silently stored as raw base64 instead of a URL. No test fed
+    /// BMP/TIFF base64 through this function, so the gap went unnoticed.
+    #[test]
+    fn test_try_decode_base64_image_bmp_tiff_prefixes() {
+        use base64::Engine as _;
+        // BMP magic "BM" + a few body bytes (len > 100 to clear the short-string gate).
+        let bmp = {
+            let mut v = vec![0x42, 0x4D];
+            v.extend_from_slice(&[0u8; 120]);
+            v
+        };
+        // TIFF little-endian "II*\0" + body.
+        let tiff_le = {
+            let mut v = vec![0x49, 0x49, 0x2A, 0x00];
+            v.extend_from_slice(&[0u8; 120]);
+            v
+        };
+        // TIFF big-endian "MM\0*" + body.
+        let tiff_be = {
+            let mut v = vec![0x4D, 0x4D, 0x00, 0x2A];
+            v.extend_from_slice(&[0u8; 120]);
+            v
+        };
+        for (label, bytes) in [("bmp", bmp), ("tiff-le", tiff_le), ("tiff-be", tiff_be)] {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            // Raw base64 (no data: prefix) — the path the prefix gate guards.
+            let decoded = try_decode_base64_image(&encoded)
+                .unwrap_or_else(|| panic!("{label}: prefix gate must not reject this format"));
+            assert_eq!(decoded, bytes, "{label}: round-trip mismatch");
+        }
     }
 
     /// Whitespace inside base64 (MIME folding) must not break decoding.

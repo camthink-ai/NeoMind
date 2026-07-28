@@ -21,8 +21,10 @@ interface BackendUnavailableOverlayProps {
  *
  * Two trigger sources (wired in App.tsx):
  *  - Tauri `backend-start-failed` event (port_conflict detected on the Rust side)
- *  - WebSocket `ConnectionState.status === 'error' && !wasConnected`
- *    (fallback for the web/non-Tauri build, or a missed event)
+ *  - WebSocket `ConnectionState.gaveUp` — set only after the fast-retry budget
+ *    is exhausted without ever connecting (fallback for the web/non-Tauri build,
+ *    or a missed event). The WS keeps slow-polling, so this clears on its own
+ *    once the backend answers — it no longer flips on every transient error.
  */
 export function BackendUnavailableOverlay({
   portConflict,

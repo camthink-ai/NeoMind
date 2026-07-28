@@ -107,6 +107,10 @@ pub struct RuleEngine {
     subscription_index: Arc<StdRwLock<HashMap<String, Vec<RuleId>>>>,
     /// Cooldown tracking: RuleId → last trigger Instant
     cooldowns: Arc<StdRwLock<HashMap<RuleId, Instant>>>,
+    /// Consecutive all-actions-failed count per rule. Gates the cooldown
+    /// refund so a persistently-failing rule paces itself instead of re-firing
+    /// on every matching data point.
+    consecutive_action_failures: Arc<StdRwLock<HashMap<RuleId, u32>>>,
     /// Value provider for condition evaluation.
     value_provider: Arc<dyn ValueProvider>,
     /// In-memory execution history.
@@ -127,6 +131,7 @@ impl RuleEngine {
             rules: Arc::new(RwLock::new(HashMap::new())),
             subscription_index: Arc::new(StdRwLock::new(HashMap::new())),
             cooldowns: Arc::new(StdRwLock::new(HashMap::new())),
+            consecutive_action_failures: Arc::new(StdRwLock::new(HashMap::new())),
             value_provider,
             history: Arc::new(RwLock::new(VecDeque::new())),
             message_manager: Arc::new(tokio::sync::RwLock::new(None)),
@@ -454,16 +459,40 @@ impl RuleEngine {
             }
         }
 
-        // If ALL actions failed, refund the cooldown so the rule can retry on
-        // the next matching data point instead of waiting the full cooldown
-        // window — critical-sensor rules shouldn't silently miss alerts due to
-        // a transient action failure (device offline, extension down, etc.).
+        // If ALL actions failed, retry quickly so critical-sensor rules don't
+        // silently miss alerts due to a transient failure (device offline,
+        // extension down). But pace the retries: refund the cooldown ONLY on the
+        // first consecutive failure (immediate retry on next match); on repeat
+        // failures leave the cooldown claimed so the rule fires at most once
+        // per cooldown window. Without this cap, a rule bound to a high-rate
+        // stream whose only actions persistently fail (e.g. a lone Execute
+        // against an offline device — Notify essentially always succeeds, so it
+        // only applies to action sets with no Notify) would re-fire on every
+        // data point and flood rule_history (0.9.11 implicitly rate-limited via
+        // the held cooldown; 8d3d0349's full refund removed that cap).
         if actions_executed.is_empty() && error.is_some() {
-            self.cooldowns.write().remove(id);
-            tracing::warn!(
-                rule_id = %id,
-                "All actions failed — refunded cooldown for retry on next match"
-            );
+            let first_consecutive = {
+                let mut failures = self.consecutive_action_failures.write();
+                let count = failures.entry(id.clone()).or_insert(0);
+                let was_zero = *count == 0;
+                *count += 1;
+                was_zero
+            };
+            if first_consecutive {
+                self.cooldowns.write().remove(id);
+                tracing::warn!(
+                    rule_id = %id,
+                    "All actions failed — refunded cooldown for one immediate retry"
+                );
+            } else {
+                tracing::warn!(
+                    rule_id = %id,
+                    "All actions failed again — cooldown held to pace retries (avoids rule_history flood)"
+                );
+            }
+        } else if !actions_executed.is_empty() {
+            // At least one action succeeded → clear the consecutive-failure counter.
+            self.consecutive_action_failures.write().remove(id);
         }
 
         // Update state (cooldown already claimed before action execution)

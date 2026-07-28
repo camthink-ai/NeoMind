@@ -470,9 +470,13 @@ function App() {
 
 
   // Backend never came up — show a clear error page above everything else
-  // (overrides startup loading / login) so the user knows to act instead of
-  // waiting on an endless "Reconnecting".
-  if (backendError || (wsConnectionState.status === "error" && !wsConnectionState.wasConnected)) {
+  // (overrides startup loading / login) so the user knows the backend is
+  // unreachable. `gaveUp` is set only after the fast-retry budget is exhausted
+  // WITHOUT ever connecting (port conflict, crashed/misconfigured backend, or a
+  // slow-booting edge box) — NOT on every transient connect error, which avoids
+  // a full-screen flash per failed attempt. The WS keeps slow-polling in the
+  // background, so this clears automatically once the backend actually answers.
+  if (backendError || wsConnectionState.gaveUp) {
     return (
       <BackendUnavailableOverlay
         portConflict={backendError?.port_conflict}

@@ -59,6 +59,13 @@ fn create_hmac(key: &[u8]) -> Result<HmacSha256, AuthError> {
 // Table definitions
 const USERS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("users");
 
+/// Clock-skew tolerance (seconds) applied to JWT `exp` during validation, and
+/// mirrored by the sessions reaper so it never evicts a session whose token is
+/// still within this grace window. Hoisted to module scope to keep the two
+/// call sites in lockstep (a drift here can wrongly `SessionRevoked` a valid
+/// token, or let expired sessions linger).
+const JWT_CLOCK_SKEW_SECS: i64 = 30;
+
 /// User roles for RBAC
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -210,7 +217,33 @@ impl AuthUserState {
                 }
             }
             let new_secret = uuid::Uuid::new_v4().to_string().replace("-", "");
-            let _ = std::fs::write(&secret_path, &new_secret);
+            // Persist with 0600 — this secret forges any auth token, so it must
+            // not be world/group-readable. std::fs::write defaults to 0644. We
+            // also set_permissions afterward to harden a file a prior 0.9.12
+            // build may have written 0644 (OpenOptions::mode only applies at
+            // creation, not when opening an existing file).
+            #[cfg(unix)]
+            {
+                use std::io::Write;
+                use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&secret_path)
+                {
+                    let _ = f.write_all(new_secret.as_bytes());
+                }
+                let _ = std::fs::set_permissions(
+                    &secret_path,
+                    std::fs::Permissions::from_mode(0o600),
+                );
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = std::fs::write(&secret_path, &new_secret);
+            }
             tracing::warn!(
                 category = "auth",
                 secret_path = %secret_path,
@@ -469,8 +502,7 @@ impl AuthUserState {
         // slow networks can hit the boundary mid-request. 30s matches the
         // de-facto standard used by most JWT libraries.
         let exp = payload["exp"].as_i64().unwrap_or(0);
-        const CLOCK_SKEW_SECS: i64 = 30;
-        if exp + CLOCK_SKEW_SECS < chrono::Utc::now().timestamp() {
+        if exp + JWT_CLOCK_SKEW_SECS < chrono::Utc::now().timestamp() {
             return Err(AuthError::ExpiredToken);
         }
 
@@ -624,9 +656,13 @@ impl AuthUserState {
         let mut sessions = self.sessions.write().unwrap();
         sessions.insert(token.clone(), session_info);
         // Piggyback: reap expired sessions on each login (was: never cleaned →
-        // unbounded growth over months of operation).
+        // unbounded growth over months of operation). Honor the same
+        // JWT_CLOCK_SKEW_SECS grace the validator grants, so a login-triggered
+        // reap never evicts a session whose token is still within that grace
+        // window (would wrongly `SessionRevoked` a valid token at the tail of
+        // its lifetime).
         let now = chrono::Utc::now().timestamp();
-        sessions.retain(|_, info| info.expires_at > now);
+        sessions.retain(|_, info| info.expires_at + JWT_CLOCK_SKEW_SECS > now);
         drop(sessions);
 
         info!(category = "auth", username = username, "User logged in");
@@ -666,9 +702,15 @@ impl AuthUserState {
     /// Delete user.
     pub async fn delete_user(&self, username: &str) -> Result<(), AuthError> {
         let mut users = self.users.write().await;
-        users.remove(username).ok_or(AuthError::UserNotFound)?;
-        // Persist the deletion so the user doesn't resurrect from `users.redb`
-        // on restart (was previously in-memory only).
+        // Verify existence first (UserNotFound semantics), but persist the
+        // deletion BEFORE mutating memory — mirrors change_password's atomic
+        // ordering. If the DB write fails the in-memory map stays intact, so
+        // the user does NOT silently disappear from list_users only to
+        // resurrect from users.redb on the next restart (the exact bug this
+        // path previously had when it removed from memory first).
+        if !users.contains_key(username) {
+            return Err(AuthError::UserNotFound);
+        }
         if let Err(e) = Self::delete_user_from_db(self.db_path, username) {
             error!(category = "auth", username = username, error = %e, "Failed to persist user deletion");
             return Err(AuthError::DatabaseError(format!(
@@ -676,6 +718,7 @@ impl AuthUserState {
                 e
             )));
         }
+        users.remove(username);
         Ok(())
     }
 
