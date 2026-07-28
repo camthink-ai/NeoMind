@@ -31,6 +31,7 @@ import {
 import { cn } from '@/lib/utils'
 import { textMicro, badgeSize, textNano, textMini } from '@/design-system/tokens/typography'
 import { api } from '@/lib/api'
+import { resolveImageSrc } from '@/lib/imageUtils'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import { useEvents } from '@/hooks/useEvents'
 import { Badge } from '@/components/ui/badge'
@@ -62,63 +63,6 @@ interface AgentMonitorWidgetProps {
   editMode?: boolean
 }
 
-// Magic bytes for image type detection
-const IMAGE_MAGIC_BYTES: Record<string, { magic: number[]; mime: string }> = {
-  png: { magic: [0x89, 0x50, 0x4E, 0x47], mime: 'image/png' },
-  jpeg: { magic: [0xFF, 0xD8, 0xFF], mime: 'image/jpeg' },
-  gif: { magic: [0x47, 0x49, 0x46], mime: 'image/gif' },
-  webp: { magic: [0x52, 0x49, 0x46, 0x46], mime: 'image/webp' },
-  bmp: { magic: [0x42, 0x4D], mime: 'image/bmp' },
-}
-
-function detectImageFormat(base64Data: string): string | null {
-  try {
-    const pureBase64 = base64Data.replace(/^data:image\/[^;]+;base64,/, '').replace(/^data:,/, '')
-    const binaryString = atob(pureBase64.slice(0, 32))
-    for (const [, info] of Object.entries(IMAGE_MAGIC_BYTES)) {
-      if (info.magic.every((byte, idx) => binaryString.charCodeAt(idx) === byte)) {
-        return info.mime
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return null
-}
-
-function isBase64Image(str: string): boolean {
-  if (!str || str.length < 100) return false
-  if (str.startsWith('data:image/')) return true
-  if (str.startsWith('http://') || str.startsWith('https://')) return false
-  return detectImageFormat(str) !== null
-}
-
-function normalizeToDataUrl(str: string): string {
-  if (str.startsWith('data:image/')) {
-    const commaIdx = str.indexOf(',')
-    if (commaIdx === -1) return str
-    let b64 = str.slice(commaIdx + 1).replace(/[\s\r\n]+/g, '')
-    // Unwrap double-prefixed data URLs
-    if (b64.startsWith('data:image/') || b64.startsWith('data:')) return normalizeToDataUrl(b64)
-    // Verify mime type against actual magic bytes — backend may declare wrong type
-    const detected = detectImageFormat(b64)
-    if (detected) return `data:${detected};base64,${b64}`
-    return str.slice(0, commaIdx + 1) + b64
-  }
-  // Handle non-standard data: prefix (e.g., data:png;base64,...)
-  if (str.startsWith('data:')) {
-    const commaIdx = str.indexOf(',')
-    const b64 = commaIdx !== -1 ? str.slice(commaIdx + 1).replace(/[\s\r\n]+/g, '') : ''
-    const detected = detectImageFormat(b64)
-    if (detected) return `data:${detected};base64,${b64}`
-    return `data:image/png;base64,${b64}`
-  }
-  const clean = str.replace(/[\s\r\n]+/g, '')
-  const mime = detectImageFormat(clean)
-  if (mime) return `data:${mime};base64,${clean}`
-  return `data:image/png;base64,${clean}`
-}
-
 // Extract images from data_collected values
 function extractImagesFromData(data: DataCollected[]): Array<{ source: string; image: string; timestamp: number }> {
   const images: Array<{ source: string; image: string; timestamp: number }> = []
@@ -133,14 +77,17 @@ function extractImagesFromData(data: DataCollected[]): Array<{ source: string; i
     for (const value of valueList) {
       if (!value) continue
 
-      // Direct string value that might be an image
-      if (typeof value === 'string' && isBase64Image(value)) {
-        images.push({
-          source: item.source,
-          image: normalizeToDataUrl(value),
-          timestamp: item.timestamp
-        })
-        continue
+      // Direct string value that might be an image (base64, /api/images/, or image URL)
+      if (typeof value === 'string') {
+        const imgSrc = resolveImageSrc(value)
+        if (imgSrc) {
+          images.push({
+            source: item.source,
+            image: imgSrc,
+            timestamp: item.timestamp
+          })
+          continue
+        }
       }
 
       // Object with image field
@@ -160,22 +107,20 @@ function extractImagesFromData(data: DataCollected[]): Array<{ source: string; i
           }
         }
 
-        // Check base64 image fields
+        // Check image fields (base64, /api/images/, or image URL)
         if (images.length === 0) {
           for (const key of ['image', 'image_base64', 'src', 'url', 'data', 'value', 'base64', 'image_data']) {
             const v = obj[key]
-            if (typeof v === 'string' && isBase64Image(v)) {
-              let imgSrc = v
-              if (key === 'image_base64' && !v.startsWith('data:')) {
-                const mime = (obj.image_mime_type || obj.mime_type) as string | undefined
-                imgSrc = mime ? `data:${mime};base64,${v}` : `data:image/png;base64,${v}`
+            if (typeof v === 'string') {
+              const imgSrc = resolveImageSrc(v)
+              if (imgSrc) {
+                images.push({
+                  source: `${item.source}.${key}`,
+                  image: imgSrc,
+                  timestamp: item.timestamp
+                })
+                break
               }
-              images.push({
-                source: `${item.source}.${key}`,
-                image: normalizeToDataUrl(imgSrc),
-                timestamp: item.timestamp
-              })
-              break
             }
           }
         }
