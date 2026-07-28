@@ -415,7 +415,20 @@ impl AutoOnboardManager {
 
                     let manager = self.clone_for_task();
                     tokio::spawn(async move {
-                        let _ = manager.analyze_device(&draft_id, &device_id, samples).await;
+                        if let Err(e) = manager.analyze_device(&draft_id, &device_id, samples).await
+                        {
+                            // A failed analysis would otherwise leave the draft
+                            // stuck on "Analyzing" until the 24h cleanup or a
+                            // restart. Flip it to Failed so the UI surfaces the
+                            // error and the user gets feedback.
+                            manager.mark_analysis_failed(&device_id).await;
+                            tracing::warn!(
+                                category = "discovery",
+                                error = %e,
+                                "Auto-onboard analysis failed for device '{}'",
+                                device_id
+                            );
+                        }
                     });
                 }
             }
@@ -499,6 +512,18 @@ impl AutoOnboardManager {
         }
 
         Ok(added)
+    }
+
+    /// Mark a draft's analysis as failed.
+    ///
+    /// Called when `analyze_device` returns an error so the draft does not stay
+    /// stuck on `Analyzing` forever — without this the failure is invisible to
+    /// the UI until the 24h cleanup task or a process restart.
+    pub async fn mark_analysis_failed(&self, device_id: &str) {
+        let mut drafts = self.drafts.write().await;
+        if let Some(draft) = drafts.get_mut(device_id) {
+            draft.set_status(DraftDeviceStatus::Failed);
+        }
     }
 
     /// Analyze collected samples and generate device type

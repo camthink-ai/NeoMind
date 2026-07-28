@@ -405,8 +405,17 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             // Initialize extension event subscription
             bg_state.init_extension_event_subscription().await;
 
-            // Initialize AI Agent manager
-            let _ = bg_state.start_agent_manager().await;
+            // Initialize AI Agent manager.
+            // A failure here means the scheduler never starts: all scheduled and
+            // event-triggered agents silently stop running (HTTP/health stay green).
+            // Log at error! so it is visible — do not swallow with `let _ =`.
+            if let Err(e) = bg_state.start_agent_manager().await {
+                tracing::error!(
+                    category = "agent",
+                    error = %e,
+                    "Failed to start agent manager — scheduled and event-triggered agents will not run"
+                );
+            }
 
             // Initialize AI Agent event listener
             bg_state.init_agent_events().await;
