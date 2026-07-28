@@ -518,7 +518,10 @@ mod tests {
         let fresh_hash = create_test_image_file(&metric_dir, "0fedcba987654321.jpg");
 
         let result = cleanup_expired_images(&images_dir, 2).await.unwrap();
-        assert!(!stale_hash.exists(), "old hash-named file should expire by mtime");
+        assert!(
+            !stale_hash.exists(),
+            "old hash-named file should expire by mtime"
+        );
         assert!(fresh_hash.exists(), "fresh hash-named file must be kept");
         assert_eq!(result.0, 1);
     }

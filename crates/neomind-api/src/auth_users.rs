@@ -235,10 +235,8 @@ impl AuthUserState {
                 {
                     let _ = f.write_all(new_secret.as_bytes());
                 }
-                let _ = std::fs::set_permissions(
-                    &secret_path,
-                    std::fs::Permissions::from_mode(0o600),
-                );
+                let _ =
+                    std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600));
             }
             #[cfg(not(unix))]
             {

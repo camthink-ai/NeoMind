@@ -12,37 +12,6 @@ use neomind_core::{MetricValue, NeoMindEvent};
 use neomind_devices::DeviceRegistry;
 use neomind_rules::RuleEngine;
 
-/// Rule engine event service.
-///
-/// Subscribes to device metric events and auto-evaluates rules.
-pub struct RuleEngineEventService {
-    _event_bus: Arc<EventBus>,
-    _rule_engine: Arc<RuleEngine>,
-    running: Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl RuleEngineEventService {
-    /// Create a new rule engine event service.
-    pub fn new(event_bus: Arc<EventBus>, rule_engine: Arc<RuleEngine>) -> Self {
-        Self {
-            _event_bus: event_bus,
-            _rule_engine: rule_engine,
-            running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }
-    }
-
-    /// Start the service.
-    ///
-    /// The actual rule evaluation is driven by the value-provider and extension-output
-    /// tasks spawned in `init_rule_engine_events`. This method only sets the running flag
-    /// so callers can track service lifecycle.
-    pub fn start(&self) -> Arc<std::sync::atomic::AtomicBool> {
-        self.running
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-        self.running.clone()
-    }
-}
-
 /// Transform event service.
 ///
 /// Subscribes to device metric events and processes transforms to generate virtual metrics.

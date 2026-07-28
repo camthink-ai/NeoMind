@@ -226,7 +226,10 @@ pub fn try_decode_base64_image(s: &str) -> Option<Vec<u8>> {
             "SUk",         // TIFF little-endian (magic "II*\0")
             "TU0",         // TIFF big-endian   (magic "MM\0*")
         ];
-        if !IMG_B64_PREFIXES.iter().any(|p| s.trim_start().starts_with(p)) {
+        if !IMG_B64_PREFIXES
+            .iter()
+            .any(|p| s.trim_start().starts_with(p))
+        {
             return None;
         }
         s

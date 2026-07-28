@@ -185,10 +185,6 @@ pub struct ServerState {
     /// Flag to track if rule engine events have been initialized (prevents duplicate subscribers).
     rule_engine_events_initialized: Arc<std::sync::atomic::AtomicBool>,
 
-    /// Cached rule engine event service instance (prevents duplicate instances).
-    rule_engine_event_service:
-        Arc<tokio::sync::Mutex<Option<crate::event_services::RuleEngineEventService>>>,
-
     /// Flag to track if extension event subscription has been initialized (prevents duplicate subscribers).
     extension_event_subscription_initialized: Arc<std::sync::atomic::AtomicBool>,
 
@@ -1175,7 +1171,6 @@ impl ServerState {
             gpu_info,
             agent_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            rule_engine_event_service: Arc::new(tokio::sync::Mutex::new(None)),
             extension_event_subscription_initialized: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -1369,7 +1364,6 @@ impl ServerState {
             gpu_info,
             agent_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             rule_engine_events_initialized: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            rule_engine_event_service: Arc::new(tokio::sync::Mutex::new(None)),
             extension_event_subscription_initialized: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -2188,35 +2182,14 @@ impl ServerState {
             }
         };
 
-        use crate::event_services::RuleEngineEventService;
-
-        // Get or create the service instance (cached in ServerState)
-        {
-            let mut cached_service = self.rule_engine_event_service.lock().await;
-            if cached_service.is_none() {
-                let service =
-                    RuleEngineEventService::new((*event_bus).clone(), rule_engine.clone());
-                *cached_service = Some(service);
-            }
-        }
-
-        // Start the service (duplicate init already prevented by rule_engine_events_initialized guard)
-        let running = {
-            let cached_service = self.rule_engine_event_service.lock().await;
-            cached_service
-                .as_ref()
-                .expect("rule engine event service should be initialized")
-                .start()
-        };
-
-        if running.load(std::sync::atomic::Ordering::Relaxed) {
-            tracing::info!(
-                category = "rule_engine",
-                "Rule engine event service started - rules will auto-evaluate on device metrics"
-            );
-        } else {
-            tracing::warn!("Rule engine event service failed to start");
-        }
+        // The rule engine reacts to device metrics via the value-provider update
+        // task spawned below (plus the extension-output task). There is no
+        // separate "rule engine event service" anymore — it was a dead shell
+        // whose start() only flipped an AtomicBool that nothing ever read.
+        tracing::info!(
+            category = "rule_engine",
+            "Rule engine event listener starting - rules will auto-evaluate on device metrics"
+        );
 
         // Start a task to update the UnifiedValueProvider when device metrics arrive
         // This is needed for rule evaluation to work with current values

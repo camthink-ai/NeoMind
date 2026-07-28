@@ -134,10 +134,21 @@ impl ToolRegistry {
         // Tools not listed here (e.g. extension tools) sort to the end,
         // retaining their relative order via stable sort.
         let order = [
-            "shell", "skill", "memory", "vision", "image_edit", "web_fetch", "file_write",
+            "shell",
+            "skill",
+            "memory",
+            "vision",
+            "image_edit",
+            "web_fetch",
+            "file_write",
             "file_edit",
         ];
-        defs.sort_by_key(|d| order.iter().position(|n| *n == d.name).unwrap_or(usize::MAX));
+        defs.sort_by_key(|d| {
+            order
+                .iter()
+                .position(|n| *n == d.name)
+                .unwrap_or(usize::MAX)
+        });
         defs
     }
 
