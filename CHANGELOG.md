@@ -130,6 +130,38 @@ smolagents, Letta, Mem0, OpenClaw, Hermes) and a full codebase scan
 - **Stale MemoryScheduler comment removed** — claimed "periodic extraction"
   that doesn't exist.
 
+### Pre-release regression sweep
+A full `v0.9.11..HEAD` regression audit (fan-out review + manual verification)
+surfaced and fixed eight issues before tagging:
+- **BMP/TIFF image decode** — the base64 magic-prefix fast-reject whitelisted
+  only JPEG/PNG/GIF/WebP, so BMP/TIFF images were rejected before decode and
+  stored as raw base64 (never rendered). Prefix list now matches
+  `detect_extension`.
+- **Stale telemetry-topic routing** — the `topic_index` reverse-index wasn't
+  invalidated when a device's `telemetry_topic` changed, so orphan messages on
+  an old topic were routed to a device that no longer subscribed. The read path
+  now verifies the device's current topic still matches.
+- **Image retention disk leak** — CLI-materialized images named by content hash
+  had no parseable timestamp, so retention skipped them forever. Falls back to
+  mtime for unparseable filenames.
+- **JWT secret file permissions** — persisted `data/.jwt_secret` was world-
+  readable (0644); now 0600.
+- **delete_user atomicity** — mutated memory before the DB write; on DB failure
+  the user vanished from the list only to resurrect on restart. Now persists DB
+  first (mirrors `change_password`).
+- **Sessions reaper grace** — evicted sessions at `expires_at` with no grace,
+  while JWT validation grants 30s skew; a login-triggered reap could revoke a
+  still-valid token. Now honors the same skew.
+- **Cooldown retry flood** — the all-actions-failed cooldown refund had no
+  backoff, so an Execute-only rule on a high-rate stream re-fired on every data
+  point. Now refunds only on the first consecutive failure (transient failures
+  still retry immediately); repeat failures pace at the cooldown window.
+- **Backend-unavailable overlay UX** — the WebSocket gave up permanently after
+  ~140s when never connected (false-positive on a slow-booting edge box,
+  contradicting the slow-startup patience added earlier) and the overlay
+  flashed on every transient error. Now never gives up (keeps slow-polling) and
+  surfaces never-connected via a `gaveUp` flag.
+
 ---
 
 ## [0.9.11] - 2026-07-22
