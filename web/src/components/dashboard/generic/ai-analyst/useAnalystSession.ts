@@ -293,8 +293,11 @@ async function loadHistoryMessages(
         const allImages: string[] = []
         const allLines: string[] = []
         for (const dc of dataCollected) {
-          // Skip device_info — device metadata, not sensor data
-          if (dc.data_type === 'device_info') continue
+          // Skip device_info (device metadata) and summary entries (agent memory
+          // context: last_conclusion / recent_conclusions / total_executions —
+          // prior-execution context for the LLM, not sensor data; must not leak
+          // into the Data source bubble on history load).
+          if (dc.data_type === 'device_info' || dc.data_type === 'summary' || dc.source === 'memory') continue
 
           const values = dc.values
           const dataType = dc.data_type
