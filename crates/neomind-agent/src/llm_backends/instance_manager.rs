@@ -289,7 +289,13 @@ impl LlmBackendInstanceManager {
                             updated.capabilities.multimodal_source =
                                 Some("runtime_api".to_string());
                         }
-                        let _ = self.storage.save_instance(&updated);
+                        if let Err(e) = self.storage.save_instance(&updated) {
+                            tracing::warn!(
+                                error = %e,
+                                instance_id = %instance.id,
+                                "Failed to persist updated instance capabilities; in-memory value is current but will revert on restart"
+                            );
+                        }
                         self.instances.insert(instance.id.clone(), updated);
                     }
                     // For runtime override: if user has override, use their value;
@@ -392,7 +398,13 @@ impl LlmBackendInstanceManager {
                             updated.capabilities.supports_tools = caps.supports_tools;
                             updated.capabilities.supports_audio = caps.supports_audio;
                             updated.capabilities.max_context = caps.max_context;
-                            let _ = self.storage.save_instance(&updated);
+                            if let Err(e) = self.storage.save_instance(&updated) {
+                                tracing::warn!(
+                                    error = %e,
+                                    instance_id = %instance.id,
+                                    "Failed to persist updated instance capabilities; in-memory value is current but will revert on restart"
+                                );
+                            }
                             self.instances.insert(instance.id.clone(), updated);
                         }
                         let runtime_multimodal = user_override.unwrap_or(caps.supports_multimodal);
@@ -731,7 +743,13 @@ impl LlmBackendInstanceManager {
                     updated.capabilities.supports_thinking = caps.supports_thinking;
                     updated.capabilities.supports_tools = caps.supports_tools;
                     updated.capabilities.max_context = caps.max_context;
-                    let _ = self.storage.save_instance(&updated);
+                    if let Err(e) = self.storage.save_instance(&updated) {
+                        tracing::warn!(
+                            error = %e,
+                            instance_id = %instance.id,
+                            "Failed to persist updated instance capabilities; in-memory value is current but will revert on restart"
+                        );
+                    }
                     self.instances.insert(instance.id.clone(), updated);
                 }
             }
