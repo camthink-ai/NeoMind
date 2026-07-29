@@ -244,7 +244,7 @@ export function AgentDetailPanel({
           <TabsList className={cn(
             isMobile
               ? "grid grid-cols-4 gap-1 h-auto w-full"
-              : "h-9 w-full justify-start"
+              : "h-9"
           )}>
             <TabsTrigger
               value="overview"

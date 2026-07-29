@@ -481,7 +481,7 @@ export function ComponentConfigDialog({
           <div className="flex-1 flex flex-col overflow-hidden bg-background min-w-0">
             {(hasStyleConfig || hasDisplayConfig || hasDataSource) ? (
               <Tabs value={configTabValue} onValueChange={(v) => setConfigTabValue(v as typeof configTabValue)} className="flex-1 flex flex-col min-h-0">
-                <TabsList className="w-full justify-start shrink-0">
+                <TabsList>
                   {hasStyleConfig && (
                     <TabsTrigger value="style">
                       {t('componentConfig.style')}
