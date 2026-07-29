@@ -18,6 +18,25 @@ anti_triggers:
 
 Messages are platform notifications delivered through configurable channels. 7 channel types are supported: webhook, email, telegram, wecom, dingtalk, slack, feishu.
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output.
+
+| Command | Purpose |
+|---|---|
+| `neomind message list` | List messages |
+| `neomind message get <id>` | Message details |
+| `neomind message send` | Send a new message |
+| `neomind message read <id>` | Acknowledge/read a message (alias: `ack`) |
+| `neomind message channel-list` | List message channels |
+| `neomind message channel-get <id>` | Channel details |
+| `neomind message channel-types` | List available channel types |
+| `neomind message channel-type-schema <TYPE>` | Config schema + examples for a channel type |
+| `neomind message channel-create` | Create a message channel |
+| `neomind message channel-update <id>` | Update channel configuration |
+| `neomind message channel-delete <id>` | Delete a channel |
+| `neomind message channel-test <id>` | Test a message channel |
+
 ## CRITICAL Rules
 
 1. **`--title` and `--body` are required** for sending — not `--channel`

@@ -18,6 +18,23 @@ anti_triggers:
 
 Data Push forwards device metrics and extension outputs to external systems (webhook, MQTT broker) in real-time or on a schedule.
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output. The CLI group is `neomind push` (not `data-push`).
+
+| Command | Purpose |
+|---|---|
+| `neomind push list` | List push targets |
+| `neomind push get <id>` | Push target details |
+| `neomind push create` | Create a push target |
+| `neomind push update <id>` | Update a push target |
+| `neomind push delete <id>` | Delete a push target |
+| `neomind push enable <id>` | Enable a target (alias for `push start`) |
+| `neomind push disable <id>` | Disable a target (alias for `push stop`) |
+| `neomind push test <id>` | Test a push target |
+| `neomind push logs <id>` | Delivery logs for a target |
+| `neomind push stats` | Push statistics |
+
 ## CRITICAL Rules
 
 1. **`--name` is required** for creating push targets

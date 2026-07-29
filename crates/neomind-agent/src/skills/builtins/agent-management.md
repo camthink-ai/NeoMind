@@ -18,6 +18,26 @@ anti_triggers:
 
 Agents are LLM-powered automated tasks. They can be scheduled (interval/cron) or event-driven, and have access to the shell tool to execute CLI commands.
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output.
+
+| Command | Purpose |
+|---|---|
+| `neomind agent list` | List all agents |
+| `neomind agent get <id>` | Agent details |
+| `neomind agent create` | Create a new agent |
+| `neomind agent update <id>` | Update an agent |
+| `neomind agent delete <id>` | Delete an agent |
+| `neomind agent control <id> <pause|resume>` | Control agent status |
+| `neomind agent invoke <id> [input]` | Invoke / run an agent now with input |
+| `neomind agent memory <id>` | Get agent memory |
+| `neomind agent clear-memory <id>` | Clear agent memory |
+| `neomind agent executions <id>` | Execution history |
+| `neomind agent latest-execution <id>` | Latest execution |
+| `neomind agent conversation <id>` | Get agent conversation / messages |
+| `neomind agent send-message <id> <text>` | Send a message to an agent |
+
 ## CRITICAL: Create → Active Pattern
 
 New agents are created in **active** state and start executing immediately (if scheduled). Use this pattern:

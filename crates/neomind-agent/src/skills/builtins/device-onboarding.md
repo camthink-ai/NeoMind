@@ -18,6 +18,24 @@ anti_triggers:
 
 # Device Onboarding & Connection Guide
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output — don't narrate.
+
+| Command | Purpose |
+|---|---|
+| `neomind device list` | List all devices (grouped by type) |
+| `neomind device get <id>` | Details: metadata + metrics + commands |
+| `neomind device create --name <N> --device-type <TYPE> [--id <id>] [--adapter-type <a>]` | Create a device |
+| `neomind device update <id>` | Update a device |
+| `neomind device delete <id>` | Delete a device |
+| `neomind device history <id>` | Telemetry history |
+| `neomind device control <id> <COMMAND>` | Send a control command to a device |
+| `neomind device types list` | List device-type templates |
+| `neomind device write-metric <id> <METRIC> <VALUE>` | Write a metric data point |
+| `neomind device webhook-url <id>` | Get the webhook URL for a device |
+| `neomind device drafts` | Manage auto-discovery drafts |
+
 ## Overview
 
 NeoMind supports multiple ways to connect IoT devices. Before helping users, **always check current infrastructure**:
