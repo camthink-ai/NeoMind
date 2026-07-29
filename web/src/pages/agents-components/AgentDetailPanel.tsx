@@ -403,7 +403,7 @@ export function AgentDetailPanel({
                     {/* Resource list */}
                     <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                       {(agent.resources || []).slice(0, 8).map((resource, idx) => (
-                        <div key={idx} className="flex items-center justify-between px-2.5 py-1.5 rounded bg-background border">
+                        <div key={idx} className="flex items-center justify-between px-2.5 py-1.5 rounded border">
                           <span className="text-sm truncate flex-1 mr-2" title={resource.resource_id}>
                             {resource.name || resource.resource_id}
                           </span>
@@ -481,7 +481,7 @@ interface DetailSectionProps {
 
 function DetailSection({ title, icon: Icon, children }: DetailSectionProps) {
   return (
-    <div className="bg-muted-20 rounded-lg p-3">
+    <div className="rounded-lg p-3">
       {title && Icon && (
         <h3 className="text-sm font-medium flex items-center gap-2 mb-3 text-muted-foreground">
           <Icon className="h-4 w-4" />
@@ -503,7 +503,7 @@ interface StatItemProps {
 
 function StatItem({ icon, label, value, color }: StatItemProps) {
   return (
-    <div className="flex items-center gap-2 px-2.5 py-2 rounded bg-background border">
+    <div className="flex items-center gap-2 px-2.5 py-2 rounded border">
       <div className={cn("shrink-0", color)}>{icon}</div>
       <div className="flex-1 min-w-0">
         <div className="text-xs text-muted-foreground truncate">{label}</div>
@@ -651,7 +651,7 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
             </div>
           )}
           {memory.updated_at && (
-            <div className="flex flex-col items-center p-3 rounded-lg bg-muted-30 border border-border">
+            <div className="flex flex-col items-center p-3 rounded-lg border border-border">
               <Clock className="h-4 w-4 text-muted-foreground mb-1" />
               <span className="text-sm font-medium text-foreground">
                 {formatTime(memory.updated_at)}
@@ -683,7 +683,7 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
           >
             <div className="space-y-2">
               {journalRecords.map((record: JournalExecutionRecord, idx: number) => (
-                <div key={idx} className="group rounded-lg bg-background border border-border hover:border-info transition-colors">
+                <div key={idx} className="group rounded-lg border border-border hover:border-info transition-colors">
                   <div className="pl-4 pr-3 py-3">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">

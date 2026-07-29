@@ -120,7 +120,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
             <div className="px-4 md:px-6 pt-4 pb-2 shrink-0 space-y-3">
               <div className="flex items-center gap-3">
                 <Tabs value={libraryTab} onValueChange={(v) => onLibraryTabChange(v as 'components' | 'marketplace')} className="flex-1">
-                  <TabsList className="h-8 w-full grid grid-cols-2">
+                  <TabsList className="h-8">
                     <TabsTrigger value="components" className="gap-1.5 text-xs px-3">
                       <LayoutGrid className="w-3.5 h-3.5" />
                       {t('componentLibrary.tabComponents')}
