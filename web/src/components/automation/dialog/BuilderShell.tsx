@@ -71,7 +71,7 @@ export function BuilderShell({
       <FullScreenDialogContent>
         {isMobile ? (
           <FullScreenDialogMain className="p-4 md:p-5">
-            <details className="mb-4 rounded-lg border border-border bg-background">
+            <details className="mb-4 rounded-lg border border-border">
               <summary className="cursor-pointer px-4 py-2.5 text-sm font-medium text-foreground">
                 {mobileConfigLabel ?? '配置'}
               </summary>

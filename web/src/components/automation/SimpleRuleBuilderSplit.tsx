@@ -800,7 +800,7 @@ function ConditionCanvas({
   }, [triggerType, cronExpression])
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border border-border bg-background">
+    <div className="space-y-4 p-4 rounded-lg border border-border">
       {triggerType === 'data_change' && (
         <>
           <div className="flex items-center gap-2 pb-4 border-b">
@@ -878,7 +878,7 @@ function ConditionCanvas({
                 tBuilder={tBuilder}
               />
 
-              <div className="flex items-center gap-3 p-4 bg-muted-30 rounded-lg border">
+              <div className="flex items-center gap-3 p-4 rounded-lg border">
                 <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
                 <Label className="text-sm font-medium">{tBuilder('duration')}</Label>
                 <Input
@@ -986,7 +986,7 @@ function ConditionCanvas({
                   )}
                 />
               ) : (
-                <div className="p-3 bg-muted-30 rounded-lg border">
+                <div className="p-3 rounded-lg border">
                   <code className="text-sm font-mono">{cronExpression}</code>
                 </div>
               )}
@@ -997,7 +997,7 @@ function ConditionCanvas({
             </div>
 
             {nextExecution && (
-              <div className="flex items-center gap-2 p-3 bg-muted-30 rounded-lg border">
+              <div className="flex items-center gap-2 p-3 rounded-lg border">
                 <Calendar className="h-4 w-4 text-success" />
                 <span className="text-xs text-muted-foreground">
                   {tBuilder('nextExecution') || 'Next execution'}: {nextExecution.toLocaleString('zh-CN', {
@@ -1026,13 +1026,13 @@ function ConditionCanvas({
           </div>
 
           <div className="space-y-3">
-            <div className="flex items-center gap-3 p-3 bg-muted-30 rounded-lg border">
+            <div className="flex items-center gap-3 p-3 rounded-lg border">
               <div className="w-6 h-6 shrink-0 rounded-full bg-success-light flex items-center justify-center">
                 <span className="text-xs font-medium text-success">1</span>
               </div>
               <p className="text-sm text-muted-foreground">{tBuilder('manualStep1') || 'Click execute button in rule list'}</p>
             </div>
-            <div className="flex items-center gap-3 p-3 bg-muted-30 rounded-lg border">
+            <div className="flex items-center gap-3 p-3 rounded-lg border">
               <div className="w-6 h-6 shrink-0 rounded-full bg-success-light flex items-center justify-center">
                 <span className="text-xs font-medium text-success">2</span>
               </div>
@@ -1066,7 +1066,7 @@ interface ActionCanvasProps {
 
 function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensions, messageChannels, agents, errors, t, tBuilder }: ActionCanvasProps) {
   return (
-    <div className="space-y-4 p-4 rounded-lg border border-border bg-background">
+    <div className="space-y-4 p-4 rounded-lg border border-border">
       {/* Header — emerald accent to differentiate from Condition (indigo) */}
       <div className="flex items-center gap-2 pb-3 border-b">
         <div className="p-2 rounded-full bg-accent-emerald-light">
@@ -1133,10 +1133,10 @@ function ConditionTypeButton({ label, icon, onClick }: { label: string; icon: Re
   return (
     <button
       onClick={onClick}
-      className="p-4 rounded-lg border-2 border-border hover:border-accent-indigo hover:bg-muted-30 transition-all text-left min-w-0"
+      className="p-4 rounded-lg border-2 border-border hover:border-accent-indigo hover:transition-all text-left min-w-0"
     >
       <div className="flex items-center gap-3 min-w-0">
-        <div className="p-2 rounded-lg bg-muted-30 shrink-0">{icon}</div>
+        <div className="p-2 rounded-lg shrink-0">{icon}</div>
         <span className="font-medium min-w-0 break-words">{label}</span>
       </div>
     </button>
@@ -1602,7 +1602,7 @@ export function SimpleRuleBuilderSplit({
         )}
 
         {workspaceTab === 'dsl' && (
-          <div className="rounded-lg border border-border bg-muted-30 p-4">
+          <div className="rounded-lg border border-border p-4">
             <pre className={cn(textNano, "font-mono overflow-x-auto whitespace-pre-wrap break-all")}>
               {previewJSON || tBuilder('noPreview')}
             </pre>
@@ -1666,7 +1666,7 @@ export function SimpleRuleBuilderSplit({
           {/* Tags editor - lifted from BasicInfoStep */}
           <Field>
             <FieldLabel>{t('automation:ruleBuilder.tags') || 'Tags'}</FieldLabel>
-            <div className="flex flex-wrap gap-2 p-2 border rounded-md bg-background min-h-[42px]">
+            <div className="flex flex-wrap gap-2 p-2 border rounded-md min-h-[42px]">
               {tags.map(tag => (
                 <Badge key={tag} variant="secondary" className="gap-1 pl-2">
                   {tag}
@@ -2162,7 +2162,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
           </Button>
         </div>
 
-        <div className="p-3 bg-background border border-t-0 rounded-b-lg space-y-3">
+        <div className="p-3 border border-t-0 rounded-b-lg space-y-3">
           {condition.conditions?.map((subCond, i) => (
             <div key={subCond.id} className="relative group">
               {i > 0 && (
