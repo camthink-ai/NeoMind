@@ -454,7 +454,7 @@ export function AboutTab() {
                     {(systemInfo.networks ?? []).map((net, idx) => (
                       <div
                         key={`net-${idx}-${net.name}`}
-                        className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                        className="flex flex-wrap items-center justify-between gap-2 text-xs"
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="font-medium">{net.name}</span>
