@@ -1680,7 +1680,7 @@ export function SimpleRuleBuilderSplit({
                   </button>
                 </Badge>
               ))}
-              <input
+              <Input
                 type="text"
                 value={tagInput}
                 onChange={e => setTagInput(e.target.value)}
@@ -1697,7 +1697,7 @@ export function SimpleRuleBuilderSplit({
                   }
                 }}
                 placeholder={tags.length === 0 ? (tBuilder('addTag') || 'Add tag...') : ''}
-                className="flex-1 min-w-[80px] outline-none bg-transparent text-sm"
+                className="flex-1 min-w-[80px] border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
               />
             </div>
           </Field>
