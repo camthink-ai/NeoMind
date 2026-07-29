@@ -120,7 +120,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
             <div className="px-4 md:px-6 pt-4 pb-2 shrink-0 space-y-3">
               <div className="flex items-center gap-3">
                 <Tabs value={libraryTab} onValueChange={(v) => onLibraryTabChange(v as 'components' | 'marketplace')} className="flex-1">
-                  <TabsList className="h-8">
+                  <TabsList className="h-8 w-full grid grid-cols-2">
                     <TabsTrigger value="components" className="gap-1.5 text-xs px-3">
                       <LayoutGrid className="w-3.5 h-3.5" />
                       {t('componentLibrary.tabComponents')}
@@ -198,7 +198,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                               <button
                                 type="button"
                                 onClick={() => onAddComponent(item.id)}
-                                className={`w-full h-[72px] flex items-center gap-3 py-2 px-3 rounded-xl border bg-background hover:shadow-sm transition-all duration-200 cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
+                                className={`w-full h-[72px] flex items-center gap-3 py-2 px-3 rounded-xl border hover:shadow-sm transition-all duration-200 cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
                               >
                                 <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${category.categoryColor}`}>
                                   <Icon className="h-4 w-4 shrink-0" />

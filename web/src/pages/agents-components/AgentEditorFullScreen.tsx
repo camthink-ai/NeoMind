@@ -1448,7 +1448,7 @@ export function AgentEditorFullScreen({
               )}
 
               {/* AI Helper Tip */}
-              <div className="flex items-start gap-2 p-3 bg-muted rounded-lg border border-border">
+              <div className="flex items-start gap-2 p-3 rounded-lg border border-border">
                 <Wand2 className="h-4 w-4 text-primary shrink-0 mt-0.5" />
                 <p className="text-xs text-muted-foreground">
                   <span className="font-medium text-primary">Tip:</span> {tAgent('creator.basicInfo.promptTip')}
@@ -1644,7 +1644,7 @@ export function AgentEditorFullScreen({
               </div>
 
               {/* Schedule Configuration */}
-              <div className={cn("border rounded-lg", isMobile ? "p-4" : "p-4 bg-muted-30")}>
+              <div className={cn("border rounded-lg p-4")}>
                 {scheduleType === 'timer' && (
                   <div className="space-y-3">
                     {/* Timer sub-type tabs */}
@@ -2148,7 +2148,7 @@ export function AgentEditorFullScreen({
 
               if (isProminent) {
                 return (
-                  <div className="space-y-3 bg-muted rounded-lg p-3 -mx-3 border border-border">
+                  <div className="space-y-3 rounded-lg p-3 -mx-3 border border-border">
                     <div className={cn(
                       "flex items-center justify-between",
                       isMobile ? "flex-col items-start gap-3" : ""
@@ -2174,7 +2174,7 @@ export function AgentEditorFullScreen({
                     </div>
                     <p className="text-xs text-muted-foreground">{sectionHint}</p>
                     {selectedResources.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-6 border rounded-lg bg-background">
+                      <div className="flex flex-col items-center justify-center py-6 border rounded-lg">
                         <Target className="h-6 w-6 text-muted-foreground mb-2" />
                         <p className="text-xs text-muted-foreground">
                           {tAgent('creator.resources.dialog.noResourcesHint')}
@@ -2205,7 +2205,7 @@ export function AgentEditorFullScreen({
 
               // Collapsed style (Reactive / Free / On-demand)
               return (
-                <div className="rounded-lg -mx-3 border bg-muted-30 overflow-hidden">
+                <div className="rounded-lg -mx-3 border overflow-hidden">
                   <button
                     type="button"
                     onClick={() => setFreeModeResourcesExpanded(!freeModeResourcesExpanded)}
@@ -2232,7 +2232,7 @@ export function AgentEditorFullScreen({
                     <div className="px-3 pb-3 pt-0 space-y-2 border-t">
                       <p className="text-xs text-muted-foreground pt-2">{sectionHint}</p>
                       {selectedResources.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center py-4 border rounded-lg bg-background">
+                        <div className="flex flex-col items-center justify-center py-4 border rounded-lg">
                           <Target className="h-6 w-6 text-muted-foreground mb-1" />
                           <p className="text-xs text-muted-foreground">
                             {tAgent('creator.resources.dialog.noResourcesHint')}
@@ -2560,7 +2560,7 @@ function ResourceSelectionDialog({
           {/* Dual-pane layout */}
           <div className="flex-1 flex gap-4 min-h-0 p-4 overflow-hidden">
             {/* Available Resources */}
-            <div className="flex-1 flex flex-col bg-muted-30 rounded-lg overflow-hidden">
+            <div className="flex-1 flex flex-col rounded-lg overflow-hidden">
               <div className="p-3 border-b bg-bg-50">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium">{tAgent('creator.resources.dialog.available')}</span>
@@ -2599,7 +2599,7 @@ function ResourceSelectionDialog({
             </div>
 
             {/* Selected Resources */}
-            <div className="flex-1 flex flex-col bg-background rounded-lg overflow-hidden border">
+            <div className="flex-1 flex flex-col rounded-lg overflow-hidden border">
               <div className="p-3 border-b">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">{tAgent('creator.resources.dialog.selected')}</span>
@@ -2703,10 +2703,10 @@ function ScheduleCard({ icon, label, description, active, onClick, isMobile = fa
         isMobile ? "gap-3 p-4" : "gap-2 p-3",
         active
           ? "border-primary bg-muted"
-          : "border-transparent hover:border-border hover:bg-muted-30"
+          : "border-transparent hover:border-border"
       )}
     >
-      <div className={cn("rounded-lg", active ? "bg-muted" : "bg-muted-30", isMobile ? "p-2" : "p-1.5")}>
+      <div className={cn("rounded-lg", active ? "bg-muted" : "", isMobile ? "p-2" : "p-1.5")}>
         {icon}
       </div>
       <div className="text-center">
@@ -2823,7 +2823,7 @@ function SelectedResourceItem({ resource, setSelectedResources, onRemove, onTogg
   const hasCommands = resource.allCommands.length > 0
 
   return (
-    <div className={cn("rounded-lg bg-background border group", isMobile ? "px-4 py-3" : "px-3 py-2")}>
+    <div className={cn("rounded-lg border group", isMobile ? "px-4 py-3" : "px-3 py-2")}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <button
