@@ -1293,6 +1293,7 @@ export function AgentEditorFullScreen({
   // ========================================================================
 
   return (
+    <>
     <FullScreenDialog
       open={open}
       onOpenChange={onOpenChange}
@@ -2303,7 +2304,9 @@ export function AgentEditorFullScreen({
         )}
       </FullScreenDialogFooter>
 
-      {/* Resource Selection Dialog */}
+    </FullScreenDialog>
+
+      {/* Resource Selection Dialog — sibling of FullScreenDialog to avoid Radix focus conflict (double-click issue) */}
       <ResourceSelectionDialog
         open={resourceDialogOpen}
         onOpenChange={setResourceDialogOpen}
@@ -2318,7 +2321,7 @@ export function AgentEditorFullScreen({
         toggleRecommendation={toggleRecommendation}
         scheduleType={scheduleType}
       />
-    </FullScreenDialog>
+    </>
   )
 }
 
