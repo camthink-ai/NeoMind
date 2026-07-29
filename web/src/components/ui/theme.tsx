@@ -1,4 +1,7 @@
 import { createContext, useContext, useEffect, useState } from "react"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+import { setTheme as setAppTheme } from "@tauri-apps/api/app"
+import { isTauriEnv } from "@/lib/api"
 
 type Theme = "dark" | "light" | "system"
 
@@ -71,6 +74,22 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     root.classList.add(resolvedTheme)
     localStorage.setItem("theme", theme)
   }, [resolvedTheme, theme, mounted])
+
+  // Sync the native window theme + background (Tauri title bar / launch flash)
+  // to the resolved app theme so the OS chrome follows the app's light/dark
+  // and there's no mismatched background flash. No-op in web mode.
+  useEffect(() => {
+    if (!isTauriEnv()) return
+    const win = getCurrentWindow()
+    // App-level theme sets NSApp appearance -> drives the macOS title bar.
+    // (Window-level setTheme alone doesn't move the title bar on macOS.)
+    setAppTheme(resolvedTheme).catch(() => {})
+    win.setTheme(resolvedTheme).catch(() => {})
+    // Match the app canvas (--background): oklch(0.975) light / oklch(0.135 0.01 270) dark.
+    const bg: [number, number, number] =
+      resolvedTheme === "dark" ? [20, 20, 27] : [245, 245, 245]
+    win.setBackgroundColor(bg).catch(() => {})
+  }, [resolvedTheme])
 
   // Don't block rendering - always show children with current theme
   return (
