@@ -98,8 +98,44 @@ pub struct SystemInfo {
     pub free_memory: u64,
     /// Available memory in bytes
     pub available_memory: u64,
+    /// Global CPU usage (0..100), sampled over a short interval
+    pub cpu_usage: f32,
     /// GPU information (if detected)
     pub gpus: Vec<GpuInfo>,
+    /// Mounted filesystems (storage usage)
+    pub disks: Vec<DiskInfo>,
+    /// Network interfaces (traffic)
+    pub networks: Vec<NetInfo>,
+}
+
+/// One mounted filesystem.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DiskInfo {
+    /// Device / label name (e.g. "Macintosh HD", "/dev/sda1")
+    pub name: String,
+    /// Mount point (e.g. "/", "/home")
+    pub mount: String,
+    /// Total bytes
+    pub total: u64,
+    /// Used bytes (total - available)
+    pub used: u64,
+    /// Available bytes
+    pub available: u64,
+}
+
+/// One network interface.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NetInfo {
+    /// Interface name (e.g. "en0", "eth0")
+    pub name: String,
+    /// First IPv4/IPv6 address, if any
+    pub ip: String,
+    /// MAC address
+    pub mac: String,
+    /// Total bytes received (cumulative)
+    pub rx_bytes: u64,
+    /// Total bytes transmitted (cumulative)
+    pub tx_bytes: u64,
 }
 
 /// Get overall system statistics.
@@ -231,16 +267,75 @@ pub async fn get_system_stats_handler(
         .map(|c| c.get())
         .unwrap_or(1);
 
-    // Get memory info using sysinfo crate
-    let (total_memory, used_memory, free_memory, available_memory) = {
+    // Get memory + CPU info using sysinfo. CPU usage needs two samples spaced
+    // in time (first refresh establishes a baseline; the value is meaningful on
+    // the next refresh), so take a ~200ms sample. The 5s response cache means
+    // this only runs once per cache window.
+    let (total_memory, used_memory, free_memory, available_memory, cpu_usage) = {
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
+        sys.refresh_cpu_usage();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        sys.refresh_cpu_usage();
         (
             sys.total_memory(),
             sys.used_memory(),
             sys.free_memory(),
             sys.available_memory(),
+            sys.global_cpu_usage(),
         )
+    };
+
+    // Mounted filesystems (storage usage)
+    let disks: Vec<DiskInfo> = {
+        let dl = sysinfo::Disks::new_with_refreshed_list();
+        // macOS APFS surfaces the same container at multiple mount points
+        // (e.g. "/" and "/System/Volumes/Data"); dedup by (total, used).
+        let mut seen = std::collections::HashSet::new();
+        dl.iter()
+            .filter_map(|d| {
+                let total = d.total_space();
+                let available = d.available_space();
+                let used = total.saturating_sub(available);
+                if !seen.insert((total, used)) {
+                    return None;
+                }
+                Some(DiskInfo {
+                    name: d.name().to_string_lossy().to_string(),
+                    mount: d.mount_point().to_string_lossy().to_string(),
+                    total,
+                    used,
+                    available,
+                })
+            })
+            .collect()
+    };
+
+    // Network interfaces (traffic). Skip loopback.
+    let networks: Vec<NetInfo> = {
+        let nets = sysinfo::Networks::new_with_refreshed_list();
+        nets.iter()
+            .filter_map(|(name, net)| {
+                if name.starts_with("lo") {
+                    return None;
+                }
+                // Only include interfaces with a routable IPv4 address — skips
+                // macOS's many IPv6 link-local / virtual interfaces (utun*, awdl*,
+                // llw*, bridge*, stf*, etc.) so the panel shows real connections.
+                let ip = net
+                    .ip_networks()
+                    .iter()
+                    .find(|n| n.addr.is_ipv4())
+                    .map(|n| n.addr.to_string())?;
+                Some(NetInfo {
+                    name: name.to_string(),
+                    ip,
+                    mac: net.mac_address().to_string(),
+                    rx_bytes: net.total_received(),
+                    tx_bytes: net.total_transmitted(),
+                })
+            })
+            .collect()
     };
 
     // Detect GPUs (lazy: first call triggers detection, subsequent calls use cache)
@@ -268,7 +363,10 @@ pub async fn get_system_stats_handler(
         used_memory,
         free_memory,
         available_memory,
+        cpu_usage,
         gpus,
+        disks,
+        networks,
     };
 
     let stats = SystemStats {
@@ -289,7 +387,10 @@ pub async fn get_system_stats_handler(
         "used_memory": system_info.used_memory,
         "free_memory": system_info.free_memory,
         "available_memory": system_info.available_memory,
+        "cpu_usage": system_info.cpu_usage,
         "gpus": system_info.gpus,
+        "disks": system_info.disks,
+        "networks": system_info.networks,
     }))?;
 
     // Cache the response for 5 seconds
@@ -549,6 +650,9 @@ mod tests {
                 free_memory: 4_000_000_000,
                 available_memory: 8_000_000_000,
                 gpus: vec![],
+                cpu_usage: 42.0,
+                disks: vec![],
+                networks: vec![],
             },
         };
 

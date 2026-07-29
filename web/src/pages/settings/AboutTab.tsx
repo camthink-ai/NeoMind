@@ -15,6 +15,8 @@ import {
   Activity,
   Monitor,
   Download,
+  Upload,
+  Wifi,
   Loader2,
   Terminal,
   ExternalLink,
@@ -22,8 +24,7 @@ import {
 import { api, isTauriEnv } from "@/lib/api"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { useUpdateCheck } from "@/hooks/useUpdateCheck"
-import { useAppStore, useStore } from "@/store"
-import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
+import { useAppStore } from "@/store"
 
 interface GpuInfo {
   name: string
@@ -42,7 +43,26 @@ interface SystemInfo {
   used_memory: number
   free_memory: number
   available_memory: number
+  cpu_usage: number
   gpus: GpuInfo[]
+  disks: DiskInfo[]
+  networks: NetInfo[]
+}
+
+interface DiskInfo {
+  name: string
+  mount: string
+  total: number
+  used: number
+  available: number
+}
+
+interface NetInfo {
+  name: string
+  ip: string
+  mac: string
+  rx_bytes: number
+  tx_bytes: number
 }
 
 /* ============================================================================
@@ -81,69 +101,71 @@ function MetricTile({
   )
 }
 
-function MemoryGauge({
-  used,
-  total,
-  available,
-  formatBytes,
-  usedLabel,
-  availableLabel,
-  memoryLabel,
+function UsageGauge({
+  icon: Icon,
+  label,
+  pct,
+  sub,
+  rightLabel,
+  rightValue,
+  footer,
 }: {
-  used: number
-  total: number
-  available: number
-  formatBytes: (b: number) => string
-  usedLabel: string
-  availableLabel: string
-  memoryLabel: string
+  icon: LucideIcon
+  label: string
+  pct: number
+  sub?: string
+  rightLabel?: string
+  rightValue?: string
+  footer?: string
 }) {
-  const pct = Math.round((used / total) * 100)
-  const barColor = pct >= 80 ? "bg-error" : pct >= 60 ? "bg-warning" : "bg-success"
-  const textColor = pct >= 80 ? "text-error" : pct >= 60 ? "text-warning" : "text-success"
+  const clamped = Math.max(0, Math.min(100, Math.round(pct)))
+  const barColor = clamped >= 80 ? "bg-error" : clamped >= 60 ? "bg-info" : "bg-success"
+  const textColor = clamped >= 80 ? "text-error" : clamped >= 60 ? "text-info" : "text-success"
 
   return (
     <div className="rounded-lg border bg-muted-30 p-4 space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <HardDrive className="h-3.5 w-3.5" />
-            <span className="uppercase tracking-wide">{memoryLabel}</span>
+            <Icon className="h-3.5 w-3.5" />
+            <span className="uppercase tracking-wide">{label}</span>
           </div>
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-2xl font-semibold leading-none">
-              {pct}
+              {clamped}
               <span className="text-lg text-muted-foreground">%</span>
             </span>
-            <span className={`text-xs font-mono ${textColor}`}>
-              {formatBytes(used)} / {formatBytes(total)}
-            </span>
+            {sub && <span className={`text-xs font-mono ${textColor}`}>{sub}</span>}
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-xs text-muted-foreground uppercase tracking-wide">
-            {availableLabel}
+        {rightLabel && (
+          <div className="text-right">
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">
+              {rightLabel}
+            </div>
+            {rightValue && <div className="font-mono text-sm font-medium">{rightValue}</div>}
           </div>
-          <div className="font-mono text-sm font-medium">{formatBytes(available)}</div>
-        </div>
+        )}
       </div>
       {/* Segmented gauge with tick marks */}
       <div className="relative h-2.5 w-full rounded-full bg-muted overflow-hidden">
         <div
           className={`h-full ${barColor} rounded-full transition-all duration-700 ease-out`}
-          style={{ width: `${pct}%` }}
+          style={{ width: `${clamped}%` }}
         />
         {[25, 50, 75].map((p) => (
           <div
             key={p}
-            className="absolute top-0 bottom-0 w-px bg-glass-border"
+            className="absolute top-0 bottom-0 w-px bg-border"
             style={{ left: `${p}%` }}
           />
         ))}
       </div>
-      <div className="flex justify-between text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
-        <span>{usedLabel}: {formatBytes(used)}</span>
-      </div>
+      {footer && (
+        <div className="flex justify-between text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
+          <span>{footer}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -209,16 +231,6 @@ export function AboutTab() {
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
-  const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
-  const instances = useStore((s) => s.instances)
-  const currentInstanceId = useStore((s) => s.currentInstanceId)
-  const isConnected = useStore((s) => s.wsConnected)
-  const currentInstance = instances.find((i) => i.id === currentInstanceId)
-  const instanceOnline =
-    isConnected &&
-    (!currentInstance || currentInstance.is_local
-      ? currentInstance?.last_status === "online" || !currentInstance
-      : true)
 
   const handleUpToDate = useCallback(() => {
     showSuccess(t("settings:alreadyUpToDate"))
@@ -268,6 +280,10 @@ export function AboutTab() {
 
   useEffect(() => {
     loadSystemInfo()
+    // Resources (CPU/memory/disk) drift over time — refresh every 5s, aligned
+    // with the backend's 5s stats cache. Cleared on unmount.
+    const id = setInterval(loadSystemInfo, 5000)
+    return () => clearInterval(id)
   }, [])
 
   const formatBytes = (bytes: number) => {
@@ -336,47 +352,6 @@ export function AboutTab() {
         </div>
       </div>
 
-      {/* Instance manager entry — moved here from the mobile drawer so the
-          drawer stays focused on navigation. Desktop also exposes this via
-          TopNav's InstanceSelector, but having it in Settings gives a single
-          canonical home on mobile. */}
-      <Card>
-        <CardContent className="flex items-center justify-between gap-3 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${
-                instanceOnline
-                  ? "bg-success-light text-success"
-                  : "bg-error-light text-error"
-              }`}
-            >
-              <Server className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-medium">
-                {currentInstance?.name || t("instances:local", "Local")}
-              </div>
-              <div
-                className={`text-xs ${
-                  instanceOnline ? "text-success" : "text-error"
-                }`}
-              >
-                {instanceOnline
-                  ? t("instances:status.online", "Online")
-                  : t("instances:status.offline", "Offline")}
-              </div>
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setInstanceManagerOpen(true)}
-          >
-            {t("instances:manage", "Manage")}
-          </Button>
-        </CardContent>
-      </Card>
-
       {/* System Information Card */}
       <Card>
         <CardHeader>
@@ -434,16 +409,74 @@ export function AboutTab() {
                 )}
               </div>
 
-              {/* Memory gauge */}
-              <MemoryGauge
-                used={systemInfo.used_memory}
-                total={systemInfo.total_memory}
-                available={systemInfo.available_memory}
-                formatBytes={formatBytes}
-                usedLabel={t("settings:usedMemory")}
-                availableLabel={t("settings:availableMemory")}
-                memoryLabel={t("settings:memory")}
-              />
+              {/* Resource gauges — CPU / Memory / Disk (refresh every 5s) */}
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <UsageGauge
+                  icon={Cpu}
+                  label={t("settings:cpu", "CPU")}
+                  pct={systemInfo.cpu_usage ?? 0}
+                  sub={`${systemInfo.cpu_count} ${t("settings:cores")}`}
+                />
+                <UsageGauge
+                  icon={HardDrive}
+                  label={t("settings:memory")}
+                  pct={
+                    systemInfo.total_memory > 0
+                      ? (systemInfo.used_memory / systemInfo.total_memory) * 100
+                      : 0
+                  }
+                  sub={`${formatBytes(systemInfo.used_memory)} / ${formatBytes(systemInfo.total_memory)}`}
+                  rightLabel={t("settings:availableMemory")}
+                  rightValue={formatBytes(systemInfo.available_memory)}
+                  footer={`${t("settings:usedMemory")}: ${formatBytes(systemInfo.used_memory)}`}
+                />
+                {(systemInfo.disks ?? []).map((disk, idx) => (
+                  <UsageGauge
+                    key={`disk-${idx}-${disk.mount}`}
+                    icon={HardDrive}
+                    label={disk.mount || disk.name || t("settings:disk", "Disk")}
+                    pct={disk.total > 0 ? (disk.used / disk.total) * 100 : 0}
+                    sub={`${formatBytes(disk.used)} / ${formatBytes(disk.total)}`}
+                    rightLabel={t("settings:free", "free")}
+                    rightValue={formatBytes(disk.available)}
+                  />
+                ))}
+              </div>
+
+              {/* Network interfaces */}
+              {(systemInfo.networks ?? []).length > 0 && (
+                <div className="rounded-lg border bg-muted-30 p-4">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
+                    <Wifi className="h-3.5 w-3.5" />
+                    <span className="uppercase tracking-wide">{t("settings:network", "Network")}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {(systemInfo.networks ?? []).map((net, idx) => (
+                      <div
+                        key={`net-${idx}-${net.name}`}
+                        className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="font-medium">{net.name}</span>
+                          {net.ip && (
+                            <span className="font-mono text-xs text-muted-foreground">{net.ip}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 font-mono text-xs">
+                          <span className="inline-flex items-center gap-1 text-info">
+                            <Download className="h-3 w-3" />
+                            {formatBytes(net.rx_bytes)}
+                          </span>
+                          <span className="inline-flex items-center gap-1 text-success">
+                            <Upload className="h-3 w-3" />
+                            {formatBytes(net.tx_bytes)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* GPU detail rows */}
               {systemInfo.gpus.length > 0 && (
@@ -570,10 +603,6 @@ export function AboutTab() {
       <div className="text-center text-xs text-muted-foreground">
         © 2025–2026 CamThink · NeoMind
       </div>
-      <InstanceManagerDialog
-        open={instanceManagerOpen}
-        onOpenChange={setInstanceManagerOpen}
-      />
     </div>
   )
 }

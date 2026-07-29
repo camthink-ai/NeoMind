@@ -1138,7 +1138,7 @@ export const api = {
     ),
 
   // ========== Stats API ==========
-  getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number; gpus: Array<{ name: string; vendor: string; total_memory_mb: number | null; driver_version: string | null }> }>('/stats/system'),
+  getSystemStats: () => fetchAPI<{ version: string; uptime: number; platform: string; arch: string; cpu_count: number; total_memory: number; used_memory: number; free_memory: number; available_memory: number; cpu_usage: number; gpus: Array<{ name: string; vendor: string; total_memory_mb: number | null; driver_version: string | null }>; disks: Array<{ name: string; mount: string; total: number; used: number; available: number }>; networks: Array<{ name: string; ip: string; mac: string; rx_bytes: number; tx_bytes: number }> }>('/stats/system'),
   getRuleStats: () => fetchAPI<{ stats: { total_rules: number; enabled_rules: number; disabled_rules: number; by_type: Record<string, number> } }>('/stats/rules'),
 
   /**
