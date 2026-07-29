@@ -1133,11 +1133,11 @@ function ConditionTypeButton({ label, icon, onClick }: { label: string; icon: Re
   return (
     <button
       onClick={onClick}
-      className="p-4 rounded-lg border-2 border-border hover:border-accent-indigo hover:bg-muted-30 transition-all text-left"
+      className="p-4 rounded-lg border-2 border-border hover:border-accent-indigo hover:bg-muted-30 transition-all text-left min-w-0"
     >
-      <div className="flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-muted-30">{icon}</div>
-        <span className="font-medium">{label}</span>
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="p-2 rounded-lg bg-muted-30 shrink-0">{icon}</div>
+        <span className="font-medium min-w-0 break-words">{label}</span>
       </div>
     </button>
   )
