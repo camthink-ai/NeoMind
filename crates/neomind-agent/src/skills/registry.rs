@@ -66,6 +66,7 @@ impl SkillRegistry {
             include_str!("../skills/builtins/settings-management.md"),
             include_str!("../skills/builtins/system-info.md"),
             include_str!("../skills/builtins/extension-management.md"),
+            include_str!("../skills/builtins/widget-management.md"),
         ];
 
         let mut count = 0;

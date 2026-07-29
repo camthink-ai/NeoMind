@@ -16,6 +16,23 @@ anti_triggers:
 
 # Transform Management & Data Processing
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output.
+
+| Command | Purpose |
+|---|---|
+| `neomind transform list` | List all transforms |
+| `neomind transform get <id>` | Transform details |
+| `neomind transform create` | Create a new transform |
+| `neomind transform update <id>` | Update a transform |
+| `neomind transform enable <id>` | Enable a transform |
+| `neomind transform disable <id>` | Disable a transform |
+| `neomind transform delete <id>` | Delete a transform |
+| `neomind transform metrics` | List virtual metrics from transforms |
+| `neomind transform test-code` | Test transform code |
+| `neomind transform data-sources` | List transform data sources |
+
 Transforms process raw metric data into derived values using JavaScript code. They create virtual metrics that can be used in dashboards just like device data.
 
 ## CRITICAL: Transform Code Format

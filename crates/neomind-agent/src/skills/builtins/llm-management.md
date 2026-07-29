@@ -16,6 +16,21 @@ anti_triggers:
 
 # LLM Backend Management
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output.
+
+| Command | Purpose |
+|---|---|
+| `neomind llm list` | List configured LLM backends |
+| `neomind llm get <id>` | LLM backend details |
+| `neomind llm models` | List available models (from Ollama) |
+| `neomind llm create` | Create a new LLM backend |
+| `neomind llm update <id>` | Update LLM backend configuration |
+| `neomind llm delete <id>` | Delete an LLM backend |
+| `neomind llm activate <id>` | Activate a backend (set as default) |
+| `neomind llm test <id>` | Test LLM backend connection |
+
 LLM backends are the model providers that power all agents. Each agent is bound to one backend (via `--llm-backend <ID>`, or the system default if unset). Backends are **multi-instance** — you can register several and switch between them.
 
 ## CRITICAL: Create → Test → Activate Workflow

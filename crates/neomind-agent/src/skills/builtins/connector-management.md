@@ -16,6 +16,24 @@ anti_triggers:
 
 # Connector Management & MQTT Configuration
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output.
+
+| Command | Purpose |
+|---|---|
+| `neomind connector list` | List all data connectors |
+| `neomind connector get <id>` | Connector details + connection status |
+| `neomind connector create` | Create a new data connector |
+| `neomind connector update <id>` | Update connector configuration |
+| `neomind connector delete <id>` | Delete a connector |
+| `neomind connector enable <id>` | Enable a connector |
+| `neomind connector disable <id>` | Disable a connector |
+| `neomind connector test <id>` | Test connectivity (real MQTT handshake) |
+| `neomind connector subscriptions <id>` | List MQTT topic subscriptions |
+| `neomind connector subscribe <id>` | Subscribe to a custom MQTT topic |
+| `neomind connector unsubscribe <id>` | Unsubscribe from a topic |
+
 Connectors link NeoMind to external MQTT brokers and data sources. They allow subscribing to topics and bridging data from remote systems.
 
 ## CRITICAL Rules

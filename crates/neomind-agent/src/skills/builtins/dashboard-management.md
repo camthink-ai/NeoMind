@@ -22,6 +22,21 @@ anti_triggers:
 
 # Dashboard Management & Component Creation
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output.
+
+| Command | Purpose |
+|---|---|
+| `neomind dashboard list` | List all dashboards |
+| `neomind dashboard get <id>` | Dashboard details |
+| `neomind dashboard create` | Create a new dashboard |
+| `neomind dashboard update <id>` | Update a dashboard |
+| `neomind dashboard add-components <id>` | Add components (append mode) |
+| `neomind dashboard remove-components <id>` | Remove components by ID |
+| `neomind dashboard delete <id>` | Delete a dashboard |
+| `neomind dashboard share <id>` | Share a dashboard |
+
 Creating dashboards with data-bound components is the most complex CLI operation. Follow the workflows below exactly.
 
 ## CRITICAL Rules

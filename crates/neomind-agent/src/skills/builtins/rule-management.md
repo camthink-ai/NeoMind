@@ -16,6 +16,22 @@ anti_triggers:
 
 # Rule Management
 
+## Command Cheat-Sheet (run these via `shell`)
+
+Always RUN the command yourself and report the real output.
+
+| Command | Purpose |
+|---|---|
+| `neomind rule list` | List all rules |
+| `neomind rule get <id>` | Rule details |
+| `neomind rule create` | Create a new rule |
+| `neomind rule update <id>` | Update a rule |
+| `neomind rule delete <id>` | Delete a rule |
+| `neomind rule enable <id>` | Enable a rule |
+| `neomind rule disable <id>` | Disable a rule |
+| `neomind rule test <id>` | Test a rule |
+| `neomind rule history <id>` | Rule execution history |
+
 Create, update, diagnose, or delete event-driven rules over device / extension / transform metrics. Skipped discovery is the #1 cause of silent rule failures.
 
 ## When to Load This Skill
