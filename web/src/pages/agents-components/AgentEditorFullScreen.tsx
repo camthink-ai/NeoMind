@@ -1644,7 +1644,7 @@ export function AgentEditorFullScreen({
               </div>
 
               {/* Schedule Configuration */}
-              <div className={cn("border rounded-lg", isMobile ? "p-4" : "p-4 bg-muted-50")}>
+              <div className={cn("border rounded-lg", isMobile ? "p-4" : "p-4 bg-muted-30")}>
                 {scheduleType === 'timer' && (
                   <div className="space-y-3">
                     {/* Timer sub-type tabs */}
@@ -1980,7 +1980,7 @@ export function AgentEditorFullScreen({
                                   hasTrigger && "border-l-2 border-primary",
                                   !hasTrigger && "border-l-2 border-transparent",
                                   isViewing && hasTrigger && "bg-muted",
-                                  isViewing && !hasTrigger && "bg-muted-50",
+                                  isViewing && !hasTrigger && "bg-muted-30",
                                   "hover:bg-muted"
                                 )}
                               >
@@ -2209,7 +2209,7 @@ export function AgentEditorFullScreen({
                   <button
                     type="button"
                     onClick={() => setFreeModeResourcesExpanded(!freeModeResourcesExpanded)}
-                    className="w-full flex items-center justify-between p-3 text-left hover:bg-muted-50 transition-colors"
+                    className="w-full flex items-center justify-between p-3 text-left hover:bg-muted-30 transition-colors"
                   >
                     <div className="flex items-center gap-2">
                       <ChevronRight className={cn("h-4 w-4 transition-transform", freeModeResourcesExpanded && "rotate-90")} />
@@ -2706,7 +2706,7 @@ function ScheduleCard({ icon, label, description, active, onClick, isMobile = fa
           : "border-transparent hover:border-border hover:bg-muted-30"
       )}
     >
-      <div className={cn("rounded-lg", active ? "bg-muted" : "bg-muted-50", isMobile ? "p-2" : "p-1.5")}>
+      <div className={cn("rounded-lg", active ? "bg-muted" : "bg-muted-30", isMobile ? "p-2" : "p-1.5")}>
         {icon}
       </div>
       <div className="text-center">
@@ -2730,7 +2730,7 @@ function RecommendationCard({ recommendation, selected, onClick }: Recommendatio
       onClick={onClick}
       className={cn(
         "flex items-center gap-2 px-3 py-2 rounded-lg border text-left whitespace-nowrap transition-colors min-w-0",
-        selected ? "border-primary bg-muted" : "border-border hover:bg-muted-50"
+        selected ? "border-primary bg-muted" : "border-border hover:bg-muted-30"
       )}
     >
       <div className={cn(
@@ -2921,7 +2921,7 @@ function SelectedResourceItem({ resource, setSelectedResources, onRemove, onTogg
                           : "px-1.5 py-0.5 text-xs",
                         resource.selectedMetrics.has(metric.name)
                           ? "bg-muted text-primary"
-                          : "hover:bg-muted-50"
+                          : "hover:bg-muted-30"
                       )}
                     >
                       <div
@@ -2990,7 +2990,7 @@ function SelectedResourceItem({ resource, setSelectedResources, onRemove, onTogg
                         : "px-1.5 py-0.5 text-xs",
                       resource.selectedCommands.has(command.name)
                         ? "bg-muted text-primary"
-                        : "hover:bg-muted-50"
+                        : "hover:bg-muted-30"
                     )}
                     onClick={() => onToggleCommand(resource.id, command.name)}
                   >

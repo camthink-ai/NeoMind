@@ -859,7 +859,7 @@ export function ExtensionDetailsDialog({
           return (
             <div key={metric.name} className="border rounded-lg overflow-hidden">
               {/* Metric Header */}
-              <div className="p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-muted-20">
+              <div className="p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-muted-30">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-sm break-words">{metric.display_name}</span>
                   <Badge variant="outline" className="text-xs break-all">

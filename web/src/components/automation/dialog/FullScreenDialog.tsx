@@ -104,67 +104,37 @@ export function FullScreenDialog({
 // ============================================================================
 
 export interface FullScreenDialogHeaderProps {
-  icon: ReactNode
-  iconBg?: string
-  iconColor?: string
   title: string
-  subtitle?: string
   onClose: () => void
   /** Actions to show on the right side */
   actions?: ReactNode
+  /** @deprecated no longer rendered — kept so callers compile */
+  icon?: ReactNode
+  /** @deprecated */
+  iconBg?: string
+  /** @deprecated */
+  iconColor?: string
+  /** @deprecated */
+  subtitle?: string
 }
 
 export function FullScreenDialogHeader({
-  icon,
-  iconBg = 'bg-info-light',
-  iconColor = 'text-info',
   title,
-  subtitle,
   onClose,
   actions,
 }: FullScreenDialogHeaderProps) {
   return (
-    <header
-      className={cn(
-        "shrink-0 flex items-center justify-between gap-3 md:gap-4",
-        "px-3 md:px-5 lg:px-6 py-3 md:py-4 lg:py-5",
-        "border-b border-border"
-      )}
-    >
-      {/* Left: Icon + Title */}
-      <div className="flex items-center gap-4 min-w-0 flex-1">
-        <div className={cn(
-          "shrink-0 flex items-center justify-center",
-          "w-8 h-8 md:w-10 md:h-11",
-          "rounded-lg md:rounded-xl",
-          iconBg
-        )}>
-          <div className={cn("w-4 h-4 md:w-5 md:h-5", iconColor)}>
-            {icon}
-          </div>
-        </div>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-base md:text-lg lg:text-xl font-semibold truncate text-foreground">
-            {title}
-          </h1>
-          {subtitle && (
-            <p className="text-xs md:text-sm text-muted-foreground truncate mt-0.5">
-              {subtitle}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Right: Actions + Close */}
+    <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 h-14 border-b border-border">
+      <h1 className="text-base md:text-lg font-semibold truncate text-foreground min-w-0 flex-1">
+        {title}
+      </h1>
       <div className="flex items-center gap-2 shrink-0">
         {actions}
         <button
           onClick={onClose}
           className={cn(
-            "shrink-0 flex items-center justify-center",
-            "w-8 h-8 md:w-9 md:h-9 lg:w-10 lg:h-10",
-            "rounded-lg md:rounded-xl",
-            "text-muted-foreground hover:text-foreground",
+            "shrink-0 flex items-center justify-center w-8 h-8 md:w-9 md:h-9",
+            "rounded-lg text-muted-foreground hover:text-foreground",
             "bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10",
             "transition-all"
           )}

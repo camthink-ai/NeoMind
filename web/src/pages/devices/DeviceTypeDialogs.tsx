@@ -912,7 +912,7 @@ function DataDefinitionStep({
             </div>
 
             {(!data.metrics || data.metrics.length === 0) ? (
-              <div className="flex items-center justify-center border-2 border-dashed rounded-lg bg-muted-20 py-12">
+              <div className="flex items-center justify-center border-2 border-dashed rounded-lg bg-muted-30 py-12">
                 <div className="text-center">
                   <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
                   <p className="text-sm text-muted-foreground">No metrics defined</p>
@@ -983,7 +983,7 @@ function DataDefinitionStep({
             {importError}
           </p>
         )}
-        <div className="p-3 bg-muted-50 rounded text-xs">
+        <div className="p-3 bg-muted-30 rounded text-xs">
           <p className="font-medium mb-1">{t('devices:metricEditor.exampleJson')}</p>
           <pre className="text-muted-foreground">{`{
   "sensor": {
@@ -1190,7 +1190,7 @@ function CommandsStep({
             </div>
 
             {(!data.commands || data.commands.length === 0) ? (
-              <div className="text-center py-12 border-2 border-dashed rounded-lg bg-muted-20">
+              <div className="text-center py-12 border-2 border-dashed rounded-lg bg-muted-30">
                 <FileText className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
                 <p className="text-sm text-muted-foreground">No commands defined</p>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -1321,7 +1321,7 @@ function ReviewStep({ data, onEdit, onValidate, validating, validationResult }: 
             ) : (
               <div className="space-y-3">
                 {data.metrics.map((metric, i) => (
-                  <div key={i} className="p-3 bg-muted-50 rounded-lg">
+                  <div key={i} className="p-3 bg-muted-30 rounded-lg">
                     <div className="flex items-center justify-between">
                       <div>
                         <span className="font-mono text-sm">{metric.name}</span>
@@ -1352,7 +1352,7 @@ function ReviewStep({ data, onEdit, onValidate, validating, validationResult }: 
             ) : (
               <div className="space-y-2">
                 {data.commands.map((cmd, i) => (
-                  <div key={i} className="text-sm p-2 bg-muted-50 rounded flex items-center justify-between">
+                  <div key={i} className="text-sm p-2 bg-muted-30 rounded flex items-center justify-between">
                     <div>
                       <span className="font-mono">{cmd.name}</span>
                       <span className="text-muted-foreground mx-2">•</span>
@@ -2369,7 +2369,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
               ) : (
                 <div className="space-y-2">
                   {deviceType.metrics.map((metric, i) => (
-                    <div key={i} className="p-3 bg-muted-50 rounded-lg">
+                    <div key={i} className="p-3 bg-muted-30 rounded-lg">
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="font-mono text-sm truncate">{metric.name}</span>
@@ -2445,7 +2445,7 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
               ) : (
                 <div className="space-y-2">
                   {deviceType.commands.map((cmd, i) => (
-                    <div key={i} className="p-3 bg-muted-50 rounded-lg">
+                    <div key={i} className="p-3 bg-muted-30 rounded-lg">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-sm">{cmd.name}</span>

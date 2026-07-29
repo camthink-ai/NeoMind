@@ -481,29 +481,29 @@ export function ComponentConfigDialog({
           <div className="flex-1 flex flex-col overflow-hidden bg-background min-w-0">
             {(hasStyleConfig || hasDisplayConfig || hasDataSource) ? (
               <Tabs value={configTabValue} onValueChange={(v) => setConfigTabValue(v as typeof configTabValue)} className="flex-1 flex flex-col min-h-0">
-                <TabsList className="w-full justify-start bg-muted-50 px-4 h-12 shrink-0 border-b rounded-none">
+                <TabsList className="w-full justify-start shrink-0">
                   {hasStyleConfig && (
-                    <TabsTrigger value="style" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-lg">
+                    <TabsTrigger value="style">
                       {t('componentConfig.style')}
                     </TabsTrigger>
                   )}
                   {hasDisplayConfig && (
-                    <TabsTrigger value="display" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-lg">
+                    <TabsTrigger value="display">
                       {t('componentConfig.display')}
                     </TabsTrigger>
                   )}
                   {hasDataSource && (
-                    <TabsTrigger value="datasource" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-lg">
+                    <TabsTrigger value="datasource">
                       {t('componentConfig.dataSource')}
                     </TabsTrigger>
                   )}
                   {hasAdvancedConfig && (
-                    <TabsTrigger value="advanced" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-lg">
+                    <TabsTrigger value="advanced">
                       {t('componentConfig.advanced', 'Advanced')}
                     </TabsTrigger>
                   )}
                   {shouldShowDataTransform && (
-                    <TabsTrigger value="transform" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-lg">
+                    <TabsTrigger value="transform">
                       {t('componentConfig.transform')}
                     </TabsTrigger>
                   )}
