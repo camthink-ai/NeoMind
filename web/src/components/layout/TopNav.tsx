@@ -248,9 +248,9 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                       variant="ghost"
                       size="icon"
                       className={cn(
-                        "w-11 h-11 rounded-lg transition-all no-press-scale",
+                        "w-10 h-10 rounded-lg transition-all no-press-scale",
                         isActive
-                          ? "text-brand"
+                          ? "text-brand hover:text-brand hover:bg-transparent"
                           : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
                       )}
                       onClick={() => startTransition(() => navigate(item.path))}
