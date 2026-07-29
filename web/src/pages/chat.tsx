@@ -165,6 +165,7 @@ export function ChatPage() {
   const { toast } = useToast()
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
   const navigate = useNavigate()
+  const openSettings = useStore((s) => s.openSettings)
   const [searchParams, setSearchParams] = useSearchParams()
   const { handleError } = useErrorHandler()
   const llmBackends = useStore((state) => state.llmBackends)
@@ -855,7 +856,7 @@ export function ChatPage() {
             {t('chat:notConfigured.description')}
           </p>
           <Button
-            onClick={() => navigate('/settings')}
+            onClick={() => openSettings()}
             className="gap-2"
             size="default"
           >

@@ -12,6 +12,8 @@ import { useState, useEffect, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
+import { useStore } from "@/store"
+import type { SettingsSection } from "@/store/types"
 import {
   Rocket, Sparkles, Cpu, Check, X, ChevronLeft, ChevronRight,
   LayoutDashboard, Zap, Puzzle, MessageSquareText,
@@ -37,6 +39,7 @@ type StepKey = (typeof STEPS)[number]
 export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: OnboardingDialogProps) {
   const { t } = useTranslation("common")
   const navigate = useNavigate()
+  const openSettings = useStore((s) => s.openSettings)
   const [step, setStep] = useState<StepKey>("setup")
 
   const stepIndex = STEPS.indexOf(step)
@@ -67,7 +70,15 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
 
   const handleAction = (path: string) => {
     onOpenChange(false)
-    navigate(path)
+    // Settings is now a full-screen dialog, not a route — open it on the tab.
+    if (path.startsWith("/settings")) {
+      const tab = path.includes("?tab=")
+        ? (path.split("?tab=")[1] as SettingsSection)
+        : undefined
+      openSettings(tab)
+    } else {
+      navigate(path)
+    }
   }
 
   const handleFinish = () => {

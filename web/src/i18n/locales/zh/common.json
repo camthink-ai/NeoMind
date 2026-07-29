@@ -831,7 +831,8 @@
     "preferences": "偏好设置",
     "about": "关于",
     "help": "帮助",
-    "role": "角色"
+    "role": "角色",
+    "language": "语言"
   },
   "actions": {
     "more": "更多"

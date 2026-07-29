@@ -6,13 +6,14 @@
  */
 
 import type { StateCreator } from 'zustand'
-import type { SettingsState } from '../types'
+import type { SettingsState, SettingsSection } from '../types'
 import { api } from '@/lib/api'
 import { logError } from '@/lib/errors'
 
 export interface SettingsSlice extends SettingsState {
   // Dialog actions
-  setSettingsDialogOpen: (open: boolean) => void
+  openSettings: (section?: SettingsSection) => void
+  closeSettings: () => void
 
   // System Config actions
   exportConfig: () => Promise<{ config: Record<string, unknown> }>
@@ -28,9 +29,17 @@ export const createSettingsSlice: StateCreator<
 > = (set) => ({
   // Initial state
   settingsDialogOpen: false,
+  settingsSection: "preferences",
 
-  // Dialog actions
-  setSettingsDialogOpen: (open) => set({ settingsDialogOpen: open }),
+  // Dialog actions — openSettings(section?) opens the settings dialog on the
+  // given section (falls back to current/last). Any page can call it; the
+  // dialog is mounted once at the app root.
+  openSettings: (section) =>
+    set((state) => ({
+      settingsDialogOpen: true,
+      settingsSection: section ?? state.settingsSection,
+    })),
+  closeSettings: () => set({ settingsDialogOpen: false }),
 
   // System Config - Export
   exportConfig: async () => {

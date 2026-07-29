@@ -242,6 +242,7 @@ export function PushTargetsTab() {
         data={paginatedTargets as unknown as Record<string, unknown>[]}
         renderCell={renderCell}
         rowKey={(row) => (row as unknown as PushTarget).id}
+        onRowClick={(row) => setEditingPushTarget(row as unknown as PushTarget)}
         actions={actions}
         loading={pushTargetsLoading}
         flexHeight

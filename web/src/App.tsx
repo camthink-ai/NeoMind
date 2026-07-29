@@ -7,6 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { TopNav } from "@/components/layout/TopNav"
 import { MobileNav } from "@/components/layout/MobileNav"
+import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
 import { useIsMobile } from "@/hooks/useMobile"
 import { Toaster } from "@/components/ui/toaster"
@@ -20,6 +21,7 @@ import { useExtensionComponents } from "@/hooks/useExtensionComponents"
 import { UpdateDialog } from '@/components/update'
 import { InstanceSwitchOverlay } from '@/components/layout/InstanceSwitchOverlay'
 import { GlobalChatFab } from '@/components/chat/GlobalChatFab'
+import { SettingsDialog } from "@/components/settings/SettingsDialog"
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 import { listen } from "@tauri-apps/api/event"
 import type { ConnectionState } from "@/lib/websocket"
@@ -38,7 +40,6 @@ const DataExplorerPage = lazy(() => import('@/pages/data-explorer').then(m => ({
 const DevicesPage = lazy(() => import('@/pages/devices').then(m => ({ default: m.DevicesPage })))
 const AutomationPage = lazy(() => import('@/pages/automation').then(m => ({ default: m.AutomationPage })))
 const AgentsPage = lazy(() => import('@/pages/agents').then(m => ({ default: m.AgentsPage })))
-const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default: m.SettingsPage })))
 const MessagesPage = lazy(() => import('@/pages/messages').then(m => ({ default: m.default })))
 const ExtensionsPage = lazy(() => import('@/pages/extensions').then(m => ({ default: m.ExtensionsPage })))
 const SystemPage = lazy(() => import('@/pages/SystemPage'))
@@ -577,7 +578,7 @@ function App() {
                       <Route path="/agents/memory" element={<AgentsPage />} />
                       <Route path="/agents/skills" element={<AgentsPage />} />
                       <Route path="/agents/tools" element={<AgentsPage />} />
-                      <Route path="/settings" element={<SettingsPage />} />
+                      <Route path="/settings" element={<Navigate to="/" replace />} />
                       {/* Messages with tab routes */}
                       <Route path="/messages" element={<MessagesPage />} />
                       <Route path="/messages/channels" element={<MessagesPage />} />
@@ -595,6 +596,8 @@ function App() {
                   </main>
                   <Toaster />
                   <Confirmer />
+                  <SettingsDialog />
+                  <SwipeNavigation />
                   {!isMobile && <GlobalChatFab />}
                 </div>
               </ProtectedRoute>

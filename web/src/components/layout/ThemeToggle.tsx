@@ -26,7 +26,7 @@ export function ThemeToggle() {
         <Button
           variant="ghost"
           size="icon"
-          className="w-10 h-10 rounded-lg"
+          className="w-10 h-10 rounded-lg bg-[var(--chrome)]"
         >
           {getIcon()}
         </Button>

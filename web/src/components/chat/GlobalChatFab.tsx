@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
+import { useStore } from "@/store"
 import { useTranslation } from "react-i18next"
 import { MessageSquare } from "lucide-react"
 import { PanelChatView } from "./PanelChatView"
@@ -23,6 +24,7 @@ export function GlobalChatFab() {
   const [isStreaming, setIsStreaming] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
+  const openSettings = useStore((s) => s.openSettings)
   const { t } = useTranslation("chat")
   const fabRef = useRef<HTMLButtonElement>(null)
 
@@ -111,7 +113,7 @@ export function GlobalChatFab() {
             onClose={handleClose}
             onStreamingChange={setIsStreaming}
             showMinimize
-            onNavigateToSettings={() => navigate('/settings')}
+            onNavigateToSettings={() => openSettings()}
           />
         )}
       </div>

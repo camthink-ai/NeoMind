@@ -54,7 +54,7 @@ export function SystemHealthButton() {
         <Button
           variant="ghost"
           size="icon"
-          className="relative w-10 h-10 rounded-lg"
+          className="relative w-10 h-10 rounded-lg bg-[var(--chrome)]"
           aria-label={t('systemHealth.title')}
         >
           <Activity className="h-4 w-4" />

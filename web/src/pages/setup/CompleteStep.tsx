@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
+import { useStore } from '@/store'
 import { Check, MessageSquare, Settings, ChevronRight, Cpu, Zap, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -22,6 +23,7 @@ interface CompleteStepProps {
 export function CompleteStep({ username, initialTimezone, token, getApiUrl, onComplete }: CompleteStepProps) {
   const { t } = useTranslation(['common', 'setup'])
   const navigate = useNavigate()
+  const openSettings = useStore((s) => s.openSettings)
   const [timezone, setTimezone] = useState(initialTimezone)
   const timezoneOptions = getLocalizedTimezones(t)
 
@@ -53,7 +55,7 @@ export function CompleteStep({ username, initialTimezone, token, getApiUrl, onCo
       icon: Cpu,
       title: t('setup:quickLlm'),
       description: t('setup:quickLlmDesc'),
-      action: () => { onComplete(); setTimeout(() => navigate('/settings'), 100) },
+      action: () => { onComplete(); setTimeout(() => openSettings(), 100) },
     },
     {
       icon: Zap,

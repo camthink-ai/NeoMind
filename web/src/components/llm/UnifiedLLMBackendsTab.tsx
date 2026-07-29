@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { confirm } from '@/hooks/use-confirm'
 import {
-  ArrowLeft,
   Server,
   CheckCircle2,
   Loader2,
@@ -17,7 +16,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { EmptyState, LoadingState } from '@/components/shared'
+import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { fetchAPI } from '@/lib/api'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
@@ -397,42 +396,32 @@ export function UnifiedLLMBackendsTab({
 
     return (
       <>
-        {/* Header with back button — sticky. bg-background + negative margins
-            fill the full scroll-container width (px-4 sm:px-6 md:px-8) and
-            a ::before pseudo-element fills the scroll container's pt-2 top
-            padding on mobile so scrolled instances don't bleed through.
-            (-mt-2 doesn't work with sticky: negative margin-top shifts the
-            border-box DOWN when stuck, re-exposing the gap.) */}
-        <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 pb-2 bg-background flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4 before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background md:before:hidden">
-          <Button variant="ghost" size="sm" onClick={() => setView('list')} className="gap-1 self-start -ml-2">
-            <ArrowLeft className="h-4 w-4" />
-            {t('plugins:llm.back')}
-          </Button>
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className={cn("flex items-center justify-center w-10 h-10 rounded-lg shrink-0", info.iconBg)}>
-              {info.icon}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-lg sm:text-2xl font-bold truncate">{info.name}</h2>
-                {selectedType.supports_streaming && (
-                  <Badge variant="outline" className="text-xs shrink-0">{t('plugins:llm.streamingOutput')}</Badge>
-                )}
-                {selectedType.default_model && (
-                  <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">
-                    {t('plugins:llm.defaultModel')}: {selectedType.default_model}
-                  </Badge>
-                )}
-                {selectedType.requires_api_key && (
-                  <Badge variant="outline" className="text-xs text-warning border-warning shrink-0">
-                    {t('plugins:llm.requiresApiKey')}
-                  </Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground line-clamp-2">{selectedType.description}</p>
-            </div>
-          </div>
-        </div>
+        {/* Header with back button — sticky (see shared ListToolbar). */}
+        <ListToolbar
+          onBack={() => setView('list')}
+          backLabel={t('plugins:llm.back')}
+          icon={info.icon}
+          iconBg={info.iconBg}
+          title={info.name}
+          description={selectedType.description}
+          badges={
+            <>
+              {selectedType.supports_streaming && (
+                <Badge variant="outline" className="text-xs shrink-0">{t('plugins:llm.streamingOutput')}</Badge>
+              )}
+              {selectedType.default_model && (
+                <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">
+                  {t('plugins:llm.defaultModel')}: {selectedType.default_model}
+                </Badge>
+              )}
+              {selectedType.requires_api_key && (
+                <Badge variant="outline" className="text-xs text-warning border-warning shrink-0">
+                  {t('plugins:llm.requiresApiKey')}
+                </Badge>
+              )}
+            </>
+          }
+        />
 
         {/* Instances */}
         {pluginInstances.length === 0 ? (

@@ -121,6 +121,7 @@ export default function SystemPage() {
   const navigate = useNavigate()
 
   const user = useStore((s) => s.user)
+  const openSettings = useStore((s) => s.openSettings)
   const logout = useStore((s) => s.logout)
   const alerts = useStore((s) => s.alerts)
   const { status: onboardingStatus, dismiss: dismissOnboarding } = useOnboarding()
@@ -215,7 +216,7 @@ export default function SystemPage() {
       iconTone: "bg-muted text-foreground",
       titleKey: "nav.settings",
       descKey: "system.cards.settings",
-      onClick: () => navigate("/settings"),
+      onClick: () => openSettings(),
     },
   ]
 
@@ -241,7 +242,7 @@ export default function SystemPage() {
       iconTone: "bg-muted text-foreground",
       titleKey: "system.about",
       descKey: "system.cards.about",
-      onClick: () => navigate("/settings?tab=about"),
+      onClick: () => openSettings("about"),
     },
     {
       id: "logout",

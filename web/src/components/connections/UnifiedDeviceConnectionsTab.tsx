@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { showErrorToast } from '@/lib/error-messages'
 import {
-  ArrowLeft,
   Server,
   Edit,
   Trash2,
@@ -33,7 +32,7 @@ import {
   DialogTitle,
   DialogContentBody,
 } from '@/components/ui/dialog'
-import { EmptyState, LoadingState } from '@/components/shared'
+import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useServerUrl } from '@/lib/server-url'
@@ -565,24 +564,16 @@ export function UnifiedDeviceConnectionsTab() {
 
       return (
         <>
-          {/* Header with back button — sticky. ::before pseudo-element fills
-              the scroll container's pt-2 top padding on mobile so scrolled
-              instances don't bleed through. (-mt-2 doesn't work with sticky.) */}
-          <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 pb-2 bg-background flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4 before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background md:before:hidden">
-            <Button variant="ghost" size="sm" onClick={() => setView('list')} className="gap-1 self-start -ml-2">
-              <ArrowLeft className="h-4 w-4" />
-              {t('plugins:llm.back')}
-            </Button>
-            <div className="flex items-center gap-3">
-              <div className={cn("flex items-center justify-center w-10 sm:w-12 h-10 sm:h-12 rounded-lg shrink-0", adapterType?.icon_bg)}>
-                <IconComponent className="h-5 w-5 sm:h-6 sm:w-6" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-lg sm:text-2xl font-bold truncate">{adapterType?.name}</h2>
-                <p className="text-sm text-muted-foreground line-clamp-2">{adapterType?.description}</p>
-              </div>
-            </div>
-          </div>
+          {/* Header with back button — sticky (see shared ListToolbar). */}
+          <ListToolbar
+            onBack={() => setView('list')}
+            backLabel={t('plugins:llm.back')}
+            icon={<IconComponent className="h-5 w-5 sm:h-6 sm:w-6" />}
+            iconBg={adapterType?.icon_bg || ""}
+            title={adapterType?.name || ""}
+            description={adapterType?.description}
+            responsiveIcon
+          />
 
           {/* Webhook Info Card */}
           <Card className="mb-6">
@@ -736,24 +727,15 @@ export function UnifiedDeviceConnectionsTab() {
 
     return (
       <>
-        {/* Header with back button — sticky. ::before pseudo-element fills
-            the scroll container's pt-2 top padding on mobile so scrolled
-            instances don't bleed through. (-mt-2 doesn't work with sticky.) */}
-        <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 pb-2 bg-background flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4 before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background md:before:hidden">
-          <Button variant="ghost" size="sm" onClick={() => setView('list')} className="gap-1 self-start -ml-2">
-            <ArrowLeft className="h-4 w-4" />
-            {t('plugins:llm.back')}
-          </Button>
-          <div className="flex items-center gap-3">
-            <div className={cn("flex items-center justify-center w-10 h-10 rounded-lg shrink-0", adapterType?.icon_bg)}>
-              <IconComponent className="h-6 w-6" />
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-lg sm:text-2xl font-bold truncate">{adapterType?.name}</h2>
-              <p className="text-sm text-muted-foreground line-clamp-2">{adapterType?.description}</p>
-            </div>
-          </div>
-        </div>
+        {/* Header with back button — sticky (see shared ListToolbar). */}
+        <ListToolbar
+          onBack={() => setView('list')}
+          backLabel={t('plugins:llm.back')}
+          icon={<IconComponent className="h-6 w-6" />}
+          iconBg={adapterType?.icon_bg || ""}
+          title={adapterType?.name || ""}
+          description={adapterType?.description}
+        />
 
         {/* Instance Cards */}
         {pluginInstances.length === 0 ? (

@@ -831,7 +831,8 @@
     "preferences": "Preferences",
     "about": "About",
     "help": "Help",
-    "role": "Role"
+    "role": "Role",
+    "language": "Language"
   },
   "actions": {
     "more": "More"

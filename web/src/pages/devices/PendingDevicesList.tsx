@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
+import { useStore } from "@/store"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { Badge } from "@/components/ui/badge"
 import { ResponsiveTable, EmptyState } from "@/components/shared"
@@ -56,6 +57,7 @@ export function PendingDevicesList({
   const [drafts, setDrafts] = useState<DraftDevice[]>([])
   const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
+  const openSettings = useStore((s) => s.openSettings)
   const [hasBroker, setHasBroker] = useState<boolean | null>(null)
 
   // Use external pagination state if provided, otherwise use internal state
@@ -470,7 +472,7 @@ export function PendingDevicesList({
               description={t('devices:pending.noBrokerDesc')}
               action={{
                 label: t('devices:pending.goToSettings'),
-                onClick: () => navigate('/settings?tab=connections'),
+                onClick: () => openSettings('connections'),
               }}
             />
           ) : (

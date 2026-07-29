@@ -84,6 +84,7 @@ export function MobileNav() {
   const isMobile = useIsMobile()
   const { t, i18n } = useTranslation("common")
   const navigate = useNavigate()
+  const openSettings = useStore((state) => state.openSettings)
   const location = useLocation()
   const user = useStore((s) => s.user)
   const logout = useStore((s) => s.logout)
@@ -148,7 +149,14 @@ export function MobileNav() {
       <button
         key={entry.id}
         type="button"
-        onClick={() => go(entry.path)}
+        onClick={() => {
+          if (entry.id === "settings") {
+            setOpen(false)
+            openSettings()
+          } else {
+            go(entry.path)
+          }
+        }}
         // p-3 (12px) + 20px content = ~44px, Apple HIG minimum touch target.
         // Previously p-2 → 36px which missed taps when the finger drifted even
         // a few pixels, especially near the rounded-lg corners.
@@ -158,7 +166,7 @@ export function MobileNav() {
         )}
       >
         <Icon
-          className={cn("h-5 w-5 shrink-0", active ? "text-brand brand-icon-stroke" : "text-muted-foreground")}
+          className={cn("h-5 w-5 shrink-0", active ? "text-brand dark:brand-icon-stroke" : "text-muted-foreground")}
         />
         <span
           className={cn(
@@ -319,37 +327,42 @@ export function MobileNav() {
             shrink-0 footer always sits above safe-bottom. */}
         <div className="shrink-0 border-t border-border px-2 pt-2">
           {user && (
-            <button
-              type="button"
-              onClick={() => go("/settings?tab=preferences")}
-              className={cn(
-                "mb-1 flex w-full items-center gap-3 rounded-lg p-2 text-left transition-all hover:bg-muted-50",
-              )}
-            >
-              <Avatar className="h-9 w-9 shrink-0 rounded-lg">
-                <AvatarFallback className="bg-muted text-xs font-medium text-foreground">
-                  {getUserInitials(user.username)}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">{user.username}</p>
-                {user.role && (
-                  <p className="truncate text-xs text-muted-foreground">{user.role}</p>
-                )}
-              </div>
-            </button>
+            <div className="mb-1 flex w-full items-center gap-2 rounded-lg p-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false)
+                  openSettings("preferences")
+                }}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-lg p-1 text-left transition-all hover:bg-muted-50"
+              >
+                <Avatar className="h-9 w-9 shrink-0 rounded-lg">
+                  <AvatarFallback className="bg-muted text-xs font-medium text-foreground">
+                    {getUserInitials(user.username)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-foreground">{user.username}</p>
+                  {user.role && (
+                    <p className="truncate text-xs text-muted-foreground">{user.role}</p>
+                  )}
+                </div>
+              </button>
+              {/* Logout — to the right of the username */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  setOpen(false)
+                  logout()
+                }}
+                className="h-9 w-9 shrink-0 rounded-lg text-error hover:text-error hover:bg-error-light"
+                aria-label={t("logout")}
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
+            </div>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false)
-              logout()
-            }}
-            className="group relative flex w-full items-center gap-2 rounded-lg p-2 text-left text-error transition-all hover:bg-muted-50"
-          >
-            <LogOut className="h-4 w-4 shrink-0" />
-            <span className="flex-1 truncate text-sm font-medium">{t("logout")}</span>
-          </button>
         </div>
 
         {/* Safe-bottom spacer */}

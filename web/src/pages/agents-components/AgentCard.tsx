@@ -92,7 +92,7 @@ export function AgentCard({
   return (
     <div
       className={cn(
-        "group relative p-4 h-full",
+        "group relative p-4 h-full cursor-pointer",
         interactiveCard,
       )}
       onClick={onClick}

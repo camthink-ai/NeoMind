@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { logError } from "@/lib/errors"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
+import { SettingsRow } from "./SettingsRow"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -158,15 +158,10 @@ export function PreferencesTab() {
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Language */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div>
-              <Label className="text-sm font-medium">
-                {t("settings:language")}
-              </Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {t("settings:languageDesc")}
-              </p>
-            </div>
+          <SettingsRow
+            label={t("settings:language")}
+            description={t("settings:languageDesc")}
+          >
             <Select
               value={preferences.language}
               onValueChange={(v) => updatePreference("language", v as Language)}
@@ -182,7 +177,7 @@ export function PreferencesTab() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </SettingsRow>
         </CardContent>
       </Card>
 
@@ -196,15 +191,10 @@ export function PreferencesTab() {
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Time Format */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div>
-              <Label className="text-sm font-medium">
-                {t("settings:timeFormat")}
-              </Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {t("settings:timeFormatDesc")}
-              </p>
-            </div>
+          <SettingsRow
+            label={t("settings:timeFormat")}
+            description={t("settings:timeFormatDesc")}
+          >
             <Select
               value={preferences.timeFormat}
               onValueChange={(v) => updatePreference("timeFormat", v as TimeFormat)}
@@ -220,56 +210,49 @@ export function PreferencesTab() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </SettingsRow>
 
           {/* System Timezone */}
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div className="flex-1">
-                <Label className="text-sm font-medium">
-                  {t("settings:systemTimezone")}
-                </Label>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {t("settings:systemTimezoneDesc")}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {timezoneLoading && (
-                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                )}
-                <Select
-                  value={globalTimezone}
-                  onValueChange={async (value) => {
-                    try {
-                      await updateTimezone(value)
-                      toast({
-                        title: t("settings:timezoneUpdated"),
-                      })
-                    } catch (e) {
-                      toast({
-                        title: t("settings:timezoneUpdateFailed"),
-                        variant: "destructive",
-                      })
-                    }
-                  }}
-                  disabled={timezoneLoading}
-                >
-                  <SelectTrigger className="w-full sm:w-[280px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(availableTimezones.length > 0 ? availableTimezones : localizedTimezones).map(
-                      (tz: { id: string; name: string }) => (
-                        <SelectItem key={tz.id} value={tz.id}>
-                          {tz.name}
-                        </SelectItem>
-                      )
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
+          <SettingsRow
+            label={t("settings:systemTimezone")}
+            description={t("settings:systemTimezoneDesc")}
+          >
+            <div className="flex items-center gap-2">
+              {timezoneLoading && (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              )}
+              <Select
+                value={globalTimezone}
+                onValueChange={async (value) => {
+                  try {
+                    await updateTimezone(value)
+                    toast({
+                      title: t("settings:timezoneUpdated"),
+                    })
+                  } catch (e) {
+                    toast({
+                      title: t("settings:timezoneUpdateFailed"),
+                      variant: "destructive",
+                    })
+                  }
+                }}
+                disabled={timezoneLoading}
+              >
+                <SelectTrigger className="w-full sm:w-[280px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(availableTimezones.length > 0 ? availableTimezones : localizedTimezones).map(
+                    (tz: { id: string; name: string }) => (
+                      <SelectItem key={tz.id} value={tz.id}>
+                        {tz.name}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
             </div>
-          </div>
+          </SettingsRow>
 
           {/* Current Time Preview */}
           <div className="pt-4 border-t">
@@ -395,31 +378,21 @@ function DataManagementCard() {
       </CardHeader>
       <CardContent className="space-y-5">
         {/* Auto Cleanup Toggle */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex-1">
-            <Label className="text-sm font-medium">
-              {t("settings:autoCleanup")}
-            </Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {t("settings:autoCleanupDesc")}
-            </p>
-          </div>
+        <SettingsRow
+          label={t("settings:autoCleanup")}
+          description={t("settings:autoCleanupDesc")}
+        >
           <Switch
             checked={config.enabled}
             onCheckedChange={(checked) => saveConfig({ enabled: checked })}
           />
-        </div>
+        </SettingsRow>
 
         {/* Default Retention */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div>
-            <Label className="text-sm font-medium">
-              {t("settings:defaultRetention")}
-            </Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {t("settings:defaultRetentionDesc")}
-            </p>
-          </div>
+        <SettingsRow
+          label={t("settings:defaultRetention")}
+          description={t("settings:defaultRetentionDesc")}
+        >
           <Select
             value={hoursToOption(config.default_retention)}
             onValueChange={(v) => saveConfig({ default_retention: optionToHours(v) })}
@@ -436,21 +409,14 @@ function DataManagementCard() {
               ))}
             </SelectContent>
           </Select>
-        </div>
+        </SettingsRow>
 
         {/* Image Retention */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <SwitchCamera className="h-4 w-4 text-muted-foreground" />
-            <div>
-              <Label className="text-sm font-medium">
-                {t("settings:imageRetention")}
-              </Label>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {t("settings:imageRetentionDesc")}
-              </p>
-            </div>
-          </div>
+        <SettingsRow
+          label={t("settings:imageRetention")}
+          description={t("settings:imageRetentionDesc")}
+          leadingIcon={<SwitchCamera className="h-4 w-4 text-muted-foreground" />}
+        >
           <Select
             value={hoursToOption(config.image_retention)}
             onValueChange={(v) => saveConfig({ image_retention: optionToHours(v) })}
@@ -467,7 +433,7 @@ function DataManagementCard() {
               ))}
             </SelectContent>
           </Select>
-        </div>
+        </SettingsRow>
 
         {/* Manual Cleanup */}
         <div className="pt-4 border-t">
@@ -523,15 +489,10 @@ function DiagnosticDataCard() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div>
-            <Label className="text-sm font-medium">
-              {t("settings:logTimeRange")}
-            </Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {t("settings:diagnosticDataDesc")}
-            </p>
-          </div>
+        <SettingsRow
+          label={t("settings:logTimeRange")}
+          description={t("settings:diagnosticDataDesc")}
+        >
           <Select value={logDays} onValueChange={setLogDays}>
             <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue />
@@ -542,7 +503,7 @@ function DiagnosticDataCard() {
               <SelectItem value="7">{t("settings:logRangeLast7Days")}</SelectItem>
             </SelectContent>
           </Select>
-        </div>
+        </SettingsRow>
         <div className="pt-4 border-t">
           <Button
             variant="outline"

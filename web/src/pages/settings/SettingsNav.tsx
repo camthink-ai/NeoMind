@@ -1,6 +1,6 @@
 import { ReactNode } from "react"
 import { cn } from "@/lib/utils"
-import { Cpu, Plug, Sliders, Info } from "lucide-react"
+import { Cpu, Plug, Sliders, Info, ArrowLeft } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
 export type SettingsSection = "llm" | "connections" | "preferences" | "about"
@@ -24,18 +24,32 @@ interface SettingsNavProps {
   sections: SettingsSectionConfig[]
   activeSection: SettingsSection
   onSectionChange: (section: SettingsSection) => void
+  /** Closes the settings dialog (back link at the top of the sidebar). */
+  onBack: () => void
 }
 
-export function SettingsNav({ sections, activeSection, onSectionChange }: SettingsNavProps) {
+export function SettingsNav({ sections, activeSection, onSectionChange, onBack }: SettingsNavProps) {
+  const { t } = useTranslation(["common", "settings"])
   return (
     <nav
       // w-60 (240px) — within the 240–300px sidebar range recommended by UX
       // best practices; the old w-52 (208px) felt cramped.
-      className="w-60 shrink-0 hidden md:block"
+      className="w-60 shrink-0 hidden md:block rounded-lg border border-border bg-card p-2 flex flex-col mb-6"
       role="tablist"
       aria-label="Settings sections"
     >
-      <div className="space-y-1">
+      {/* Back link (closes the dialog) */}
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted-30 hover:text-foreground transition-colors shrink-0"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        {t("common:back", { defaultValue: "Back" })}
+      </button>
+
+      {/* Sections */}
+      <div className="space-y-1 mt-3">
         {sections.map((section) => {
           const isActive = activeSection === section.value
           return (

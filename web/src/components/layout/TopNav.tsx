@@ -26,6 +26,8 @@ import {
   Database,
   Rocket,
   Info,
+  Sun,
+  Languages,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -43,8 +45,14 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuPortal,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
-import { ThemeToggle } from "./ThemeToggle"
+import { useTheme } from "@/components/ui/theme"
 import { InstanceSelector } from "./InstanceSelector"
 import { SystemHealthButton } from "./SystemHealthButton"
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
@@ -74,14 +82,12 @@ const navItems: NavItem[] = [
   { id: "data", path: "/data", labelKey: "nav.data", mobileLabelKey: "navShort.data", icon: Database },
   { id: "messages", path: "/messages", labelKey: "nav.messages", mobileLabelKey: "navShort.messages", icon: Bell },
   { id: "extensions", path: "/extensions", labelKey: "nav.extensions", mobileLabelKey: "navShort.extensions", icon: Puzzle },
-  { id: "settings", path: "/settings", labelKey: "nav.settings", mobileLabelKey: "navShort.settings", icon: Settings },
 ]
 
 export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   const innerRef = useRef<HTMLDivElement>(null)
   const tabBarRef = useRef<HTMLDivElement>(null)
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
-  const touchStartX = useRef(0)
 
   const isMobile = useIsMobile()
   const navigate = useNavigate()
@@ -104,6 +110,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   const location = useLocation()
   const user = useStore((state) => state.user)
   const logout = useStore((state) => state.logout)
+  const openSettings = useStore((state) => state.openSettings)
   const alerts = useStore((state) => state.alerts)
   const fetchAlerts = useStore((state) => state.fetchAlerts)
   const acknowledgeAlert = useStore((state) => state.acknowledgeAlert)
@@ -141,10 +148,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
     return username.slice(0, 2).toUpperCase()
   }
 
-  const toggleLanguage = () => {
-    const newLang = i18n.language === 'zh' ? 'en' : 'zh'
-    i18n.changeLanguage(newLang)
-  }
+  const { theme, setTheme } = useTheme()
 
   const handleLogout = () => {
     logout()
@@ -203,23 +207,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
       activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
     }
   }, [currentPath, isMobile])
-
-  // Swipe handlers for tab bar
-  const handleTabTouchStart = useCallback((e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX
-  }, [])
-
-  const handleTabTouchEnd = useCallback((e: React.TouchEvent) => {
-    const deltaX = e.changedTouches[0].clientX - touchStartX.current
-    if (Math.abs(deltaX) < 50) return
-
-    const currentIndex = navItems.findIndex(item => isItemActive(item))
-    if (deltaX < 0 && currentIndex >= 0 && currentIndex < navItems.length - 1) {
-      startTransition(() => navigate(navItems[currentIndex + 1].path))
-    } else if (deltaX > 0 && currentIndex > 0) {
-      startTransition(() => navigate(navItems[currentIndex - 1].path))
-    }
-  }, [isItemActive, navigate])
 
   return (
     <TooltipProvider delayDuration={500}>
@@ -283,7 +270,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="w-10 h-10 rounded-lg relative"
+                  className="w-10 h-10 rounded-lg relative bg-[var(--chrome)]"
                   onClick={() => setOnboardingOpen(true)}
                   aria-label={t('onboarding.title')}
                 >
@@ -308,7 +295,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="w-10 h-10 rounded-lg relative"
+                      className="w-10 h-10 rounded-lg relative bg-[var(--chrome)]"
                     >
                       <BellRing className="h-4 w-4" />
                       {unreadCount > 0 && (
@@ -418,25 +405,12 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* Theme toggle */}
-            <ThemeToggle />
-
-            {/* Language toggle */}
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleLanguage}
-              className="h-10 w-10 rounded-lg text-muted-foreground hover:text-foreground text-xs font-medium"
-            >
-              {i18n.language === 'zh' ? '中' : 'EN'}
-            </Button>
-
-            {/* User avatar with dropdown */}
+            {/* User avatar with dropdown (theme / language / settings live in here) */}
             {user && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Avatar className="h-10 w-10 cursor-pointer rounded-lg">
-                    <AvatarFallback className="bg-muted text-muted-foreground text-xs font-medium">
+                  <Avatar className="h-10 w-10 cursor-pointer rounded-full ring-2 ring-background">
+                    <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
                       {getUserInitials(user.username)}
                     </AvatarFallback>
                   </Avatar>
@@ -453,11 +427,41 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                     </div>
                   </div>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => navigate('/settings?tab=preferences')}>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <Sun className="h-4 w-4 mr-2" />
+                      {t('theme.title', { defaultValue: 'Theme' })}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuPortal>
+                      <DropdownMenuSubContent>
+                        <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as "light" | "dark" | "system")}>
+                          <DropdownMenuRadioItem value="light">{t('theme.light')}</DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="dark">{t('theme.dark')}</DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="system">{t('theme.system')}</DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuPortal>
+                  </DropdownMenuSub>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <Languages className="h-4 w-4 mr-2" />
+                      {t('userMenu.language', { defaultValue: 'Language' })}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuPortal>
+                      <DropdownMenuSubContent>
+                        <DropdownMenuRadioGroup value={i18n.language} onValueChange={(v) => i18n.changeLanguage(v)}>
+                          <DropdownMenuRadioItem value="zh">中文</DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuPortal>
+                  </DropdownMenuSub>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => openSettings()}>
                     <Settings className="h-4 w-4 mr-2" />
-                    {t('userMenu.preferences')}
+                    {t('nav.settings')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate('/settings?tab=about')}>
+                  <DropdownMenuItem onClick={() => openSettings('about')}>
                     <Info className="h-4 w-4 mr-2" />
                     {t('userMenu.about')}
                   </DropdownMenuItem>
@@ -476,8 +480,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
         {isMobile && (
           <div
             className="relative border-b border-glass-border"
-            onTouchStart={handleTabTouchStart}
-            onTouchEnd={handleTabTouchEnd}
           >
             <div
               ref={tabBarRef}

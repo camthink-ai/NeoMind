@@ -701,6 +701,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
       }
       icon={<span className={pluginType.color}>{pluginType.icon}</span>}
       width="xl"
+      className="z-[110]"
       isSubmitting={saving}
       preventCloseOnSubmit={false}
       footer={
