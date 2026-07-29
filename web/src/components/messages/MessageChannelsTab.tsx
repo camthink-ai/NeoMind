@@ -193,7 +193,7 @@ export function MessageChannelsTab({
         )}
         {selectedChannelType.id === 'email' && (
           <>
-            <div className="bg-muted-50 rounded-lg p-3 text-sm text-muted-foreground">
+            <div className="rounded-lg p-3 text-sm text-muted-foreground">
               <p className="font-medium mb-2">{t('messages.channels.quickTestOptions', 'Quick Test Options:')}</p>
               <ul className="space-y-1 text-xs">
                 <li>• <strong>MailHog</strong>: Run <code className="bg-background px-1 py-0.5 rounded">mailhog</code> (localhost:1025)</li>

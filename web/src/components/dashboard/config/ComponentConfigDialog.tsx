@@ -281,7 +281,7 @@ export function ComponentConfigDialog({
                     isExpanded={expandedSections.has('preview')}
                     onToggle={() => toggleSection('preview')}
                   >
-                    <div className="rounded-lg border bg-muted-20 p-4">
+                    <div className="rounded-lg border p-4">
                       <ComponentPreview
                         key={previewKey}
                         componentType={componentType}
@@ -306,7 +306,7 @@ export function ComponentConfigDialog({
                         shouldShowDataTransform ? (
                           <div className="space-y-3">
                             {/* Inner tabs */}
-                            <div className="flex gap-2 p-1 bg-muted-50 rounded-lg">
+                            <div className="flex gap-2 p-1 bg-muted rounded-lg">
                               <button
                                 onClick={() => setMobileDataSourceTab('datasource')}
                                 className={`flex-1 py-2 px-3 text-sm font-medium rounded-lg transition-all ${
@@ -463,7 +463,7 @@ export function ComponentConfigDialog({
       <FullScreenDialogContent className="!p-0">
         <div className="h-full w-full flex">
           {/* Left: Preview */}
-          <div className="flex-1 flex flex-col bg-muted-20 overflow-hidden border-r min-w-0">
+          <div className="flex-1 flex flex-col overflow-hidden border-r min-w-0">
             <div className="flex-1 flex items-center justify-center p-4 min-h-0">
               <div
                 className="rounded-lg overflow-hidden border bg-background shadow-sm max-w-lg max-h-full"
@@ -478,10 +478,10 @@ export function ComponentConfigDialog({
           </div>
 
           {/* Right: Config tabs */}
-          <div className="flex-1 flex flex-col overflow-hidden bg-background min-w-0">
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             {(hasStyleConfig || hasDisplayConfig || hasDataSource) ? (
               <Tabs value={configTabValue} onValueChange={(v) => setConfigTabValue(v as typeof configTabValue)} className="flex-1 flex flex-col min-h-0">
-                <TabsList className="w-full justify-start px-4 h-12 shrink-0 border-b rounded-none">
+                <TabsList className="w-full justify-start px-4 h-12 shrink-0 border-b rounded-none bg-transparent">
                   {hasStyleConfig && (
                     <TabsTrigger value="style" className="data-[state=active]:bg-card data-[state=active]:shadow-sm rounded-lg">
                       {t('componentConfig.style')}

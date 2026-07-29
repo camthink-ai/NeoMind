@@ -506,7 +506,7 @@ export function UnifiedDataSourceConfig({
     return (
       <div className="flex flex-col h-full">
         {/* Search input inside device list */}
-        <div className="p-2 border-b bg-muted-20">
+        <div className="p-2 border-b">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -902,7 +902,7 @@ export function UnifiedDataSourceConfig({
     return (
       <div className="flex flex-col h-full">
         {/* Search input inside extension list */}
-        <div className="p-2 border-b bg-muted-20">
+        <div className="p-2 border-b">
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input

@@ -280,7 +280,7 @@ export function TaskWizard({ task, className }: TaskProgressProps) {
           )}
 
           {currentStepData.details && (
-            <div className="p-3 rounded-md bg-muted-50 text-sm">
+            <div className="p-3 rounded-md text-sm">
               {currentStepData.details}
             </div>
           )}
