@@ -74,23 +74,23 @@ export function FullScreenDialog({
       <div
         className={cn(
           "flex flex-col flex-1 overflow-hidden",
-          // Both mobile and desktop now use an opaque bg-popover surface
-          // (the semantic "floating layer" token), unified with all other
-          // dialogs / sheets / popovers. Mobile additionally uses --chrome
-          // via inline style to match the MobilePageHeader top bar; desktop
-          // keeps the floating rounded panel shape with shadow.
-          isMobile ? "" : "bg-popover m-3 md:m-4 border border-border rounded-2xl shadow-2xl shadow-black/10",
+          // Full-bleed: opaque bg-background on desktop (page-like, max space
+          // for heavy editors); --chrome on mobile via inline style.
+          isMobile ? "" : "bg-popover",
           className
         )}
         onClick={(e) => e.stopPropagation()}
-        style={isMobile ? {
-          backgroundColor: 'var(--chrome)',
-          // Extend edge-to-edge; safe-area insets become INTERNAL padding so
-          // the solid chrome covers the full viewport (no backdrop color
-          // stripes showing through at top/bottom on PWA / iOS Safari).
-          paddingTop: 'env(safe-area-inset-top, 0px)',
-          paddingBottom: 'env(safe-area-inset-bottom, 0px)',
-        } : undefined}
+        style={{
+          // Reserve the macOS title-bar (traffic-light) inset so the
+          // header/content isn't covered by the overlay traffic lights.
+          paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
+          ...(isMobile
+            ? {
+                backgroundColor: "var(--chrome)",
+                paddingBottom: "env(safe-area-inset-bottom, 0px)",
+              }
+            : {}),
+        }}
       >
         {children}
       </div>

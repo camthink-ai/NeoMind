@@ -95,6 +95,12 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   // (their own row, not pushing the logo right); the top bar doubles as the
   // drag region.
   const isMacTauri = isTauriEnv() && /Mac/i.test(navigator.platform || navigator.userAgent)
+  // Expose the macOS title-bar (traffic-light) inset as a CSS var so full-screen
+  // overlays (settings, onboarding) reserve the same top space and aren't
+  // covered by the traffic lights.
+  useEffect(() => {
+    document.documentElement.style.setProperty("--titlebar-inset", isMacTauri ? "24px" : "0px")
+  }, [isMacTauri])
   const navigate = useNavigate()
 
   // Set the nav height in CSS variable after mount and on resize
@@ -218,7 +224,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
       <nav
         ref={innerRef}
         className="fixed top-0 left-0 right-0 z-20 bg-[var(--chrome)] border-b border-border flex flex-col"
-        style={{ paddingTop: isMacTauri ? "calc(env(safe-area-inset-top, 0px) + 28px)" : "env(safe-area-inset-top, 0px)" }}
+        style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
       >
         {/* Main bar */}
         <div

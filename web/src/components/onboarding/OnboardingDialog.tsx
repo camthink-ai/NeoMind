@@ -104,7 +104,7 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
   if (!root) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] flex flex-col bg-bg-90 backdrop-blur-xl">
+    <div className="fixed inset-0 z-[100] flex flex-col bg-bg-90 backdrop-blur-xl" style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}>
       {/* Close button */}
       <button
         onClick={() => onOpenChange(false)}

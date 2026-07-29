@@ -87,7 +87,7 @@ export function SettingsDialog() {
     <div
       className="fixed inset-0 z-[100] flex flex-col bg-background animate-fade-in"
       style={{
-        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
       }}
     >
       <div className="flex-1 min-h-0 flex">
