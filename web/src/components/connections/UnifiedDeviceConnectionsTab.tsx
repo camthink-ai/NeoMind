@@ -610,7 +610,7 @@ export function UnifiedDeviceConnectionsTab() {
               {/* Request Format */}
               <div className="space-y-2">
                 <Label>Request Format</Label>
-                <div className="rounded-lg bg-muted p-3 sm:p-4 -mx-1 sm:mx-0">
+                <div className="rounded-lg p-3 sm:p-4 -mx-1 sm:mx-0">
                   <pre className="text-xs sm:text-sm overflow-x-auto whitespace-pre">
 {`POST ${getWebhookUrl()}
 
@@ -629,7 +629,7 @@ export function UnifiedDeviceConnectionsTab() {
               {/* Response Format */}
               <div className="space-y-2">
                 <Label>Response Format</Label>
-                <div className="rounded-lg bg-muted p-3 sm:p-4 -mx-1 sm:mx-0">
+                <div className="rounded-lg p-3 sm:p-4 -mx-1 sm:mx-0">
                   <pre className="text-xs sm:text-sm overflow-x-auto whitespace-pre">
 {`{
   "success": true,
@@ -676,7 +676,7 @@ export function UnifiedDeviceConnectionsTab() {
               <div className="space-y-2">
                 <Label>{t('devices:add.webhookAuthHeader')}</Label>
                 <p className="text-xs text-muted-foreground">{t('devices:add.webhookAuthDesc')}</p>
-                <div className="rounded-lg bg-muted p-3 sm:p-4 -mx-1 sm:mx-0 space-y-2">
+                <div className="rounded-lg p-3 sm:p-4 -mx-1 sm:mx-0 space-y-2">
                   <div>
                     <span className="text-xs font-medium">Authorization Header:</span>
                     <pre className="text-xs font-mono">Authorization: Bearer {'<token>'}</pre>

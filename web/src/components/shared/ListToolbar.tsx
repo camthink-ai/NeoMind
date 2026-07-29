@@ -36,7 +36,7 @@ export function ListToolbar({
   responsiveIcon = false,
 }: ListToolbarProps) {
   return (
-    <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 pb-2 bg-background flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4 before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-background md:before:hidden">
+    <div className="sticky top-0 z-10 -mx-4 sm:-mx-6 md:-mx-8 px-4 sm:px-6 md:px-8 pb-2 bg-popover flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 mb-4 before:content-[''] before:absolute before:inset-x-0 before:-top-2 before:h-2 before:bg-popover md:before:hidden">
       <button
         type="button"
         onClick={onBack}
