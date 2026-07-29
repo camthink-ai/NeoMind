@@ -419,11 +419,29 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
               </DropdownMenuContent>
             </DropdownMenu>
 
+            {/* Settings quick access */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="w-10 h-10 rounded-lg bg-[var(--chrome)]"
+                  onClick={() => openSettings()}
+                  aria-label={t('nav.settings')}
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs px-2 py-1">
+                {t('nav.settings')}
+              </TooltipContent>
+            </Tooltip>
+
             {/* User avatar with dropdown (theme / language / settings live in here) */}
             {user && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Avatar className="h-10 w-10 cursor-pointer rounded-full ring-2 ring-background">
+                  <Avatar className="h-9 w-9 cursor-pointer rounded-full ring-2 ring-background">
                     <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
                       {getUserInitials(user.username)}
                     </AvatarFallback>
