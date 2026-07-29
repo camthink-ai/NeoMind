@@ -973,7 +973,15 @@ pub async fn process_stream_events_with_safeguards(
                             tool_call_results.push((name.clone(), slimmed_str));
                         }
                         Err(e) => {
-                            let error_msg = format!("Tool execution failed: {}", e);
+                            let mut error_msg = format!("Tool execution failed: {}", e);
+                            // Weak models sometimes emit a whole `neomind ...` command or a
+                            // CLI domain as the tool name. Redirect to `shell` so they recover
+                            // next round instead of looping. No-op for real tool names.
+                            if let Some(hint) =
+                                crate::ai_agent::executor::tool_result::hallucinated_tool_hint(&name)
+                            {
+                                error_msg.push_str(&hint);
+                            }
                             let error_value = serde_json::json!({"error": error_msg});
 
                             tool_calls_with_results.push(ToolCall {

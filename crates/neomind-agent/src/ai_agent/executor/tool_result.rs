@@ -24,7 +24,7 @@ use super::super::AgentExecutor;
 /// them to the real mechanism (`shell` → `neomind <domain> ...`) so they
 /// self-correct next round. Returns None for names with no specific hint
 /// (caller falls back to listing the actually-available tools).
-fn hallucinated_tool_hint(tool_name: &str) -> Option<String> {
+pub(crate) fn hallucinated_tool_hint(tool_name: &str) -> Option<String> {
     let lower = tool_name.to_lowercase();
     // 1. Message/alert family — give the exact send syntax (most common hallucination).
     if matches!(
@@ -51,6 +51,19 @@ fn hallucinated_tool_hint(tool_name: &str) -> Option<String> {
             " There is NO `{}` tool — `{}` is a neomind CLI domain. Use the `shell` tool: \
              `neomind {} <action>` (e.g. `neomind {} list`, or `neomind {} --help` for all actions).",
             tool_name, tool_name, lower, lower, lower
+        ));
+    }
+    // 3. A full `neomind <...>` command emitted as a tool name. Small/weak models
+    //    do this when they can't map intent -> shell(command=...): they emit the
+    //    whole command (e.g. "neomind device list") as the tool name with empty
+    //    args, get NotFound, and loop. Redirect verbatim so they recover in one
+    //    round instead of looping.
+    if lower.trim_start().starts_with("neomind ") {
+        let cmd = tool_name.trim();
+        return Some(format!(
+            " There is NO `{}` tool — that is a shell command. Re-issue it via the `shell` tool \
+             with arguments {{\"command\": \"{cmd}\"}}.",
+            tool_name
         ));
     }
     None
@@ -578,5 +591,29 @@ mod tests {
                 h
             );
         }
+    }
+
+    #[test]
+    fn test_hallucinated_tool_hint_redirects_full_neomind_command() {
+        // Weak models emit a whole `neomind ...` command as the tool name (e.g.
+        // "neomind device list") with empty args, then loop on NotFound. Redirect
+        // verbatim to shell so they recover next round.
+        for name in &[
+            "neomind device list",
+            "neomind settings set-timezone Asia/Shanghai",
+            "neomind rule create",
+            "  neomind system info  ",
+        ] {
+            let hint = hallucinated_tool_hint(name);
+            assert!(hint.is_some(), "{:?} should redirect as a full neomind command", name);
+            let h = hint.unwrap();
+            assert!(h.contains("shell"), "must point to shell: {}", h);
+            let trimmed = name.trim();
+            assert!(h.contains(trimmed), "must echo the verbatim command {:?}: {}", trimmed, h);
+        }
+        // Real tool names and unrelated strings still get no hint.
+        assert!(hallucinated_tool_hint("shell").is_none());
+        assert!(hallucinated_tool_hint("skill").is_none());
+        assert!(hallucinated_tool_hint("random_thing").is_none());
     }
 }

@@ -169,7 +169,7 @@ mod response_parser;
 pub(crate) mod stuck_detector;
 mod tool_loop;
 mod tool_prompt;
-mod tool_result;
+pub(crate) mod tool_result; // pub(crate): hallucinated_tool_hint reused by chat streaming path
 
 // Re-export public types
 pub(crate) use analyzer::AnalysisResult;
