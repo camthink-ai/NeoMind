@@ -1666,7 +1666,7 @@ export function SimpleRuleBuilderSplit({
           {/* Tags editor - lifted from BasicInfoStep */}
           <Field>
             <FieldLabel>{t('automation:ruleBuilder.tags') || 'Tags'}</FieldLabel>
-            <div className="flex flex-wrap gap-2 p-2 border rounded-md min-h-[42px]">
+            <div className="flex flex-wrap gap-2 p-2 border border-input bg-card rounded-md min-h-[42px] focus-within:ring-1 focus-within:ring-ring transition-all">
               {tags.map(tag => (
                 <Badge key={tag} variant="secondary" className="gap-1 pl-2">
                   {tag}
@@ -2152,7 +2152,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
 
     return (
       <div className="space-y-3">
-        <div className="flex items-center gap-2 p-2.5 bg-muted rounded-t-lg border">
+        <div className="flex items-center gap-2 p-2.5 rounded-t-lg border">
           <Badge variant="outline" className={cn('text-xs px-2.5 py-1', badgeClass)}>{label}</Badge>
           <span className="text-xs text-muted-foreground flex-1">
             {condition.type === 'and' ? tBuilder('allConditionsMustMeet') : condition.type === 'or' ? tBuilder('anyConditionMustMeet') : tBuilder('conditionNotMet')}
@@ -2176,7 +2176,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
                 </div>
               )}
               <div className="relative pr-8">
-                <div className="rounded-lg bg-muted-30">
+                <div className="rounded-lg">
                   <ConditionEditor
                     condition={subCond}
                     onChange={(c) => updateNestedCondition(i, c)}

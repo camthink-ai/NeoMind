@@ -397,7 +397,7 @@ function VariablesRail({
   if (loadingExtensions) {
     return (
       <div className={cn(
-        "bg-background h-full min-h-0",
+        "h-full min-h-0",
         isMobile ? "w-full" : "w-72"
       )}>
         <LoadingState variant="page" />
@@ -418,12 +418,12 @@ function VariablesRail({
 
   return (
     <div className={cn(
-      "bg-background flex flex-col h-full min-h-0",
+      "flex flex-col h-full min-h-0",
       isMobile ? "w-full" : "w-72"
     )}>
       {/* Unified header: title + segmented tabs + actions */}
       <div className={cn(
-        "border-b bg-muted-30 flex items-center gap-1.5 shrink-0",
+        "border-b flex items-center gap-1.5 shrink-0",
         isMobile ? "px-3 py-2" : "px-2.5 py-1.5"
       )}>
         <Database className={cn("text-info shrink-0", isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
@@ -443,7 +443,7 @@ function VariablesRail({
               className={cn(
                 "flex items-center gap-1 px-1.5 h-6 text-[11px] font-medium rounded-md transition-colors",
                 activeTab === tab.id
-                  ? "bg-background text-foreground shadow-sm border border-border"
+                  ? "bg-card text-foreground shadow-sm border border-border"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted"
               )}
             >
@@ -837,7 +837,7 @@ function TestStrip({
         value={testInput}
         onChange={e => onTestInputChange(e.target.value)}
         placeholder='{"temperature": 25}'
-        className="font-mono text-xs resize-none bg-muted-30 h-20 md:h-16"
+        className="font-mono text-xs resize-none h-20 md:h-16"
       />
 
       {/* Output / Error row */}
@@ -866,7 +866,7 @@ function TestStrip({
               {tBuilder('clear')}
             </Button>
           </div>
-          <div className="rounded-md bg-muted-30 p-2 max-h-40 overflow-auto">
+          <div className="rounded-md p-2 max-h-40 overflow-auto">
             {testError && (
               <div className="p-1.5 bg-muted border border-error rounded text-xs text-error font-mono">
                 {testError}
@@ -948,7 +948,7 @@ function TransformWorkspace({
   return (
     <div className="flex flex-col gap-4 h-full">
       {/* Sub-toolbar: templates dropdown + selected sources — fixed single-row height */}
-      <div className="rounded-lg border border-border bg-muted-30 px-3 py-2 shrink-0 flex items-center gap-2">
+      <div className="rounded-lg border border-border px-3 py-2 shrink-0 flex items-center gap-2">
         <Select
           onValueChange={(key) => {
             const tpl = templates.find((t) => t.key === key)
