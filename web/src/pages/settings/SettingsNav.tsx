@@ -34,7 +34,7 @@ export function SettingsNav({ sections, activeSection, onSectionChange, onBack }
     <nav
       // w-60 (240px) — within the 240–300px sidebar range recommended by UX
       // best practices; the old w-52 (208px) felt cramped.
-      className="w-60 shrink-0 hidden md:block rounded-lg border border-border bg-card p-2 flex flex-col mb-6"
+      className="w-60 shrink-0 hidden md:block rounded-lg border border-border p-2 flex flex-col mb-6"
       role="tablist"
       aria-label="Settings sections"
     >

@@ -85,7 +85,7 @@ export function SettingsDialog() {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex flex-col bg-background animate-fade-in"
+      className="fixed inset-0 z-[100] flex flex-col bg-popover animate-fade-in"
       style={{
         paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
       }}
