@@ -177,6 +177,7 @@ export function DeviceTypeList({
         ]}
         data={paginatedDeviceTypes as unknown as Record<string, unknown>[]}
         rowKey={(type) => (type as unknown as DeviceType).device_type}
+        onRowClick={(row) => onViewDetails(row as unknown as DeviceType)}
         loading={loading}
         renderCell={(columnKey, rowData) => {
           const type = rowData as unknown as DeviceType

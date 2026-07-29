@@ -272,6 +272,7 @@ export function TransformsList({
       ]}
       data={paginatedTransforms as unknown as Record<string, unknown>[]}
       rowKey={(transform) => (transform as unknown as TransformAutomation).id}
+      onRowClick={(row) => onEdit(row as unknown as TransformAutomation)}
       loading={loading}
       getRowClassName={(rowData) => {
         const transform = rowData as unknown as TransformAutomation

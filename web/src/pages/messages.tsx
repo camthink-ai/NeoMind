@@ -1322,6 +1322,7 @@ export default function MessagesPage() {
             ]}
             data={channels as unknown as Record<string, unknown>[]}
             rowKey={(ch) => (ch as unknown as MessageChannel).name}
+            onRowClick={(row) => handleViewChannel((row as unknown as MessageChannel).name)}
             renderCell={(columnKey, rowData) => {
               const channel = rowData as unknown as MessageChannel
               const config: Record<string, { icon: typeof Bell; color: string }> = {

@@ -543,6 +543,10 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
         ]}
         data={tableData as unknown as Record<string, unknown>[]}
         rowKey={(row) => (row as unknown as MemoryFileRow).id}
+        onRowClick={(row) => {
+          const r = row as unknown as MemoryFileRow
+          handleViewEdit(r.isCustom ? r.name : r.id, r.isCustom)
+        }}
         loading={loading}
         renderCell={(columnKey, rowData) => {
           const row = rowData as unknown as MemoryFileRow
