@@ -6,6 +6,7 @@
 
 import { useStore } from "@/store"
 import { cn } from "@/lib/utils"
+import { isTauriEnv } from "@/lib/api"
 import { textNano, textMini } from "@/design-system/tokens/typography"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router-dom"
@@ -90,6 +91,10 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
   const isMobile = useIsMobile()
+  // macOS Tauri overlay title bar: reserve a top strip for the traffic lights
+  // (their own row, not pushing the logo right); the top bar doubles as the
+  // drag region.
+  const isMacTauri = isTauriEnv() && /Mac/i.test(navigator.platform || navigator.userAgent)
   const navigate = useNavigate()
 
   // Set the nav height in CSS variable after mount and on resize
@@ -213,10 +218,13 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
       <nav
         ref={innerRef}
         className="fixed top-0 left-0 right-0 z-20 bg-[var(--chrome)] border-b border-border flex flex-col"
-        style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+        style={{ paddingTop: isMacTauri ? "calc(env(safe-area-inset-top, 0px) + 28px)" : "env(safe-area-inset-top, 0px)" }}
       >
         {/* Main bar */}
-        <div className="flex items-center px-4 sm:px-6 h-14">
+        <div
+          className="flex items-center px-4 sm:px-6 h-14"
+          data-tauri-drag-region={isTauriEnv() || undefined}
+        >
           {/* Logo */}
           <Link to="/chat" className="flex shrink-0 items-center justify-center mr-4 md:mr-6">
             <BrandLogoWithName />
