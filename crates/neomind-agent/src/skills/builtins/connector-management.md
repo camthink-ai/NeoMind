@@ -20,10 +20,11 @@ Connectors link NeoMind to external MQTT brokers and data sources. They allow su
 
 ## CRITICAL Rules
 
-1. **Always test connection after creating** — use `connector test <ID>`
-2. **Default port is 1883** (non-TLS) or 8883 (TLS)
-3. **`broker` is a deprecated alias** — use `connector` instead
-4. **Topics are comma-separated** — e.g., `--topics "sensors/temp,sensors/humidity"`
+1. **Connectors are for EXTERNAL/remote brokers the user configures** — NOT for the built-in broker. If the user wants the **active broker address / port / network info** (e.g. to connect a device like ESP32 to NeoMind), run `neomind system info` (see `system-info` skill) — do NOT run `connector list` or OS commands (`ipconfig`/`ip a`) for that.
+2. **Always test connection after creating** — use `connector test <ID>`
+3. **Default port is 1883** (non-TLS) or 8883 (TLS)
+4. **`broker` is a deprecated alias** — use `connector` instead
+5. **Topics are comma-separated** — e.g., `--topics "sensors/temp,sensors/humidity"`
 
 ## Command Reference
 
