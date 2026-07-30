@@ -467,8 +467,8 @@ function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto">
-        <div className="space-y-6 max-w-2xl mx-auto">
+      <div className="flex-1 overflow-y-auto overflow-x-visible">
+        <div className="space-y-6 max-w-2xl mx-auto px-1">
 
       {/* Device Type (name) */}
       <div className="space-y-2">
@@ -530,27 +530,27 @@ function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
       {/* Categories */}
       <div className="space-y-2">
         <Label className="text-sm font-medium">Categories</Label>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
           {data.categories?.map((cat, i) => (
-            <Badge key={i} variant="secondary" className="pl-2 pr-1 h-7">
+            <Badge key={i} variant="secondary" className="gap-1 pl-2 pr-1 h-7">
               {cat}
               <button
+                type="button"
                 onClick={() => removeCategory(cat)}
-                className="ml-1 hover:text-error"
+                className="ml-0.5 rounded p-0.5 hover:bg-muted hover:text-error transition-colors"
+                aria-label="Remove category"
               >
-                ×
+                <X className="h-3 w-3" />
               </button>
             </Badge>
           ))}
-          <div className="flex gap-1">
-            <Input
-              placeholder="+ Add category"
-              value={categoryInput}
-              onChange={(e) => setCategoryInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory())}
-              className="h-7 w-32 text-xs"
-            />
-          </div>
+          <Input
+            placeholder="+ Add category"
+            value={categoryInput}
+            onChange={(e) => setCategoryInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory())}
+            className="h-8 flex-1 min-w-[120px] text-xs"
+          />
         </div>
       </div>
         </div>
