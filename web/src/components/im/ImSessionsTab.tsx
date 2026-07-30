@@ -7,10 +7,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, RotateCcw, RefreshCw, Settings } from 'lucide-react'
+import { Send, RotateCcw, Settings } from 'lucide-react'
 import { ResponsiveTable, LoadingState } from '@/components/shared'
-import { Badge } from '@/components/ui/badge'
-import { IconButton, Button } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess } from '@/lib/notify'
@@ -90,29 +89,6 @@ export function ImSessionsTab() {
 
   return (
     <>
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 mb-4">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold">{t('messages.im.title', 'IM Sessions')}</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {t(
-              'messages.im.description',
-              'Active chat sessions bound to agents. Reset clears the conversation.',
-            )}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Badge variant="secondary">{sessions.length}</Badge>
-          <IconButton
-            aria-label={t('refresh')}
-            onClick={() => loadAll()}
-            disabled={loading || resetting !== null}
-          >
-            <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-          </IconButton>
-        </div>
-      </div>
-
       <ResponsiveTable
           columns={[
             {
