@@ -189,6 +189,12 @@ async fn process_event(payload: &[u8], bus: &EventBus) -> EventOutcome {
             return EventOutcome::Malformed;
         }
     };
+    tracing::info!(
+        chat_id = %parsed.chat_id,
+        sender_id = %parsed.sender_id,
+        text = %parsed.text,
+        "feishu text event -> publishing ImMessageReceived"
+    );
 
     let _published = bus
         .publish(NeoMindEvent::ImMessageReceived {
@@ -200,13 +206,6 @@ async fn process_event(payload: &[u8], bus: &EventBus) -> EventOutcome {
             timestamp: parsed.timestamp,
         })
         .await;
-
-    tracing::info!(
-        chat_id = %parsed.chat_id,
-        sender_id = %parsed.sender_id,
-        text = %parsed.text,
-        "feishu text event -> published ImMessageReceived"
-    );
     EventOutcome::Published
 }
 
