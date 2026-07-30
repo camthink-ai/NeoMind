@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.13] - 2026-07-30
+
+Skills overhaul + user-configurable system preferences + About resource panel.
+Focus: make small/edge models more reliable at tool use, and expose
+previously-hardcoded operational knobs as user-facing settings.
+
+### Skills System
+- **4 new built-in skills**: `settings-management`, `system-info`,
+  `extension-management`, `widget-management`. Previously these CLI domains
+  had no skill (settings/system) or were buried in 500-line dev guides
+  (extension/widget). Each has a concise command cheat-sheet at the top.
+- **Unified command cheat-sheets** across all 13 management skills — every
+  CLI domain now has a top-of-file table with exact subcommands, so small
+  models see the precise command first instead of prose.
+- Eval impact: settings 0% → 66%; tool-selection wrong-cmd failures reduced
+  across device/rule/agent/message/push/transform/dashboard/connector/llm.
+
+### Agent Loop
+- **Hallucinated tool-name redirect** (chat path): when a weak model emits
+  a full `neomind <command>` as the tool name (e.g. "neomind device list"),
+  the chat path now appends a "use `shell(command=...)`" hint so the model
+  recovers next round instead of looping. Guidance only — no early-stop.
+
+### System Preferences (new)
+- **Agent defaults** (`GET/PUT /api/settings/agent`): `max_rounds` (was
+  const 30), `execution_timeout_secs` (was 300), `tool_concurrency` (was 6),
+  `default_temperature` (was 0.3), `default_top_p` (was 0.7),
+  `default_thinking_enabled`. All configurable via Preferences UI with
+  range-clamped Selects. Priority: env > UI > hardcoded.
+- **Device defaults** (`GET/PUT /api/settings/device`):
+  `default_offline_timeout_secs` (was 300, now **live** via
+  `effective_offline_timeout`) and `auto_onboard_enabled` (was true,
+  applies on restart).
+
+### About Resource Panel
+- **Live system metrics** in the About tab: CPU usage gauge + memory gauge
+  + per-disk usage gauges (deduped macOS APFS duplicates) + network
+  interfaces (IPv4, loopback/virtual filtered) with rx/tx bytes.
+- Polls `/api/stats/system` every 5s (aligned with backend cache).
+- Threshold colors use `info` (blue) mid-tier instead of `warning` (orange).
+- Reusable `UsageGauge` component (parameterized icon/label/sub/right).
+
+### Backend Stats Expansion
+- `/api/stats/system` now returns `cpu_usage` (sysinfo 2-sample),
+  `disks` (per-disk total/used/available), and `networks` (per-interface
+  name/IP/MAC/rx/tx). Flattened to top-level `data.*` for frontend access.
+
+### UI Fixes
+- **Portal dialog click bubbling**: UnifiedFormDialog now stops click
+  propagation on portal content + overlay, preventing dialog taps (✕, Close)
+  from reaching ancestor handlers like table row onRowClick.
+- Card style consistency: Agent + Device preference cards match the standard
+  pattern (icon, space-y-4, SelectTrigger width).
+- About tab: removed redundant instance-manager entry (duplicated TopNav's
+  InstanceSelector).
+
+---
+
 ## [0.9.12] - 2026-07-27
 
 Agent hardening + security fixes + data integrity + test infrastructure.
