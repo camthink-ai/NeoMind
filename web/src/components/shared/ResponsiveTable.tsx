@@ -266,6 +266,7 @@ export function ResponsiveTable({
                               size="icon"
                               className="h-8 w-8 p-0"
                               aria-label="Actions"
+                              onClick={(e) => e.stopPropagation()}
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>
