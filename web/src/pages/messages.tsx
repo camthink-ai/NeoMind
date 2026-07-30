@@ -8,6 +8,7 @@ import { PageLayout } from '@/components/layout/PageLayout'
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, ResponsiveTable, EmptyState } from '@/components/shared'
 import { MessageSquare, Network, Settings, Filter as FilterIcon, Inbox, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useStore } from '@/store'
 import { useToast } from '@/hooks/use-toast'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
@@ -135,6 +136,7 @@ const getCategoryConfig = (category: string) => {
 
 export default function MessagesPage() {
   const { t } = useTranslation()
+  const openSettings = useStore((s) => s.openSettings)
   const { handleError } = useErrorHandler()
   const navigate = useNavigate()
   const location = useLocation()
@@ -607,7 +609,9 @@ export default function MessagesPage() {
     ...(activeTab === 'channels' ? [
       { label: t('messages.channels.create', 'Add Channel'), icon: <Plus className="h-4 w-4" />, onClick: () => { setEditingChannel(null); setChannelEditorOpen(true) } },
     ] : []),
-    // 'im' tab renders its own refresh inside ImSessionsTab; no page-level action.
+    ...(activeTab === 'im' ? [
+      { label: t('messages.im.goToSettings', 'Configure IM bridge'), icon: <Settings className="h-4 w-4" />, onClick: () => openSettings('im') },
+    ] : []),
     ...(activeTab !== 'im' ? [{
       label: t('refresh'),
       variant: 'outline' as const,

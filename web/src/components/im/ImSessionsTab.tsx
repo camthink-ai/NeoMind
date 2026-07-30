@@ -7,20 +7,17 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, RotateCcw, Settings } from 'lucide-react'
+import { Send, RotateCcw } from 'lucide-react'
 import { ResponsiveTable, LoadingState } from '@/components/shared'
-import { Button } from '@/components/ui/button'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess } from '@/lib/notify'
 import { api, type ImBridge, type ImSession } from '@/lib/api'
 import { formatTimestamp } from '@/lib/utils/format'
-import { useStore } from '@/store'
 
 export function ImSessionsTab() {
   const { t } = useTranslation()
   const { handleError } = useErrorHandler()
-  const openSettings = useStore((s) => s.openSettings)
 
   const [loading, setLoading] = useState(true)
   const [bridge, setBridge] = useState<ImBridge | null>(null)
@@ -89,14 +86,6 @@ export function ImSessionsTab() {
 
   return (
     <>
-      {!bridge && (
-        <div className="flex justify-end mb-3">
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => openSettings('im')}>
-            <Settings className="h-4 w-4" />
-            {t('messages.im.goToSettings', 'Configure IM bridge')}
-          </Button>
-        </div>
-      )}
       <ResponsiveTable
           columns={[
             {
@@ -119,16 +108,6 @@ export function ImSessionsTab() {
             },
           ]}
           data={sessions as unknown as Record<string, unknown>[]}
-          emptyState={
-            !bridge ? (
-              <p className="text-sm text-muted-foreground">
-                {t(
-                  'messages.im.noBridgeDesc',
-                  'Configure an IM bridge in Settings to start managing chat sessions.',
-                )}
-              </p>
-            ) : undefined
-          }
           rowKey={(row) => (row as unknown as ImSession).chat_id}
           renderCell={(columnKey, rowData) => {
             const s = rowData as unknown as ImSession

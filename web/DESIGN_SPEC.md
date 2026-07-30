@@ -294,6 +294,8 @@ Every page must use `PageLayout` from `@/components/layout/PageLayout`.
 
 ### Tabs Pattern: `PageTabsBar` + `PageTabsContent`
 
+**Page-level primary actions (Add / Configure / Create) live in `PageTabsBar` `actions` — level with the tabs, top-right — NOT inside the tab content.** Build `actions` per `activeTab` (e.g. "Add Channel" on the channels tab, "Configure IM bridge" on the IM tab). Do not render a separate toolbar or button row inside `PageTabsContent` for a primary add/configure action.
+
 ```tsx
 <PageLayout title="Title" headerContent={<PageTabsBar tabs={tabs} />}>
   <PageTabsContent />
@@ -444,6 +446,8 @@ const { isLoading, handleClick } = useLoadingButton(async () => { await api.save
 ```
 
 **Mobile behavior:** First column becomes card title, remaining columns become key-value pairs. Skeleton rows shown during loading.
+
+**Empty state (hard rule):** `ResponsiveTable` always renders the header and shows its built-in `EmptyStateCompact` when `data` is empty. Do NOT swap the whole table for a standalone `EmptyState` on empty data, and do NOT hand-roll a custom `<p>` empty hint. If you need a custom message, pass it via `emptyState={<EmptyState .../>}` (same component family) — never a bare paragraph. The table + header must stay visible at all times so every tab's empty state looks the same.
 
 ### Virtual List: `VirtualList`
 
