@@ -87,7 +87,7 @@ export function TransformsBadge({ deviceId, deviceTypeId, count: countProp, onRe
         variant="ghost"
         size="sm"
         className="h-7 px-2"
-        onClick={() => setDialogOpen(true)}
+        onClick={(e) => { e.stopPropagation(); setDialogOpen(true) }}
       >
         <Database className="h-4 w-4 mr-1 text-accent-purple" />
         <Badge variant="outline" className="text-xs">
