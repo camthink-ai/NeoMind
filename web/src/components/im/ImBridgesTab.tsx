@@ -232,7 +232,7 @@ export function ImBridgesTab() {
           title={t('settings:im.selectPlatform')}
           description={t('settings:im.addBridgeDesc')}
         />
-        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {available.map(def => {
             const PlatformIcon = def.icon
             return (
@@ -313,7 +313,7 @@ export function ImBridgesTab() {
           </div>
         </div>
 
-        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {bridges.map(bridge => {
             const st = statusBadge(bridge.status)
             return (
