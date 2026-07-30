@@ -74,14 +74,15 @@ pub async fn create_bridge_handler(
     // moved into the spawned task's tracing macro.
     let platform_str = platform.as_str().to_string();
 
-    // M1 has no enforcement for the allowlist (ImRouter hardcodes None). Warn
-    // instead of swallowing silently so a caller who configures one sees the
-    // drop in logs rather than a silent no-op. Wired in M2.
+    // The `allowlist` request field is a vestigial M1 stub: M2a manages bridge
+    // access via the invite system (`/start <token>` binds a chat into the
+    // persisted allowlist), NOT via this field. Warn (rather than silently
+    // ignore) if a caller still sets it, so the non-effect is observable.
     if let Some(list) = &req.allowlist {
         if !list.is_empty() {
             tracing::warn!(
                 platform = %platform_str,
-                "allowlist configured on bridge but not yet enforced (M1); will be wired in M2"
+                "allowlist field on bridge create is ignored; access is managed via invites (/start bind)"
             );
         }
     }
