@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Send, RotateCcw, RefreshCw } from 'lucide-react'
+import { Send, RotateCcw, RefreshCw, Settings } from 'lucide-react'
 import { ResponsiveTable, EmptyState, LoadingState } from '@/components/shared'
 import { Badge } from '@/components/ui/badge'
 import { IconButton } from '@/components/ui/button'
@@ -16,10 +16,12 @@ import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess } from '@/lib/notify'
 import { api, type ImBridge, type ImSession } from '@/lib/api'
 import { formatTimestamp } from '@/lib/utils/format'
+import { useStore } from '@/store'
 
 export function ImSessionsTab() {
   const { t } = useTranslation()
   const { handleError } = useErrorHandler()
+  const openSettings = useStore((s) => s.openSettings)
 
   const [loading, setLoading] = useState(true)
   const [bridge, setBridge] = useState<ImBridge | null>(null)
@@ -96,6 +98,11 @@ export function ImSessionsTab() {
           'messages.im.noBridgeDesc',
           'Configure an IM bridge in Settings to start managing chat sessions.',
         )}
+        action={{
+          label: t('messages.im.goToSettings', 'Configure IM bridge'),
+          onClick: () => openSettings('im'),
+          icon: <Settings className="h-4 w-4" />,
+        }}
       />
     )
   }
@@ -125,17 +132,7 @@ export function ImSessionsTab() {
         </div>
       </div>
 
-      {sessions.length === 0 ? (
-        <EmptyState
-          icon={<Send className="h-12 w-12" />}
-          title={t('messages.im.noSessions', 'No Sessions')}
-          description={t(
-            'messages.im.noSessionsDesc',
-            'No active chat sessions yet. Start a chat with the bot to create one.',
-          )}
-        />
-      ) : (
-        <ResponsiveTable
+      <ResponsiveTable
           columns={[
             {
               key: 'chat_id',
@@ -193,7 +190,6 @@ export function ImSessionsTab() {
           ]}
           loading={loading}
         />
-      )}
     </>
   )
 }
