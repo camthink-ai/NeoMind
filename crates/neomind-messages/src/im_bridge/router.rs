@@ -947,4 +947,183 @@ mod e2e_tests {
         assert_eq!(final_replies[0].1, "🤔 思考中…");
         assert_eq!(final_replies[1].1, "echo:dup");
     }
+
+    // ---- /start invite-bind through the full EventBus pipeline (Task 9) ----
+    //
+    // These tests exercise the wiring a real bridge uses (publish
+    // `ImMessageReceived` → subscriber → `handle_inbound` → MockBridge reply)
+    // against a router constructed in **enforcement mode**:
+    // `allowlist = Some(empty HashSet)`. That strict configuration proves the
+    // `/start` flow actually gates inbound traffic — `None` (allow-all) would
+    // hide any ordering or admission bug.
+
+    /// Full bind lifecycle: (1) unbound chat is rejected by the allowlist,
+    /// (2) `/start <token>` binds the chat and persists state, (3) the same
+    /// chat can then chat freely because the runtime allowlist was synced by
+    /// the bind. This closes the "normal message after bind" coverage gap.
+    #[tokio::test]
+    async fn e2e_start_invite_bind_flow_through_eventbus() {
+        let bus = EventBus::new();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        // ⚠️ Strict mode: allowlist = Some(empty set) → reject everyone except
+        // via /start bind. `None` would be allow-all and hide gating bugs.
+        let router = Arc::new(ImRouter::new(
+            store.clone(),
+            Arc::new(EchoRunner::new()),
+            "agent-1".into(),
+            Some(HashSet::new()),
+        ));
+        let bridge = MockBridge::new(ImPlatform::Telegram);
+        router.registry.register(bridge.clone()).await;
+
+        spawn_event_subscriber(&bus, router.clone());
+
+        // Same chat_id across all three steps so the before/after-bind
+        // contrast (rejected → admitted) is unambiguous.
+        let chat_id = "chat-42";
+
+        // --- Step 1: enforcement ON — unbound chat is rejected (no reply) ---
+        bus.publish(NeoMindEvent::ImMessageReceived {
+            platform: "telegram".into(),
+            im_chat_id: chat_id.into(),
+            sender_id: "u-stranger".into(),
+            text: "hi".into(),
+            msg_id: "e2e-pre-1".into(),
+            timestamp: 1,
+        })
+        .await;
+        // No reply is ever expected here (allowlist drops the message before
+        // any ack). Grace window lets the subscriber process + (not) reply.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let pre_replies = bridge.replies_snapshot();
+        assert!(
+            pre_replies.is_empty(),
+            "strict allowlist must reject unbound chat (step 1); got: {pre_replies:?}"
+        );
+
+        // --- Step 2: /start <token> reaches the unbound user and binds ---
+        let token = store.create_invite().unwrap();
+        bus.publish(NeoMindEvent::ImMessageReceived {
+            platform: "telegram".into(),
+            im_chat_id: chat_id.into(),
+            sender_id: "u-stranger".into(),
+            text: format!("/start {token}"),
+            msg_id: "e2e-bind".into(),
+            timestamp: 2,
+        })
+        .await;
+        let after_bind = wait_for_replies(&bridge, 1, 2000).await;
+        assert_eq!(
+            after_bind.len(),
+            1,
+            "/start bind should produce exactly 1 reply, got: {after_bind:?}"
+        );
+        assert!(
+            after_bind[0].1.contains("绑定成功"),
+            "bind reply should confirm success, got: {}",
+            after_bind[0].1
+        );
+
+        // Persistent allow_list now contains the bound chat_id.
+        let allow = store.allow_list().unwrap();
+        assert!(
+            allow.iter().any(|c| c == chat_id),
+            "allow_list should contain bound chat_id, got: {allow:?}"
+        );
+
+        // Invite marked used + bound_chat_id recorded.
+        let invite = store
+            .list_invites()
+            .unwrap()
+            .into_iter()
+            .find(|(t, _)| t == &token)
+            .map(|(_, r)| r)
+            .expect("invite should persist after consume");
+        assert!(invite.used, "invite should be marked used after bind");
+        assert_eq!(
+            invite.bound_chat_id.as_deref(),
+            Some(chat_id),
+            "invite should record the bound chat_id"
+        );
+
+        // --- Step 3: bound chat can now chat (runtime allowlist synced) ---
+        bus.publish(NeoMindEvent::ImMessageReceived {
+            platform: "telegram".into(),
+            im_chat_id: chat_id.into(),
+            sender_id: "u-stranger".into(),
+            text: "hello".into(),
+            msg_id: "e2e-post-1".into(),
+            timestamp: 3,
+        })
+        .await;
+        // 1 (bind) + 2 (思考中 + echo:hello) = 3 total replies.
+        let final_replies = wait_for_replies(&bridge, 3, 2000).await;
+        assert_eq!(
+            final_replies.len(),
+            3,
+            "post-bind normal message must pass allowlist → 思考中 + echo, got: {final_replies:?}"
+        );
+        // Last two are the post-bind pair.
+        assert_eq!(
+            final_replies[1].1, "🤔 思考中…",
+            "second reply should be the 思考中 ack"
+        );
+        assert_eq!(
+            final_replies[2].1, "echo:hello",
+            "third reply should be the agent echo result"
+        );
+    }
+
+    /// `/start <bogus>` is rejected; the chat_id must NOT leak into the
+    /// allowlist. Validates the failure path through the EventBus pipeline.
+    #[tokio::test]
+    async fn e2e_start_bogus_token_rejected_through_eventbus() {
+        let bus = EventBus::new();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let router = Arc::new(ImRouter::new(
+            store.clone(),
+            Arc::new(EchoRunner::new()),
+            "agent-1".into(),
+            Some(HashSet::new()),
+        ));
+        let bridge = MockBridge::new(ImPlatform::Telegram);
+        router.registry.register(bridge.clone()).await;
+
+        spawn_event_subscriber(&bus, router.clone());
+
+        bus.publish(NeoMindEvent::ImMessageReceived {
+            platform: "telegram".into(),
+            im_chat_id: "chat-bogus".into(),
+            sender_id: "u-x".into(),
+            text: "/start ghost-token".into(),
+            msg_id: "e2e-bogus".into(),
+            timestamp: 1,
+        })
+        .await;
+
+        let replies = wait_for_replies(&bridge, 1, 2000).await;
+        assert_eq!(
+            replies.len(),
+            1,
+            "bogus /start should produce exactly 1 reply, got: {replies:?}"
+        );
+        assert!(
+            replies[0].1.contains("邀请无效或已使用"),
+            "bogus token should be rejected, got: {}",
+            replies[0].1
+        );
+        // A failed bind must not mutate the allowlist.
+        assert!(
+            !store
+                .allow_list()
+                .unwrap()
+                .iter()
+                .any(|c| c == "chat-bogus"),
+            "failed bind must not add chat_id to allow_list"
+        );
+    }
 }
