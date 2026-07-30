@@ -2957,6 +2957,7 @@ impl ServerState {
     /// surface errors via `tracing::error!` — do not swallow with `let _ =`.
     pub async fn start_im_router(&self) -> Result<(), crate::models::ErrorResponse> {
         use neomind_messages::im_bridge::{router::InboundMessage, ImPlatform};
+        use std::collections::HashSet;
 
         // Open the IM session store under data/. A failure here means the
         // bridge cannot persist chat↔session mappings — surface as 500 rather
@@ -2990,14 +2991,30 @@ impl ServerState {
         // reads/writes — no divergence.
         let store_for_cleanup = store.clone();
 
+        // Load the persisted allowlist BEFORE `store` moves into the router.
+        // Across restarts this repopulates the runtime gate from `/start`
+        // binds the operator already approved — without it the router would
+        // boot in allow-all mode (None) and the invite system would be
+        // cosmetic: any chat could talk to the agent. A fresh deploy with no
+        // approved chats yields an empty set, so Some(empty) rejects all
+        // inbound until an operator mints + a user `/start`-binds an invite.
+        // That is the intended M2a posture (invite-gated from boot).
+        let initial_allowlist: HashSet<String> = store
+            .allow_list()
+            .map_err(|e| {
+                crate::models::ErrorResponse::internal(format!(
+                    "Failed to read IM allowlist: {}",
+                    e
+                ))
+            })?
+            .into_iter()
+            .collect();
+
         let router = Arc::new(neomind_messages::im_bridge::router::ImRouter::new(
             store,
             runner,
             default_agent_id,
-            // allowlist=None ⇒ accept all senders. Production deployments MUST
-            // configure this (Task 10+); recorded as a follow-up, not a silent
-            // default-to-secure footgun here.
-            None,
+            Some(initial_allowlist),
         ));
 
         // Subscribe to ImMessageReceived events and forward each to the router.

@@ -268,6 +268,23 @@ impl ImSessionStore {
         }
         Ok(out)
     }
+
+    /// 列出全部 chat↔session 映射，返回 `(composite_key, record)`。
+    ///
+    /// composite_key 形如 `<platform>:<chat_id>`（见 `SessionKey::composite`）。
+    /// 调用方按平台前缀过滤后，用 `splitn(2, ':').nth(1)` 还原 chat_id。
+    /// 无顺序保证，与 `list_invites` 一致。
+    pub fn list_sessions(&self) -> Result<Vec<(String, ImSessionRecord)>, anyhow::Error> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(IM_SESSIONS_TABLE)?;
+        let mut out = Vec::new();
+        for item in t.iter()? {
+            let (k, v) = item?;
+            let rec: ImSessionRecord = serde_json::from_str(v.value())?;
+            out.push((k.value().to_string(), rec));
+        }
+        Ok(out)
+    }
 }
 
 fn now_secs() -> i64 {
@@ -303,6 +320,36 @@ mod tests {
         assert_eq!(r.neo_session_id, "sess-1");
         let r2 = store.get(&key).unwrap().unwrap();
         assert_eq!(r2.neo_session_id, "sess-1"); // 复用，不新建
+    }
+
+    #[tokio::test]
+    async fn list_sessions_returns_composite_key_and_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ImSessionStore::open(tmp.path()).unwrap();
+        // 空表 → 空 list。
+        assert!(store.list_sessions().unwrap().is_empty());
+
+        let key_a = SessionKey {
+            platform: "telegram".into(),
+            chat_id: "111".into(),
+        };
+        let key_b = SessionKey {
+            platform: "telegram".into(),
+            chat_id: "222".into(),
+        };
+        store.get_or_create(&key_a, "sess-a", "agent-1").unwrap();
+        store.get_or_create(&key_b, "sess-b", "agent-1").unwrap();
+
+        let mut rows = store.list_sessions().unwrap();
+        assert_eq!(rows.len(), 2);
+        // 排序后断言稳定。
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(rows[0].0, "telegram:111");
+        assert_eq!(rows[0].1.neo_session_id, "sess-a");
+        assert_eq!(rows[1].0, "telegram:222");
+        assert_eq!(rows[1].1.neo_session_id, "sess-b");
+        // composite key 形如 `<platform>:<chat_id>`，split_once 能还原 chat_id。
+        assert_eq!(rows[0].0.split_once(':').map(|x| x.1), Some("111"));
     }
 
     #[test]

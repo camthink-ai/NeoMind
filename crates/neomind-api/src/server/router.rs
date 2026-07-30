@@ -330,6 +330,18 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         )
         // === IM Bridges (read - expose running bridge platforms) ===
         .route("/api/im-bridges", get(im_bridges::list_bridges_handler))
+        .route(
+            "/api/im-bridges/:id/invites",
+            get(im_bridges::list_invites_handler),
+        )
+        .route(
+            "/api/im-bridges/:id/allowlist",
+            get(im_bridges::list_allowlist_handler),
+        )
+        .route(
+            "/api/im-bridges/:id/sessions",
+            get(im_bridges::list_sessions_handler),
+        )
         // === Skills (moved from public - expose skill configs) ===
         .route("/api/skills", get(skills::list_skills_handler))
         .route("/api/skills/match", post(skills::match_skills_handler))
@@ -680,6 +692,22 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/im-bridges/:id",
             delete(im_bridges::delete_bridge_handler),
+        )
+        .route(
+            "/api/im-bridges/:id/invites",
+            post(im_bridges::create_invite_handler),
+        )
+        .route(
+            "/api/im-bridges/:id/invites/:token",
+            delete(im_bridges::revoke_invite_handler),
+        )
+        .route(
+            "/api/im-bridges/:id/allowlist/:chat_id",
+            delete(im_bridges::remove_allowlist_handler),
+        )
+        .route(
+            "/api/im-bridges/:id/sessions/:chat_id/reset",
+            post(im_bridges::reset_session_handler),
         )
         // LLM Generation API (one-shot, no session)
         .route("/api/llm/generate", post(settings::llm_generate_handler))
