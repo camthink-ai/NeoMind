@@ -795,11 +795,10 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
             <LoadingState size="lg" className="flex-1" />
           ) : (
             <FullScreenDialogMain className="p-6">
-              <div className="space-y-8 max-w-4xl mx-auto">
+              <div className="space-y-6">
                 {/* General Settings */}
                 <div className="space-y-4">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <Settings className="h-4 w-4 text-accent-purple" />
+                  <h3 className="text-sm font-semibold">
                     {t("systemMemory.config.general", "General Settings")}
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -819,8 +818,7 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
 
                 {/* Char Limits */}
                 <div className="space-y-4">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <BookOpen className="h-4 w-4 text-info" />
+                  <h3 className="text-sm font-semibold">
                     {t("systemMemory.config.charLimits", "Character Limits")}
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -904,8 +902,7 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
 
                 {/* Schedule Settings */}
                 <div className="space-y-4">
-                  <h3 className="text-sm font-semibold flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-accent-orange" />
+                  <h3 className="text-sm font-semibold">
                     {t("systemMemory.config.schedule", "Schedule")}
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
