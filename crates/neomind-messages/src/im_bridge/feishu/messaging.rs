@@ -2,13 +2,13 @@
 //!
 //! Two-step flow mirroring `larksuite/node-sdk`'s `client.ts`:
 //!
-//! 1. **tenant_access_token** — `POST {domain}/auth/v3/tenant_access_token/internal`
+//! 1. **tenant_access_token** — `POST {domain}/open-apis/auth/v3/tenant_access_token/internal`
 //!    with `{app_id, app_secret}` → `{code, msg, tenant_access_token, expire}`
 //!    (`expire` in seconds, default 7200 = 2h). Cached as
 //!    `(token, expire_unix_secs)`; a cached token with **< 60s remaining** is
 //!    treated as stale and re-fetched (matches the 60s safety margin in
 //!    `larksuite/node-sdk`'s token cache).
-//! 2. **send_text** — `POST {domain}/im/v1/messages?receive_id_type=chat_id`
+//! 2. **send_text** — `POST {domain}/open-apis/im/v1/messages?receive_id_type=chat_id`
 //!    with header `Authorization: Bearer {token}` and body
 //!    `{receive_id, msg_type:"text", content: JSON.stringify({"text": text})}`
 //!    → `data.message_id`.
@@ -79,7 +79,7 @@ impl FeishuMessenger {
         // Cache empty / stale → fetch a fresh token. `guard` stays held across
         // the await so a racing caller waits, then re-checks the now-populated
         // cache on its own lock acquisition (no duplicate fetch).
-        let url = format!("{}/auth/v3/tenant_access_token/internal", self.domain);
+        let url = format!("{}/open-apis/auth/v3/tenant_access_token/internal", self.domain);
         let body = serde_json::json!({
             "app_id": self.app_id,
             "app_secret": self.app_secret,
@@ -115,7 +115,7 @@ impl FeishuMessenger {
     /// `TelegramBridge::reply`'s `Option<String>`.
     pub async fn send_text(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
         let token = self.tenant_access_token().await?;
-        let url = format!("{}/im/v1/messages?receive_id_type=chat_id", self.domain);
+        let url = format!("{}/open-apis/im/v1/messages?receive_id_type=chat_id", self.domain);
 
         // Feishu requires `content` to be a JSON-encoded *string*, not a nested
         // object; `to_string` of `{"text": text}` yields exactly that.
@@ -170,7 +170,7 @@ mod tests {
     use std::time::Duration;
     use tokio::net::TcpListener;
 
-    /// Body the mock `/im/v1/messages` handler records. `content` is the raw
+    /// Body the mock `/open-apis/im/v1/messages` handler records. `content` is the raw
     /// JSON-encoded string Feishu expects (deserialized as a String, then
     /// re-parsed in the test to assert its inner shape).
     #[derive(Debug, Clone, serde::Deserialize)]
@@ -192,7 +192,7 @@ mod tests {
         expire_secs: AtomicI64,
     }
 
-    /// `POST /auth/v3/tenant_access_token/internal` — echoes a fake token +
+    /// `POST /open-apis/auth/v3/tenant_access_token/internal` — echoes a fake token +
     /// the configured `expire`. Asserts the request carried app_id/app_secret.
     async fn handle_token(
         State(shared): State<Arc<Shared>>,
@@ -215,7 +215,7 @@ mod tests {
         }))
     }
 
-    /// `POST /im/v1/messages` — records body + Authorization header, returns a
+    /// `POST /open-apis/im/v1/messages` — records body + Authorization header, returns a
     /// fixed `message_id`.
     async fn handle_send(
         State(shared): State<Arc<Shared>>,
@@ -253,8 +253,8 @@ mod tests {
                 expire_secs: AtomicI64::new(expire_secs),
             });
             let app = Router::new()
-                .route("/auth/v3/tenant_access_token/internal", post(handle_token))
-                .route("/im/v1/messages", post(handle_send))
+                .route("/open-apis/auth/v3/tenant_access_token/internal", post(handle_token))
+                .route("/open-apis/im/v1/messages", post(handle_send))
                 .with_state(shared.clone());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
@@ -304,7 +304,7 @@ mod tests {
         let id = m.send_text("oc_chat_1", "hello").await.expect("send ok");
 
         assert_eq!(id.as_deref(), Some("om_test_123"));
-        assert_eq!(server.send_calls(), 1, "exactly one POST /im/v1/messages");
+        assert_eq!(server.send_calls(), 1, "exactly one POST /open-apis/im/v1/messages");
 
         let body = server.last_send_body();
         assert_eq!(body.receive_id, "oc_chat_1");
@@ -371,14 +371,14 @@ mod tests {
         let shared = Arc::new(Shared::default());
         let app = Router::new()
             .route(
-                "/auth/v3/tenant_access_token/internal",
+                "/open-apis/auth/v3/tenant_access_token/internal",
                 post(|| async {
                     Json(
                         serde_json::json!({ "code": 99991661, "msg": "app_id/app_secret invalid" }),
                     )
                 }),
             )
-            .route("/im/v1/messages", post(handle_send))
+            .route("/open-apis/im/v1/messages", post(handle_send))
             .with_state(shared.clone());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

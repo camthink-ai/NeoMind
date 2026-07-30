@@ -511,7 +511,7 @@ mod tests {
     // endpoints, returning a fixed `message_id`. Asserts `FeishuBridge::reply`
     // delegates to `FeishuMessenger::send_text` and surfaces the returned id.
 
-    /// Body the mock `/im/v1/messages` handler records.
+    /// Body the mock `/open-apis/im/v1/messages` handler records.
     #[derive(Debug, Clone, serde::Deserialize)]
     struct SendBody {
         receive_id: String,
@@ -561,8 +561,8 @@ mod tests {
                 ..Default::default()
             });
             let app = Router::new()
-                .route("/auth/v3/tenant_access_token/internal", post(handle_token))
-                .route("/im/v1/messages", post(handle_send))
+                .route("/open-apis/auth/v3/tenant_access_token/internal", post(handle_token))
+                .route("/open-apis/im/v1/messages", post(handle_send))
                 .with_state(shared.clone());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
@@ -603,7 +603,7 @@ mod tests {
             .expect("reply ok");
 
         assert_eq!(msg_id.as_deref(), Some("om_reply_1"));
-        assert_eq!(server.send_calls(), 1, "exactly one POST /im/v1/messages");
+        assert_eq!(server.send_calls(), 1, "exactly one POST /open-apis/im/v1/messages");
 
         let body = server.last_send_body();
         assert_eq!(body.receive_id, "oc_chat_9");
