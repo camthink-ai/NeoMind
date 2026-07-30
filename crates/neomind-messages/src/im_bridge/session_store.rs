@@ -3,7 +3,7 @@
 //! 每个 `(platform, chat_id)` 对应一条 NeoMind chat session，首次入站时建，
 //! 后续复用；`/reset` 或管理命令可清掉重建。
 
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -115,6 +115,37 @@ impl ImSessionStore {
         tx.commit()?;
         Ok(())
     }
+
+    /// 删除 `last_active` 早于 `cutoff` 的记录，返回删除数。
+    ///
+    /// 用于后台周期性清理（见 `start_im_router` 的 cleanup task）：
+    /// 长期不活跃的 IM↔NeoMind 映射会被回收，下次该 chat 入站时自动重建。
+    /// 空表或全新鲜记录返回 0。先收集 key 再删，避免在 iter 借用期 mutate 同表。
+    pub fn evict_expired(&self, cutoff: i64) -> Result<usize, anyhow::Error> {
+        let tx = self.db.begin_write()?;
+        let mut removed = 0;
+        {
+            let mut t = tx.open_table(IM_SESSIONS_TABLE)?;
+            // 先收集待删除 key（String 拷贝出借用域），避免一边 iter 一边 remove。
+            let stale_keys: Vec<String> = {
+                let mut out = Vec::new();
+                for item in t.iter()? {
+                    let (k, v) = item?;
+                    let rec: ImSessionRecord = serde_json::from_str(v.value())?;
+                    if rec.last_active < cutoff {
+                        out.push(k.value().to_string());
+                    }
+                }
+                out
+            };
+            for k in stale_keys {
+                t.remove(k.as_str())?;
+                removed += 1;
+            }
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
 }
 
 fn now_secs() -> i64 {
@@ -137,5 +168,66 @@ mod tests {
         assert_eq!(r.neo_session_id, "sess-1");
         let r2 = store.get(&key).unwrap().unwrap();
         assert_eq!(r2.neo_session_id, "sess-1"); // 复用，不新建
+    }
+
+    #[test]
+    fn evict_expired_removes_stale_records() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ImSessionStore::open(tmp.path()).unwrap();
+        let key = SessionKey { platform: "telegram".into(), chat_id: "123".into() };
+        // 插入一条 last_active = now - 8 天 的过期记录。
+        let now = now_secs();
+        let stale = ImSessionRecord {
+            neo_session_id: "s1".into(),
+            bound_agent_id: "a1".into(),
+            alias: None,
+            created_at: now - 8 * 86400,
+            last_active: now - 8 * 86400,
+        };
+        store.put(&key, &stale).unwrap();
+        // cutoff = now - 7 天：stale (8 天前) 应被删除。
+        let removed = store.evict_expired(now - 7 * 86400).unwrap();
+        assert_eq!(removed, 1);
+        assert!(store.get(&key).unwrap().is_none());
+    }
+
+    #[test]
+    fn evict_expired_keeps_fresh_records() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ImSessionStore::open(tmp.path()).unwrap();
+        let key = SessionKey { platform: "telegram".into(), chat_id: "456".into() };
+        // 一条新鲜记录（刚刚 active）+ 一条 10 天前的记录。
+        let now = now_secs();
+        let fresh = ImSessionRecord {
+            neo_session_id: "fresh".into(),
+            bound_agent_id: "a".into(),
+            alias: None,
+            created_at: now,
+            last_active: now,
+        };
+        let old_key = SessionKey { platform: "telegram".into(), chat_id: "old".into() };
+        let old = ImSessionRecord {
+            neo_session_id: "old".into(),
+            bound_agent_id: "a".into(),
+            alias: None,
+            created_at: now - 10 * 86400,
+            last_active: now - 10 * 86400,
+        };
+        store.put(&key, &fresh).unwrap();
+        store.put(&old_key, &old).unwrap();
+        let removed = store.evict_expired(now - 7 * 86400).unwrap();
+        assert_eq!(removed, 1);
+        // fresh 保留，old 删除。
+        assert!(store.get(&key).unwrap().is_some());
+        assert!(store.get(&old_key).unwrap().is_none());
+    }
+
+    #[test]
+    fn evict_expired_empty_table_returns_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ImSessionStore::open(tmp.path()).unwrap();
+        let now = now_secs();
+        let removed = store.evict_expired(now - 7 * 86400).unwrap();
+        assert_eq!(removed, 0);
     }
 }

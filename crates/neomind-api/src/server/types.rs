@@ -2984,6 +2984,12 @@ impl ServerState {
         // silently dropping every inbound message.
         let default_agent_id = self.im_default_agent().await?;
 
+        // Clone a handle for the periodic expiry cleanup task (the original
+        // `store` is moved into ImRouter below). Same Arc<ImSessionStore>,
+        // so the cleanup task evicts from the same backing redb the router
+        // reads/writes — no divergence.
+        let store_for_cleanup = store.clone();
+
         let router = Arc::new(neomind_messages::im_bridge::router::ImRouter::new(
             store,
             runner,
@@ -3047,6 +3053,50 @@ impl ServerState {
 
         *self.im_router.write().await = Some(router);
         tracing::info!(category = "im", "IM router started");
+
+        // Periodic IM session expiry cleanup — mirrors the agent-execution
+        // cleanup pattern above (line ~1132). TTL = 7 days: a chat inactive
+        // this long is unlikely to recall its prior NeoMind session, and
+        // re-prompting from a clean slate (new session via get_or_create) is
+        // cheaper than carrying stale context indefinitely. First tick is
+        // immediate (`tokio::time::interval` semantics) — consumed so the
+        // server doesn't do a full-table scan during startup, matching the
+        // agent-execution cleanup's rationale.
+        {
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+                // Skip the immediate first tick to avoid contending with
+                // startup I/O (same rationale as the agent-execution cleanup).
+                interval.tick().await;
+                let ttl_secs: i64 = 7 * 86400;
+                loop {
+                    interval.tick().await;
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let cutoff = now_secs - ttl_secs;
+                    match store_for_cleanup.evict_expired(cutoff) {
+                        Ok(n) if n > 0 => {
+                            tracing::info!(
+                                category = "im",
+                                removed = n,
+                                "IM session expiry cleanup removed stale records"
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                category = "im",
+                                error = %e,
+                                "IM session expiry cleanup failed — stale sessions may accumulate"
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
         Ok(())
     }
 
