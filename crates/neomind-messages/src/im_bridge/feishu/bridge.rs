@@ -120,7 +120,17 @@ impl ImBridge for FeishuBridge {
     }
 
     async fn reply(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
-        self.messenger.send_text(chat_id, text).await
+        tracing::info!(chat_id, text_len = text.len(), "feishu reply -> send_text");
+        match self.messenger.send_text(chat_id, text).await {
+            Ok(mid) => {
+                tracing::info!(chat_id, message_id = ?mid, "feishu reply send_text ok");
+                Ok(mid)
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, chat_id, "feishu reply send_text failed");
+                Err(e)
+            }
+        }
     }
 
     // deep_link intentionally NOT overridden: Feishu has no deep-link / QR
