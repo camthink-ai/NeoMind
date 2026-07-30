@@ -290,6 +290,9 @@ export function ImBridgesTab() {
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {bridges.map(bridge => {
             const st = statusBadge(bridge.status)
+            const def = getPlatformDef(bridge.platform)
+            const PlatformIcon = def?.icon ?? Send
+            const iconBg = def?.iconBg ?? 'bg-info-light text-info'
             return (
               <Card
                 key={bridge.id}
@@ -298,8 +301,8 @@ export function ImBridgesTab() {
               >
                 <CardContent className="p-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex items-center justify-center h-10 w-10 rounded-lg shrink-0 bg-info-light text-info">
-                      <Send className="h-5 w-5" />
+                    <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', iconBg)}>
+                      <PlatformIcon className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
@@ -307,7 +310,7 @@ export function ImBridgesTab() {
                         <Badge className={cn('text-xs border shrink-0', st.className)}>{st.label}</Badge>
                       </div>
                       <CardDescription className="mt-1 text-xs line-clamp-1">
-                        {t('settings:im.platformFixed')}
+                        {t(def?.descriptionKey ?? 'settings:im.platformFixed')}
                       </CardDescription>
                     </div>
                   </div>
