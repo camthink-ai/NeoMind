@@ -3367,11 +3367,28 @@ impl neomind_messages::im_bridge::AgentRunner for SessionManagerAgentRunner {
             .await?;
         let mut s = stream;
         let mut out = String::new();
+        let mut last_error: Option<String> = None;
         while let Some(ev) = s.next().await {
             match ev {
                 neomind_agent::AgentEvent::Content { content } => out.push_str(&content),
+                // gotcha #10: capture the error instead of dropping it — if the
+                // stream errors before any Content chunk, `out` would stay empty,
+                // the router would reply "" → Telegram 400 → reply() silently
+                // swallowed, leaving the user stuck on "思考中…".
+                neomind_agent::AgentEvent::Error { message } => {
+                    last_error = Some(message)
+                }
                 neomind_agent::AgentEvent::End { .. } => break,
                 _ => {}
+            }
+        }
+        // gotcha #10: never return empty silently — surface the error text so
+        // the router replies something instead of empty→400→silent. When content
+        // was produced we keep it as-is (an error mid-stream after partial output
+        // is still useful to the user).
+        if out.is_empty() {
+            if let Some(msg) = last_error {
+                out = format!("（处理失败：{msg}）");
             }
         }
         Ok(out)

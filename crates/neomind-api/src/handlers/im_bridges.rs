@@ -46,8 +46,8 @@ pub struct CreateBridgeRequest {
     /// Optional Telegram Bot API base URL (proxy / private gateway).
     pub api_base: Option<String>,
     /// Optional sender/chat allowlist. M2+ concern; ignored by the bridge
-    /// today — enforcement lives in `ImRouter`'s inbound path.
-    #[allow(dead_code)]
+    /// today — enforcement lives in `ImRouter`'s inbound path. We warn (not
+    /// reject) when set so the silent-drop is observable.
     pub allowlist: Option<Vec<String>>,
     /// Platform id; only `"telegram"` is supported in M1.
     pub platform: String,
@@ -67,6 +67,18 @@ pub async fn create_bridge_handler(
     // Capture the platform string for logging — the ImPlatform itself is
     // moved into the spawned task's tracing macro.
     let platform_str = platform.as_str().to_string();
+
+    // M1 has no enforcement for the allowlist (ImRouter hardcodes None). Warn
+    // instead of swallowing silently so a caller who configures one sees the
+    // drop in logs rather than a silent no-op. Wired in M2.
+    if let Some(list) = &req.allowlist {
+        if !list.is_empty() {
+            tracing::warn!(
+                platform = %platform_str,
+                "allowlist configured on bridge but not yet enforced (M1); will be wired in M2"
+            );
+        }
+    }
 
     let bus = state
         .core
