@@ -588,6 +588,7 @@ function App() {
                       {/* Messages with tab routes */}
                       <Route path="/messages" element={<MessagesPage />} />
                       <Route path="/messages/channels" element={<MessagesPage />} />
+                      <Route path="/messages/im" element={<MessagesPage />} />
                       {/* Extensions */}
                       <Route path="/extensions" element={<ExtensionsPage />} />
                       <Route path="/plugins" element={<Navigate to="/extensions" replace />} />
