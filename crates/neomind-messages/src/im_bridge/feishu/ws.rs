@@ -274,7 +274,7 @@ impl FeishuWsClient {
             let cfg = match self.fetch_endpoint().await {
                 Ok(c) => c,
                 Err(e) => {
-                    tracing::warn!(error = %e, "feishu endpoint fetch failed");
+                    tracing::warn!(error = ?e, "feishu endpoint fetch failed");
                     attempts += 1;
                     if !self.should_retry(attempts, -1) {
                         return Err(anyhow!(

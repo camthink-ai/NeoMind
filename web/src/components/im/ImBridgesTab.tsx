@@ -16,7 +16,7 @@ import { api, type ImBridge, type ImInvite, type ImInviteCreated } from '@/lib/a
 import { cn } from '@/lib/utils'
 import { IM_PLATFORMS, getPlatformDef, type ImPlatformDef, type ImPlatformField } from './platforms'
 
-type View = 'list' | 'detail' | 'configure'
+type View = 'list' | 'detail' | 'configure' | 'picker'
 
 /** Display name for a platform id, resolved from the registry (falls back to capitalized id). */
 function platformDisplayName(platform: string, t: TFunction): string {
@@ -220,6 +220,43 @@ export function ImBridgesTab() {
   }
 
   // ========== CONFIGURE-PLATFORM VIEW (add-flow step 2) ==========
+  // ========== PICKER VIEW (add another bridge) ==========
+  if (view === 'picker') {
+    const available = IM_PLATFORMS.filter(p => p.available)
+    return (
+      <>
+        <ListToolbar
+          onBack={() => setView('list')}
+          backLabel={t('settings:im.back', { defaultValue: 'Back' })}
+          icon={<Plus className="h-5 w-5" />}
+          iconBg="bg-info-light text-info"
+          title={t('settings:im.selectPlatform')}
+          description={t('settings:im.addBridgeDesc')}
+        />
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
+          {available.map(def => {
+            const PlatformIcon = def.icon
+            return (
+              <Card key={def.id} className="cursor-pointer transition-all duration-200 hover:shadow-md" onClick={() => handlePlatformSelect(def)}>
+                <CardContent className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', def.iconBg)}>
+                      <PlatformIcon className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <CardTitle className="text-base truncate">{t(def.nameKey)}</CardTitle>
+                      <CardDescription className="mt-1 text-xs line-clamp-1">{t(def.descriptionKey)}</CardDescription>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })}
+        </div>
+      </>
+    )
+  }
+
   if (view === 'configure' && selectedPlatform) {
     const PlatformIcon = selectedPlatform.icon
     return (
@@ -287,6 +324,12 @@ export function ImBridgesTab() {
 
     return (
       <>
+        <div className="flex justify-end mb-3">
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => setView('picker')}>
+            <Plus className="h-4 w-4" />
+            {t('settings:im.addBridge', { defaultValue: 'Add bridge' })}
+          </Button>
+        </div>
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {bridges.map(bridge => {
             const st = statusBadge(bridge.status)
