@@ -382,6 +382,31 @@ export async function fetchAPI<T>(
   return json as T
 }
 
+// ========== IM Bridges API ==========
+export interface ImBridge {
+  id: string
+  platform: string
+  status: string
+}
+export interface ImInvite {
+  token: string
+  created_at: number
+  used: boolean
+  bound_chat_id: string | null
+  bound_at: number | null
+}
+export interface ImInviteCreated {
+  token: string
+  deep_link: string | null
+}
+export interface ImSession {
+  chat_id: string
+  bound_agent_id: string
+  neo_session_id: string
+  last_active: number
+  created_at: number
+}
+
 // ============================================================================
 // API Methods
 // ============================================================================
@@ -978,6 +1003,27 @@ export const api = {
       // automatic notifyFromError to avoid double-toasting on PATCH failure.
       skipErrorToast: true,
     }),
+
+  // ========== IM Bridges API ==========
+  listImBridges: () => fetchAPI<{ bridges: ImBridge[] }>('/im-bridges'),
+  createImBridge: (req: { platform: string; bot_token: string; api_base?: string }) =>
+    fetchAPI<ImBridge>('/im-bridges', { method: 'POST', body: JSON.stringify(req) }),
+  deleteImBridge: (id: string) =>
+    fetchAPI<{ id: string; status: string }>(`/im-bridges/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  createImInvite: (id: string) =>
+    fetchAPI<ImInviteCreated>(`/im-bridges/${encodeURIComponent(id)}/invites`, { method: 'POST' }),
+  listImInvites: (id: string) =>
+    fetchAPI<{ invites: ImInvite[] }>(`/im-bridges/${encodeURIComponent(id)}/invites`),
+  revokeImInvite: (id: string, token: string) =>
+    fetchAPI(`/im-bridges/${encodeURIComponent(id)}/invites/${encodeURIComponent(token)}`, { method: 'DELETE' }),
+  listImAllowlist: (id: string) =>
+    fetchAPI<{ allowlist: string[] }>(`/im-bridges/${encodeURIComponent(id)}/allowlist`),
+  removeImAllowed: (id: string, chat_id: string) =>
+    fetchAPI(`/im-bridges/${encodeURIComponent(id)}/allowlist/${encodeURIComponent(chat_id)}`, { method: 'DELETE' }),
+  listImSessions: (id: string) =>
+    fetchAPI<{ sessions: ImSession[] }>(`/im-bridges/${encodeURIComponent(id)}/sessions`),
+  resetImSession: (id: string, chat_id: string) =>
+    fetchAPI(`/im-bridges/${encodeURIComponent(id)}/sessions/${encodeURIComponent(chat_id)}/reset`, { method: 'POST' }),
 
   // ========== MQTT / Brokers API ==========
   // Used by UnifiedDeviceConnectionsTab to display connection status
