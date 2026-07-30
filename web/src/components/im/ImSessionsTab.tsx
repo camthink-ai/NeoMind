@@ -8,9 +8,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Send, RotateCcw, RefreshCw, Settings } from 'lucide-react'
-import { ResponsiveTable, EmptyState, LoadingState } from '@/components/shared'
+import { ResponsiveTable, LoadingState } from '@/components/shared'
 import { Badge } from '@/components/ui/badge'
-import { IconButton } from '@/components/ui/button'
+import { IconButton, Button } from '@/components/ui/button'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess } from '@/lib/notify'
@@ -88,25 +88,6 @@ export function ImSessionsTab() {
     return <LoadingState variant="page" text={t('loading', 'Loading...')} />
   }
 
-  // No bridge configured → hint to set one up in Settings.
-  if (!bridge) {
-    return (
-      <EmptyState
-        icon={<Send className="h-12 w-12" />}
-        title={t('messages.im.noBridge', 'No IM Bridge Configured')}
-        description={t(
-          'messages.im.noBridgeDesc',
-          'Configure an IM bridge in Settings to start managing chat sessions.',
-        )}
-        action={{
-          label: t('messages.im.goToSettings', 'Configure IM bridge'),
-          onClick: () => openSettings('im'),
-          icon: <Settings className="h-4 w-4" />,
-        }}
-      />
-    )
-  }
-
   return (
     <>
       {/* Header */}
@@ -154,6 +135,22 @@ export function ImSessionsTab() {
             },
           ]}
           data={sessions as unknown as Record<string, unknown>[]}
+          emptyState={
+            !bridge ? (
+              <div className="flex flex-col items-center gap-3 py-2">
+                <p className="text-sm text-muted-foreground">
+                  {t(
+                    'messages.im.noBridgeDesc',
+                    'Configure an IM bridge in Settings to start managing chat sessions.',
+                  )}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => openSettings('im')}>
+                  <Settings className="mr-2 h-4 w-4" />
+                  {t('messages.im.goToSettings', 'Configure IM bridge')}
+                </Button>
+              </div>
+            ) : undefined
+          }
           rowKey={(row) => (row as unknown as ImSession).chat_id}
           renderCell={(columnKey, rowData) => {
             const s = rowData as unknown as ImSession
