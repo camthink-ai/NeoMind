@@ -474,6 +474,11 @@
       "cloud": "云端"
     }
   },
+  "im": {
+    "platforms": {
+      "telegram": "Telegram"
+    }
+  },
   "inputSuggestions": {
     "greeting": {
       "morning": "早上好",

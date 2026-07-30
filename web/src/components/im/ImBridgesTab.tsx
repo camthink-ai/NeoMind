@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { Send, Plus, Trash2, Copy, QrCode, Check, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -8,21 +9,19 @@ import { Button, IconButton } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/field'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
-import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess, notifyError } from '@/lib/notify'
 import { api, type ImBridge, type ImInvite } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { IM_PLATFORMS, getPlatformDef, type ImPlatformDef, type ImPlatformField } from './platforms'
 
-type View = 'list' | 'detail'
+type View = 'list' | 'detail' | 'select' | 'configure'
 
-// M2a: Telegram is the only supported IM platform. The bridge id is the
-// platform string itself ("telegram"), so at most one Telegram bridge exists.
-const TELEGRAM_PLATFORM = 'telegram'
-
-function platformDisplayName(platform: string): string {
-  if (platform === TELEGRAM_PLATFORM) return 'Telegram'
+/** Display name for a platform id, resolved from the registry (falls back to capitalized id). */
+function platformDisplayName(platform: string, t: TFunction): string {
+  const def = getPlatformDef(platform)
+  if (def) return t(def.nameKey)
   return platform.charAt(0).toUpperCase() + platform.slice(1)
 }
 
@@ -52,11 +51,11 @@ export function ImBridgesTab() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [lastInvite, setLastInvite] = useState<{ deep_link: string | null } | null>(null)
 
-  // Create-bridge dialog
-  const [createOpen, setCreateOpen] = useState(false)
+  // Add-flow state: select-platform → configure. The form field values live
+  // inside <PlatformConfigForm/>; here we only track which platform was
+  // picked and whether the create request is in flight.
+  const [selectedPlatform, setSelectedPlatform] = useState<ImPlatformDef | null>(null)
   const [creating, setCreating] = useState(false)
-  const [botToken, setBotToken] = useState('')
-  const [apiBase, setApiBase] = useState('')
 
   // Invite generation + clipboard
   const [generating, setGenerating] = useState(false)
@@ -100,22 +99,27 @@ export function ImBridgesTab() {
     loadDetail(bridge.id)
   }
 
-  const handleCreate = async () => {
-    const token = botToken.trim()
-    if (!token) return
+  const handlePlatformSelect = (def: ImPlatformDef) => {
+    setSelectedPlatform(def)
+    setView('configure')
+  }
+
+  // Builds the create payload purely from the selected platform id + the
+  // field-driven values collected by <PlatformConfigForm/>. No
+  // Telegram-specific keys are referenced here — the field definitions are
+  // the single source of truth.
+  const handleCreate = async (values: Record<string, string>) => {
+    if (!selectedPlatform) return
     setCreating(true)
     try {
-      const payload: { platform: string; bot_token: string; api_base?: string } = {
-        platform: TELEGRAM_PLATFORM,
-        bot_token: token,
-      }
-      const base = apiBase.trim()
-      if (base) payload.api_base = base
+      const payload = {
+        platform: selectedPlatform.id,
+        ...values,
+      } as { platform: string; bot_token: string; api_base?: string }
       await api.createImBridge(payload)
       notifySuccess(t('settings:im.bridgeCreated'))
-      setCreateOpen(false)
-      setBotToken('')
-      setApiBase('')
+      setSelectedPlatform(null)
+      setView('list')
       await loadBridges()
     } catch (error) {
       handleError(error, { operation: 'Create IM bridge' })
@@ -215,6 +219,73 @@ export function ImBridgesTab() {
     return <LoadingState variant="page" text={t('common:loading', { defaultValue: 'Loading...' })} />
   }
 
+  // ========== SELECT-PLATFORM VIEW (add-flow step 1) ==========
+  if (view === 'select') {
+    const available = IM_PLATFORMS.filter(p => p.available)
+    return (
+      <>
+        <ListToolbar
+          onBack={() => setView('list')}
+          backLabel={t('settings:im.back', { defaultValue: 'Back' })}
+          icon={<Send className="h-5 w-5" />}
+          iconBg="bg-info-light text-info"
+          title={t('settings:im.selectPlatform')}
+          description={t('settings:im.addBridgeDesc')}
+        />
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
+          {available.map(def => {
+            const PlatformIcon = def.icon
+            return (
+              <Card
+                key={def.id}
+                className="cursor-pointer transition-all duration-200 hover:shadow-md"
+                onClick={() => handlePlatformSelect(def)}
+              >
+                <CardHeader className="pb-3">
+                  <div className={cn('flex items-center justify-center w-12 h-12 rounded-lg', def.iconBg)}>
+                    <PlatformIcon className="h-6 w-6" />
+                  </div>
+                  <CardTitle className="text-base mt-3">{t(def.nameKey)}</CardTitle>
+                  <CardDescription className="mt-1 text-xs line-clamp-2 min-h-[2.5em]">
+                    {t(def.descriptionKey)}
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            )
+          })}
+        </div>
+        <p className="text-sm text-muted-foreground mt-4">{t('settings:im.morePlatformsComingSoon')}</p>
+      </>
+    )
+  }
+
+  // ========== CONFIGURE-PLATFORM VIEW (add-flow step 2) ==========
+  if (view === 'configure' && selectedPlatform) {
+    const PlatformIcon = selectedPlatform.icon
+    return (
+      <>
+        <ListToolbar
+          onBack={() => setView('select')}
+          backLabel={t('settings:im.back', { defaultValue: 'Back' })}
+          icon={<PlatformIcon className="h-5 w-5" />}
+          iconBg={selectedPlatform.iconBg}
+          title={t('settings:im.configurePlatform', { platform: t(selectedPlatform.nameKey) })}
+          description={t('settings:im.addBridgeDesc')}
+        />
+        <Card>
+          <CardContent className="pt-6">
+            <PlatformConfigForm
+              fields={selectedPlatform.fields}
+              onSubmit={handleCreate}
+              submitting={creating}
+              submitLabel={t('settings:im.create', { defaultValue: 'Create' })}
+            />
+          </CardContent>
+        </Card>
+      </>
+    )
+  }
+
   // ========== LIST VIEW ==========
   if (view === 'list') {
     if (bridges.length === 0) {
@@ -225,7 +296,7 @@ export function ImBridgesTab() {
           description={t('settings:im.noBridgesDesc')}
           action={{
             label: t('settings:im.addBridge'),
-            onClick: () => setCreateOpen(true),
+            onClick: () => setView('select'),
             icon: <Plus className="h-4 w-4" />,
           }}
         />
@@ -255,7 +326,7 @@ export function ImBridgesTab() {
                   <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-info-light text-info">
                     <Send className="h-6 w-6" />
                   </div>
-                  <CardTitle className="text-base mt-3">{platformDisplayName(bridge.platform)}</CardTitle>
+                  <CardTitle className="text-base mt-3">{platformDisplayName(bridge.platform, t)}</CardTitle>
                   <CardDescription className="mt-1 text-xs">
                     {t('settings:im.platformFixed')}
                   </CardDescription>
@@ -296,17 +367,6 @@ export function ImBridgesTab() {
             )
           })}
         </div>
-
-        <CreateBridgeDialog
-          open={createOpen}
-          onOpenChange={setCreateOpen}
-          botToken={botToken}
-          apiBase={apiBase}
-          onBotTokenChange={setBotToken}
-          onApiBaseChange={setApiBase}
-          creating={creating}
-          onSubmit={handleCreate}
-        />
       </>
     )
   }
@@ -325,7 +385,7 @@ export function ImBridgesTab() {
           backLabel={t('settings:im.back', { defaultValue: 'Back' })}
           icon={<Send className="h-5 w-5" />}
           iconBg="bg-info-light text-info"
-          title={platformDisplayName(selectedBridge.platform)}
+          title={platformDisplayName(selectedBridge.platform, t)}
           description={t('settings:im.detailDesc')}
           badges={<Badge className={cn('text-xs border', st.className)}>{st.label}</Badge>}
         />
@@ -490,90 +550,59 @@ export function ImBridgesTab() {
   return null
 }
 
-// ========== Create-bridge dialog ==========
+// ========== Platform config form (add-flow step 2 body) ==========
 
-interface CreateBridgeDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  botToken: string
-  apiBase: string
-  onBotTokenChange: (v: string) => void
-  onApiBaseChange: (v: string) => void
-  creating: boolean
-  onSubmit: () => Promise<void>
+interface PlatformConfigFormProps {
+  fields: ImPlatformField[]
+  onSubmit: (values: Record<string, string>) => Promise<void>
+  submitting: boolean
+  submitLabel: string
 }
 
-function CreateBridgeDialog({
-  open,
-  onOpenChange,
-  botToken,
-  apiBase,
-  onBotTokenChange,
-  onApiBaseChange,
-  creating,
-  onSubmit,
-}: CreateBridgeDialogProps) {
+/**
+ * Renders a config form purely from `ImPlatformField[]` definitions. No
+ * platform-specific knowledge here — each field is looked up by its i18n
+ * keys, so wiring a new platform is a data-only change in `platforms.ts`.
+ */
+function PlatformConfigForm({ fields, onSubmit, submitting, submitLabel }: PlatformConfigFormProps) {
   const { t } = useTranslation(['settings', 'common'])
-  const tokenValid = botToken.trim().length > 0
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map(f => [f.name, ''])),
+  )
 
-  const handleClose = (next: boolean) => {
-    if (!next) {
-      // Reset is handled by parent on successful create; nothing extra here.
-      onOpenChange(false)
-    }
+  const setValue = (name: string, v: string) => setValues(prev => ({ ...prev, [name]: v }))
+  const requiredMissing = fields.some(f => f.required && !values[f.name]?.trim())
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (requiredMissing || submitting) return
+    await onSubmit(values)
   }
 
   return (
-    <UnifiedFormDialog
-      open={open}
-      onOpenChange={handleClose}
-      title={t('settings:im.addBridgeTitle')}
-      description={t('settings:im.addBridgeDesc')}
-      icon={<Send className="h-5 w-5" />}
-      width="md"
-      onSubmit={onSubmit}
-      isSubmitting={creating}
-      submitDisabled={!tokenValid}
-      submitLabel={t('settings:im.create', { defaultValue: 'Create' })}
-      cancelLabel={t('common:cancel', { defaultValue: 'Cancel' })}
-    >
-      <div className="space-y-4">
-        {/* Fixed platform indicator (no selector — Telegram is the only M2a platform) */}
-        <FormField label={t('settings:im.platform', { defaultValue: 'Platform' })}>
-          <div className="flex items-center gap-2 rounded-md border border-input bg-muted-30 px-3 py-2 text-sm">
-            <Send className="h-4 w-4 text-info" />
-            <span>{platformDisplayName(TELEGRAM_PLATFORM)}</span>
-          </div>
-        </FormField>
-
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {fields.map(field => (
         <FormField
-          label={t('settings:im.botToken', { defaultValue: 'Bot Token' })}
-          required
-          helpText={t('settings:im.botTokenHelp')}
+          key={field.name}
+          label={t(field.labelKey)}
+          required={field.required}
+          helpText={field.helpKey ? t(field.helpKey) : undefined}
         >
           <Input
-            type="password"
+            type={field.type}
             autoComplete="off"
-            placeholder={t('settings:im.botTokenPlaceholder')}
-            value={botToken}
-            onChange={e => onBotTokenChange(e.target.value)}
+            placeholder={field.placeholderKey ? t(field.placeholderKey) : undefined}
+            value={values[field.name] ?? ''}
+            onChange={e => setValue(field.name, e.target.value)}
           />
         </FormField>
-
-        <FormField
-          label={t('settings:im.apiBase', { defaultValue: 'API Base' })}
-          helpText={t('settings:im.apiBaseHelp')}
-        >
-          <Input
-            type="text"
-            autoComplete="off"
-            placeholder={t('settings:im.apiBasePlaceholder')}
-            value={apiBase}
-            onChange={e => onApiBaseChange(e.target.value)}
-          />
-        </FormField>
+      ))}
+      <div className="flex justify-end pt-2">
+        <Button type="submit" disabled={requiredMissing || submitting}>
+          {submitLabel}
+        </Button>
       </div>
-    </UnifiedFormDialog>
+    </form>
   )
 }
 

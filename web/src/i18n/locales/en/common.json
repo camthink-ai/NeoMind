@@ -478,6 +478,11 @@
       "cloud": "Cloud"
     }
   },
+  "im": {
+    "platforms": {
+      "telegram": "Telegram"
+    }
+  },
   "inputSuggestions": {
     "greeting": {
       "morning": "Good morning",
