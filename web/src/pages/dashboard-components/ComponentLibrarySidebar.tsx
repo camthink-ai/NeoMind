@@ -198,7 +198,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                               <button
                                 type="button"
                                 onClick={() => onAddComponent(item.id)}
-                                className={`w-full h-[72px] flex items-center gap-3 py-2 px-3 rounded-xl border hover:shadow-sm transition-all duration-200 cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
+                                className={`w-full h-[72px] flex items-center gap-3 py-2 px-3 rounded-md border hover:shadow-sm transition-all duration-200 cursor-pointer active:scale-[0.98] text-left ${isHighlighted ? 'border-primary shadow-sm ring-2 ring-primary animate-[fadeHighlight_2s_ease-out_forwards]' : 'border-border'}`}
                               >
                                 <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${category.categoryColor}`}>
                                   <Icon className="h-4 w-4 shrink-0" />
@@ -299,7 +299,7 @@ export const ComponentLibrarySidebar = memo(function ComponentLibrarySidebar({
                       const mcName = typeof mc.name === 'string' ? mc.name : (mc.name[i18n.language] || mc.name.en || Object.values(mc.name)[0] || mc.id)
                       const mcDesc = typeof mc.description === 'string' ? mc.description : (mc.description[i18n.language] || mc.description.en || Object.values(mc.description)[0] || '')
                       return (
-                        <div key={mc.id} className="rounded-xl border border-border bg-card p-3.5 flex flex-col gap-2">
+                        <div key={mc.id} className="rounded-md border border-border bg-card p-3.5 flex flex-col gap-2">
                           <div className="flex items-start gap-2.5">
                             <div className="w-9 h-9 rounded-lg bg-success-light flex items-center justify-center shrink-0">
                               <McIcon className="w-4 h-4 text-success" />
