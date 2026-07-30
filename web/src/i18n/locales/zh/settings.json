@@ -245,5 +245,27 @@
     "configPlaceholder": "配置 JSON..."
   },
   "updateReady": "更新就绪",
-  "availableMemory": "可用内存"
+  "availableMemory": "可用内存",
+  "agentDefaults": "AI Agent",
+  "agentDefaultsDesc": "Agent 执行行为 — 下次运行生效",
+  "maxRounds": "最大轮次",
+  "maxRoundsDesc": "每次 agent 执行的最大工具调用轮数",
+  "executionTimeout": "执行超时",
+  "executionTimeoutDesc": "每次执行的全局时间限制",
+  "toolConcurrency": "工具并发",
+  "toolConcurrencyDesc": "单轮内并行工具执行数",
+  "defaultTemperature": "默认温度",
+  "defaultTemperatureDesc": "采样温度（低 = 更确定性）",
+  "defaultTopP": "默认 Top-P",
+  "defaultTopPDesc": "核采样阈值",
+  "defaultThinking": "默认思考模式",
+  "defaultThinkingDesc": "覆盖思考模型的设置（自动 = 后端默认）",
+  "thinkingAuto": "自动",
+  "appliesNextRun": "下次 agent 执行生效",
+  "deviceDefaults": "设备默认",
+  "deviceDefaultsDesc": "IoT 设备行为 — 离线检测和自动注册",
+  "defaultOfflineTimeout": "离线超时",
+  "defaultOfflineTimeoutDesc": "设备静默多少秒后标记为离线",
+  "autoOnboardEnabled": "自动注册",
+  "autoOnboardEnabledDesc": "为未知 MQTT 客户端自动创建草稿设备（重启后生效）"
 }

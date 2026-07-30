@@ -19,6 +19,8 @@ pub const KEY_LLM_CONFIG: &str = "llm_config";
 pub const KEY_MQTT_CONFIG: &str = "mqtt_config";
 pub const KEY_GLOBAL_TIMEZONE: &str = "global_timezone";
 pub const KEY_RETENTION_CONFIG: &str = "retention_config";
+pub const KEY_AGENT_DEFAULTS: &str = "agent_defaults";
+pub const KEY_DEVICE_DEFAULTS: &str = "device_defaults";
 
 /// Default global timezone (IANA format)
 pub const DEFAULT_GLOBAL_TIMEZONE: &str = "Asia/Shanghai";
@@ -337,6 +339,107 @@ pub struct RetentionConfig {
     /// Retention period in hours for image/binary data (None = forever).
     #[serde(default = "default_retention_image")]
     pub image_retention: Option<u64>,
+}
+
+/// Agent execution defaults (configurable via /api/settings/agent).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentDefaults {
+    /// Max tool-loop rounds (default 30).
+    #[serde(default = "default_agent_max_rounds")]
+    pub max_rounds: u32,
+    /// Global execution timeout in seconds (default 300).
+    #[serde(default = "default_agent_execution_timeout")]
+    pub execution_timeout_secs: u64,
+    /// Tool execution parallelism (default 6).
+    #[serde(default = "default_agent_tool_concurrency")]
+    pub tool_concurrency: usize,
+    /// Default sampling temperature (default 0.3).
+    #[serde(default = "default_agent_temperature")]
+    pub default_temperature: f32,
+    /// Default top_p (default 0.7).
+    #[serde(default = "default_agent_top_p")]
+    pub default_top_p: f32,
+    /// Default thinking_enabled override (None = use backend default).
+    #[serde(default)]
+    pub default_thinking_enabled: Option<bool>,
+}
+
+fn default_agent_max_rounds() -> u32 {
+    30
+}
+fn default_agent_execution_timeout() -> u64 {
+    300
+}
+fn default_agent_tool_concurrency() -> usize {
+    6
+}
+fn default_agent_temperature() -> f32 {
+    0.3
+}
+fn default_agent_top_p() -> f32 {
+    0.7
+}
+
+impl Default for AgentDefaults {
+    fn default() -> Self {
+        Self {
+            max_rounds: default_agent_max_rounds(),
+            execution_timeout_secs: default_agent_execution_timeout(),
+            tool_concurrency: default_agent_tool_concurrency(),
+            default_temperature: default_agent_temperature(),
+            default_top_p: default_agent_top_p(),
+            default_thinking_enabled: None,
+        }
+    }
+}
+
+impl AgentDefaults {
+    /// Load from the settings store (singleton), or defaults if unset/unavailable.
+    /// Mirrors the inline read pattern in `data_collector::get_time_context`.
+    pub fn get() -> Self {
+        const SETTINGS_DB_PATH: &str = "data/settings.redb";
+        SettingsStore::open(SETTINGS_DB_PATH)
+            .ok()
+            .map(|s| s.get_agent_defaults())
+            .unwrap_or_default()
+    }
+}
+
+/// Device defaults (configurable via /api/settings/device).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceDefaults {
+    /// Global default offline timeout in seconds (fallback for all devices).
+    #[serde(default = "default_device_offline_timeout")]
+    pub default_offline_timeout_secs: u64,
+    /// Whether unknown MQTT devices are auto-onboarded.
+    #[serde(default = "default_device_auto_onboard")]
+    pub auto_onboard_enabled: bool,
+}
+
+fn default_device_offline_timeout() -> u64 {
+    300
+}
+fn default_device_auto_onboard() -> bool {
+    true
+}
+
+impl Default for DeviceDefaults {
+    fn default() -> Self {
+        Self {
+            default_offline_timeout_secs: default_device_offline_timeout(),
+            auto_onboard_enabled: default_device_auto_onboard(),
+        }
+    }
+}
+
+impl DeviceDefaults {
+    pub fn get() -> Self {
+        const SETTINGS_DB_PATH: &str = "data/settings.redb";
+        SettingsStore::open(SETTINGS_DB_PATH)
+            .ok()
+            .map(|s| s.get_device_defaults())
+            .unwrap_or_default()
+    }
 }
 
 fn default_retention_enabled() -> bool {
@@ -1104,6 +1207,75 @@ impl SettingsStore {
     /// Get retention configuration, returning defaults if not set.
     pub fn get_retention_config(&self) -> RetentionConfig {
         self.load_retention_config()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    // ========================================================================
+    // Agent Defaults
+    // ========================================================================
+
+    pub fn save_agent_defaults(&self, config: &AgentDefaults) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(SETTINGS_TABLE)?;
+            let value =
+                serde_json::to_vec(config).map_err(|e| Error::Serialization(e.to_string()))?;
+            table.insert(KEY_AGENT_DEFAULTS, value.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn load_agent_defaults(&self) -> Result<Option<AgentDefaults>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(SETTINGS_TABLE)?;
+        if let Some(data) = table.get(KEY_AGENT_DEFAULTS)? {
+            let config: AgentDefaults = serde_json::from_slice(data.value())
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            Ok(Some(config))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get agent defaults, returning defaults if not set.
+    pub fn get_agent_defaults(&self) -> AgentDefaults {
+        self.load_agent_defaults()
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    // Device Defaults
+
+    pub fn save_device_defaults(&self, config: &DeviceDefaults) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(SETTINGS_TABLE)?;
+            let value =
+                serde_json::to_vec(config).map_err(|e| Error::Serialization(e.to_string()))?;
+            table.insert(KEY_DEVICE_DEFAULTS, value.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    pub fn load_device_defaults(&self) -> Result<Option<DeviceDefaults>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(SETTINGS_TABLE)?;
+        if let Some(data) = table.get(KEY_DEVICE_DEFAULTS)? {
+            let config: DeviceDefaults = serde_json::from_slice(data.value())
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            Ok(Some(config))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn get_device_defaults(&self) -> DeviceDefaults {
+        self.load_device_defaults()
             .ok()
             .flatten()
             .unwrap_or_default()

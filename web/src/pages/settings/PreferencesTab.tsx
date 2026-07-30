@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/select"
 import {
   Clock,
+  Cpu,
+  Server,
   Check,
   Info,
   Loader2,
@@ -268,6 +270,12 @@ export function PreferencesTab() {
         </CardContent>
       </Card>
 
+      {/* AI Agent Defaults */}
+      <AgentDefaultsCard />
+
+      {/* Device Defaults */}
+      <DeviceDefaultsCard />
+
       {/* Data Management */}
       <DataManagementCard />
 
@@ -301,6 +309,192 @@ function hoursToOption(hours: number | null | undefined): string {
 function optionToHours(value: string): number | null {
   if (value === "never") return null
   return Number(value)
+}
+
+function AgentDefaultsCard() {
+  const { t } = useTranslation(["common", "settings"])
+  const { toast } = useToast()
+  const [config, setConfig] = useState<{
+    max_rounds: number
+    execution_timeout_secs: number
+    tool_concurrency: number
+    default_temperature: number
+    default_top_p: number
+    default_thinking_enabled: boolean | null
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get("/settings/agent")
+      .then((data: any) => setConfig(data))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const saveConfig = async (updates: Partial<typeof config>) => {
+    if (!config) return
+    const next = { ...config, ...updates }
+    setConfig(next)
+    try {
+      await api.put("/settings/agent", next)
+    } catch {
+      toast({ title: "Failed to save", variant: "destructive" })
+      setConfig(config)
+    }
+  }
+
+  if (loading || !config) {
+    return (
+      <Card>
+        <CardContent className="py-6">
+          <div className="h-32 w-full animate-pulse rounded-md bg-muted" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const roundOpts = [10, 20, 30, 40, 50]
+  const timeoutOpts = [
+    { v: 60, l: "1 min" }, { v: 180, l: "3 min" }, { v: 300, l: "5 min" },
+    { v: 600, l: "10 min" }, { v: 1800, l: "30 min" },
+  ]
+  const concOpts = [2, 4, 6, 8, 12, 16]
+  const tempOpts = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  const topPOpts = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Cpu className="h-5 w-5 text-info" />
+          {t("settings:agentDefaults")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <SettingsRow label={t("settings:maxRounds")} description={t("settings:maxRoundsDesc")}>
+          <Select value={String(config.max_rounds)} onValueChange={(v) => saveConfig({ max_rounds: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {roundOpts.map((r) => <SelectItem key={r} value={String(r)}>{r}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:executionTimeout")} description={t("settings:executionTimeoutDesc")}>
+          <Select value={String(config.execution_timeout_secs)} onValueChange={(v) => saveConfig({ execution_timeout_secs: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {timeoutOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:toolConcurrency")} description={t("settings:toolConcurrencyDesc")}>
+          <Select value={String(config.tool_concurrency)} onValueChange={(v) => saveConfig({ tool_concurrency: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {concOpts.map((c) => <SelectItem key={c} value={String(c)}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:defaultTemperature")} description={t("settings:defaultTemperatureDesc")}>
+          <Select value={config.default_temperature.toFixed(1)} onValueChange={(v) => saveConfig({ default_temperature: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {tempOpts.map((tp) => <SelectItem key={tp} value={tp.toFixed(1)}>{tp.toFixed(1)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:defaultTopP")} description={t("settings:defaultTopPDesc")}>
+          <Select value={config.default_top_p.toFixed(1)} onValueChange={(v) => saveConfig({ default_top_p: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {topPOpts.map((tp) => <SelectItem key={tp} value={tp.toFixed(1)}>{tp.toFixed(1)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:defaultThinking")} description={t("settings:defaultThinkingDesc")}>
+          <Select
+            value={config.default_thinking_enabled === null ? "auto" : String(config.default_thinking_enabled)}
+            onValueChange={(v) => saveConfig({ default_thinking_enabled: v === "auto" ? null : v === "true" })}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">{t("settings:thinkingAuto")}</SelectItem>
+              <SelectItem value="true">On</SelectItem>
+              <SelectItem value="false">Off</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+      </CardContent>
+    </Card>
+  )
+}
+
+function DeviceDefaultsCard() {
+  const { t } = useTranslation(["common", "settings"])
+  const { toast } = useToast()
+  const [config, setConfig] = useState<{
+    default_offline_timeout_secs: number
+    auto_onboard_enabled: boolean
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    api.get("/settings/device")
+      .then((data: any) => setConfig(data))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [])
+
+  const saveConfig = async (updates: Partial<typeof config>) => {
+    if (!config) return
+    const next = { ...config, ...updates }
+    setConfig(next)
+    try {
+      await api.put("/settings/device", next)
+    } catch {
+      toast({ title: "Failed to save", variant: "destructive" })
+      setConfig(config)
+    }
+  }
+
+  if (loading || !config) {
+    return (
+      <Card>
+        <CardContent className="py-6">
+          <div className="h-20 w-full animate-pulse rounded-md bg-muted" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const timeoutOpts = [
+    { v: 60, l: "1 min" }, { v: 120, l: "2 min" }, { v: 300, l: "5 min" },
+    { v: 600, l: "10 min" }, { v: 1800, l: "30 min" },
+  ]
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Server className="h-5 w-5 text-success" />
+          {t("settings:deviceDefaults")}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <SettingsRow label={t("settings:defaultOfflineTimeout")} description={t("settings:defaultOfflineTimeoutDesc")}>
+          <Select value={String(config.default_offline_timeout_secs)} onValueChange={(v) => saveConfig({ default_offline_timeout_secs: +v })}>
+            <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {timeoutOpts.map((o) => <SelectItem key={o.v} value={String(o.v)}>{o.l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:autoOnboardEnabled")} description={t("settings:autoOnboardEnabledDesc")}>
+          <Switch checked={config.auto_onboard_enabled} onCheckedChange={(checked) => saveConfig({ auto_onboard_enabled: checked })} />
+        </SettingsRow>
+      </CardContent>
+    </Card>
+  )
 }
 
 function DataManagementCard() {

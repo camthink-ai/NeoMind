@@ -122,16 +122,18 @@ pub(crate) struct ToolLoopConfig {
 
 impl ToolLoopConfig {
     fn free() -> Self {
+        let max_rounds = neomind_storage::AgentDefaults::get().max_rounds as usize;
         Self {
-            max_rounds: 30,
+            max_rounds,
             recommended_tools: None,
             is_focused_plus: false,
         }
     }
 
     fn focused_plus(agent: &AiAgent) -> Self {
+        let ceiling = neomind_storage::AgentDefaults::get().max_rounds as usize;
         Self {
-            max_rounds: agent.max_chain_depth.clamp(1, 30),
+            max_rounds: agent.max_chain_depth.clamp(1, ceiling),
             recommended_tools: Some(Self::build_focused_recommended_tools(agent)),
             is_focused_plus: true,
         }
@@ -371,7 +373,9 @@ impl AgentExecutor {
             tool_registry: parking_lot::RwLock::new(config.tool_registry.clone()),
             memory_store: config.memory_store.clone(),
             backend_semaphores: config.backend_semaphores.clone(),
-            tool_concurrency: Arc::new(Semaphore::new(6)),
+            tool_concurrency: Arc::new(Semaphore::new(
+                neomind_storage::AgentDefaults::get().tool_concurrency,
+            )),
         })
     }
 
@@ -891,10 +895,11 @@ impl AgentExecutor {
         // silently disappearing.
         // Also enforce a global timeout (5 min) as a safety net against runaway
         // execution (e.g., 30 rounds × slow extension tools).
-        const GLOBAL_EXECUTION_TIMEOUT_SECS: u64 = 300;
+        let global_execution_timeout_secs =
+            neomind_storage::AgentDefaults::get().execution_timeout_secs;
         let execution_result: AgentResult<(DecisionProcess, StorageExecutionResult)> =
             match tokio::time::timeout(
-                std::time::Duration::from_secs(GLOBAL_EXECUTION_TIMEOUT_SECS),
+                std::time::Duration::from_secs(global_execution_timeout_secs),
                 std::panic::AssertUnwindSafe(self.execute_internal(
                     context,
                     event_data.clone(),
@@ -926,12 +931,12 @@ impl AgentExecutor {
                     tracing::error!(
                         agent_id = %agent_id,
                         execution_id = %execution_id,
-                        timeout_secs = GLOBAL_EXECUTION_TIMEOUT_SECS,
+                        timeout_secs = global_execution_timeout_secs,
                         "Agent execution timed out globally"
                     );
                     Err(NeoMindError::Llm(format!(
                         "Execution timed out after {}s",
-                        GLOBAL_EXECUTION_TIMEOUT_SECS
+                        global_execution_timeout_secs
                     )))
                 }
             };

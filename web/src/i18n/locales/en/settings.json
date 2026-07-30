@@ -245,5 +245,27 @@
     "configPlaceholder": "Configuration JSON..."
   },
   "updateReady": "Update Ready",
-  "availableMemory": "Available Memory"
+  "availableMemory": "Available Memory",
+  "agentDefaults": "AI Agent",
+  "agentDefaultsDesc": "Agent execution behavior — applies to the next run",
+  "maxRounds": "Max Rounds",
+  "maxRoundsDesc": "Maximum tool-call rounds per agent execution",
+  "executionTimeout": "Execution Timeout",
+  "executionTimeoutDesc": "Global wall-clock limit per execution",
+  "toolConcurrency": "Tool Concurrency",
+  "toolConcurrencyDesc": "Parallel tool executions within a round",
+  "defaultTemperature": "Default Temperature",
+  "defaultTemperatureDesc": "Sampling temperature (lower = more deterministic)",
+  "defaultTopP": "Default Top-P",
+  "defaultTopPDesc": "Nucleus sampling threshold",
+  "defaultThinking": "Default Thinking Mode",
+  "defaultThinkingDesc": "Override for thinking-enabled models (auto = backend default)",
+  "thinkingAuto": "Auto",
+  "appliesNextRun": "Applies to the next agent execution",
+  "deviceDefaults": "Device Defaults",
+  "deviceDefaultsDesc": "IoT device behavior — offline detection and auto-onboarding",
+  "defaultOfflineTimeout": "Offline Timeout",
+  "defaultOfflineTimeoutDesc": "Seconds before a silent device is marked offline",
+  "autoOnboardEnabled": "Auto-Onboarding",
+  "autoOnboardEnabledDesc": "Automatically create draft devices for unknown MQTT clients (restart to apply)"
 }

@@ -335,6 +335,147 @@ pub async fn update_retention_config(
     }))
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct AgentDefaultsRequest {
+    #[serde(default)]
+    pub max_rounds: u32,
+    #[serde(default)]
+    pub execution_timeout_secs: u64,
+    #[serde(default)]
+    pub tool_concurrency: usize,
+    #[serde(default)]
+    pub default_temperature: f32,
+    #[serde(default)]
+    pub default_top_p: f32,
+    #[serde(default)]
+    pub default_thinking_enabled: Option<bool>,
+}
+
+/// Get agent execution defaults (max_rounds, timeout, concurrency, sampling).
+pub async fn get_agent_defaults(
+    State(_state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::SettingsStore;
+
+    const SETTINGS_DB_PATH: &str = "data/settings.redb";
+    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
+    let config = settings_store.get_agent_defaults();
+
+    ok(json!({
+        "max_rounds": config.max_rounds,
+        "execution_timeout_secs": config.execution_timeout_secs,
+        "tool_concurrency": config.tool_concurrency,
+        "default_temperature": config.default_temperature,
+        "default_top_p": config.default_top_p,
+        "default_thinking_enabled": config.default_thinking_enabled,
+    }))
+}
+
+/// Update agent execution defaults. Values are clamped to sane ranges.
+/// Applies to the NEXT agent execution (not mid-flight).
+pub async fn update_agent_defaults(
+    State(_state): State<ServerState>,
+    Json(req): Json<AgentDefaultsRequest>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::SettingsStore;
+
+    const SETTINGS_DB_PATH: &str = "data/settings.redb";
+
+    let config = neomind_storage::AgentDefaults {
+        max_rounds: req.max_rounds.clamp(1, 50),
+        execution_timeout_secs: req.execution_timeout_secs.clamp(30, 1800),
+        tool_concurrency: req.tool_concurrency.clamp(1, 16),
+        default_temperature: req.default_temperature.clamp(0.0, 2.0),
+        default_top_p: req.default_top_p.clamp(0.0, 1.0),
+        default_thinking_enabled: req.default_thinking_enabled,
+    };
+
+    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
+    settings_store
+        .save_agent_defaults(&config)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to save agent defaults: {}", e)))?;
+
+    tracing::info!(
+        max_rounds = config.max_rounds,
+        timeout_secs = config.execution_timeout_secs,
+        tool_conc = config.tool_concurrency,
+        temp = config.default_temperature,
+        top_p = config.default_top_p,
+        thinking = ?config.default_thinking_enabled,
+        "Agent defaults updated"
+    );
+
+    ok(json!({
+        "success": true,
+        "max_rounds": config.max_rounds,
+        "execution_timeout_secs": config.execution_timeout_secs,
+        "tool_concurrency": config.tool_concurrency,
+        "default_temperature": config.default_temperature,
+        "default_top_p": config.default_top_p,
+        "default_thinking_enabled": config.default_thinking_enabled,
+    }))
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct DeviceDefaultsRequest {
+    #[serde(default)]
+    pub default_offline_timeout_secs: u64,
+    #[serde(default)]
+    pub auto_onboard_enabled: bool,
+}
+
+/// Get device defaults (offline timeout, auto-onboarding).
+pub async fn get_device_defaults(
+    State(_state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::SettingsStore;
+
+    const SETTINGS_DB_PATH: &str = "data/settings.redb";
+    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
+    let config = settings_store.get_device_defaults();
+
+    ok(json!({
+        "default_offline_timeout_secs": config.default_offline_timeout_secs,
+        "auto_onboard_enabled": config.auto_onboard_enabled,
+    }))
+}
+
+/// Update device defaults. offline_timeout is live; auto_onboard applies on next restart.
+pub async fn update_device_defaults(
+    State(_state): State<ServerState>,
+    Json(req): Json<DeviceDefaultsRequest>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::SettingsStore;
+
+    const SETTINGS_DB_PATH: &str = "data/settings.redb";
+
+    let config = neomind_storage::DeviceDefaults {
+        default_offline_timeout_secs: req.default_offline_timeout_secs.max(10),
+        auto_onboard_enabled: req.auto_onboard_enabled,
+    };
+
+    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
+    settings_store
+        .save_device_defaults(&config)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to save device defaults: {}", e)))?;
+
+    tracing::info!(
+        offline_timeout = config.default_offline_timeout_secs,
+        auto_onboard = config.auto_onboard_enabled,
+        "Device defaults updated"
+    );
+
+    ok(json!({
+        "success": true,
+        "default_offline_timeout_secs": config.default_offline_timeout_secs,
+        "auto_onboard_enabled": config.auto_onboard_enabled,
+    }))
+}
+
 /// Manually trigger a retention cleanup.
 pub async fn trigger_retention_cleanup(
     State(_state): State<ServerState>,

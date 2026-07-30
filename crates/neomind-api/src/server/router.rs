@@ -692,6 +692,14 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/settings/retention/cleanup",
             post(settings::trigger_retention_cleanup),
         )
+        .route(
+            "/api/settings/agent",
+            get(settings::get_agent_defaults).put(settings::update_agent_defaults),
+        )
+        .route(
+            "/api/settings/device",
+            get(settings::get_device_defaults).put(settings::update_device_defaults),
+        )
         // Unified Automations API
         .route(
             "/api/automations",

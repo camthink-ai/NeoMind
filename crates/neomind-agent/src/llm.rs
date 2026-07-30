@@ -301,7 +301,9 @@ impl LlmInterface {
             cached_tools_hash: Arc::new(RwLock::new(None)),
             limiter: ConcurrencyLimiter::new(concurrent_limit),
             use_instance_manager: Arc::new(AtomicUsize::new(0)),
-            thinking_enabled: Arc::new(RwLock::new(None)), // Use backend default (from storage)
+            thinking_enabled: Arc::new(RwLock::new(
+                neomind_storage::AgentDefaults::get().default_thinking_enabled,
+            )), // Use backend default (from storage)
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
@@ -332,7 +334,9 @@ impl LlmInterface {
             cached_tools_hash: Arc::new(RwLock::new(None)),
             limiter: ConcurrencyLimiter::new(concurrent_limit),
             use_instance_manager: Arc::new(AtomicUsize::new(1)),
-            thinking_enabled: Arc::new(RwLock::new(None)), // Will use instance manager setting
+            thinking_enabled: Arc::new(RwLock::new(
+                neomind_storage::AgentDefaults::get().default_thinking_enabled,
+            )), // Will use instance manager setting
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
@@ -2220,10 +2224,17 @@ pub struct ChatConfig {
 
 impl Default for ChatConfig {
     fn default() -> Self {
+        let ad = neomind_storage::AgentDefaults::get();
         Self {
             model: "ministral-3:3b".to_string(),
-            temperature: agent_env_vars::temperature(),
-            top_p: agent_env_vars::top_p(),
+            temperature: std::env::var(agent_env_vars::TEMPERATURE)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(ad.default_temperature),
+            top_p: std::env::var(agent_env_vars::TOP_P)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(ad.default_top_p),
             top_k: 40,
             max_tokens: agent_env_vars::max_tokens(),
             concurrent_limit: agent_env_vars::concurrent_limit(),

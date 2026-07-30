@@ -124,7 +124,7 @@ pub struct AutoOnboardConfig {
 impl Default for AutoOnboardConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: neomind_storage::DeviceDefaults::get().auto_onboard_enabled,
             max_samples: 10,             // Collect 10 samples max
             draft_retention_secs: 86400, // 24 hours
         }

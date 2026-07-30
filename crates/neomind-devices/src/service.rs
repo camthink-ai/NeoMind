@@ -394,8 +394,8 @@ impl DeviceService {
     /// This is the canonical resolution used by API handlers when building
     /// `DeviceDto.online` and any consumer-visible "online within" check.
     pub fn effective_offline_timeout(&self, device_id: &str) -> u64 {
-        // Global fallback
-        let global = self.heartbeat_config.offline_timeout;
+        // Global fallback: user-configured DeviceDefaults (live), or default 300s
+        let global = neomind_storage::DeviceDefaults::get().default_offline_timeout_secs;
 
         // Try per-device override
         if let Some(device) = self.registry.get_device(device_id) {

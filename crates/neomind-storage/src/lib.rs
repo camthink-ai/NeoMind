@@ -76,8 +76,8 @@ pub use session::{
 pub use messages::{MessageStore, StoredMessage};
 
 pub use settings::{
-    ExternalBroker, LlmBackendType, LlmSettings, MqttSettings, SecurityLevel, SettingsStore,
-    DEFAULT_GLOBAL_TIMEZONE,
+    AgentDefaults, DeviceDefaults, ExternalBroker, LlmBackendType, LlmSettings, MqttSettings,
+    SecurityLevel, SettingsStore, DEFAULT_GLOBAL_TIMEZONE,
 };
 
 pub use llm_backends::{
