@@ -4,7 +4,7 @@
 //! WS long-connection lifecycle described in
 //! `larksuite/node-sdk`'s `ws-client/index.ts`:
 //!
-//! 1. **endpoint** — `POST {domain}/callback/ws/endpoint.all()` with
+//! 1. **endpoint** — `POST {domain}/callback/ws/endpoint` with
 //!    `{AppID, AppSecret}` + `locale: zh` header → `{code, data:{URL,
 //!    ClientConfig:{PingInterval, ReconnectCount, ReconnectInterval,
 //!    ReconnectNonce}}}`. `code != 0` (system_busy/internal_error) is retried.
@@ -61,7 +61,7 @@ pub const DEFAULT_DOMAIN: &str = "https://open.feishu.cn";
 
 /// `POST` path for the WS endpoint lookup. The literal `()` is part of the
 /// path (matches `larksuite/node-sdk`).
-const ENDPOINT_PATH: &str = "/callback/ws/endpoint.all()";
+const ENDPOINT_PATH: &str = "/callback/ws/endpoint";
 
 /// Per-connection client config negotiated with the server.
 #[derive(Debug, Clone)]
@@ -359,7 +359,7 @@ impl FeishuWsClient {
         }
     }
 
-    /// Fetch the WS endpoint config from `{domain}/callback/ws/endpoint.all()`.
+    /// Fetch the WS endpoint config from `{domain}/callback/ws/endpoint`.
     ///
     /// Retries on `code != 0` (system_busy / internal_error) a few times before
     /// surfacing the error to the outer reconnect loop.
