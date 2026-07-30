@@ -13,11 +13,11 @@
 //! POST   /api/im-bridges/:id/sessions/:chat_id/reset - Reset a chat session (M2a)
 //! ```
 //!
-//! **M1 scope:** only `platform: "telegram"` is supported — it is the only
-//! `ImBridge` implementation today. `ImPlatform::parse` also accepts
-//! `"feishu"` / `"whatsapp"`, but those have no bridge backend, so the
-//! handler layer rejects them as `400` rather than letting callers register
-//! a dead registry entry that would silently blackhole replies.
+//! **Supported platforms:** `"telegram"` (Telegram bot token, M1) and
+//! `"feishu"` (Feishu / Lark `app_id` + `app_secret`, M2). `"whatsapp"` is
+//! parsed by `ImPlatform::parse` but has no bridge backend, so the handler
+//! layer rejects it as `400` rather than letting callers register a dead
+//! registry entry that would silently blackhole replies.
 //!
 //! Router access pattern: `state.im_router` is the lazy-init
 //! `Arc<RwLock<Option<Arc<ImRouter>>>>` wired by `start_im_router` at server
@@ -41,22 +41,46 @@ use super::{
 use crate::models::ErrorResponse;
 
 use neomind_messages::im_bridge::{
-    router::ImRouter, session_store::SessionKey, telegram::TelegramBridge, ImBridge, ImPlatform,
+    feishu::FeishuBridge, router::ImRouter, session_store::SessionKey, telegram::TelegramBridge,
+    ImBridge, ImPlatform,
 };
 
 /// `POST /api/im-bridges` body.
+///
+/// Fields are partitioned by platform: Telegram requests send `bot_token`
+/// (+ optional `api_base`); Feishu requests send `app_id` + `app_secret`
+/// (+ optional `domain`). The handler validates the credential fields required
+/// for the requested `platform` and rejects with `400` if any are missing or
+/// blank, so a misconfigured bridge never reaches the registry / start spawn.
+/// All credential fields are `Option` precisely because they are platform-
+/// specific — serde maps a missing JSON key to `None`, and the per-platform
+/// check turns the relevant `None`/empty into a descriptive `400`.
 #[derive(Debug, Deserialize)]
 pub struct CreateBridgeRequest {
-    /// Telegram bot token (`<bot_id>:<secret>`).
-    pub bot_token: String,
+    /// Platform id; `"telegram"` or `"feishu"`.
+    pub platform: String,
+    /// Telegram bot token (`<bot_id>:<secret>`). Required when
+    /// `platform = "telegram"`.
+    #[serde(default)]
+    pub bot_token: Option<String>,
     /// Optional Telegram Bot API base URL (proxy / private gateway).
+    #[serde(default)]
     pub api_base: Option<String>,
+    /// Feishu / Lark app_id. Required when `platform = "feishu"`.
+    #[serde(default)]
+    pub app_id: Option<String>,
+    /// Feishu / Lark app_secret. Required when `platform = "feishu"`.
+    #[serde(default)]
+    pub app_secret: Option<String>,
+    /// Optional Feishu domain override (defaults to `https://open.feishu.cn`;
+    /// use `https://open.larksuite.com` for the international Lark variant).
+    #[serde(default)]
+    pub domain: Option<String>,
     /// Optional sender/chat allowlist. M2+ concern; ignored by the bridge
     /// today — enforcement lives in `ImRouter`'s inbound path. We warn (not
     /// reject) when set so the silent-drop is observable.
+    #[serde(default)]
     pub allowlist: Option<Vec<String>>,
-    /// Platform id; only `"telegram"` is supported in M1.
-    pub platform: String,
 }
 
 /// Create + start a Telegram bridge.
@@ -95,12 +119,32 @@ pub async fn create_bridge_handler(
 
     let router = read_router(&state).await?;
 
-    // Build + register the bridge BEFORE spawning start(). Registering first
-    // closes the tiny race where an early inbound event arrives and
-    // ImRouter's reply path can't find the bridge yet. Cheap to do, impossible
-    // to forget once it's the natural order.
-    let bridge: Arc<dyn ImBridge> =
-        Arc::new(TelegramBridge::new(req.bot_token, req.api_base));
+    // Build the bridge per-platform, validating the required credential fields
+    // BEFORE registering. A missing/blank field yields `400` with a specific
+    // message — better to fail the POST than to register a bridge whose start()
+    // task dies immediately on auth (which would blackhole replies silently).
+    // Matching on `&platform` (not `platform`) keeps the owned value available
+    // for the tracing/spawn block below.
+    let bridge: Arc<dyn ImBridge> = match &platform {
+        ImPlatform::Telegram => {
+            let bot_token = require_nonempty(req.bot_token.as_deref(), "bot_token", "telegram")?;
+            Arc::new(TelegramBridge::new(bot_token, req.api_base))
+        }
+        ImPlatform::Feishu => {
+            let app_id = require_nonempty(req.app_id.as_deref(), "app_id", "feishu")?;
+            let app_secret = require_nonempty(req.app_secret.as_deref(), "app_secret", "feishu")?;
+            Arc::new(FeishuBridge::new(app_id, app_secret, req.domain))
+        }
+        // validate_platform rejects whatsapp upstream, so this arm is genuinely
+        // unreachable today; kept defensive (return 400) rather than `unreachable!`
+        // so a future loosening of validate_platform surfaces a clean error
+        // instead of a 500 panic.
+        ImPlatform::Whatsapp => {
+            return Err(ErrorResponse::bad_request(
+                "platform 'whatsapp' is not supported",
+            ));
+        }
+    };
     router.registry.register(bridge.clone()).await;
 
     // Spawn the long-poll loop. start() runs until stop() flips `running`;
@@ -393,21 +437,39 @@ async fn read_router(state: &ServerState) -> Result<Arc<ImRouter>, ErrorResponse
 
 /// Parse + validate the platform field.
 ///
-/// `ImPlatform::parse` accepts `telegram`/`feishu`/`whatsapp`; only Telegram
-/// has a bridge implementation today (M1), so reject the other two as
-/// `BAD_REQUEST`. Unknown strings fail at parse time.
+/// `ImPlatform::parse` accepts `telegram`/`feishu`/`whatsapp`; Telegram and
+/// Feishu both have bridge implementations, so both are admitted. Whatsapp has
+/// no backend yet, so it is rejected as `BAD_REQUEST` (rather than letting a
+/// caller register a dead registry entry). Unknown strings fail at parse time.
 fn validate_platform(s: &str) -> Result<ImPlatform, ErrorResponse> {
     match ImPlatform::parse(s) {
-        Some(ImPlatform::Telegram) => Ok(ImPlatform::Telegram),
+        Some(p @ (ImPlatform::Telegram | ImPlatform::Feishu)) => Ok(p),
         Some(other) => Err(ErrorResponse::bad_request(format!(
-            "Unsupported platform '{}': only 'telegram' is available in M1",
+            "Unsupported platform '{}': only 'telegram' and 'feishu' are available",
             other.as_str()
         ))),
         None => Err(ErrorResponse::bad_request(format!(
-            "Unknown platform '{}'. Supported: telegram",
+            "Unknown platform '{}'. Supported: telegram, feishu",
             s
         ))),
     }
+}
+
+/// Trim + reject empty credential strings for `create_bridge_handler`.
+///
+/// Treats `None`, `""`, and whitespace-only as missing. The error message names
+/// both the `platform` and the `field` so the caller knows exactly what to fix
+/// (e.g. `platform 'feishu' requires a non-empty 'app_id'`).
+fn require_nonempty(v: Option<&str>, field: &str, platform: &str) -> Result<String, ErrorResponse> {
+    v.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            ErrorResponse::bad_request(format!(
+                "platform '{}' requires a non-empty '{}'",
+                platform, field
+            ))
+        })
 }
 
 #[cfg(test)]
@@ -516,12 +578,16 @@ mod tests {
     // ─────────── validate_platform ───────────
 
     #[tokio::test]
-    async fn validate_platform_accepts_only_telegram() {
+    async fn validate_platform_accepts_telegram_and_feishu() {
         assert_eq!(
             validate_platform("telegram").map(|p| p.as_str()).ok(),
             Some("telegram")
         );
-        assert!(validate_platform("feishu").is_err());
+        assert_eq!(
+            validate_platform("feishu").map(|p| p.as_str()).ok(),
+            Some("feishu")
+        );
+        // whatsapp parses but has no bridge backend → still rejected.
         assert!(validate_platform("whatsapp").is_err());
         assert!(validate_platform("unknown").is_err());
         assert!(validate_platform("").is_err());
@@ -533,10 +599,13 @@ mod tests {
     async fn create_returns_503_when_router_not_started() {
         let state = ServerState::new_for_testing().await;
         let req = CreateBridgeRequest {
-            bot_token: "x".into(),
-            api_base: None,
-            allowlist: None,
             platform: "telegram".into(),
+            bot_token: Some("x".into()),
+            api_base: None,
+            app_id: None,
+            app_secret: None,
+            domain: None,
+            allowlist: None,
         };
         let err = create_bridge_handler(State(state), Json(req))
             .await
@@ -563,18 +632,186 @@ mod tests {
     // ─────────── platform validation (400) ───────────
 
     #[tokio::test]
-    async fn create_rejects_non_telegram_platform() {
+    async fn create_rejects_unsupported_platform() {
+        // whatsapp parses but has no bridge backend → 400 from validate_platform.
         let state = ServerState::new_for_testing().await;
         let req = CreateBridgeRequest {
-            bot_token: "x".into(),
+            platform: "whatsapp".into(),
+            bot_token: None,
             api_base: None,
+            app_id: None,
+            app_secret: None,
+            domain: None,
             allowlist: None,
-            platform: "feishu".into(),
         };
         let err = create_bridge_handler(State(state), Json(req))
             .await
             .unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    // ─────────── per-platform credential validation (400) ───────────
+    //
+    // These cover the field-presence gate that runs AFTER validate_platform and
+    // BEFORE bridge construction — so they never build a real bridge nor spawn
+    // any network I/O. The 400 is returned with a descriptive message naming
+    // the missing field (asserted via `error.to_string()` containing the field).
+
+    #[tokio::test]
+    async fn create_telegram_rejects_missing_bot_token() {
+        let (state, _) = state_with_router(vec![]).await;
+        let req = CreateBridgeRequest {
+            platform: "telegram".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: None,
+            app_secret: None,
+            domain: None,
+            allowlist: None,
+        };
+        let err = create_bridge_handler(State(state), Json(req))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(
+            err.to_string().contains("bot_token"),
+            "error should name the missing field: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn create_telegram_rejects_blank_bot_token() {
+        // Whitespace-only is treated as missing (trimmed → empty).
+        let (state, _) = state_with_router(vec![]).await;
+        let req = CreateBridgeRequest {
+            platform: "telegram".into(),
+            bot_token: Some("   ".into()),
+            api_base: None,
+            app_id: None,
+            app_secret: None,
+            domain: None,
+            allowlist: None,
+        };
+        let err = create_bridge_handler(State(state), Json(req))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn create_feishu_rejects_missing_app_id() {
+        let (state, _) = state_with_router(vec![]).await;
+        let req = CreateBridgeRequest {
+            platform: "feishu".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: None,
+            app_secret: Some("secret".into()),
+            domain: None,
+            allowlist: None,
+        };
+        let err = create_bridge_handler(State(state), Json(req))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(
+            err.to_string().contains("app_id"),
+            "error should name the missing field: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn create_feishu_rejects_missing_app_secret() {
+        let (state, _) = state_with_router(vec![]).await;
+        let req = CreateBridgeRequest {
+            platform: "feishu".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: Some("aid".into()),
+            app_secret: None,
+            domain: None,
+            allowlist: None,
+        };
+        let err = create_bridge_handler(State(state), Json(req))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(
+            err.to_string().contains("app_secret"),
+            "error should name the missing field: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn create_feishu_rejects_empty_credentials() {
+        // Empty strings (not just None) are rejected after trimming.
+        let (state, _) = state_with_router(vec![]).await;
+        let req = CreateBridgeRequest {
+            platform: "feishu".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: Some("".into()),
+            app_secret: Some("".into()),
+            domain: None,
+            allowlist: None,
+        };
+        let err = create_bridge_handler(State(state), Json(req))
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    }
+
+    // ─────────── feishu happy path ───────────
+    //
+    // Validates the bridge IS constructed + registered when credentials are
+    // present. `domain` points at a closed localhost port so the spawned WS
+    // run_loop fails fast (connection refused) offline rather than hitting the
+    // real `open.feishu.cn`. The handler returns immediately after spawning the
+    // detached start task (FeishuBridge::start spawns its WS loop internally
+    // and returns Ok(()) right away — see bridge.rs), so this test never blocks
+    // on network I/O and the detached task is torn down with the test runtime.
+
+    #[tokio::test]
+    async fn create_feishu_succeeds_and_registers_bridge() {
+        let (state, _) = state_with_router(vec![]).await;
+        let req = CreateBridgeRequest {
+            platform: "feishu".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: Some("fake_app_id".into()),
+            app_secret: Some("fake_secret".into()),
+            // Closed localhost port → offline, fails fast, no real Feishu call.
+            domain: Some("http://127.0.0.1:1".into()),
+            allowlist: None,
+        };
+        let resp = create_bridge_handler(State(state.clone()), Json(req))
+            .await
+            .expect("feishu create ok");
+        let data = resp.0.data.expect("has data");
+        assert_eq!(
+            data.get("platform").and_then(|v| v.as_str()),
+            Some("feishu")
+        );
+        assert_eq!(
+            data.get("status").and_then(|v| v.as_str()),
+            Some("running")
+        );
+
+        // The bridge is now in the router's registry — list reflects it.
+        let list_resp = list_bridges_handler(State(state)).await.expect("list ok");
+        let list_data = list_resp.0.data.expect("has data");
+        let bridges = list_data
+            .get("bridges")
+            .and_then(|v| v.as_array())
+            .expect("bridges array");
+        assert_eq!(bridges.len(), 1, "feishu bridge should be registered");
+        assert_eq!(
+            bridges[0].get("platform").and_then(|v| v.as_str()),
+            Some("feishu")
+        );
     }
 
     #[tokio::test]

@@ -17,3 +17,9 @@ pub mod bridge;
 pub mod messaging;
 pub mod pbbp2;
 pub mod ws;
+
+// Re-export at the module root so the public import path mirrors telegram's
+// (`neomind_messages::im_bridge::telegram::TelegramBridge`):
+// callers write `feishu::FeishuBridge` without drilling into the `bridge`
+// submodule.
+pub use bridge::FeishuBridge;
