@@ -240,6 +240,10 @@ export function UnifiedFormDialog({
           // bg-background which has /97% alpha in dark mode and lets the
           // previous layer bleed through, creating a visible color split.
           style={{ backgroundColor: 'var(--chrome)' }}
+          // Portal content bubbles through the React tree (not the DOM tree).
+          // Without this, every tap inside the dialog — including the close
+          // button — reaches ancestor handlers like a table row's onRowClick.
+          onClick={(e) => e.stopPropagation()}
         >
           <div className="flex h-full w-full flex-col">
             {/* Header */}
@@ -328,7 +332,7 @@ export function UnifiedFormDialog({
       {open && (
         <div
           className={cn("fixed inset-0 bg-overlay-heavy backdrop-blur-sm animate-in fade-in duration-200", overlayZIndex)}
-          onClick={() => !isDisabled && handleClose()}
+          onClick={(e) => { e.stopPropagation(); if (!isDisabled) handleClose() }}
         />
       )}
 
@@ -351,6 +355,10 @@ export function UnifiedFormDialog({
             className
           )}
           style={{ maxHeight: '85vh' }}
+          // Portal content bubbles through the React tree. Stop clicks (incl.
+          // the header ✕ and footer Close) from reaching ancestor handlers
+          // such as a table row's onRowClick.
+          onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           <div className="flex items-center justify-between gap-2 px-6 py-4 border-b shrink-0">

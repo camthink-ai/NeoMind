@@ -69,13 +69,6 @@ export function SettingsDialog() {
   if (!open) return null
 
   const sections = getSettingsSections(t)
-  const activeLabel = sections.find((s) => s.value === activeSection)?.label ?? ""
-  const sectionDescriptions: Partial<Record<SettingsSection, string>> = {
-    llm: t("settings:llmDesc", { defaultValue: "管理 LLM 后端、模型与实例" }),
-    connections: t("settings:connectionsDesc", { defaultValue: "管理 MQTT / Webhook 设备连接" }),
-    preferences: t("settings:preferencesDesc", { defaultValue: "语言、时间格式、数据保留等偏好" }),
-  }
-  const sectionDescription = sectionDescriptions[activeSection] ?? ""
 
   const dialogRoot =
     typeof document !== "undefined"
@@ -111,13 +104,6 @@ export function SettingsDialog() {
               onBack={closeSettings}
             />
             <main className="flex-1 min-w-0 min-h-0 overflow-y-auto scrollbar-none">
-              {/* Section header — title + one-line description (desktop; About has its own hero) */}
-              {!isMobile && activeSection !== "about" && (
-                <div className="mb-6">
-                  <h2 className="text-2xl font-semibold">{activeLabel}</h2>
-                  <p className="text-sm text-muted-foreground mt-2">{sectionDescription}</p>
-                </div>
-              )}
               {activeSection === "llm" && (
                 <UnifiedLLMBackendsTab
                   onCreateBackend={createBackend}
