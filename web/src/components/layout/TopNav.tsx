@@ -7,6 +7,7 @@
 import { useStore } from "@/store"
 import { cn } from "@/lib/utils"
 import { isTauriEnv } from "@/lib/api"
+import { getCurrentWindow } from "@tauri-apps/api/window"
 import { textNano, textMini } from "@/design-system/tokens/typography"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router-dom"
@@ -95,6 +96,18 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   // (their own row, not pushing the logo right); the top bar doubles as the
   // drag region.
   const isMacTauri = isTauriEnv() && /Mac/i.test(navigator.platform || navigator.userAgent)
+
+  // Tauri window drag — explicitly call startDragging() on mousedown instead of
+  // relying on data-tauri-drag-region (which is unreliable in Tauri 2 overlay mode).
+  // Only fires when clicking non-interactive areas (the drag handler checks target).
+  const handleDragMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!isTauriEnv()) return
+    const target = e.target as HTMLElement
+    // Skip if clicking on interactive elements (buttons, links, inputs, etc.)
+    if (target.closest("button, a, input, select, textarea, [role='button'], [role='tab']")) return
+    getCurrentWindow().startDragging()
+  }, [])
+
   // Expose the macOS title-bar (traffic-light) inset as a CSS var so full-screen
   // overlays (settings, onboarding) reserve the same top space and aren't
   // covered by the traffic lights.
@@ -225,12 +238,11 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
         ref={innerRef}
         className="fixed top-0 left-0 right-0 z-20 bg-[var(--chrome)] border-b border-border flex flex-col"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
-        data-tauri-drag-region={isTauriEnv() || undefined}
+        onMouseDown={handleDragMouseDown}
       >
         {/* Main bar */}
         <div
           className="flex items-center px-4 sm:px-6 h-14"
-          data-tauri-drag-region={isTauriEnv() || undefined}
         >
           {/* Logo */}
           <Link to="/chat" className="flex shrink-0 items-center justify-center mr-4 md:mr-6">
@@ -269,7 +281,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
           </div>
 
           {/* Spacer */}
-          <div className="flex-1 max-md:max-w-4" data-tauri-drag-region={isTauriEnv() || undefined} />
+          <div className="flex-1 max-md:max-w-4" />
 
           {/* Right side: Instance + Health + Guide + Alerts + Preferences + User */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2.5">
