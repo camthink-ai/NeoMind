@@ -3132,3 +3132,57 @@ async fn apply_persisted_tool_disabled_state(
 
 // Note: Default implementation removed because ServerState::new() is now async
 // to support persistent device registry initialization.
+
+/// Production `AgentRunner` adapter that forwards to `SessionManager`.
+///
+/// Used by `start_im_router` (Task 9) to bind the IM bridge to the real agent
+/// backend. The aggregation pattern mirrors the canonical HTTP chat handler in
+/// `handlers/sessions.rs:757-781`: append `AgentEvent::Content` chunks, break
+/// on `AgentEvent::End`, ignore everything else (Thinking/ToolCall*/Warning).
+///
+/// Deliberately no unit test — `SessionManager` cannot have its LLM backend
+/// injected in-process (by design), so the adapter is exercised end-to-end in
+/// Task 11 via an `EchoRunner` mock instead.
+#[allow(dead_code)] // wired up in Task 9 (start_im_router)
+pub struct SessionManagerAgentRunner {
+    sm: Arc<SessionManager>,
+}
+
+impl SessionManagerAgentRunner {
+    #[allow(dead_code)] // wired up in Task 9 (start_im_router)
+    pub fn new(sm: Arc<SessionManager>) -> Self {
+        Self { sm }
+    }
+}
+
+#[async_trait::async_trait]
+impl neomind_messages::im_bridge::AgentRunner for SessionManagerAgentRunner {
+    async fn create_session(&self) -> anyhow::Result<String> {
+        // CreateSessionOptions::default() leaves every override as None, so the
+        // new session inherits the manager's default_config (model / system
+        // prompt / tools). The configured "default IM agent" binding happens
+        // in Task 9's start_im_router, not here.
+        let opts = neomind_agent::CreateSessionOptions::default();
+        Ok(self.sm.create_session_with_options(opts).await?)
+    }
+
+    async fn run(&self, session_id: &str, text: &str) -> anyhow::Result<String> {
+        use futures::StreamExt as _;
+        // backend_id=None → use the session's currently-active backend.
+        // selected_skills=&[] → no pinned skills for this turn.
+        let stream = self
+            .sm
+            .process_message_events_with_backend_and_skills(session_id, text, None, &[])
+            .await?;
+        let mut s = stream;
+        let mut out = String::new();
+        while let Some(ev) = s.next().await {
+            match ev {
+                neomind_agent::AgentEvent::Content { content } => out.push_str(&content),
+                neomind_agent::AgentEvent::End { .. } => break,
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+}
