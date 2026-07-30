@@ -3757,6 +3757,7 @@ dependencies = [
  "lettre",
  "neomind-core",
  "neomind-storage",
+ "rand 0.8.7",
  "redb",
  "reqwest",
  "serde",
