@@ -581,9 +581,18 @@ impl FeishuWsClient {
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
         let payload = frame.payload.clone().unwrap_or_default();
+        tracing::info!(
+            message_id = %message_id, sum, seq,
+            payload_len = payload.len(),
+            "feishu ws data event shard received"
+        );
 
         if let Some(merged) = cache.insert(&message_id, seq, sum, payload) {
-            // Fully assembled — emit + ack.
+            tracing::info!(
+                message_id = %message_id,
+                merged_len = merged.len(),
+                "feishu ws event fully merged -> invoking handler"
+            );
             event_handler(merged);
         }
         // Ack every received data shard (matches larksuite/node-sdk: each
