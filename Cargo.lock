@@ -3750,6 +3750,7 @@ version = "0.9.13"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "base64 0.22.1",
  "chrono",
  "hmac",

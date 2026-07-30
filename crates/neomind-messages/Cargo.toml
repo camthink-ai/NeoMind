@@ -26,6 +26,7 @@ urlencoding = { workspace = true, optional = true }
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = { workspace = true }
+axum = { workspace = true }
 
 [features]
 default = ["webhook", "email", "telegram", "wecom", "dingtalk", "slack", "feishu"]
