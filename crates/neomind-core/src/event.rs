@@ -154,6 +154,16 @@ pub enum NeoMindEvent {
     /// Message was resolved
     MessageResolved { message_id: String, timestamp: i64 },
 
+    /// IM message received from a bridge (Telegram/Feishu/...)
+    ImMessageReceived {
+        platform: String,
+        im_chat_id: String,
+        sender_id: String,
+        text: String,
+        msg_id: String,
+        timestamp: i64,
+    },
+
     // ========== Agent Events (User-defined AI Agents) ==========
     /// Agent execution started
     AgentExecutionStarted {
@@ -482,6 +492,7 @@ impl NeoMindEvent {
             Self::MessageCreated { .. } => "MessageCreated",
             Self::MessageAcknowledged { .. } => "MessageAcknowledged",
             Self::MessageResolved { .. } => "MessageResolved",
+            Self::ImMessageReceived { .. } => "ImMessageReceived",
             Self::AgentExecutionStarted { .. } => "AgentExecutionStarted",
             Self::AgentThinking { .. } => "AgentThinking",
             Self::AgentDecision { .. } => "AgentDecision",
@@ -536,6 +547,7 @@ impl NeoMindEvent {
             | Self::MessageCreated { timestamp, .. }
             | Self::MessageAcknowledged { timestamp, .. }
             | Self::MessageResolved { timestamp, .. }
+            | Self::ImMessageReceived { timestamp, .. }
             | Self::AgentExecutionStarted { timestamp, .. }
             | Self::AgentThinking { timestamp, .. }
             | Self::AgentDecision { timestamp, .. }
