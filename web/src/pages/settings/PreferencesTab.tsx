@@ -2,7 +2,6 @@ import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { logError } from "@/lib/errors"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { SettingsRow } from "./SettingsRow"
 import { Button } from "@/components/ui/button"
 import {
@@ -13,16 +12,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import {
-  Clock,
-  Cpu,
-  Server,
   Check,
   Info,
   Loader2,
-  Globe,
   Database,
   SwitchCamera,
-  ScrollText,
   Download,
 } from "lucide-react"
 import { Switch } from "@/components/ui/switch"
@@ -130,7 +124,7 @@ export function PreferencesTab() {
   const localizedTimezones = getLocalizedTimezones(t)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Actions */}
       {hasChanges && (
         <div className="flex items-center justify-between p-4 bg-muted-50 rounded-lg">
@@ -151,14 +145,11 @@ export function PreferencesTab() {
       )}
 
       {/* Language & Region Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Globe className="h-5 w-5 text-info" />
-            {t("settings:languageRegion")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <section>
+        <h3 className="text-base font-semibold mb-3">
+          {t("settings:languageRegion")}
+        </h3>
+        <div className="rounded-xl bg-muted-30 p-5 space-y-4">
           {/* Language */}
           <SettingsRow
             label={t("settings:language")}
@@ -180,18 +171,15 @@ export function PreferencesTab() {
               </SelectContent>
             </Select>
           </SettingsRow>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* Time Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5 text-success" />
-            {t("settings:timeSettings")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <section>
+        <h3 className="text-base font-semibold mb-3">
+          {t("settings:timeSettings")}
+        </h3>
+        <div className="rounded-xl bg-muted-30 p-5 space-y-4">
           {/* Time Format */}
           <SettingsRow
             label={t("settings:timeFormat")}
@@ -257,7 +245,7 @@ export function PreferencesTab() {
           </SettingsRow>
 
           {/* Current Time Preview */}
-          <div className="pt-4 border-t">
+          <div className="pt-3">
             <div className="text-center p-4 bg-muted-50 rounded-lg">
               <div className="text-xs text-muted-foreground mb-1">
                 {t("settings:currentTime")}
@@ -267,20 +255,20 @@ export function PreferencesTab() {
               </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* AI Agent Defaults */}
-      <AgentDefaultsCard />
+      <AgentDefaultsSection />
 
       {/* Device Defaults */}
-      <DeviceDefaultsCard />
+      <DeviceDefaultsSection />
 
       {/* Data Management */}
-      <DataManagementCard />
+      <DataManagementSection />
 
       {/* Diagnostic Data — log archive download */}
-      <DiagnosticDataCard />
+      <DiagnosticDataSection />
 
       {/* Info */}
       <div className="text-sm text-muted-foreground text-center py-4">
@@ -311,7 +299,7 @@ function optionToHours(value: string): number | null {
   return Number(value)
 }
 
-function AgentDefaultsCard() {
+function AgentDefaultsSection() {
   const { t } = useTranslation(["common", "settings"])
   const { toast } = useToast()
   const [config, setConfig] = useState<{
@@ -344,13 +332,7 @@ function AgentDefaultsCard() {
   }
 
   if (loading || !config) {
-    return (
-      <Card>
-        <CardContent className="py-6">
-          <div className="h-32 w-full animate-pulse rounded-md bg-muted" />
-        </CardContent>
-      </Card>
-    )
+    return <div className="h-32 w-full animate-pulse rounded-md bg-muted" />
   }
 
   const roundOpts = [10, 20, 30, 40, 50]
@@ -363,14 +345,11 @@ function AgentDefaultsCard() {
   const topPOpts = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Cpu className="h-5 w-5 text-info" />
-          {t("settings:agentDefaults")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <section>
+      <h3 className="text-base font-semibold mb-3">
+        {t("settings:agentDefaults")}
+      </h3>
+      <div className="rounded-xl bg-muted-30 p-5 space-y-4">
         <SettingsRow label={t("settings:maxRounds")} description={t("settings:maxRoundsDesc")}>
           <Select value={String(config.max_rounds)} onValueChange={(v) => saveConfig({ max_rounds: +v })}>
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
@@ -424,12 +403,12 @@ function AgentDefaultsCard() {
             </SelectContent>
           </Select>
         </SettingsRow>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }
 
-function DeviceDefaultsCard() {
+function DeviceDefaultsSection() {
   const { t } = useTranslation(["common", "settings"])
   const { toast } = useToast()
   const [config, setConfig] = useState<{
@@ -458,13 +437,7 @@ function DeviceDefaultsCard() {
   }
 
   if (loading || !config) {
-    return (
-      <Card>
-        <CardContent className="py-6">
-          <div className="h-20 w-full animate-pulse rounded-md bg-muted" />
-        </CardContent>
-      </Card>
-    )
+    return <div className="h-20 w-full animate-pulse rounded-md bg-muted" />
   }
 
   const timeoutOpts = [
@@ -473,14 +446,11 @@ function DeviceDefaultsCard() {
   ]
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Server className="h-5 w-5 text-success" />
-          {t("settings:deviceDefaults")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <section>
+      <h3 className="text-base font-semibold mb-3">
+        {t("settings:deviceDefaults")}
+      </h3>
+      <div className="rounded-xl bg-muted-30 p-5 space-y-4">
         <SettingsRow label={t("settings:defaultOfflineTimeout")} description={t("settings:defaultOfflineTimeoutDesc")}>
           <Select value={String(config.default_offline_timeout_secs)} onValueChange={(v) => saveConfig({ default_offline_timeout_secs: +v })}>
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
@@ -492,12 +462,12 @@ function DeviceDefaultsCard() {
         <SettingsRow label={t("settings:autoOnboardEnabled")} description={t("settings:autoOnboardEnabledDesc")}>
           <Switch checked={config.auto_onboard_enabled} onCheckedChange={(checked) => saveConfig({ auto_onboard_enabled: checked })} />
         </SettingsRow>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }
 
-function DataManagementCard() {
+function DataManagementSection() {
   const { t } = useTranslation(["common", "settings"])
   const { toast } = useToast()
   const [config, setConfig] = useState<{
@@ -543,34 +513,17 @@ function DataManagementCard() {
   }
 
   if (loading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="h-5 w-5 text-accent-orange" />
-            {t("settings:dataManagement")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
-        </CardContent>
-      </Card>
-    )
+    return <div className="h-40 w-full animate-pulse rounded-md bg-muted" />
   }
 
   if (!config) return null
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Database className="h-5 w-5 text-accent-orange" />
-          {t("settings:dataManagement")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-5">
+    <section>
+      <h3 className="text-base font-semibold mb-3">
+        {t("settings:dataManagement")}
+      </h3>
+      <div className="rounded-xl bg-muted-30 p-5 space-y-5">
         {/* Auto Cleanup Toggle */}
         <SettingsRow
           label={t("settings:autoCleanup")}
@@ -630,7 +583,7 @@ function DataManagementCard() {
         </SettingsRow>
 
         {/* Manual Cleanup */}
-        <div className="pt-4 border-t">
+        <div className="pt-3">
           <Button
             variant="outline"
             size="sm"
@@ -645,12 +598,12 @@ function DataManagementCard() {
             {cleaning ? t("settings:cleanupRunning") : t("settings:cleanupNow")}
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }
 
-function DiagnosticDataCard() {
+function DiagnosticDataSection() {
   const { t } = useTranslation(["common", "settings"])
   const { handleError, showSuccess } = useErrorHandler()
   const [downloading, setDownloading] = useState(false)
@@ -675,14 +628,11 @@ function DiagnosticDataCard() {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ScrollText className="h-5 w-5 text-info" />
-          {t("settings:diagnosticData")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <section>
+      <h3 className="text-base font-semibold mb-3">
+        {t("settings:diagnosticData")}
+      </h3>
+      <div className="rounded-xl bg-muted-30 p-5 space-y-4">
         <SettingsRow
           label={t("settings:logTimeRange")}
           description={t("settings:diagnosticDataDesc")}
@@ -698,7 +648,7 @@ function DiagnosticDataCard() {
             </SelectContent>
           </Select>
         </SettingsRow>
-        <div className="pt-4 border-t">
+        <div className="pt-3">
           <Button
             variant="outline"
             size="sm"
@@ -713,8 +663,8 @@ function DiagnosticDataCard() {
             {downloading ? t("settings:downloadingLogs") : t("settings:downloadLogs")}
           </Button>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }
 

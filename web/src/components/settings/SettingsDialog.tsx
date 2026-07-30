@@ -85,7 +85,7 @@ export function SettingsDialog() {
       }}
     >
       <div className="flex-1 min-h-0 flex">
-        <div className="w-full min-h-0 flex flex-col px-6 md:px-8 pt-6">
+        <div className="w-full min-h-0 flex flex-col px-6 md:px-8 pt-12">
           {/* Back button (closes the dialog) — mobile only (desktop back is in the sidebar) */}
           <button
             type="button"
@@ -105,18 +105,25 @@ export function SettingsDialog() {
               onBack={closeSettings}
             />
             <main className="flex-1 min-w-0 min-h-0 overflow-y-auto scrollbar-none">
-              {activeSection === "llm" && (
-                <UnifiedLLMBackendsTab
-                  onCreateBackend={createBackend}
-                  onUpdateBackend={updateBackend}
-                  onDeleteBackend={deleteBackend}
-                  onTestBackend={testBackend}
-                />
-              )}
-              {activeSection === "connections" && <UnifiedDeviceConnectionsTab />}
-              {activeSection === "im" && <ImBridgesTab />}
-              {activeSection === "preferences" && <PreferencesTab />}
-              {activeSection === "about" && <AboutTab />}
+              <div className="max-w-6xl mx-auto">
+                {activeSection !== "about" && (
+                  <h2 className="text-2xl font-semibold tracking-tight mb-8">
+                    {sections.find((s) => s.value === activeSection)?.label}
+                  </h2>
+                )}
+                {activeSection === "llm" && (
+                  <UnifiedLLMBackendsTab
+                    onCreateBackend={createBackend}
+                    onUpdateBackend={updateBackend}
+                    onDeleteBackend={deleteBackend}
+                    onTestBackend={testBackend}
+                  />
+                )}
+                {activeSection === "connections" && <UnifiedDeviceConnectionsTab />}
+                {activeSection === "im" && <ImBridgesTab />}
+                {activeSection === "preferences" && <PreferencesTab />}
+                {activeSection === "about" && <AboutTab />}
+              </div>
             </main>
           </div>
         </div>

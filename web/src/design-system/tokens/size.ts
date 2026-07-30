@@ -306,7 +306,7 @@ export const dashboardScrollableContent = [
  * Equivalent to `rounded-lg border bg-card shadow-sm` but centralized
  */
 export const cardBase = [
-  'rounded-lg border bg-card shadow-sm',
+  'rounded-md border bg-card',
 ].join(' ')
 
 /**
@@ -316,7 +316,7 @@ export const cardBase = [
  * Opaque surface: no backdrop-blur, keeping content legible and GPU-light.
  */
 export const interactiveCard = [
-  'bg-card rounded-lg border shadow-sm',
+  'bg-card rounded-md border',
   'cursor-pointer transition-all duration-fast ease-spring-soft',
   'hover:shadow-md hover:-translate-y-0.5',
 ].join(' ')

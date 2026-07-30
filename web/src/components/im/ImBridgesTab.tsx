@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { Send, Plus, Trash2, Copy, QrCode, Check, X } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button, IconButton } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -255,14 +255,6 @@ export function ImBridgesTab() {
       const available = IM_PLATFORMS.filter(p => p.available)
       return (
         <>
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold">{t('settings:im.title')}</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {t('settings:im.selectPlatformDesc', {
-                defaultValue: 'Choose a platform to let agents reply on a chat app.',
-              })}
-            </p>
-          </div>
           <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
             {available.map(def => {
               const PlatformIcon = def.icon
@@ -272,34 +264,29 @@ export function ImBridgesTab() {
                   className="cursor-pointer transition-all duration-200 hover:shadow-md"
                   onClick={() => handlePlatformSelect(def)}
                 >
-                  <CardHeader className="pb-3">
-                    <div className={cn('flex items-center justify-center w-12 h-12 rounded-lg', def.iconBg)}>
-                      <PlatformIcon className="h-6 w-6" />
+                  <CardContent className="p-4">
+                    <div className="flex items-start gap-3">
+                      <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', def.iconBg)}>
+                        <PlatformIcon className="h-5 w-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <CardTitle className="text-base truncate min-w-0">{t(def.nameKey)}</CardTitle>
+                        <CardDescription className="mt-1 text-xs line-clamp-1">
+                          {t(def.descriptionKey)}
+                        </CardDescription>
+                      </div>
                     </div>
-                    <CardTitle className="text-base mt-3">{t(def.nameKey)}</CardTitle>
-                    <CardDescription className="mt-1 text-xs line-clamp-2 min-h-[2.5em]">
-                      {t(def.descriptionKey)}
-                    </CardDescription>
-                  </CardHeader>
+                  </CardContent>
                 </Card>
               )
             })}
           </div>
-          <p className="text-sm text-muted-foreground mt-4">{t('settings:im.morePlatformsComingSoon')}</p>
         </>
       )
     }
 
     return (
       <>
-        {/* Header / toolbar */}
-        <div className="flex items-start justify-between gap-3 mb-4">
-          <div className="min-w-0">
-            <h2 className="text-lg font-semibold">{t('settings:im.title')}</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">{t('settings:im.description')}</p>
-          </div>
-        </div>
-
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {bridges.map(bridge => {
             const st = statusBadge(bridge.status)
@@ -309,45 +296,43 @@ export function ImBridgesTab() {
                 className="cursor-pointer transition-all duration-200 hover:shadow-md"
                 onClick={() => openDetail(bridge)}
               >
-                <CardHeader className="pb-3">
-                  <div className="flex items-center justify-center w-12 h-12 rounded-lg bg-info-light text-info">
-                    <Send className="h-6 w-6" />
-                  </div>
-                  <CardTitle className="text-base mt-3">{platformDisplayName(bridge.platform, t)}</CardTitle>
-                  <CardDescription className="mt-1 text-xs">
-                    {t('settings:im.platformFixed')}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">{t('settings:im.status')}</span>
-                    <Badge className={cn('text-xs border', st.className)}>{st.label}</Badge>
-                  </div>
-                  <div className="flex justify-between items-center mt-3">
-                    <span className="text-muted-foreground">{t('settings:im.manage')}</span>
-                    <div className="flex items-center gap-1">
-                      <IconButton
-                        size="sm"
-                        aria-label={t('settings:im.manage')}
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation()
-                          openDetail(bridge)
-                        }}
-                      >
-                        <QrCode className="h-4 w-4" />
-                      </IconButton>
-                      <IconButton
-                        size="sm"
-                        aria-label={t('common:delete', { defaultValue: 'Delete' })}
-                        className="hover:text-error hover:bg-error-light"
-                        onClick={(e: React.MouseEvent) => {
-                          e.stopPropagation()
-                          handleDelete(bridge)
-                        }}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </IconButton>
+                <CardContent className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex items-center justify-center h-10 w-10 rounded-lg shrink-0 bg-info-light text-info">
+                      <Send className="h-5 w-5" />
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="text-base truncate min-w-0">{platformDisplayName(bridge.platform, t)}</CardTitle>
+                        <Badge className={cn('text-xs border shrink-0', st.className)}>{st.label}</Badge>
+                      </div>
+                      <CardDescription className="mt-1 text-xs line-clamp-1">
+                        {t('settings:im.platformFixed')}
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-end gap-1">
+                    <IconButton
+                      size="sm"
+                      aria-label={t('settings:im.manage')}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation()
+                        openDetail(bridge)
+                      }}
+                    >
+                      <QrCode className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton
+                      size="sm"
+                      aria-label={t('common:delete', { defaultValue: 'Delete' })}
+                      className="hover:text-error hover:bg-error-light"
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation()
+                        handleDelete(bridge)
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
                   </div>
                 </CardContent>
               </Card>

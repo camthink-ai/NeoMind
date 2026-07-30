@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -12,14 +11,15 @@ import {
   Cpu,
   HardDrive,
   Layers,
-  Activity,
   Monitor,
   Download,
   Upload,
   Wifi,
   Loader2,
-  Terminal,
   ExternalLink,
+  ArrowUpCircle,
+  CheckCircle2,
+  RefreshCw,
 } from "lucide-react"
 import { api, isTauriEnv } from "@/lib/api"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
@@ -95,7 +95,7 @@ function MetricTile({
       </div>
       {/* Unified secondary line: always rendered (preserves vertical rhythm across tiles) */}
       <div className="text-xs text-muted-foreground font-mono uppercase tracking-wide truncate min-h-[1rem]">
-        {sub ?? "\u00A0"}
+        {sub ?? " "}
       </div>
     </div>
   )
@@ -173,18 +173,12 @@ function UsageGauge({
 function InfoRow({
   label,
   children,
-  last,
 }: {
   label: string
   children: ReactNode
-  last?: boolean
 }) {
   return (
-    <div
-      className={`flex items-center justify-between gap-4 py-3 ${
-        !last ? "border-b border-border" : ""
-      }`}
-    >
+    <div className="flex items-center justify-between gap-4 py-3">
       <span className="text-sm text-muted-foreground">{label}</span>
       <div className="text-sm text-right">{children}</div>
     </div>
@@ -306,61 +300,76 @@ export function AboutTab() {
 
   const heroVersion = versionTag || "---"
 
+  const updateTitle = checkingUpdate
+    ? t("settings:checkingForUpdates")
+    : updateInfo?.available
+      ? `${t("settings:updateNow")} · v${updateInfo.version}`
+      : updateInfo
+        ? t("settings:alreadyUpToDate")
+        : t("settings:checkForUpdates")
+
   return (
-    <div className="space-y-6">
-      {/* Hero — Brand wordmark + build tag */}
-      <div className="relative overflow-hidden rounded-xl border bg-card shadow-sm p-6 md:p-10">
-        {/* Grid background */}
-        <div
-          className="absolute inset-0 opacity-[0.04] pointer-events-none"
-          style={{
-            backgroundImage: `linear-gradient(var(--foreground) 1px, transparent 1px), linear-gradient(90deg, var(--foreground) 1px, transparent 1px)`,
-            backgroundSize: "32px 32px",
-          }}
-        />
-        {/* Brand glow */}
-        <div
-          className="absolute -top-24 -right-24 w-80 h-80 rounded-full pointer-events-none"
-          style={{ background: "var(--brand-bg)", filter: "blur(60px)" }}
-        />
-
-        <div className="relative flex flex-col md:flex-row md:items-end md:justify-between gap-6">
-          <div className="space-y-3 min-w-0">
-            <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground font-mono">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-75 animate-ping" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
-              </span>
-              <span>{t("settings:aboutDesc")}</span>
-            </div>
-            <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-none">
-              <BrandName />
-            </h1>
-            <p className="text-sm text-muted-foreground max-w-md">
-              {t("settings:aboutDesc1")}
-            </p>
+    <div className="space-y-8">
+      {/* Hero — brand wordmark + build (borderless) */}
+      <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
+        <div className="space-y-3 min-w-0">
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight leading-none">
+            <BrandName />
+          </h1>
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground font-mono">
+            <span>{t("settings:aboutDesc")}</span>
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full rounded-full bg-success opacity-75 animate-ping" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-success" />
+            </span>
           </div>
+          <p className="text-sm text-muted-foreground max-w-md">
+            {t("settings:aboutDesc1")}
+          </p>
+        </div>
 
-          <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
-            <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
-              build
-            </div>
+        <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
+          <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
+            build
+          </div>
+          <div className="flex items-center gap-2">
             <div className="font-mono text-2xl md:text-3xl font-semibold text-brand leading-none">
               [{heroVersion}]
             </div>
+            {isTauriEnv() && (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label={updateTitle}
+                title={updateTitle}
+                onClick={() =>
+                  updateInfo?.available
+                    ? setUpdateDialogOpen(true)
+                    : handleCheckForUpdates()
+                }
+                disabled={checkingUpdate}
+              >
+                {checkingUpdate ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : updateInfo?.available ? (
+                  <ArrowUpCircle className="h-4 w-4 text-info" />
+                ) : updateInfo ? (
+                  <CheckCircle2 className="h-4 w-4 text-success" />
+                ) : (
+                  <RefreshCw className="h-4 w-4 text-muted-foreground" />
+                )}
+              </Button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* System Information Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5 text-info" />
-            {t("settings:systemInfo")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {/* System Information */}
+      <section>
+        <h3 className="text-base font-semibold">
+          {t("settings:systemInfo")}
+        </h3>
+        <div className="mt-4 space-y-4">
           {loading ? (
             <TelemetrySkeleton />
           ) : systemInfo ? (
@@ -519,18 +528,15 @@ export function AboutTab() {
               {t("settings:systemInfoUnavailable")}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
-      {/* Project Information Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Terminal className="h-5 w-5 text-info" />
-            {t("settings:projectInfo")}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {/* Project Information */}
+      <section>
+        <h3 className="text-base font-semibold">
+          {t("settings:projectInfo")}
+        </h3>
+        <div className="mt-4 rounded-xl bg-muted-30 p-5">
           <div>
             <InfoRow label={t("settings:version")}>
               <div className="flex items-center gap-2">
@@ -559,45 +565,15 @@ export function AboutTab() {
             <InfoRow label={t("settings:website")}>
               <ExternalLinkValue href="https://www.camthink.ai" text="www.camthink.ai" />
             </InfoRow>
-            <InfoRow label={t("settings:documentation")} last>
+            <InfoRow label={t("settings:documentation")}>
               <ExternalLinkValue
                 href="https://wiki.camthink.ai/docs/neomind/product-overview/what-is-neomind"
                 text="wiki.camthink.ai"
               />
             </InfoRow>
           </div>
-
-          {isTauriEnv() && (
-            <Button
-              variant={updateInfo?.available ? "default" : "outline"}
-              className="w-full"
-              onClick={() =>
-                updateInfo?.available
-                  ? setUpdateDialogOpen(true)
-                  : handleCheckForUpdates()
-              }
-              disabled={checkingUpdate}
-            >
-              {checkingUpdate ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  {t("settings:checkingForUpdates")}
-                </>
-              ) : updateInfo?.available ? (
-                <>
-                  <Download className="w-4 h-4 mr-2" />
-                  {t("settings:updateNow")} · v{updateInfo.version}
-                </>
-              ) : (
-                <>
-                  <Download className="w-4 h-4 mr-2" />
-                  {t("settings:checkForUpdates")}
-                </>
-              )}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* Footer */}
       <div className="text-center text-xs text-muted-foreground">

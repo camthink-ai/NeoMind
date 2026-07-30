@@ -339,7 +339,7 @@ export function UnifiedLLMBackendsTab({
     return (
       <>
         {/* Provider Cards Grid */}
-        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {backendTypes.map((type) => {
             const typeInstances = getInstancesForType(type.id)
             const info = getLlmProviderInfo(type.id, t)
@@ -358,25 +358,26 @@ export function UnifiedLLMBackendsTab({
                   setView('detail')
                 }}
               >
-                <CardHeader className="pb-3">
-                  <div className={cn("flex items-center justify-center w-12 h-12 rounded-lg", info.iconBg)}>
-                    {info.icon}
+                <CardContent className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className={cn("flex items-center justify-center h-10 w-10 rounded-lg shrink-0", info.iconBg)}>
+                      {info.icon}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="text-base truncate min-w-0">{info.name}</CardTitle>
+                        <span className={cn("text-xs font-medium shrink-0", hasActive ? "text-success" : "text-muted-foreground")}>
+                          {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
+                        </span>
+                      </div>
+                      <CardDescription className="mt-1 text-xs line-clamp-1">
+                        {type.description}
+                      </CardDescription>
+                    </div>
                   </div>
-                  <CardTitle className="text-base mt-3">{info.name}</CardTitle>
-                  <CardDescription className="mt-1 text-xs line-clamp-2 min-h-[2.5em]">
-                    {type.description}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm">
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">{t('plugins:llm.status')}:</span>
-                    <span className={hasActive ? "text-success dark:text-success font-medium" : "text-muted-foreground font-medium"}>
-                      {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center mt-2">
-                    <span className="text-muted-foreground">{t('plugins:llm.instances')}:</span>
-                    <span className="font-medium">{t('plugins:llm.instancesCount', { count: typeInstances.length })}</span>
+                  <div className="mt-3 flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">{t('plugins:llm.instances')}</span>
+                    <span className="font-medium text-foreground">{t('plugins:llm.instancesCount', { count: typeInstances.length })}</span>
                   </div>
                 </CardContent>
               </Card>

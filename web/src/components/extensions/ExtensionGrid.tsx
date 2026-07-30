@@ -147,7 +147,7 @@ export function ExtensionGrid({
 
   if (loading) {
     return (
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5">
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
@@ -340,7 +340,7 @@ export function ExtensionGrid({
       </div>
 
       {/* Extension Cards Grid */}
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-5">
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,280px),1fr))] gap-5">
         {filteredExtensions.map((extension, index) => (
           <div
             key={extension.id}

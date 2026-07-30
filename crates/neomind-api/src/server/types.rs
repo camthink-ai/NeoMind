@@ -1420,6 +1420,20 @@ impl ServerState {
                 tracing::warn!(category = "storage", error = %e, "Failed to open device registry for seeding");
             }
         }
+
+        // Reload the in-memory registry cache so freshly-seeded builtin
+        // templates (NE101/NE301) become visible. `with_persistence()` loaded
+        // the cache at `ServerState::new` before this seed ran; on a fresh
+        // boot that cache is empty and without a reload, storage has the
+        // templates but the cache stays empty — device registration then
+        // fails with "Device type template '...' not found".
+        if let Err(e) = self.devices.registry.load_from_storage().await {
+            tracing::warn!(
+                category = "storage",
+                error = %e,
+                "Failed to reload device registry cache after builtin seed"
+            );
+        }
     }
 
     /// Start enabled data push targets from persistent storage.
