@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Send, RotateCcw } from 'lucide-react'
-import { ResponsiveTable, LoadingState } from '@/components/shared'
+import { ResponsiveTable, EmptyState, LoadingState } from '@/components/shared'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess } from '@/lib/notify'
@@ -108,6 +108,21 @@ export function ImSessionsTab() {
             },
           ]}
           data={sessions as unknown as Record<string, unknown>[]}
+          emptyState={
+            <EmptyState
+              icon={<Send className="h-12 w-12" />}
+              title={t(
+                !bridge ? 'messages.im.noBridge' : 'messages.im.noSessions',
+                !bridge ? 'No IM Bridge Configured' : 'No Sessions',
+              )}
+              description={t(
+                !bridge ? 'messages.im.noBridgeDesc' : 'messages.im.noSessionsDesc',
+                !bridge
+                  ? 'Configure an IM bridge in Settings to start managing chat sessions.'
+                  : 'No active chat sessions yet. Start a chat with the bot to create one.',
+              )}
+            />
+          }
           rowKey={(row) => (row as unknown as ImSession).chat_id}
           renderCell={(columnKey, rowData) => {
             const s = rowData as unknown as ImSession
