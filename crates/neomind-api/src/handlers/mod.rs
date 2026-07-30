@@ -17,6 +17,7 @@ pub mod extension_stream;
 pub mod extensions;
 pub mod frontend_components;
 pub mod images;
+pub mod im_bridges;
 pub mod instances;
 pub mod llm_backends;
 pub mod logs;

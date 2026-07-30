@@ -26,9 +26,9 @@ pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
         agents, auth as auth_handlers, auth_users, automations, basic, capabilities, config,
         dashboards, data, data_push, devices, events, extension_stream, extensions,
-        frontend_components, images, instances, llm_backends, logs, memory, message_channels,
-        messages, mqtt, onboarding, rules, sessions, settings, setup, skills, stats, suggestions,
-        tools,
+        frontend_components, images, im_bridges, instances, llm_backends, logs, memory,
+        message_channels, messages, mqtt, onboarding, rules, sessions, settings, setup, skills,
+        stats, suggestions, tools,
     };
 
     // Public routes (no authentication required)
@@ -328,6 +328,8 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/messages/channels/stats",
             get(message_channels::get_channel_stats_handler),
         )
+        // === IM Bridges (read - expose running bridge platforms) ===
+        .route("/api/im-bridges", get(im_bridges::list_bridges_handler))
         // === Skills (moved from public - expose skill configs) ===
         .route("/api/skills", get(skills::list_skills_handler))
         .route("/api/skills/match", post(skills::match_skills_handler))
@@ -672,6 +674,12 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/messages/channels/:name/enabled",
             put(message_channels::toggle_enabled_handler),
+        )
+        // IM Bridges API (write operations - create + delete bridges)
+        .route("/api/im-bridges", post(im_bridges::create_bridge_handler))
+        .route(
+            "/api/im-bridges/:id",
+            delete(im_bridges::delete_bridge_handler),
         )
         // LLM Generation API (one-shot, no session)
         .route("/api/llm/generate", post(settings::llm_generate_handler))

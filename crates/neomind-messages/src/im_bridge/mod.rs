@@ -80,6 +80,75 @@ impl ImBridgeRegistry {
     pub async fn get(&self, platform: &ImPlatform) -> Option<Arc<dyn ImBridge>> {
         self.bridges.read().await.get(platform).cloned()
     }
+
+    /// Remove and return the bridge registered for `platform`, if any.
+    ///
+    /// Called by `DELETE /api/im-bridges/:id` so the dropped `Arc` can be
+    /// explicitly stopped — `stop()` flips the bridge's `running` flag so the
+    /// spawned `start()` long-poll task exits within one iteration. Without
+    /// this explicit hand-back the Arc would still be held by the registry
+    /// slot's HashMap entry and the spawned task would never observe stop().
+    pub async fn remove(&self, platform: &ImPlatform) -> Option<Arc<dyn ImBridge>> {
+        self.bridges.write().await.remove(platform)
+    }
+
+    /// Snapshot of currently-registered platforms, for `GET /api/im-bridges`.
+    /// Order is unspecified (HashMap iteration); callers sort for stable output.
+    pub async fn list(&self) -> Vec<ImPlatform> {
+        self.bridges.read().await.keys().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+    use crate::im_bridge::mock::MockBridge;
+
+    /// register → get/list → remove round-trip ends with an empty registry.
+    #[tokio::test]
+    async fn register_get_remove_round_trip() {
+        let reg = ImBridgeRegistry::default();
+        reg.register(MockBridge::new(ImPlatform::Telegram))
+            .await;
+
+        // Present after register.
+        assert!(reg.get(&ImPlatform::Telegram).await.is_some());
+        let listed = reg.list().await;
+        assert_eq!(listed, vec![ImPlatform::Telegram]);
+
+        // remove returns the Arc and clears the slot.
+        let removed = reg.remove(&ImPlatform::Telegram).await;
+        assert!(removed.is_some(), "remove should return the registered bridge");
+
+        // Now empty across all accessors.
+        assert!(reg.get(&ImPlatform::Telegram).await.is_none());
+        assert!(reg.list().await.is_empty());
+        assert!(reg.remove(&ImPlatform::Telegram).await.is_none());
+    }
+
+    /// `list` reflects every registered platform (independent of order).
+    #[tokio::test]
+    async fn list_includes_all_registered_platforms() {
+        let reg = ImBridgeRegistry::default();
+        reg.register(MockBridge::new(ImPlatform::Telegram)).await;
+        reg.register(MockBridge::new(ImPlatform::Feishu)).await;
+
+        let listed = reg.list().await;
+        assert_eq!(listed.len(), 2);
+        assert!(listed.contains(&ImPlatform::Telegram));
+        assert!(listed.contains(&ImPlatform::Feishu));
+    }
+
+    /// Re-registering a platform overwrites the previous Arc (HashMap semantics).
+    /// The previous bridge is dropped — important for DELETE semantics: a fresh
+    /// POST after a DELETE starts a clean task, not a resurrected one.
+    #[tokio::test]
+    async fn register_replaces_existing() {
+        let reg = ImBridgeRegistry::default();
+        reg.register(MockBridge::new(ImPlatform::Telegram)).await;
+        reg.register(MockBridge::new(ImPlatform::Telegram)).await;
+        assert_eq!(reg.list().await.len(), 1);
+    }
 }
 
 /// 解耦 ImRouter 与 SessionManager 的可测试性抽象（见设计调整 B）。
