@@ -396,3 +396,191 @@ mod tests {
         assert!(replies[1].1.contains("处理失败"), "error surfaced to user");
     }
 }
+
+#[cfg(test)]
+mod e2e_tests {
+    //! End-to-end test of the EventBus-mediated inbound pipeline.
+    //!
+    //! Unlike the unit tests above (which call `handle_inbound` directly),
+    //! these tests exercise the wiring a real bridge would use: a bridge
+    //! publishes `ImMessageReceived` onto the EventBus; a spawned subscriber
+    //! forwards matching events to `router.handle_inbound`; the router replies
+    //! through the registered MockBridge. This validates the Task 9 wiring
+    //! pattern (`subscribe_filtered` → `handle_inbound`) in isolation from
+    //! ServerState.
+    use super::*;
+    use crate::im_bridge::mock::MockBridge;
+    use async_trait::async_trait;
+    use neomind_core::event::NeoMindEvent;
+    use neomind_core::eventbus::EventBus;
+
+    /// Self-contained echo runner (mirrors `tests::EchoRunner` but kept private
+    /// to this module so the e2e tests are independent of the unit-test module).
+    struct EchoRunner {
+        creates: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl AgentRunner for EchoRunner {
+        async fn create_session(&self) -> anyhow::Result<String> {
+            self.creates
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("echo-session".into())
+        }
+        async fn run(&self, _sid: &str, text: &str) -> anyhow::Result<String> {
+            Ok(format!("echo:{text}"))
+        }
+    }
+
+    impl EchoRunner {
+        fn new() -> Self {
+            Self {
+                creates: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn creates(&self) -> usize {
+            self.creates.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    /// Poll `MockBridge::replies_snapshot` until at least `expected` replies
+    /// have arrived, or `timeout_ms` elapses (returns the last snapshot either
+    /// way). Avoids races with the spawned subscriber task.
+    async fn wait_for_replies(bridge: &MockBridge, expected: usize, timeout_ms: u64) -> Vec<(String, String)> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        loop {
+            let snap = bridge.replies_snapshot();
+            if snap.len() >= expected {
+                return snap;
+            }
+            if std::time::Instant::now() >= deadline {
+                return snap;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Spawn a subscriber mirroring Task 9's production wiring:
+    /// `subscribe_filtered(ImMessageReceived)` → forward to `router.handle_inbound`.
+    fn spawn_event_subscriber(
+        bus: &EventBus,
+        router: Arc<ImRouter>,
+    ) {
+        let mut rx = bus.subscribe_filtered(|e| matches!(e, NeoMindEvent::ImMessageReceived { .. }));
+        tokio::spawn(async move {
+            while let Some((ev, _meta)) = rx.recv().await {
+                if let NeoMindEvent::ImMessageReceived {
+                    platform,
+                    im_chat_id,
+                    sender_id,
+                    text,
+                    msg_id,
+                    timestamp,
+                } = ev
+                {
+                    let p = ImPlatform::parse(&platform).unwrap_or(ImPlatform::Telegram);
+                    router
+                        .handle_inbound(InboundMessage {
+                            platform: p,
+                            chat_id: im_chat_id,
+                            sender_id,
+                            text,
+                            msg_id,
+                            timestamp,
+                        })
+                        .await;
+                }
+            }
+        });
+    }
+
+    #[tokio::test]
+    async fn e2e_publish_routes_to_bridge_reply() {
+        let bus = EventBus::new();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let runner = Arc::new(EchoRunner::new());
+        let router = Arc::new(ImRouter::new(
+            store,
+            runner.clone(),
+            "agent-1".into(),
+            None,
+        ));
+        let bridge = MockBridge::new(ImPlatform::Telegram);
+        router.registry.register(bridge.clone()).await;
+
+        spawn_event_subscriber(&bus, router.clone());
+
+        // Act: publish as a bridge would.
+        bus.publish(NeoMindEvent::ImMessageReceived {
+            platform: "telegram".into(),
+            im_chat_id: "123".into(),
+            sender_id: "u1".into(),
+            text: "hello".into(),
+            msg_id: "m-e2e-1".into(),
+            timestamp: 1,
+        })
+        .await;
+
+        // Assert: both the “思考中” ack and the echo result arrived.
+        let replies = wait_for_replies(&bridge, 2, 2000).await;
+        assert_eq!(
+            replies.len(),
+            2,
+            "EventBus→router→bridge should produce 思考中 + echo:hello, got: {replies:?}"
+        );
+        assert_eq!(replies[0].1, "🤔 思考中…");
+        assert_eq!(replies[1].1, "echo:hello");
+        assert_eq!(replies[0].0, "123", "reply addressed to the originating chat_id");
+        assert_eq!(runner.creates(), 1, "first inbound creates a session");
+    }
+
+    #[tokio::test]
+    async fn e2e_dedup_same_msg_id_through_eventbus() {
+        // Same msg_id published twice through the bus should still yield only
+        // the first pair (思考中 + echo) — the second event is deduped inside
+        // handle_inbound by the `seen` set, proving dedup survives the
+        // EventBus hop.
+        let bus = EventBus::new();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let router = Arc::new(ImRouter::new(
+            store,
+            Arc::new(EchoRunner::new()),
+            "agent-1".into(),
+            None,
+        ));
+        let bridge = MockBridge::new(ImPlatform::Telegram);
+        router.registry.register(bridge.clone()).await;
+
+        spawn_event_subscriber(&bus, router.clone());
+
+        for _ in 0..2 {
+            bus.publish(NeoMindEvent::ImMessageReceived {
+                platform: "telegram".into(),
+                im_chat_id: "456".into(),
+                sender_id: "u1".into(),
+                text: "dup".into(),
+                msg_id: "m-dup".into(), // identical across both publishes
+                timestamp: 2,
+            })
+            .await;
+        }
+
+        // Wait for the first event's pair, then give the second event a short
+        // grace window to be (deduped and) observed as a no-op.
+        let _ = wait_for_replies(&bridge, 2, 2000).await;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        let final_replies = bridge.replies_snapshot();
+        assert_eq!(
+            final_replies.len(),
+            2,
+            "duplicate msg_id via EventBus must dedup (2 replies total, not 4), got: {final_replies:?}"
+        );
+        assert_eq!(final_replies[0].1, "🤔 思考中…");
+        assert_eq!(final_replies[1].1, "echo:dup");
+    }
+}
