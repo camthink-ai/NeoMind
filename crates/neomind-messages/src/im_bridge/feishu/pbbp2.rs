@@ -468,10 +468,7 @@ fn read_varint(bytes: &[u8], mut pos: usize) -> Result<(u64, usize), DecodeError
 
 /// Read a length-delimited field (length varint + that many bytes).
 /// Returns `(slice, new_pos)`.
-fn read_length_delimited(
-    bytes: &[u8],
-    pos: usize,
-) -> Result<(&[u8], usize), DecodeError> {
+fn read_length_delimited(bytes: &[u8], pos: usize) -> Result<(&[u8], usize), DecodeError> {
     let (len, after_len) = read_varint(bytes, pos)?;
     let len = len as usize;
     let end = after_len.checked_add(len).ok_or(DecodeError::Truncated)?;

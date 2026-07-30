@@ -9,7 +9,10 @@ pub struct MockBridge {
 
 impl MockBridge {
     pub fn new(platform: ImPlatform) -> Arc<Self> {
-        Arc::new(Self { platform, replies: Mutex::new(vec![]) })
+        Arc::new(Self {
+            platform,
+            replies: Mutex::new(vec![]),
+        })
     }
     pub fn replies_snapshot(&self) -> Vec<(String, String)> {
         self.replies.lock().unwrap().clone()
@@ -21,14 +24,20 @@ impl ImBridge for MockBridge {
     fn platform(&self) -> ImPlatform {
         self.platform.clone()
     }
-    async fn start(self: Arc<Self>, _bus: Arc<neomind_core::eventbus::EventBus>) -> anyhow::Result<()> {
+    async fn start(
+        self: Arc<Self>,
+        _bus: Arc<neomind_core::eventbus::EventBus>,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
     async fn stop(&self) -> anyhow::Result<()> {
         Ok(())
     }
     async fn reply(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
-        self.replies.lock().unwrap().push((chat_id.into(), text.into()));
+        self.replies
+            .lock()
+            .unwrap()
+            .push((chat_id.into(), text.into()));
         Ok(Some("mock-msg-id".into()))
     }
 }

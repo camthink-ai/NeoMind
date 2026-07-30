@@ -26,7 +26,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
     use crate::handlers::{
         agents, auth as auth_handlers, auth_users, automations, basic, capabilities, config,
         dashboards, data, data_push, devices, events, extension_stream, extensions,
-        frontend_components, images, im_bridges, instances, llm_backends, logs, memory,
+        frontend_components, im_bridges, images, instances, llm_backends, logs, memory,
         message_channels, messages, mqtt, onboarding, rules, sessions, settings, setup, skills,
         stats, suggestions, tools,
     };
