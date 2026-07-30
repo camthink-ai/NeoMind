@@ -307,7 +307,7 @@ export function AddDeviceTypeDialog({
       {/* Content Area */}
       <FullScreenDialogContent>
         {/* Left Sidebar - Vertical Steps - Hide on mobile */}
-        <FullScreenDialogSidebar>
+        <FullScreenDialogSidebar className="p-4">
           <VerticalStepper
             steps={stepperSteps}
             currentStep={currentStep}
