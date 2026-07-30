@@ -89,6 +89,14 @@ export function ImSessionsTab() {
 
   return (
     <>
+      {!bridge && (
+        <div className="flex justify-end mb-3">
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => openSettings('im')}>
+            <Settings className="h-4 w-4" />
+            {t('messages.im.goToSettings', 'Configure IM bridge')}
+          </Button>
+        </div>
+      )}
       <ResponsiveTable
           columns={[
             {
@@ -113,18 +121,12 @@ export function ImSessionsTab() {
           data={sessions as unknown as Record<string, unknown>[]}
           emptyState={
             !bridge ? (
-              <div className="flex flex-col items-center gap-3 py-2">
-                <p className="text-sm text-muted-foreground">
-                  {t(
-                    'messages.im.noBridgeDesc',
-                    'Configure an IM bridge in Settings to start managing chat sessions.',
-                  )}
-                </p>
-                <Button variant="outline" size="sm" onClick={() => openSettings('im')}>
-                  <Settings className="mr-2 h-4 w-4" />
-                  {t('messages.im.goToSettings', 'Configure IM bridge')}
-                </Button>
-              </div>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  'messages.im.noBridgeDesc',
+                  'Configure an IM bridge in Settings to start managing chat sessions.',
+                )}
+              </p>
             ) : undefined
           }
           rowKey={(row) => (row as unknown as ImSession).chat_id}
