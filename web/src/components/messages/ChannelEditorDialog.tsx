@@ -690,7 +690,7 @@ export function ChannelEditorDialog({
           )}
 
           <FullScreenDialogMain>
-            <div className="p-4 md:p-6 space-y-4 max-w-2xl">
+            <div className="p-4 md:p-6 space-y-4 max-w-2xl mx-auto">
               {/* Channel name */}
               <FormField
                 label={t('messages.channels.name')}
