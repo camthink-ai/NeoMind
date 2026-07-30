@@ -225,6 +225,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
         ref={innerRef}
         className="fixed top-0 left-0 right-0 z-20 bg-[var(--chrome)] border-b border-border flex flex-col"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
+        data-tauri-drag-region={isTauriEnv() || undefined}
       >
         {/* Main bar */}
         <div
@@ -268,7 +269,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
           </div>
 
           {/* Spacer */}
-          <div className="flex-1 max-md:max-w-4" />
+          <div className="flex-1 max-md:max-w-4" data-tauri-drag-region={isTauriEnv() || undefined} />
 
           {/* Right side: Instance + Health + Guide + Alerts + Preferences + User */}
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2.5">
