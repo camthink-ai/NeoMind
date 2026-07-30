@@ -29,7 +29,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -40,6 +40,7 @@ use super::{
 };
 use crate::models::ErrorResponse;
 
+use neomind_core::eventbus::EventBus;
 use neomind_messages::im_bridge::{
     feishu::FeishuBridge, router::ImRouter, session_store::SessionKey, telegram::TelegramBridge,
     ImBridge, ImPlatform,
@@ -119,50 +120,26 @@ pub async fn create_bridge_handler(
 
     let router = read_router(&state).await?;
 
-    // Build the bridge per-platform, validating the required credential fields
-    // BEFORE registering. A missing/blank field yields `400` with a specific
-    // message — better to fail the POST than to register a bridge whose start()
-    // task dies immediately on auth (which would blackhole replies silently).
-    // Matching on `&platform` (not `platform`) keeps the owned value available
-    // for the tracing/spawn block below.
-    let bridge: Arc<dyn ImBridge> = match &platform {
-        ImPlatform::Telegram => {
-            let bot_token = require_nonempty(req.bot_token.as_deref(), "bot_token", "telegram")?;
-            Arc::new(TelegramBridge::new(bot_token, req.api_base))
-        }
-        ImPlatform::Feishu => {
-            let app_id = require_nonempty(req.app_id.as_deref(), "app_id", "feishu")?;
-            let app_secret = require_nonempty(req.app_secret.as_deref(), "app_secret", "feishu")?;
-            Arc::new(FeishuBridge::new(app_id, app_secret, req.domain))
-        }
-        // validate_platform rejects whatsapp upstream, so this arm is genuinely
-        // unreachable today; kept defensive (return 400) rather than `unreachable!`
-        // so a future loosening of validate_platform surfaces a clean error
-        // instead of a 500 panic.
-        ImPlatform::Whatsapp => {
-            return Err(ErrorResponse::bad_request(
-                "platform 'whatsapp' is not supported",
-            ));
-        }
-    };
-    router.registry.register(bridge.clone()).await;
+    // Build + register + spawn via the shared helper (also used by reload on
+    // restart). Credential validation happens inside, so a missing field still
+    // surfaces as the same descriptive 400 before any bridge is constructed.
+    build_and_register_bridge(&platform, &req, &router, &bus).await?;
 
-    // Spawn the long-poll loop. start() runs until stop() flips `running`;
-    // detaching the task mirrors start_im_router's event-listener spawn
-    // (types.rs:3007) — process-lifetime, no JoinHandle tracked. The bridge
-    // is held alive by the registry entry even if this task exits early.
-    let bridge_for_task = bridge.clone();
-    let bus_for_task = bus.clone();
-    let platform_for_task = platform.clone();
-    tokio::spawn(async move {
-        if let Err(e) = bridge_for_task.start(bus_for_task).await {
-            tracing::error!(
-                error = %e,
-                platform = %platform_for_task.as_str(),
-                "IM bridge start task exited with error"
-            );
-        }
-    });
+    // Persist the credential set so the bridge is recreated on server restart
+    // (reload_persisted_bridges in start_im_router). Only credential fields are
+    // stored — platform is the redb key, allowlist is a vestigial M1 stub.
+    // A persist failure is warned, not fatal: the bridge is already running
+    // in-process; only restart-recovery is lost, which the operator can fix by
+    // re-POSTing. Truncating the JSON defensively (it's small, but be safe).
+    let config_json = serde_json::to_string(&BridgeConfig::from_request(&req))
+        .unwrap_or_else(|_| "{}".to_string());
+    if let Err(e) = router.store().persist_bridge(&platform_str, &config_json) {
+        tracing::warn!(
+            error = %e,
+            platform = %platform_str,
+            "failed to persist IM bridge config — bridge is running but will NOT auto-reload on restart"
+        );
+    }
 
     tracing::info!(platform = %platform_str, "IM bridge created and start task spawned");
 
@@ -222,15 +199,29 @@ pub async fn delete_bridge_handler(
     let platform = validate_platform(&id)?;
     let router = read_router(&state).await?;
 
-    let bridge = router.registry.remove(&platform).await.ok_or_else(|| {
-        ErrorResponse::not_found(format!("IM bridge '{}'", platform.as_str()))
-    })?;
+    let bridge =
+        router.registry.remove(&platform).await.ok_or_else(|| {
+            ErrorResponse::not_found(format!("IM bridge '{}'", platform.as_str()))
+        })?;
 
     if let Err(e) = bridge.stop().await {
         tracing::warn!(
             error = %e,
             platform = %platform.as_str(),
             "IM bridge stop() returned error after removal; the spawned task will still exit on next iteration"
+        );
+    }
+
+    // Drop the persisted credential set so the bridge does NOT auto-reload on
+    // the next restart. Missing-row is a no-op (idempotent), matching the
+    // delete semantics. A delete failure is warned (the registry entry is
+    // already gone, so the in-process bridge is stopped regardless) — the
+    // operator can re-DELETE if the persisted row lingers.
+    if let Err(e) = router.store().delete_bridge(platform.as_str()) {
+        tracing::warn!(
+            error = %e,
+            platform = %platform.as_str(),
+            "failed to delete persisted IM bridge config — it may auto-reload on next restart"
         );
     }
 
@@ -472,6 +463,174 @@ fn require_nonempty(v: Option<&str>, field: &str, platform: &str) -> Result<Stri
         })
 }
 
+// ─────────── shared build+register+spawn helper ───────────
+//
+// `create_bridge_handler` 和启动期 `reload_persisted_bridges` 都走这条路径：
+// 按 platform 构造 bridge → register 进 router.registry → spawn `start(bus)`。
+// 抽出来避免两处复制「Telegram/Feishu 分支 + register + spawn」的样板，并
+// 保证重启恢复的 bridge 与新建的 bridge 行为完全一致。
+
+/// 持久化的 bridge 凭证集合。镜像 `CreateBridgeRequest` 的凭证字段，**不含**
+/// `platform`（platform 是 redb key）和 `allowlist`（M2a stub，重启无关）。
+/// 只存凭证字段，重启后 `reload_persisted_bridges` 读出重建 registry。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct BridgeConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_base: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+impl BridgeConfig {
+    /// 从 create 请求投影出持久化凭证（丢弃 platform / allowlist）。
+    fn from_request(req: &CreateBridgeRequest) -> Self {
+        Self {
+            bot_token: req.bot_token.clone(),
+            api_base: req.api_base.clone(),
+            app_id: req.app_id.clone(),
+            app_secret: req.app_secret.clone(),
+            domain: req.domain.clone(),
+        }
+    }
+
+    /// 反序列化回 create 请求，供 `build_and_register_bridge` 复用。`platform`
+    /// 由调用方从 redb key 传入；`allowlist` 置 `None`（重启无关）。
+    fn to_request(&self, platform: String) -> CreateBridgeRequest {
+        CreateBridgeRequest {
+            platform,
+            bot_token: self.bot_token.clone(),
+            api_base: self.api_base.clone(),
+            app_id: self.app_id.clone(),
+            app_secret: self.app_secret.clone(),
+            domain: self.domain.clone(),
+            allowlist: None,
+        }
+    }
+}
+
+/// Build a bridge for `platform` from the credential fields on `req`, register
+/// it into `router.registry`, and spawn `bridge.start(bus)` (detached,
+/// process-lifetime — same pattern as `start_im_router`'s event listener).
+///
+/// Shared by `create_bridge_handler` (live create) and
+/// `reload_persisted_bridges` (restart recovery). Credential validation runs
+/// here so a corrupt persisted config surfaces as a 400-equivalent skip on
+/// reload rather than spawning a bridge that dies immediately on auth.
+pub(crate) async fn build_and_register_bridge(
+    platform: &ImPlatform,
+    req: &CreateBridgeRequest,
+    router: &Arc<ImRouter>,
+    bus: &Arc<EventBus>,
+) -> Result<(), ErrorResponse> {
+    let bridge: Arc<dyn ImBridge> = match platform {
+        ImPlatform::Telegram => {
+            let bot_token = require_nonempty(req.bot_token.as_deref(), "bot_token", "telegram")?;
+            Arc::new(TelegramBridge::new(bot_token, req.api_base.clone()))
+        }
+        ImPlatform::Feishu => {
+            let app_id = require_nonempty(req.app_id.as_deref(), "app_id", "feishu")?;
+            let app_secret = require_nonempty(req.app_secret.as_deref(), "app_secret", "feishu")?;
+            Arc::new(FeishuBridge::new(app_id, app_secret, req.domain.clone()))
+        }
+        // validate_platform rejects whatsapp upstream; this arm mirrors that
+        // for the reload path (a persisted whatsapp row would have failed at
+        // create time, but defend against future loosening).
+        ImPlatform::Whatsapp => {
+            return Err(ErrorResponse::bad_request(
+                "platform 'whatsapp' is not supported",
+            ));
+        }
+    };
+    router.registry.register(bridge.clone()).await;
+
+    // Spawn the long-poll / WS run loop. FeishuBridge::start spawns its WS loop
+    // internally and returns immediately; TelegramBridge::start blocks on
+    // long-polling — detaching handles both. The bridge is held alive by the
+    // registry entry even if this task exits early.
+    let bridge_for_task = bridge.clone();
+    let bus_for_task = bus.clone();
+    let platform_for_task = platform.clone();
+    tokio::spawn(async move {
+        if let Err(e) = bridge_for_task.start(bus_for_task).await {
+            tracing::error!(
+                error = %e,
+                platform = %platform_for_task.as_str(),
+                "IM bridge start task exited with error"
+            );
+        }
+    });
+    Ok(())
+}
+
+/// Reload persisted bridges from `store.im_bridges` into `router.registry`.
+///
+/// Called once from `start_im_router` after the router is built + subscribed.
+/// Each entry is best-effort: a single corrupt/unknown/unbuildable row is
+/// warned and skipped (mirrors `reload_active_agents` fault isolation) — it
+/// must NOT block server startup or the recovery of other bridges.
+pub(crate) async fn reload_persisted_bridges(
+    router: &Arc<ImRouter>,
+    store: &Arc<neomind_messages::im_bridge::session_store::ImSessionStore>,
+    bus: &Arc<EventBus>,
+) {
+    let entries = match store.list_bridges() {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                category = "im",
+                "failed to list persisted IM bridges for reload — no bridges recovered"
+            );
+            return;
+        }
+    };
+    for (platform_str, config_json) in entries {
+        let platform = match ImPlatform::parse(&platform_str) {
+            Some(p) => p,
+            None => {
+                tracing::warn!(
+                    category = "im",
+                    platform = %platform_str,
+                    "persisted IM bridge has unknown platform, skipping"
+                );
+                continue;
+            }
+        };
+        let cfg: BridgeConfig = match serde_json::from_str(&config_json) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    category = "im",
+                    platform = %platform_str,
+                    "persisted IM bridge config is corrupt, skipping"
+                );
+                continue;
+            }
+        };
+        let req = cfg.to_request(platform_str.clone());
+        match build_and_register_bridge(&platform, &req, router, bus).await {
+            Ok(()) => tracing::info!(
+                category = "im",
+                platform = %platform_str,
+                "IM bridge reloaded from persisted config"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                category = "im",
+                platform = %platform_str,
+                "failed to reload persisted IM bridge (credential check failed), skipping"
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,11 +690,7 @@ mod tests {
             self.stopped.store(true, Ordering::SeqCst);
             Ok(())
         }
-        async fn reply(
-            &self,
-            _chat_id: &str,
-            _text: &str,
-        ) -> anyhow::Result<Option<String>> {
+        async fn reply(&self, _chat_id: &str, _text: &str) -> anyhow::Result<Option<String>> {
             Ok(None)
         }
     }
@@ -553,8 +708,7 @@ mod tests {
         // intentionally leaked so the mmap handle stays valid for the test
         // lifetime — the test process exits shortly after.
         let tmp = tempfile::tempdir().expect("tempdir for im session store");
-        let store =
-            Arc::new(ImSessionStore::open(tmp.path()).expect("open im session store"));
+        let store = Arc::new(ImSessionStore::open(tmp.path()).expect("open im session store"));
         std::mem::forget(tmp);
 
         let router = Arc::new(ImRouter::new(
@@ -795,10 +949,7 @@ mod tests {
             data.get("platform").and_then(|v| v.as_str()),
             Some("feishu")
         );
-        assert_eq!(
-            data.get("status").and_then(|v| v.as_str()),
-            Some("running")
-        );
+        assert_eq!(data.get("status").and_then(|v| v.as_str()), Some("running"));
 
         // The bridge is now in the router's registry — list reflects it.
         let list_resp = list_bridges_handler(State(state)).await.expect("list ok");
@@ -843,10 +994,7 @@ mod tests {
             bridges[0].get("status").and_then(|v| v.as_str()),
             Some("running")
         );
-        assert_eq!(
-            data.get("count").and_then(|v| v.as_u64()),
-            Some(1)
-        );
+        assert_eq!(data.get("count").and_then(|v| v.as_u64()), Some(1));
     }
 
     #[tokio::test]
@@ -856,10 +1004,7 @@ mod tests {
             .await
             .expect("delete ok");
         let data = resp.0.data.expect("has data");
-        assert_eq!(
-            data.get("status").and_then(|v| v.as_str()),
-            Some("stopped")
-        );
+        assert_eq!(data.get("status").and_then(|v| v.as_str()), Some("stopped"));
 
         // stop() was actually called on the removed bridge.
         assert!(
@@ -1137,5 +1282,234 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // ─────────── M2a persistence + restart reload ───────────
+    //
+    // Bridge configs must survive a server restart. create/delete handlers
+    // persist/drop credentials in the session store; start_im_router re-reads
+    // them via reload_persisted_bridges. These cover the persist side-effect of
+    // the handlers, the build helper, and the three reload fault paths.
+
+    #[tokio::test]
+    async fn create_persists_bridge_config_to_store() {
+        let (state, _) = state_with_router(vec![]).await;
+        let req = CreateBridgeRequest {
+            platform: "feishu".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: Some("fake_app_id".into()),
+            app_secret: Some("fake_secret".into()),
+            // closed localhost port → offline, fails fast, no real Feishu call
+            // (same posture as `create_feishu_succeeds_and_registers_bridge`).
+            domain: Some("http://127.0.0.1:1".into()),
+            allowlist: None,
+        };
+        create_bridge_handler(State(state.clone()), Json(req))
+            .await
+            .expect("create ok");
+
+        let store = store_from_state(&state).await;
+        let bridges = store.list_bridges().unwrap();
+        let (_, cfg_json) = bridges
+            .into_iter()
+            .find(|(p, _)| p == "feishu")
+            .expect("feishu config should be persisted");
+        // Only credential fields are stored (platform is the redb key).
+        assert!(cfg_json.contains("fake_app_id"), "config: {}", cfg_json);
+        assert!(cfg_json.contains("fake_secret"), "config: {}", cfg_json);
+        // platform/allowlist should NOT appear in the persisted JSON.
+        assert!(
+            !cfg_json.contains("\"platform\""),
+            "platform must not be stored in config JSON: {}",
+            cfg_json
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_removes_persisted_bridge_config() {
+        let (state, _) = state_with_router(vec![]).await;
+        let store = store_from_state(&state).await;
+
+        // Seed via create handler (exercises the persist path).
+        let req = CreateBridgeRequest {
+            platform: "feishu".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: Some("aid".into()),
+            app_secret: Some("asec".into()),
+            domain: Some("http://127.0.0.1:1".into()),
+            allowlist: None,
+        };
+        create_bridge_handler(State(state.clone()), Json(req))
+            .await
+            .expect("create ok");
+        assert!(store
+            .list_bridges()
+            .unwrap()
+            .iter()
+            .any(|(p, _)| p == "feishu"));
+
+        let _ = delete_bridge_handler(State(state.clone()), Path("feishu".into()))
+            .await
+            .expect("delete ok");
+
+        // Persisted row is gone → won't auto-reload on next restart.
+        assert!(store
+            .list_bridges()
+            .unwrap()
+            .iter()
+            .all(|(p, _)| p != "feishu"));
+    }
+
+    #[tokio::test]
+    async fn build_and_register_bridge_registers_into_router() {
+        // Helper is the shared path for create + reload. Feishu chosen because
+        // its start() spawns the WS loop internally and returns immediately,
+        // so the test never blocks on network I/O.
+        let (state, _) = state_with_router(vec![]).await;
+        let router = state
+            .im_router
+            .read()
+            .await
+            .clone()
+            .expect("router injected");
+        let bus = state.core.event_bus.clone().expect("bus present");
+        let req = CreateBridgeRequest {
+            platform: "feishu".into(),
+            bot_token: None,
+            api_base: None,
+            app_id: Some("aid".into()),
+            app_secret: Some("asec".into()),
+            domain: Some("http://127.0.0.1:1".into()),
+            allowlist: None,
+        };
+        build_and_register_bridge(&ImPlatform::Feishu, &req, &router, &bus)
+            .await
+            .expect("build ok");
+
+        let platforms = router.registry.list().await;
+        assert!(
+            platforms.iter().any(|p| p.as_str() == "feishu"),
+            "feishu should be registered after build_and_register_bridge"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_and_register_bridge_rejects_missing_credentials() {
+        // Reload path also runs credential validation — a corrupt persisted
+        // row (missing field) surfaces as an Err so the caller can warn+skip
+        // instead of spawning a bridge that dies on auth.
+        let (state, _) = state_with_router(vec![]).await;
+        let router = state
+            .im_router
+            .read()
+            .await
+            .clone()
+            .expect("router injected");
+        let bus = state.core.event_bus.clone().expect("bus present");
+        let req = CreateBridgeRequest {
+            platform: "telegram".into(),
+            bot_token: None, // missing → must Err
+            api_base: None,
+            app_id: None,
+            app_secret: None,
+            domain: None,
+            allowlist: None,
+        };
+        let err = build_and_register_bridge(&ImPlatform::Telegram, &req, &router, &bus)
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        // Registry untouched.
+        assert!(router.registry.list().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reload_persisted_bridges_rebuilds_from_store() {
+        let (state, _) = state_with_router(vec![]).await;
+        let router = state
+            .im_router
+            .read()
+            .await
+            .clone()
+            .expect("router injected");
+        let store = router.store().clone();
+        let bus = state.core.event_bus.clone().expect("bus present");
+
+        // Seed the store as if a feishu bridge had been created before restart.
+        store
+            .persist_bridge(
+                "feishu",
+                r#"{"app_id":"aid","app_secret":"asec","domain":"http://127.0.0.1:1"}"#,
+            )
+            .unwrap();
+        assert!(router.registry.list().await.is_empty());
+
+        reload_persisted_bridges(&router, &store, &bus).await;
+
+        let platforms = router.registry.list().await;
+        assert!(
+            platforms.iter().any(|p| p.as_str() == "feishu"),
+            "feishu should be reloaded into registry"
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_persisted_bridges_skips_corrupt_config() {
+        let (state, _) = state_with_router(vec![]).await;
+        let router = state
+            .im_router
+            .read()
+            .await
+            .clone()
+            .expect("router injected");
+        let store = router.store().clone();
+        let bus = state.core.event_bus.clone().expect("bus present");
+
+        // A valid feishu entry coexisting with a corrupt telegram entry: the
+        // corrupt one must be skipped (warned), but the valid one still reloads.
+        // Single-row failure must NOT block the rest (mirrors reload_active_agents).
+        store
+            .persist_bridge(
+                "feishu",
+                r#"{"app_id":"a","app_secret":"s","domain":"http://127.0.0.1:1"}"#,
+            )
+            .unwrap();
+        store.persist_bridge("telegram", "{bad json").unwrap();
+
+        reload_persisted_bridges(&router, &store, &bus).await;
+
+        let platforms = router.registry.list().await;
+        assert!(
+            platforms.iter().any(|p| p.as_str() == "feishu"),
+            "valid feishu entry should reload despite a corrupt sibling"
+        );
+        assert!(
+            !platforms.iter().any(|p| p.as_str() == "telegram"),
+            "corrupt telegram entry should be skipped"
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_persisted_bridges_skips_unknown_platform() {
+        let (state, _) = state_with_router(vec![]).await;
+        let router = state
+            .im_router
+            .read()
+            .await
+            .clone()
+            .expect("router injected");
+        let store = router.store().clone();
+        let bus = state.core.event_bus.clone().expect("bus present");
+
+        store
+            .persist_bridge("myspace", r#"{"bot_token":"x"}"#)
+            .unwrap();
+        reload_persisted_bridges(&router, &store, &bus).await;
+        assert!(
+            router.registry.list().await.is_empty(),
+            "unknown platform should produce no bridge"
+        );
     }
 }

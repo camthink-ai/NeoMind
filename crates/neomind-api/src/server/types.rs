@@ -3057,8 +3057,7 @@ impl ServerState {
                         // typo in a bridge's published event doesn't blackhole
                         // the message; this mirrors the bridge's own inbound
                         // publish path.
-                        let p =
-                            ImPlatform::parse(&platform).unwrap_or(ImPlatform::Telegram);
+                        let p = ImPlatform::parse(&platform).unwrap_or(ImPlatform::Telegram);
                         r.handle_inbound(InboundMessage {
                             platform: p,
                             chat_id: im_chat_id,
@@ -3079,6 +3078,24 @@ impl ServerState {
             tracing::warn!(
                 category = "im",
                 "EventBus not available — IM router will not receive inbound messages"
+            );
+        }
+
+        // Reload persisted bridges: each platform's credential set was saved by
+        // `create_bridge_handler` so the bridge auto-starts after a server
+        // restart. Reload happens AFTER the router is built + subscribed (so the
+        // registry exists to receive the rebuilt bridges) and BEFORE the router
+        // is published into `im_router` (so handlers can't observe a half-loaded
+        // registry). Single-bridge failure is warned + skipped inside
+        // reload_persisted_bridges — it does not block server startup. No bus
+        // means no spawn target; the persisted rows remain on disk for next boot.
+        if let Some(bus) = self.core.event_bus.clone() {
+            crate::handlers::im_bridges::reload_persisted_bridges(&router, router.store(), &bus)
+                .await;
+        } else {
+            tracing::warn!(
+                category = "im",
+                "EventBus not available — persisted IM bridges skipped this boot (rows remain on disk)"
             );
         }
 
@@ -3406,9 +3423,7 @@ impl neomind_messages::im_bridge::AgentRunner for SessionManagerAgentRunner {
                 // stream errors before any Content chunk, `out` would stay empty,
                 // the router would reply "" → Telegram 400 → reply() silently
                 // swallowed, leaving the user stuck on "思考中…".
-                neomind_agent::AgentEvent::Error { message } => {
-                    last_error = Some(message)
-                }
+                neomind_agent::AgentEvent::Error { message } => last_error = Some(message),
                 neomind_agent::AgentEvent::End { .. } => break,
                 _ => {}
             }

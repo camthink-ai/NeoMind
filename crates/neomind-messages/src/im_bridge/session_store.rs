@@ -11,6 +11,11 @@ use std::sync::Arc;
 const IM_SESSIONS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("im_sessions");
 const IM_INVITES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("im_invites");
 const IM_ALLOWLIST_TABLE: TableDefinition<&str, &str> = TableDefinition::new("im_allowlist");
+/// 持久化的 IM bridge 凭证。key = platform as_str（`"telegram"` / `"feishu"`，
+/// 每平台最多一条），value = JSON `{bot_token?, api_base?, app_id?, app_secret?, domain?}`
+/// （只存凭证字段，platform 已在 key 里）。重启后 `reload_persisted_bridges`
+/// 读此表重建 registry。
+const IM_BRIDGES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("im_bridges");
 
 /// 唯一定位一条 IM↔NeoMind session 映射。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +66,7 @@ impl ImSessionStore {
             tx.open_table(IM_SESSIONS_TABLE)?;
             tx.open_table(IM_INVITES_TABLE)?;
             tx.open_table(IM_ALLOWLIST_TABLE)?;
+            tx.open_table(IM_BRIDGES_TABLE)?;
         }
         tx.commit()?;
         Ok(Self { db: Arc::new(db) })
@@ -285,6 +291,44 @@ impl ImSessionStore {
         }
         Ok(out)
     }
+
+    // ─────────── persisted bridge configs (reload on restart) ───────────
+
+    /// 持久化一条 bridge 凭证（upsert）。`platform` 是 key（如 `"telegram"`），
+    /// `config_json` 是凭证 JSON（见 `IM_BRIDGES_TABLE` 文档）。重启后由
+    /// `reload_persisted_bridges` 读出重建 registry。
+    pub fn persist_bridge(&self, platform: &str, config_json: &str) -> Result<(), anyhow::Error> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut t = tx.open_table(IM_BRIDGES_TABLE)?;
+            t.insert(platform, config_json)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 删除一条持久化 bridge 凭证；不存在算成功（幂等，与 `allow_remove` 一致）。
+    pub fn delete_bridge(&self, platform: &str) -> Result<(), anyhow::Error> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut t = tx.open_table(IM_BRIDGES_TABLE)?;
+            t.remove(platform)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// 列出全部持久化 bridge `(platform, config_json)`，无顺序保证（redb iter）。
+    pub fn list_bridges(&self) -> Result<Vec<(String, String)>, anyhow::Error> {
+        let tx = self.db.begin_read()?;
+        let t = tx.open_table(IM_BRIDGES_TABLE)?;
+        let mut out = Vec::new();
+        for item in t.iter()? {
+            let (k, v) = item?;
+            out.push((k.value().to_string(), v.value().to_string()));
+        }
+        Ok(out)
+    }
 }
 
 fn now_secs() -> i64 {
@@ -502,5 +546,60 @@ mod tests {
         let mut listed3 = store.allow_list().unwrap();
         listed3.sort();
         assert_eq!(listed3, vec!["chat-b".to_string()]);
+    }
+
+    #[test]
+    fn bridge_persist_list_delete_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = ImSessionStore::open(tmp.path()).unwrap();
+
+        // 空表 → 空 list。
+        assert!(store.list_bridges().unwrap().is_empty());
+
+        // persist 两条不同 platform。
+        store
+            .persist_bridge("telegram", r#"{"bot_token":"tok1"}"#)
+            .unwrap();
+        store
+            .persist_bridge("feishu", r#"{"app_id":"a","app_secret":"s"}"#)
+            .unwrap();
+
+        let mut listed = store.list_bridges().unwrap();
+        listed.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].0, "feishu");
+        assert_eq!(listed[1].0, "telegram");
+        assert!(listed[1].1.contains("tok1"));
+
+        // upsert：同 platform 再 persist 覆盖旧值（不产生重复 key）。
+        store
+            .persist_bridge("telegram", r#"{"bot_token":"tok2"}"#)
+            .unwrap();
+        let tele = store
+            .list_bridges()
+            .unwrap()
+            .into_iter()
+            .find(|(p, _)| p == "telegram")
+            .expect("telegram present after upsert");
+        assert!(tele.1.contains("tok2"));
+        assert!(
+            !tele.1.contains("tok1"),
+            "upsert should overwrite, not append"
+        );
+        // 仍是 2 条（不是 3）。
+        assert_eq!(store.list_bridges().unwrap().len(), 2);
+
+        // delete 一条。
+        store.delete_bridge("telegram").unwrap();
+        assert!(store
+            .list_bridges()
+            .unwrap()
+            .iter()
+            .all(|(p, _)| p != "telegram"));
+        assert_eq!(store.list_bridges().unwrap().len(), 1);
+
+        // delete 不存在的 key 幂等（与 allow_remove 一致）。
+        store.delete_bridge("ghost").unwrap();
+        assert_eq!(store.list_bridges().unwrap().len(), 1);
     }
 }
