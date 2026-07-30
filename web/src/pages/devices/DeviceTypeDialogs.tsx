@@ -468,7 +468,7 @@ function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
       )}
 
       <div className="flex-1 overflow-y-auto overflow-x-visible">
-        <div className="space-y-6 max-w-2xl mx-auto px-1">
+        <div className="space-y-6 max-w-2xl mx-auto px-1 pb-4">
 
       {/* Device Type (name) */}
       <div className="space-y-2">
@@ -532,12 +532,12 @@ function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
         <Label className="text-sm font-medium">Categories</Label>
         <div className="flex gap-2 flex-wrap items-center">
           {data.categories?.map((cat, i) => (
-            <Badge key={i} variant="secondary" className="gap-1 pl-2 pr-1 h-7">
+            <Badge key={i} variant="secondary" className="gap-1 pl-2.5 pr-1 h-7">
               {cat}
               <button
                 type="button"
                 onClick={() => removeCategory(cat)}
-                className="ml-0.5 rounded p-0.5 hover:bg-muted hover:text-error transition-colors"
+                className="ml-0.5 flex items-center justify-center w-4 h-4 rounded hover:text-error transition-colors"
                 aria-label="Remove category"
               >
                 <X className="h-3 w-3" />
@@ -545,11 +545,11 @@ function BasicInfoStep({ data, onChange, errors }: BasicInfoStepProps) {
             </Badge>
           ))}
           <Input
-            placeholder="+ Add category"
+            placeholder="Add category"
             value={categoryInput}
             onChange={(e) => setCategoryInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addCategory())}
-            className="h-8 flex-1 min-w-[120px] text-xs"
+            className="w-[140px] text-sm"
           />
         </div>
       </div>
