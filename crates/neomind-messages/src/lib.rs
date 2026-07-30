@@ -43,6 +43,7 @@
 
 pub mod channels;
 pub mod error;
+pub mod im_bridge;
 pub mod manager;
 pub mod message;
 
