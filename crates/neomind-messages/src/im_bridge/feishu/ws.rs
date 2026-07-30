@@ -444,6 +444,7 @@ impl FeishuWsClient {
                 msg = read.next() => {
                     match msg {
                         Some(Ok(Message::Binary(bytes))) => {
+                            tracing::info!(len = bytes.len(), "feishu ws received binary frame");
                             self.handle_frame(&mut write, cfg, &mut cache, &bytes, event_handler).await;
                         }
                         Some(Ok(Message::Ping(p))) => {
@@ -500,6 +501,13 @@ impl FeishuWsClient {
                 return;
             }
         };
+        let htype = header_value(&frame, header_key::TYPE).unwrap_or("");
+        tracing::info!(
+            frame_type = ?frame.frame_type,
+            msg_type = %htype,
+            has_payload = frame.payload.is_some(),
+            "feishu ws frame decoded"
+        );
         match frame.frame_type {
             FrameType::Control => self.handle_control(cfg, &frame),
             FrameType::Data => {
