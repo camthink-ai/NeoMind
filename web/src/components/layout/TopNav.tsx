@@ -55,7 +55,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useTheme } from "@/components/ui/theme"
 import { InstanceSelector } from "./InstanceSelector"
-import { SystemHealthButton } from "./SystemHealthButton"
+
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
@@ -275,8 +275,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
             {/* Instance selector (identity anchor) */}
             <InstanceSelector onManageInstances={() => setInstanceManagerOpen(true)} />
 
-            {/* System health indicator */}
-            <SystemHealthButton />
 
             {/* Onboarding guide */}
             <Tooltip>
