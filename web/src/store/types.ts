@@ -95,7 +95,7 @@ export interface AlertState {
 // LLM/MQTT/Device settings are now managed via the Plugin system.
 // Only general system settings remain here.
 
-export type SettingsSection = "llm" | "connections" | "preferences" | "about"
+export type SettingsSection = "llm" | "connections" | "im" | "preferences" | "about"
 
 export interface SettingsState {
   settingsDialogOpen: boolean

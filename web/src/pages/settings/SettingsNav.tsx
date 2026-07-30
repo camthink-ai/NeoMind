@@ -1,9 +1,9 @@
 import { ReactNode } from "react"
 import { cn } from "@/lib/utils"
-import { Cpu, Plug, Sliders, Info, ArrowLeft } from "lucide-react"
+import { Cpu, Plug, Send, Sliders, Info, ArrowLeft } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
-export type SettingsSection = "llm" | "connections" | "preferences" | "about"
+export type SettingsSection = "llm" | "connections" | "im" | "preferences" | "about"
 
 export interface SettingsSectionConfig {
   value: SettingsSection
@@ -15,6 +15,7 @@ export function getSettingsSections(t: ReturnType<typeof useTranslation>["t"]): 
   return [
     { value: "llm", label: t("settings:llmBackends"), icon: <Cpu className="h-4 w-4" /> },
     { value: "connections", label: t("settings:deviceConnections"), icon: <Plug className="h-4 w-4" /> },
+    { value: "im", label: t("settings:imChannels"), icon: <Send className="h-4 w-4" /> },
     { value: "preferences", label: t("settings:preferences"), icon: <Sliders className="h-4 w-4" /> },
     { value: "about", label: t("settings:about"), icon: <Info className="h-4 w-4" /> },
   ]

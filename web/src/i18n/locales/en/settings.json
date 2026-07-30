@@ -4,6 +4,7 @@
   "llmBackends": "LLM Backends",
   "llmDesc": "Manage LLM backends, models and instances",
   "deviceConnections": "Device Connections",
+  "imChannels": "IM Channels",
   "connectionsDesc": "Manage MQTT / Webhook device connections",
   "alertChannels": "Message Channels",
   "preferences": "Preferences",

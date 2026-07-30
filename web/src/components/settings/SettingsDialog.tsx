@@ -27,6 +27,7 @@ import { AboutTab } from "@/pages/settings/AboutTab"
 import { PreferencesTab } from "@/pages/settings/PreferencesTab"
 import { UnifiedLLMBackendsTab } from "@/components/llm/UnifiedLLMBackendsTab"
 import { UnifiedDeviceConnectionsTab } from "@/components/connections"
+import { ImBridgesTab } from "@/components/im/ImBridgesTab"
 import { SettingsNav, getSettingsSections } from "@/pages/settings/SettingsNav"
 import type { SettingsSection } from "@/store/types"
 
@@ -113,6 +114,7 @@ export function SettingsDialog() {
                 />
               )}
               {activeSection === "connections" && <UnifiedDeviceConnectionsTab />}
+              {activeSection === "im" && <ImBridgesTab />}
               {activeSection === "preferences" && <PreferencesTab />}
               {activeSection === "about" && <AboutTab />}
             </main>

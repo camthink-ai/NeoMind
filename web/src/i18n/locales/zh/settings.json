@@ -4,6 +4,7 @@
   "llmBackends": "LLM 后端",
   "llmDesc": "管理 LLM 后端、模型与实例",
   "deviceConnections": "设备连接",
+  "imChannels": "IM 渠道",
   "connectionsDesc": "管理 MQTT / Webhook 设备连接",
   "alertChannels": "消息通道",
   "preferences": "偏好设置",
