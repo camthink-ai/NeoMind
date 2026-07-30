@@ -210,6 +210,13 @@ pub struct ServerState {
     /// sets BOTH headers when forwarding via loopback reqwest; external
     /// attackers cannot know this per-process random secret.
     pub internal_proxy_secret: Arc<String>,
+
+    /// IM bridge router (lazy-initialized by `start_im_router` at startup).
+    /// Mirrors `agents.agent_manager`'s `Arc<RwLock<Option<…>>>` lazy-init
+    /// pattern, but lives on `ServerState` directly because the IM bridge is a
+    /// cross-cutting concern (events + agents + messages), not agent-only.
+    pub im_router:
+        Arc<tokio::sync::RwLock<Option<Arc<neomind_messages::im_bridge::router::ImRouter>>>>,
 }
 
 // Backward compatibility: Provide direct field access as before
@@ -1199,6 +1206,7 @@ impl ServerState {
             #[cfg(feature = "embedded-broker")]
             credential_cache: Arc::new(std::sync::RwLock::new(CredentialCache::default())),
             internal_proxy_secret: Arc::new(generate_internal_proxy_secret()),
+            im_router: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -1379,6 +1387,7 @@ impl ServerState {
             #[cfg(feature = "embedded-broker")]
             credential_cache: Arc::new(std::sync::RwLock::new(CredentialCache::default())),
             internal_proxy_secret: Arc::new(generate_internal_proxy_secret()),
+            im_router: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -2935,6 +2944,140 @@ impl ServerState {
         Ok(())
     }
 
+    /// Start the IM bridge router.
+    ///
+    /// Subscribes to `ImMessageReceived` on the EventBus and dispatches each
+    /// event to `ImRouter::handle_inbound`. The router owns per-chat
+    /// serialization, msg_id dedup, allowlist gating, and chat↔session reuse.
+    /// Outbound replies are delivered through bridges registered on the
+    /// router's `ImBridgeRegistry` (Task 10+ wires the Telegram bridge).
+    ///
+    /// Mirrors `start_agent_manager` (above): a failure here means all inbound
+    /// IM messages are silently dropped, so callers in server/mod.rs startup
+    /// surface errors via `tracing::error!` — do not swallow with `let _ =`.
+    pub async fn start_im_router(&self) -> Result<(), crate::models::ErrorResponse> {
+        use neomind_messages::im_bridge::{router::InboundMessage, ImPlatform};
+
+        // Open the IM session store under data/. A failure here means the
+        // bridge cannot persist chat↔session mappings — surface as 500 rather
+        // than panicking (the plan's `.unwrap()` would crash the server).
+        let store = Arc::new(
+            neomind_messages::im_bridge::session_store::ImSessionStore::open(&self.data_dir)
+                .map_err(|e| {
+                    crate::models::ErrorResponse::internal(format!(
+                        "Failed to open IM session store: {}",
+                        e
+                    ))
+                })?,
+        );
+
+        // SessionManagerAgentRunner forwards to the real SessionManager (Task 8).
+        // Annotate the trait-object type so the unsizing coercion to
+        // `Arc<dyn AgentRunner>` (expected by ImRouter::new) is unambiguous.
+        let runner: Arc<dyn neomind_messages::im_bridge::AgentRunner> =
+            Arc::new(SessionManagerAgentRunner::new(self.session_manager()));
+
+        // Resolve the default IM agent. With no per-channel override mechanism
+        // yet (M1), bind the router to the first Active agent so /reset and
+        // future skill bindings have a stable handle. None-active is surfaced
+        // as an error so operators notice the bridge is dead rather than
+        // silently dropping every inbound message.
+        let default_agent_id = self.im_default_agent().await?;
+
+        let router = Arc::new(neomind_messages::im_bridge::router::ImRouter::new(
+            store,
+            runner,
+            default_agent_id,
+            // allowlist=None ⇒ accept all senders. Production deployments MUST
+            // configure this (Task 10+); recorded as a follow-up, not a silent
+            // default-to-secure footgun here.
+            None,
+        ));
+
+        // Subscribe to ImMessageReceived events and forward each to the router.
+        // The task is intentionally detached: it lives for the process lifetime
+        // (same pattern as init_agent_events at types.rs:2999). Holding the
+        // `FilteredReceiver` in `rx` keeps the broadcast subscription alive;
+        // dropping it on bus close terminates the `while let` cleanly.
+        if let Some(bus) = self.core.event_bus.clone() {
+            let r = router.clone();
+            let mut rx = bus.subscribe_filtered(move |e| {
+                matches!(e, neomind_core::NeoMindEvent::ImMessageReceived { .. })
+            });
+            tokio::spawn(async move {
+                tracing::info!(category = "im", "IM router event listener started");
+                while let Some((ev, _meta)) = rx.recv().await {
+                    if let neomind_core::NeoMindEvent::ImMessageReceived {
+                        platform,
+                        im_chat_id,
+                        sender_id,
+                        text,
+                        msg_id,
+                        timestamp,
+                    } = ev
+                    {
+                        // Unknown platform strings fall back to Telegram so a
+                        // typo in a bridge's published event doesn't blackhole
+                        // the message; this mirrors the bridge's own inbound
+                        // publish path.
+                        let p =
+                            ImPlatform::parse(&platform).unwrap_or(ImPlatform::Telegram);
+                        r.handle_inbound(InboundMessage {
+                            platform: p,
+                            chat_id: im_chat_id,
+                            sender_id,
+                            text,
+                            msg_id,
+                            timestamp,
+                        })
+                        .await;
+                    }
+                }
+                tracing::warn!(
+                    category = "im",
+                    "IM router event listener exited (EventBus closed)"
+                );
+            });
+        } else {
+            tracing::warn!(
+                category = "im",
+                "EventBus not available — IM router will not receive inbound messages"
+            );
+        }
+
+        *self.im_router.write().await = Some(router);
+        tracing::info!(category = "im", "IM router started");
+        Ok(())
+    }
+
+    /// Resolve the default agent id for the IM bridge.
+    ///
+    /// M1: bind to the first Active agent returned by the store. Once a per-IM
+    /// configuration surface exists (settings key / per-chat override), this
+    /// becomes the single swap point. Returns an `ErrorResponse` when no Active
+    /// agent exists so the startup `tracing::error!` in server/mod.rs surfaces
+    /// it instead of the bridge silently dropping every inbound message.
+    async fn im_default_agent(&self) -> Result<String, crate::models::ErrorResponse> {
+        let agents = self
+            .agent_store()
+            .query_agents(neomind_storage::AgentFilter {
+                status: Some(neomind_storage::AgentStatus::Active),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| {
+                crate::models::ErrorResponse::internal(format!(
+                    "Failed to query agents for IM default: {}",
+                    e
+                ))
+            })?;
+        agents.into_iter().next().map(|a| a.id).ok_or_else(|| {
+            crate::models::ErrorResponse::internal(
+                "No Active agent available to bind as IM default — create or activate an agent first",
+            )
+        })
+    }
+
     /// Initialize AI Agent event listener.
     ///
     /// Starts a background task that listens for device events and triggers
@@ -3143,13 +3286,11 @@ async fn apply_persisted_tool_disabled_state(
 /// Deliberately no unit test — `SessionManager` cannot have its LLM backend
 /// injected in-process (by design), so the adapter is exercised end-to-end in
 /// Task 11 via an `EchoRunner` mock instead.
-#[allow(dead_code)] // wired up in Task 9 (start_im_router)
 pub struct SessionManagerAgentRunner {
     sm: Arc<SessionManager>,
 }
 
 impl SessionManagerAgentRunner {
-    #[allow(dead_code)] // wired up in Task 9 (start_im_router)
     pub fn new(sm: Arc<SessionManager>) -> Self {
         Self { sm }
     }

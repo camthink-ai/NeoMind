@@ -417,6 +417,19 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                 );
             }
 
+            // Start the IM bridge router.
+            // A failure here means all inbound IM messages (Telegram/Feishu/...)
+            // are silently dropped — the EventBus subscription never starts, so
+            // inbound events go nowhere. Surface at error! so it is visible;
+            // do NOT swallow with `let _ =` (P0 pattern).
+            if let Err(e) = bg_state.start_im_router().await {
+                tracing::error!(
+                    category = "im",
+                    error = %e,
+                    "Failed to start IM router — inbound IM messages will not be processed"
+                );
+            }
+
             // Initialize AI Agent event listener
             bg_state.init_agent_events().await;
 
