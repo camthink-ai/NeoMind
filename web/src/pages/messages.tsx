@@ -80,11 +80,12 @@ import {
 } from 'lucide-react'
 import { CreateMessageDialog } from '@/components/messages/CreateMessageDialog'
 import { ChannelEditorDialog } from '@/components/messages/ChannelEditorDialog'
+import { ImSessionsTab } from '@/components/im/ImSessionsTab'
 import { formatTimestamp } from '@/lib/utils/format'
 import { cn } from '@/lib/utils'
 import { textNano, textMini } from "@/design-system/tokens/typography"
 
-type TabValue = 'messages' | 'channels'
+type TabValue = 'messages' | 'channels' | 'im'
 
 // Get tab from URL path
 const getTabFromPath = (pathname: string): TabValue => {
@@ -92,6 +93,9 @@ const getTabFromPath = (pathname: string): TabValue => {
   const lastSegment = pathSegments[pathSegments.length - 1]
   if (lastSegment === 'channels') {
     return 'channels'
+  }
+  if (lastSegment === 'im') {
+    return 'im'
   }
   return 'messages'
 }
@@ -421,6 +425,8 @@ export default function MessagesPage() {
     setActiveTab(tab)
     if (tab === 'channels') {
       navigate('/messages/channels')
+    } else if (tab === 'im') {
+      navigate('/messages/im')
     } else {
       navigate('/messages')
     }
@@ -522,9 +528,10 @@ export default function MessagesPage() {
   useEffect(() => {
     if (activeTab === 'messages') {
       fetchMessages()
-    } else {
+    } else if (activeTab === 'channels') {
       fetchChannels()
     }
+    // 'im' tab manages its own data lifecycle via ImSessionsTab
   }, [activeTab, fetchMessages, fetchChannels])
 
   // Message actions - using messages API endpoints
@@ -590,6 +597,7 @@ export default function MessagesPage() {
   const tabs = [
     { value: 'messages' as TabValue, label: t('messages.tabs.messages'), icon: <MessageSquare className="h-4 w-4" /> },
     { value: 'channels' as TabValue, label: t('messages.tabs.channels'), icon: <Network className="h-4 w-4" /> },
+    { value: 'im' as TabValue, label: t('messages.tabs.im', 'IM Sessions'), icon: <Send className="h-4 w-4" /> },
   ]
 
   const actions = [
@@ -599,7 +607,13 @@ export default function MessagesPage() {
     ...(activeTab === 'channels' ? [
       { label: t('messages.channels.create', 'Add Channel'), icon: <Plus className="h-4 w-4" />, onClick: () => { setEditingChannel(null); setChannelEditorOpen(true) } },
     ] : []),
-    { label: t('refresh'), variant: 'outline' as const, onClick: activeTab === 'messages' ? fetchMessages : fetchChannels, disabled: loading },
+    // 'im' tab renders its own refresh inside ImSessionsTab; no page-level action.
+    ...(activeTab !== 'im' ? [{
+      label: t('refresh'),
+      variant: 'outline' as const,
+      onClick: activeTab === 'messages' ? fetchMessages : fetchChannels,
+      disabled: loading,
+    }] : []),
   ]
 
   // Filter dropdown for actionsExtra
@@ -1495,6 +1509,11 @@ export default function MessagesPage() {
             }
           />
           )}
+        </PageTabsContent>
+
+        {/* IM Sessions Tab */}
+        <PageTabsContent value="im" activeTab={activeTab}>
+          <ImSessionsTab />
         </PageTabsContent>
       </PageLayout>
 
