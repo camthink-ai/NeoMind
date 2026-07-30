@@ -57,6 +57,46 @@ impl ImRouter {
     }
 
     pub async fn handle_inbound(&self, m: InboundMessage) {
+        // 0) `/start` invite-bind：必须在白名单检查之前拦截——发起 /start 的用户
+        //    尚未绑定，白名单 guard 会把这条消息丢掉。consume_invite 原子性兜底
+        //    重试：已用 token 再次 /start 只会得到「邀请无效」回复。
+        let trimmed = m.text.trim();
+        if trimmed == "/start" || trimmed.starts_with("/start@") || trimmed.starts_with("/start ") {
+            let token = trimmed.split_whitespace().nth(1);
+            match token {
+                None => {
+                    if let Some(b) = self.registry.get(&m.platform).await {
+                        let _ = b.reply(&m.chat_id, "需要邀请码，请联系管理员获取").await;
+                    }
+                }
+                Some(tok) => match self.store.consume_invite(tok, &m.chat_id) {
+                    Ok(true) => {
+                        // 持久化 + 同步运行时 allowlist。持久化失败只 warn，不阻塞
+                        // 绑定（运行时 set 已更新，用户本次能对话；下次重启从磁盘加载
+                        // 会缺失，但 invite 已 used 防止双绑）。
+                        if let Err(e) = self.store.allow_add(&m.chat_id) {
+                            tracing::warn!(error=%e, "im allow_add failed during /start bind");
+                        }
+                        {
+                            let mut g = self.allowlist.lock().await;
+                            if let Some(set) = g.as_mut() {
+                                set.insert(m.chat_id.clone());
+                            }
+                        }
+                        if let Some(b) = self.registry.get(&m.platform).await {
+                            let _ = b.reply(&m.chat_id, "✅ 绑定成功，现在可以与我对话了").await;
+                        }
+                    }
+                    Ok(false) | Err(_) => {
+                        if let Some(b) = self.registry.get(&m.platform).await {
+                            let _ = b.reply(&m.chat_id, "邀请无效或已使用").await;
+                        }
+                    }
+                },
+            }
+            return;
+        }
+
         // 1) 白名单：`None` 允许所有；`Some` 则 sender_id 或 chat_id 命中其一即放行。
         {
             let guard = self.allowlist.lock().await;
@@ -77,7 +117,7 @@ impl ImRouter {
 
         // 3) 平台无关命令（文本前缀识别）——在 agent 执行前拦截，不回「思考中」。
         //    `/reset@<botname>` 形式兼容 Telegram 群组 @ 提及。
-        let trimmed = m.text.trim();
+        //    （`trimmed` 已在 step 0 计算，复用同一份。）
         let key = SessionKey {
             platform: m.platform.as_str().into(),
             chat_id: m.chat_id.clone(),
@@ -160,6 +200,30 @@ impl ImRouter {
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone()
     }
+
+    /// 替换整个运行时 allowlist（`None` = 允许所有）。供 API（DELETE allowlist）
+    /// 从持久化存储重建内存集合使用。
+    pub async fn set_allowlist(&self, list: Option<HashSet<String>>) {
+        *self.allowlist.lock().await = list;
+    }
+
+    /// 在运行时允许一个 chat_id **并**持久化（供 `/start` bind 及 API add 使用）。
+    /// 仅当当前 allowlist 为 `Some(set)` 时才插入运行时集合；`None`（允许所有）
+    /// 无需修改。持久化始终发生。
+    pub async fn add_allowed(&self, chat_id: String) -> Result<(), anyhow::Error> {
+        self.store.allow_add(&chat_id)?;
+        let mut g = self.allowlist.lock().await;
+        if let Some(set) = g.as_mut() {
+            set.insert(chat_id);
+        }
+        Ok(())
+    }
+
+    /// 暴露 session store，让 HTTP handler 能调用 `create_invite` / `allow_list`
+    /// / `list_sessions` 等，无需在调用方再持一份 `Arc` 副本。
+    pub fn store(&self) -> &Arc<ImSessionStore> {
+        &self.store
+    }
 }
 
 #[cfg(test)]
@@ -215,15 +279,16 @@ mod tests {
         let (router, runner) = make_router(store, Arc::new(EchoRunner::new()));
         router.registry.register(bridge.clone()).await;
 
-        router.handle_inbound(InboundMessage {
-            platform: ImPlatform::Telegram,
-            chat_id: "123".into(),
-            sender_id: "u1".into(),
-            text: "hi".into(),
-            msg_id: "m1".into(),
-            timestamp: 1,
-        })
-        .await;
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "123".into(),
+                sender_id: "u1".into(),
+                text: "hi".into(),
+                msg_id: "m1".into(),
+                timestamp: 1,
+            })
+            .await;
 
         let replies = bridge.replies_snapshot();
         assert_eq!(replies.len(), 2, "should send 思考中 + result");
@@ -241,15 +306,16 @@ mod tests {
         router.registry.register(bridge.clone()).await;
 
         for _ in 0..2 {
-            router.handle_inbound(InboundMessage {
-                platform: ImPlatform::Telegram,
-                chat_id: "123".into(),
-                sender_id: "u1".into(),
-                text: "hi".into(),
-                msg_id: "m1".into(), // same msg_id both times
-                timestamp: 1,
-            })
-            .await;
+            router
+                .handle_inbound(InboundMessage {
+                    platform: ImPlatform::Telegram,
+                    chat_id: "123".into(),
+                    sender_id: "u1".into(),
+                    text: "hi".into(),
+                    msg_id: "m1".into(), // same msg_id both times
+                    timestamp: 1,
+                })
+                .await;
         }
         let replies = bridge.replies_snapshot();
         assert_eq!(
@@ -267,15 +333,16 @@ mod tests {
         let (router, _runner) = make_router(store, Arc::new(EchoRunner::new()));
         router.registry.register(bridge.clone()).await;
 
-        router.handle_inbound(InboundMessage {
-            platform: ImPlatform::Telegram,
-            chat_id: "123".into(),
-            sender_id: "u1".into(),
-            text: "/reset".into(),
-            msg_id: "m-reset".into(),
-            timestamp: 1,
-        })
-        .await;
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "123".into(),
+                sender_id: "u1".into(),
+                text: "/reset".into(),
+                msg_id: "m-reset".into(),
+                timestamp: 1,
+            })
+            .await;
 
         let replies = bridge.replies_snapshot();
         assert_eq!(replies.len(), 1, "no 思考中 for commands");
@@ -294,15 +361,16 @@ mod tests {
         let (router, _runner) = make_router(store, Arc::new(EchoRunner::new()));
         router.registry.register(bridge.clone()).await;
 
-        router.handle_inbound(InboundMessage {
-            platform: ImPlatform::Telegram,
-            chat_id: "123".into(),
-            sender_id: "u1".into(),
-            text: "/help".into(),
-            msg_id: "m-help".into(),
-            timestamp: 1,
-        })
-        .await;
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "123".into(),
+                sender_id: "u1".into(),
+                text: "/help".into(),
+                msg_id: "m-help".into(),
+                timestamp: 1,
+            })
+            .await;
 
         let replies = bridge.replies_snapshot();
         assert_eq!(replies.len(), 1, "no 思考中 for commands");
@@ -316,18 +384,24 @@ mod tests {
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
         let mut allow = HashSet::new();
         allow.insert("allowed-user".to_string());
-        let router = ImRouter::new(store, Arc::new(EchoRunner::new()), "agent-1".into(), Some(allow));
+        let router = ImRouter::new(
+            store,
+            Arc::new(EchoRunner::new()),
+            "agent-1".into(),
+            Some(allow),
+        );
         router.registry.register(bridge.clone()).await;
 
-        router.handle_inbound(InboundMessage {
-            platform: ImPlatform::Telegram,
-            chat_id: "123".into(),
-            sender_id: "stranger".into(),
-            text: "hi".into(),
-            msg_id: "m-x".into(),
-            timestamp: 1,
-        })
-        .await;
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "123".into(),
+                sender_id: "stranger".into(),
+                text: "hi".into(),
+                msg_id: "m-x".into(),
+                timestamp: 1,
+            })
+            .await;
 
         let replies = bridge.replies_snapshot();
         assert!(replies.is_empty(), "rejected by allowlist → no reply");
@@ -343,15 +417,16 @@ mod tests {
         router.registry.register(bridge.clone()).await;
 
         for i in 0..3 {
-            router.handle_inbound(InboundMessage {
-                platform: ImPlatform::Telegram,
-                chat_id: "123".into(),
-                sender_id: "u1".into(),
-                text: format!("msg{i}"),
-                msg_id: format!("m{i}"),
-                timestamp: i,
-            })
-            .await;
+            router
+                .handle_inbound(InboundMessage {
+                    platform: ImPlatform::Telegram,
+                    chat_id: "123".into(),
+                    sender_id: "u1".into(),
+                    text: format!("msg{i}"),
+                    msg_id: format!("m{i}"),
+                    timestamp: i,
+                })
+                .await;
         }
         // 3 messages × 2 replies each = 6
         let replies = bridge.replies_snapshot();
@@ -381,19 +456,308 @@ mod tests {
         let router = ImRouter::new(store, Arc::new(FailingRunner), "agent-1".into(), None);
         router.registry.register(bridge.clone()).await;
 
-        router.handle_inbound(InboundMessage {
-            platform: ImPlatform::Telegram,
-            chat_id: "123".into(),
-            sender_id: "u1".into(),
-            text: "hi".into(),
-            msg_id: "m-fail".into(),
-            timestamp: 1,
-        })
-        .await;
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "123".into(),
+                sender_id: "u1".into(),
+                text: "hi".into(),
+                msg_id: "m-fail".into(),
+                timestamp: 1,
+            })
+            .await;
 
         let replies = bridge.replies_snapshot();
         assert_eq!(replies.len(), 2, "思考中 + error reply");
         assert!(replies[1].1.contains("处理失败"), "error surfaced to user");
+    }
+
+    // ---- /start invite-bind tests (Task 2) ----
+
+    /// Helper: build a router whose runtime allowlist is `Some(empty set)` —
+    /// i.e. reject everyone except via `/start` bind. This is the strict
+    /// production configuration the `/start` flow must work against.
+    fn make_strict_router(store: Arc<ImSessionStore>) -> (ImRouter, Arc<MockBridge>) {
+        let bridge = MockBridge::new(ImPlatform::Telegram);
+        let router = ImRouter::new(
+            store,
+            Arc::new(EchoRunner::new()),
+            "agent-1".into(),
+            Some(HashSet::new()),
+        );
+        // 注册由调用方在返回后执行（与现有 helper 风格一致）。
+        (router, bridge)
+    }
+
+    #[tokio::test]
+    async fn start_with_no_arg_replies_invite_required() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let (router, bridge) = make_strict_router(store);
+        router.registry.register(bridge.clone()).await;
+
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "999".into(),
+                sender_id: "stranger".into(),
+                text: "/start".into(),
+                msg_id: "ms-1".into(),
+                timestamp: 1,
+            })
+            .await;
+
+        let replies = bridge.replies_snapshot();
+        assert_eq!(replies.len(), 1, "exactly one reply for /start with no arg");
+        assert!(
+            replies[0].1.contains("需要邀请码"),
+            "reply should ask for invite code, got: {}",
+            replies[0].1
+        );
+    }
+
+    #[tokio::test]
+    async fn start_with_valid_token_binds_and_allows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+
+        // 预生成一个未使用 invite token。
+        let token = store.create_invite().unwrap();
+
+        let (router, bridge) = make_strict_router(store.clone());
+        router.registry.register(bridge.clone()).await;
+
+        // 一个不在 allowlist 中的 chat_id 发 /start <token>。
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "chat-bound".into(),
+                sender_id: "stranger".into(),
+                text: format!("/start {token}"),
+                msg_id: "ms-2".into(),
+                timestamp: 1,
+            })
+            .await;
+
+        let replies = bridge.replies_snapshot();
+        // 关键断言 1：/start 未被 allowlist 拦截（runs before guard）→ 有回复。
+        assert_eq!(replies.len(), 1, "/start must bypass allowlist guard");
+        assert!(
+            replies[0].1.contains("绑定成功"),
+            "reply should confirm bind success, got: {}",
+            replies[0].1
+        );
+
+        // 关键断言 2：chat_id 已持久化到 allowlist。
+        let allow = store.allow_list().unwrap();
+        assert!(
+            allow.iter().any(|c| c == "chat-bound"),
+            "allow_list should contain bound chat_id, got: {allow:?}"
+        );
+
+        // 关键断言 3：invite 已标记 used + bound_chat_id。
+        let invite = store
+            .list_invites()
+            .unwrap()
+            .into_iter()
+            .find(|(t, _)| t == &token)
+            .map(|(_, r)| r)
+            .expect("invite should still exist after consume");
+        assert!(invite.used, "invite should be marked used");
+        assert_eq!(
+            invite.bound_chat_id.as_deref(),
+            Some("chat-bound"),
+            "invite should record bound chat_id"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_with_already_used_token_replies_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let token = store.create_invite().unwrap();
+
+        let (router, bridge) = make_strict_router(store.clone());
+        router.registry.register(bridge.clone()).await;
+
+        // 第一次：合法绑定。
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "chat-A".into(),
+                sender_id: "stranger".into(),
+                text: format!("/start {token}"),
+                msg_id: "ms-a".into(),
+                timestamp: 1,
+            })
+            .await;
+        // 第二次：同一 token 应被拒绝（consume_invite 原子性，第二次返回 false）。
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "chat-B".into(),
+                sender_id: "stranger".into(),
+                text: format!("/start {token}"),
+                msg_id: "ms-b".into(),
+                timestamp: 2,
+            })
+            .await;
+
+        let replies = bridge.replies_snapshot();
+        assert_eq!(replies.len(), 2, "two /start sends → two replies");
+        assert!(
+            replies[0].1.contains("绑定成功"),
+            "first /start should succeed"
+        );
+        assert!(
+            replies[1].1.contains("邀请无效或已使用"),
+            "second /start with used token should be rejected, got: {}",
+            replies[1].1
+        );
+        // 只有 chat-A 进了 allowlist。
+        let allow = store.allow_list().unwrap();
+        assert!(
+            allow.iter().any(|c| c == "chat-A"),
+            "chat-A should be allowed"
+        );
+        assert!(
+            !allow.iter().any(|c| c == "chat-B"),
+            "chat-B must NOT be allowed (token was already used)"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_with_nonexistent_token_replies_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let (router, bridge) = make_strict_router(store.clone());
+        router.registry.register(bridge.clone()).await;
+
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "chat-N".into(),
+                sender_id: "stranger".into(),
+                text: "/start ghost-token".into(),
+                msg_id: "ms-ghost".into(),
+                timestamp: 1,
+            })
+            .await;
+
+        let replies = bridge.replies_snapshot();
+        assert_eq!(replies.len(), 1);
+        assert!(
+            replies[0].1.contains("邀请无效或已使用"),
+            "nonexistent token should be rejected, got: {}",
+            replies[0].1
+        );
+        // 不应写入 allowlist。
+        assert!(
+            store.allow_list().unwrap().is_empty(),
+            "no chat_id should be added for a failed bind"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_bypasses_allowlist_for_unbound_user() {
+        // 显式验证：allowlist=Some(empty) 时，未绑定用户的 /start <token>
+        // 没有被 allowlist guard 丢弃（这是 test 2 的核心不变量，单独成例以便
+        // 回归时一眼看出是 ordering 问题还是 bind 逻辑问题）。
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let token = store.create_invite().unwrap();
+        let (router, bridge) = make_strict_router(store.clone());
+        router.registry.register(bridge.clone()).await;
+
+        router
+            .handle_inbound(InboundMessage {
+                platform: ImPlatform::Telegram,
+                chat_id: "unbound-chat".into(),
+                sender_id: "unbound-user".into(),
+                text: format!("/start {token}"),
+                msg_id: "ms-order".into(),
+                timestamp: 1,
+            })
+            .await;
+
+        // 任何回复都证明 /start 跑在了 allowlist guard 之前（否则 strict 配置下
+        // 会 0 回复）。
+        assert!(
+            !bridge.replies_snapshot().is_empty(),
+            "/start must run before allowlist guard; got zero replies"
+        );
+    }
+
+    // ---- set_allowlist / add_allowed / store accessor (Task 2 Step 1/1b) ----
+
+    #[tokio::test]
+    async fn set_allowlist_replaces_runtime_set() {
+        // 起始：allowlist=None（允许所有）。set_allowlist(Some(empty)) 后变成
+        // 拒绝所有未知 sender；再 set(None) 又放开。验证「整组替换」语义。
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let router = ImRouter::new(store, Arc::new(EchoRunner::new()), "a".into(), None);
+
+        // 替换为空 allowlist → 未知 sender 应被拒绝。
+        router.set_allowlist(Some(HashSet::new())).await;
+        let allow = router.allowlist.lock().await;
+        assert!(allow.is_some(), "allowlist replaced with Some");
+        assert!(allow.as_ref().unwrap().is_empty(), "set is empty");
+        drop(allow);
+
+        // 替换回 None → 允许所有。
+        router.set_allowlist(None).await;
+        let allow = router.allowlist.lock().await;
+        assert!(allow.is_none(), "allowlist replaced back to None");
+    }
+
+    #[tokio::test]
+    async fn add_allowed_persists_and_syncs_runtime() {
+        // add_allowed 必须：(1) 写持久化 store，(2) 插入运行时 set（若为 Some）。
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let mut initial = HashSet::new();
+        initial.insert("existing".to_string());
+        let router = ImRouter::new(
+            store.clone(),
+            Arc::new(EchoRunner::new()),
+            "a".into(),
+            Some(initial),
+        );
+
+        router.add_allowed("new-chat".to_string()).await.unwrap();
+
+        // 运行时集合应包含新 chat_id。
+        let g = router.allowlist.lock().await;
+        let set = g.as_ref().expect("still Some");
+        assert!(set.contains("existing"), "pre-existing entry preserved");
+        assert!(
+            set.contains("new-chat"),
+            "new entry inserted into runtime set"
+        );
+        drop(g);
+
+        // 持久化也应包含新 chat_id。
+        let persisted = store.allow_list().unwrap();
+        assert!(
+            persisted.iter().any(|c| c == "new-chat"),
+            "add_allowed should persist to store, got: {persisted:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn store_accessor_returns_same_arc() {
+        // store() 必须返回 router 持有的同一 Arc（可通过 create_invite 生效验证）。
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
+        let router = ImRouter::new(store.clone(), Arc::new(EchoRunner::new()), "a".into(), None);
+        let tok = router.store().create_invite().unwrap();
+        // 通过返回的 &Arc 创建的 invite，应能在原始 store 上看到。
+        let invites = store.list_invites().unwrap();
+        assert!(
+            invites.iter().any(|(t, _)| t == &tok),
+            "store() returns the same backing Arc"
+        );
     }
 }
 
@@ -446,7 +810,11 @@ mod e2e_tests {
     /// Poll `MockBridge::replies_snapshot` until at least `expected` replies
     /// have arrived, or `timeout_ms` elapses (returns the last snapshot either
     /// way). Avoids races with the spawned subscriber task.
-    async fn wait_for_replies(bridge: &MockBridge, expected: usize, timeout_ms: u64) -> Vec<(String, String)> {
+    async fn wait_for_replies(
+        bridge: &MockBridge,
+        expected: usize,
+        timeout_ms: u64,
+    ) -> Vec<(String, String)> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         loop {
             let snap = bridge.replies_snapshot();
@@ -462,11 +830,9 @@ mod e2e_tests {
 
     /// Spawn a subscriber mirroring Task 9's production wiring:
     /// `subscribe_filtered(ImMessageReceived)` → forward to `router.handle_inbound`.
-    fn spawn_event_subscriber(
-        bus: &EventBus,
-        router: Arc<ImRouter>,
-    ) {
-        let mut rx = bus.subscribe_filtered(|e| matches!(e, NeoMindEvent::ImMessageReceived { .. }));
+    fn spawn_event_subscriber(bus: &EventBus, router: Arc<ImRouter>) {
+        let mut rx =
+            bus.subscribe_filtered(|e| matches!(e, NeoMindEvent::ImMessageReceived { .. }));
         tokio::spawn(async move {
             while let Some((ev, _meta)) = rx.recv().await {
                 if let NeoMindEvent::ImMessageReceived {
@@ -501,12 +867,7 @@ mod e2e_tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
         let runner = Arc::new(EchoRunner::new());
-        let router = Arc::new(ImRouter::new(
-            store,
-            runner.clone(),
-            "agent-1".into(),
-            None,
-        ));
+        let router = Arc::new(ImRouter::new(store, runner.clone(), "agent-1".into(), None));
         let bridge = MockBridge::new(ImPlatform::Telegram);
         router.registry.register(bridge.clone()).await;
 
@@ -532,7 +893,10 @@ mod e2e_tests {
         );
         assert_eq!(replies[0].1, "🤔 思考中…");
         assert_eq!(replies[1].1, "echo:hello");
-        assert_eq!(replies[0].0, "123", "reply addressed to the originating chat_id");
+        assert_eq!(
+            replies[0].0, "123",
+            "reply addressed to the originating chat_id"
+        );
         assert_eq!(runner.creates(), 1, "first inbound creates a session");
     }
 
