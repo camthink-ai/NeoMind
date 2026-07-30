@@ -480,7 +480,8 @@
   },
   "im": {
     "platforms": {
-      "telegram": "Telegram"
+      "telegram": "Telegram",
+      "feishu": "Feishu"
     }
   },
   "inputSuggestions": {

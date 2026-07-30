@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Send } from 'lucide-react'
+import { Send, MessageSquare } from 'lucide-react'
 
 /**
  * Field definition for an IM platform's configuration form.
@@ -70,7 +70,41 @@ export const IM_PLATFORMS: ImPlatformDef[] = [
       },
     ],
   },
-  // Future platforms (Feishu / Discord / Slack / DingTalk / ...): add an
+  {
+    id: 'feishu',
+    nameKey: 'common:im.platforms.feishu',
+    descriptionKey: 'settings:im.feishuCardDesc',
+    icon: MessageSquare,
+    iconBg: 'bg-success-light text-success',
+    available: true,
+    fields: [
+      {
+        name: 'app_id',
+        labelKey: 'settings:im.appId',
+        type: 'text',
+        required: true,
+        placeholderKey: 'settings:im.appIdPlaceholder',
+        helpKey: 'settings:im.appIdHelp',
+      },
+      {
+        name: 'app_secret',
+        labelKey: 'settings:im.appSecret',
+        type: 'password',
+        required: true,
+        placeholderKey: 'settings:im.appSecretPlaceholder',
+        helpKey: 'settings:im.appSecretHelp',
+      },
+      {
+        name: 'domain',
+        labelKey: 'settings:im.domain',
+        type: 'text',
+        required: false,
+        placeholderKey: 'settings:im.domainPlaceholder',
+        helpKey: 'settings:im.domainHelp',
+      },
+    ],
+  },
+  // Future platforms (Discord / Slack / DingTalk / ...): add an
   // entry here with `available: false` until the backend is wired, then
   // flip to true. The picker only renders available platforms, so
   // coming-soon platforms stay invisible by design (per product spec:

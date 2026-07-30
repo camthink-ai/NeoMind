@@ -1006,8 +1006,17 @@ export const api = {
 
   // ========== IM Bridges API ==========
   listImBridges: () => fetchAPI<{ bridges: ImBridge[] }>('/im-bridges'),
-  createImBridge: (req: { platform: string; bot_token: string; api_base?: string }) =>
-    fetchAPI<ImBridge>('/im-bridges', { method: 'POST', body: JSON.stringify(req) }),
+  // Mirrors the backend `CreateBridgeRequest` (im_bridges.rs): credential
+  // fields are all optional because they are platform-specific — `bot_token`
+  // + `api_base` for Telegram, `app_id` + `app_secret` + `domain` for Feishu.
+  createImBridge: (req: {
+    platform: string
+    bot_token?: string
+    api_base?: string
+    app_id?: string
+    app_secret?: string
+    domain?: string
+  }) => fetchAPI<ImBridge>('/im-bridges', { method: 'POST', body: JSON.stringify(req) }),
   deleteImBridge: (id: string) =>
     fetchAPI<{ id: string; status: string }>(`/im-bridges/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   createImInvite: (id: string) =>

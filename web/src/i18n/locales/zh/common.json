@@ -476,7 +476,8 @@
   },
   "im": {
     "platforms": {
-      "telegram": "Telegram"
+      "telegram": "Telegram",
+      "feishu": "飞书"
     }
   },
   "inputSuggestions": {

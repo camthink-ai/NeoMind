@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Send, Plus, Trash2, Copy, QrCode, Check, X } from 'lucide-react'
+import { Send, Plus, Trash2, Copy, QrCode, Check, X, MessageSquare } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -12,7 +12,7 @@ import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { notifySuccess, notifyError } from '@/lib/notify'
-import { api, type ImBridge, type ImInvite } from '@/lib/api'
+import { api, type ImBridge, type ImInvite, type ImInviteCreated } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { IM_PLATFORMS, getPlatformDef, type ImPlatformDef, type ImPlatformField } from './platforms'
 
@@ -49,7 +49,7 @@ export function ImBridgesTab() {
   const [invites, setInvites] = useState<ImInvite[]>([])
   const [allowlist, setAllowlist] = useState<string[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
-  const [lastInvite, setLastInvite] = useState<{ deep_link: string | null } | null>(null)
+  const [lastInvite, setLastInvite] = useState<ImInviteCreated | null>(null)
 
   // Add-flow state: select-platform → configure. The form field values live
   // inside <PlatformConfigForm/>; here we only track which platform was
@@ -115,7 +115,7 @@ export function ImBridgesTab() {
       const payload = {
         platform: selectedPlatform.id,
         ...values,
-      } as { platform: string; bot_token: string; api_base?: string }
+      }
       await api.createImBridge(payload)
       notifySuccess(t('settings:im.bridgeCreated'))
       setSelectedPlatform(null)
@@ -406,16 +406,44 @@ export function ImBridgesTab() {
             </Card>
           )}
 
-          {/* Invite generated but bot not identified yet — no deep link / QR available.
-              Without this the QR card silently disappears after a "generate" success,
-              looking broken; tell the user why (bot token not validated / username unknown). */}
+          {/* Invite generated but no deep link / QR available.
+              Two distinct causes:
+              (a) Telegram: the bot was not identified yet (token not validated
+                  / username unknown) — show a generic "not ready" note.
+              (b) Feishu: there is no deep-link concept at all; the user binds
+                  a chat by sending the bot `/start <token>` manually. Without
+                  this branch the invite card silently disappears after a
+                  "generate" success, looking broken. */}
           {lastInvite && !deepLink && (
             <Card className="mb-3 border-dashed">
-              <CardContent className="py-4 flex items-center gap-2 text-sm text-muted-foreground">
-                <QrCode className="h-4 w-4" />
-                {t('settings:im.deepLinkUnavailable', {
-                  defaultValue: 'Deep link is unavailable until the bot is identified.',
-                })}
+              <CardContent className="py-4">
+                {selectedBridge.platform === 'feishu' ? (
+                  <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <MessageSquare className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p>{t('settings:im.feishuBindHint')}</p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <code className="flex-1 min-w-0 truncate text-xs font-mono bg-muted-30 px-2 py-1 rounded">
+                          /start {lastInvite.token}
+                        </code>
+                        <IconButton
+                          size="sm"
+                          aria-label={t('settings:im.copyLink', { defaultValue: 'Copy link' })}
+                          onClick={() => handleCopyLink(`/start ${lastInvite.token}`)}
+                        >
+                          {copiedLink ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
+                        </IconButton>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <QrCode className="h-4 w-4" />
+                    {t('settings:im.deepLinkUnavailable', {
+                      defaultValue: 'Deep link is unavailable until the bot is identified.',
+                    })}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
