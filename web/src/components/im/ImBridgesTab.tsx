@@ -16,7 +16,7 @@ import { api, type ImBridge, type ImInvite } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { IM_PLATFORMS, getPlatformDef, type ImPlatformDef, type ImPlatformField } from './platforms'
 
-type View = 'list' | 'detail' | 'select' | 'configure'
+type View = 'list' | 'detail' | 'configure'
 
 /** Display name for a platform id, resolved from the registry (falls back to capitalized id). */
 function platformDisplayName(platform: string, t: TFunction): string {
@@ -219,53 +219,13 @@ export function ImBridgesTab() {
     return <LoadingState variant="page" text={t('common:loading', { defaultValue: 'Loading...' })} />
   }
 
-  // ========== SELECT-PLATFORM VIEW (add-flow step 1) ==========
-  if (view === 'select') {
-    const available = IM_PLATFORMS.filter(p => p.available)
-    return (
-      <>
-        <ListToolbar
-          onBack={() => setView('list')}
-          backLabel={t('settings:im.back', { defaultValue: 'Back' })}
-          icon={<Send className="h-5 w-5" />}
-          iconBg="bg-info-light text-info"
-          title={t('settings:im.selectPlatform')}
-          description={t('settings:im.addBridgeDesc')}
-        />
-        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
-          {available.map(def => {
-            const PlatformIcon = def.icon
-            return (
-              <Card
-                key={def.id}
-                className="cursor-pointer transition-all duration-200 hover:shadow-md"
-                onClick={() => handlePlatformSelect(def)}
-              >
-                <CardHeader className="pb-3">
-                  <div className={cn('flex items-center justify-center w-12 h-12 rounded-lg', def.iconBg)}>
-                    <PlatformIcon className="h-6 w-6" />
-                  </div>
-                  <CardTitle className="text-base mt-3">{t(def.nameKey)}</CardTitle>
-                  <CardDescription className="mt-1 text-xs line-clamp-2 min-h-[2.5em]">
-                    {t(def.descriptionKey)}
-                  </CardDescription>
-                </CardHeader>
-              </Card>
-            )
-          })}
-        </div>
-        <p className="text-sm text-muted-foreground mt-4">{t('settings:im.morePlatformsComingSoon')}</p>
-      </>
-    )
-  }
-
   // ========== CONFIGURE-PLATFORM VIEW (add-flow step 2) ==========
   if (view === 'configure' && selectedPlatform) {
     const PlatformIcon = selectedPlatform.icon
     return (
       <>
         <ListToolbar
-          onBack={() => setView('select')}
+          onBack={() => setView('list')}
           backLabel={t('settings:im.back', { defaultValue: 'Back' })}
           icon={<PlatformIcon className="h-5 w-5" />}
           iconBg={selectedPlatform.iconBg}
@@ -289,17 +249,44 @@ export function ImBridgesTab() {
   // ========== LIST VIEW ==========
   if (view === 'list') {
     if (bridges.length === 0) {
+      // No bridges yet — show the platform-card picker directly as the home
+      // view, so users see available platforms immediately (matching the LLM
+      // tab's pattern) instead of going through an empty-state middleman.
+      const available = IM_PLATFORMS.filter(p => p.available)
       return (
-        <EmptyState
-          icon={<Send className="h-12 w-12" />}
-          title={t('settings:im.noBridges')}
-          description={t('settings:im.noBridgesDesc')}
-          action={{
-            label: t('settings:im.addBridge'),
-            onClick: () => setView('select'),
-            icon: <Plus className="h-4 w-4" />,
-          }}
-        />
+        <>
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold">{t('settings:im.title')}</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {t('settings:im.selectPlatformDesc', {
+                defaultValue: 'Choose a platform to let agents reply on a chat app.',
+              })}
+            </p>
+          </div>
+          <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
+            {available.map(def => {
+              const PlatformIcon = def.icon
+              return (
+                <Card
+                  key={def.id}
+                  className="cursor-pointer transition-all duration-200 hover:shadow-md"
+                  onClick={() => handlePlatformSelect(def)}
+                >
+                  <CardHeader className="pb-3">
+                    <div className={cn('flex items-center justify-center w-12 h-12 rounded-lg', def.iconBg)}>
+                      <PlatformIcon className="h-6 w-6" />
+                    </div>
+                    <CardTitle className="text-base mt-3">{t(def.nameKey)}</CardTitle>
+                    <CardDescription className="mt-1 text-xs line-clamp-2 min-h-[2.5em]">
+                      {t(def.descriptionKey)}
+                    </CardDescription>
+                  </CardHeader>
+                </Card>
+              )
+            })}
+          </div>
+          <p className="text-sm text-muted-foreground mt-4">{t('settings:im.morePlatformsComingSoon')}</p>
+        </>
       )
     }
 
