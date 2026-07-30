@@ -23,6 +23,9 @@ pub struct TelegramBridge {
     /// 长轮询循环取消标志：`start()` 置 true，`stop()` 置 false。
     /// 用 `std::sync::atomic` 避免引入 tokio-util 依赖。
     running: Arc<AtomicBool>,
+    /// Cached bot username from getMe; enables deep-link generation. `None` until
+    /// `start()` succeeds at getMe (or if getMe failed — deep-link then unavailable).
+    bot_username: tokio::sync::Mutex<Option<String>>,
 }
 
 impl TelegramBridge {
@@ -40,6 +43,7 @@ impl TelegramBridge {
             api_base: api_base.unwrap_or_else(|| "https://api.telegram.org".into()),
             client,
             running: Arc::new(AtomicBool::new(false)),
+            bot_username: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -49,6 +53,32 @@ impl TelegramBridge {
 
     fn updates_url(&self) -> String {
         format!("{}/bot{}/getUpdates", self.api_base, self.token)
+    }
+
+    fn get_me_url(&self) -> String {
+        format!("{}/bot{}/getMe", self.api_base, self.token)
+    }
+
+    /// 当前缓存的 bot username（getMe 成功后才有；用于 deep-link）。
+    pub async fn bot_username(&self) -> Option<String> {
+        self.bot_username.lock().await.clone()
+    }
+
+    /// 调 getMe 取 bot username。失败（网络/非 2xx/缺 result.username）返回 Err；
+    /// 调用方（`start()`）据此决定是否启用 deep-link，不影响长轮询。
+    async fn fetch_bot_username(&self) -> anyhow::Result<String> {
+        let v: serde_json::Value = self
+            .client
+            .post(self.get_me_url())
+            .send()
+            .await?
+            .json()
+            .await?;
+        Ok(v.get("result")
+            .and_then(|r| r.get("username"))
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| anyhow::anyhow!("getMe result.username missing"))?
+            .to_string())
     }
 
     /// 发送纯文本到指定 chat，按字符分块。返回末条平台 message_id。
@@ -122,6 +152,17 @@ impl ImBridge for TelegramBridge {
         bus: Arc<neomind_core::eventbus::EventBus>,
     ) -> anyhow::Result<()> {
         self.running.store(true, Ordering::SeqCst);
+        // 启动即识别 bot 身份：getMe 失败不中断 start() —— bridge 仍能长轮询收发消息，
+        // 只是 deep-link（依赖 bot username）会降级为不可用。
+        match self.fetch_bot_username().await {
+            Ok(u) => {
+                *self.bot_username.lock().await = Some(u.clone());
+                tracing::info!(bot_username = %u, "telegram bridge identified");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "telegram getMe failed; deep-link will be unavailable")
+            }
+        }
         let mut offset: i64 = 0;
         loop {
             if !self.running.load(Ordering::SeqCst) {
@@ -188,6 +229,12 @@ impl ImBridge for TelegramBridge {
 
     async fn reply(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
         self.send_text(chat_id, text).await
+    }
+
+    async fn deep_link(&self, token: &str) -> Option<String> {
+        self.bot_username()
+            .await
+            .map(|u| format!("https://t.me/{}?start={}", u, token))
     }
 }
 
@@ -357,16 +404,36 @@ mod tests {
         addr: SocketAddr,
         calls: Arc<std::sync::atomic::AtomicU64>,
         offsets: Arc<Mutex<Vec<i64>>>,
+        /// getMe 命中计数 —— 断言 start() 启动时确有一次 getMe。
+        get_me_calls: Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    /// getMe handler：返回固定 bot username "testbot"。
+    async fn handle_get_me() -> Json<serde_json::Value> {
+        Json(serde_json::json!({
+            "ok": true,
+            "result": { "id": 1, "username": "testbot" }
+        }))
     }
 
     impl PollTestServer {
         async fn start(token: &str) -> Self {
             let calls = Arc::new(std::sync::atomic::AtomicU64::new(0));
             let offsets: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+            let get_me_calls = Arc::new(std::sync::atomic::AtomicU64::new(0));
             let state = (calls.clone(), offsets.clone());
-            let route = format!("/bot{token}/getUpdates");
+            let get_me_route = format!("/bot{token}/getMe");
+            let updates_route = format!("/bot{token}/getUpdates");
+            let get_me_calls_clone = get_me_calls.clone();
             let app = Router::new()
-                .route(&route, post(handle_get_updates))
+                .route(
+                    &get_me_route,
+                    post(move || {
+                        get_me_calls_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        async { handle_get_me().await }
+                    }),
+                )
+                .route(&updates_route, post(handle_get_updates))
                 .with_state(state);
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
@@ -377,6 +444,7 @@ mod tests {
                 addr,
                 calls,
                 offsets,
+                get_me_calls,
             }
         }
 
@@ -386,6 +454,10 @@ mod tests {
 
         fn offsets_snapshot(&self) -> Vec<i64> {
             self.offsets.lock().unwrap().clone()
+        }
+
+        fn get_me_call_count(&self) -> u64 {
+            self.get_me_calls.load(std::sync::atomic::Ordering::SeqCst)
         }
 
         #[allow(dead_code)]
@@ -527,6 +599,106 @@ mod tests {
             offsets[1], 502,
             "second call must carry offset 502 (=last update_id 501 +1); got {:?}",
             offsets
+        );
+
+        // start() 启动时已调 getMe 并缓存 bot username —— deep-link 因此可用。
+        assert!(
+            server.get_me_call_count() >= 1,
+            "start() must call getMe exactly once at startup"
+        );
+        assert_eq!(
+            bridge.bot_username().await.as_deref(),
+            Some("testbot"),
+            "start() must cache bot username from getMe"
+        );
+    }
+
+    // ──────────────── getMe / deep-link 测试 ────────────────
+
+    /// 起一个只带 `/bot<token>/getMe` 路由的服务器，返回固定 username。
+    async fn spawn_get_me_server(token: &str, username: &str) -> SocketAddr {
+        let route = format!("/bot{token}/getMe");
+        let username = username.to_string();
+        let app = Router::new().route(
+            &route,
+            post(move || {
+                let u = username.clone();
+                async move {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "result": { "id": 1, "username": u }
+                    }))
+                }
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn fetch_bot_username_returns_username() {
+        let addr = spawn_get_me_server("gm-token", "mybot").await;
+        let bridge = TelegramBridge::new("gm-token".into(), Some(format!("http://{}", addr)));
+
+        let username = bridge.fetch_bot_username().await.expect("getMe ok");
+        assert_eq!(username, "mybot");
+        // fetch 单独不写缓存 —— 只有 start() 才缓存（避免在别处调用引入副作用）。
+        assert_eq!(bridge.bot_username().await, None, "fetch must not cache");
+    }
+
+    #[tokio::test]
+    async fn fetch_bot_username_returns_err_when_username_missing() {
+        // getMe 成功返回但缺 username 字段（result.username 缺失）→ Err。
+        let token = "no-user";
+        let route = format!("/bot{token}/getMe");
+        let app = Router::new().route(
+            &route,
+            post(|| async { Json(serde_json::json!({ "ok": true, "result": { "id": 7 } })) }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let bridge = TelegramBridge::new(token.into(), Some(format!("http://{}", addr)));
+        let err = bridge
+            .fetch_bot_username()
+            .await
+            .expect_err("missing username should error");
+        assert!(
+            err.to_string().contains("username"),
+            "error should mention username: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn deep_link_returns_url_when_identified() {
+        let server = TestServer::start("dl").await; // 任意 client 都行，这里不发送
+        let bridge = TelegramBridge::new("dl".into(), Some(server.base_url()));
+        // 模拟 start() 已缓存 username。
+        *bridge.bot_username.lock().await = Some("mybot".into());
+
+        let url = bridge.deep_link("abc123").await;
+        assert_eq!(
+            url.as_deref(),
+            Some("https://t.me/mybot?start=abc123"),
+            "deep_link must produce t.me invite URL with cached bot + token"
+        );
+    }
+
+    #[tokio::test]
+    async fn deep_link_returns_none_when_not_identified() {
+        let server = TestServer::start("noid").await;
+        let bridge = TelegramBridge::new("noid".into(), Some(server.base_url()));
+        // 全新 bridge —— bot_username 还是 None（未 start / getMe 未跑过）。
+        assert_eq!(bridge.bot_username().await, None);
+        assert_eq!(
+            bridge.deep_link("xyz").await,
+            None,
+            "deep_link must be None when bot is unidentified"
         );
     }
 }

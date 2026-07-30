@@ -1,11 +1,11 @@
 //! Platform-agnostic two-way IM bridge.
 
+#[cfg(test)]
+pub mod mock;
 pub mod router;
 pub mod session_store;
 #[cfg(feature = "telegram")]
 pub mod telegram;
-#[cfg(test)]
-pub mod mock;
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -50,12 +50,21 @@ pub struct ImTarget {
 #[async_trait]
 pub trait ImBridge: Send + Sync {
     fn platform(&self) -> ImPlatform;
-    async fn start(self: Arc<Self>, bus: Arc<neomind_core::eventbus::EventBus>) -> anyhow::Result<()>;
+    async fn start(
+        self: Arc<Self>,
+        bus: Arc<neomind_core::eventbus::EventBus>,
+    ) -> anyhow::Result<()>;
     async fn stop(&self) -> anyhow::Result<()>;
     /// 定向回复，返回平台 message_id（供 M2 流式 edit / thread binding；平台无 id 则 None）。
     async fn reply(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>>;
     async fn push(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
         self.reply(chat_id, text).await
+    }
+    /// Deep-link URL for invite QR codes (`https://t.me/<bot>?start=<token>`).
+    /// Platforms that don't support deep-linking return `None` (default); only
+    /// Telegram overrides this once `getMe` has identified the bot username.
+    async fn deep_link(&self, _token: &str) -> Option<String> {
+        None
     }
 }
 
@@ -108,8 +117,7 @@ mod registry_tests {
     #[tokio::test]
     async fn register_get_remove_round_trip() {
         let reg = ImBridgeRegistry::default();
-        reg.register(MockBridge::new(ImPlatform::Telegram))
-            .await;
+        reg.register(MockBridge::new(ImPlatform::Telegram)).await;
 
         // Present after register.
         assert!(reg.get(&ImPlatform::Telegram).await.is_some());
@@ -118,7 +126,10 @@ mod registry_tests {
 
         // remove returns the Arc and clears the slot.
         let removed = reg.remove(&ImPlatform::Telegram).await;
-        assert!(removed.is_some(), "remove should return the registered bridge");
+        assert!(
+            removed.is_some(),
+            "remove should return the registered bridge"
+        );
 
         // Now empty across all accessors.
         assert!(reg.get(&ImPlatform::Telegram).await.is_none());
