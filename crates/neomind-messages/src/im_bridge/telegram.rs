@@ -1,28 +1,37 @@
-//! Telegram 双向 bridge — 出站 sendMessage（入站长轮询见 Task 7）。
+//! Telegram 双向 bridge — 出站 sendMessage + 入站 getUpdates 长轮询。
 //!
 //! 出站按字符分块（Telegram 单条上限 4096 codepoint），返回末条平台 message_id
 //! 供 M2 流式 edit / thread binding。纯文本不设 parse_mode，避免用户输入触发
 //! Telegram 的 HTML/Markdown 解析错误（Channel 层 `channels/telegram.rs` 用 HTML
 //! 是因为内容完全由后端格式化；这里 reply 的文本来自 LLM / 用户转发，不可控）。
+//!
+//! 入站长轮询（`getUpdates`，30s 窗口）把每条文本消息 publish 成 `ImMessageReceived`。
+//! 循环靠 `running` 标志停止：`stop()` 置 false，下一轮迭代退出。因长轮询窗口达 30s，
+//! 调用 `stop()` 后最长约 30s 才真正退出（设计允许）。
 
 use super::*;
 use async_trait::async_trait;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-/// Telegram 双向 bridge。`bus` 字段供 Task 7 入站长轮询 publish 事件使用。
+/// Telegram 双向 bridge。
 pub struct TelegramBridge {
     token: String,
     /// Telegram Bot API 基址，默认 `https://api.telegram.org`；可配代理/私有网关。
     api_base: String,
     client: reqwest::Client,
-    #[allow(dead_code)] // Task 7 入站长轮询写入 EventBus
-    bus: Option<Arc<neomind_core::eventbus::EventBus>>,
+    /// 长轮询循环取消标志：`start()` 置 true，`stop()` 置 false。
+    /// 用 `std::sync::atomic` 避免引入 tokio-util 依赖。
+    running: Arc<AtomicBool>,
 }
 
 impl TelegramBridge {
     pub fn new(token: String, api_base: Option<String>) -> Self {
+        // 客户端总超时必须 > getUpdates 长轮询窗口(30s)：否则无消息时 reqwest 会
+        // 先于 Telegram 返回而超时。35s = 30s 长轮询 + 连接/延迟余量。
+        // 出站 sendMessage 共用此 client，35s 上限对通常秒级返回的 sendMessage 无影响。
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(35))
             .connect_timeout(std::time::Duration::from_secs(10))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
@@ -30,12 +39,16 @@ impl TelegramBridge {
             token,
             api_base: api_base.unwrap_or_else(|| "https://api.telegram.org".into()),
             client,
-            bus: None,
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
     fn send_url(&self) -> String {
         format!("{}/bot{}/sendMessage", self.api_base, self.token)
+    }
+
+    fn updates_url(&self) -> String {
+        format!("{}/bot{}/getUpdates", self.api_base, self.token)
     }
 
     /// 发送纯文本到指定 chat，按字符分块。返回末条平台 message_id。
@@ -68,6 +81,36 @@ impl TelegramBridge {
     }
 }
 
+/// 从一个 getUpdates 结果项提取文本消息字段，返回 `(chat_id, sender_id, text, msg_id)`。
+///
+/// **`msg_id` 用 `update_id`（全局唯一单调递增），不是 `message.message_id`**：
+/// Telegram 的 `message_id` 是 per-chat 的（不同 chat 会复用同一 id），而 `ImRouter`
+/// 用 `msg_id` 做全局去重——误用 `message_id` 会导致跨 chat 的第二条消息被错误丢弃。
+/// `update_id` 是 update 对象上 `message` 的兄弟字段，全局唯一。
+///
+/// 返回 `None` 表示非文本 message update（edited_message / inline_query / 缺 text 的
+/// 图片 sticker / …）或关键字段缺失。调用方对 `None` 仍按 `update_id + 1` 推进 offset。
+fn parse_message(update: &serde_json::Value) -> Option<(String, String, String, String)> {
+    let message = update.get("message")?;
+    let chat_id = message
+        .get("chat")
+        .and_then(|c| c.get("id"))
+        .and_then(|x| x.as_i64())
+        .map(|i| i.to_string())?;
+    let sender_id = message
+        .get("from")
+        .and_then(|f| f.get("id"))
+        .and_then(|x| x.as_i64())
+        .map(|i| i.to_string())?;
+    let text = message.get("text").and_then(|t| t.as_str())?.to_string();
+    // update_id 是 message 的兄弟字段（在 update 根上），全局唯一。
+    let msg_id = update
+        .get("update_id")
+        .and_then(|x| x.as_i64())
+        .map(|i| i.to_string())?;
+    Some((chat_id, sender_id, text, msg_id))
+}
+
 #[async_trait]
 impl ImBridge for TelegramBridge {
     fn platform(&self) -> ImPlatform {
@@ -76,13 +119,70 @@ impl ImBridge for TelegramBridge {
 
     async fn start(
         self: Arc<Self>,
-        _bus: Arc<neomind_core::eventbus::EventBus>,
+        bus: Arc<neomind_core::eventbus::EventBus>,
     ) -> anyhow::Result<()> {
-        // 入站长轮询见 Task 7 — 当前留空 no-op。
+        self.running.store(true, Ordering::SeqCst);
+        let mut offset: i64 = 0;
+        loop {
+            if !self.running.load(Ordering::SeqCst) {
+                break;
+            }
+            let resp = self
+                .client
+                .post(self.updates_url())
+                .json(&serde_json::json!({
+                    "offset": offset,
+                    "timeout": 30,
+                    "allowed_updates": ["message"]
+                }))
+                .send()
+                .await;
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    let v: serde_json::Value = r.json().await.unwrap_or_default();
+                    if let Some(arr) = v.get("result").and_then(|x| x.as_array()) {
+                        for u in arr {
+                            let uid = u.get("update_id").and_then(|x| x.as_i64());
+                            if let Some((chat_id, sender_id, text, msg_id)) = parse_message(u) {
+                                // ack 时机：publish 成功（≥1 订阅者）才推进 offset，
+                                // 确保事件入 bus；失败则下轮重收，避免静默丢消息。
+                                let published = bus
+                                    .publish(neomind_core::event::NeoMindEvent::ImMessageReceived {
+                                        platform: "telegram".into(),
+                                        im_chat_id: chat_id,
+                                        sender_id,
+                                        text,
+                                        msg_id,
+                                        timestamp: 0,
+                                    })
+                                    .await;
+                                if published {
+                                    if let Some(uid) = uid {
+                                        offset = uid + 1;
+                                    }
+                                }
+                            } else if let Some(uid) = uid {
+                                // 非 message update（edited/inline/图片…）直接推进。
+                                offset = uid + 1;
+                            }
+                        }
+                    }
+                }
+                Ok(r) => {
+                    tracing::warn!(status = %r.status(), "telegram getUpdates non-2xx");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "telegram poll error");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
         Ok(())
     }
 
     async fn stop(&self) -> anyhow::Result<()> {
+        self.running.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -95,6 +195,8 @@ impl ImBridge for TelegramBridge {
 mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
+    use neomind_core::event::NeoMindEvent;
+    use neomind_core::eventbus::EventBus;
     use std::net::SocketAddr;
     use std::sync::{Arc, Mutex};
     use tokio::net::TcpListener;
@@ -219,5 +321,212 @@ mod tests {
         assert_eq!(recv.len(), 2, "5000 codepoint → 2 chunks of 4000+1000");
         let reassembled: String = recv.iter().map(|b| b.text.as_str()).collect();
         assert_eq!(reassembled, payload, "no corruption at chunk boundary");
+    }
+
+    // ──────────────── 入站长轮询 (getUpdates) 测试 ────────────────
+
+    /// getUpdates mock 共享状态：(调用计数, 记录的 offset 列表)。
+    type PollState = (Arc<std::sync::atomic::AtomicU64>, Arc<Mutex<Vec<i64>>>);
+
+    /// getUpdates handler：首次调用返回 2 条 update，之后返回空 result（让循环空转不堆事件）。
+    /// 同时记录每次请求的 offset，用于断言 offset 推进。
+    async fn handle_get_updates(
+        State((calls, offsets)): State<PollState>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(off) = body.get("offset").and_then(|x| x.as_i64()) {
+            offsets.lock().unwrap().push(off);
+        }
+        if n == 0 {
+            // 两条 update：update_id 500/501，message_id 故意取 1/2（per-chat，应被忽略）。
+            Json(serde_json::json!({
+                "ok": true,
+                "result": [
+                    {"update_id": 500, "message": {"message_id": 1, "chat": {"id": 123}, "from": {"id": 999}, "text": "hi"}},
+                    {"update_id": 501, "message": {"message_id": 2, "chat": {"id": 456}, "from": {"id": 888}, "text": "yo"}}
+                ]
+            }))
+        } else {
+            Json(serde_json::json!({"ok": true, "result": []}))
+        }
+    }
+
+    /// getUpdates 测试服务器句柄。
+    struct PollTestServer {
+        addr: SocketAddr,
+        calls: Arc<std::sync::atomic::AtomicU64>,
+        offsets: Arc<Mutex<Vec<i64>>>,
+    }
+
+    impl PollTestServer {
+        async fn start(token: &str) -> Self {
+            let calls = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let offsets: Arc<Mutex<Vec<i64>>> = Arc::new(Mutex::new(Vec::new()));
+            let state = (calls.clone(), offsets.clone());
+            let route = format!("/bot{token}/getUpdates");
+            let app = Router::new()
+                .route(&route, post(handle_get_updates))
+                .with_state(state);
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            Self {
+                addr,
+                calls,
+                offsets,
+            }
+        }
+
+        fn base_url(&self) -> String {
+            format!("http://{}", self.addr)
+        }
+
+        fn offsets_snapshot(&self) -> Vec<i64> {
+            self.offsets.lock().unwrap().clone()
+        }
+
+        #[allow(dead_code)]
+        fn call_count(&self) -> u64 {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[tokio::test]
+    async fn parse_message_extracts_fields_and_uses_update_id_as_msg_id() {
+        // update_id(全局) 与 message_id(per-chat) 故意取不同值，验证 msg_id 取前者。
+        let update = serde_json::json!({
+            "update_id": 7777,
+            "message": {
+                "message_id": 42,
+                "chat": { "id": -100123 }, // 群聊 id 为负
+                "from": { "id": 4242 },
+                "text": "hello world"
+            }
+        });
+        let (chat_id, sender_id, text, msg_id) = parse_message(&update).expect("parsed");
+        assert_eq!(chat_id, "-100123");
+        assert_eq!(sender_id, "4242");
+        assert_eq!(text, "hello world");
+        assert_eq!(
+            msg_id, "7777",
+            "msg_id must be update_id (globally unique), NOT message_id (per-chat)"
+        );
+    }
+
+    #[test]
+    fn parse_message_returns_none_for_non_message_or_non_text() {
+        // edited_message（无顶层 message）→ None
+        let edited = serde_json::json!({
+            "update_id": 9,
+            "edited_message": { "message_id": 1, "chat": {"id": 1}, "from": {"id": 1}, "text": "x" }
+        });
+        assert!(parse_message(&edited).is_none());
+
+        // 图片消息（无 text）→ None（只转发文本）
+        let photo = serde_json::json!({
+            "update_id": 10,
+            "message": { "message_id": 5, "chat": {"id": 7}, "from": {"id": 8}, "photo": [] }
+        });
+        assert!(parse_message(&photo).is_none());
+
+        // 缺 update_id → None（无法做去重键）
+        let no_uid = serde_json::json!({
+            "message": { "message_id": 5, "chat": {"id": 7}, "from": {"id": 8}, "text": "x" }
+        });
+        assert!(parse_message(&no_uid).is_none());
+    }
+
+    #[tokio::test]
+    async fn start_long_polls_publishes_events_and_advances_offset() {
+        let token = "poll-token";
+        let server = PollTestServer::start(token).await;
+
+        let bridge = Arc::new(TelegramBridge::new(token.into(), Some(server.base_url())));
+        let bus = Arc::new(EventBus::new());
+        // 必须先 subscribe 再 spawn start()：否则首条 publish 无订阅者 → publish 返回
+        // false → offset 不推进 → 下轮重复收同一批 update → 事件风暴。
+        let mut rx = bus.subscribe();
+
+        let bridge_clone = bridge.clone();
+        let bus_clone = bus.clone();
+        let task = tokio::spawn(async move { bridge_clone.start(bus_clone).await });
+
+        // 收集 2 条 ImMessageReceived（最长等 5s）。
+        let mut events: Vec<NeoMindEvent> = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while events.len() < 2 && std::time::Instant::now() < deadline {
+            if let Ok(Some((ev, _))) =
+                tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+            {
+                if matches!(ev, NeoMindEvent::ImMessageReceived { .. }) {
+                    events.push(ev);
+                }
+            }
+        }
+
+        assert_eq!(
+            events.len(),
+            2,
+            "should receive exactly 2 ImMessageReceived events"
+        );
+
+        // msg_id 必须是 update_id(500/501)，不是 per-chat 的 message_id(1/2)。
+        let extracted: Vec<(String, String, String)> = events
+            .iter()
+            .map(|e| match e {
+                NeoMindEvent::ImMessageReceived {
+                    im_chat_id,
+                    text,
+                    msg_id,
+                    ..
+                } => (msg_id.clone(), im_chat_id.clone(), text.clone()),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert!(
+            extracted.contains(&("500".into(), "123".into(), "hi".into())),
+            "event from update_id 500 missing/wrong; got {:?}",
+            extracted
+        );
+        assert!(
+            extracted.contains(&("501".into(), "456".into(), "yo".into())),
+            "event from update_id 501 missing/wrong; got {:?}",
+            extracted
+        );
+        // 反向断言：绝不能用 message_id(1/2)。
+        let ids: Vec<&str> = extracted.iter().map(|(id, _, _)| id.as_str()).collect();
+        assert!(
+            !ids.contains(&"1") && !ids.contains(&"2"),
+            "must not use per-chat message_id"
+        );
+
+        // platform 字段一致。
+        assert!(events.iter().all(|e| matches!(e,
+                NeoMindEvent::ImMessageReceived { platform, .. } if platform == "telegram")));
+
+        // 停止 bridge，等待 spawned task 退出（running=false 后下一轮迭代即 break）。
+        bridge.stop().await.expect("stop ok");
+        match tokio::time::timeout(std::time::Duration::from_secs(5), task).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => panic!("start task errored on shutdown: {e}"),
+            Err(_) => panic!("start task did not stop within 5s after stop()"),
+        }
+
+        // offset 推进：首次请求 offset=0；处理 500/501 后 offset=502；第二次请求带 502。
+        let offsets = server.offsets_snapshot();
+        assert!(
+            offsets.len() >= 2,
+            "at least 2 getUpdates calls; got {:?}",
+            offsets
+        );
+        assert_eq!(offsets[0], 0, "first call starts at offset 0");
+        assert_eq!(
+            offsets[1], 502,
+            "second call must carry offset 502 (=last update_id 501 +1); got {:?}",
+            offsets
+        );
     }
 }
