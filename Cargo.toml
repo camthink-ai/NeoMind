@@ -73,6 +73,11 @@ rand = "0.8"
 # or patch hyper-rustls. At runtime the process installs ring (start_server), so
 # aws-lc-rs is compiled-but-mostly-unused today.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "charset", "http2", "stream"] }
+# Feishu WS long-connection client. Default features (connect + handshake) stay
+# on; add rustls-tls-webpki-roots so `wss://` works without system cert probes
+# (bundles Mozilla roots statically — friendlier for aarch64 cross-compile, and
+# consistent with the project's rustls-not-openssl direction).
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "hostname", "builder", "tokio1-rustls", "ring", "rustls-native-certs"] }
 
 # Image processing (decode headers for dimensions + image_edit tool formats)
