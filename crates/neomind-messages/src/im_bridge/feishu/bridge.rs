@@ -59,16 +59,34 @@ impl FeishuBridge {
     ) -> Self {
         let app_id = app_id.into();
         let app_secret = app_secret.into();
+        // Normalize domain: empty/None -> default; missing scheme -> prepend https://
+        // (avoids reqwest "relative URL without a base" when callers pass a bare/empty host)
+        let domain = normalize_domain(domain);
         let ws_client = Arc::new(FeishuWsClient::new(
             app_id.clone(),
             app_secret.clone(),
-            domain.clone(),
+            Some(domain.clone()),
         ));
-        let messenger = FeishuMessenger::new(app_id, app_secret, domain);
-        Self {
-            ws_client,
-            messenger,
-        }
+        let messenger = FeishuMessenger::new(app_id, app_secret, Some(domain));
+        Self { ws_client, messenger }
+    }
+}
+
+/// Normalize the Feishu open-platform domain:
+/// - `None` / empty / whitespace -> default `https://open.feishu.cn`
+/// - value without a scheme -> `https://` prepended (bare host would build a
+///   relative URL and fail at the reqwest builder).
+fn normalize_domain(domain: Option<String>) -> String {
+    const DEFAULT: &str = "https://open.feishu.cn";
+    let Some(d) = domain else { return DEFAULT.to_string() };
+    let d = d.trim();
+    if d.is_empty() {
+        return DEFAULT.to_string();
+    }
+    if d.starts_with("http://") || d.starts_with("https://") {
+        d.trim_end_matches('/').to_string()
+    } else {
+        format!("https://{d}")
     }
 }
 
