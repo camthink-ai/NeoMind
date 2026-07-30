@@ -510,7 +510,7 @@ export function UnifiedDeviceConnectionsTab() {
     return (
       <>
         {/* Connection Type Cards Grid - Dynamically loaded */}
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
           {adapterTypes.map((type) => {
             const isActive = getConnectionStatus(type.id)
             const deviceCount = getDeviceCount(type.id)

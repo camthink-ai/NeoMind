@@ -339,7 +339,7 @@ export function UnifiedLLMBackendsTab({
     return (
       <>
         {/* Provider Cards Grid */}
-        <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]">
           {backendTypes.map((type) => {
             const typeInstances = getInstancesForType(type.id)
             const info = getLlmProviderInfo(type.id, t)
