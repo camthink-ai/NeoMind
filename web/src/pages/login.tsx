@@ -287,7 +287,7 @@ export function LoginPage() {
   // Full-screen instance picker
   if (showInstancePicker) {
     return (
-      <div className="flex flex-col bg-background viewport-full">
+      <div className="flex flex-col bg-popover viewport-full">
         {/* Header */}
         <header className="flex items-center gap-3 px-4 sm:px-6 h-14 border-b border-border safe-top">
           <Button variant="ghost" size="sm" onClick={() => setShowInstancePicker(false)}>
@@ -307,7 +307,7 @@ export function LoginPage() {
                 <button
                   key={inst.id}
                   onClick={() => handleInstanceSwitch(inst)}
-                  className={`w-full flex items-center gap-4 p-4 rounded-xl bg-bg-50 border transition-colors text-left ${
+                  className={`w-full flex items-center gap-4 p-4 rounded-xl border transition-colors text-left ${
                     isCurrent ? 'border-primary' : 'border-border hover:border-primary'
                   }`}
                 >

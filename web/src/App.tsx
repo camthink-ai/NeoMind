@@ -83,6 +83,12 @@ window.addEventListener('unhandledrejection', (event) => {
   }
 })
 
+// Set the macOS Tauri title-bar inset globally (login/setup pages don't have TopNav).
+const _isMacTauri = typeof window !== 'undefined' && '__TAURI__' in window && /Mac/i.test(navigator.platform || navigator.userAgent)
+if (_isMacTauri) {
+  document.documentElement.style.setProperty('--titlebar-inset', '24px')
+}
+
 // Protected Route component
 // Checks authentication first, then setup status in background
 function ProtectedRoute({ children }: { children: React.ReactNode }) {

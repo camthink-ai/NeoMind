@@ -66,7 +66,7 @@ body,
 }
 @supports (padding: env(safe-area-inset-top)) {
   .safe-top {
-    padding-top: env(safe-area-inset-top, 0px);
+    padding-top: calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px));
   }
   /* Mobile nav drawer: hide the built-in SheetContent close (X) button —
      we render our own inside the header for proper safe-area handling
