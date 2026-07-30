@@ -374,6 +374,20 @@ export function ImBridgesTab() {
             </Card>
           )}
 
+          {/* Invite generated but bot not identified yet — no deep link / QR available.
+              Without this the QR card silently disappears after a "generate" success,
+              looking broken; tell the user why (bot token not validated / username unknown). */}
+          {lastInvite && !deepLink && (
+            <Card className="mb-3 border-dashed">
+              <CardContent className="py-4 flex items-center gap-2 text-sm text-muted-foreground">
+                <QrCode className="h-4 w-4" />
+                {t('settings:im.deepLinkUnavailable', {
+                  defaultValue: 'Deep link is unavailable until the bot is identified.',
+                })}
+              </CardContent>
+            </Card>
+          )}
+
           {detailLoading ? (
             <LoadingState variant="default" size="sm" text={t('common:loading', { defaultValue: 'Loading...' })} />
           ) : invites.length === 0 && !deepLink ? (
