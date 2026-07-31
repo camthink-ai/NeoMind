@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.14] - 2026-07-31
+
+IM bridge system (Telegram + Feishu) + OTA release notes + extension log UX.
+Focus: first release of two-way IM (chat-platform) integration — invite-gated
+access, per-platform bridges, persistence, and real-bot debugging lessons.
+
+### IM Bridges (new subsystem)
+- **Two-way IM integration**: NeoMind agents reply on chat platforms.
+  Inbound message → ImRouter → agent → reply. Architecture mirrors openclaw
+  (Gateway + channel adapter); IM is positioned as a lightweight conversation
+  entry + output channel (web chat remains core).
+- **Telegram bridge**: getUpdates long-polling (35s client > 30s window) +
+  sendMessage (4000-char chunking) + getMe → bot username → deep-link QR.
+- **Feishu (飞书) bridge**: hand-written pbbp2 protobuf frame codec (field
+  numbers from larksuite/node-sdk, byte-level verified) + WebSocket
+  long-connection (endpoint/ping/shard-merge/per-frame ack/reconnect) + REST
+  send-message (tenant_access_token single-flight cache). No official Rust
+  SDK → ported from Node SDK (MIT). No deep-link → invite via `/start <token>`.
+- **Invite-gated access**: admin generates invite → user `/start <token>` →
+  atomic consume → allowlist. Bridge boots invite-gated (rejects all until
+  bound). `/start` runs before allowlist + dedup.
+- **Bridge persistence + restart reload**: `im_bridges` redb table; create/
+  delete sync; `start_im_router` reloads persisted bridges on restart (was
+  in-memory only).
+- **IM sessions**: per `(platform, chat_id)` session mapping (redb) + expiry
+  cleanup; Messages → IM Sessions tab.
+
+### IM UX
+- **Settings → IM channels**: all-platform card list (Telegram + Feishu) with
+  configured/not-configured status; bridge CRUD + invite management (QR for
+  Telegram, `/start <token>` hint for Feishu) + allowlist.
+- **Messages → IM Sessions**: session table (chat_id / agent / last-active) +
+  reset; "Configure IM bridge" CTA when no bridge.
+- Per-platform icons (Settings gear for manage; platform-specific tint).
+
+### IM Reliability (real-bot debugging lessons)
+- Removed fixed Chinese "🤔 思考中…" ack (inappropriate for multilingual;
+  replies go straight to result).
+- 10-min agent timeout + English error/timeout reply (was silent hang on
+  LLM stall, e.g. thinking-model runaways).
+- Telegram: api_base normalize + reply() tracing.
+- Feishu: WS endpoint path, domain normalize, REST /open-apis/ prefix,
+  event/reply tracing.
+
+### OTA Updates
+- **Update notes as markdown**: OTA update dialog renders release notes as
+  markdown (was plain text).
+
+### CI
+- **CHANGELOG as release notes**: GitHub release / Discord / OTA now surface
+  CHANGELOG.md sections. Short mode: clean headlines, no truncation.
+
+### Extensions
+- **Stderr capture refactor**: extracted `capture_stderr_loop` (testable) +
+  non-UTF8 byte survival test. Extension details dialog log auto-scroll
+  sticks to bottom only when already there (scrolling up to read history
+  isn't yanked back down on every 3s poll).
+
 ## [0.9.13] - 2026-07-30
 
 Skills overhaul + user-configurable system preferences + About resource panel.
