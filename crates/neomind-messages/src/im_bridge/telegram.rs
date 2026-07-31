@@ -40,10 +40,27 @@ impl TelegramBridge {
             .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             token,
-            api_base: api_base.unwrap_or_else(|| "https://api.telegram.org".into()),
+            api_base: Self::normalize_api_base(api_base),
             client,
             running: Arc::new(AtomicBool::new(false)),
             bot_username: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// Normalize api_base: None/empty -> default https://api.telegram.org;
+    /// missing scheme -> prepend https:// (same lesson as FeishuBridge::normalize_domain —
+    /// an empty/scheme-less base builds a relative URL and reqwest fails at the builder).
+    fn normalize_api_base(api_base: Option<String>) -> String {
+        const DEFAULT: &str = "https://api.telegram.org";
+        let Some(b) = api_base else { return DEFAULT.to_string() };
+        let b = b.trim();
+        if b.is_empty() {
+            return DEFAULT.to_string();
+        }
+        if b.starts_with("http://") || b.starts_with("https://") {
+            b.trim_end_matches('/').to_string()
+        } else {
+            format!("https://{b}")
         }
     }
 
@@ -228,7 +245,17 @@ impl ImBridge for TelegramBridge {
     }
 
     async fn reply(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
-        self.send_text(chat_id, text).await
+        tracing::info!(chat_id, text_len = text.len(), "telegram reply -> send_text");
+        match self.send_text(chat_id, text).await {
+            Ok(mid) => {
+                tracing::info!(chat_id, message_id = ?mid, "telegram reply send_text ok");
+                Ok(mid)
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, chat_id, "telegram reply send_text failed");
+                Err(e)
+            }
+        }
     }
 
     async fn deep_link(&self, token: &str) -> Option<String> {
