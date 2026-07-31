@@ -91,6 +91,10 @@ export function ExtensionDetailsDialog({
   const [logs, setLogs] = useState<ExtensionLogEntry[]>([])
   const [logsLoading, setLogsLoading] = useState(false)
   const logListRef = useRef<HTMLDivElement>(null)
+  // True while the log list is scrolled to (near) the bottom. Auto-scroll only
+  // sticks to bottom when this is true, so scrolling up to read history isn't
+  // yanked back down on every 3s poll.
+  const pinnedToBottomRef = useRef(true)
 
   // Section navigation
   const [activeSection, setActiveSection] = useState<SectionId>("overview")
@@ -258,6 +262,8 @@ export function ExtensionDetailsDialog({
       loadConfig()
     }
     if (section === "logs") {
+      // Re-entering logs: jump to latest on next render.
+      pinnedToBottomRef.current = true
       loadLogs()
     }
   }
@@ -380,9 +386,13 @@ export function ExtensionDetailsDialog({
     return () => clearInterval(interval)
   }, [activeSection, extension?.id, open, loadLogs, silentRefreshLogs])
 
-  // Auto-scroll log list to bottom when new logs arrive (latest at bottom)
+  // Auto-scroll log list to bottom when new logs arrive (latest at bottom) —
+  // but only when the user is already pinned to the bottom. If they've scrolled
+  // up to read history, leave them be; otherwise the 3s poll would yank them
+  // back down every cycle.
   useEffect(() => {
     if (activeSection !== 'logs' || !logListRef.current) return
+    if (!pinnedToBottomRef.current) return
     logListRef.current.scrollTop = logListRef.current.scrollHeight
   }, [logs, activeSection])
 
@@ -649,13 +659,6 @@ export function ExtensionDetailsDialog({
 
     return (
       <FormSectionGroup>
-        <div className="pb-2 border-b">
-          <h3 className="text-sm font-medium">{t("extensions:config.title", { defaultValue: "Extension Configuration" })}</h3>
-          <p className="text-xs text-muted-foreground">
-            {t("extensions:config.configure", { defaultValue: "Configure" })} {extension?.name}
-          </p>
-        </div>
-
         <div className="space-y-1">
           {(() => {
             const props = configData!.config_schema.properties || {}
@@ -673,12 +676,6 @@ export function ExtensionDetailsDialog({
               })
               .map(([name, param]) => renderConfigInput(name, param))
           })()}
-        </div>
-
-        <div className="pt-4 border-t">
-          <p className="text-xs text-muted-foreground">
-            {t("extensions:config.changesNote", { defaultValue: "Changes will be saved and the extension will be reloaded to apply the new configuration." })}
-          </p>
         </div>
 
         <div className="pt-4">
@@ -1015,29 +1012,7 @@ export function ExtensionDetailsDialog({
 
   const renderLogs = () => {
     return (
-      <div className="flex h-full flex-col gap-3">
-        {/* Toolbar */}
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <span className="text-xs text-muted-foreground tabular-nums">
-            {logsLoading
-              ? t("extensions:logs.loading", { defaultValue: "Loading..." })
-              : t("extensions:logs.count", { count: logs.length, defaultValue: "{{count}} entries" })
-            }
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="xs"
-              className="gap-1.5 hover:bg-error-light hover:text-error"
-              onClick={handleClearLogs}
-              disabled={logsLoading || logs.length === 0}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              {t("extensions:logs.clear", { defaultValue: "Clear" })}
-            </Button>
-          </div>
-        </div>
-
+      <div className="flex h-full flex-col">
         {/* Log entries */}
         {logsLoading && logs.length === 0 ? (
           <div className="flex-1 flex items-center justify-center">
@@ -1049,29 +1024,47 @@ export function ExtensionDetailsDialog({
             <p>{t("extensions:logs.noLogs", { defaultValue: "No log entries yet" })}</p>
           </div>
         ) : (
-          <div className="flex-1 min-h-0 flex flex-col border rounded-lg overflow-hidden font-mono text-xs">
-            <div ref={logListRef} className="flex-1 min-h-0 overflow-y-auto">
-              {logs.map((log, i) => {
+          <div className="relative flex-1 min-h-0 flex flex-col rounded-lg overflow-hidden bg-muted-30 font-mono text-xs">
+            {/* Clear — overlay icon so we don't need a dedicated toolbar row */}
+            <Button
+              variant="ghost"
+              size="xs"
+              className="absolute right-1.5 top-1.5 z-10 h-7 w-7 p-0 text-muted-foreground hover:bg-error-light hover:text-error"
+              onClick={handleClearLogs}
+              aria-label={t("extensions:logs.clear", { defaultValue: "Clear" })}
+              title={t("extensions:logs.clear", { defaultValue: "Clear" })}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+            <div
+              ref={logListRef}
+              onScroll={(e) => {
+                const el = e.currentTarget
+                // "Pinned to bottom" while within 32px of the end — avoids
+                // flipping off auto-scroll on minor scrollbar rounding.
+                pinnedToBottomRef.current =
+                  el.scrollHeight - el.scrollTop - el.clientHeight < 32
+              }}
+              className="flex-1 min-h-0 overflow-y-auto"
+            >
+              {logs.map((log) => {
                 const levelKey = (log.level || 'info').toLowerCase()
                 return (
                   <div
-                    key={i}
+                    key={`${log.timestamp}-${log.message}`}
                     className={cn(
-                      "flex gap-2 sm:gap-3 px-3 py-1.5 border-b border-border last:border-b-0 hover:bg-muted-30",
+                      "px-3 py-1 leading-5 whitespace-pre-wrap break-words hover:bg-muted-50",
                       levelKey === 'error' && "bg-error-light",
                       levelKey === 'warn' && "bg-warning-light",
                     )}
                   >
-                    <span className="shrink-0 text-muted-foreground tabular-nums w-[64px] sm:w-[72px]">
+                    <span className="text-muted-foreground">
                       {new Date(log.timestamp).toLocaleTimeString()}
-                    </span>
-                    <span className={cn(
-                      "shrink-0 w-[52px] sm:w-[56px] uppercase font-semibold tracking-wide text-[10px] leading-5",
-                      getLogLevelColor(levelKey)
-                    )}>
+                    </span>{" "}
+                    <span className={cn("uppercase font-medium tracking-wide", getLogLevelColor(levelKey))}>
                       {levelKey}
-                    </span>
-                    <span className="whitespace-pre-wrap break-words flex-1 min-w-0">{log.message}</span>
+                    </span>{" "}
+                    <span>{log.message}</span>
                   </div>
                 )
               })}

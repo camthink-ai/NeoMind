@@ -664,32 +664,13 @@ impl IsolatedExtension {
         let rt_handle = tokio::runtime::Handle::current();
         self.spawn_receiver_thread(stdout, shutdown_rx, rt_handle, pid);
 
-        // Spawn stderr reader to prevent pipe buffer from filling up and capture logs
+        // Spawn stderr reader to prevent pipe buffer from filling up and capture logs.
+        // Body lives in `capture_stderr_loop` so it can be unit-tested with a
+        // synthetic stream (see `stderr_capture_survives_non_utf8_byte`).
         let extension_id = self.extension_id.clone();
         let log_buffer = self.log_buffer.clone();
         std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(stderr);
-            for line in reader.lines().map_while(Result::ok) {
-                let level = infer_log_level(&line);
-                match level {
-                    "ERROR" | "error" => {
-                        tracing::error!(extension_id = %extension_id, "{}", line);
-                    }
-                    "WARN" | "warning" => {
-                        tracing::warn!(extension_id = %extension_id, "{}", line);
-                    }
-                    _ => {
-                        tracing::info!(extension_id = %extension_id, "{}", line);
-                    }
-                }
-                let timestamp = chrono::Utc::now().timestamp_millis();
-                log_buffer.push(ExtensionLogEntry {
-                    timestamp,
-                    level: level.to_string(),
-                    message: line,
-                });
-            }
+            capture_stderr_loop(BufReader::new(stderr), extension_id, log_buffer);
         });
 
         // Spawn event push task to send events to extension process
@@ -2793,6 +2774,69 @@ fn infer_log_level(line: &str) -> &'static str {
     }
 }
 
+/// Continuously read stderr lines from `reader` into `log_buffer`.
+///
+/// Extracted from the stderr-capture spawn site so the logic can be exercised
+/// with a synthetic `BufRead` in unit tests.
+fn capture_stderr_loop<R: std::io::BufRead>(
+    reader: R,
+    extension_id: String,
+    log_buffer: Arc<LogBuffer>,
+) {
+    // Byte-level splitting instead of `BufRead::lines()`. `lines()` yields
+    // Err(InvalidData) on any non-UTF-8 byte; combined with a `map_while(Result::ok)`
+    // exit that permanently killed the capture thread — freezing the log buffer
+    // at startup output. Native deps (OpenCV/ONNX/ffmpeg/...) write directly to
+    // fd 2 and routinely emit non-UTF-8 bytes during model load, so we read raw
+    // bytes and lossy-convert, and never abort on a single bad line.
+    let mut reader = reader;
+    let mut buf: Vec<u8> = Vec::with_capacity(512);
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) => break, // EOF — child closed stderr
+            Ok(_) => {
+                // Strip trailing CR/LF produced by the splitter.
+                while matches!(buf.last(), Some(b'\n') | Some(b'\r')) {
+                    buf.pop();
+                }
+                if buf.is_empty() {
+                    continue;
+                }
+                let line = String::from_utf8_lossy(&buf).into_owned();
+                let level = infer_log_level(&line);
+                match level {
+                    "ERROR" | "error" => {
+                        tracing::error!(extension_id = %extension_id, "{}", line);
+                    }
+                    "WARN" | "warning" => {
+                        tracing::warn!(extension_id = %extension_id, "{}", line);
+                    }
+                    _ => {
+                        tracing::info!(extension_id = %extension_id, "{}", line);
+                    }
+                }
+                let timestamp = chrono::Utc::now().timestamp_millis();
+                log_buffer.push(ExtensionLogEntry {
+                    timestamp,
+                    level: level.to_string(),
+                    message: line,
+                });
+            }
+            Err(e) => {
+                // Transient read error — keep draining. A single blip must not
+                // freeze the whole log buffer (the old failure mode).
+                tracing::warn!(
+                    extension_id = %extension_id,
+                    error = %e,
+                    "stderr read error, continuing capture"
+                );
+                continue;
+            }
+        }
+    }
+}
+
 impl Drop for IsolatedExtension {
     fn drop(&mut self) {
         if let Ok(mut child) = self.process.try_lock() {
@@ -2868,6 +2912,43 @@ impl Drop for IsolatedExtension {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stderr_capture_survives_non_utf8_byte() {
+        // Regression: the stderr capture loop used `reader.lines().map_while(Result::ok)`.
+        // `BufRead::lines()` yields Err(InvalidData) on any non-UTF-8 byte, and
+        // `map_while(Result::ok)` terminates the whole iteration at the first Err —
+        // silently killing the capture thread. The log buffer then froze at whatever
+        // was collected before the bad byte (i.e. startup output), and no later logs
+        // ever appeared. Native deps (OpenCV/ONNX/ffmpeg/...) write directly to fd 2
+        // and routinely emit non-UTF-8 bytes during model load — right after startup.
+        use std::io::Cursor;
+
+        let mut stream: Vec<u8> = Vec::new();
+        stream.extend_from_slice(b"2026-07-31T00:00:00.000000Z  INFO extension starting\n");
+        stream.extend_from_slice(b"model load warning: [");
+        stream.push(0xFF); // invalid UTF-8 byte — killed the old loop
+        stream.extend_from_slice(b"] check locale\n");
+        stream.extend_from_slice(b"2026-07-31T00:00:01.000000Z  INFO inference ready\n");
+
+        let buffer = Arc::new(LogBuffer::new());
+        capture_stderr_loop(Cursor::new(stream), "test-ext".to_string(), buffer.clone());
+
+        let snapshot = buffer.snapshot();
+        let messages: Vec<&str> = snapshot.iter().map(|e| e.message.as_str()).collect();
+
+        // Pre-bad-byte line must be present.
+        assert!(
+            messages.iter().any(|m| m.contains("extension starting")),
+            "startup line missing: {messages:?}"
+        );
+        // The bug: the line AFTER the non-UTF-8 byte was never captured because the
+        // loop had already died. A passing fix must reach this line.
+        assert!(
+            messages.iter().any(|m| m.contains("inference ready")),
+            "post-non-utf8 line missing — capture thread died at 0xFF: {messages:?}"
+        );
+    }
 
     #[test]
     fn test_config_default() {
