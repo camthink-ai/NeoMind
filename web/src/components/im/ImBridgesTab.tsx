@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Send, Plus, Trash2, Copy, QrCode, Check, X, MessageSquare } from 'lucide-react'
+import { Send, Plus, Trash2, Copy, QrCode, Check, X, MessageSquare, Settings } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -298,7 +298,7 @@ export function ImBridgesTab() {
                         openDetail(bridge)
                       }}
                     >
-                      <QrCode className="h-4 w-4" />
+                      <Settings className="h-4 w-4" />
                     </IconButton>
                     <IconButton
                       size="sm"
