@@ -172,10 +172,20 @@ impl ImRouter {
             }
         };
 
-        // 6) 跑 agent；失败也回错误文本（不静默）。
-        let reply_text = match self.runner.run(&rec.neo_session_id, &m.text).await {
-            Ok(t) => t,
-            Err(e) => format!("（处理失败：{e}）"),
+        // 6) Run agent with a 5-min timeout; surface timeout/failure as the reply
+        //    (English, no silent wait — user gets told instead of hanging).
+        let reply_text = match tokio::time::timeout(
+            std::time::Duration::from_secs(300),
+            self.runner.run(&rec.neo_session_id, &m.text),
+        )
+        .await
+        {
+            Ok(Ok(t)) => t,
+            Ok(Err(e)) => format!("Failed to process: {e}"),
+            Err(_elapsed) => {
+                "Request timed out after 5 minutes. Please try again or simplify your request."
+                    .to_string()
+            }
         };
         if let Err(e) = self.store.touch(&key) {
             tracing::warn!(error=%e, "im_session touch failed");
@@ -463,7 +473,7 @@ mod tests {
 
         let replies = bridge.replies_snapshot();
         assert_eq!(replies.len(), 1, "error reply only (no ack)");
-        assert!(replies[0].1.contains("处理失败"), "error surfaced to user");
+        assert!(replies[0].1.contains("Failed to process"), "error surfaced to user");
     }
 
     // ---- /start invite-bind tests (Task 2) ----
