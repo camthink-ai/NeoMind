@@ -249,7 +249,7 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
 
         {/* Release Notes */}
         {currentUpdateInfo?.body && installStatus === 'idle' && (
-          <div className="max-h-60 overflow-y-auto rounded-md border p-3 text-sm">
+          <div className="max-h-[60vh] overflow-y-auto rounded-md border p-3 text-sm">
             <div className="prose prose-sm dark:prose-invert max-w-none">
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={releaseNotesComponents}>
                 {updateInfo?.body ?? ''}
