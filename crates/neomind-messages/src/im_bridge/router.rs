@@ -4,9 +4,9 @@
 //! Business rules:
 //! - 白名单（allowlist=None 允许所有，生产环境必须配置）
 //! - msg_id 去重（同一 msg_id 只处理一次）
-//! - 平台无关命令（`/reset`、`/help`）在 agent 执行前拦截，不回「思考中」
+//! - 平台无关命令（`/reset`、`/help`）在 agent 执行前拦截，直接回命令文本
 //! - per-chat 串行（同一 chat_id 的消息顺序处理，避免 session 竞态）
-//! - 即时反馈：先回「🤔 思考中…」，agent 跑完再回结果（单条消息产生 2 条回复）
+//! - 直接回复：agent 跑完后只回 1 条结果（无中间 ack；中间反馈用固定中文不合适多语言用户）
 //! - 会话复用：首次入站向 runner 要真 session_id 并存映射，后续复用
 
 use super::*;
@@ -115,7 +115,7 @@ impl ImRouter {
             }
         }
 
-        // 3) 平台无关命令（文本前缀识别）——在 agent 执行前拦截，不回「思考中」。
+        // 3) 平台无关命令（文本前缀识别）——在 agent 执行前拦截，直接回命令文本。
         //    `/reset@<botname>` 形式兼容 Telegram 群组 @ 提及。
         //    （`trimmed` 已在 step 0 计算，复用同一份。）
         let key = SessionKey {
@@ -147,12 +147,7 @@ impl ImRouter {
         let lock = self.chat_lock_for(&m.platform, &m.chat_id).await;
         let _g = lock.lock().await;
 
-        // 5) 即时反馈：先回「思考中」，agent 跑完再回结果。
-        if let Some(b) = self.registry.get(&m.platform).await {
-            let _ = b.reply(&m.chat_id, "🤔 思考中…").await;
-        }
-
-        // 6) 会话映射：首次向 runner 要真 session_id 并存映射；后续复用。
+        // 5) 会话映射：首次向 runner 要真 session_id 并存映射；后续复用。
         let rec = match self.store.get(&key) {
             Ok(Some(r)) => r,
             Ok(None) => {
@@ -177,7 +172,7 @@ impl ImRouter {
             }
         };
 
-        // 7) 跑 agent；失败也回错误文本（不静默）。
+        // 6) 跑 agent；失败也回错误文本（不静默）。
         let reply_text = match self.runner.run(&rec.neo_session_id, &m.text).await {
             Ok(t) => t,
             Err(e) => format!("（处理失败：{e}）"),
@@ -186,7 +181,7 @@ impl ImRouter {
             tracing::warn!(error=%e, "im_session touch failed");
         }
 
-        // 8) 出站：回复最终结果。
+        // 7) 出站：直接回复最终结果（无中间 ack）。
         if let Some(bridge) = self.registry.get(&m.platform).await {
             let _ = bridge.reply(&m.chat_id, &reply_text).await;
         }
@@ -291,9 +286,8 @@ mod tests {
             .await;
 
         let replies = bridge.replies_snapshot();
-        assert_eq!(replies.len(), 2, "should send 思考中 + result");
-        assert_eq!(replies[0].1, "🤔 思考中…");
-        assert_eq!(replies[1].1, "echo:hi");
+        assert_eq!(replies.len(), 1, "agent runs → exactly 1 reply (no ack)");
+        assert_eq!(replies[0].1, "echo:hi");
         assert_eq!(runner.creates(), 1, "first inbound creates a session");
     }
 
@@ -320,8 +314,8 @@ mod tests {
         let replies = bridge.replies_snapshot();
         assert_eq!(
             replies.len(),
-            2,
-            "second same-msg_id message deduped (only first processed → 2 replies total)"
+            1,
+            "second same-msg_id message deduped (only first processed → 1 reply total)"
         );
     }
 
@@ -428,9 +422,9 @@ mod tests {
                 })
                 .await;
         }
-        // 3 messages × 2 replies each = 6
+        // 3 messages × 1 reply each = 3
         let replies = bridge.replies_snapshot();
-        assert_eq!(replies.len(), 6, "3 messages → 6 replies");
+        assert_eq!(replies.len(), 3, "3 messages → 3 replies");
         assert_eq!(
             runner.creates(),
             1,
@@ -468,8 +462,8 @@ mod tests {
             .await;
 
         let replies = bridge.replies_snapshot();
-        assert_eq!(replies.len(), 2, "思考中 + error reply");
-        assert!(replies[1].1.contains("处理失败"), "error surfaced to user");
+        assert_eq!(replies.len(), 1, "error reply only (no ack)");
+        assert!(replies[0].1.contains("处理失败"), "error surfaced to user");
     }
 
     // ---- /start invite-bind tests (Task 2) ----
@@ -884,15 +878,14 @@ mod e2e_tests {
         })
         .await;
 
-        // Assert: both the “思考中” ack and the echo result arrived.
-        let replies = wait_for_replies(&bridge, 2, 2000).await;
+        // Assert: the echo result arrived (single direct reply, no ack).
+        let replies = wait_for_replies(&bridge, 1, 2000).await;
         assert_eq!(
             replies.len(),
-            2,
-            "EventBus→router→bridge should produce 思考中 + echo:hello, got: {replies:?}"
+            1,
+            "EventBus→router→bridge should produce echo:hello, got: {replies:?}"
         );
-        assert_eq!(replies[0].1, "🤔 思考中…");
-        assert_eq!(replies[1].1, "echo:hello");
+        assert_eq!(replies[0].1, "echo:hello");
         assert_eq!(
             replies[0].0, "123",
             "reply addressed to the originating chat_id"
@@ -903,7 +896,7 @@ mod e2e_tests {
     #[tokio::test]
     async fn e2e_dedup_same_msg_id_through_eventbus() {
         // Same msg_id published twice through the bus should still yield only
-        // the first pair (思考中 + echo) — the second event is deduped inside
+        // the first reply (echo) — the second event is deduped inside
         // handle_inbound by the `seen` set, proving dedup survives the
         // EventBus hop.
         let bus = EventBus::new();
@@ -933,19 +926,18 @@ mod e2e_tests {
             .await;
         }
 
-        // Wait for the first event's pair, then give the second event a short
+        // Wait for the first event's reply, then give the second event a short
         // grace window to be (deduped and) observed as a no-op.
-        let _ = wait_for_replies(&bridge, 2, 2000).await;
+        let _ = wait_for_replies(&bridge, 1, 2000).await;
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
         let final_replies = bridge.replies_snapshot();
         assert_eq!(
             final_replies.len(),
-            2,
-            "duplicate msg_id via EventBus must dedup (2 replies total, not 4), got: {final_replies:?}"
+            1,
+            "duplicate msg_id via EventBus must dedup (1 reply total, not 2), got: {final_replies:?}"
         );
-        assert_eq!(final_replies[0].1, "🤔 思考中…");
-        assert_eq!(final_replies[1].1, "echo:dup");
+        assert_eq!(final_replies[0].1, "echo:dup");
     }
 
     // ---- /start invite-bind through the full EventBus pipeline (Task 9) ----
@@ -1058,21 +1050,17 @@ mod e2e_tests {
             timestamp: 3,
         })
         .await;
-        // 1 (bind) + 2 (思考中 + echo:hello) = 3 total replies.
-        let final_replies = wait_for_replies(&bridge, 3, 2000).await;
+        // 1 (bind) + 1 (echo:hello) = 2 total replies.
+        let final_replies = wait_for_replies(&bridge, 2, 2000).await;
         assert_eq!(
             final_replies.len(),
-            3,
-            "post-bind normal message must pass allowlist → 思考中 + echo, got: {final_replies:?}"
+            2,
+            "post-bind normal message must pass allowlist → echo, got: {final_replies:?}"
         );
-        // Last two are the post-bind pair.
+        // Last one is the post-bind echo.
         assert_eq!(
-            final_replies[1].1, "🤔 思考中…",
-            "second reply should be the 思考中 ack"
-        );
-        assert_eq!(
-            final_replies[2].1, "echo:hello",
-            "third reply should be the agent echo result"
+            final_replies[1].1, "echo:hello",
+            "second reply should be the agent echo result"
         );
     }
 
