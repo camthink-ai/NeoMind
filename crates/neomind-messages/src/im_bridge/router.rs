@@ -172,7 +172,7 @@ impl ImRouter {
             }
         };
 
-        // 6) Run agent with a 5-min timeout; surface timeout/failure as the reply
+        // 6) Run agent with a 10-min timeout; surface timeout/failure as the reply
         //    (English, no silent wait — user gets told instead of hanging).
         let reply_text = match tokio::time::timeout(
             std::time::Duration::from_secs(600),
@@ -183,7 +183,7 @@ impl ImRouter {
             Ok(Ok(t)) => t,
             Ok(Err(e)) => format!("Failed to process: {e}"),
             Err(_elapsed) => {
-                "Request timed out after 5 minutes. Please try again or simplify your request."
+                "Request timed out after 10 minutes. Please try again or simplify your request."
                     .to_string()
             }
         };
