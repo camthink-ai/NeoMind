@@ -297,6 +297,8 @@
     "create": "Create",
     "status": "Status",
     "connected": "Connected",
+    "configured": "Configured",
+    "notConfigured": "Not configured",
     "manage": "Manage",
     "back": "Back",
     "detailDesc": "Generate invites to bind chats, and manage the allowlist.",

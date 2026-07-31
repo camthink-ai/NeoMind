@@ -297,6 +297,8 @@
     "create": "创建",
     "status": "状态",
     "connected": "已连接",
+    "configured": "已配置",
+    "notConfigured": "未配置",
     "manage": "管理",
     "back": "返回",
     "detailDesc": "生成邀请以绑定会话，并管理白名单。",

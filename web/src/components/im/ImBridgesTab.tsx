@@ -16,7 +16,7 @@ import { api, type ImBridge, type ImInvite, type ImInviteCreated } from '@/lib/a
 import { cn } from '@/lib/utils'
 import { IM_PLATFORMS, getPlatformDef, type ImPlatformDef, type ImPlatformField } from './platforms'
 
-type View = 'list' | 'detail' | 'configure' | 'picker'
+type View = 'list' | 'detail' | 'configure'
 
 /** Display name for a platform id, resolved from the registry (falls back to capitalized id). */
 function platformDisplayName(platform: string, t: TFunction): string {
@@ -219,44 +219,7 @@ export function ImBridgesTab() {
     return <LoadingState variant="page" text={t('common:loading', { defaultValue: 'Loading...' })} />
   }
 
-  // ========== CONFIGURE-PLATFORM VIEW (add-flow step 2) ==========
-  // ========== PICKER VIEW (add another bridge) ==========
-  if (view === 'picker') {
-    const available = IM_PLATFORMS.filter(p => p.available)
-    return (
-      <>
-        <ListToolbar
-          onBack={() => setView('list')}
-          backLabel={t('settings:im.back', { defaultValue: 'Back' })}
-          icon={<Plus className="h-5 w-5" />}
-          iconBg="bg-info-light text-info"
-          title={t('settings:im.selectPlatform')}
-          description={t('settings:im.addBridgeDesc')}
-        />
-        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
-          {available.map(def => {
-            const PlatformIcon = def.icon
-            return (
-              <Card key={def.id} className="cursor-pointer transition-all duration-200 hover:shadow-md" onClick={() => handlePlatformSelect(def)}>
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', def.iconBg)}>
-                      <PlatformIcon className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <CardTitle className="text-base truncate">{t(def.nameKey)}</CardTitle>
-                      <CardDescription className="mt-1 text-xs line-clamp-1">{t(def.descriptionKey)}</CardDescription>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      </>
-    )
-  }
-
+  // ========== CONFIGURE VIEW (add-flow step 2) ==========
   if (view === 'configure' && selectedPlatform) {
     const PlatformIcon = selectedPlatform.icon
     return (
@@ -284,79 +247,48 @@ export function ImBridgesTab() {
   }
 
   // ========== LIST VIEW ==========
+  // Every available platform is always rendered as a card; its badge reflects
+  // whether a bridge is already configured. Click a configured card to open
+  // its detail view; click an unconfigured card to enter the configure form.
+  // Platforms are the fixed axis (not bridges), so the grid no longer branches
+  // on bridges.length — a freshly-installed server shows all platforms up
+  // front instead of an empty-state middleman.
   if (view === 'list') {
-    if (bridges.length === 0) {
-      // No bridges yet — show the platform-card picker directly as the home
-      // view, so users see available platforms immediately (matching the LLM
-      // tab's pattern) instead of going through an empty-state middleman.
-      const available = IM_PLATFORMS.filter(p => p.available)
-      return (
-        <>
-          <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
-            {available.map(def => {
-              const PlatformIcon = def.icon
-              return (
-                <Card
-                  key={def.id}
-                  className="cursor-pointer transition-all duration-200 hover:shadow-md"
-                  onClick={() => handlePlatformSelect(def)}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-start gap-3">
-                      <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', def.iconBg)}>
-                        <PlatformIcon className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <CardTitle className="text-base truncate min-w-0">{t(def.nameKey)}</CardTitle>
-                        <CardDescription className="mt-1 text-xs line-clamp-1">
-                          {t(def.descriptionKey)}
-                        </CardDescription>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
-        </>
-      )
-    }
-
+    const available = IM_PLATFORMS.filter(p => p.available)
     return (
-      <>
-        <div className="flex justify-end mb-3">
-          <Button variant="outline" size="sm" className="gap-2" onClick={() => setView('picker')}>
-            <Plus className="h-4 w-4" />
-            {t('settings:im.addBridge', { defaultValue: 'Add bridge' })}
-          </Button>
-        </div>
-        <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
-          {bridges.map(bridge => {
-            const st = statusBadge(bridge.status)
-            const def = getPlatformDef(bridge.platform)
-            const PlatformIcon = def?.icon ?? Send
-            const iconBg = def?.iconBg ?? 'bg-info-light text-info'
-            return (
-              <Card
-                key={bridge.id}
-                className="cursor-pointer transition-all duration-200 hover:shadow-md"
-                onClick={() => openDetail(bridge)}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-start gap-3">
-                    <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', iconBg)}>
-                      <PlatformIcon className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <CardTitle className="text-base truncate min-w-0">{platformDisplayName(bridge.platform, t)}</CardTitle>
-                        <Badge className={cn('text-xs border shrink-0', st.className)}>{st.label}</Badge>
-                      </div>
-                      <CardDescription className="mt-1 text-xs line-clamp-1">
-                        {t(def?.descriptionKey ?? 'settings:im.platformFixed')}
-                      </CardDescription>
-                    </div>
+      <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
+        {available.map(def => {
+          const PlatformIcon = def.icon
+          const bridge = bridges.find(b => b.platform === def.id)
+          const st = bridge ? statusBadge(bridge.status) : null
+          return (
+            <Card
+              key={def.id}
+              className="cursor-pointer transition-all duration-200 hover:shadow-md"
+              onClick={() => (bridge ? openDetail(bridge) : handlePlatformSelect(def))}
+            >
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <div className={cn('flex items-center justify-center h-10 w-10 rounded-lg shrink-0', def.iconBg)}>
+                    <PlatformIcon className="h-5 w-5" />
                   </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <CardTitle className="text-base truncate min-w-0">{t(def.nameKey)}</CardTitle>
+                      {bridge && st ? (
+                        <Badge className={cn('text-xs border shrink-0', st.className)}>{st.label}</Badge>
+                      ) : (
+                        <Badge className="text-xs border shrink-0 bg-muted-30 text-muted-foreground border-border">
+                          {t('settings:im.notConfigured')}
+                        </Badge>
+                      )}
+                    </div>
+                    <CardDescription className="mt-1 text-xs line-clamp-1">
+                      {t(def.descriptionKey)}
+                    </CardDescription>
+                  </div>
+                </div>
+                {bridge && (
                   <div className="mt-3 flex items-center justify-end gap-1">
                     <IconButton
                       size="sm"
@@ -380,12 +312,12 @@ export function ImBridgesTab() {
                       <Trash2 className="h-4 w-4" />
                     </IconButton>
                   </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      </>
+                )}
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
     )
   }
 
