@@ -257,13 +257,11 @@ export function AboutTab() {
   const handleCheckForUpdates = async () => {
     setCheckingUpdate(true)
     try {
+      // checkUpdate() handles both outcomes itself: on "available" it opens
+      // the update dialog, on "up to date" it fires onUpToDate (→ showSuccess).
+      // Re-checking + toasting here fired the "already up to date" toast a
+      // second time, so only surface errors here.
       await checkUpdate()
-      const latestInfo = useAppStore.getState().updateInfo
-      if (!latestInfo?.available) {
-        showSuccess(t("settings:alreadyUpToDate"))
-      } else {
-        setUpdateDialogOpen(true)
-      }
     } catch (error) {
       console.error("[AboutTab] checkUpdate error:", error)
       handleError(error, { operation: "Check for updates" })
