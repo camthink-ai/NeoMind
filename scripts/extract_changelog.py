@@ -7,7 +7,8 @@ Single source of truth for NeoMind's three release-note channels:
 
 The short mode renders a scannable summary from structures you already write:
   * the lead paragraph under the `## [x.y.z]` header, and
-  * the first bullet of each `### Subsection` (the `**bold lead-in**` style).
+  * the **bold lead-in** of the first bullet in each `### Subsection` (a clean
+    one-line headline per area — never mid-sentence truncation).
 If a section contains an explicit `### Highlights` block, its bullets are used
 verbatim (override) — handy on big releases where you want tight control over
 the one-screen summary.
@@ -32,8 +33,7 @@ import sys
 REPO_URL = os.environ.get("NEOMIND_REPO_URL", "https://github.com/camthink-ai/NeoMind")
 
 SHORT_BUDGET = 1500  # keep OTA dialog / Discord embed compact
-LEAD_BUDGET = 320
-BULLET_BUDGET = 140
+LEAD_BUDGET = 360  # lead paragraph; capped at a sentence boundary
 
 
 def find_section(text: str, version: str):
@@ -77,18 +77,20 @@ def parse_section(body: str):
     return lead_text, subs
 
 
-def _cap(s: str, n: int) -> str:
-    """Collapse whitespace and cap to n chars with an ellipsis."""
-    s = re.sub(r"\s+", " ", s).strip()
-    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+def _cap_sentence(text: str, budget: int) -> str:
+    """Cap at a sentence boundary when possible; ellipsis only as a last resort."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= budget:
+        return text
+    upto = text[:budget]
+    stop = max(upto.rfind(". "), upto.rfind("! "), upto.rfind("? "))
+    if stop > budget * 0.5:  # only cut at a sentence end if it's reasonably far in
+        return upto[: stop + 1].strip()
+    return upto.rstrip() + "…"
 
 
 def _first_bullet(lines) -> str | None:
-    """First bullet, joining indented continuation lines into one string.
-
-    No sentence splitting — a naive splitter breaks on abbreviations like
-    "e.g." / "i.e.". BULLET_BUDGET caps with an ellipsis instead.
-    """
+    """First bullet, joining indented continuation lines into one string."""
     for idx, bl in enumerate(lines):
         s = bl.strip()
         if not s.startswith("- "):
@@ -105,9 +107,17 @@ def _first_bullet(lines) -> str | None:
     return None
 
 
-def _debold(s: str) -> str:
-    # "**Bold lead-in**: rest" -> "Bold lead-in: rest" (keep whatever follows verbatim)
-    return re.sub(r"^\*\*(.+?)\*\*", r"\1", s).strip()
+def _headline(lines) -> str | None:
+    """One-line headline for a subsection: the **bold lead-in** of its first
+    bullet, else the first few words. Never truncates mid-sentence/word, so the
+    summary never reads like cut-off text."""
+    fb = _first_bullet(lines)
+    if not fb:
+        return None
+    m = re.match(r"\*\*(.+?)\*\*", fb)
+    if m:
+        return m.group(1).strip()
+    return " ".join(re.sub(r"\s+", " ", fb).split()[:7]).rstrip(",.;:—").strip()
 
 
 def build_short(version: str, date: str, lead: str, subs) -> str:
@@ -121,14 +131,16 @@ def build_short(version: str, date: str, lead: str, subs) -> str:
     if highlights:
         cands = [b.rstrip() for b in highlights if b.strip().startswith("-")]
     else:
+        # One clean headline per subsection (bold lead-in, else first few words).
+        # No per-line truncation — each bullet is a complete short phrase.
         cands = [
-            f"- **{n}**: {_cap(_debold(_first_bullet(bl)), BULLET_BUDGET)}"
+            f"- **{n}**: {_headline(bl)}"
             for n, bl in subs
-            if _first_bullet(bl)
+            if _headline(bl)
         ]
 
     # Fit as many bullets as the budget allows (reserve title + lead + link).
-    lead_line = _cap(lead, LEAD_BUDGET) if lead else ""
+    lead_line = _cap_sentence(lead, LEAD_BUDGET) if lead else ""
     overhead = len(title) + 2 + len(link) + 2 + (len(lead_line) + 2 if lead_line else 0)
 
     chosen, used, truncated = [], overhead, False
