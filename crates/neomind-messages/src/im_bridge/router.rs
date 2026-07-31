@@ -175,7 +175,7 @@ impl ImRouter {
         // 6) Run agent with a 5-min timeout; surface timeout/failure as the reply
         //    (English, no silent wait — user gets told instead of hanging).
         let reply_text = match tokio::time::timeout(
-            std::time::Duration::from_secs(300),
+            std::time::Duration::from_secs(600),
             self.runner.run(&rec.neo_session_id, &m.text),
         )
         .await
