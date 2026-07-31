@@ -19,12 +19,13 @@ on:
           - debug
         default: test
 
-# 正式发布时自动触发（创建 tag 或 release 时）
+# 正式发布时由 tag push 触发。不要加 `release: published`:
+#  ① release 事件时 github.ref 是默认分支而非 tag,release job 的
+#     `if: contains(github.ref, 'refs/tags/')` 守门会被跳过,白跑一次;
+#  ② 若 release 由 UI/PAT 发布,还会叠加 release-notify 双发 Discord。
   push:
     tags:
       - 'v*'
-  release:
-    types: [published]
 
 permissions:
   contents: write

@@ -1,17 +1,22 @@
 name: Release Notify
 
-# Posts a release announcement to the Discord community channel whenever a
-# GitHub Release is published. Requires the `DISCORD_WEBHOOK_URL` repository
-# secret (Discord channel Webhook URL). Optional `DISCORD_ROLE_ID` secret,
-# when set, adds a role ping to the message.
+# Posts a release announcement to the Discord community channel. Triggered by
+# the build workflow's release job (which dispatches us with the tag once the
+# GitHub Release is published); also runnable manually via workflow_dispatch.
+#
+# NOT triggered by `on: release: published`: a release published via the UI or
+# a PAT emits that event and would fire this workflow IN ADDITION to build's
+# explicit dispatch → duplicate Discord posts (hit on v0.9.14: 3 posts).
+# Dispatch is the single trigger source.
+#
+# Requires the `DISCORD_WEBHOOK_URL` repo secret (Discord channel Webhook URL).
+# Optional `DISCORD_ROLE_ID`, when set, adds a role ping to the message.
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag to announce (e.g. v0.8.12)"
+        description: "Release tag to announce (e.g. v0.9.14)"
         required: true
 
 permissions:
