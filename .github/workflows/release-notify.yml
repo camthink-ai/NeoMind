@@ -22,6 +22,11 @@ jobs:
     name: Post to Discord
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout tag (for CHANGELOG extractor)
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ github.event.release.tag_name || inputs.tag_name }}
+
       - name: Resolve release metadata
         id: meta
         env:
@@ -32,34 +37,40 @@ jobs:
         run: |
           tag="${TAG_NAME}"
           url="${HTML_URL:-https://github.com/${GITHUB_REPOSITORY}/releases/tag/${tag}}"
+          VERSION="${tag#v}"
 
-          # When triggered via workflow_dispatch (the build workflow's release
-          # job dispatches us, because a release published with the default
-          # GITHUB_TOKEN does not emit a `release: published` event that
-          # triggers other workflows), github.event.release.* is empty. Fetch
-          # the published release's body + URL ourselves so the Discord embed
-          # keeps the full release notes instead of just the headline.
-          if [ -z "${BODY}" ]; then
-            fetched=$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json body,htmlUrl 2>/dev/null || echo '{}')
-            BODY=$(printf '%s' "${fetched}" | jq -r '.body // ""')
-            fetched_url=$(printf '%s' "${fetched}" | jq -r '.htmlUrl // ""')
-            [ -n "${fetched_url}" ] && url="${fetched_url}"
+          # Prefer the curated SHORT changelog — the same content the OTA
+          # dialog shows, so Discord and the in-app updater stay in sync.
+          # The build workflow dispatches us with the tag; we checked it out
+          # above so CHANGELOG.md + the extractor are present at that ref.
+          NOTES="$(python3 scripts/extract_changelog.py --version "${VERSION}" --mode short 2>/dev/null || true)"
+
+          # Fallback: extractor missing / version not in CHANGELOG -> use the
+          # release body. On workflow_dispatch github.event.release.* is empty
+          # (a release published with the default GITHUB_TOKEN doesn't emit a
+          # `release: published` event that re-triggers workflows), so fetch it.
+          if [ -z "${NOTES}" ]; then
+            if [ -z "${BODY}" ]; then
+              fetched=$(gh release view "${tag}" --repo "${GITHUB_REPOSITORY}" --json body,htmlUrl 2>/dev/null || echo '{}')
+              BODY=$(printf '%s' "${fetched}" | jq -r '.body // ""')
+              fetched_url=$(printf '%s' "${fetched}" | jq -r '.htmlUrl // ""')
+              [ -n "${fetched_url}" ] && url="${fetched_url}"
+            fi
+            NOTES="${BODY}"
           fi
 
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "url=${url}" >> "$GITHUB_OUTPUT"
 
-          # GitHub Actions JSON-in-env vars wrap multi-line strings, so we read
-          # via the environment to keep newlines intact for the JSON payload.
-          export RELEASE_BODY="${BODY}"
+          # Read NOTES via the environment so multi-line newlines survive into
+          # the JSON payload. Truncate well under Discord's 4096 embed cap.
+          export RELEASE_NOTES="${NOTES}"
           python3 - <<'PY'
           import json, os
-          body = os.environ.get("RELEASE_BODY", "") or ""
-          # Discord embed description cap is 4096; truncate the notes summary.
-          summary = body.strip()
-          if len(summary) > 1800:
-              summary = summary[:1797] + "…"
-          # Store as JSON string for safe shell interpolation next step.
+          notes = os.environ.get("RELEASE_NOTES", "") or ""
+          summary = notes.strip()
+          if len(summary) > 1500:
+              summary = summary[:1497] + "…"
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write("EMBED_SUMMARY_JSON=" + json.dumps(summary) + "\n")
           PY

@@ -438,6 +438,22 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      - name: Extract CHANGELOG section
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          # CHANGELOG.md is the single source of truth for release notes.
+          #   short -> OTA updater `notes` field + Discord embed (glanceable)
+          #   full  -> GitHub Release body (long-form)
+          # Falls back to a plain version label so a missing/empty section
+          # never breaks the release pipeline.
+          python3 scripts/extract_changelog.py --version "${VERSION}" --mode short > changelog_short.md || true
+          python3 scripts/extract_changelog.py --version "${VERSION}" --mode full  > changelog_full.md  || true
+          [ -s changelog_short.md ] || echo "NeoMind ${VERSION}" > changelog_short.md
+          [ -s changelog_full.md ]  || echo "## NeoMind ${VERSION}" > changelog_full.md
+          echo "===== OTA/Discord short version ====="; cat changelog_short.md; echo
+          echo "===== release body full version: $(wc -c < changelog_full.md) chars ====="
+
       - name: Generate latest-update.json
         id: update_manifest
         run: |
@@ -511,8 +527,12 @@ jobs:
           }
           EOFJ
 
-            # Validate and pretty-print with jq
-            jq '.' latest-update.json > latest-update-tmp.json && mv latest-update-tmp.json latest-update.json
+            # Validate, pretty-print, and inject the curated short changelog
+            # into the OTA `notes` field (replaces the version-only placeholder).
+            # jq safely JSON-escapes the multi-line notes text.
+            NOTES="$(cat changelog_short.md)"
+            jq --arg notes "${NOTES}" '.notes = $notes' latest-update.json > latest-update-tmp.json \
+              && mv latest-update-tmp.json latest-update.json
 
             echo "✅ Generated latest-update.json with ${FOUND} platforms:"
             cat latest-update.json
@@ -523,8 +543,13 @@ jobs:
         id: notes
         run: |
           VERSION="${GITHUB_REF#refs/tags/v}"
-          cat > release_notes.md << 'EOF'
-          # NeoMind ${{ github.ref_name }}
+          # Lead with the curated CHANGELOG section (single source of truth),
+          # then the downloads/install template. GitHub's auto-generated commit
+          # log (generate_release_notes: true below) appends after the body.
+          cp changelog_full.md release_notes.md
+          cat >> release_notes.md << 'EOF'
+
+          ---
 
           ## Downloads
 
