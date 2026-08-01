@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::agent::tokenizer::truncate_to_tokens;
 use neomind_storage::{AgentMemory, ExecutionRecord};
 
 /// Hard cap on the number of knowledge files an agent may accumulate.
@@ -230,7 +231,8 @@ impl AgentExecutor {
         for f in knowledge_files {
             match store.read_agent_custom_file(agent_id, &f.name) {
                 Ok(content) => {
-                    content_map.insert(f.name.clone(), truncate_to(&content, per_file_limit));
+                    content_map
+                        .insert(f.name.clone(), truncate_to_tokens(&content, per_file_limit));
                 }
                 Err(e) => {
                     tracing::debug!(
@@ -251,12 +253,14 @@ impl AgentExecutor {
     }
 }
 
-/// Per-knowledge-file char cap, sized to the backend's real context length.
+/// Per-knowledge-file TOKEN cap, sized to the backend's real context length.
 ///
 /// Larger context windows can afford larger per-file contributions; small ones
-/// stay conservative. Callers MUST pass the live `max_context_length()`, not the
-/// agent's `context_window_size` knob — that knob is a 1-100 scale and never
-/// reaches these token tiers, which used to leave every file capped at 8000.
+/// stay conservative. Applied via `truncate_to_tokens`, so CJK content is bounded
+/// by tokens, not chars (a 20000-char Chinese file would otherwise be ~36K
+/// tokens). Callers MUST pass the live `max_context_length()`, not the agent's
+/// `context_window_size` knob — that knob is a 1-100 scale and never reaches
+/// these token tiers.
 pub(crate) fn knowledge_per_file_limit(context_tokens: usize) -> usize {
     if context_tokens > 64000 {
         20000

@@ -16,7 +16,7 @@
 
 use neomind_storage::MarkdownMemoryStore;
 
-use crate::agent::tokenizer::estimate_tokens;
+use crate::agent::tokenizer::{estimate_tokens, truncate_to_tokens};
 
 /// Hard character budget for memory context in prompts (user + knowledge + procedures).
 const CHAR_BUDGET: usize = 8000;
@@ -221,40 +221,6 @@ fn cap_to_token_budget(content: &str, max_tokens: usize) -> String {
         return content.to_string();
     }
     truncate_to_tokens(content, max_tokens)
-}
-
-/// Truncate to the longest prefix whose `estimate_tokens` is ≤ `max_tokens`.
-///
-/// `estimate_tokens` is monotonically non-decreasing in prefix length (every
-/// char contributes a positive weight), so a binary search over the char split
-/// point bounds it in ~log(n) measurements.
-fn truncate_to_tokens(s: &str, max_tokens: usize) -> String {
-    if estimate_tokens(s) <= max_tokens {
-        return s.to_string();
-    }
-    let total_chars = s.chars().count();
-    let mut lo: usize = 0;
-    let mut hi: usize = total_chars;
-    while lo < hi {
-        let mid = lo + (hi - lo).div_ceil(2);
-        if estimate_tokens(split_at_char(s, mid)) <= max_tokens {
-            lo = mid;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    split_at_char(s, lo).to_string()
-}
-
-/// Prefix of `s` containing the first `n` Unicode scalar values (UTF-8 safe).
-fn split_at_char(s: &str, n: usize) -> &str {
-    if n == 0 {
-        return "";
-    }
-    match s.char_indices().nth(n) {
-        Some((idx, _)) => &s[..idx],
-        None => s,
-    }
 }
 
 #[cfg(test)]

@@ -125,6 +125,42 @@ pub fn estimate_prompt_tokens(
     tokens + images * IMAGE_TOKEN_ESTIMATE
 }
 
+/// Truncate to the longest prefix whose `estimate_tokens` is ≤ `max_tokens`.
+///
+/// `estimate_tokens` is monotonically non-decreasing in prefix length (every
+/// char contributes a positive weight), so a binary search over the char split
+/// point bounds it in ~log(n) measurements. The canonical token-based truncation
+/// primitive — used wherever content must be capped by token budget rather than
+/// char count (memory snapshot, knowledge files).
+pub fn truncate_to_tokens(s: &str, max_tokens: usize) -> String {
+    if estimate_tokens(s) <= max_tokens {
+        return s.to_string();
+    }
+    let total_chars = s.chars().count();
+    let mut lo: usize = 0;
+    let mut hi: usize = total_chars;
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if estimate_tokens(split_at_char(s, mid)) <= max_tokens {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    split_at_char(s, lo).to_string()
+}
+
+/// Prefix of `s` containing the first `n` Unicode scalar values (UTF-8 safe).
+fn split_at_char(s: &str, n: usize) -> &str {
+    if n == 0 {
+        return "";
+    }
+    match s.char_indices().nth(n) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 /// === P1.2: Relevance-Based Context Selection ===
 ///
 /// Calculate importance score for a message based on multiple factors:
@@ -356,5 +392,25 @@ mod tests {
             tokens < 500,
             "image base64 bytes leaked into the estimate: got {tokens}",
         );
+    }
+
+    #[test]
+    fn truncate_to_tokens_caps_cjk_under_budget() {
+        // 5000 Chinese chars ≈ 9900 tokens — over an 8000-token budget. The
+        // char-based truncate_to would leave all 5000 chars (5000 < 8000),
+        // injecting ~9900 tokens; token-based truncation must cap under budget.
+        let big = "知".repeat(5000);
+        let capped = truncate_to_tokens(&big, 8000);
+        assert!(
+            estimate_tokens(&capped) <= 8000,
+            "exceeded token budget: {}",
+            estimate_tokens(&capped),
+        );
+        assert!(capped.chars().count() < 5000, "should have truncated");
+    }
+
+    #[test]
+    fn truncate_to_tokens_preserves_under_budget_content() {
+        assert_eq!(truncate_to_tokens("hello world", 100), "hello world");
     }
 }
