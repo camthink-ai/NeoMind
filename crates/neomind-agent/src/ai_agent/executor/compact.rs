@@ -3,7 +3,7 @@
 //! Provides token-aware compaction (via neomind-core) with a legacy
 //! count-based fallback for unknown context windows.
 
-use neomind_core::message::{Content, Message, MessageRole};
+use neomind_core::message::Message;
 
 /// Compact executor message history using token-aware compaction from neomind-core.
 ///
@@ -11,17 +11,24 @@ use neomind_core::message::{Content, Message, MessageRole};
 pub(crate) fn compact_executor_messages(messages: &mut Vec<Message>, context_window: usize) {
     use neomind_core::llm::compaction::{compact_messages, CompactionConfig};
 
-    // Unknown or unreasonably large context window → legacy fallback
-    if context_window == 0 || context_window > 1_000_000 {
-        compact_executor_messages_legacy(messages, 10);
-        return;
-    }
+    // Backends that don't report a context size pass 0 (or a nonsensical value).
+    // Assume a conservative 8K window so they still get proper token-aware
+    // compaction — recent-preservation + smart summarization — instead of the
+    // old crude 80-char-per-result mangling that destroyed large tool results.
+    const DEFAULT_CONTEXT_WINDOW: usize = 8192;
+    let effective_window = if context_window == 0 || context_window > 1_000_000 {
+        DEFAULT_CONTEXT_WINDOW
+    } else {
+        context_window
+    };
 
-    let config = CompactionConfig::for_context_size(context_window);
-    let result = compact_messages(messages, &config, context_window);
+    let config = CompactionConfig::for_context_size(effective_window);
+    let result = compact_messages(messages, &config, effective_window);
 
     if result.messages_removed > 0 || result.messages_truncated > 0 {
         tracing::debug!(
+            context_window,
+            effective_window,
             original_tokens = result.original_tokens,
             compacted_tokens = result.compacted_tokens,
             removed = result.messages_removed,
@@ -33,70 +40,39 @@ pub(crate) fn compact_executor_messages(messages: &mut Vec<Message>, context_win
     *messages = result.messages;
 }
 
-/// Legacy count-based compaction fallback.
-///
-/// When the number of non-system messages exceeds `keep_recent * 2`, old tool result
-/// messages are replaced with short summaries. The system prompt (first message) and
-/// the most recent messages are always preserved.
-pub(crate) fn compact_executor_messages_legacy(messages: &mut [Message], keep_recent: usize) {
-    let non_system_count = messages
-        .iter()
-        .filter(|m| m.role != MessageRole::System)
-        .count();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use neomind_core::message::Message;
 
-    let threshold = keep_recent * 2;
-    if non_system_count <= threshold {
-        return;
-    }
-
-    let to_compact = non_system_count.saturating_sub(keep_recent);
-    if to_compact == 0 {
-        return;
-    }
-
-    tracing::debug!(
-        total_messages = messages.len(),
-        non_system = non_system_count,
-        to_compact,
-        "Compacting executor messages (legacy)"
-    );
-
-    let mut compacted_count = 0usize;
-    let mut i = 1; // Skip system prompt at index 0
-    while i < messages.len() && compacted_count < to_compact {
-        if messages[i].role == MessageRole::User {
-            let text = messages[i].content.as_text();
-            if text.starts_with("Skill guide retrieved") {
-                let summary = if text.len() > 100 {
-                    let preview = &text[..text.floor_char_boundary(80)];
-                    format!("[Previous tool result: {}...]", preview)
-                } else {
-                    format!("[Previous tool result: {}]", text)
-                };
-                messages[i].content = Content::text(summary);
-                compacted_count += 1;
-            } else {
-                compacted_count += 1;
-            }
-        } else if messages[i].role == MessageRole::Tool {
-            let text = messages[i].content.as_text();
-            let summary = if text.len() > 100 {
-                let preview = &text[..text.floor_char_boundary(80)];
-                format!("[Previous tool result: {}...]", preview)
-            } else {
-                format!("[Previous tool result: {}]", text)
-            };
-            messages[i].content = Content::text(summary);
-            compacted_count += 1;
-        } else if messages[i].role == MessageRole::Assistant {
-            let text = messages[i].content.as_text();
-            if text.len() > 200 {
-                let preview = &text[..text.floor_char_boundary(100)];
-                messages[i].content =
-                    Content::text(format!("[Previous reasoning: {}...]", preview));
-            }
-            compacted_count += 1;
+    /// `context_window = 0` means the backend didn't report a size. The legacy
+    /// fallback used to replace old tool results with
+    /// `"[Previous tool result: {first 80 chars}...]"`, destroying all but 80
+    /// chars of a large result once the message count crossed its keep_recent*2
+    /// (=20) threshold. Routing unknown windows through the token-aware good path
+    /// instead leaves a fitting history intact — no 80-char mangling.
+    #[test]
+    fn unknown_window_does_not_degrade_large_tool_result_to_80_chars() {
+        let marker = "Z".repeat(2000);
+        let mut messages = vec![Message::system("system")];
+        // Oldest non-system message is a large tool result.
+        messages.push(Message::tool_result("tool", marker.as_str()));
+        // 20 more user messages → 21 non-system, past the legacy count threshold.
+        for i in 0..20 {
+            messages.push(Message::user(format!("step {i}")));
         }
-        i += 1;
+        assert!(messages.len() >= 22);
+
+        compact_executor_messages(&mut messages, 0);
+
+        let z_surviving: usize = messages
+            .iter()
+            .map(|m| m.content.as_text().matches('Z').count())
+            .sum();
+        assert!(
+            z_surviving > 80,
+            "unknown-window compaction degraded to an 80-char preview \
+             (only {z_surviving} of 2000 marker chars survived)",
+        );
     }
 }

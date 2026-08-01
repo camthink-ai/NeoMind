@@ -215,7 +215,7 @@ impl AgentExecutor {
         &self,
         agent_id: &str,
         knowledge_files: &[neomind_storage::KnowledgeFileRef],
-        context_window_size: usize,
+        context_tokens: usize,
     ) -> Option<std::collections::HashMap<String, String>> {
         if knowledge_files.is_empty() {
             return None;
@@ -223,14 +223,8 @@ impl AgentExecutor {
 
         let store = self.memory_store.as_ref()?;
 
-        // Per-file cap (unchanged): bounds each individual file's contribution.
-        let per_file_limit = if context_window_size > 64000 {
-            20000
-        } else if context_window_size > 16000 {
-            16000
-        } else {
-            8000
-        };
+        // Per-file cap sized to the backend's real context length.
+        let per_file_limit = knowledge_per_file_limit(context_tokens);
 
         let mut content_map = std::collections::HashMap::new();
         for f in knowledge_files {
@@ -254,5 +248,40 @@ impl AgentExecutor {
         } else {
             Some(content_map)
         }
+    }
+}
+
+/// Per-knowledge-file char cap, sized to the backend's real context length.
+///
+/// Larger context windows can afford larger per-file contributions; small ones
+/// stay conservative. Callers MUST pass the live `max_context_length()`, not the
+/// agent's `context_window_size` knob — that knob is a 1-100 scale and never
+/// reaches these token tiers, which used to leave every file capped at 8000.
+pub(crate) fn knowledge_per_file_limit(context_tokens: usize) -> usize {
+    if context_tokens > 64000 {
+        20000
+    } else if context_tokens > 16000 {
+        16000
+    } else {
+        8000
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `prefetch_knowledge_files` receives the live backend's real context length
+    /// (in tokens), so these per-file tiers must actually be reachable. With the
+    /// old wiring the callers passed the 1-100 `context_window_size` knob, so the
+    /// 16K/64K branches were dead and every file was capped at 8000.
+    #[test]
+    fn knowledge_per_file_limit_scales_with_real_context_tokens() {
+        assert_eq!(knowledge_per_file_limit(0), 8000);
+        assert_eq!(knowledge_per_file_limit(8000), 8000);
+        assert_eq!(knowledge_per_file_limit(16000), 8000); // not > 16000
+        assert_eq!(knowledge_per_file_limit(20000), 16000);
+        assert_eq!(knowledge_per_file_limit(64000), 16000); // not > 64000
+        assert_eq!(knowledge_per_file_limit(128000), 20000);
     }
 }

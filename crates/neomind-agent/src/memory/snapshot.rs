@@ -16,8 +16,16 @@
 
 use neomind_storage::MarkdownMemoryStore;
 
+use crate::agent::tokenizer::estimate_tokens;
+
 /// Hard character budget for memory context in prompts (user + knowledge + procedures).
 const CHAR_BUDGET: usize = 8000;
+
+/// Token budget for the memory snapshot. The snapshot is injected into every
+/// prompt, so it must stay a bounded fraction of context. A char budget alone
+/// balloons for CJK (8000 chars ≈ 15K tokens) and would dominate small windows,
+/// so the snapshot is also capped to this many tokens after the char-budget pass.
+const SNAPSHOT_TOKEN_BUDGET: usize = 2048;
 
 /// Frozen memory snapshot loaded once per session.
 #[derive(Debug, Clone)]
@@ -54,6 +62,11 @@ impl MemorySnapshot {
                 truncated
             }
         };
+
+        // Enforce a token budget so CJK-heavy snapshots don't balloon: 8000 chars
+        // of Chinese is ~15K tokens, which would dominate a small context window.
+        // Keeps the prefix, so the highest-priority User section survives intact.
+        let content = cap_to_token_budget(&content, SNAPSHOT_TOKEN_BUDGET);
 
         Self { content }
     }
@@ -198,6 +211,52 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     chars[..limit].iter().collect()
 }
 
+/// Cap `content` to at most `max_tokens` tokens (via `estimate_tokens`).
+///
+/// Content under the budget passes through unchanged. Over-budget content is
+/// truncated to a prefix — the snapshot lists User first (highest priority),
+/// then Knowledge, then Procedures, so a prefix cut preserves the important bits.
+fn cap_to_token_budget(content: &str, max_tokens: usize) -> String {
+    if estimate_tokens(content) <= max_tokens {
+        return content.to_string();
+    }
+    truncate_to_tokens(content, max_tokens)
+}
+
+/// Truncate to the longest prefix whose `estimate_tokens` is ≤ `max_tokens`.
+///
+/// `estimate_tokens` is monotonically non-decreasing in prefix length (every
+/// char contributes a positive weight), so a binary search over the char split
+/// point bounds it in ~log(n) measurements.
+fn truncate_to_tokens(s: &str, max_tokens: usize) -> String {
+    if estimate_tokens(s) <= max_tokens {
+        return s.to_string();
+    }
+    let total_chars = s.chars().count();
+    let mut lo: usize = 0;
+    let mut hi: usize = total_chars;
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        if estimate_tokens(split_at_char(s, mid)) <= max_tokens {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    split_at_char(s, lo).to_string()
+}
+
+/// Prefix of `s` containing the first `n` Unicode scalar values (UTF-8 safe).
+fn split_at_char(s: &str, n: usize) -> &str {
+    if n == 0 {
+        return "";
+    }
+    match s.char_indices().nth(n) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,6 +272,32 @@ mod tests {
     #[test]
     fn test_char_budget_is_8000() {
         assert_eq!(CHAR_BUDGET, 8000);
+    }
+
+    /// CJK content balloons under token accounting: 3000 Chinese chars ≈ 5400+
+    /// tokens under `estimate_tokens`. A char-only budget lets non-ASCII memory
+    /// dominate every prompt, so the snapshot must also enforce a token cap.
+    #[test]
+    fn cap_to_token_budget_truncates_cjk_under_budget() {
+        let big = format!("## Knowledge\n{}\n", "知".repeat(3000));
+        let capped = cap_to_token_budget(&big, SNAPSHOT_TOKEN_BUDGET);
+        let tokens = crate::agent::tokenizer::estimate_tokens(&capped);
+        assert!(
+            tokens <= SNAPSHOT_TOKEN_BUDGET,
+            "token cap failed: {tokens} > {SNAPSHOT_TOKEN_BUDGET}",
+        );
+        assert!(
+            capped.chars().count() < big.chars().count(),
+            "over-budget content should have been truncated",
+        );
+    }
+
+    /// Small content under the budget passes through unchanged.
+    #[test]
+    fn cap_to_token_budget_preserves_small_content() {
+        let small = "## User\nhello world\n".to_string();
+        let capped = cap_to_token_budget(&small, SNAPSHOT_TOKEN_BUDGET);
+        assert_eq!(capped, small, "small content must pass through unchanged");
     }
 
     #[tokio::test(flavor = "multi_thread")]

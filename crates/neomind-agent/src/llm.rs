@@ -1857,21 +1857,15 @@ impl LlmInterface {
         // consume all num_predict tokens on thinking alone, producing no content.
         // Observed: qwen3.5:2b with prompt_eval=32259, eval=32768, content=0.
         let thinking_enabled = if thinking_enabled == Some(true) {
-            let hist_chars: usize = history
-                .map(|h| {
-                    h.iter()
-                        .map(|m| match &m.content {
-                            neomind_core::Content::Text(s) => s.len(),
-                            neomind_core::Content::Parts(parts) => {
-                                parts.iter().map(|p| format!("{:?}", p).len()).sum()
-                            }
-                        })
-                        .sum()
-                })
-                .unwrap_or(0);
-            let total_chars = hist_chars + system_prompt.len() + user_message.len();
-            // Rough estimate: mixed Chinese/English ≈ 0.8 tokens/char
-            let estimated_tokens = (total_chars as f64 * 0.8) as usize;
+            // Size the prompt with the same estimator the budget math uses, so the
+            // guard reflects real token density — not a bytes*0.8 approximation
+            // that over-counted English (~3×) and tripped the guard far too
+            // eagerly on text-heavy prompts.
+            let estimated_tokens = crate::agent::tokenizer::estimate_prompt_tokens(
+                history.unwrap_or(&[]),
+                &system_prompt,
+                &user_message,
+            );
 
             if estimated_tokens > 18000 {
                 tracing::info!(

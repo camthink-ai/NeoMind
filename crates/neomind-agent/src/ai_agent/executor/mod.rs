@@ -550,7 +550,7 @@ impl AgentExecutor {
         let knowledge_content = self.prefetch_knowledge_files(
             &agent.id,
             &agent.memory.knowledge_files,
-            agent.context_window_size,
+            llm_runtime.max_context_length(),
         );
 
         let system_prompt = tool_prompt::build_tool_system_prompt(
