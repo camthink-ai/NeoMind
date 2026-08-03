@@ -1,0 +1,67 @@
+{
+  "id": "dashboard-live-binding",
+  "description": "Dashboard component bound to device metric + real MQTT telemetry → live WS DeviceMetric reaches the widget's data spine",
+  "setup": {
+    "extras": {
+      "device_types": [
+        {
+          "device_type": "env_sensor",
+          "name": "Env Sensor",
+          "metrics": [
+            { "name": "temperature", "data_type": "Float", "unit": "C" }
+          ]
+        }
+      ],
+      "devices": [
+        {
+          "device_type": "env_sensor",
+          "device_id": "mqtt-temp-005",
+          "name": "Mqtt Dashboard Device",
+          "adapter_type": "mqtt",
+          "connection_config": {
+            "telemetry_topic": "device/env_sensor/mqtt-temp-005/uplink"
+          }
+        }
+      ],
+      "dashboards": [
+        {
+          "name": "Live Temp Board",
+          "layout": { "columns": 12, "rows": "auto", "breakpoints": { "lg": 12, "md": 6, "sm": 4, "xs": 2 } },
+          "components": [
+            {
+              "id": "comp-temp",
+              "type": "chart",
+              "title": "Temperature",
+              "position": { "x": 0, "y": 0, "w": 6, "h": 4 },
+              "data_source": {
+                "type": "telemetry",
+                "source": "device",
+                "id": "mqtt-temp-005",
+                "field": "temperature",
+                "sourceId": "device:mqtt-temp-005",
+                "metricId": "temperature"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "action": {
+    "type": "mqtt_publish",
+    "device_id": "mqtt-temp-005",
+    "device_type": "env_sensor",
+    "payload": { "temperature": 21.0 }
+  },
+  "asserts": [
+    { "type": "latest_telemetry", "params": { "device_id": "mqtt-temp-005", "metric": "temperature" }, "expected": 21.0 },
+    { "type": "dashboard_component_bound", "params": { "name": "Live Temp Board", "device_id": "mqtt-temp-005", "metric": "temperature" }, "expected": true }
+  ],
+  "ws_asserts": [
+    {
+      "type": "DeviceMetric",
+      "match": { "data.device_id": "mqtt-temp-005", "data.metric": "temperature", "data.value": 21.0 },
+      "timeout": 10
+    }
+  ]
+}

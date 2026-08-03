@@ -1,0 +1,63 @@
+{
+  "id": "rule-on-real-mqtt",
+  "description": "Real MQTT telemetry fires a rule → notify message (bridges agent-eval runtime cases to the real MQTT path)",
+  "setup": {
+    "extras": {
+      "device_types": [
+        {
+          "device_type": "env_sensor",
+          "name": "Env Sensor",
+          "metrics": [
+            { "name": "temperature", "data_type": "Float", "unit": "C" },
+            { "name": "battery_level", "data_type": "Float", "unit": "%" }
+          ]
+        }
+      ],
+      "devices": [
+        {
+          "device_type": "env_sensor",
+          "device_id": "mqtt-temp-003",
+          "name": "Mqtt Rule Device",
+          "adapter_type": "mqtt",
+          "connection_config": {
+            "telemetry_topic": "device/env_sensor/mqtt-temp-003/uplink"
+          }
+        }
+      ],
+      "rules": [
+        {
+          "name": "mqtt-battery-low",
+          "enabled": true,
+          "trigger": { "trigger_type": "data_change" },
+          "condition": {
+            "condition_type": "comparison",
+            "source": "device:mqtt-temp-003:battery_level",
+            "operator": "less_than",
+            "threshold": 20.0
+          },
+          "actions": [
+            { "type": "notify", "message": "battery low: {value}%", "severity": "warning" }
+          ],
+          "cooldown": 60000
+        }
+      ]
+    }
+  },
+  "action": {
+    "type": "mqtt_publish",
+    "device_id": "mqtt-temp-003",
+    "device_type": "env_sensor",
+    "payload": { "battery_level": 15.0 }
+  },
+  "asserts": [
+    { "type": "message_count", "expected_min": 1 },
+    { "type": "rule_exists", "params": { "name": "mqtt-battery-low" }, "expected": true }
+  ],
+  "ws_asserts": [
+    {
+      "type": "DeviceMetric",
+      "match": { "data.device_id": "mqtt-temp-003", "data.metric": "battery_level", "data.value": 15.0 },
+      "timeout": 10
+    }
+  ]
+}
