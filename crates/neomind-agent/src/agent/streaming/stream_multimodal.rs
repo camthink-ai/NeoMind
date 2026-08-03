@@ -16,6 +16,7 @@ use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
 use super::sanitize::sanitize_tool_result_for_prompt;
 use super::stream_core::StreamSafeguards;
+use super::next_chunk_or_timeout;
 use super::tool_detect::detect_json_tool_calls;
 use super::tool_exec::execute_tool_with_retry;
 use crate::agent::tool_parser::{
@@ -157,8 +158,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             last_event_time = Instant::now();
         }
 
-        // Stream the response
-        while let Some(result) = StreamExt::next(&mut stream).await {
+        // Stream the response — bounded next(): a zero-chunk stall force-breaks
+        // the round instead of hanging (same bug fixed in stream_core).
+        while let Some(result) = next_chunk_or_timeout(&mut stream, safeguards.max_stream_duration).await {
             let elapsed = stream_start.elapsed();
 
             if elapsed > safeguards.max_stream_duration {
@@ -431,7 +433,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     // Collect the continuation response — buffer for tool calls
                     let mut cont_buffer = String::new();
                     let mut cont_stream = Box::pin(cont_stream);
-                    while let Some(chunk) = cont_stream.next().await {
+                    while let Some(chunk) =
+                        next_chunk_or_timeout(&mut cont_stream, safeguards.max_stream_duration).await
+                    {
                         match chunk {
                             Ok((text, _)) => cont_buffer.push_str(&text),
                             Err(_) => break,
@@ -542,8 +546,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             match summary_result {
                 Ok(stream) => {
                     let mut pin = Box::pin(stream);
-                    use futures::StreamExt;
-                    while let Some(chunk) = pin.next().await {
+                    while let Some(chunk) =
+                        next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                    {
                         match chunk {
                             Ok((text, _)) => {
                                 final_content.push_str(&text);

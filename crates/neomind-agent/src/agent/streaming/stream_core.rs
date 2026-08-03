@@ -10,6 +10,8 @@ use std::time::{Duration, Instant};
 
 use futures::{Stream, StreamExt};
 
+use super::next_chunk_or_timeout;
+
 use super::context::{
     build_context_window_with_config, build_context_window_with_summary, ToolExecutionResult,
 };
@@ -440,7 +442,9 @@ pub async fn process_stream_events_with_safeguards(
                             match summary_result {
                                 Ok(s) => {
                                     let mut pin = Box::pin(s);
-                                    while let Some(chunk) = pin.next().await {
+                                    while let Some(chunk) =
+                                        next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                                    {
                                         match chunk {
                                             Ok((text, _)) => { yield AgentEvent::content(text); }
                                             Err(_) => break,
@@ -470,7 +474,9 @@ pub async fn process_stream_events_with_safeguards(
             }
 
             // === PHASE 1: Stream initial response (thinking + content + tool calls) ===
-            while let Some(result) = StreamExt::next(&mut stream).await {
+            // Bounded `next()`: a zero-chunk stall (upstream LLM never yields)
+            // force-breaks the round instead of hanging forever.
+            while let Some(result) = next_chunk_or_timeout(&mut stream, safeguards.max_stream_duration).await {
                 let elapsed = stream_start.elapsed();
 
                 // Check timeout with early warning at 80% of max duration
@@ -1177,7 +1183,9 @@ pub async fn process_stream_events_with_safeguards(
                     match summary_result {
                         Ok(stream) => {
                             let mut pin = Box::pin(stream);
-                            while let Some(chunk) = pin.next().await {
+                            while let Some(chunk) =
+                                next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                            {
                                 match chunk {
                                     Ok((text, _)) => {
                                         final_content.push_str(&text);
@@ -1292,7 +1300,9 @@ pub async fn process_stream_events_with_safeguards(
                         Ok(stream) => {
                             let mut summary_content = String::new();
                             let mut pin = Box::pin(stream);
-                            while let Some(chunk) = pin.next().await {
+                            while let Some(chunk) =
+                                next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                            {
                                 match chunk {
                                     Ok((text, _)) => {
                                         summary_content.push_str(&text);
@@ -1370,7 +1380,9 @@ pub async fn process_stream_events_with_safeguards(
                         Ok(retry_stream) => {
                             let mut retry_content = String::new();
                             let mut pin = Box::pin(retry_stream);
-                            while let Some(chunk) = pin.next().await {
+                            while let Some(chunk) =
+                                next_chunk_or_timeout(&mut pin, safeguards.max_stream_duration).await
+                            {
                                 match chunk {
                                     Ok((text, _)) => {
                                         retry_content.push_str(&text);

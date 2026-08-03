@@ -40,9 +40,75 @@ pub use stream_core::{
 pub use stream_multimodal::process_multimodal_stream_events_with_safeguards;
 pub use thinking::cleanup_thinking_content;
 
+/// `StreamExt::next().await` wrapped in `tokio::time::timeout`.
+///
+/// Every LLM stream loop previously did `while let Some(x) = stream.next().await`
+/// with only an *in-loop* elapsed-timeout check. When the upstream stream
+/// stalls (zero chunks — e.g. the LLM backend never yields), `next()` blocks
+/// forever and the in-loop check is never reached, hanging the whole chat/eval
+/// turn. This helper bounds each `next()` so a stall yields `None` and the
+/// loop force-completes instead of hanging.
+///
+/// `Ok(Some(item))` = a chunk arrived; `Ok(None)` = stream ended normally;
+/// `Err(_)` = stalled for `dur` with zero chunks → treat as end of stream.
+pub async fn next_chunk_or_timeout<S>(stream: &mut S, dur: std::time::Duration) -> Option<S::Item>
+where
+    S: futures::Stream + Unpin,
+{
+    match tokio::time::timeout(dur, futures::StreamExt::next(stream)).await {
+        Ok(Some(item)) => Some(item),
+        Ok(None) => None,
+        Err(_elapsed) => {
+            tracing::warn!(
+                "Stream stalled: no chunks for {:?}, forcing completion",
+                dur
+            );
+            None
+        }
+    }
+}
+
 // Re-exports for internal crate use and test access
 pub(crate) use resolve::resolve_cached_arguments;
 pub(crate) use sanitize::{sanitize_tool_result_for_prompt, truncate_result_utf8};
+
+#[cfg(test)]
+mod stall_tests {
+    use super::next_chunk_or_timeout;
+    use std::time::Duration;
+
+    /// A zero-chunk stall (upstream LLM never yields) must force-break via
+    /// the timeout instead of hanging forever. Regression for the 8h hang on
+    /// the `dashboard/components` eval case (stream_core PHASE 1 loop).
+    #[tokio::test]
+    async fn stalled_stream_times_out() {
+        let mut stalled: futures::stream::Pending<Result<(String, bool), &'static str>> =
+            futures::stream::pending();
+        let started = std::time::Instant::now();
+        let got = next_chunk_or_timeout(&mut stalled, Duration::from_millis(50)).await;
+        assert!(got.is_none(), "stalled stream must yield None on timeout");
+        assert!(
+            started.elapsed() >= Duration::from_millis(40),
+            "must actually wait for the timeout, not return instantly"
+        );
+    }
+
+    /// A finite stream still yields normally through the wrapper.
+    #[tokio::test]
+    async fn finite_stream_yields() {
+        let chunks: Vec<Result<(String, bool), &'static str>> = vec![
+            Ok(("hi".to_string(), false)),
+            Ok(("there".to_string(), false)),
+        ];
+        let mut s = futures::stream::iter(chunks);
+        let mut n = 0;
+        while let Some(item) = next_chunk_or_timeout(&mut s, Duration::from_secs(1)).await {
+            assert!(item.is_ok());
+            n += 1;
+        }
+        assert_eq!(n, 2);
+    }
+}
 
 #[cfg(test)]
 use sanitize::{humanize_bytes, is_large_base64_string};
