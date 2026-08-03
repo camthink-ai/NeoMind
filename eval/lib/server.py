@@ -156,6 +156,9 @@ class TestServer:
         self._out_thread = None
         self._err_thread = None
         self.port: int = 0
+        import threading
+        self._log_lines: list[str] = []
+        self._log_lock = threading.Lock()
 
     def spawn(self, startup_timeout: float = 30.0, case_id: Optional[str] = None) -> "TestServer":
         self.tmpdir = tempfile.TemporaryDirectory(prefix="neomind-eval-")
@@ -217,6 +220,8 @@ class TestServer:
                     line = raw.decode("utf-8", errors="replace")
                 except Exception:
                     line = repr(raw)
+                with self._log_lock:
+                    self._log_lines.append(line.rstrip())
                 sys_stderr_write(f"{prefix} {line.rstrip()}\n")
 
         threading.Thread(
@@ -245,6 +250,23 @@ class TestServer:
             f"server never became healthy at {self.api_base} within "
             f"{startup_timeout}s (last error: {last_err})"
         )
+
+    def wait_for_log(self, needle: str, timeout: float = 30.0) -> str | None:
+        """Block until the server's stdout/stderr contains `needle`.
+
+        The embedded MQTT broker and its adapters start asynchronously and can
+        lag ``/health`` going green — publishing telemetry before the adapter
+        has subscribed silently drops the message. This is the deterministic
+        readiness gate for system tests (vs a fixed sleep).
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._log_lock:
+                for line in self._log_lines:
+                    if needle in line:
+                        return line
+            time.sleep(0.2)
+        return None
 
     def shutdown(self):
         if self.process is None:

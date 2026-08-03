@@ -367,6 +367,31 @@ def run_query(q: dict, base: str, key: str) -> dict:
             for a in acts if isinstance(a, dict)
         ] if isinstance(acts, list) else []
         actual = (want in types) if want else (len(types) > 0)
+    elif t == "latest_telemetry":
+        # GET /devices/:id/telemetry?metric=<m>&limit=<n>. The handler flushes
+        # the write buffer before querying (telemetry.rs:243), so the point is
+        # readable immediately after MQTT ingest. Unwrapped response is a dict
+        # keyed by metric → [{timestamp,value},...] (ascending; newest is last).
+        # Reusable by both the agent eval and the eval/system layer.
+        device_id = _sid(params, "device_id")
+        metric = _sid(params, "metric")
+        limit = int(params.get("limit", 10))
+        v = _get_json(base, key, f"/devices/{device_id}/telemetry?metric={metric}&limit={limit}")
+        series = None
+        if isinstance(v, list):
+            series = v
+        elif isinstance(v, dict):
+            series = v.get(metric)
+            if series is None:
+                inner = v.get("data")
+                if isinstance(inner, dict):
+                    series = inner.get(metric)
+                elif isinstance(inner, list):
+                    series = inner
+        actual = None
+        if isinstance(series, list) and series:
+            last = series[-1]
+            actual = last.get("value") if isinstance(last, dict) else last
     else:
         raise ValueError(f"unknown state_query type: {t}")
 

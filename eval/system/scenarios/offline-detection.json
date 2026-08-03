@@ -1,0 +1,46 @@
+{
+  "id": "offline-detection",
+  "description": "MQTT device connects (transport online) then disconnects → DeviceTransportOffline event + device status transport_connected=false (4-state model)",
+  "setup": {
+    "extras": {
+      "device_types": [
+        {
+          "device_type": "env_sensor",
+          "name": "Env Sensor",
+          "metrics": [
+            { "name": "temperature", "data_type": "Float", "unit": "C" }
+          ]
+        }
+      ],
+      "devices": [
+        {
+          "device_type": "env_sensor",
+          "device_id": "mqtt-temp-006",
+          "name": "Mqtt Offline Device",
+          "adapter_type": "mqtt",
+          "connection_config": {
+            "telemetry_topic": "device/env_sensor/mqtt-temp-006/uplink"
+          }
+        }
+      ]
+    }
+  },
+  "action": {
+    "type": "mqtt_publish",
+    "device_id": "mqtt-temp-006",
+    "device_type": "env_sensor",
+    "connect_then_disconnect": true,
+    "payload": { "temperature": 18.5 }
+  },
+  "asserts": [
+    { "type": "latest_telemetry", "params": { "device_id": "mqtt-temp-006", "metric": "temperature" }, "expected": 18.5 },
+    { "type": "device_transport_offline", "params": { "device_id": "mqtt-temp-006" }, "expected": true, "timeout": 20 }
+  ],
+  "ws_asserts": [
+    {
+      "type": "DeviceMetric",
+      "match": { "data.device_id": "mqtt-temp-006", "data.metric": "temperature", "data.value": 18.5 },
+      "timeout": 10
+    }
+  ]
+}

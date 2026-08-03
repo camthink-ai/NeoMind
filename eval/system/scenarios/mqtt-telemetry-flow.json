@@ -1,0 +1,48 @@
+{
+  "id": "mqtt-telemetry-flow",
+  "description": "Real MQTT device publish → telemetry store (HTTP) + live DeviceMetric WS event (dashboard spine)",
+  "setup": {
+    "extras": {
+      "device_types": [
+        {
+          "device_type": "env_sensor",
+          "name": "Env Sensor",
+          "metrics": [
+            { "name": "temperature", "data_type": "Float", "unit": "C" }
+          ]
+        }
+      ],
+      "devices": [
+        {
+          "device_type": "env_sensor",
+          "device_id": "mqtt-temp-001",
+          "name": "Mqtt Temp Sensor",
+          "adapter_type": "mqtt",
+          "connection_config": {
+            "telemetry_topic": "device/env_sensor/mqtt-temp-001/uplink"
+          }
+        }
+      ]
+    }
+  },
+  "action": {
+    "type": "mqtt_publish",
+    "device_id": "mqtt-temp-001",
+    "device_type": "env_sensor",
+    "payload": { "temperature": 25.5 }
+  },
+  "asserts": [
+    {
+      "type": "latest_telemetry",
+      "params": { "device_id": "mqtt-temp-001", "metric": "temperature" },
+      "expected": 25.5
+    }
+  ],
+  "ws_asserts": [
+    {
+      "type": "DeviceMetric",
+      "match": { "data.device_id": "mqtt-temp-001", "data.metric": "temperature", "data.value": 25.5 },
+      "timeout": 10
+    }
+  ]
+}

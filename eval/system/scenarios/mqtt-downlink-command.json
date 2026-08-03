@@ -1,0 +1,73 @@
+{
+  "id": "mqtt-downlink-command",
+  "description": "Real MQTT telemetry fires a rule → Execute action → downlink command delivered to the device over MQTT",
+  "setup": {
+    "extras": {
+      "device_types": [
+        {
+          "device_type": "env_sensor",
+          "name": "Env Sensor",
+          "metrics": [
+            { "name": "temperature", "data_type": "Float", "unit": "C" },
+            { "name": "battery_level", "data_type": "Float", "unit": "%" }
+          ],
+          "commands": [
+            { "name": "set_alarm", "display_name": "Set Alarm", "description": "Raise the device alarm" }
+          ]
+        }
+      ],
+      "devices": [
+        {
+          "device_type": "env_sensor",
+          "device_id": "mqtt-temp-004",
+          "name": "Mqtt Downlink Device",
+          "adapter_type": "mqtt",
+          "connection_config": {
+            "telemetry_topic": "device/env_sensor/mqtt-temp-004/uplink"
+          }
+        }
+      ],
+      "rules": [
+        {
+          "name": "mqtt-low-battery-alarm",
+          "enabled": true,
+          "trigger": { "trigger_type": "data_change" },
+          "condition": {
+            "condition_type": "comparison",
+            "source": "device:mqtt-temp-004:battery_level",
+            "operator": "less_than",
+            "threshold": 20.0
+          },
+          "actions": [
+            {
+              "type": "execute",
+              "target": "mqtt-temp-004",
+              "target_type": "device",
+              "command": "set_alarm",
+              "params": {}
+            }
+          ],
+          "cooldown": 60000
+        }
+      ]
+    }
+  },
+  "action": {
+    "type": "mqtt_publish",
+    "device_id": "mqtt-temp-004",
+    "device_type": "env_sensor",
+    "subscribe_downlink": "device/+/+/downlink",
+    "payload": { "battery_level": 10.0 }
+  },
+  "asserts": [
+    { "type": "downlink_received", "params": { "command": "set_alarm" }, "expected": "set_alarm" },
+    { "type": "device_command_sent", "params": { "id": "mqtt-temp-004", "command": "set_alarm" }, "expected": true }
+  ],
+  "ws_asserts": [
+    {
+      "type": "DeviceMetric",
+      "match": { "data.device_id": "mqtt-temp-004", "data.metric": "battery_level", "data.value": 10.0 },
+      "timeout": 10
+    }
+  ]
+}
