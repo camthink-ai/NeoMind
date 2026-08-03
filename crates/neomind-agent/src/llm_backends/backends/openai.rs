@@ -699,6 +699,41 @@ impl CloudRuntime {
         request
     }
 
+    /// Parse tool calls that leaked into the assistant `content` as XML.
+    ///
+    /// Some local runtimes (e.g. the Nanbeige llama.cpp fork) fail to lift
+    /// tool calls into the OpenAI `tool_calls` field: their PEG parser's
+    /// `content_before_tools` rule bails when the model emits preamble text
+    /// before `<tool_call>`, so the whole call lands in `content` as
+    /// `<tool_call><function=name><parameter=k>v</parameter></function></tool_call>`.
+    /// This recovers those calls so the agent can still act.
+    fn parse_xml_tool_calls(content: &str) -> Vec<serde_json::Value> {
+        use regex::Regex;
+        let block_re = Regex::new(r"(?s)<tool_call>\s*(.*?)\s*</tool_call>").unwrap();
+        let func_re = Regex::new(r"(?s)<function=([\w-]+)>(.*?)</function>").unwrap();
+        let param_re = Regex::new(r"(?s)<parameter=([\w-]+)>(.*?)</parameter>").unwrap();
+        let mut out = Vec::new();
+        for b in block_re.captures_iter(content) {
+            let inner = b.get(1).map(|m| m.as_str()).unwrap_or("");
+            if let Some(fc) = func_re.captures(inner) {
+                let name = fc.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let body = fc.get(2).map(|m| m.as_str()).unwrap_or("");
+                let mut args = serde_json::Map::new();
+                for pc in param_re.captures_iter(body) {
+                    let k = pc.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                    let v = pc.get(2).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+                    args.insert(k, serde_json::Value::String(v));
+                }
+                out.push(serde_json::json!({
+                    "id": serde_json::Value::Null,
+                    "name": name,
+                    "arguments": serde_json::Value::Object(args),
+                }));
+            }
+        }
+        out
+    }
+
     /// OpenAI-compatible non-streaming generation path.
     async fn generate_openai(
         &self,
@@ -799,6 +834,28 @@ impl CloudRuntime {
             }
         } else {
             None
+        };
+
+        // Fallback: recover tool calls that leaked into content as XML when the
+        // upstream parser (e.g. llama.cpp fork) failed to populate `tool_calls`.
+        // See `parse_xml_tool_calls` for the cause.
+        let native_tool_calls = if native_tool_calls.is_none()
+            && response_text.contains("<tool_call>")
+        {
+            let parsed = Self::parse_xml_tool_calls(&response_text);
+            if !parsed.is_empty() {
+                tracing::debug!(
+                    "OpenAI: recovered {} tool call(s) from content XML fallback",
+                    parsed.len()
+                );
+                let json_str = serde_json::to_string(&parsed).unwrap_or_default();
+                response_text.push_str(&json_str);
+                Some(parsed)
+            } else {
+                None
+            }
+        } else {
+            native_tool_calls
         };
 
         let result = Ok(LlmOutput {
@@ -1025,6 +1082,10 @@ impl CloudRuntime {
         let provider = self.config.provider;
 
         let request = self.build_chat_request(input, true);
+        // Idle timeout for the streaming read (see the bytes_stream loop below):
+        // computed OUTSIDE the async-move block so it's a plain owned Duration,
+        // not a borrow of `self`.
+        let read_idle_timeout = self.config.timeout();
 
         tokio::spawn(async move {
             // Create rate limit key
@@ -1075,8 +1136,25 @@ impl CloudRuntime {
                         u32,
                         AccumulatedToolCall,
                     > = std::collections::HashMap::new();
+                    // Accumulate content for fallback XML tool-call recovery at [DONE].
+                    let mut accumulated_content = String::new();
 
-                    while let Some(chunk_result) = stream.next().await {
+                    // Idle timeout on the raw HTTP read: without this, a stalled
+                    // upstream SSE connection (no chunk within `config.timeout()` —
+                    // default 60s) blocks `stream.next()` forever, hanging every
+                    // consumer (PermitStream in chat_stream_internal, the
+                    // stream_core/multimodal loops) — observed as an 8h eval hang
+                    // on Gemma4 QAT. Normal generation emits chunks continuously,
+                    // so a 60s zero-chunk gap is unambiguously a dead connection.
+                    // `unwrap_or(None)` treats a stall as end-of-stream: the loop
+                    // exits and the [DONE] flush path below still runs.
+                    while let Some(chunk_result) = tokio::time::timeout(
+                        read_idle_timeout,
+                        stream.next(),
+                    )
+                    .await
+                    .unwrap_or(None)
+                    {
                         // If the consumer dropped the receiver (chat UI closed,
                         // agent execution cancelled/timed out), stop draining the
                         // upstream HTTP body. Without this check we'd keep pulling
@@ -1132,6 +1210,22 @@ impl CloudRuntime {
                                             let json_str = serde_json::to_string(&tool_calls_json)
                                                 .unwrap_or_default();
                                             let _ = tx.send(Ok((json_str, false))).await;
+                                        } else if accumulated_content.contains("<tool_call>") {
+                                            // Fallback: upstream parser failed to populate
+                                            // delta.tool_calls (preamble before <tool_call>
+                                            // confused its content_before_tools), so recover
+                                            // the calls from accumulated content XML.
+                                            let parsed =
+                                                Self::parse_xml_tool_calls(&accumulated_content);
+                                            if !parsed.is_empty() {
+                                                tracing::debug!(
+                                                    "OpenAI stream: recovered {} tool call(s) from content XML fallback",
+                                                    parsed.len()
+                                                );
+                                                let json_str = serde_json::to_string(&parsed)
+                                                    .unwrap_or_default();
+                                                let _ = tx.send(Ok((json_str, false))).await;
+                                            }
                                         }
                                         let _ = tx.send(Ok((String::new(), false))).await;
                                         continue;
@@ -1159,6 +1253,7 @@ impl CloudRuntime {
                                                 // Handle content
                                                 if let Some(ref content) = choice.delta.content {
                                                     if !content.is_empty() {
+                                                        accumulated_content.push_str(content);
                                                         let _ = tx
                                                             .send(Ok((content.clone(), false)))
                                                             .await;
@@ -1260,6 +1355,9 @@ impl CloudRuntime {
         let api_key = self.config.api_key.clone();
         let rate_limiter = self.client.clone();
         let inner_client = self.client.inner().clone();
+        // Idle timeout for the streaming read (see the bytes_stream loop below):
+        // owned Duration moved into the async block (not a borrow of `self`).
+        let read_idle_timeout = self.config.timeout();
 
         tokio::spawn(async move {
             let rate_limit_key = format!("Anthropic:{:x}", hash_api_key(&api_key));
@@ -1326,7 +1424,13 @@ impl CloudRuntime {
                         (Option<String>, Option<String>, String),
                     > = std::collections::HashMap::new();
 
-                    while let Some(chunk_result) = stream.next().await {
+                    while let Some(chunk_result) = tokio::time::timeout(
+                        read_idle_timeout,
+                        stream.next(),
+                    )
+                    .await
+                    .unwrap_or(None)
+                    {
                         // If the consumer dropped the receiver (chat UI closed,
                         // agent execution cancelled/timed out), stop draining the
                         // upstream HTTP body. Without this check we'd keep pulling
