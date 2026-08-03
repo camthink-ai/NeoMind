@@ -463,7 +463,16 @@ def _is_transient_stall(result: dict) -> bool:
     if not result.get("error"):
         return False
     err = result["error"]
-    if "WS recv gap timeout" not in err:
+    # Transient LLM-call failures worth retrying:
+    #   1. WS recv gap timeout (no event for 240s) — the classic transient
+    #      stall (rate-limit window / network blip before the LLM call returns).
+    #   2. "Network error: error sending request" — the LLM HTTP request itself
+    #      failed to send (connection refused/reset to the backend). Both
+    #      produce ZERO streamed events with the LLM never really running, so
+    #      both deserve a retry. Without this, a burst of backend connection
+    #      failures silently records empty turns (suspected_fallback) and
+    #      inflates the failure count for whatever model is under test.
+    if ("WS recv gap timeout" not in err) and ("Network error: error sending request" not in err):
         return False
     if result.get("response"):
         return False
