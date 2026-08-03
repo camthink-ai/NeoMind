@@ -1233,13 +1233,21 @@ pub async fn process_stream_events_with_safeguards(
 
                 tracing::debug!("ReAct loop completed after {} tool iterations", tool_iteration_count + 1);
             } else {
-                // No tool calls - save response directly
-                // Use buffer if content_before_tools is empty (buffer contains all content chunks when no tools)
-                let mut raw_response = if content_before_tools.is_empty() {
-                    buffer.clone()
-                } else {
-                    content_before_tools.clone()
-                };
+                // No tool calls - save response directly.
+                //
+                // `buffer` holds *every* streamed chunk for this round and is the
+                // complete response. `content_before_tools` is only ever assigned
+                // the slice of content sitting in front of a suspected tool-call
+                // by the `might_be_json_start` hold-back heuristic — so when the
+                // model's answer quotes a JSON payload mid-text (e.g. a push log
+                // echoed as `{"source_id": ...}` inside a markdown table cell),
+                // that heuristic leaves a stale fragment behind (e.g. `":`) while
+                // the real summary lives on in `buffer`. Trusting the fragment
+                // over `buffer` here corrupted those summaries. Since no tool
+                // call was detected this round, nothing needs excluding — use the
+                // full buffer. Any residual tool-call JSON is stripped below by
+                // remove_tool_calls_from_response.
+                let mut raw_response = buffer.clone();
 
                 // === RECOVERY: Incomplete tool call JSON ===
                 // LLM stopped mid-tool-call (e.g. backend token limit).

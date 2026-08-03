@@ -123,6 +123,18 @@ fn try_parse_json_array(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
 fn try_parse_json_object(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
     let start = text.find('{')?;
 
+    // Guard: a bare JSON object is treated as a tool call only when it leads
+    // the content (the model emitting the call AS the response, optionally
+    // behind a ```json fence). An object quoted mid-prose — e.g. a device or
+    // push target like {"name":"obs-target","url":...} echoed in a summary —
+    // is data, not a tool call. Without this guard the parser steals the
+    // object and discards everything after it, corrupting the response to a
+    // fragment (e.g. `":`). See eval run qwen4b-en push-observability.
+    let prefix = text[..start].trim();
+    if !prefix.is_empty() && !prefix.starts_with("```") {
+        return None;
+    }
+
     // Find matching closing brace
     let mut brace_count = 0;
     let mut end = start;
@@ -477,6 +489,14 @@ pub fn remove_tool_calls_from_response(response: &str) -> String {
 
     // Remove JSON object format
     while let Some(start) = result.find('{') {
+        // Guard: only strip a bare object tool call when it leads the content
+        // (only whitespace before it). Code-block objects were already removed
+        // by code_block_obj_re above; any other {...} here is data quoted in
+        // prose (e.g. a push target {"name":..,"url":..} echoed in a summary),
+        // which must be preserved — stripping it truncated answers to fragments.
+        if !result[..start].trim().is_empty() {
+            break;
+        }
         let mut brace_count = 0;
         let mut end = start;
 
@@ -769,6 +789,56 @@ mod tests {
 
         assert_eq!(content, "Let me check.");
         assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_does_not_steal_quoted_json_object_in_prose() {
+        // Regression (eval qwen4b-en push-observability, 2026-08-03): a model
+        // summary that quotes a data object carrying a "name" field (here a
+        // push target echoed from a tool result) must NOT be parsed as a tool
+        // call — doing so stole the object and truncated the answer to `":`.
+        let text = "Here are the delivery logs:\n\
+            {\"name\": \"obs-target\", \"type\": \"webhook\", \"url\": \"https://example.com/obs\"}\n\
+            No deliveries yet.";
+        let (content, calls) = parse_tool_calls(text).unwrap();
+        assert!(calls.is_empty(), "quoted data object must not be parsed as a tool call");
+        assert_eq!(content, text, "content must be preserved verbatim");
+    }
+
+    #[test]
+    fn test_parse_does_not_steal_deeply_nested_quoted_object() {
+        // Same class: a config/payload object quoted inside a longer summary,
+        // where the leading `{` is not the first non-whitespace token.
+        let text = "Payload sent: {\"name\": \"event\", \"value\": 42, \"meta\": {\"ok\": true}} — delivered.";
+        let (content, calls) = parse_tool_calls(text).unwrap();
+        assert!(calls.is_empty());
+        assert_eq!(content, text);
+    }
+
+    #[test]
+    fn test_remove_tool_calls_preserves_quoted_object_in_prose() {
+        let text = "Logs for {\"name\": \"obs-target\", \"type\": \"webhook\"} show 0 deliveries.";
+        let cleaned = remove_tool_calls_from_response(text);
+        assert_eq!(cleaned, text, "quoted data object in prose must not be stripped");
+    }
+
+    #[test]
+    fn test_parse_leading_bare_json_object_still_parses() {
+        // Sanity: the "object must lead" guard must not break a genuine
+        // bare-object tool call emitted as the whole response.
+        let text = "{\"name\": \"list_devices\", \"arguments\": {\"type\": \"sensor\"}}";
+        let (_content, calls) = parse_tool_calls(text).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "list_devices");
+        assert_eq!(calls[0].arguments["type"], "sensor");
+    }
+
+    #[test]
+    fn test_remove_tool_calls_strips_leading_bare_object() {
+        // Sanity: a leading bare-object tool call IS still stripped.
+        let text = "{\"name\": \"list_devices\", \"arguments\": {}}";
+        let cleaned = remove_tool_calls_from_response(text);
+        assert_eq!(cleaned, "");
     }
 
     #[test]
