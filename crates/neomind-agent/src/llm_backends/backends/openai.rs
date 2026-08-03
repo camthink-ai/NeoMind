@@ -1098,6 +1098,13 @@ impl CloudRuntime {
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", api_key))
                 .json(&request)
+                // Bounded request: `send()` waits for the response HEADERS. A
+                // single-slot backend (e.g. llama.cpp) that accepts the
+                // connection but queues the request behind an in-flight one may
+                // never send headers → `send()` blocks forever. The non-streaming
+                // paths use `.timeout()`; the streaming path missed it. Same
+                // 60s budget as the idle read timeout below.
+                .timeout(read_idle_timeout)
                 .send()
                 .await;
 
@@ -1369,6 +1376,9 @@ impl CloudRuntime {
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
                 .json(&request)
+                // Bounded request: see the openai streaming send — wait-for-headers
+                // can block forever on a queued single-slot backend.
+                .timeout(read_idle_timeout)
                 .send()
                 .await;
 
