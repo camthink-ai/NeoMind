@@ -150,6 +150,15 @@ pub fn match_skills(
 pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
 
+    // Dedup helper — a phrase may appear in both a quoted synonym and the
+    // Includes/e.g. clauses; each distinct phrase should count once (else it
+    // double-counts in score_skill/score_skill_query).
+    let mut push_unique = |out: &mut Vec<String>, p: String| {
+        if !p.is_empty() && !out.iter().any(|e| e == &p) {
+            out.push(p);
+        }
+    };
+
     // 1. Quoted phrases "..." (both quote styles).
     let quoted = quoted_re();
     for m in quoted.find_iter(description) {
@@ -157,9 +166,7 @@ pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
         let inner = s
             .trim_start_matches(['"', '“', '「', '\''])
             .trim_end_matches(['"', '”', '」', '\'']);
-        if !inner.is_empty() {
-            out.push(inner.to_string());
-        }
+        push_unique(&mut out, inner.to_string());
     }
 
     // 2. The "Includes A/B/C" intent vocabulary.
@@ -167,8 +174,8 @@ pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
         let seg = &description[idx + "Includes ".len()..];
         for piece in seg.split(['/', '，', ',']) {
             let p = piece.trim().trim_end_matches('。');
-            if p.len() >= 2 && !out.iter().any(|e| e == p) {
-                out.push(p.to_string());
+            if p.len() >= 2 {
+                push_unique(&mut out, p.to_string());
             }
         }
     }
@@ -182,7 +189,7 @@ pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
         for piece in seg[..end].split([';', '；', ',']) {
             let p = piece.trim().trim_end_matches(')').trim();
             if p.len() >= 3 {
-                out.push(p.to_string());
+                push_unique(&mut out, p.to_string());
             }
         }
     }

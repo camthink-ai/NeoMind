@@ -125,14 +125,26 @@ fn try_parse_json_object(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> 
 
     // Guard: a bare JSON object is treated as a tool call only when it leads
     // the content (the model emitting the call AS the response, optionally
-    // behind a ```json fence). An object quoted mid-prose — e.g. a device or
-    // push target like {"name":"obs-target","url":...} echoed in a summary —
-    // is data, not a tool call. Without this guard the parser steals the
-    // object and discards everything after it, corrupting the response to a
-    // fragment (e.g. `":`). See eval run qwen4b-en push-observability.
+    // behind a ```json fence), OR when the object carries an explicit
+    // `arguments`/`params`/`parameters` field — that's the tool-call shape,
+    // and a small model may emit it after a short preamble ("Sure, let me
+    // check. {"name": "...", "arguments": {...}}"). A data object quoted
+    // mid-prose — e.g. {"name":"obs-target","url":...} — has no arguments
+    // field and stays as content (avoids the `":` corruption, see eval run
+    // qwen4b-en push-observability).
     let prefix = text[..start].trim();
     if !prefix.is_empty() && !prefix.starts_with("```") {
-        return None;
+        // Look ahead for a tool-call-shaped object (has arguments/params).
+        if let Ok(v) = serde_json::from_str::<Value>(&text[start..]) {
+            if v.get("arguments").is_none()
+                && v.get("params").is_none()
+                && v.get("parameters").is_none()
+            {
+                return None;
+            }
+        } else {
+            return None;
+        }
     }
 
     // Find matching closing brace

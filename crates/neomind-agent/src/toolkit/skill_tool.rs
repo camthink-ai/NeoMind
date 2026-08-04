@@ -88,12 +88,21 @@ impl SkillTool {
         // matcher (quoted synonyms + "Includes A/B"), so a search like "把泵
         // 停掉" or "turn off the pump" (no literal keyword) still matches.
         if !skill.metadata.description.is_empty() {
+            let mut desc_hits = 0u32;
             for phrase in description_intent_phrases(&skill.metadata.description) {
                 let p_lower = phrase.to_lowercase();
-                if p_lower.chars().count() >= 2
-                    && (query_lower.contains(&p_lower) || p_lower.contains(&query_lower))
-                {
+                // Forward match (query contains the phrase) is the intent hit.
+                // Reverse match (phrase contains the query) only for queries
+                // ≥2 chars, so a 1-char query like "建" doesn't match every
+                // phrase. Cap at 3 to bound noise.
+                let forward = query_lower.contains(&p_lower);
+                let reverse = query_lower.chars().count() >= 2 && p_lower.contains(&query_lower);
+                if p_lower.chars().count() >= 2 && (forward || reverse) {
                     score += 1.0;
+                    desc_hits += 1;
+                    if desc_hits >= 3 {
+                        break;
+                    }
                 }
             }
         }
