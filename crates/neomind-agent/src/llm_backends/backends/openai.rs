@@ -1094,19 +1094,24 @@ impl CloudRuntime {
             // Acquire rate limit permit before making request
             rate_limiter.acquire(&rate_limit_key).await;
 
-            let result = inner_client
+            // Bound only the wait-for-HEADERS, not the whole request: a
+            // single-slot backend may queue a request and never send headers,
+            // but a long healthy generation must not be killed by a
+            // request-wide budget. 30s to receive headers, then the
+            // read-side idle timeout governs the body.
+            let send_fut = inner_client
                 .post(&url)
                 .header("Authorization", format!("Bearer {}", api_key))
                 .json(&request)
-                // Bounded request: `send()` waits for the response HEADERS. A
-                // single-slot backend (e.g. llama.cpp) that accepts the
-                // connection but queues the request behind an in-flight one may
-                // never send headers → `send()` blocks forever. The non-streaming
-                // paths use `.timeout()`; the streaming path missed it. Same
-                // 60s budget as the idle read timeout below.
-                .timeout(read_idle_timeout)
-                .send()
-                .await;
+                .send();
+            let send_result = tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
+            let result: Result<_, LlmError> = match send_result {
+                Ok(Ok(r)) => Ok(r),
+                Ok(Err(e)) => Err(LlmError::Network(e.to_string())),
+                Err(_elapsed) => Err(LlmError::Generation(
+                    "Timed out waiting for streaming response headers".to_string(),
+                )),
+            };
 
             match result {
                 Ok(response) => {
@@ -1370,17 +1375,24 @@ impl CloudRuntime {
             let rate_limit_key = format!("Anthropic:{:x}", hash_api_key(&api_key));
             rate_limiter.acquire(&rate_limit_key).await;
 
-            let result = inner_client
+            // Same as the openai streaming path: bound only the header wait
+            // (30s) with tokio::time, not the whole request (which would kill
+            // long healthy generations).
+            let send_fut = inner_client
                 .post(&url)
                 .header("x-api-key", &api_key)
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")
                 .json(&request)
-                // Bounded request: see the openai streaming send — wait-for-headers
-                // can block forever on a queued single-slot backend.
-                .timeout(read_idle_timeout)
-                .send()
-                .await;
+                .send();
+            let send_result = tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
+            let result: Result<_, LlmError> = match send_result {
+                Ok(Ok(r)) => Ok(r),
+                Ok(Err(e)) => Err(LlmError::Network(e.to_string())),
+                Err(_elapsed) => Err(LlmError::Generation(
+                    "Timed out waiting for streaming response headers".to_string(),
+                )),
+            };
 
             match result {
                 Ok(response) => {
