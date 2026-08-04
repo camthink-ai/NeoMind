@@ -5,13 +5,26 @@
   "workflow": "llm-management",
   "scenario_type": "multi_turn",
   "description": "Multi-turn: create LLM backend -> activate -> delete (covers `neomind llm create` + `llm activate` + `llm delete`; entire write path was uncovered).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Register a new Ollama backend: name dev-ollama, endpoint http://localhost:11434, model qwen3:4b." },
-    { "user": "Set dev-ollama as the system default backend." },
-    { "user": "OK, finally delete this backend." }
+    {
+      "user": "Register a new Ollama backend: name dev-ollama, endpoint http://localhost:11434, model qwen3:4b."
+    },
+    {
+      "user": "Set dev-ollama as the system default backend."
+    },
+    {
+      "user": "OK, finally delete this backend."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent runs `neomind llm create --name dev-ollama --type ollama --endpoint http://localhost:11434 --model qwen3:4b` and parses the id",
@@ -19,5 +32,14 @@
       "Turn 3: Agent runs `neomind llm delete <id>`"
     ],
     "overall": "Last two turns must reuse the id parsed from turn 1"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "llm_backend_exists",
+      "params": {
+        "name": "dev-ollama"
+      },
+      "expected": true
+    }
+  ]
 }

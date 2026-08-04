@@ -225,7 +225,10 @@ def run_query(q: dict, base: str, key: str) -> dict:
         stats = v.get("stats") if isinstance(v, dict) else None
         actual = stats.get("total_executions") if isinstance(stats, dict) else 0
     elif t == "push_enabled":
-        actual = _field(base, key, f"/data-push/{_sid(params, 'id')}", "enabled")
+        # Need the record's id: support name fallback (list + match by name),
+        # since agents create pushes with auto-generated ids.
+        v = _get_with_name_fallback(base, key, "/data-push", "/data-push/{id}", "data", params)
+        actual = v.get("enabled") if isinstance(v, dict) else None
     elif t == "device_count":
         actual = _count(base, key, "/devices")
     elif t == "message_count":

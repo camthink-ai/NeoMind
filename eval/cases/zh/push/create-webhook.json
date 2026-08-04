@@ -5,15 +5,32 @@
   "workflow": "data-push-management",
   "scenario_type": "single_turn",
   "description": "创建一个 webhook 推送目标并验证（覆盖 `neomind push create --type webhook` 写入路径，此前仅覆盖 list）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "请帮我新建一个 webhook 推送目标：名字叫 ops-webhook，URL 是 https://httpbin.org/post，然后确认它出现在推送列表里。" }
+    {
+      "user": "请帮我新建一个 webhook 推送目标：名字叫 ops-webhook，URL 是 https://httpbin.org/post，然后确认它出现在推送列表里。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind push create --name ops-webhook --type webhook --config '{\"url\":\"https://httpbin.org/post\"}'`（顺序可不同），随后调用 `neomind push list` 验证存在"
     ],
     "overall": "必须实际执行 create + list，不能仅在回复中复述"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "push_enabled",
+      "params": {
+        "name": "ops-webhook"
+      },
+      "expected": true
+    }
+  ]
 }

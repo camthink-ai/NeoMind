@@ -23,5 +23,14 @@
       "Turn 1: Create a push config then update it (covers `neomind push update`)"
     ],
     "overall": "Create a push config then update it (covers `neomind push update`)"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "push_enabled",
+      "params": {
+        "name": "push-2"
+      },
+      "expected": true
+    }
+  ]
 }
