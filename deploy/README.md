@@ -243,7 +243,7 @@ Download the installer for your platform:
 
 From the Release page, download:
 - `neomind-server-{os}-{arch}.tar.gz` - Backend server
-- `neomind-web-{version}.tar.gz` - Frontend static files
+- `neomind-web.tar.gz` - Frontend static files
 
 ### 2. Deploy Backend
 
@@ -261,11 +261,14 @@ tar xzf neomind-server-linux-amd64.tar.gz
 ### 3. Deploy Frontend
 
 ```bash
+# Download the latest web bundle
+wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-web.tar.gz
+
 # Create web directory
 sudo mkdir -p /var/www/neomind
 
 # Extract frontend files
-tar xzf neomind-web-0.6.2.tar.gz -C /var/www/neomind
+tar xzf neomind-web.tar.gz -C /var/www/neomind
 ```
 
 ### 4. Configure Nginx

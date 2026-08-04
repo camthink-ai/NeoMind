@@ -242,16 +242,14 @@ curl -fsSL ... | USE_NGINX=true sh
 
 **Manual installation:**
 ```bash
-# Server binary — always resolves to the newest release
+# Both assets resolve to the newest release — no version number to maintain
 wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-server-linux-amd64.tar.gz
-# Web bundle is versioned per release — bump VERSION when a new version ships
-VERSION=0.9.15
-wget https://github.com/camthink-ai/NeoMind/releases/download/v${VERSION}/neomind-web-${VERSION}.tar.gz
+wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-web.tar.gz
 tar xzf neomind-server-linux-amd64.tar.gz
 sudo install -m 755 neomind /usr/local/bin/
 sudo install -m 755 neomind-extension-runner /usr/local/bin/
 sudo mkdir -p /var/www/neomind
-sudo tar xzf neomind-web-${VERSION}.tar.gz -C /var/www/neomind
+sudo tar xzf neomind-web.tar.gz -C /var/www/neomind
 ./neomind serve
 ```
 

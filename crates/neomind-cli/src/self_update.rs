@@ -204,8 +204,8 @@ pub async fn run_upgrade(version: Option<String>, yes: bool) -> Result<()> {
     // 9. Best-effort web-frontend swap (only if the web dir + a web tarball exist).
     if Path::new(WEB_DIR).is_dir() {
         let web_url = format!(
-            "https://github.com/{}/releases/download/v{}/neomind-web-{}.tar.gz",
-            REPO, target, target
+            "https://github.com/{}/releases/download/v{}/neomind-web.tar.gz",
+            REPO, target
         );
         if let Ok(resp) = client.get(&web_url).send().await {
             if resp.status().is_success() {

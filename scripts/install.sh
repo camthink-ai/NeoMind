@@ -151,7 +151,7 @@ install_linux() {
     if [ "$NO_WEB" = "true" ]; then
         status "Skipping frontend (NO_WEB=true). Backend-only deployment."
     else
-        WEB_FILE="neomind-web-${VERSION}.tar.gz"
+        WEB_FILE="neomind-web.tar.gz"
     WEB_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${WEB_FILE}"
 
     status "Downloading frontend..."
@@ -386,7 +386,7 @@ install_darwin() {
     if [ "$NO_WEB" = "true" ]; then
         status "Skipping frontend (NO_WEB=true). Backend-only deployment."
     else
-        WEB_FILE="neomind-web-${VERSION}.tar.gz"
+        WEB_FILE="neomind-web.tar.gz"
         WEB_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${WEB_FILE}"
 
         status "Downloading frontend..."

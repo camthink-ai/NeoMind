@@ -96,20 +96,20 @@ jobs:
       - name: Create frontend release package
         if: contains(github.ref, 'refs/tags/')
         run: |
-          # Extract version from tag (e.g., v0.6.2 -> 0.6.2)
-          VERSION="${GITHUB_REF#refs/tags/v}"
+          # Web bundle name is unversioned (matches neomind-server-*), so the
+          # releases/latest/download/neomind-web.tar.gz URL always resolves.
           cd web/dist
-          tar czvf ../../neomind-web-${VERSION}.tar.gz .
+          tar czvf ../../neomind-web.tar.gz .
           cd ../..
-          echo "✅ Frontend package created: neomind-web-${VERSION}.tar.gz"
-          ls -lh neomind-web-${VERSION}.tar.gz
+          echo "✅ Frontend package created: neomind-web.tar.gz"
+          ls -lh neomind-web.tar.gz
 
       - name: Upload frontend release artifact
         if: contains(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: neomind-web
-          path: neomind-web-*.tar.gz
+          path: neomind-web.tar.gz
           retention-days: 30
 
   # ========== 桌面应用构建（使用并行策略）==========
@@ -564,7 +564,7 @@ jobs:
              - Extract and run: `./neomind serve`
              - Default port: 9375
 
-          2. **Frontend Static Files**: Download `neomind-web-{version}.tar.gz`
+          2. **Frontend Static Files**: Download `neomind-web.tar.gz`
 
           **All-in-One** (default, no nginx needed):
           - Extract frontend to `/var/www/neomind` (or configure `NEOMIND_WEB_DIR`)
