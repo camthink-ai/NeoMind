@@ -28,6 +28,8 @@ Always RUN the command yourself and report the real output — don't narrate.
 | `neomind device list` | List all devices (grouped by type) |
 | `neomind device get <id>` | Details: metadata + metrics + commands |
 | `neomind device create --name <N> --device-type <TYPE> [--id <id>] [--adapter-type <a>]` | Create a device |
+
+**When the user gives a device ID in their request (e.g. "create cam-office"), you MUST pass `--id <that-id>`** — never silently swap it for an auto-generated one. If you omit `--id`, the CLI auto-generates a random ID and the user's requested identifier is lost.
 | `neomind device update <id>` | Update a device |
 | `neomind device delete <id>` | Delete a device |
 | `neomind device history <id>` | Telemetry history |
