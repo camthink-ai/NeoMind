@@ -1,0 +1,35 @@
+{
+  "id": "device-control-stop-pump",
+  "lang": "en",
+  "category": "device",
+  "workflow": "device-control",
+  "scenario_type": "single_turn",
+  "description": "Isolated single-turn probe of device-control CLI syntax (not buried in a multi-turn scenario). pump-A (ind_machine template with a stop command). The model must `device get` to discover stop, then `device control pump-A stop` (correct arg order: ID then COMMAND). en currently has ZERO device_command_sent cases; zh scenario cases fail on this. Add coverage so en can expose the same gap.",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "device_types": [
+        {"device_type":"ind_machine","name":"Industrial Machine","metrics":[{"name":"vibration","data_type":"Float"}],
+         "commands":[{"name":"stop","display_name":"Stop"},{"name":"calibrate","display_name":"Calibrate"}]}
+      ],
+      "devices": [
+        {"device_type":"ind_machine","device_id":"pump-A","name":"Pump A","adapter_type":"mqtt",
+         "connection_config":{"telemetry_topic":"device/ind_machine/pump-A/uplink"}}
+      ]
+    }
+  },
+  "turns": [
+    {"user": "pump-A's vibration is too high — use its stop command to shut it down."}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: `neomind device get pump-A` to discover the stop command, then `neomind device control pump-A stop` (correct arg order: ID then COMMAND)"
+    ],
+    "overall": "stop command was sent to pump-A (command history has a record)"
+  },
+  "expect": {"tools":["shell"],"commands":["neomind device control"]},
+  "state_queries": [
+    {"type":"device_command_sent","params":{"id":"pump-A","command":"stop"},"expected":true}
+  ]
+}

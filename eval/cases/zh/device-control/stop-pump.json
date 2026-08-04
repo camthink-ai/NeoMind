@@ -1,0 +1,35 @@
+{
+  "id": "device-control-stop-pump",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "device-control",
+  "scenario_type": "single_turn",
+  "description": "单轮隔离测 device control 正确语法（不埋多轮场景）:pump-A(ind_machine 模板,含 stop 命令)。模型必须 `device get` 发现 stop → `device control pump-A stop`(正确参数顺序)。此前 10 个场景 case 的 device_command_sent 全挂,怀疑模型 CLI 语法弱;此 case 隔离验证。",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "device_types": [
+        {"device_type":"ind_machine","name":"Industrial Machine","metrics":[{"name":"vibration","data_type":"Float"}],
+         "commands":[{"name":"stop","display_name":"Stop"},{"name":"calibrate","display_name":"Calibrate"}]}
+      ],
+      "devices": [
+        {"device_type":"ind_machine","device_id":"pump-A","name":"Pump A","adapter_type":"mqtt",
+         "connection_config":{"telemetry_topic":"device/ind_machine/pump-A/uplink"}}
+      ]
+    }
+  },
+  "turns": [
+    {"user": "pump-A 振动过高,用它的停机命令把它停下来。"}
+  ],
+  "applies": ["tool_accuracy","task_completion","language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: `neomind device get pump-A` 发现支持 stop 命令 → `neomind device control pump-A stop`(正确参数顺序 ID 在前 COMMAND 在后)"
+    ],
+    "overall": "stop 命令被成功发送到 pump-A(command history 有记录)"
+  },
+  "expect": {"tools":["shell"],"commands":["neomind device control"]},
+  "state_queries": [
+    {"type":"device_command_sent","params":{"id":"pump-A","command":"stop"},"expected":true}
+  ]
+}

@@ -6,7 +6,7 @@ origin: builtin
 priority: 90
 token_budget: 12000
 triggers:
-  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, broker, webhook, 传感器, sensor, 如何连接, how to connect, 怎么接入, 设备配置, device setup, device connect, 设备上线, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, connection method, 接入协议, protocol, broker地址, broker address, 服务器地址, server address, topic, 主题, 订阅, subscribe, 发布, publish, draft, 草稿, 待审批, pending device, auto-discovery, 自动发现]
+  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, broker, webhook, 传感器, sensor, 如何连接, how to connect, 怎么接入, 设备配置, device setup, device connect, 设备上线, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, connection method, 接入协议, protocol, broker地址, broker address, 服务器地址, server address, topic, 主题, 订阅, subscribe, 发布, publish, draft, 草稿, 待审批, pending device, auto-discovery, 自动发现, 控制, 命令, 下发, 停机, 停止, 启动, 重启, 调速, 设置, 告警, 关, 开, control, command, send command, stop, shutdown, stop it, stop the, reboot, restart, set speed, set_speed, set alarm, turn off, turn on, enable, disable, calibrate, 传感器控制, device control]
   tool_target:
     - tool: system
       actions: [info]
@@ -35,6 +35,22 @@ Always RUN the command yourself and report the real output — don't narrate.
 | `neomind device write-metric <id> <METRIC> <VALUE>` | Write a metric data point |
 | `neomind device webhook-url <id>` | Get the webhook URL for a device |
 | `neomind device drafts` | Manage auto-discovery drafts |
+
+## Sending Control Commands
+
+To send a command to a device (stop, set speed, alarm, reboot, ...):
+
+1. **Always inspect first**: `neomind device get <id>` — its output lists the device's supported commands. Do NOT guess a command name.
+2. **Send with the correct argument order**: `neomind device control <id> <COMMAND>` — the device ID comes FIRST, the command name SECOND. (Common mistake: writing the command before the ID, or `device <command> <id>`. The subcommand is `control`, not the command name.)
+3. Optional params: `neomind device control <id> <COMMAND> --params '{"key":"value"}'`.
+
+Example:
+```bash
+neomind device get pump-A            # → shows stop / set_speed / calibrate
+neomind device control pump-A stop   # → sends stop (ID first, command second)
+```
+
+If `device get` shows the command is NOT defined for the device's template, tell the user it isn't available — do not fabricate a success.
 
 ## Overview
 
