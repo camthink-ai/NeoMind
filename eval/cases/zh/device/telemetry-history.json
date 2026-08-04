@@ -5,15 +5,33 @@
   "workflow": "device-onboarding",
   "scenario_type": "single_turn",
   "description": "查询设备的遥测历史（覆盖 `neomind device history` — 时序数据读取路径）",
-  "setup": { "fixture": "seed-default" },
+  "setup": {
+    "fixture": "seed-default"
+  },
   "turns": [
-    { "user": "帮我看一下 sensor-001 最近 24 小时的遥测历史。" }
+    {
+      "user": "帮我看一下 sensor-001 最近 24 小时的遥测历史。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind device history sensor-001 --time-range 24h`（或 GET /api/devices/sensor-001/telemetry）"
     ],
     "overall": "必须实际查询历史，并引用 values.battery 这个 metric"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "latest_telemetry",
+      "params": {
+        "device_id": "sensor-001",
+        "metric": "values.battery"
+      },
+      "expected_min": 0
+    }
+  ]
 }

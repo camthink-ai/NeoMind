@@ -1,0 +1,11 @@
+{
+  "id": "data-push-delivery",
+  "description": "Webhook data-push target actually delivers a payload to an external receiver (outbound delivery proof — push_enabled alone can't verify this)",
+  "action": {
+    "type": "push_delivery",
+    "name": "e2e-webhook-push"
+  },
+  "asserts": [
+    { "type": "push_delivery_received", "params": {}, "expected": true, "timeout": 15 }
+  ]
+}

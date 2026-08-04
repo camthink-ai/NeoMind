@@ -39,6 +39,9 @@ KNOWN_QUERY_TYPES = {
     "device_command_sent",
     "rule_references_source",
     "rule_action_type",
+    "latest_telemetry",
+    "agent_status",
+    "device_count",
 }
 
 

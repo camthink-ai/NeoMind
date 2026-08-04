@@ -28,6 +28,7 @@ from seed import seed_extras  # noqa: E402
 from state_query import run_query  # noqa: E402
 from mqtt_device import MqttDeviceSimulator  # noqa: E402
 from ws_events import WSEventSubscriber  # noqa: E402
+from webhook_catcher import WebhookCatcher  # noqa: E402
 
 SCENARIOS_DIR = _SYSTEM_DIR / "scenarios"
 
@@ -90,12 +91,46 @@ def run_scenario(path: str) -> dict:
             if action.get("connect_then_disconnect"):
                 dev.disconnect()
                 time.sleep(2.0)
+        elif action.get("type") == "push_delivery":
+            # Real outbound-webhook delivery: spin up a local HTTP receiver,
+            # create a webhook push target pointing at it, trigger a test push,
+            # and assert the payload actually arrives at the receiver.
+            catcher = WebhookCatcher()
+            catcher.start()
+            try:
+                name = action.get("name", "e2e-webhook-push")
+                r = srv.post("/data-push", {
+                    "name": name,
+                    "target_type": "webhook",
+                    "config": {"url": catcher.url},
+                    "schedule": {"type": "interval", "interval_secs": 60},
+                    "data_filter": {"source_patterns": [], "only_changes": False},
+                    "enabled": True,
+                })
+                if r.status_code not in (200, 201):
+                    raise RuntimeError(f"push create -> {r.status_code}: {r.text[:200]}")
+                push_id = (r.json().get("data") or r.json()).get("id")
+                if not push_id:
+                    raise RuntimeError(f"push create no id: {r.text[:200]}")
+                t = srv.post(f"/data-push/{push_id}/test", {})
+                if t.status_code not in (200, 201):
+                    raise RuntimeError(f"push test -> {t.status_code}: {t.text[:200]}")
+                result["delivery"] = catcher.wait_for_post(timeout=15.0)
+            finally:
+                catcher.stop()
         else:
             raise RuntimeError(f"unknown action type: {action.get('type')}")
 
         # HTTP / simulator asserts (state_query, plus MQTT-specific ones).
         for a in sc.get("asserts", []):
-            if a["type"] == "downlink_received":
+            if a["type"] == "push_delivery_received":
+                delivery = result.get("delivery")
+                result["assertions"].append(
+                    {"type": "push_delivery_received", "params": a.get("params", {}),
+                     "expected": True, "actual": bool(delivery), "passed": delivery is not None,
+                     "delivery_path": (delivery or {}).get("path")}
+                )
+            elif a["type"] == "downlink_received":
                 want = str(a.get("params", {}).get("command") or a.get("expected") or "")
                 timeout = float(a.get("params", {}).get("timeout", 10))
                 # The rule → execute → downlink chain is async: poll the

@@ -5,15 +5,33 @@
   "workflow": "device-onboarding",
   "scenario_type": "single_turn",
   "description": "Query a device's telemetry history (covers `neomind device history` — the time-series read path)",
-  "setup": { "fixture": "seed-default" },
+  "setup": {
+    "fixture": "seed-default"
+  },
   "turns": [
-    { "user": "Show me sensor-001's telemetry history for the last 24 hours." }
+    {
+      "user": "Show me sensor-001's telemetry history for the last 24 hours."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent invokes `neomind device history sensor-001 --time-range 24h` (or GET /api/devices/sensor-001/telemetry)"
     ],
     "overall": "Must actually query the history and reference the values.battery metric"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "latest_telemetry",
+      "params": {
+        "device_id": "sensor-001",
+        "metric": "values.battery"
+      },
+      "expected_min": 0
+    }
+  ]
 }
