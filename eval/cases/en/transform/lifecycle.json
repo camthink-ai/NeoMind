@@ -5,16 +5,36 @@
   "workflow": "transform-management",
   "scenario_type": "multi_turn",
   "description": "Multi-turn lifecycle: create -> test-code -> update -> disable -> enable -> delete (covers `neomind transform test-code` + `update` + `enable/disable` + `delete`; previously only create/list had coverage).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Create a global transform: name c2f, code 'return input * 1.8 + 32'." },
-    { "user": "Test it via test-code with input 25 to see the output." },
-    { "user": "Change its code to 'return input * 1.8 + 32 + 0.5'." },
-    { "user": "Temporarily disable it." },
-    { "user": "Re-enable it." },
-    { "user": "Finally delete it." }
+    {
+      "user": "Create a global transform: name c2f, code 'return input * 1.8 + 32'."
+    },
+    {
+      "user": "Test it via test-code with input 25 to see the output."
+    },
+    {
+      "user": "Change its code to 'return input * 1.8 + 32 + 0.5'."
+    },
+    {
+      "user": "Temporarily disable it."
+    },
+    {
+      "user": "Re-enable it."
+    },
+    {
+      "user": "Finally delete it."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "error_recovery", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "error_recovery",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent runs `neomind transform create --name c2f --scope global --code 'return input * 1.8 + 32'`, parses id",
@@ -25,5 +45,27 @@
       "Turn 6: Agent runs `neomind transform delete <id>`"
     ],
     "overall": "Last five turns must reuse the id parsed from turn 1"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 2
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 4
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 5
+    },
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 0
+    }
+  ]
 }

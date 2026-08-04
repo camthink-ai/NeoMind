@@ -5,16 +5,36 @@
   "workflow": "transform-management",
   "scenario_type": "multi_turn",
   "description": "多轮生命周期：创建 → 测试代码 → 更新 → 禁用 → 启用 → 删除（覆盖 `neomind transform test-code` + `update` + `enable/disable` + `delete`，此前仅 create/list 有覆盖）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "创建一个全局 transform：name c2f，code 'return input * 1.8 + 32'。" },
-    { "user": "用 test-code 测试输入 25 看输出。" },
-    { "user": "把它的 code 改成 'return input * 1.8 + 32 + 0.5'。" },
-    { "user": "暂时禁用它。" },
-    { "user": "再启用。" },
-    { "user": "最后删除。" }
+    {
+      "user": "创建一个全局 transform：name c2f，code 'return input * 1.8 + 32'。"
+    },
+    {
+      "user": "用 test-code 测试输入 25 看输出。"
+    },
+    {
+      "user": "把它的 code 改成 'return input * 1.8 + 32 + 0.5'。"
+    },
+    {
+      "user": "暂时禁用它。"
+    },
+    {
+      "user": "再启用。"
+    },
+    {
+      "user": "最后删除。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "error_recovery", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "error_recovery",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind transform create --name c2f --scope global --code 'return input * 1.8 + 32'`，解析 id",
@@ -26,5 +46,35 @@
     ],
     "overall": "后五轮必须复用第一轮解析的 id"
   },
-  "expect": { "tools": ["shell"], "commands": ["neomind transform create", "neomind transform delete"] }
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind transform create",
+      "neomind transform delete"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 2
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 4
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 5
+    },
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 0
+    }
+  ]
 }

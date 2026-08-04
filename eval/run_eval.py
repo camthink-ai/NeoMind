@@ -251,7 +251,14 @@ def run_case(case_path: str) -> dict:
                 final_text = tr_["assistant_message"]
         for q in sqs:
             try:
-                r = state_query.run_query(q, srv.api_base, srv.api_key, final_text)
+                # Optional per-turn assertion: `turn_index` targets a specific
+                # turn's assistant message (for "does the model still remember
+                # X N turns later"). Default = final turn.
+                tidx = q.get("turn_index")
+                resp = final_text
+                if isinstance(tidx, int) and 0 <= tidx < len(turn_records):
+                    resp = turn_records[tidx].get("assistant_message") or ""
+                r = state_query.run_query(q, srv.api_base, srv.api_key, resp)
                 state_results.append(r)
             except Exception as e:
                 state_results.append({
