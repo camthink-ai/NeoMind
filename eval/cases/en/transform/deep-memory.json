@@ -1,0 +1,124 @@
+{
+  "id": "deep-memory-transform",
+  "lang": "en",
+  "category": "transform",
+  "workflow": "transform-deep-memory",
+  "scenario_type": "multi_turn",
+  "description": "Deep cross-turn memory: 10 turns operating the same transform c2f, hard-asserting the model still remembers the entity name mid-way. Exposes small-model memory decay at 8-10 turns (6-turn transform-lifecycle remembers all).",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "device_types": [
+        {
+          "device_type": "env_sensor",
+          "name": "Env Sensor",
+          "metrics": [
+            {
+              "name": "temperature",
+              "data_type": "Float"
+            }
+          ]
+        }
+      ],
+      "devices": [
+        {
+          "device_type": "env_sensor",
+          "device_id": "sensor-a",
+          "name": "Sensor A",
+          "adapter_type": "mqtt",
+          "connection_config": {
+            "telemetry_topic": "device/env_sensor/sensor-a/uplink"
+          }
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "Create a global transform named c2f with code 'return input * 1.8 + 32' bound to sensor-a's temperature."
+    },
+    {
+      "user": "Use test-code to test c2f with input 25."
+    },
+    {
+      "user": "Change c2f's code to 'return input * 1.8 + 32 + 0.5'."
+    },
+    {
+      "user": "Temporarily disable c2f."
+    },
+    {
+      "user": "Re-enable c2f."
+    },
+    {
+      "user": "Test c2f again with input 30 — check it uses the new code."
+    },
+    {
+      "user": "List c2f's output metrics."
+    },
+    {
+      "user": "Add a note to c2f: output unit is Fahrenheit."
+    },
+    {
+      "user": "Check c2f's current status and code."
+    },
+    {
+      "user": "Finally delete c2f, then confirm it no longer exists."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: neomind transform create --name c2f ...",
+      "Turn 2-9: reference c2f (don't recreate)",
+      "Turn 10: delete c2f",
+      "Turn 4: reference c2f",
+      "Turn 5: reference c2f",
+      "Turn 6: reference c2f",
+      "Turn 7: reference c2f",
+      "Turn 8: reference c2f",
+      "Turn 9: reference c2f",
+      "Turn 10: reference c2f"
+    ],
+    "overall": "All 10 turns reference c2f without forgetting"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind transform"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 2
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 4
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 6
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 8
+    },
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected": 0
+    }
+  ]
+}

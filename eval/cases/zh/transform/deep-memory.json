@@ -1,0 +1,124 @@
+{
+  "id": "deep-memory-transform",
+  "lang": "zh",
+  "category": "transform",
+  "workflow": "transform-deep-memory",
+  "scenario_type": "multi_turn",
+  "description": "深轮次跨轮记忆:10 轮逐步操作同一个 transform `c2f`,中间轮硬断言模型还记得实体名。暴露小模型在长上下文(8-10 轮)的记忆衰退——6 轮内的 transform-lifecycle 全记得,10 轮是否还记得是极限测试。",
+  "setup": {
+    "fixture": "seed-empty",
+    "extras": {
+      "device_types": [
+        {
+          "device_type": "env_sensor",
+          "name": "Env Sensor",
+          "metrics": [
+            {
+              "name": "temperature",
+              "data_type": "Float"
+            }
+          ]
+        }
+      ],
+      "devices": [
+        {
+          "device_type": "env_sensor",
+          "device_id": "sensor-a",
+          "name": "Sensor A",
+          "adapter_type": "mqtt",
+          "connection_config": {
+            "telemetry_topic": "device/env_sensor/sensor-a/uplink"
+          }
+        }
+      ]
+    }
+  },
+  "turns": [
+    {
+      "user": "创建一个全局 transform：name c2f，code 'return input * 1.8 + 32'，作用在 sensor-a 的 temperature 上。"
+    },
+    {
+      "user": "用 test-code 测试 c2f，输入 25 看输出。"
+    },
+    {
+      "user": "把 c2f 的 code 改成 'return input * 1.8 + 32 + 0.5'。"
+    },
+    {
+      "user": "暂时禁用 c2f。"
+    },
+    {
+      "user": "重新启用 c2f。"
+    },
+    {
+      "user": "再测一次 c2f，输入 30，看输出是否用了新 code。"
+    },
+    {
+      "user": "把 c2f 的输出指标列出来。"
+    },
+    {
+      "user": "给 c2f 加一个备注：输出单位是华氏。"
+    },
+    {
+      "user": "查一下 c2f 当前的状态和 code。"
+    },
+    {
+      "user": "最后把 c2f 删掉，然后确认它已不存在。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: neomind transform create --name c2f ...",
+      "Turn 2-9: 每轮应引用前轮建的 c2f(不重新创建)",
+      "Turn 10: 删除 c2f",
+      "Turn 4: 引用 c2f",
+      "Turn 5: 引用 c2f",
+      "Turn 6: 引用 c2f",
+      "Turn 7: 引用 c2f",
+      "Turn 8: 引用 c2f",
+      "Turn 9: 引用 c2f",
+      "Turn 10: 引用 c2f"
+    ],
+    "overall": "10 轮内始终引用 c2f,不遗忘"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind transform"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 2
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 4
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 6
+    },
+    {
+      "type": "response_contains",
+      "expected": "c2f",
+      "turn_index": 8
+    },
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected": 0
+    }
+  ]
+}
