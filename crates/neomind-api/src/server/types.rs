@@ -1400,24 +1400,21 @@ impl ServerState {
         // Device registry storage is initialized automatically on first use
         tracing::info!(category = "storage", "Data directory created/verified");
 
-        // Seed built-in device type templates (NE101, NE301, etc.)
-        match neomind_storage::DeviceRegistryStore::open("data/devices.redb") {
-            Ok(store) => match store.seed_builtin_templates() {
-                Ok(seeded) => {
-                    if seeded > 0 {
-                        tracing::info!(
-                            category = "storage",
-                            seeded,
-                            "Seeded built-in device type templates"
-                        );
-                    }
+        // Seed built-in device type templates via the registry's OWN storage
+        // handle (same store the cache reads from), so the subsequent reload
+        // is guaranteed to see the seed — no cross-handle visibility race.
+        match self.devices.registry.seed_builtin_templates().await {
+            Ok(seeded) => {
+                if seeded > 0 {
+                    tracing::info!(
+                        category = "storage",
+                        seeded,
+                        "Seeded built-in device type templates"
+                    );
                 }
-                Err(e) => {
-                    tracing::warn!(category = "storage", error = %e, "Failed to seed built-in templates");
-                }
-            },
+            }
             Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open device registry for seeding");
+                tracing::warn!(category = "storage", error = %e, "Failed to seed built-in templates");
             }
         }
 

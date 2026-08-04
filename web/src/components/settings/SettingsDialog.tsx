@@ -85,16 +85,22 @@ export function SettingsDialog() {
       }}
     >
       <div className="flex-1 min-h-0 flex">
-        <div className="w-full min-h-0 flex flex-col px-6 md:px-8 pt-12">
-          {/* Back button (closes the dialog) — mobile only (desktop back is in the sidebar) */}
-          <button
-            type="button"
-            onClick={closeSettings}
-            className="self-start shrink-0 -ml-1 mb-4 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-muted-foreground hover:bg-muted-30 transition-colors md:hidden"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            {t("common:back", { defaultValue: "Back" })}
-          </button>
+        <div className="w-full min-h-0 flex flex-col px-6 md:px-8 md:pt-12">
+          {/* Mobile header bar — h-12 (48px) to match MobilePageHeader so the
+              back button sits at the same Y as every other page's top chrome.
+              The old pt-12 whitespace left it floating ~48px too low with no
+              visual anchor. Full-bleed (-mx-6 px-6) so the border spans the
+              overlay width. Desktop keeps pt-12; its back link is in sidebar. */}
+          <div className="md:hidden -mx-6 mb-4 flex h-12 items-center border-b border-border px-6">
+            <button
+              type="button"
+              onClick={closeSettings}
+              className="-ml-1 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm text-muted-foreground hover:bg-muted-30 transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              {t("common:back", { defaultValue: "Back" })}
+            </button>
+          </div>
 
           {/* Fixed sidebar (desktop) + independently scrolling content */}
           <div className="flex flex-1 min-h-0 gap-8">
@@ -141,11 +147,16 @@ export function SettingsDialog() {
                 type="button"
                 onClick={() => setActiveSection(s.value)}
                 className={cn(
-                  "flex flex-1 flex-col items-center gap-0.5 rounded-lg py-1 transition-colors",
+                  // py-2 + h-5 icon match PageTabsBottomNav so this bar is the
+                  // same height (~58px + safe-bottom) as bottom tab bars on
+                  // other pages. Icon size is overridden here via [&>svg] so
+                  // getSettingsSections' h-4 w-4 (used by the desktop sidebar)
+                  // is left untouched.
+                  "flex flex-1 flex-col items-center gap-0.5 rounded-lg py-2 transition-colors",
                   isActive ? "text-primary" : "text-muted-foreground"
                 )}
               >
-                {s.icon}
+                <span className="[&>svg]:h-5 [&>svg]:w-5">{s.icon}</span>
                 <span className="text-[10px] font-medium leading-tight truncate w-full text-center">
                   {s.label}
                 </span>

@@ -481,6 +481,22 @@ impl DeviceRegistry {
     }
 
     /// Load all data from storage into memory
+    /// Seed built-in device type templates (NE101, NE301, ...) via this
+    /// registry's OWN storage handle — the same store the in-memory cache
+    /// reads from. Seeding through a separately-opened `DeviceRegistryStore`
+    /// races with the registry's reload: the seed writes one handle, the
+    /// reload reads another, and the write may not be visible to the read on
+    /// the same boot (seen as intermittent "template not found"). Going
+    /// through `self.storage` keeps seed + reload on the same handle.
+    pub async fn seed_builtin_templates(&self) -> Result<usize, DeviceError> {
+        let Some(store) = &self.storage else {
+            return Err(DeviceError::Storage("No storage configured".to_string()));
+        };
+        store
+            .seed_builtin_templates()
+            .map_err(|e| DeviceError::Storage(format!("seed_builtin_templates failed: {}", e)))
+    }
+
     pub async fn load_from_storage(&self) -> Result<(), DeviceError> {
         let Some(store) = &self.storage else {
             return Err(DeviceError::Storage("No storage configured".to_string()));
