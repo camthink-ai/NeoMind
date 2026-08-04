@@ -8,6 +8,7 @@ use super::object_schema;
 use super::tool::{Tool, ToolCategory};
 use super::ToolOutput;
 use crate::skills;
+use crate::skills::matcher::description_intent_phrases;
 
 /// Tool for managing operation guides (skills).
 ///
@@ -82,6 +83,21 @@ impl SkillTool {
             score += 1.0;
         }
 
+        // Description intent match — the agentskills.io standard trigger
+        // signal. Shares the intent-vocabulary extraction with the auto-inject
+        // matcher (quoted synonyms + "Includes A/B"), so a search like "把泵
+        // 停掉" or "turn off the pump" (no literal keyword) still matches.
+        if !skill.metadata.description.is_empty() {
+            for phrase in description_intent_phrases(&skill.metadata.description) {
+                let p_lower = phrase.to_lowercase();
+                if p_lower.chars().count() >= 2
+                    && (query_lower.contains(&p_lower) || p_lower.contains(&query_lower))
+                {
+                    score += 1.0;
+                }
+            }
+        }
+
         // Category match
         let category_lower = format!("{:?}", skill.metadata.category).to_lowercase();
         if category_lower.contains(&query_lower) {
@@ -146,6 +162,10 @@ Available skill IDs (load these when relevant) — any of these also auto-resolv
 - connector-management: External MQTT broker connections
 - data-push-management: Data push to external systems
 - llm-management: LLM backend CRUD, capability, default selection
+- extension-management: Extension install, market, status, logs
+- widget-management: Widget install, market, bundle, list
+- settings-management: Timezone & data retention settings
+- system-info: System/infrastructure info, broker address
 
 When to load a skill:
 - User asks to create/update/delete any entity → load the relevant skill FIRST
@@ -201,14 +221,18 @@ When to load a skill:
                 for skill in registry_guard.list() {
                     let score = Self::score_skill_query(skill, query);
                     if score > 0.0 {
-                        // Extract first non-empty line from body as description
-                        let desc = skill.body
-                            .lines()
-                            .find(|l| !l.is_empty() && !l.starts_with('#'))
-                            .unwrap_or("Step-by-step guide")
-                            .chars()
-                            .take(100)
-                            .collect::<String>();
+                        // The frontmatter `description` is the intent-carrying
+                        // signal (agentskills.io); fall back to the body's first
+                        // content line for skills authored before descriptions.
+                        let desc = if !skill.metadata.description.is_empty() {
+                            skill.metadata.description.clone()
+                        } else {
+                            skill.body
+                                .lines()
+                                .find(|l| !l.is_empty() && !l.starts_with('#'))
+                                .unwrap_or("Step-by-step guide")
+                                .to_string()
+                        };
                         results.push((skill.metadata.id.clone(), desc, score));
                     }
                 }

@@ -144,7 +144,10 @@ pub fn match_skills(
 ///    intent vocabulary, typically zh keywords or domain phrases).
 /// 3. En-dash `—` separated "e.g. ..." examples are split too (e.g. "set the
 ///    fan speed").
-fn description_intent_phrases(description: &str) -> Vec<String> {
+///
+/// `pub(crate)`: shared by the auto-inject matcher AND the on-demand
+/// `skill` tool's search (both must see the same intent vocabulary).
+pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
 
     // 1. Quoted phrases "..." (both quote styles).
