@@ -5,17 +5,35 @@
   "workflow": "tools-memory",
   "scenario_type": "multi_turn",
   "description": "Multi-turn: write a long-term preference -> read it back in a later turn (covers memory tool action=list/read path; previously only update was covered).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Remember a long-term preference: sensors on shelf 3 of warehouse zone B must alert at 35 degrees Celsius, not the default 40 degrees." },
-    { "user": "What was that threshold rule I asked you to remember?" }
+    {
+      "user": "Remember a long-term preference: sensors on shelf 3 of warehouse zone B must alert at 35 degrees Celsius, not the default 40 degrees."
+    },
+    {
+      "user": "What was that threshold rule I asked you to remember?"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent invokes `memory(action=update/set, section=user or knowledge)` to persist the preference",
       "Turn 2: Agent invokes `memory(action=list)` and/or `memory(action=read, target=...)` to retrieve persisted content, and accurately restates the 35-degree threshold"
     ],
     "overall": "Turn 2 must actually call the memory tool to read; must not answer only from in-context memory"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "35"
+    }
+  ]
 }

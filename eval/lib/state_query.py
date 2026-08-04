@@ -186,8 +186,13 @@ def _field_with_name_fallback(base: str, key: str, list_path: str,
     return v.get(field) if isinstance(v, dict) else None
 
 
-def run_query(q: dict, base: str, key: str) -> dict:
+def run_query(q: dict, base: str, key: str, response: str | None = None) -> dict:
     """Run one state_query; returns {type, params, expected, actual, passed}.
+
+    `response` is the final assistant message (when the caller has it) — used
+    by `response_contains` to assert the model's *answer* mentions a value,
+    which is how cross-turn recall cases (remember-then-remember-back) get a
+    hard assertion instead of a judge score.
 
     Supported assertion shapes:
     - `expected: <value>` → exact equality (default).
@@ -203,7 +208,17 @@ def run_query(q: dict, base: str, key: str) -> dict:
     expected = q.get("expected")
     expected_min = q.get("expected_min")
 
-    if t == "device_exists":
+    if t == "response_contains":
+        # Assert the model's final answer contains the expected text — the
+        # hard signal for "did the agent recall what it learned earlier".
+        needle = str(expected if expected is not None else params.get("text", ""))
+        actual = (response or "") if response is not None else ""
+        return {
+            "type": t, "params": params,
+            "expected": needle, "expected_min": None,
+            "actual": actual[:200], "passed": (needle in actual) if needle else False,
+        }
+    elif t == "device_exists":
         actual = _id_or_name_exists(base, key, "/devices", "/devices/{id}", params)
     elif t == "rule_exists":
         actual = _id_or_name_exists(base, key, "/rules", "/rules/{id}", params)

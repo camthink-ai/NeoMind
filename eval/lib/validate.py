@@ -42,6 +42,7 @@ KNOWN_QUERY_TYPES = {
     "latest_telemetry",
     "agent_status",
     "device_count",
+    "response_contains",
 }
 
 

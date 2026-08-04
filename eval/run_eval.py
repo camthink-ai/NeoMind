@@ -244,9 +244,14 @@ def run_case(case_path: str) -> dict:
         # State queries.
         sqs = case.get("state_queries") or []
         state_results = []
+        # Final assistant text — lets response_contains assert cross-turn recall.
+        final_text = ""
+        for tr_ in turn_records:
+            if tr_.get("assistant_message"):
+                final_text = tr_["assistant_message"]
         for q in sqs:
             try:
-                r = state_query.run_query(q, srv.api_base, srv.api_key)
+                r = state_query.run_query(q, srv.api_base, srv.api_key, final_text)
                 state_results.append(r)
             except Exception as e:
                 state_results.append({

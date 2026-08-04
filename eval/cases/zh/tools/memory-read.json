@@ -5,17 +5,35 @@
   "workflow": "tools-memory",
   "scenario_type": "multi_turn",
   "description": "多轮：写入长期偏好 → 后续轮次读回来（覆盖 memory 工具 action=list/read 路径，此前仅覆盖 update）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "请记住一条长期偏好：仓库 B 区 3 号货架的传感器阈值要按摄氏 35 度告警，不是默认的 40 度。" },
-    { "user": "我刚才让你记的那条阈值规则是什么？" }
+    {
+      "user": "请记住一条长期偏好：仓库 B 区 3 号货架的传感器阈值要按摄氏 35 度告警，不是默认的 40 度。"
+    },
+    {
+      "user": "我刚才让你记的那条阈值规则是什么？"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `memory(action=update/set, section=user 或 knowledge)` 持久化该偏好",
       "Turn 2: Agent 调用 `memory(action=list)` 和/或 `memory(action=read, target=...)` 检索持久化内容，并准确复述 35 度阈值"
     ],
     "overall": "Turn 2 必须实际调用 memory 工具读取，不能仅靠上下文记忆作答"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "35"
+    }
+  ]
 }
