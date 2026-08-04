@@ -1,6 +1,7 @@
 ---
 id: extension-management
 name: Extension Management (Install/Market/Status)
+description: Use when the user wants to INSTALL or MANAGE existing extensions — installing/uninstalling from market, listing, status, logs, config, reload. Distinct from DEVELOPMENT (that's extension-development). Covers extension install/market/status even without saying 'extension' (e.g. '装个天气扩展'). Includes 扩展安装/卸载/市场/状态.
 category: extension
 origin: builtin
 priority: 90

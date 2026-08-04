@@ -1,12 +1,13 @@
 ---
 id: device-onboarding
 name: Device Onboarding & Connection Guide
+description: Use when the user wants to onboard, connect, or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE connection, getting broker addresses, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
 category: device
 origin: builtin
 priority: 90
 token_budget: 12000
 triggers:
-  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, broker, webhook, 传感器, sensor, 如何连接, how to connect, 怎么接入, 设备配置, device setup, device connect, 设备上线, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, connection method, 接入协议, protocol, broker地址, broker address, 服务器地址, server address, topic, 主题, 订阅, subscribe, 发布, publish, draft, 草稿, 待审批, pending device, auto-discovery, 自动发现, 控制, 命令, 下发, 停机, 停止, 启动, 重启, 调速, 设置, 告警, 关, 开, control, command, send command, stop, shutdown, stop it, stop the, reboot, restart, set speed, set_speed, set alarm, turn off, turn on, enable, disable, calibrate, 传感器控制, device control]
+  keywords: [设备接入, 接入, onboarding, 连接设备, connect device, MQTT, mqtt, broker, webhook, 传感器, sensor, 设备配置, device setup, device connect, provision, 配置设备, device provisioning, 网关, gateway, 接入方式, 订阅, subscribe, auto-discovery, 自动发现, 控制, 命令, 停机, 停止, control, command, stop, shutdown, reboot, set speed, device control]
   tool_target:
     - tool: system
       actions: [info]

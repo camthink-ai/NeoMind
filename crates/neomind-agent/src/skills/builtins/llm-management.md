@@ -1,6 +1,7 @@
 ---
 id: llm-management
 name: LLM Backend Management
+description: Use when the user wants to manage LLM backends — adding/removing/activating model backends (Ollama/OpenAI/Qwen/DeepSeek), testing connections, switching default model, multimodal/vision models, API keys. Covers llm create/list/activate/test even without saying 'LLM' (e.g. '换个大模型', '配置一下模型'). Includes 大模型/模型后端/切换模型.
 category: llm
 origin: builtin
 priority: 80

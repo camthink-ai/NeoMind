@@ -1,6 +1,7 @@
 ---
 id: rule-management
 name: Rule Management Guide
+description: Use when the user wants to create or manage rules — conditions (comparison/range/logical), triggers, actions (notify/execute/trigger-agent), thresholds, enabling/disabling. Covers rule create/update/enable/disable even without saying 'rule' (e.g. '温度超过30就告警', '低于20发通知'). Includes 规则/告警/条件/阈值/自动化.
 category: rule
 origin: builtin
 priority: 85

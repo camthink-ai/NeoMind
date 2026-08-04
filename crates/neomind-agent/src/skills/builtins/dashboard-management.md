@@ -1,6 +1,7 @@
 ---
 id: dashboard-management
 name: Dashboard Management & Component Creation
+description: Use when the user wants to create or manage dashboards and their components — creating boards, adding/removing chart/widget/gauge components, binding data sources to widgets, sharing dashboards. Covers dashboard create/update/share/add-components even without saying 'dashboard' (e.g. '做个监控面板', '把温度画出来'). Includes 仪表盘/看板/组件/绑定数据.
 category: dashboard
 origin: builtin
 priority: 85

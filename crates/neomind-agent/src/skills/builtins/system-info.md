@@ -1,6 +1,7 @@
 ---
 id: system-info
 name: System Information & Infrastructure
+description: Use when the user asks about system/infrastructure details — broker address/port, connection info, network, server IP, how to connect devices, ESP32/ESP8266, webhook URL, TLS/auth. Covers system info even without saying 'system' (e.g. '我的设备连哪里', 'broker 地址是多少'). Includes 系统信息/broker 地址/连接信息/网络.
 category: system
 origin: builtin
 priority: 88

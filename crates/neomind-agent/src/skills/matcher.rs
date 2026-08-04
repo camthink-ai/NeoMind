@@ -18,6 +18,27 @@ fn score_skill(skill: &Skill, user_input: &str) -> f32 {
     let input_lower = user_input.to_lowercase();
     let mut score: f32 = 0.0;
 
+    // Description intent matching (+0.3 per hit, capped at +0.9).
+    // The description is the primary trigger carrier (agentskills.io standard).
+    // Intent synonyms are written in quotes in the description (e.g.
+    // "turn off the pump", "把泵停掉") plus a trailing "Includes 设备接入/..." —
+    // extract those and match against the user input, so semantically-equivalent
+    // phrasings trigger even when they share no literal keyword.
+    if !skill.metadata.description.is_empty() {
+        let phrases = description_intent_phrases(&skill.metadata.description);
+        let mut desc_hits: f32 = 0.0;
+        for p in &phrases {
+            let p_lower = p.to_lowercase();
+            if p_lower.chars().count() >= 2 && input_lower.contains(&p_lower) {
+                desc_hits += 0.3;
+                if desc_hits >= 0.9 {
+                    break;
+                }
+            }
+        }
+        score += desc_hits;
+    }
+
     // Keyword matching (+0.4 per exact match)
     for keyword in &skill.metadata.triggers.keywords {
         let kw_lower = keyword.to_lowercase();
@@ -113,6 +134,64 @@ pub fn match_skills(
     }
 
     result
+}
+
+/// Extract intent phrases from a skill description for matching.
+///
+/// Two sources:
+/// 1. Quoted synonyms in prose — `"shut down the pump"`, `"把泵停掉"`.
+/// 2. The trailing `Includes <词1>/<词2>/...` segment (the author's explicit
+///    intent vocabulary, typically zh keywords or domain phrases).
+/// 3. En-dash `—` separated "e.g. ..." examples are split too (e.g. "set the
+///    fan speed").
+fn description_intent_phrases(description: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+
+    // 1. Quoted phrases "..." (both quote styles).
+    let quoted = quoted_re();
+    for m in quoted.find_iter(description) {
+        let s = &description[m.start()..m.end()];
+        let inner = s
+            .trim_start_matches(['"', '“', '「', '\''])
+            .trim_end_matches(['"', '”', '」', '\'']);
+        if !inner.is_empty() {
+            out.push(inner.to_string());
+        }
+    }
+
+    // 2. The "Includes A/B/C" intent vocabulary.
+    if let Some(idx) = description.find("Includes ") {
+        let seg = &description[idx + "Includes ".len()..];
+        for piece in seg.split(['/', '，', ',']) {
+            let p = piece.trim().trim_end_matches('。');
+            if p.len() >= 2 && !out.iter().any(|e| e == p) {
+                out.push(p.to_string());
+            }
+        }
+    }
+
+    // 3. "e.g. X" examples — split on ',' / '；' inside the e.g. clause.
+    if let Some(idx) = description.find("e.g. ") {
+        let seg = &description[idx + "e.g. ".len()..];
+        let end = seg
+            .find(|c: char| c == ')' || c == '.' || c == '\n')
+            .unwrap_or(seg.len());
+        for piece in seg[..end].split([';', '；', ',']) {
+            let p = piece.trim().trim_end_matches(')').trim();
+            if p.len() >= 3 {
+                out.push(p.to_string());
+            }
+        }
+    }
+
+    out
+}
+
+/// Regex for quoted phrases in a description.
+fn quoted_re() -> &'static regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r#""[^"]*"|“[^”]*”|「[^」]*」|'[^']*'"#).unwrap())
 }
 
 /// Truncate a string at a natural boundary (double newline) to stay within max_chars.
@@ -235,5 +314,75 @@ Step 2: ONE action (delete/update/enable)"#;
         let budget = TokenBudgetConfig::for_context(8000);
         let matches = match_skills(&registry, "删除规则", budget);
         assert!(matches.is_empty());
+    }
+
+    /// trigger-eval (agentskills.io): semantically-equivalent phrasings that
+    /// share NO literal keyword must still trigger via the description.
+    #[test]
+    fn test_description_matches_semantic_synonyms() {
+        // device-onboarding with an intent description carrying quoted synonyms.
+        let skill = r#"---
+id: device-onboarding
+name: Device Onboarding
+description: Use when the user wants to send a control command to a device ("turn off the pump", "把泵停掉", "set the fan speed", "停下来"). Includes 设备接入/控制/停机/调速.
+category: device
+priority: 90
+token_budget: 800
+triggers:
+  keywords: [device, 接入, MQTT, control]
+tool_target:
+  tool: device
+  actions: [create, control]
+anti_triggers:
+  keywords: [rule, 规则]
+---
+# Device
+Control a device."#;
+        let mut registry = SkillRegistry::new();
+        registry.add_user_skill(skill).unwrap();
+        let budget = TokenBudgetConfig::for_context(8000);
+
+        // Should-trigger: no literal keyword, but description synonym matches.
+        for q in ["turn off the pump", "把泵停掉", "set the fan speed to 50%"] {
+            let m = match_skills(&registry, q, budget);
+            assert!(
+                m.iter().any(|x| x.skill_id == "device-onboarding"),
+                "should trigger via description for {:?}, got {:?}",
+                q,
+                m.iter().map(|x| (&x.skill_id, x.score)).collect::<Vec<_>>()
+            );
+        }
+
+        // Should-NOT-trigger (near-miss: mentions "device" but is rule work —
+        // the rule anti-trigger must exclude it).
+        let m = match_skills(&registry, "device 温度超过30就创建规则告警", budget);
+        let has = m.iter().any(|x| x.skill_id == "device-onboarding");
+        assert!(!has, "anti-trigger rule should exclude, got {:?}", m.iter().map(|x| &x.skill_id).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_description_no_overfit_weather() {
+        let skill = r#"---
+id: device-onboarding
+name: Device Onboarding
+description: Use when controlling a device ("shut down the pump"). Includes 设备控制/停机.
+category: device
+priority: 90
+token_budget: 800
+triggers:
+  keywords: [device, MQTT]
+tool_target:
+  tool: device
+  actions: [control]
+---
+# Device
+Control."#;
+        let mut registry = SkillRegistry::new();
+        registry.add_user_skill(skill).unwrap();
+        let budget = TokenBudgetConfig::for_context(8000);
+        let m = match_skills(&registry, "天气怎么样", budget);
+        for x in &m {
+            assert!(x.score < 0.2, "unrelated query low score, got {}", x.score);
+        }
     }
 }

@@ -1,6 +1,7 @@
 ---
 id: settings-management
 name: System Settings (Timezone & Data Retention)
+description: Use when the user wants to change system settings — timezone, data retention, cleanup policies. Covers settings timezone/retention/cleanup even without saying 'settings' (e.g. '把时区改成上海', '数据保留30天'). Includes 设置/时区/数据保留/清理.
 category: settings
 origin: builtin
 priority: 75

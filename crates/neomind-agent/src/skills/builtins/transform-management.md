@@ -1,6 +1,7 @@
 ---
 id: transform-management
 name: Transform Management & Data Processing
+description: Use when the user wants to process or transform data — computing derived/virtual metrics, unit conversion, formulas, JS scripts, averaging/summing telemetry. Covers transform create/test-code/metrics even without saying 'transform' (e.g. '温度转华氏', '算个平均值'). Includes 数据转换/计算/公式/虚拟指标.
 category: transform
 origin: builtin
 priority: 80

@@ -1,6 +1,7 @@
 ---
 id: widget-management
 name: Widget Management (Install/Market/List)
+description: Use when the user wants to INSTALL or MANAGE existing dashboard widgets — installing from market, listing, getting bundle, uninstalling. Distinct from DEVELOPMENT (that's widget-development). Covers widget install/market/bundle even without saying 'widget' (e.g. '装个仪表盘组件'). Includes 组件安装/卸载/市场.
 category: widget
 origin: builtin
 priority: 90
