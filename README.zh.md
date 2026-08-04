@@ -13,7 +13,9 @@
     <img src="https://github.com/camthink-ai/NeoMind/actions/workflows/build.yml/badge.svg" alt="构建状态">
   </a>
   <img src="https://img.shields.io/badge/License-Apache--2.0-blue.svg" alt="许可证">
-  <img src="https://img.shields.io/badge/v-0.8.11-information.svg" alt="版本">
+  <a href="https://github.com/camthink-ai/NeoMind/releases/latest">
+    <img src="https://img.shields.io/github/v/release/camthink-ai/NeoMind?color=informational&label=版本" alt="版本">
+  </a>
   <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="平台支持">
 </p>
@@ -188,7 +190,16 @@ curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/in
 <details>
 <summary>更多安装选项</summary>
 
-**Docker 部署：**
+**Docker 部署（拉取 Docker Hub 官方多架构镜像，无需本地构建）：**
+
+```bash
+docker run -d --name neomind \
+  -p 9375:9375 -p 1883:1883 \
+  -v neomind-data:/app/data \
+  camthink/neomind:latest
+```
+
+或使用 [docker-compose](docker-compose.yml)（自动拉取 `camthink/neomind:latest`）：
 
 ```bash
 git clone https://github.com/camthink-ai/NeoMind.git
@@ -196,9 +207,11 @@ cd NeoMind
 docker compose up -d
 ```
 
+`camthink/neomind:latest` 镜像在每次发版时自动重建（amd64 + arm64）；如需固定版本用 `camthink/neomind:0.9.15`。若想从源码构建镜像，取消注释 `docker-compose.yml` 中的 `build:` 块即可。
+
 **指定版本：**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.8.11 sh
+curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.9.15 sh
 ```
 
 **自定义目录：**
@@ -218,8 +231,10 @@ curl -fsSL ... | USE_NGINX=true sh
 
 **手动安装：**
 ```bash
-VERSION=0.8.11
-wget https://github.com/camthink-ai/NeoMind/releases/download/v${VERSION}/neomind-server-linux-amd64.tar.gz
+# 服务器二进制 — 始终指向最新版
+wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-server-linux-amd64.tar.gz
+# Web 前端包按版本号命名 — 新版本发布时同步更新 VERSION
+VERSION=0.9.15
 wget https://github.com/camthink-ai/NeoMind/releases/download/v${VERSION}/neomind-web-${VERSION}.tar.gz
 tar xzf neomind-server-linux-amd64.tar.gz
 sudo install -m 755 neomind /usr/local/bin/

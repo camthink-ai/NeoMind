@@ -201,7 +201,16 @@ Access the web UI at `http://your-server:9375`.
 <details>
 <summary>More installation options</summary>
 
-**Docker:**
+**Docker (pulls the official multi-arch image from Docker Hub — no build):**
+
+```bash
+docker run -d --name neomind \
+  -p 9375:9375 -p 1883:1883 \
+  -v neomind-data:/app/data \
+  camthink/neomind:latest
+```
+
+Or with [docker-compose](docker-compose.yml) (pulls `camthink/neomind:latest` automatically):
 
 ```bash
 git clone https://github.com/camthink-ai/NeoMind.git
@@ -209,9 +218,11 @@ cd NeoMind
 docker compose up -d
 ```
 
+The `camthink/neomind:latest` image is rebuilt on every release (amd64 + arm64); pin a version with `camthink/neomind:0.9.15`. To build the image from source instead, uncomment the `build:` block in `docker-compose.yml`.
+
 **Specific version:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.9.1 sh
+curl -fsSL https://raw.githubusercontent.com/camthink-ai/NeoMind/main/scripts/install.sh | VERSION=0.9.15 sh
 ```
 
 **Custom directories:**
@@ -231,8 +242,10 @@ curl -fsSL ... | USE_NGINX=true sh
 
 **Manual installation:**
 ```bash
-VERSION=0.9.1
-wget https://github.com/camthink-ai/NeoMind/releases/download/v${VERSION}/neomind-server-linux-amd64.tar.gz
+# Server binary — always resolves to the newest release
+wget https://github.com/camthink-ai/NeoMind/releases/latest/download/neomind-server-linux-amd64.tar.gz
+# Web bundle is versioned per release — bump VERSION when a new version ships
+VERSION=0.9.15
 wget https://github.com/camthink-ai/NeoMind/releases/download/v${VERSION}/neomind-web-${VERSION}.tar.gz
 tar xzf neomind-server-linux-amd64.tar.gz
 sudo install -m 755 neomind /usr/local/bin/
