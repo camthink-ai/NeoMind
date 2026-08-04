@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.15] - 2026-08-04
+
+Agent streaming reliability (stall hang fixes) + skill matching (description-based) + system-level test layer + eval coverage.
+Focus: fix a class of agent stream hangs that could freeze chat/eval for hours, make skill discovery semantic, and add a deterministic real-server test layer.
+
+### Agent Streaming Reliability (hang fixes — three layers)
+- **Stream consumer timeout**: `stream_core`/`stream_multimodal` LLM `next()` loops now bound each `next()` with `tokio::time::timeout` (`next_chunk_or_timeout`). A zero-chunk upstream stall force-completes the round instead of hanging forever.
+- **Backend read idle timeout**: openai/anthropic streaming `bytes_stream().next()` bounded by a 60s chunk-interval idle timeout — the upstream HTTP read itself can no longer block indefinitely.
+- **Backend header-wait bound**: streaming `send()` (waiting for response headers) bounded by a 30s header timeout via `tokio::time` (NOT reqwest's whole-request `.timeout()`, which would kill long healthy generations).
+- **Hold-back fragment fix**: the no-tool-call round-end now uses the full `buffer`, not a `content_before_tools` fragment left by the JSON-hold-back heuristic (was corrupting responses to `":`).
+- **eval harness**: LLM "Network error: error sending request" now treated as a transient stall and retried (was silently recording empty turns as failures).
+
+### Skill Matching (description-based, agentskills.io)
+- 15 builtin skills now carry an intent-based `description`; `SkillMetadata` + parser support it (1024-char cap).
+- Matcher scores description intent phrases (quoted synonyms + `Includes`/`e.g.` clauses) — semantically-equivalent phrasing ("turn off the pump", "把泵停掉") triggers without a literal keyword.
+- On-demand `skill` tool search is description-driven and surfaces the frontmatter description (was a body-first-line slice). Device-control trigger coverage expanded; preserve user-specified device ID on create.
+
+### System-Level Test Layer (`eval/system/`)
+- New deterministic, LLM-free test layer driving a real `neomind serve`: real MQTT device → telemetry store → live WS event; rule-on-real-mqtt; downlink command delivery; dashboard live binding; offline detection; data-push outbound delivery (local HTTP receiver verifies the payload actually arrives).
+- `TestServer.wait_for_log()` — deterministic adapter/broker readiness gate.
+
+### Eval Coverage
+- Assertion types now include `latest_telemetry` (agent read-back), `push_enabled` (with name fallback), `response_contains` (hard signal for answer content / cross-turn recall), and per-turn `turn_index` assertions.
+- New `device-control` probe cases (zh+en), `deep-memory` 10-turn case exposing small-model recall decay (~8-turn limit on Gemma4-E2B).
+
+### Device/Web
+- Seed built-in device templates via the registry's own storage handle (fixes intermittent "template not found" boot race).
+- Settings dialog mobile header bar aligned to MobilePageHeader.
+
+---
+
 ## [0.9.14] - 2026-07-31
 
 IM bridge system (Telegram + Feishu) + OTA release notes + extension log UX.

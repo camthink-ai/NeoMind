@@ -153,7 +153,7 @@ pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
     // Dedup helper — a phrase may appear in both a quoted synonym and the
     // Includes/e.g. clauses; each distinct phrase should count once (else it
     // double-counts in score_skill/score_skill_query).
-    let mut push_unique = |out: &mut Vec<String>, p: String| {
+    let push_unique = |out: &mut Vec<String>, p: String| {
         if !p.is_empty() && !out.iter().any(|e| e == &p) {
             out.push(p);
         }
