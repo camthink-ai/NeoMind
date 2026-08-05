@@ -20,6 +20,14 @@ pub const TIMEZONE_PLACEHOLDER: &str = "{{TIMEZONE}}";
 /// are wrapped in HTML-comment sentinels, stripped at build time based on flags.
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 
+/// Slim system prompt template (~48% smaller). Selected when
+/// `NEOMIND_SLIM_PROMPT=1` — an opt-in for small local models that struggle
+/// with the full template's token volume. Keeps every hard constraint
+/// (language policy, tool-first, no fabrication, batch rule, error recovery)
+/// and drops soft style guidance (chitchat examples, narrate-intent, etc.).
+/// Must preserve the KV-CACHE BOUNDARY block and the same sentinel markers.
+const SYSTEM_PROMPT_SLIM_TEMPLATE: &str = include_str!("system_prompt_slim.md");
+
 const VISION_BEGIN: &str = "<!-- BEGIN_VISION -->";
 const VISION_END: &str = "<!-- END_VISION -->";
 const THINKING_BEGIN: &str = "<!-- BEGIN_THINKING -->";
@@ -59,7 +67,12 @@ impl PromptBuilder {
 
     /// Build the enhanced system prompt.
     pub fn build_system_prompt(&self) -> String {
-        let mut prompt = SYSTEM_PROMPT_TEMPLATE.to_string();
+        let template = if std::env::var("NEOMIND_SLIM_PROMPT").as_deref() == Ok("1") {
+            SYSTEM_PROMPT_SLIM_TEMPLATE
+        } else {
+            SYSTEM_PROMPT_TEMPLATE
+        };
+        let mut prompt = template.to_string();
         if self.supports_vision {
             // Keep content, strip only the sentinel markers.
             prompt = strip_sentinels(&prompt, VISION_BEGIN, VISION_END);
@@ -239,5 +252,28 @@ mod tests {
         let default_prompt = PromptBuilder::new().build_system_prompt();
         assert!(!default_prompt.contains("## Vision"));
         assert!(default_prompt.contains("## Thinking Mode"));
+    }
+
+    #[test]
+    fn test_slim_prompt_is_compact_and_preserves_rules() {
+        // NEOMIND_SLIM_PROMPT=1 must yield a smaller prompt that still keeps
+        // every hard constraint (language policy, tool-first, batch rule) —
+        // only soft style guidance is dropped.
+        unsafe {
+            std::env::set_var("NEOMIND_SLIM_PROMPT", "1");
+        }
+        let slim = PromptBuilder::new().build_system_prompt();
+        unsafe {
+            std::env::remove_var("NEOMIND_SLIM_PROMPT");
+        }
+        let full = PromptBuilder::new().build_system_prompt();
+
+        assert!(slim.len() < full.len(), "slim must be smaller");
+        assert!(slim.contains("Language Policy"));
+        assert!(slim.contains("No Hallucinated Operations"));
+        assert!(slim.contains("BATCH RULE"));
+        assert!(slim.contains("Tool-First"));
+        assert!(slim.contains("{{CURRENT_TIME}}")); // KV-cache boundary preserved
+        assert!(slim.contains("## Environment"));
     }
 }

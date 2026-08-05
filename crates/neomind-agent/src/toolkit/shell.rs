@@ -947,7 +947,12 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        r#"Execute shell commands on the host system.
+        // Full description (default): exhaustive CLI syntax, easy-to-miss
+        // subcommands, GUI-launching guard. Slim description (NEOMIND_SLIM_PROMPT=1):
+        // keeps Critical Syntax Rules (hard constraints) + CLI concept, drops the
+        // defensive knowledge (easy-to-miss list, GUI guard) — those are discoverable
+        // via `neomind <domain> <action> --help` or the skill tool on demand.
+        static FULL: &str = r#"Execute shell commands on the host system.
 
 Use this tool to run any system command. For NeoMind platform operations, use the `neomind` CLI.
 
@@ -984,7 +989,36 @@ Commands like `open` (macOS), `xdg-open` (Linux), `start`/`explorer` (Windows), 
 ## Execution Notes
 - Each command runs in a fresh process — no persistent shell state between calls.
 - `neomind` commands are dispatched in-process (no subprocess); they return a structured `CliResponse` as pretty-printed JSON on stdout.
-- Output may be truncated for very long responses."#
+- Output may be truncated for very long responses."#;
+
+        static SLIM: &str = r#"Execute shell commands on the host system.
+
+Use this tool to run any system command. For NeoMind platform operations, use the `neomind` CLI.
+
+## Critical Syntax Rules (apply to ALL neomind domains)
+- **ID usage by command type**: READ commands (`device get <ID>`, `rule get <ID>`) take ID as a positional arg — NEVER `--id`. CREATE commands (`device create`, `rule create`) accept an optional `--id <id>` flag when the user supplies a specific ID — pass it through, never silently auto-generate. Correct create: `neomind device create --name X --device-type Y --id cam-lobby`. Wrong: `neomind device create cam-lobby`.
+- **NEVER guess metric names**. Discover first via `neomind device list` (returns `metric_fields` per type) or `neomind device get <ID>` (full metric names + values), then use exact names in `--metric`, rule conditions, transform code, or dashboard bindings. The same applies to extension fields — discover via `neomind extension info <ID>`.
+- **"unexpected argument" error** = you used a flag where positional was expected. Rewrite without the flag.
+- On command failure, check the `suggestion` field in the JSON output for recovery hints.
+
+## NeoMind CLI Domain Syntax
+The `neomind` CLI has 14 domains: `device`, `dashboard`, `rule`, `agent`, `extension`, `widget`, `transform`, `llm`, `message`, `connector`, `push`, `settings`, `system`, `api-key`.
+
+**Domain-specific command syntax, flags, and copy-paste templates live in skill docs** — use the `skill` tool to load the matching guide before any create/update/delete/control operation, or run `neomind <domain> <action> --help` for flags and examples. All commands return JSON by default (controlled by `NEOMIND_JSON`) — do NOT pass any `--json` flag.
+
+## Native System Commands
+Runs on host via `/bin/sh -c` (Unix) or `cmd /C` (Windows). Common tools available: ping, traceroute, curl, arp, nmap, ps, df, free, top, uptime, systemctl status, ls, cat, head, tail, grep, find, wc, arp-scan, avahi-browse, bluetoothctl, docker.
+
+## Execution Notes
+- Each command runs in a fresh process — no persistent shell state between calls.
+- `neomind` commands are dispatched in-process (no subprocess); they return a structured `CliResponse` as pretty-printed JSON on stdout.
+- Output may be truncated for very long responses."#;
+
+        if std::env::var("NEOMIND_SLIM_PROMPT").as_deref() == Ok("1") {
+            SLIM
+        } else {
+            FULL
+        }
     }
 
     fn parameters(&self) -> Value {
