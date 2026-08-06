@@ -1,0 +1,35 @@
+{
+  "id": "diagnose-device-status",
+  "lang": "en",
+  "category": "system",
+  "workflow": "system-diagnostics",
+  "scenario_type": "single_turn",
+  "description": "Diagnostics: system health check. Agent must query device/system status via tools.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Is the system running normally right now? Anything I should worry about?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent checks device/system status"
+    ],
+    "overall": "主动巡检设备状态,基于真实数据回答"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}

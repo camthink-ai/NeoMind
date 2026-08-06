@@ -1,0 +1,46 @@
+{
+  "id": "metric-discovery-rule",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "rule-discovery",
+  "scenario_type": "single_turn",
+  "description": "Rule with metric discovery: agent must discover the battery metric name (values.battery) and reference it correctly.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "sensor-001's battery is a bit low. Create a rule named battery-discovered: alert when sensor-001's battery drops below 20."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: rule create referencing battery metric"
+    ],
+    "overall": "规则 source 正确引用 values.battery(证明 agent 查了而非猜)"
+  },
+  "state_queries": [
+    {
+      "type": "rule_references_source",
+      "params": {
+        "name": "battery-discovered"
+      },
+      "source": "battery",
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device get",
+      "neomind rule create"
+    ]
+  }
+}

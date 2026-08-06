@@ -1,0 +1,49 @@
+{
+  "id": "multi-turn-threshold-change",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "multi-turn-context",
+  "scenario_type": "multi_turn",
+  "description": "Multi-turn: threshold change. Agent must update the rule's condition in turn 2.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a rule for sensor-001 named ctx-battery-rule: alert when battery is below 20."
+    },
+    {
+      "user": "The threshold is too low — change it to 10."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: rule create (ctx-battery-rule, threshold 20)",
+      "T2: rule update threshold to 10"
+    ],
+    "overall": "规则建成 + 成功修改阈值"
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "ctx-battery-rule"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create",
+      "neomind rule update"
+    ]
+  }
+}

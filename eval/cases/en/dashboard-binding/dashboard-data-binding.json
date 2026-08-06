@@ -1,0 +1,54 @@
+{
+  "id": "dashboard-data-binding",
+  "lang": "en",
+  "category": "dashboard",
+  "workflow": "dashboard-binding",
+  "scenario_type": "single_turn",
+  "description": "Dashboard data binding: create dashboard + widget with dataSource bound to a device metric. Tests the full data-binding path.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Build a dashboard named 'Sensor Board' for sensor-001. Add a component showing the current battery value, with its data source bound to sensor-001's battery metric."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: dashboard create + component with dataSource bound to sensor-001 battery"
+    ],
+    "overall": "仪表盘建成 + 组件 data_source 正确引用 sensor-001 的电量指标(battery)"
+  },
+  "state_queries": [
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "name": "Sensor Board"
+      },
+      "expected": true
+    },
+    {
+      "type": "dashboard_component_bound",
+      "params": {
+        "name": "Sensor Board",
+        "device_id": "sensor-001",
+        "metric": "battery"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device get",
+      "neomind dashboard create"
+    ]
+  }
+}

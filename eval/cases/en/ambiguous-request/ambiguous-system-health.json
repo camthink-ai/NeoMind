@@ -1,0 +1,35 @@
+{
+  "id": "ambiguous-system-health",
+  "lang": "en",
+  "category": "system",
+  "workflow": "ambiguous-request",
+  "scenario_type": "single_turn",
+  "description": "Ambiguous request: vague system-health query that could mean alerts, devices, or status. Tests whether the agent gathers real state via tools rather than guessing.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Is there anything on the system that needs attention lately? Take a look."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent queries system state via tools (alerts/devices/status)"
+    ],
+    "overall": "主动查设备状态+告警,基于真实数据回答"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}

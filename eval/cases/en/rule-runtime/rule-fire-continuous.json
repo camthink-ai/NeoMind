@@ -1,0 +1,35 @@
+{
+  "id": "rule-fire-continuous",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "rule-runtime",
+  "scenario_type": "single_turn",
+  "description": "Rule runtime: query current metric value. Tests live telemetry read.",
+  "setup": {
+    "fixture": "scenario-rule-runtime"
+  },
+  "turns": [
+    {
+      "user": "What is webhook-sensor's battery_level right now?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent reads current battery_level via device get/history"
+    ],
+    "overall": "(模拟器持续发送 battery_level 30→28→26→...→<20)规则在阈值跌破时 fire → message 产生"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device get"
+    ]
+  }
+}

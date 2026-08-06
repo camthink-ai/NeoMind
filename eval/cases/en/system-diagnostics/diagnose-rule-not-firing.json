@@ -1,0 +1,36 @@
+{
+  "id": "diagnose-rule-not-firing",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "system-diagnostics",
+  "scenario_type": "single_turn",
+  "description": "Diagnostics: investigate why a rule never triggered. Agent must inspect rule/trigger history and diagnose.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "I created a rule-battery-low rule earlier, but it's never fired. Can you look into why?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent inspects rule config + history, diagnoses"
+    ],
+    "overall": "正确诊断出规则未触发的原因(条件不满足)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule get",
+      "neomind device get"
+    ]
+  }
+}

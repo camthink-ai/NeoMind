@@ -1,0 +1,45 @@
+{
+  "id": "command-discovery",
+  "lang": "en",
+  "category": "device",
+  "workflow": "command-discovery",
+  "scenario_type": "single_turn",
+  "description": "Command discovery: user references a device command ('stop') that the agent must discover via device get/types, then invoke.",
+  "setup": {
+    "fixture": "scenario-industrial"
+  },
+  "turns": [
+    {
+      "user": "pump-A's vibration is too high (22mm/s), risk of failure. Use its stop command to shut it down."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent discovers the stop command and executes device control"
+    ],
+    "overall": "停机命令 stop 被发到 pump-A(command history 有记录)"
+  },
+  "state_queries": [
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "pump-A",
+        "command": "stop"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device get"
+    ]
+  }
+}

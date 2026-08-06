@@ -1,0 +1,35 @@
+{
+  "id": "edge-duplicate-create",
+  "lang": "en",
+  "category": "device",
+  "workflow": "edge-cases",
+  "scenario_type": "single_turn",
+  "description": "Edge case: duplicate create. sensor-001 may already exist in the default fixture; agent must handle the conflict (error recovery or skip).",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a device with id sensor-001, type ne101_camera."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent handles duplicate create gracefully"
+    ],
+    "overall": "正确处理重复创建(不静默覆盖/不崩溃)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device create"
+    ]
+  }
+}

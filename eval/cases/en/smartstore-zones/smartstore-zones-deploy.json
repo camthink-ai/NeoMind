@@ -1,0 +1,70 @@
+{
+  "id": "smartstore-zones-deploy",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "smartstore-zones",
+  "scenario_type": "multi_turn",
+  "description": "Multi-turn batch scenario: create 8+ rules + dashboard + channel in one flow. Tests large multi-entity workflow.",
+  "setup": {
+    "fixture": "scenario-smartstore-zones"
+  },
+  "turns": [
+    {
+      "user": "I run a large supermarket with 4 zones: dairy, produce, frozen, and bakery. Each zone has a temperature sensor, HVAC, and door sensor. Food-safety rules require continuous temperature monitoring with alerts."
+    },
+    {
+      "user": "Good plan. Per food-safety standards: dairy and produce below 5°C, frozen below -18°C. Create temperature alert rules for each zone, and alert if a door stays open over 30 seconds."
+    },
+    {
+      "user": "Are the rules done? Also build me a dashboard called 'Store Overview' grouping all temperatures by zone. Route alerts to a webhook channel for store-manager with URL https://example.com/store-webhook."
+    },
+    {
+      "user": "Just build it all — create everything. No need to confirm again."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: clarify plan",
+      "T2: create temp + door rules per zone",
+      "T3: dashboard + channel",
+      "T4: execute remaining without re-confirming"
+    ],
+    "overall": "完整分区监控方案落地：≥8条规则(每区至少2条) + 分区仪表盘 + 通知频道。应发现 3 个预置异常(dairy-temp-02超温/produce-hvac停机/frozen-door门开)。"
+  },
+  "state_queries": [
+    {
+      "type": "rule_count",
+      "expected_min": 8
+    },
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "name": "Store Overview"
+      },
+      "expected": true
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "store-manager"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list",
+      "neomind rule create",
+      "neomind dashboard create",
+      "neomind message channel-create"
+    ]
+  }
+}

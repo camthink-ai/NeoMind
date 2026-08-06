@@ -1,0 +1,44 @@
+{
+  "id": "error-recovery-composite",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "error-recovery",
+  "scenario_type": "single_turn",
+  "description": "Error recovery: composite AND condition that may trigger schema errors; tests agent reads suggestion and self-heals.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a rule named recovery-composite: when sensor-001's values.battery is below 20 AND above 5, alert. Both conditions must hold."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: rule create (composite AND, possibly trial-and-error)"
+    ],
+    "overall": "规则最终建成(含 AND 复合条件)"
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "recovery-composite"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create"
+    ]
+  }
+}

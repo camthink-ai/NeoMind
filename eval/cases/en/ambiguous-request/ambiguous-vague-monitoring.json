@@ -1,0 +1,35 @@
+{
+  "id": "ambiguous-vague-monitoring",
+  "lang": "en",
+  "category": "device",
+  "workflow": "ambiguous-request",
+  "scenario_type": "single_turn",
+  "description": "Ambiguous request: 'monitor temperature' without a specific device/rule. Tests clarification or a reasonable default action via tools.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Please set up temperature monitoring for me."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent either clarifies or creates a temperature monitoring rule/agent via tools"
+    ],
+    "overall": "基于真实设备数据给建议(不能凭空猜)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}

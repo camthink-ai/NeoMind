@@ -1,0 +1,35 @@
+{
+  "id": "edge-empty-system",
+  "lang": "en",
+  "category": "system",
+  "workflow": "edge-cases",
+  "scenario_type": "single_turn",
+  "description": "Edge case: empty-system query. Tests agent doesn't fabricate state when nothing exists.",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "What's in the system right now? Show me the status."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent queries and reports real (possibly empty) state"
+    ],
+    "overall": "基于真实数据回答(空就是空,不能编造)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}

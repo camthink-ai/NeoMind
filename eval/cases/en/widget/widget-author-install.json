@@ -1,0 +1,44 @@
+{
+  "id": "widget-author-install",
+  "lang": "en",
+  "category": "widget",
+  "workflow": "widget",
+  "scenario_type": "single_turn",
+  "description": "Widget authoring: create + install a custom widget via CLI.",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "Create and install a custom widget: name 'Custom Gauge', type gauge. Prefer `neomind widget create --install` to do it in one step."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: widget create --install"
+    ],
+    "overall": "widget 真正安装进系统,widget_exists 能查到 Custom Gauge"
+  },
+  "state_queries": [
+    {
+      "type": "widget_exists",
+      "params": {
+        "id": "custom-gauge"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind widget create"
+    ]
+  }
+}

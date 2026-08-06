@@ -1,0 +1,36 @@
+{
+  "id": "error-recovery-unsupported-metric",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "error-recovery",
+  "scenario_type": "single_turn",
+  "description": "Error recovery: sensor may not support humidity metric. Agent must discover actual metrics via device get and adapt or report.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a rule named recovery-metric: alert when sensor-001's humidity is above 80."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: rule create (humidity may be unsupported → agent discovers metrics and fixes)"
+    ],
+    "overall": "agent 正确处理指标不支持的情况(查/修正/告知)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device get",
+      "neomind rule create"
+    ]
+  }
+}

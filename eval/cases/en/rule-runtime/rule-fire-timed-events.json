@@ -1,0 +1,35 @@
+{
+  "id": "rule-fire-timed-events",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "rule-runtime",
+  "scenario_type": "single_turn",
+  "description": "Rule runtime: status check on a device. Tests agent queries device status rather than guessing.",
+  "setup": {
+    "fixture": "scenario-timed-events"
+  },
+  "turns": [
+    {
+      "user": "Is monitor-01 running normally?"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent checks monitor-01 status via tools"
+    ],
+    "overall": "(模拟器第5秒开门→door>30 规则 fire + 第10秒压缩机停→compressor==false 规则 fire)→ 2 条 message"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device get"
+    ]
+  }
+}

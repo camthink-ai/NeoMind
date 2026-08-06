@@ -1,0 +1,49 @@
+{
+  "id": "multi-turn-correction",
+  "lang": "en",
+  "category": "rule",
+  "workflow": "multi-turn-context",
+  "scenario_type": "multi_turn",
+  "description": "Multi-turn: correction. Agent must update/recreate the rule to target sensor-002 in turn 2.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a rule named ctx-correct-rule: alert when sensor-001's battery is below 20."
+    },
+    {
+      "user": "No wait — I want to monitor sensor-002, not sensor-001. Change it."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: rule create (ctx-correct-rule on sensor-001)",
+      "T2: rule update/recreate to sensor-002"
+    ],
+    "overall": "最终规则指向 sensor-002"
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "ctx-correct-rule"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create",
+      "neomind rule update"
+    ]
+  }
+}

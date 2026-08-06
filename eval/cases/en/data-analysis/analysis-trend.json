@@ -1,0 +1,35 @@
+{
+  "id": "analysis-trend",
+  "lang": "en",
+  "category": "device",
+  "workflow": "data-analysis",
+  "scenario_type": "single_turn",
+  "description": "Data analysis: read telemetry history for a trend and summarize.",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "What's the recent battery trend for sensor-001 — rising or falling? Show me the history."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent reads device history and reports trend"
+    ],
+    "overall": "基于真实历史数据回答趋势(不能凭空猜)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device history"
+    ]
+  }
+}
