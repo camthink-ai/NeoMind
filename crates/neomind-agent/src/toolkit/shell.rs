@@ -947,11 +947,11 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        // Full description (default): exhaustive CLI syntax, easy-to-miss
-        // subcommands, GUI-launching guard. Slim description (NEOMIND_SLIM_PROMPT=1):
-        // keeps Critical Syntax Rules (hard constraints) + CLI concept, drops the
-        // defensive knowledge (easy-to-miss list, GUI guard) — those are discoverable
-        // via `neomind <domain> <action> --help` or the skill tool on demand.
+        // Slim description (default, matches slim system prompt): keeps Critical
+        // Syntax Rules (hard constraints) + CLI concept, drops the defensive
+        // knowledge (easy-to-miss list, GUI guard) — those are discoverable via
+        // `neomind <domain> <action> --help` or the skill tool on demand.
+        // Full description (NEOMIND_FULL_PROMPT=1): exhaustive CLI syntax.
         static FULL: &str = r#"Execute shell commands on the host system.
 
 Use this tool to run any system command. For NeoMind platform operations, use the `neomind` CLI.
@@ -1014,10 +1014,13 @@ Runs on host via `/bin/sh -c` (Unix) or `cmd /C` (Windows). Common tools availab
 - `neomind` commands are dispatched in-process (no subprocess); they return a structured `CliResponse` as pretty-printed JSON on stdout.
 - Output may be truncated for very long responses."#;
 
-        if std::env::var("NEOMIND_SLIM_PROMPT").as_deref() == Ok("1") {
-            SLIM
-        } else {
+        // Default to SLIM (matches the default slim system prompt in
+        // builder.rs). `NEOMIND_FULL_PROMPT=1` opts back into the full
+        // description.
+        if std::env::var("NEOMIND_FULL_PROMPT").as_deref() == Ok("1") {
             FULL
+        } else {
+            SLIM
         }
     }
 

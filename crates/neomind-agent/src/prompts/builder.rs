@@ -21,11 +21,7 @@ pub const TIMEZONE_PLACEHOLDER: &str = "{{TIMEZONE}}";
 const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
 
 /// Slim system prompt template (~48% smaller). Selected when
-/// `NEOMIND_SLIM_PROMPT=1` — an opt-in for small local models that struggle
-/// with the full template's token volume. Keeps every hard constraint
-/// (language policy, tool-first, no fabrication, batch rule, error recovery)
-/// and drops soft style guidance (chitchat examples, narrate-intent, etc.).
-/// Must preserve the KV-CACHE BOUNDARY block and the same sentinel markers.
+/// `NEOMIND_FULL_PROMPT=1` opts back into the full template (default is slim).
 const SYSTEM_PROMPT_SLIM_TEMPLATE: &str = include_str!("system_prompt_slim.md");
 
 const VISION_BEGIN: &str = "<!-- BEGIN_VISION -->";
@@ -67,10 +63,13 @@ impl PromptBuilder {
 
     /// Build the enhanced system prompt.
     pub fn build_system_prompt(&self) -> String {
-        let template = if std::env::var("NEOMIND_SLIM_PROMPT").as_deref() == Ok("1") {
-            SYSTEM_PROMPT_SLIM_TEMPLATE
-        } else {
+        // Default to the slim prompt (eval-validated: no significant regression
+        // vs full, ~45% fewer tokens). `NEOMIND_FULL_PROMPT=1` opts back into the
+        // legacy full template (e.g. for large cloud models that can afford it).
+        let template = if std::env::var("NEOMIND_FULL_PROMPT").as_deref() == Ok("1") {
             SYSTEM_PROMPT_TEMPLATE
+        } else {
+            SYSTEM_PROMPT_SLIM_TEMPLATE
         };
         let mut prompt = template.to_string();
         if self.supports_vision {
@@ -186,12 +185,21 @@ mod tests {
 
     #[test]
     fn test_no_cli_reference_table() {
-        let builder = PromptBuilder::new();
-        let prompt = builder.build_system_prompt();
-        // CLI reference table should be removed
-        assert!(!prompt.contains("CLI Command Reference"));
-        // But --help guidance should be present
-        assert!(prompt.contains("--help"));
+        // Default (slim) prompt drops the CLI reference table AND the --help
+        // guidance (saved tokens). The full prompt (NEOMIND_FULL_PROMPT=1)
+        // keeps --help guidance.
+        let slim = PromptBuilder::new().build_system_prompt();
+        assert!(!slim.contains("CLI Command Reference"));
+        assert!(!slim.contains("--help"), "slim drops --help guidance");
+        unsafe {
+            std::env::set_var("NEOMIND_FULL_PROMPT", "1");
+        }
+        let full = PromptBuilder::new().build_system_prompt();
+        unsafe {
+            std::env::remove_var("NEOMIND_FULL_PROMPT");
+        }
+        assert!(!full.contains("CLI Command Reference"));
+        assert!(full.contains("--help"), "full keeps --help guidance");
     }
 
     #[test]
@@ -255,18 +263,17 @@ mod tests {
     }
 
     #[test]
-    fn test_slim_prompt_is_compact_and_preserves_rules() {
-        // NEOMIND_SLIM_PROMPT=1 must yield a smaller prompt that still keeps
-        // every hard constraint (language policy, tool-first, batch rule) —
-        // only soft style guidance is dropped.
-        unsafe {
-            std::env::set_var("NEOMIND_SLIM_PROMPT", "1");
-        }
+    fn test_default_is_slim_and_preserves_rules() {
+        // Default (no env) must be the slim prompt — smaller, but keeping every
+        // hard constraint. `NEOMIND_FULL_PROMPT=1` opts back into the full one.
         let slim = PromptBuilder::new().build_system_prompt();
         unsafe {
-            std::env::remove_var("NEOMIND_SLIM_PROMPT");
+            std::env::set_var("NEOMIND_FULL_PROMPT", "1");
         }
         let full = PromptBuilder::new().build_system_prompt();
+        unsafe {
+            std::env::remove_var("NEOMIND_FULL_PROMPT");
+        }
 
         assert!(slim.len() < full.len(), "slim must be smaller");
         assert!(slim.contains("Language Policy"));
@@ -275,5 +282,8 @@ mod tests {
         assert!(slim.contains("Tool-First"));
         assert!(slim.contains("{{CURRENT_TIME}}")); // KV-cache boundary preserved
         assert!(slim.contains("## Environment"));
+        // Default is slim (slim is smaller than full, and default == slim build).
+        let default_again = PromptBuilder::new().build_system_prompt();
+        assert_eq!(default_again.len(), slim.len(), "default must be slim");
     }
 }
