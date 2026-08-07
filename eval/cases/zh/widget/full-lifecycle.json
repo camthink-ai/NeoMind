@@ -23,5 +23,12 @@
       "Turn 5: Agent 调用 `neomind widget uninstall <id>`"
     ],
     "overall": "若 widget 校验失败（如 manifest schema 不匹配），agent 应基于错误信息反馈；turn 1 的 scaffold 和 turn 5 的 uninstall 必须实际执行"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "widget_exists",
+      "params": { "name": "eval-widget" },
+      "expected": false
+    }
+  ]
 }

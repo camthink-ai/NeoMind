@@ -23,5 +23,12 @@
       "Turn 5: Agent runs `neomind widget uninstall <id>`"
     ],
     "overall": "If widget validation fails (e.g. manifest schema mismatch), agent must surface the error message; turn 1 scaffold and turn 5 uninstall must still execute"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "widget_exists",
+      "params": { "name": "eval-widget" },
+      "expected": false
+    }
+  ]
 }
