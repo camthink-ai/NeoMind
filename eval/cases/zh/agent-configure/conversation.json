@@ -12,22 +12,43 @@
         {
           "name": "demo-agent",
           "user_prompt": "demo",
-          "schedule": { "schedule_type": "interval", "interval_seconds": 60 },
+          "schedule": {
+            "schedule_type": "interval",
+            "interval_seconds": 60
+          },
           "execution_mode": "free"
         }
       ]
     }
   },
   "turns": [
-    { "user": "向 demo-agent 发送一条消息：'今天有什么异常？'" },
-    { "user": "demo-agent 的最近会话历史能看下吗？" }
+    {
+      "user": "向 demo-agent 发送一条消息：'今天有什么异常？'"
+    },
+    {
+      "user": "demo-agent 的最近会话历史能看下吗？"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 解析 demo-agent 的 id 后调用 `neomind agent send-message <id> '今天有什么异常？'`（或 conversation 子命令）",
       "Turn 2: Agent 调用 `neomind agent conversation <id>`（或 GET /api/agents/<id>/conversation）查看历史"
     ],
     "overall": "Turn 1 必须实际触发消息发送（而非聊天路径的 memory 工具）"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent conversation",
+      "neomind agent send-message"
+    ]
   }
 }

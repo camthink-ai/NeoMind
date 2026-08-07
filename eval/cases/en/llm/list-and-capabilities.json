@@ -5,15 +5,32 @@
   "workflow": "llm-management",
   "scenario_type": "single_turn",
   "description": "List configured LLM backends and report which ones support vision/multimodal input (covers the multimodal capability chain — a core NeoMind differentiator, previously 0 coverage)",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Which LLM backends are configured in the system right now, and which of them support image input? Summarize as a list." }
+    {
+      "user": "Which LLM backends are configured in the system right now, and which of them support image input? Summarize as a list."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent invokes `neomind llm list` (or GET /api/llm-backends) and reports the multimodal capability of each backend"
     ],
     "overall": "Must at minimum identify the currently active backend (eval-agent) and report its multimodal status"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind llm list"
+    ]
   }
 }

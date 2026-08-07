@@ -12,22 +12,43 @@
         {
           "name": "demo-agent",
           "user_prompt": "demo",
-          "schedule": { "schedule_type": "interval", "interval_seconds": 60 },
+          "schedule": {
+            "schedule_type": "interval",
+            "interval_seconds": 60
+          },
           "execution_mode": "free"
         }
       ]
     }
   },
   "turns": [
-    { "user": "Send a message to demo-agent: 'Any anomalies today?'" },
-    { "user": "Can I see demo-agent's recent conversation history?" }
+    {
+      "user": "Send a message to demo-agent: 'Any anomalies today?'"
+    },
+    {
+      "user": "Can I see demo-agent's recent conversation history?"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent resolves demo-agent's id then runs `neomind agent send-message <id> 'Any anomalies today?'` (or conversation subcommand)",
       "Turn 2: Agent runs `neomind agent conversation <id>` (or GET /api/agents/<id>/conversation) to view history"
     ],
     "overall": "Turn 1 must actually trigger message dispatch (not the chat-path memory tool)"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent conversation",
+      "neomind agent send-message"
+    ]
   }
 }

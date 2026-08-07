@@ -5,15 +5,32 @@
   "workflow": "llm-management",
   "scenario_type": "single_turn",
   "description": "列出当前已配置的 LLM backend，并报告哪些支持视觉/多模态（覆盖 multimodal capability 链路 — NeoMind 核心卖点之一，此前 0 覆盖）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "现在系统里配置了哪些 LLM 后端？哪个支持图像输入？请用列表总结。" }
+    {
+      "user": "现在系统里配置了哪些 LLM 后端？哪个支持图像输入？请用列表总结。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind llm list`（或 GET /api/llm-backends），并对每个 backend 报告 multimodal 能力"
     ],
     "overall": "应至少识别出当前激活的 backend（eval-agent），并报告其 multimodal 状态"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind llm list"
+    ]
   }
 }
