@@ -1,0 +1,44 @@
+{
+  "id": "agri-auto-irrigate-north",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-agriculture",
+  "scenario_type": "single_turn",
+  "description": "en version of agri-auto-irrigate-north",
+  "setup": {
+    "fixture": "scenario-agriculture"
+  },
+  "turns": [
+    {
+      "user": "north-field-probe-01 is too dry - soil moisture is only 12%. Create an auto-irrigation alert rule named agri-irrigate-north: notify when north-field-probe-01's soil moisture (soil_moisture_pct) drops below 20."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: `neomind rule create` a rule named agri-irrigate-north with condition on north-field-probe-01 soil_moisture_pct"
+    ],
+    "overall": "Rule must be actually created and pass validation (soil_moisture_pct from soil_moisture_probe template)"
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "agri-irrigate-north"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create"
+    ]
+  }
+}

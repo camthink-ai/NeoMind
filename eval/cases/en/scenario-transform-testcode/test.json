@@ -1,0 +1,45 @@
+{
+  "id": "transform-testcode-create",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-transform-testcode",
+  "scenario_type": "single_turn",
+  "description": "en version of transform-testcode-create",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "Write a Celsius-to-Fahrenheit transform named c-to-f: code `return input * 1.8 + 32`, output-prefix fahrenheit, scope global. First verify with `neomind transform test-code` that input 25 outputs 77 (77.0); once verified, save and enable it."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: transform test-code (verify 25->77) + transform create with output_prefix=fahrenheit"
+    ],
+    "overall": "test-code invoked + transform created with output_prefix=fahrenheit"
+  },
+  "state_queries": [
+    {
+      "type": "transform_exists",
+      "params": {
+        "name": "c-to-f"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind transform test-code",
+      "neomind transform create"
+    ]
+  }
+}

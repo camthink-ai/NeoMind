@@ -1,0 +1,61 @@
+{
+  "id": "infer-device-type-from-samples",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-device-inference",
+  "scenario_type": "single_turn",
+  "description": "en version of infer-device-type-from-samples",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "We just onboarded an unknown device that keeps reporting this raw JSON (3 samples):\n{\"rpm\":3250,\"vibration_mm_s\":4.2,\"bearing_temp_c\":55,\"timestamp\":\"2026-07-25T10:00:00Z\"}\n{\"rpm\":3300,\"vibration_mm_s\":4.5,\"bearing_temp_c\":57,\"timestamp\":\"2026-07-25T10:01:00Z\"}\n{\"rpm\":3280,\"vibration_mm_s\":4.3,\"bearing_temp_c\":56,\"timestamp\":\"2026-07-25T10:02:00Z\"}\nCreate a device type template with id mystery-vibration-sensor, defining all these metrics (each metric's name/data_type/unit)."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: device types create mystery-vibration-sensor with metrics rpm, vibration_mm_s, bearing_temp_c"
+    ],
+    "overall": "Template must be actually created, metrics include rpm, vibration_mm_s, bearing_temp_c (timestamp is metadata, not a metric)"
+  },
+  "state_queries": [
+    {
+      "type": "device_type_has_metric",
+      "params": {
+        "id": "mystery-vibration-sensor",
+        "metric": "rpm"
+      },
+      "expected": true
+    },
+    {
+      "type": "device_type_has_metric",
+      "params": {
+        "id": "mystery-vibration-sensor",
+        "metric": "vibration_mm_s"
+      },
+      "expected": true
+    },
+    {
+      "type": "device_type_has_metric",
+      "params": {
+        "id": "mystery-vibration-sensor",
+        "metric": "bearing_temp_c"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device types create"
+    ]
+  }
+}

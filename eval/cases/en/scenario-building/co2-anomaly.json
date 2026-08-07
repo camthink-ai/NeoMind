@@ -1,0 +1,35 @@
+{
+  "id": "building-co2-anomaly",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-building",
+  "scenario_type": "single_turn",
+  "description": "en version of building-co2-anomaly",
+  "setup": {
+    "fixture": "scenario-building"
+  },
+  "turns": [
+    {
+      "user": "Check CO2 (co2_ppm) in all rooms - which rooms exceed the threshold (>1000ppm)? Report each room's value."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: `neomind device list`/get to read co2_ppm across rooms"
+    ],
+    "overall": "Based on real tool results (room-a 1200 over; room-b 600 normal) - no fabrication"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}

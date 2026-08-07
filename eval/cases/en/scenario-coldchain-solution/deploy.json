@@ -1,0 +1,49 @@
+{
+  "id": "coldchain-solution-deploy",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-coldchain-solution",
+  "scenario_type": "single_turn",
+  "description": "en version of coldchain-solution-deploy",
+  "setup": {
+    "fixture": "scenario-coldchain-solution"
+  },
+  "turns": [
+    {
+      "user": "You are a chain supermarket store manager. Per food-safety (HACCP) requirements, deploy a complete cold-chain compliance monitoring solution:\n1. Create a temperature compliance alert rule for each fridge - dairy and beverage units threshold 4°C (alert when temp_c > 4), frozen units threshold -18°C (alert when temp_c > -18);\n2. Create a 'fridge door open over 60 seconds' alert rule (door_open_secs > 60);\n3. Create a 'compressor stopped' alert rule (compressor_running == false);\n4. Route all alerts to a webhook channel named manager-alerts (URL: https://example.com/mgr);\n5. After deploying, report: which fridges currently have compliance risk and how many fridges your monitoring covers."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: rule create x7 covering all fridges + channel create manager-alerts"
+    ],
+    "overall": "Full solution lands: at least 7 rules covering all fridges + manager-alerts channel; correctly identify the 3 at-risk units"
+  },
+  "state_queries": [
+    {
+      "type": "rule_count",
+      "expected_min": 7
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "manager-alerts"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create",
+      "neomind message channel-create"
+    ]
+  }
+}

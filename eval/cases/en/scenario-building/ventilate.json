@@ -1,0 +1,45 @@
+{
+  "id": "building-ventilate",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-building",
+  "scenario_type": "single_turn",
+  "description": "en version of building-ventilate",
+  "setup": {
+    "fixture": "scenario-building"
+  },
+  "turns": [
+    {
+      "user": "meeting-room-A (sensor room-a-env) has high CO2. Send a set_mode command to its HVAC (hvac-a), setting the mode to ventilate."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: device control hvac-a set_mode ventilate"
+    ],
+    "overall": "set_mode must actually reach hvac-a (command history records it)"
+  },
+  "state_queries": [
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "hvac-a",
+        "command": "set_mode"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device control hvac-a set_mode"
+    ]
+  }
+}

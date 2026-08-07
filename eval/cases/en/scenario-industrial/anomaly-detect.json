@@ -1,0 +1,35 @@
+{
+  "id": "industrial-anomaly-detect",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-industrial",
+  "scenario_type": "single_turn",
+  "description": "en version of industrial-anomaly-detect",
+  "setup": {
+    "fixture": "scenario-industrial"
+  },
+  "turns": [
+    {
+      "user": "Check vibration (vibration_mm_s) on all machines - which one is abnormally high? Report each machine's value."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: `neomind device list`/get to read vibration_mm_s across machines"
+    ],
+    "overall": "Based on real tool results (pump-A 18mm/s abnormal; pump-B 4, compressor-1 5 normal) - no fabrication"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}

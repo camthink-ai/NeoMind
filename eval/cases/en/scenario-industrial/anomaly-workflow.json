@@ -1,0 +1,52 @@
+{
+  "id": "industrial-anomaly-workflow",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-industrial",
+  "scenario_type": "single_turn",
+  "description": "en version of industrial-anomaly-workflow",
+  "setup": {
+    "fixture": "scenario-industrial"
+  },
+  "turns": [
+    {
+      "user": "Check all machines. For any with vibration (vibration_mm_s) above 15, immediately reduce speed to 50% with set_speed, and create an alert rule named industrial-pump-a-alert."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: device control pump-A set_speed + rule create industrial-pump-a-alert"
+    ],
+    "overall": "set_speed sent to pump-A + alert rule created - both land"
+  },
+  "state_queries": [
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "pump-A",
+        "command": "set_speed"
+      },
+      "expected": true
+    },
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "industrial-pump-a-alert"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device control"
+    ]
+  }
+}

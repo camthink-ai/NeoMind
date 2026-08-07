@@ -1,0 +1,58 @@
+{
+  "id": "building-bms-solution-deploy",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-building-solution",
+  "scenario_type": "single_turn",
+  "description": "en version of building-bms-solution-deploy",
+  "setup": {
+    "fixture": "scenario-building-solution"
+  },
+  "turns": [
+    {
+      "user": "You are building facilities management. Deploy a Building Management (BMS) automation solution for the whole floor:\n1. Create a CO2 ventilation alert rule for each zone (alert when co2_ppm > 1000);\n2. For meeting rooms/offices, create a rule 'lights should be on when occupied' (occupancy > 0);\n3. For server-room, create a high-temp protection rule (temp_c > 30), and immediately send set_mode to server-room-hvac set to cool (forced cooling);\n4. Route all alerts to a webhook channel named facilities-alerts (URL: https://example.com/fac);\n5. After deploying, report: which zones need immediate action and how many zones your solution covers."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: rule create x5 + channel create facilities-alerts + device control server-room-hvac set_mode"
+    ],
+    "overall": "Full solution lands: at least 5 rules + facilities-alerts channel + server-room-hvac set_mode sent"
+  },
+  "state_queries": [
+    {
+      "type": "rule_count",
+      "expected_min": 5
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "facilities-alerts"
+      },
+      "expected": true
+    },
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "server-room-hvac",
+        "command": "set_mode"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create",
+      "neomind device control server-room-hvac set_mode",
+      "neomind message channel-create"
+    ]
+  }
+}

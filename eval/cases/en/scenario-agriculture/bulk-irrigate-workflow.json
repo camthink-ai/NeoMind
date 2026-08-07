@@ -1,0 +1,59 @@
+{
+  "id": "agri-bulk-irrigate-workflow",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-agriculture",
+  "scenario_type": "single_turn",
+  "description": "en version of agri-bulk-irrigate-workflow",
+  "setup": {
+    "fixture": "scenario-agriculture"
+  },
+  "turns": [
+    {
+      "user": "It hasn't rained at all recently. Set up irrigation alert rules for all plots with soil_moisture_pct below 25 - the north one named agri-irrigate-north, the greenhouse one named agri-irrigate-greenhouse. Also create a webhook notification channel named agri-alerts with URL https://example.com/agri-alerts to receive these alerts."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: rule create agri-irrigate-north + agri-irrigate-greenhouse + channel create agri-alerts"
+    ],
+    "overall": "All three artifacts must land: agri-irrigate-north, agri-irrigate-greenhouse, agri-alerts channel"
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "agri-irrigate-north"
+      },
+      "expected": true
+    },
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "agri-irrigate-greenhouse"
+      },
+      "expected": true
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "agri-alerts"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create",
+      "neomind message channel-create"
+    ]
+  }
+}

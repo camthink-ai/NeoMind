@@ -1,0 +1,58 @@
+{
+  "id": "transform-pipeline-deploy",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-transform-pipeline",
+  "scenario_type": "single_turn",
+  "description": "en version of transform-pipeline-deploy",
+  "setup": {
+    "fixture": "scenario-transform-pipeline"
+  },
+  "turns": [
+    {
+      "user": "Build a data pipeline for the temperature sensor:\n1. Create a transform converting temp_c Celsius to Fahrenheit (code `return input * 1.8 + 32`, output-prefix fahrenheit, scope global);\n2. Create a rule (named temp-f-high): alert when Fahrenheit (transform output) > 85 - the rule's source MUST point at the transform output (containing fahrenheit), not the raw temp_c directly;\n3. Route alerts to the temp-f-alerts webhook channel (URL: https://example.com/t)."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: transform create + rule create source=transform output (fahrenheit) + channel create temp-f-alerts"
+    ],
+    "overall": "Transform built + rule source points at transform output (fahrenheit) + channel built"
+  },
+  "state_queries": [
+    {
+      "type": "transform_count",
+      "expected_min": 1
+    },
+    {
+      "type": "rule_references_source",
+      "params": {
+        "name": "temp-f-high"
+      },
+      "source": "fahrenheit",
+      "expected": true
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "temp-f-alerts"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind transform create",
+      "neomind rule create",
+      "neomind message channel-create"
+    ]
+  }
+}

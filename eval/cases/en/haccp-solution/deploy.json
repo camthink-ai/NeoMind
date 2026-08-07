@@ -1,0 +1,70 @@
+{
+  "id": "haccp-compliance-deploy",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "haccp-solution",
+  "scenario_type": "multi_turn",
+  "description": "en version of haccp-compliance-deploy",
+  "setup": {
+    "fixture": "scenario-haccp-solution"
+  },
+  "turns": [
+    {
+      "user": "I just opened a fresh-goods supermarket with 4 fridges: 2 dairy units, 1 beverage unit, 1 frozen unit. Food-safety requires continuous cold-chain temp monitoring + alerts + traceability. Can you design a complete cold-chain monitoring solution?"
+    },
+    {
+      "user": "Sounds good. Per HACCP: dairy and beverage fridges must stay below 5°C, frozen below -18°C. Create a temp alert rule for each fridge, plus a door-open-over-30-seconds alert. Go build it."
+    },
+    {
+      "user": "All rules done? Great. Also build a dashboard named HACCP Dashboard showing an overview of all fridge temps. And route all alerts to the manager-alerts webhook channel, URL https://example.com/mgr."
+    },
+    {
+      "user": "Just build it - no more confirmation needed. Build the dashboard and channel too."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "T1: agent designs solution",
+      "T2: rule create x4 (temp per fridge + door-open)",
+      "T3: dashboard create HACCP Dashboard + channel manager-alerts",
+      "T4: execute without re-confirming"
+    ],
+    "overall": "Complete HACCP monitoring solution: at least 4 rules + dashboard + channel. dairy-fridge-2 (6.2°C) should be flagged as non-compliant"
+  },
+  "state_queries": [
+    {
+      "type": "rule_count",
+      "expected_min": 4
+    },
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "name": "HACCP Dashboard"
+      },
+      "expected": true
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "manager-alerts"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list",
+      "neomind rule create",
+      "neomind dashboard create",
+      "neomind message channel-create"
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "id": "agri-query-driest",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-agriculture",
+  "scenario_type": "single_turn",
+  "description": "en version of agri-query-driest",
+  "setup": {
+    "fixture": "scenario-agriculture"
+  },
+  "turns": [
+    {
+      "user": "Query all soil moisture probes and tell me which ones have soil_moisture_pct below 25? Report each one's current value."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: `neomind device list`/get to read soil_moisture_pct across probes"
+    ],
+    "overall": "Must answer from real tool results (north-field-probe-01=12, north-field-probe-02=14, greenhouse-probe-01=22 below 25; south not) - no fabrication"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}

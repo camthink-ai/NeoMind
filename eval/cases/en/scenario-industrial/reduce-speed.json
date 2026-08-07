@@ -1,0 +1,45 @@
+{
+  "id": "industrial-reduce-speed",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-industrial",
+  "scenario_type": "single_turn",
+  "description": "en version of industrial-reduce-speed",
+  "setup": {
+    "fixture": "scenario-industrial"
+  },
+  "turns": [
+    {
+      "user": "pump-A's vibration is too high (18mm/s), risk of failure. Use the set_speed command to reduce pump-A's speed to 50%."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: device control pump-A set_speed 50%"
+    ],
+    "overall": "set_speed must actually reach pump-A (command history records it)"
+  },
+  "state_queries": [
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "pump-A",
+        "command": "set_speed"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device control pump-A set_speed"
+    ]
+  }
+}

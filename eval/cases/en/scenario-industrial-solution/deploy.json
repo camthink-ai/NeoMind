@@ -1,0 +1,58 @@
+{
+  "id": "industrial-pdm-solution-deploy",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-industrial-solution",
+  "scenario_type": "single_turn",
+  "description": "en version of industrial-pdm-solution-deploy",
+  "setup": {
+    "fixture": "scenario-industrial-solution"
+  },
+  "turns": [
+    {
+      "user": "You are a plant manager. Deploy a Predictive Maintenance (PdM) solution for the whole production line:\n1. Create a vibration alert rule for each machine (alert when vibration_mm_s > 15);\n2. For line-motor-1, create a critical composite rule: vibration > 15 AND temp_c > 80 (logical AND);\n3. Immediately slow the critical line-motor-1: use set_speed to set speed to 50%;\n4. Route all alerts to a webhook channel named maintenance-alerts (URL: https://example.com/maint);\n5. After deploying, report: which machine needs immediate maintenance and how many machines your monitoring covers."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: rule create x6 (5 vibration + 1 composite) + channel create maintenance-alerts + device control line-motor-1 set_speed"
+    ],
+    "overall": "Full solution lands: at least 6 rules + maintenance-alerts channel + line-motor-1 slowed; identify line-motor-1 as needing immediate maintenance"
+  },
+  "state_queries": [
+    {
+      "type": "rule_count",
+      "expected_min": 6
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "maintenance-alerts"
+      },
+      "expected": true
+    },
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "line-motor-1",
+        "command": "set_speed"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create",
+      "neomind device control line-motor-1 set_speed",
+      "neomind message channel-create"
+    ]
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "id": "agriculture-irrigation-solution-deploy",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-agriculture-solution",
+  "scenario_type": "single_turn",
+  "description": "en version of agriculture-irrigation-solution-deploy",
+  "setup": {
+    "fixture": "scenario-agriculture-solution"
+  },
+  "turns": [
+    {
+      "user": "You are a farm owner. It hasn't rained (farm-weather rainfall 0). Deploy a smart irrigation solution for the whole farm:\n1. Create a soil-moisture alert rule for each plot by crop - tomato-field threshold 40 (alert when soil_moisture_pct < 40), corn-field threshold 30, greenhouse threshold 25, orchard threshold 20;\n2. For plots currently below threshold, immediately open the irrigation valve with set_valve (valve_open to on/true);\n3. Route all alerts to a webhook channel named farmer-alerts (URL: https://example.com/farm);\n4. After deploying, report: which plots need immediate irrigation and how many plots your solution covers."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: rule create x4 + channel create farmer-alerts + device control tomato-field-valve set_valve"
+    ],
+    "overall": "Full solution lands: at least 4 rules + farmer-alerts channel + tomato-field-valve opened (set_valve)"
+  },
+  "state_queries": [
+    {
+      "type": "rule_count",
+      "expected_min": 4
+    },
+    {
+      "type": "channel_exists",
+      "params": {
+        "name": "farmer-alerts"
+      },
+      "expected": true
+    },
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "tomato-field-valve",
+        "command": "set_valve"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind rule create",
+      "neomind device control tomato-field-valve set_valve",
+      "neomind message channel-create"
+    ]
+  }
+}

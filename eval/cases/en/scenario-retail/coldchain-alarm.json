@@ -1,0 +1,45 @@
+{
+  "id": "retail-coldchain-alarm",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-retail",
+  "scenario_type": "single_turn",
+  "description": "en version of retail-coldchain-alarm",
+  "setup": {
+    "fixture": "scenario-retail"
+  },
+  "turns": [
+    {
+      "user": "fridge-3's temperature is 8.2°C - it violates the cold-chain limit, food-safety risk. Send it a set_alarm command to turn the alarm on."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: device control fridge-3 set_alarm"
+    ],
+    "overall": "set_alarm must actually reach fridge-3 (command history records it)"
+  },
+  "state_queries": [
+    {
+      "type": "device_command_sent",
+      "params": {
+        "id": "fridge-3",
+        "command": "set_alarm"
+      },
+      "expected": true
+    }
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device control fridge-3 set_alarm"
+    ]
+  }
+}

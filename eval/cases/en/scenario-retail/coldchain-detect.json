@@ -1,0 +1,35 @@
+{
+  "id": "retail-coldchain-detect",
+  "lang": "en",
+  "category": "scenario",
+  "workflow": "scenario-retail",
+  "scenario_type": "single_turn",
+  "description": "en version of retail-coldchain-detect",
+  "setup": {
+    "fixture": "scenario-retail"
+  },
+  "turns": [
+    {
+      "user": "Check all fridges' temperature (temp_c) - cold-chain requires below 4°C. Which fridge is non-compliant? Report each fridge's temp."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: `neomind device list`/get to read temp_c across fridges"
+    ],
+    "overall": "Based on real tool results (fridge-3 8.2 non-compliant; fridge-1 3.5, fridge-2 3.8 compliant) - no fabrication"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device list"
+    ]
+  }
+}
