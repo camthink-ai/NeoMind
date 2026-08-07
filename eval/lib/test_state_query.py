@@ -179,6 +179,25 @@ def test_rule_action_type_trigger_agent():
     assert r["actual"] is True and r["passed"] is True
 
 
+def test_push_enabled_by_name_fallback():
+    """data-push list returns {targets:[...]}; name fallback must resolve id
+    then GET the record and read `enabled`. Regression test for the missing
+    'targets' collection key that made push_enabled always null."""
+    # GET /data-push/<id> returns the flat target record
+    get_body = {"success": True, "data": {"id": "abc123", "name": "ops-webhook",
+                                          "target_type": "webhook", "enabled": True}}
+    list_body = {"success": True, "targets": [
+        {"id": "abc123", "name": "ops-webhook", "target_type": "webhook", "enabled": True}]}
+    with _Patch({
+        "/data-push/abc123": FakeResp(200, get_body),
+        "/data-push": FakeResp(200, list_body),
+    }):
+        r = sq.run_query(
+            {"type": "push_enabled", "params": {"name": "ops-webhook"}, "expected": True},
+            "http://b", "k")
+    assert r["actual"] is True and r["passed"] is True, f"got {r}"
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

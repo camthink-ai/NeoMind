@@ -145,7 +145,8 @@ def _resolve_id_or_name(base: str, key: str, list_path: str,
             items = arr
         else:
             for k in ("devices", "rules", "agents", "channels", "messages",
-                      "dashboards", "automations", "transforms", "data", "items"):
+                      "dashboards", "automations", "transforms", "data", "items",
+                      "targets"):
                 a = v.get(k)
                 if isinstance(a, list):
                     items = a
