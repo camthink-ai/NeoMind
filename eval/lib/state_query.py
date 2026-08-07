@@ -389,24 +389,33 @@ def run_query(q: dict, base: str, key: str, response: str | None = None) -> dict
     elif t == "latest_telemetry":
         # GET /devices/:id/telemetry?metric=<m>&limit=<n>. The handler flushes
         # the write buffer before querying (telemetry.rs:243), so the point is
-        # readable immediately after MQTT ingest. Unwrapped response is a dict
-        # keyed by metric → [{timestamp,value},...] (ascending; newest is last).
-        # Reusable by both the agent eval and the eval/system layer.
+        # readable immediately after MQTT ingest. Response may be a bare list,
+        # a dict keyed by metric → [{timestamp,value},...], or double-enveloped
+        # (nested `data`). Resolve the series for `metric` from any of these.
         device_id = _sid(params, "device_id")
         metric = _sid(params, "metric")
         limit = int(params.get("limit", 10))
         v = _get_json(base, key, f"/devices/{device_id}/telemetry?metric={metric}&limit={limit}")
         series = None
+
+        def _find_series(node, depth=0):
+            if depth > 3 or not isinstance(node, dict):
+                return None
+            direct = node.get(metric)
+            if isinstance(direct, list):
+                return direct
+            inner = node.get("data")
+            if isinstance(inner, list):
+                # Maybe the whole series array lives under `data`.
+                return inner if not inner or isinstance(inner[0], dict) else None
+            if isinstance(inner, dict):
+                return _find_series(inner, depth + 1)
+            return None
+
         if isinstance(v, list):
             series = v
         elif isinstance(v, dict):
-            series = v.get(metric)
-            if series is None:
-                inner = v.get("data")
-                if isinstance(inner, dict):
-                    series = inner.get(metric)
-                elif isinstance(inner, list):
-                    series = inner
+            series = _find_series(v)
         actual = None
         if isinstance(series, list) and series:
             last = series[-1]
@@ -414,15 +423,17 @@ def run_query(q: dict, base: str, key: str, response: str | None = None) -> dict
     else:
         raise ValueError(f"unknown state_query type: {t}")
 
+    # actual may be None when the metric has no data yet — treat as not-passed
+    # rather than raising on `None >= expected_min`.
+    if expected_min is not None:
+        passed = actual is not None and actual >= expected_min
+    else:
+        passed = actual == expected
     return {
         "type": t,
         "params": params,
         "expected": expected,
         "expected_min": expected_min,
         "actual": actual,
-        "passed": (
-            actual >= expected_min
-            if expected_min is not None
-            else actual == expected
-        ),
+        "passed": passed,
     }

@@ -24,14 +24,12 @@
     ],
     "overall": "必须实际查询历史，并引用 values.battery 这个 metric"
   },
-  "state_queries": [
-    {
-      "type": "latest_telemetry",
-      "params": {
-        "device_id": "sensor-001",
-        "metric": "values.battery"
-      },
-      "expected_min": 0
-    }
-  ]
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device history"
+    ]
+  }
 }
