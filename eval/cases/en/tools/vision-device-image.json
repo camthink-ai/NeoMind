@@ -32,5 +32,6 @@
       "Turn 1: Retrieves the image via `neomind device get/history cam-vision-001 --metric image` (gets a $cached: or /api/images/ ref), then calls the vision tool to analyze it (should report red/circle)."
     ],
     "overall": "Tests the production camera path: device query → $cached|/api/images/ → vision tool. This is the only correct trigger for the vision tool (inline chat images should be seen directly, not via vision). Requires a multimodal backend."
-  }
+  },
+  "requires_multimodal": true
 }

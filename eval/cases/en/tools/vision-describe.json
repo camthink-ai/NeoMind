@@ -26,5 +26,6 @@
       "Turn 1: Correctly identifies the attached image as a red circle on a white background (answer mentions red/circle); no tool call required."
     ],
     "overall": "Must correctly describe the attached image: a solid red circle on white. Tests direct multimodal perception (NOT via the vision tool). Requires a multimodal backend — a text-only model will fail."
-  }
+  },
+  "requires_multimodal": true
 }

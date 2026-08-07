@@ -26,5 +26,6 @@
       "Turn 1: Agent calls the image_edit tool on the attached image (crop operation)"
     ],
     "overall": "image_edit must be invoked on the provided image"
-  }
+  },
+  "requires_multimodal": true
 }

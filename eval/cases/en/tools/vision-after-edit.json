@@ -32,5 +32,6 @@
       "Turn 1: Calls image_edit to crop the attached image (center 80x80), then calls the vision tool on the cropped result (should report red/circle)."
     ],
     "overall": "Must chain image_edit(crop) → vision(analyze) — the documented '2 tools, not 2 image_edit calls' pattern. Tests tool chaining and vision tool invocation."
-  }
+  },
+  "requires_multimodal": true
 }

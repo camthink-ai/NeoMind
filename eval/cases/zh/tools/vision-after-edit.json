@@ -32,5 +32,6 @@
       "Turn 1: 先调用 image_edit 对附图做 crop（中心 80x80），再用 vision 工具分析裁剪结果（应报告红色/圆形）。"
     ],
     "overall": "必须先 image_edit(crop) 再 vision 分析——文档推荐的「2 tools, not 2 image_edit」模式。考察工具链式调用与 vision 工具触发。"
-  }
+  },
+  "requires_multimodal": true
 }
