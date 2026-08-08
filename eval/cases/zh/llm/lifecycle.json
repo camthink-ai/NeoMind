@@ -5,13 +5,26 @@
   "workflow": "llm-management",
   "scenario_type": "multi_turn",
   "description": "多轮：创建 LLM 后端 → 激活 → 删除（覆盖 `neomind llm create` + `llm activate` + `llm delete`，写路径全无覆盖）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "注册一个新的 Ollama 后端：名字 dev-ollama，端点 http://localhost:11434，模型 qwen3:4b。" },
-    { "user": "把 dev-ollama 设为系统默认后端。" },
-    { "user": "好的，最后把这个后端删掉。" }
+    {
+      "user": "注册一个新的 Ollama 后端：名字 dev-ollama，端点 http://localhost:11434，模型 qwen3:4b。"
+    },
+    {
+      "user": "把 dev-ollama 设为系统默认后端。"
+    },
+    {
+      "user": "好的，最后把这个后端删掉。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `neomind llm create --name dev-ollama --type ollama --endpoint http://localhost:11434 --model qwen3:4b`，并解析 id",
@@ -19,5 +32,15 @@
       "Turn 3: Agent 调用 `neomind llm delete <id>`"
     ],
     "overall": "后两轮必须复用第一轮解析出的 id"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind llm create",
+      "neomind llm activate",
+      "neomind llm delete"
+    ]
   }
 }

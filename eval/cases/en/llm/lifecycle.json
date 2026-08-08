@@ -41,5 +41,15 @@
       },
       "expected": true
     }
-  ]
+  ],
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind llm create",
+      "neomind llm activate",
+      "neomind llm delete"
+    ]
+  }
 }

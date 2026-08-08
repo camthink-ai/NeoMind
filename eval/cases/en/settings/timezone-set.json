@@ -5,17 +5,37 @@
   "workflow": "settings-management",
   "scenario_type": "multi_turn",
   "description": "Multi-turn: list available timezones -> set system timezone (covers `neomind settings timezones` + `settings set-timezone`; previously only timezone get was covered).",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "What timezones does the system support? Show me the list." },
-    { "user": "Set the system timezone to Asia/Shanghai." }
+    {
+      "user": "What timezones does the system support? Show me the list."
+    },
+    {
+      "user": "Set the system timezone to Asia/Shanghai."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent runs `neomind settings timezones`",
       "Turn 2: Agent runs `neomind settings set-timezone Asia/Shanghai` (or PUT /api/settings/timezone)"
     ],
     "overall": "Turn 2 must actually perform the setting"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind settings timezones",
+      "neomind settings set-timezone"
+    ]
   }
 }
