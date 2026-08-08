@@ -1,0 +1,25 @@
+{
+  "id": "guided-extension-suggestion",
+  "lang": "en",
+  "category": "extension",
+  "workflow": "device-onboarding",
+  "scenario_type": "multi_turn",
+  "description": "Private/proprietary protocol device: agent should recognize a generic adapter won't work and suggest installing an extension (market) or creating one - the guided path for non-standard protocols.",
+  "setup": { "fixture": "seed-empty" },
+  "turns": [
+    { "user": "I have a proprietary protocol device (not MQTT, not HTTP). What are my options to connect it to NeoMind?" },
+    { "user": "Is there an extension for it, or do I need to build one?" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Agent explains options: marketplace extension (`neomind extension market-list`), or building a custom bridge extension (`neomind extension create`)",
+      "Turn 2: Agent checks the marketplace for a matching extension and explains the build-vs-install tradeoff"
+    ],
+    "overall": "Agent must reference the extension marketplace or extension-create path - recognizing that standard adapters (MQTT/HTTP) don't cover proprietary protocols."
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind extension"]
+  }
+}

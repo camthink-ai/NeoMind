@@ -1,0 +1,25 @@
+{
+  "id": "guided-extension-suggestion",
+  "lang": "zh",
+  "category": "extension",
+  "workflow": "device-onboarding",
+  "scenario_type": "multi_turn",
+  "description": "私有协议设备：模型应识别通用 adapter（MQTT/HTTP）不够，建议装扩展（市场）或建自定义桥接扩展——非标准协议的引导路径。",
+  "setup": { "fixture": "seed-empty" },
+  "turns": [
+    { "user": "我有一个私有协议设备（不是 MQTT 也不是 HTTP）。接入 NeoMind 有什么选择？" },
+    { "user": "有现成扩展吗，还是要自己建？" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: 模型解释选项：市场扩展（`neomind extension market-list`）或自建桥接扩展（`neomind extension create`）",
+      "Turn 2: 模型查市场是否有匹配扩展，解释 build-vs-install 权衡"
+    ],
+    "overall": "模型必须提到扩展市场或 extension-create 路径——识别标准 adapter（MQTT/HTTP）覆盖不了私有协议。"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind extension"]
+  }
+}

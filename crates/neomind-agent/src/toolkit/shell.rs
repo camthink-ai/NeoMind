@@ -951,46 +951,10 @@ impl Tool for ShellTool {
         // Syntax Rules (hard constraints) + CLI concept, drops the defensive
         // knowledge (easy-to-miss list, GUI guard) — those are discoverable via
         // `neomind <domain> <action> --help` or the skill tool on demand.
-        // Full description (NEOMIND_FULL_PROMPT=1): exhaustive CLI syntax.
-        static FULL: &str = r#"Execute shell commands on the host system.
-
-Use this tool to run any system command. For NeoMind platform operations, use the `neomind` CLI.
-
-## Critical Syntax Rules (apply to ALL neomind domains)
-- **ID is always a positional argument**, NEVER a `--id` flag. Correct: `neomind device get abc123`. Wrong: `neomind device get --id abc123`.
-- **NEVER guess metric names**. Discover first via `neomind device list` (returns `metric_fields` per type) or `neomind device get <ID>` (full metric names + values), then use exact names in `--metric`, rule conditions, transform code, or dashboard bindings. The same applies to extension fields — discover via `neomind extension info <ID>`.
-- **"unexpected argument" error** = you used a flag where positional was expected. Rewrite without the flag.
-- On command failure, check the `suggestion` field in the JSON output for recovery hints.
-
-## NeoMind CLI Domain Syntax
-The `neomind` CLI has 14 domains: `device`, `dashboard`, `rule`, `agent`, `extension`, `widget`, `transform`, `llm`, `message`, `connector`, `push`, `settings`, `system`, `api-key`.
-
-**Domain-specific command syntax, JSON formats, and copy-paste templates live in skill docs** — use the `skill` tool (`skill(action="search", query="<domain>")`) to load the matching guide, or run `neomind <domain> <action> --help` for flags and examples. All commands return JSON by default in this environment (controlled by the `NEOMIND_JSON` env var) — do NOT pass any `--json` flag.
-
-## Easy-to-miss subcommands (check before falling back to ping/nc/ls)
-When the user asks for a domain-specific action, try the matching `neomind <domain> <subcommand>` FIRST — do NOT fall back to raw shell tools (`ping`, `nc`, `ls`, `curl`) until the CLI subcommand has been tried and returned an error.
-- **`neomind connector test <id>`** — test reachability of an MQTT broker. Use this, NOT `ping`/`nc`/`/dev/tcp`.
-- **`neomind connector subscriptions`** — list active MQTT subscriptions across all brokers (takes no id).
-- **`neomind device drafts list` / `drafts approve <id>` / `drafts reject <id>`** — manage auto-discovery drafts. Drafts are NOT deleted via `device delete`; use `device drafts reject <id>` to dismiss a draft.
-- **`neomind extension status <id>` / `extension logs <id>` / `extension reload <id>` / `extension config <id>`** — runtime introspection beyond `list`/`get`. If `extension list` shows an extension but you need health/logs, use these.
-- **`neomind agent clear-memory <id>` / `agent executions <id>`** — memory reset and execution history (distinct from `agent get`).
-- **`neomind transform test-code`** — dry-run transform JavaScript against sample input before saving. For rules, use `neomind rule test <id> --input '<JSON>'` (what-if evaluation against existing rule).
-
-## Native System Commands
-Runs on host via `/bin/sh -c` (Unix) or `cmd /C` (Windows). Common tools available: ping, traceroute, curl, arp, nmap, ps, df, free, top, uptime, systemctl status, ls, cat, head, tail, grep, find, wc, arp-scan, avahi-browse, bluetoothctl, docker.
-
-## GUI-Launching Commands (IMPORTANT — do NOT loop)
-Commands like `open` (macOS), `xdg-open` (Linux), `start`/`explorer` (Windows), or any app launcher (`preview`, `code`, `safari`) launch a GUI window and return **only** `exit_code: 0` with **empty** stdout/stderr on success.
-
-- An empty-output success means "the launch was accepted" — it does NOT mean the window appeared, and you CANNOT see the window yourself.
-- **Call such a command exactly ONCE**, then move on with your task. Do NOT retry, do NOT try variants (`open -a Preview`, `open -R`, etc.) hoping for output — they all return the same empty result and you will never perceive the GUI.
-- If the user needs to inspect an image's pixels, ask them to look at their screen — do not try to "see" it yourself by re-running `open`.
-
-## Execution Notes
-- Each command runs in a fresh process — no persistent shell state between calls.
-- `neomind` commands are dispatched in-process (no subprocess); they return a structured `CliResponse` as pretty-printed JSON on stdout.
-- Output may be truncated for very long responses."#;
-
+        // Slim description (canonical): keeps Critical Syntax Rules (hard
+        // constraints) + CLI concept, drops the defensive knowledge
+        // (easy-to-miss list, GUI guard) — those are discoverable via
+        // `neomind <domain> <action> --help` or the skill tool on demand.
         static SLIM: &str = r#"Execute shell commands on the host system.
 
 Use this tool to run any system command. For NeoMind platform operations, use the `neomind` CLI.
@@ -1013,15 +977,7 @@ Runs on host via `/bin/sh -c` (Unix) or `cmd /C` (Windows). Common tools availab
 - Each command runs in a fresh process — no persistent shell state between calls.
 - `neomind` commands are dispatched in-process (no subprocess); they return a structured `CliResponse` as pretty-printed JSON on stdout.
 - Output may be truncated for very long responses."#;
-
-        // Default to SLIM (matches the default slim system prompt in
-        // builder.rs). `NEOMIND_FULL_PROMPT=1` opts back into the full
-        // description.
-        if std::env::var("NEOMIND_FULL_PROMPT").as_deref() == Ok("1") {
-            FULL
-        } else {
-            SLIM
-        }
+        SLIM
     }
 
     fn parameters(&self) -> Value {

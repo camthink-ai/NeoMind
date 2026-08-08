@@ -1,0 +1,48 @@
+{
+  "id": "guided-mqtt-onboarding",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "device-onboarding",
+  "scenario_type": "multi_turn",
+  "description": "引导式接入：用户说'帮我接入传感器'但没说细节。模型应引导 MQTT 接入流程——发现设备类型、创建设备、给出连接信息、验证。测无需扩展的引导式接入体验。",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "我想把我的温度传感器通过 MQTT 接入 NeoMind。你能引导我配置吗？"
+    },
+    {
+      "user": "好的，请带我走一遍。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: 模型调用 `neomind device types list` 发现设备类型，并解释 MQTT 接入路径",
+      "Turn 2: 模型创建设备（`neomind device create --name ... --device-type temp_sensor --adapter-type mqtt`），给出 MQTT topic/连接信息并验证"
+    ],
+    "overall": "设备必须通过 MQTT adapter 创建，且模型提供连接引导（topic/broker）——完整的引导式接入，而非简单 create。"
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device types",
+      "neomind device create"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "device_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

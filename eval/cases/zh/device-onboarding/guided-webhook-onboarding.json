@@ -1,0 +1,28 @@
+{
+  "id": "guided-webhook-onboarding",
+  "lang": "zh",
+  "category": "device",
+  "workflow": "device-onboarding",
+  "scenario_type": "multi_turn",
+  "description": "引导式 webhook 接入：设备走 HTTP POST。模型应创建 webhook adapter 设备、给出 webhook URL、验证。",
+  "setup": { "fixture": "seed-empty" },
+  "turns": [
+    { "user": "我的设备可以通过 HTTP 推送数据。怎么接入 NeoMind？" },
+    { "user": "好，帮我配置好。" }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: 模型解释 webhook 接入路径（用 webhook adapter 创建设备 + 获取 webhook URL）",
+      "Turn 2: 模型用 --adapter-type webhook 创建设备，并调用 `neomind device webhook-url` 获取 URL"
+    ],
+    "overall": "设备用 webhook adapter 创建，且向用户提供了 webhook URL。"
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device create", "neomind device webhook-url"]
+  },
+  "state_queries": [
+    { "type": "device_count", "params": {}, "expected_min": 1 }
+  ]
+}

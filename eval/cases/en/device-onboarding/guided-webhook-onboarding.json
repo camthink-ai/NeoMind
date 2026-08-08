@@ -1,0 +1,28 @@
+{
+  "id": "guided-webhook-onboarding",
+  "lang": "en",
+  "category": "device",
+  "workflow": "device-onboarding",
+  "scenario_type": "multi_turn",
+  "description": "Guided webhook onboarding: device sends HTTP POST. Agent must create the device with webhook adapter, give the webhook URL, and verify.",
+  "setup": { "fixture": "seed-empty" },
+  "turns": [
+    { "user": "My device can push data over HTTP. How do I connect it to NeoMind?" },
+    { "user": "OK, set it up for me." }
+  ],
+  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Agent explains the webhook onboarding path (create device with webhook adapter + get webhook URL)",
+      "Turn 2: Agent creates device with --adapter-type webhook and retrieves the webhook URL via `neomind device webhook-url`"
+    ],
+    "overall": "Device created with webhook adapter AND webhook URL provided to user."
+  },
+  "expect": {
+    "tools": ["shell"],
+    "commands": ["neomind device create", "neomind device webhook-url"]
+  },
+  "state_queries": [
+    { "type": "device_count", "params": {}, "expected_min": 1 }
+  ]
+}

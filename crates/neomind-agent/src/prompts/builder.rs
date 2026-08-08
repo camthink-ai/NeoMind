@@ -18,11 +18,9 @@ pub const TIMEZONE_PLACEHOLDER: &str = "{{TIMEZONE}}";
 
 /// Single-file system prompt template. Conditional sections (Vision, Thinking)
 /// are wrapped in HTML-comment sentinels, stripped at build time based on flags.
-const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt.md");
-
-/// Slim system prompt template (~48% smaller). Selected when
-/// `NEOMIND_FULL_PROMPT=1` opts back into the full template (default is slim).
-const SYSTEM_PROMPT_SLIM_TEMPLATE: &str = include_str!("system_prompt_slim.md");
+/// The slim template is the single canonical prompt — the legacy full template
+/// was removed (eval-validated: no regression, ~45% fewer tokens).
+const SYSTEM_PROMPT_TEMPLATE: &str = include_str!("system_prompt_slim.md");
 
 const VISION_BEGIN: &str = "<!-- BEGIN_VISION -->";
 const VISION_END: &str = "<!-- END_VISION -->";
@@ -63,14 +61,7 @@ impl PromptBuilder {
 
     /// Build the enhanced system prompt.
     pub fn build_system_prompt(&self) -> String {
-        // Default to the slim prompt (eval-validated: no significant regression
-        // vs full, ~45% fewer tokens). `NEOMIND_FULL_PROMPT=1` opts back into the
-        // legacy full template (e.g. for large cloud models that can afford it).
-        let template = if std::env::var("NEOMIND_FULL_PROMPT").as_deref() == Ok("1") {
-            SYSTEM_PROMPT_TEMPLATE
-        } else {
-            SYSTEM_PROMPT_SLIM_TEMPLATE
-        };
+        let template = SYSTEM_PROMPT_TEMPLATE;
         let mut prompt = template.to_string();
         if self.supports_vision {
             // Keep content, strip only the sentinel markers.
@@ -185,21 +176,11 @@ mod tests {
 
     #[test]
     fn test_no_cli_reference_table() {
-        // Default (slim) prompt drops the CLI reference table AND the --help
-        // guidance (saved tokens). The full prompt (NEOMIND_FULL_PROMPT=1)
-        // keeps --help guidance.
-        let slim = PromptBuilder::new().build_system_prompt();
-        assert!(!slim.contains("CLI Command Reference"));
-        assert!(!slim.contains("--help"), "slim drops --help guidance");
-        unsafe {
-            std::env::set_var("NEOMIND_FULL_PROMPT", "1");
-        }
-        let full = PromptBuilder::new().build_system_prompt();
-        unsafe {
-            std::env::remove_var("NEOMIND_FULL_PROMPT");
-        }
-        assert!(!full.contains("CLI Command Reference"));
-        assert!(full.contains("--help"), "full keeps --help guidance");
+        // The canonical slim prompt drops the CLI reference table AND the
+        // --help guidance (saved tokens) — details live in skills/--help.
+        let prompt = PromptBuilder::new().build_system_prompt();
+        assert!(!prompt.contains("CLI Command Reference"));
+        assert!(!prompt.contains("--help"), "slim drops --help guidance");
     }
 
     #[test]
@@ -263,27 +244,15 @@ mod tests {
     }
 
     #[test]
-    fn test_default_is_slim_and_preserves_rules() {
-        // Default (no env) must be the slim prompt — smaller, but keeping every
-        // hard constraint. `NEOMIND_FULL_PROMPT=1` opts back into the full one.
-        let slim = PromptBuilder::new().build_system_prompt();
-        unsafe {
-            std::env::set_var("NEOMIND_FULL_PROMPT", "1");
-        }
-        let full = PromptBuilder::new().build_system_prompt();
-        unsafe {
-            std::env::remove_var("NEOMIND_FULL_PROMPT");
-        }
-
-        assert!(slim.len() < full.len(), "slim must be smaller");
-        assert!(slim.contains("Language Policy"));
-        assert!(slim.contains("No Hallucinated Operations"));
-        assert!(slim.contains("BATCH RULE"));
-        assert!(slim.contains("Tool-First"));
-        assert!(slim.contains("{{CURRENT_TIME}}")); // KV-cache boundary preserved
-        assert!(slim.contains("## Environment"));
-        // Default is slim (slim is smaller than full, and default == slim build).
-        let default_again = PromptBuilder::new().build_system_prompt();
-        assert_eq!(default_again.len(), slim.len(), "default must be slim");
+    fn test_default_prompt_preserves_rules() {
+        // The canonical prompt must keep every hard constraint.
+        let prompt = PromptBuilder::new().build_system_prompt();
+        assert!(prompt.contains("Language Policy"));
+        assert!(prompt.contains("No Hallucinated Operations"));
+        assert!(prompt.contains("BATCH RULE"));
+        assert!(prompt.contains("Tool-First"));
+        assert!(prompt.contains("{{CURRENT_TIME}}")); // KV-cache boundary preserved
+        assert!(prompt.contains("## Environment"));
+        assert!(prompt.contains("Device Onboarding Guidance")); // guided onboarding
     }
 }

@@ -1,0 +1,48 @@
+{
+  "id": "guided-mqtt-onboarding",
+  "lang": "en",
+  "category": "device",
+  "workflow": "device-onboarding",
+  "scenario_type": "multi_turn",
+  "description": "Guided onboarding: user says 'help me connect my sensor' without details. Agent must walk them through MQTT onboarding - discover device types, create the device, give connection info, and verify. Tests the guided-onboarding experience (no extension needed).",
+  "setup": {
+    "fixture": "seed-empty"
+  },
+  "turns": [
+    {
+      "user": "I want to connect my temperature sensor to NeoMind over MQTT. Can you guide me through setting it up?"
+    },
+    {
+      "user": "Yes please, walk me through it."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Turn 1: Agent discovers device types (`neomind device types list`) and explains the MQTT onboarding path",
+      "Turn 2: Agent creates the device (`neomind device create --name ... --device-type temp_sensor --adapter-type mqtt`), gives the MQTT topic/connection info, and verifies"
+    ],
+    "overall": "Device must be created via MQTT adapter and the agent must provide connection guidance (topic/broker) - a complete guided onboarding, not just a bare create."
+  },
+  "expect": {
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind device types",
+      "neomind device create"
+    ]
+  },
+  "state_queries": [
+    {
+      "type": "device_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}
