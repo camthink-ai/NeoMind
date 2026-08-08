@@ -970,6 +970,14 @@ The `neomind` CLI has 14 domains: `device`, `dashboard`, `rule`, `agent`, `exten
 
 **Domain-specific command syntax, flags, and copy-paste templates live in skill docs** — use the `skill` tool to load the matching guide before any create/update/delete/control operation, or run `neomind <domain> <action> --help` for flags and examples. All commands return JSON by default (controlled by `NEOMIND_JSON`) — do NOT pass any `--json` flag.
 
+## Command Choice (pick the exact subcommand for the intent)
+- **Device**: `device get <ID>` = read one device's detail; `device list` = list all devices; `device control <ID> <COMMAND>` = send a control command (reboot/stop/set speed); `device types` = manage device TYPE templates (different from listing devices!). A "device-type" request is `device types`, NOT `device list`.
+- **Read vs write**: `get`/`list` = read (ID positional, no `--id`); `create`/`update`/`delete` = write (use flags like `--name --device-type`). If you're creating/updating, you need the WRITE command, not `get`/`list`.
+- **Set vs check state**: `settings set-timezone` = change it; `settings timezone` = read current. Same for `rule enable`/`disable` (write) vs `rule get`/`list` (read), `transform enable`/`disable` vs `transform get`/`list`.
+- **Enable/activate/delete are explicit write actions**: `connector enable <ID>`, `llm activate <ID>`, `push enable <ID>` — don't report state, perform the change.
+- **Check connectivity with `test`**: `connector test <ID>` verifies a broker; don't use `connector get` for that.
+- **When in doubt**: run `neomind <domain> --help` to see the exact subcommands before acting.
+
 ## Native System Commands
 Runs on host via `/bin/sh -c` (Unix) or `cmd /C` (Windows). Common tools available: ping, traceroute, curl, arp, nmap, ps, df, free, top, uptime, systemctl status, ls, cat, head, tail, grep, find, wc, arp-scan, avahi-browse, bluetoothctl, docker.
 
