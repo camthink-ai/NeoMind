@@ -315,11 +315,50 @@ impl Tool for ImageEditTool {
     }
 
     fn description(&self) -> &str {
-        "Crop, draw on, or blur images in ONE pipeline call. Returns a file path /api/images/... that can be passed to `vision` or shown via `![desc](url)`.\n\n\
- IMPORTANT — ONE CALL = WHOLE PIPELINE: pass all operations for an image as a single `operations` array (applied in order). Do NOT chain multiple image_edit calls for one task. Example: crop + draw label in one call, not three.\n\n\
- IMAGE ARGUMENT: use `\"image\": \"$cached:user_image\"` for an image the user uploaded to chat ($cached:user_image_1, _2, ... for additional); otherwise data URL, http(s) URL, base64, or a local path from a prior call.\n\n\
- Use `vision` (not image_edit) to ANALYZE image content. If you need to verify the edit, call `vision` with the returned path once.\n\n\
- Operation types and per-op fields are defined in the `operations` schema below (crop, draw_rect/circle/line/arrow/polygon/text, blur_rect)."
+        "Crop, draw on, or blur images in a SINGLE pipeline call. Returns an \
+ absolute file path under data/images/ that can be passed to the `vision` tool.\n\n\
+ IMPORTANT — ONE CALL HANDLES THE WHOLE PIPELINE:\n\
+ Pass ALL operations for a given image as a single `operations: [...]` array. \
+ The runtime applies them in order atomically. DO NOT chain multiple image_edit \
+ calls for the same logical task — that wastes rounds and overwrites prior \
+ results. Example: to crop AND draw a labeled rectangle, use ONE call with \
+ `operations: [crop(...), draw_rect(...), draw_text(...)]`, not three separate \
+ calls. Only call image_edit again if you genuinely need to inspect an \
+ intermediate result via vision first.\n\n\
+ Operations are applied in order. Coordinates are pixel-based, origin top-left, \
+ Y-axis down — relative to the current image state (after any previous crop).\n\n\
+ HOW TO PROVIDE THE `image` ARGUMENT:\n\
+ - If the user uploaded an image to chat (it appears in your context): pass \
+   `\"image\": \"$cached:user_image\"`. The runtime replaces this with the \
+   actual image data. For additional uploaded images use `$cached:user_image_1`, \
+ `$cached:user_image_2`, etc.\n\
+ - Otherwise: a data URL (data:image/...;base64,...), http(s) URL, raw base64, \
+   or an absolute local file path (e.g. one returned by a previous image_edit call).\n\n\
+ Operation types:\n\
+ - crop: extract sub-region (x, y, width, height)\n\
+ - draw_rect: rectangle outline or fill (x, y, width, height, color, stroke_width?, fill?)\n\
+ - draw_circle: circle outline or fill (cx, cy, radius, color, stroke_width?, fill?)\n\
+ - draw_line: line segment (x1, y1, x2, y2, color, stroke_width?)\n\
+ - draw_arrow: arrow with arrowhead (x1, y1, x2, y2, color, stroke_width?, head_length?)\n\
+ - draw_polygon: open or closed polygon (points: [{x,y}], color, stroke_width?, fill?, closed?)\n\
+ - draw_text: render text (x, y, text, color, font_size?, background?, padding?)\n\
+ - blur_rect: blur region (x, y, width, height, mode?: pixelate|gaussian, intensity?)\n\n\
+ Colors: hex strings like #FF0000 (red) or #FF000080 (semi-transparent red).\n\n\
+ DO NOT use this tool for:\n\
+ - Analyzing image content — use `vision` instead.\n\
+ - Generating images from scratch — this tool requires an existing image.\n\
+ - Re-running the same operations because you can't see the result — the \
+ response includes `operations_applied` and the file IS written; if you need \
+ to verify visually, call `vision` with the returned path ONCE.\n\n\
+ Common patterns:\n\
+ - Annotate a chat-uploaded detection in ONE call: {\"image\": \"$cached:user_image\", \"operations\": [draw_rect(...), draw_text(label, x, y-20)]}\n\
+ - Privacy masking: [blur_rect(face_region)]\n\
+ - Region-focused analysis (2 tools, not 2 image_edit calls): image_edit(crop) then vision(returned path)\n\n\
+ EMBEDDING THE RESULT IN YOUR REPLY:\n\
+ The response includes a `url` field (e.g. \"/api/images/foo.png\"). To show the \
+ processed image to the user in your text reply, write markdown: \
+ `![description](url)`. The url stays valid for the lifetime of the file. \
+ Do NOT include the base64 unless the user explicitly asks for it."
     }
 
     fn parameters(&self) -> Value {
