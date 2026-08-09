@@ -397,37 +397,13 @@ impl Tool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        r##"Manage persistent memory across sessions. Use this to store and retrieve information that should persist between conversations. This is the agent's own cross-run memory (the targets below); to create or edit arbitrary files (skill files, configs, bundles) use `file_write` or `file_edit` instead.
+        r##"Manage persistent memory across sessions (the agent's own cross-run memory). To create/edit arbitrary files use `file_write`/`file_edit` instead.
 
-Actions:
-- add: Append content to a memory target (requires content)
-- replace: Find and replace text in a memory target (requires BOTH old_text AND content)
-- remove: Find and remove text from a memory target (requires old_text)
-- read: Read the full content of a memory target
-- list: Show overview of all memory targets (chars used, preview)
-- create: Create a new custom memory file (requires content; target must be custom:{name})
+Actions: add (append), replace (needs old_text+content), remove (needs old_text), read (full target), list (all targets), create (custom file, target=custom:{name}).
 
-Targets:
-- user: Persistent user profile and preferences (USER.md, ~2000 chars)
-- knowledge: System knowledge and domain facts (KNOWLEDGE.md, ~3000 chars)
-- procedures: Procedural memory — SOPs, playbooks, how-tos (PROCEDURES.md, ~3000 chars)
-- session: Session-scoped notes for multi-step task tracking (cleared after 7 days)
-- custom:{name}: Domain-specific custom file (escape hatch — see below)
+Targets: user (profile/preferences), knowledge (domain facts), procedures (SOPs), session (7-day scratch), custom:{name} (high-bar escape hatch). PREFER the 3 standard targets. Keep entries concise.
 
-PREFER the 3 standard targets (user / knowledge / procedures) wherever the content fits.
-Global `custom:{name}` is an ADVANCED escape hatch — only when content is genuinely scoped to a
-specific topic AND does not fit any of the 3 standard targets. Global custom files persist across
-ALL future conversations, so writing one is a high-bar decision. When in doubt, use the standard targets.
-
-Limits: every target enforces a per-file char limit (custom files ~20000 chars). `content` is REQUIRED for add/replace/create. If a write is rejected for exceeding the limit, the error reports the exact limit — TRUNCATE your content and retry. Keep entries concise (bullet points).
-
-Examples:
-- Add user preference: action='add', target='user', content='Prefers dark mode'
-- Replace in knowledge: action='replace', target='knowledge', old_text='old info', content='new info'
-- Add a procedure: action='add', target='procedures', content='## Reset Camera\n1. Power off\n2. Hold reset 10s'
-- Read session notes: action='read', target='session'
-- Create custom file: action='create', target='custom:device-patterns', content='- temp normal: 22-28°C\n- alert threshold: 40°C'
-- List all targets: action='list'"##
+If a write exceeds the per-file limit, the error reports the exact limit — truncate and retry."##
     }
 
     fn parameters(&self) -> Value {
