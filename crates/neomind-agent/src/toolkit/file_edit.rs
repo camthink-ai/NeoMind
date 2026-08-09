@@ -31,9 +31,16 @@ impl Tool for FileEditTool {
     }
 
     fn description(&self) -> &str {
-        r##"Edit a file by exact text replace (old_string -> new_string). Use replace_all=true if old_string repeats. Not-found returns context to locate it. Allowed dirs only (data dir + NEOMIND_ALLOWED_WRITE_DIRS). Max 10MB.
+        r#"Edit a file by replacing exact text matches. Like a search-and-replace operation.
 
-For whole-file create use `file_write`; for agent cross-run memory use `memory`."##
+Provide the exact text to find (old_string) and what to replace it with (new_string).
+If old_string appears multiple times, use replace_all=true or make old_string more specific.
+If old_string is not found, the tool returns an error with context to help you locate the right text.
+
+Only files within allowed directories are editable (data dir + NEOMIND_ALLOWED_WRITE_DIRS).
+Maximum file size: 10 MB. Use relative paths (e.g., 'skills/my-skill.md') or absolute paths.
+
+Use `file_write` to create or overwrite a whole file. For the agent's persistent cross-run memory (facts, SOPs), use the `memory` tool."#
     }
 
     fn parameters(&self) -> Value {
