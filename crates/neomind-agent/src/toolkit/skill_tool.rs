@@ -148,38 +148,14 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        r##"Load operation guides (skills) when you need them. Skills contain step-by-step instructions, CLI command examples, and common error solutions for specific scenarios.
+        r##"Load operation guides (skills) on demand — step-by-step CLI instructions, command examples, error solutions. Skills are NOT in your system prompt; load BEFORE unfamiliar operations.
 
-IMPORTANT: Skills are NOT in your system prompt. You MUST call this tool to load a skill guide BEFORE performing operations you're unfamiliar with.
+Actions: search (find by keywords), load (full guide by ID — auto-resolves partial/domain name, e.g. 'dashboard'→dashboard-management), create/update/delete (user skills).
 
-Actions:
-- search: Search skills by query keywords — returns matching skill IDs and descriptions. Use this first to find the right skill.
-- load: Load a skill's full guide by ID. The ID auto-resolves from a partial/keyword/domain name (e.g. 'dashboard' → dashboard-management, '设备接入' → device-onboarding), so you can load by domain without remembering the exact ID.
-- create: Create a new user skill (requires 'content' with YAML frontmatter + Markdown body)
-- update: Update an existing skill by ID (full content replacement)
-- delete: Delete a user skill by ID
+Available skill IDs (load when relevant, partial name auto-resolves):
+- device-onboarding (devices/MQTT/webhook), dashboard-management, rule-management, agent-management, message-management, transform-management, extension-development, widget-development, widget-management, extension-management, connector-management, data-push-management, llm-management, settings-management, system-info
 
-Available skill IDs (load these when relevant) — any of these also auto-resolves from a partial/keyword/domain name, so `load id="dashboard"` matches dashboard-management:
-- device-onboarding: Device connection, MQTT, webhook, drafts
-- dashboard-management: Dashboard CRUD, widget layout, data binding
-- rule-management: Rule DSL, triggers, actions, CRUD
-- agent-management: AI Agent CRUD, scheduling, execution modes
-- message-management: Message sending, channel configuration
-- transform-management: Data transform CRUD, JS code
-- extension-development: Extension development, FFI, build
-- widget-development: Custom widget creation, manifest, bundle
-- connector-management: External MQTT broker connections
-- data-push-management: Data push to external systems
-- llm-management: LLM backend CRUD, capability, default selection
-- extension-management: Extension install, market, status, logs
-- widget-management: Widget install, market, bundle, list
-- settings-management: Timezone & data retention settings
-- system-info: System/infrastructure info, broker address
-
-When to load a skill:
-- User asks to create/update/delete any entity → load the relevant skill FIRST
-- You're unsure about CLI command syntax → load the skill for that domain
-- A command fails and you need troubleshooting steps → load the skill for error solutions"##
+When to load: create/update/delete any entity, unsure of CLI syntax, or command failed → load the domain skill FIRST."##
     }
 
     fn parameters(&self) -> Value {
@@ -476,7 +452,10 @@ mod tests {
         let tool = SkillTool::new(Arc::new(RwLock::new(registry)));
         let desc = tool.description();
 
-        // Parse the "- <id>: <desc>" bullets under "Available skill IDs".
+        // Parse the compact "- id1, id2, ..." list under "Available skill IDs".
+        // IDs are comma-separated on a single line; an optional "(...)" note may
+        // follow an id (e.g. "device-onboarding (devices/MQTT/webhook)") and is
+        // stripped before matching against the registry.
         let mut listed_ids: HashSet<String> = HashSet::new();
         let mut in_section = false;
         for line in desc.lines() {
@@ -486,8 +465,10 @@ mod tests {
             }
             if in_section {
                 if let Some(rest) = line.strip_prefix("- ") {
-                    if let Some(id) = rest.split(':').next() {
-                        let id = id.trim();
+                    for part in rest.split(',') {
+                        let id = part.trim();
+                        // Drop a parenthesized note, e.g. "id (note)" -> "id".
+                        let id = id.split('(').next().unwrap_or(id).trim();
                         if !id.is_empty() {
                             listed_ids.insert(id.to_string());
                         }
