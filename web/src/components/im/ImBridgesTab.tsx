@@ -360,6 +360,10 @@ export function ImBridgesTab() {
                 <div className="flex flex-col sm:flex-row items-center gap-4">
                   <div
                     className="flex items-center justify-center rounded-lg p-3 shrink-0"
+                    // BY-DESIGN: QR codes stay white-background / black-code in
+                    // both themes. Scan reliability (contrast for phone cameras)
+                    // beats dark-mode aesthetics here — switching bgColor to a
+                    // theme token would render dark-mode QRs with poor contrast.
                     style={{ backgroundColor: '#ffffff' }}
                   >
                     <QRCodeSVG value={deepLink} size={160} bgColor="#ffffff" fgColor="#000000" level="M" />

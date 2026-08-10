@@ -920,61 +920,17 @@ html {
   }
 }
 
-/* Shimmer loading effect */
-@keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
-  }
-  100% {
-    background-position: 1000px 0;
-  }
-}
+/* Shimmer loading effect — keyframe/utility live in tailwind.config.js
+   (animate-shimmer). The duplicate defined here was dead: Tailwind's utility
+   layer wins for the .animate-shimmer class, and nothing referenced this
+   keyframe directly. */
 
-/* Typing cursor animation */
-@keyframes blink {
-  0%, 50% {
-    opacity: 1;
-  }
-  51%, 100% {
-    opacity: 0;
-  }
-}
+/* Typing cursor animation — canonical in tailwind.config.js (animate-blink);
+   the index.css copy was dead (class + keyframe both unused in src/). */
 
-.animate-blink {
-  animation: blink 1s step-end infinite;
-}
-
-/* Scale in animation */
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Slide from right */
-@keyframes slide-in-right {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
-
-/* Slide from left */
-@keyframes slide-in-left {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(0);
-  }
-}
+/* Scale in animation — canonical in tailwind.config.js (animate-scale-in /
+   animate-scale-out); slide-in-right/left were dead here (no utility, no
+   keyframe refs in src/). */
 
 /* Status badge styles */
 .badge-success {
@@ -1021,22 +977,6 @@ html {
 }
 
 /* ==================== New Design System ==================== */
-
-/* Fade in up animation */
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.animate-fade-in-up {
-  animation: fade-in-up var(--duration-normal) var(--ease-out);
-}
 
 /* Slide in highlight animation for new events */
 @keyframes slide-in-highlight {
@@ -1138,51 +1078,18 @@ html {
  * AI messages: use theme variables
  * ============================================================================ */
 
-/* Light theme - User messages: white text on blue background */
+/* Light theme - User messages: white text on blue background.
+   `.prose *` covers every descendant (p/li/span/strong/em/h1-h6/td/th/blockquote/
+   code/pre). The element enumeration that used to follow is redundant — these
+   rules all carry `!important`, so specificity is irrelevant and `*` suffices. */
 .message-bubble-user .prose,
-.message-bubble-user .prose *,
-.message-bubble-user .prose p,
-.message-bubble-user .prose li,
-.message-bubble-user .prose span,
-.message-bubble-user .prose strong,
-.message-bubble-user .prose em,
-.message-bubble-user .prose b,
-.message-bubble-user .prose i,
-.message-bubble-user .prose h1,
-.message-bubble-user .prose h2,
-.message-bubble-user .prose h3,
-.message-bubble-user .prose h4,
-.message-bubble-user .prose h5,
-.message-bubble-user .prose h6,
-.message-bubble-user .prose td,
-.message-bubble-user .prose th,
-.message-bubble-user .prose blockquote,
-.message-bubble-user .prose code,
-.message-bubble-user .prose pre {
+.message-bubble-user .prose * {
   color: #fff !important;
 }
 
 /* Dark theme - User messages: dark text on blue background */
 .dark .message-bubble-user .prose,
 .dark .message-bubble-user .prose *,
-.dark .message-bubble-user .prose p,
-.dark .message-bubble-user .prose li,
-.dark .message-bubble-user .prose span,
-.dark .message-bubble-user .prose strong,
-.dark .message-bubble-user .prose em,
-.dark .message-bubble-user .prose b,
-.dark .message-bubble-user .prose i,
-.dark .message-bubble-user .prose h1,
-.dark .message-bubble-user .prose h2,
-.dark .message-bubble-user .prose h3,
-.dark .message-bubble-user .prose h4,
-.dark .message-bubble-user .prose h5,
-.dark .message-bubble-user .prose h6,
-.dark .message-bubble-user .prose td,
-.dark .message-bubble-user .prose th,
-.dark .message-bubble-user .prose blockquote,
-.dark .message-bubble-user .prose code,
-.dark .message-bubble-user .prose pre,
 .dark .message-bubble-user .dark\:prose-invert,
 .dark .message-bubble-user .dark\:prose-invert * {
   color: #1a1a1a !important;
@@ -1257,18 +1164,6 @@ html {
   color: inherit !important;
 }
 
-/* Thinking block inside message bubbles */
-.message-bubble-user .thinking-content,
-.message-bubble-user .thinking-content *,
-.message-bubble-assistant .thinking-content,
-.message-bubble-assistant .thinking-content *,
-.dark .message-bubble-user .thinking-content,
-.dark .message-bubble-user .thinking-content *,
-.dark .message-bubble-assistant .thinking-content,
-.dark .message-bubble-assistant .thinking-content * {
-  color: inherit !important;
-}
-
 /* Agent Monitor Widget - Sci-fi animations */
 @keyframes shimmer-sweep {
   0% {
@@ -1290,15 +1185,6 @@ html {
   }
 }
 
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
 /* Page transition — opacity-only fade for route changes. No transform
    (translateY/scale) because some pages use left-drawer layouts where
    vertical movement looks jarring. */
@@ -1310,9 +1196,9 @@ html {
   animation: page-enter 150ms ease-out;
 }
 
-.animate-fade-in {
-  animation: fade-in 200ms var(--ease-out);
-}
+/* .animate-fade-in / @keyframes fade-in are canonical in tailwind.config.js
+   (animate-fade-in, tokenized durations). The manual copies here conflicted
+   with the utility — removed. */
 
 @keyframes pulse-glow {
   0%, 100% {

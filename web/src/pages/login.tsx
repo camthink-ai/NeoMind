@@ -291,7 +291,7 @@ export function LoginPage() {
         {/* Header */}
         <header
           className="flex items-center gap-3 px-4 sm:px-6 py-3.5 border-b border-border"
-          style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
+          style={{ paddingTop: "calc(0.875rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
         >
           <Button variant="ghost" size="sm" onClick={() => setShowInstancePicker(false)}>
             <ArrowLeft className="h-4 w-4 mr-1" />

@@ -149,7 +149,10 @@ export function ValueMapEditor({ valueMap, onChange }: ValueMapEditorProps) {
                     <div className="flex items-center gap-1">
                       <span className="text-xs text-muted-foreground shrink-0">{t('valueMap.color')}:</span>
                       <CompactColorPicker
-                        value={mapping.color || '#000000'}
+                        // Theme-foreground fallback (black in light / white in dark)
+                        // instead of a hardcoded '#000000' — pure black is
+                        // indistinguishable from "unset" and clips in dark mode.
+                        value={mapping.color || 'hsl(var(--foreground))'}
                         onChange={(color) => updateMapping(mapping.id, { color: color || undefined })}
                         presets={COLOR_PRESETS.semantic}
                         className="flex-1"
