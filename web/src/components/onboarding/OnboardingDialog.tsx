@@ -13,6 +13,7 @@ import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
+import { useThemeColor } from "@/hooks/useThemeColor"
 import type { SettingsSection } from "@/store/types"
 import {
   Rocket, Sparkles, Cpu, Check, X, ChevronLeft, ChevronRight,
@@ -45,6 +46,11 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
   const stepIndex = STEPS.indexOf(step)
   const isFirst = stepIndex === 0
   const isLast = stepIndex === STEPS.length - 1
+
+  // Sync the PWA status-bar/safe-area color to the onboarding surface while
+  // open (bg-bg-90 → near-opaque background), so the notch strip matches the
+  // dialog body (see useThemeColor).
+  useThemeColor("bg-90", open)
 
   // Reset to first step each time the dialog opens
   useEffect(() => {

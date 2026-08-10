@@ -22,6 +22,7 @@ import { ArrowLeft } from "lucide-react"
 import { useStore } from "@/store"
 import { useIsMobile } from "@/hooks/useMobile"
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock"
+import { useThemeColor } from "@/hooks/useThemeColor"
 import { cn } from "@/lib/utils"
 import { AboutTab } from "@/pages/settings/AboutTab"
 import { PreferencesTab } from "@/pages/settings/PreferencesTab"
@@ -46,6 +47,11 @@ export function SettingsDialog() {
   const testBackend = useStore((state) => state.testBackend)
 
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection)
+
+  // Sync the PWA status-bar/safe-area color to the popover surface while the
+  // dialog is open, so the notch strip doesn't read as a different color than
+  // the dialog body (see useThemeColor).
+  useThemeColor("popover", open)
 
   // Sync the active section to the store's requested section each time the
   // dialog opens (openSettings(tab) sets both atomically).
