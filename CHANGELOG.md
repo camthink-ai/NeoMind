@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.16] - 2026-08-11
+
+LLM capability detection consolidated to a single track (registry + name heuristic) + unified thinking-effort control + slim prompt for small local models + built-in local AI (Docker llama.cpp).
+Focus: collapse the duplicated capability detection (manual table + CapabilityDetector + audio pipeline) onto the LiteLLM registry as the single source of truth, unify reasoning/effort control across backends, and ship a slim prompt + built-in local AI for edge deployment.
+
+### LLM Capability Detection — Single Track (registry + heuristic)
+- **Removed** the hand-curated manual table (`models.rs`, 72 entries / 865 lines) and `CapabilityDetector` with its heuristic suite (~1300 lines net). Vision / reasoning / max-context now come solely from the LiteLLM registry (2988 entries); audio removed entirely (was informational only — the agent pipeline never emitted audio content parts).
+- **Unified `supports_tools`**: the 4 copies of the "exclude tiny" name heuristic (`llm_backends.rs` ×3 + `ollama.rs`) collapsed into one `detect_tools_capability` — registry `supports_function_calling` first (a field that previously sat unread), name fallback for local/Ollama models.
+- `detect_vision_capability` / `detect_thinking` now call the registry directly (no `CapabilityDetector` wrapper).
+- Storage `BackendCapabilities.supports_audio` dropped (`#[serde(default)]` — legacy redb rows deserialize cleanly, no migration).
+- Fixed flaky `test_config_env_var_parsing_*` (env-var tests serialized via `ENV_LOCK` mutex — parallel pollution surfaced after the removal shifted test scheduling).
+
+### Thinking-Effort Control (unified across backends)
+- Single `ThinkingEffort` enum (none / low / medium / high / xhigh / max) in `GenerationParams`, supersedes the legacy `thinking_enabled` bool.
+- Per-backend translation: Ollama (`think` level), OpenAI / Custom / GLM / Google (`reasoning_effort`), DeepSeek / Anthropic (`thinking` boolean), Qwen (`enable_thinking`), llama.cpp (read-only `reasoning_content`).
+- `ReasoningCapabilities` declaration drives the frontend dropdown — read-only backends show a badge, level/effort backends show the full selector.
+- Frontend: capability panel redesigned as a spec-row layout (was `FormField` rows, read as a "weird half-form"); multimodal switch now syncs to the selected model when editing an existing backend.
+
+### Slim Prompt + Tool Descriptions (for small local models)
+- Slim system prompt is now the default (`NEOMIND_FULL_PROMPT=1` opts back into the verbose one); adds Device Onboarding guidance.
+- Tool descriptions slimmed (image_edit / memory / skill / file_write / file_edit); shell tool gained command-choice disambiguation hints (device read-vs-write, set-vs-check, enable-activate).
+- ~45% prompt token reduction with no eval regression (verified across the 154-case bilingual sweep using a stable-case yardstick).
+
+### Built-in Local AI (Docker)
+- Docker image now ships llama.cpp + Gemma4-E2B and auto-registers an Ollama-style backend on first boot.
+- Python3 added to the image (agents + python-sidecar extensions).
+
+### Eval / Test
+- 23 en capability-dimension cases + 20 en scenario cases (full bilingual parity with the zh set).
+- Fixed: data-push `targets` collection key in state_query, `latest_telemetry` None crash, telemetry-history expectation, widget-full-lifecycle negative sq.
+
+### Web
+- PWA status-bar color syncs with full-screen dialogs; chat model-select scrollbar hidden; CSS keyframe dedupe + prose consolidation; mostly-hidden aurora background removed.
+
+---
+
 ## [0.9.15] - 2026-08-04
 
 Agent streaming reliability (stall hang fixes) + skill matching (description-based) + system-level test layer + eval coverage.
