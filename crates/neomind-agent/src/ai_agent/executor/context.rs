@@ -117,6 +117,10 @@ pub(crate) fn build_history_context(
 
     // 3. Execution Journal
     if !agent.memory.journal.records.is_empty() {
+        // The full `action_taken` (up to 5×150 chars) is the key learning
+        // signal for FAILED runs; for successes a short preview keeps the
+        // journal from dominating a small model's window (5 entries × ~1100
+        // chars is ~10K tokens of CJK).
         let entries = agent
             .memory
             .journal
@@ -132,13 +136,18 @@ pub(crate) fn build_history_context(
                 } else {
                     format!("[{}]", r.stop_reason)
                 };
+                let action_preview = if r.success {
+                    truncate_to(&r.action_taken, 150)
+                } else {
+                    truncate_to(&r.action_taken, 800)
+                };
                 format!(
                     "- [{}][{}]{} {} → {}",
                     ts,
                     status,
                     stop_label,
                     truncate_to(&r.outcome, 300),
-                    truncate_to(&r.action_taken, 800)
+                    action_preview
                 )
             })
             .collect::<Vec<_>>();

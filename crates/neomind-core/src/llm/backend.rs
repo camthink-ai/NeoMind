@@ -81,8 +81,16 @@ pub struct GenerationParams {
     /// Presence penalty (-2.0 - 2.0)
     pub presence_penalty: Option<f32>,
 
-    /// Enable thinking/reasoning mode (for models that support it like qwen3-vl)
+    /// Enable thinking/reasoning mode (for models that support it like qwen3-vl).
+    ///
+    /// Legacy boolean control. Prefer [`Self::thinking_effort`]; this field is
+    /// kept for compatibility and maps `true`→`Some(High)`, `false`→`Some(None)`.
     pub thinking_enabled: Option<bool>,
+
+    /// Unified thinking/reasoning effort. Takes precedence over
+    /// [`Self::thinking_enabled`] when both are set. Backends translate this to
+    /// their native mechanism (Ollama `think`, Anthropic `thinking`, …).
+    pub thinking_effort: Option<ThinkingEffort>,
 
     /// Maximum context window size in tokens
     /// CRITICAL for Qwen3: must be >= 16384 to avoid infinite repetition loops
@@ -100,6 +108,7 @@ impl Default for GenerationParams {
             frequency_penalty: Some(0.0),
             presence_penalty: Some(0.0),
             thinking_enabled: None, // Let backend decide based on model capabilities
+            thinking_effort: None,  // Let backend decide based on model capabilities
             max_context: None,      // Let backend decide based on model capabilities
         }
     }
@@ -710,6 +719,96 @@ pub trait LlmRuntime: Send + Sync {
 }
 
 /// Backend capabilities.
+/// Unified thinking/reasoning effort control.
+///
+/// This is the canonical "how much should the model think" enum threaded
+/// through requests. Each backend maps it to its own native mechanism in the
+/// translate layer (Ollama `think`, Anthropic `thinking`/`output_config.effort`,
+/// OpenAI-style `reasoning_effort`/`enable_thinking`, llama.cpp read-only).
+///
+/// `None` (the enum variant, not the Option) means "explicitly disable
+/// thinking". The previous boolean control is a subset: `true` ≈ `Some(High)`,
+/// `false` ≈ `Some(None)` — kept working via a compatibility mapping.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingEffort {
+    /// Explicitly disable thinking/reasoning.
+    None,
+    /// Minimize thinking — best for simple/latency-sensitive queries.
+    Low,
+    /// Moderate thinking — may skip thinking for simple queries.
+    Medium,
+    /// Deep reasoning on complex tasks (the common default).
+    High,
+    /// Extended exploration beyond the default.
+    XHigh,
+    /// Always think with no constraint on depth.
+    Max,
+}
+
+impl ThinkingEffort {
+    /// Map from the legacy boolean control. `true` ≈ `High`, `false` ≈ `None`.
+    pub fn from_bool(enabled: bool) -> Self {
+        if enabled {
+            Self::High
+        } else {
+            Self::None
+        }
+    }
+
+    /// Whether this effort is an explicit "disable".
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    /// Stable string id for persistence / API / UI.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+}
+
+/// Declared reasoning/thinking capabilities of a backend/model.
+///
+/// Mirrors the OpenRouter `model_listing.reasoning` shape
+/// (`supported_efforts`/`default_effort`/`mandatory`) — capability
+/// *declaration* that the UI and translate layer consult, rather than
+/// hardcoding effort support per backend.
+#[derive(Debug, Clone, Default)]
+pub struct ReasoningCapabilities {
+    /// Which effort levels this backend can honor. Empty = unknown; callers
+    /// should treat that as "only None/High (boolean) are safe".
+    pub supported_efforts: Vec<ThinkingEffort>,
+    /// The model's default effort when the caller sends nothing.
+    pub default_effort: Option<ThinkingEffort>,
+    /// Whether thinking is mandatory for this model — a caller sending
+    /// `effort: None` would be rejected (OpenRouter warns on `mandatory`).
+    pub mandatory: bool,
+    /// How the backend controls thinking (not all can be turned off).
+    pub control: ReasoningControl,
+}
+
+/// How a backend controls thinking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReasoningControl {
+    /// No control at all — thinking follows model defaults; cannot be toggled.
+    #[default]
+    ReadOnly,
+    /// Boolean on/off (e.g. legacy Ollama `think: true/false`).
+    Boolean,
+    /// Discrete effort levels (e.g. Ollama `think: "low"/"medium"/"high"`).
+    Level,
+    /// An OpenAI-style `reasoning_effort` string / per-token budget.
+    Effort,
+}
+
+/// Model capability declaration.
 #[derive(Debug, Clone, Default)]
 pub struct BackendCapabilities {
     /// Supports streaming generation
@@ -738,6 +837,9 @@ pub struct BackendCapabilities {
 
     /// Supports audio input
     pub supports_audio: bool,
+
+    /// Declared reasoning/thinking capabilities (effort levels, mandatory, control).
+    pub reasoning: ReasoningCapabilities,
 }
 
 impl BackendCapabilities {
@@ -797,6 +899,15 @@ impl BackendCapabilitiesBuilder {
         self
     }
 
+    /// Declare reasoning capabilities (effort levels, control mechanism).
+    pub fn reasoning(mut self, caps: ReasoningCapabilities) -> Self {
+        self.capabilities.reasoning = caps;
+        if !self.capabilities.reasoning.supported_efforts.is_empty() {
+            self.capabilities.thinking_display = true;
+        }
+        self
+    }
+
     /// Enable audio input.
     pub fn audio(mut self) -> Self {
         self.capabilities.supports_audio = true;
@@ -845,6 +956,32 @@ mod tests {
         assert_eq!(input.messages.len(), 1);
         assert_eq!(input.model.as_deref(), Some("qwen2"));
         assert!(input.stream);
+    }
+
+    #[test]
+    fn test_thinking_effort_from_bool() {
+        // Legacy boolean control maps to the effort enum.
+        assert_eq!(ThinkingEffort::from_bool(true), ThinkingEffort::High);
+        assert_eq!(ThinkingEffort::from_bool(false), ThinkingEffort::None);
+        assert!(ThinkingEffort::None.is_disabled());
+        assert!(!ThinkingEffort::High.is_disabled());
+    }
+
+    #[test]
+    fn test_generation_params_defaults() {
+        let params = GenerationParams::default();
+        assert_eq!(params.thinking_enabled, None);
+        assert_eq!(params.thinking_effort, None);
+        // `thinking_effort` takes precedence when set, but both default None.
+    }
+
+    #[test]
+    fn test_reasoning_capabilities_default() {
+        let caps = ReasoningCapabilities::default();
+        assert!(caps.supported_efforts.is_empty());
+        assert_eq!(caps.default_effort, None);
+        assert!(!caps.mandatory);
+        assert_eq!(caps.control, ReasoningControl::ReadOnly);
     }
 
     // ── generate_to_completion default impl ──────────────────────────────

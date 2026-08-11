@@ -101,7 +101,14 @@ impl AgentExecutor {
         execution_id: &str,
         mut step_num: u32,
         cache: &mut crate::agent::types::LargeDataCache,
+        context_window: usize,
     ) -> u32 {
+        // Context-aware tool-result cap. The hard 128KB cap is larger than a
+        // small model's whole window; a single oversized result (or 6 parallel
+        // ones) can overflow 8-32K models before per-round compaction runs.
+        // Scale the cap down to a quarter of the context window so results
+        // never starve the rest of the prompt on small models.
+        let result_cap = TOOL_RESULT_MAX_LEN.min(context_window / 4);
         for result in results {
             all_tool_results.push(result.clone());
             let result_text = match &result.result {
@@ -138,7 +145,7 @@ impl AgentExecutor {
                     // UTF-8 safe truncation (has fast-path for short strings)
                     // 128KB limit: large enough for compact time-series and multi-device
                     // queries. The compaction layer handles context window limits later.
-                    crate::agent::streaming::truncate_result_utf8(&sanitized, TOOL_RESULT_MAX_LEN)
+                    crate::agent::streaming::truncate_result_utf8(&sanitized, result_cap)
                 }
                 Err(e) => {
                     let err_msg = format!("Error: {}", e);
@@ -224,6 +231,10 @@ impl AgentExecutor {
     ) -> Option<String> {
         use neomind_core::llm::backend::{GenerationParams, LlmInput};
 
+        // Context-aware cap, same as process_tool_results: don't let a single
+        // oversized result overflow a small model's window in Phase 2.
+        let result_cap = TOOL_RESULT_MAX_LEN.min(llm_runtime.max_context_length() / 4);
+
         // Build follow-up prompt — natural language, NOT JSON template.
         // Includes full tool results so the LLM can produce a real analysis.
         let task = &agent.user_prompt;
@@ -243,7 +254,7 @@ impl AgentExecutor {
                         .unwrap_or_else(|_| "Success".to_string());
                     // Sanitize base64/image data to prevent context bloat
                     let sanitized = crate::agent::streaming::sanitize_tool_result_for_prompt(&raw);
-                    crate::agent::streaming::truncate_result_utf8(&sanitized, TOOL_RESULT_MAX_LEN)
+                    crate::agent::streaming::truncate_result_utf8(&sanitized, result_cap)
                 }
                 Err(e) => format!("Error: {}", e),
             };
@@ -605,11 +616,20 @@ mod tests {
             "  neomind system info  ",
         ] {
             let hint = hallucinated_tool_hint(name);
-            assert!(hint.is_some(), "{:?} should redirect as a full neomind command", name);
+            assert!(
+                hint.is_some(),
+                "{:?} should redirect as a full neomind command",
+                name
+            );
             let h = hint.unwrap();
             assert!(h.contains("shell"), "must point to shell: {}", h);
             let trimmed = name.trim();
-            assert!(h.contains(trimmed), "must echo the verbatim command {:?}: {}", trimmed, h);
+            assert!(
+                h.contains(trimmed),
+                "must echo the verbatim command {:?}: {}",
+                trimmed,
+                h
+            );
         }
         // Real tool names and unrelated strings still get no hint.
         assert!(hallucinated_tool_hint("shell").is_none());

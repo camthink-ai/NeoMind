@@ -747,6 +747,74 @@ mod tests {
         assert_eq!(mapped.get("status").unwrap(), "online");
     }
 
+    // ===== Hallucinated-tool → shell routing (scheduled agent path) =====
+    //
+    // `run_tool_loop` routes a hallucinated CLI-domain tool call to `shell`
+    // (mirroring `tool_exec.rs` on the chat path): it resolves the name, sees
+    // it maps to `shell`, and converts the structured args into the CLI
+    // command `ShellTool` expects — {"command": "neomind <domain> ..."}. These
+    // tests pin that conversion.
+
+    #[test]
+    fn test_build_cli_command_returns_shell_command() {
+        // The resolved name for a CLI domain is "shell"; the args must be
+        // converted to a `command` string, not passed through as structured args.
+        let resolved = resolve_tool_name("device");
+        assert_eq!(resolved, "shell");
+
+        let args = serde_json::json!({
+            "action": "list",
+            "type": "sensor",
+            "status": "online"
+        });
+        let cmd = build_cli_command("device", &args).expect("device is a CLI domain");
+        let command = cmd.get("command").and_then(|v| v.as_str()).unwrap();
+        assert!(command.starts_with("neomind device list"), "got: {command}");
+        assert!(command.contains("--device_type"), "got: {command}");
+        assert!(command.contains("--status"), "got: {command}");
+    }
+
+    #[test]
+    fn test_build_cli_command_device_control_positional() {
+        // device control uses positional id + command, not --action
+        let args = serde_json::json!({
+            "device_id": "hvac-a",
+            "command": "set_mode",
+            "params": "ventilate"
+        });
+        let cmd = build_cli_command("device", &args).expect("device is a CLI domain");
+        let command = cmd.get("command").and_then(|v| v.as_str()).unwrap();
+        assert!(
+            command.starts_with("neomind device control hvac-a set_mode"),
+            "got: {command}"
+        );
+    }
+
+    #[test]
+    fn test_build_cli_command_rejects_non_domain() {
+        // A non-CLI-domain tool name must NOT be routed to shell.
+        let args = serde_json::json!({"a": 1});
+        assert!(
+            build_cli_command("skill", &args).is_none(),
+            "non-CLI-domain must not convert to a shell command"
+        );
+        assert!(
+            build_cli_command("vision", &args).is_none(),
+            "non-CLI-domain must not convert to a shell command"
+        );
+    }
+
+    #[test]
+    fn test_hallucinated_rule_create_routes_to_shell() {
+        // `rule` is a CLI domain — build_cli_command must turn it into a
+        // `neomind rule create ...` shell invocation (the scheduled-loop fix).
+        let args = serde_json::json!({"action": "create", "name": "my-rule"});
+        let cmd = build_cli_command("rule", &args).expect("rule is a CLI domain");
+        let command = cmd.get("command").and_then(|v| v.as_str()).unwrap();
+        assert!(command.starts_with("neomind rule create"), "got: {command}");
+        assert!(command.contains("my-rule"), "got: {command}");
+    }
+
     // ===== Parameter Type Coercion Tests =====
 
     #[test]

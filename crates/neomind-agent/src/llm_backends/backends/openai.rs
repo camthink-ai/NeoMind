@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use neomind_core::llm::backend::{
     BackendCapabilities, BackendId, BackendMetrics, FinishReason, LlmError, LlmInput, LlmOutput,
-    LlmRuntime, StreamChunk, TokenUsage,
+    LlmRuntime, ReasoningCapabilities, ReasoningControl, StreamChunk, ThinkingEffort, TokenUsage,
 };
 use neomind_core::message::{Content, ContentPart, ImageDetail, Message, MessageRole};
 
@@ -585,6 +585,25 @@ impl CloudRuntime {
             stop_sequences: input.params.stop.clone(),
             stream,
             tools,
+            // Unified effort → Anthropic thinking. Explicit disable sends
+            // `{type:"disabled"}`; any enable sends `{type:"enabled", budget}`.
+            // Omitted → model default (adaptive thinking on modern Claude).
+            thinking: match input.params.thinking_effort {
+                Some(ThinkingEffort::None) => Some(AnthropicThinking::Disabled),
+                Some(_) => Some(AnthropicThinking::Enabled {
+                    // Rough budget: ~32K is safe headroom for thinking + answer.
+                    budget_tokens: MAX_TOKENS_CAP.min(32000),
+                }),
+                None => input.params.thinking_enabled.map(|enabled| {
+                    if enabled {
+                        AnthropicThinking::Enabled {
+                            budget_tokens: MAX_TOKENS_CAP.min(32000),
+                        }
+                    } else {
+                        AnthropicThinking::Disabled
+                    }
+                }),
+            },
         };
 
         let url = format!(
@@ -643,8 +662,49 @@ impl CloudRuntime {
         // tool_result.rs (gotcha #7) was silently dropped on cloud, while the
         // Ollama path (ollama.rs:826-844) honored it. Other OpenAI-compatible
         // providers may reject unknown fields, so emit ONLY for Qwen.
+        //
+        // Unified effort takes precedence: `None` → disable, any other → enable.
         let enable_thinking = if matches!(self.config.provider, CloudProvider::Qwen) {
-            input.params.thinking_enabled
+            input
+                .params
+                .thinking_effort
+                .map(|e| !e.is_disabled())
+                .or(input.params.thinking_enabled)
+        } else {
+            None
+        };
+
+        // OpenAI/GPT-5-style reasoning effort. Maps the unified effort enum to
+        // the `reasoning_effort` string the OpenAI-compatible endpoints accept.
+        // Emitted only for providers that accept it (OpenAI, Custom, GLM);
+        // others reject unknown fields. Gemini via OpenAI-compat also accepts it.
+        let reasoning_effort = if matches!(
+            self.config.provider,
+            CloudProvider::OpenAI
+                | CloudProvider::Custom
+                | CloudProvider::GLM
+                | CloudProvider::Google
+        ) {
+            input
+                .params
+                .thinking_effort
+                .map(|e| e.as_str().to_string())
+        } else {
+            None
+        };
+
+        // DeepSeek thinking-mode toggle. DeepSeek defaults thinking ON at
+        // `high` effort; an explicit `{"type":"disabled"}` is required to turn
+        // it off. Only emitted for DeepSeek.
+        let thinking = if matches!(self.config.provider, CloudProvider::DeepSeek) {
+            let disabled = input
+                .params
+                .thinking_effort
+                .map(|e| e.is_disabled())
+                .unwrap_or(input.params.thinking_enabled.unwrap_or(false));
+            Some(Thinking {
+                thinking_type: if disabled { "disabled" } else { "enabled" }.to_string(),
+            })
         } else {
             None
         };
@@ -670,6 +730,8 @@ impl CloudRuntime {
                 None
             },
             enable_thinking,
+            reasoning_effort,
+            thinking,
         };
 
         // === SFT trace hook (OpenAI-compatible path) ===
@@ -716,12 +778,21 @@ impl CloudRuntime {
         for b in block_re.captures_iter(content) {
             let inner = b.get(1).map(|m| m.as_str()).unwrap_or("");
             if let Some(fc) = func_re.captures(inner) {
-                let name = fc.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let name = fc
+                    .get(1)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
                 let body = fc.get(2).map(|m| m.as_str()).unwrap_or("");
                 let mut args = serde_json::Map::new();
                 for pc in param_re.captures_iter(body) {
-                    let k = pc.get(1).map(|m| m.as_str().to_string()).unwrap_or_default();
-                    let v = pc.get(2).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+                    let k = pc
+                        .get(1)
+                        .map(|m| m.as_str().to_string())
+                        .unwrap_or_default();
+                    let v = pc
+                        .get(2)
+                        .map(|m| m.as_str().trim().to_string())
+                        .unwrap_or_default();
                     args.insert(k, serde_json::Value::String(v));
                 }
                 out.push(serde_json::json!({
@@ -839,24 +910,23 @@ impl CloudRuntime {
         // Fallback: recover tool calls that leaked into content as XML when the
         // upstream parser (e.g. llama.cpp fork) failed to populate `tool_calls`.
         // See `parse_xml_tool_calls` for the cause.
-        let native_tool_calls = if native_tool_calls.is_none()
-            && response_text.contains("<tool_call>")
-        {
-            let parsed = Self::parse_xml_tool_calls(&response_text);
-            if !parsed.is_empty() {
-                tracing::debug!(
-                    "OpenAI: recovered {} tool call(s) from content XML fallback",
-                    parsed.len()
-                );
-                let json_str = serde_json::to_string(&parsed).unwrap_or_default();
-                response_text.push_str(&json_str);
-                Some(parsed)
+        let native_tool_calls =
+            if native_tool_calls.is_none() && response_text.contains("<tool_call>") {
+                let parsed = Self::parse_xml_tool_calls(&response_text);
+                if !parsed.is_empty() {
+                    tracing::debug!(
+                        "OpenAI: recovered {} tool call(s) from content XML fallback",
+                        parsed.len()
+                    );
+                    let json_str = serde_json::to_string(&parsed).unwrap_or_default();
+                    response_text.push_str(&json_str);
+                    Some(parsed)
+                } else {
+                    None
+                }
             } else {
-                None
-            }
-        } else {
-            native_tool_calls
-        };
+                native_tool_calls
+            };
 
         let result = Ok(LlmOutput {
             text: response_text,
@@ -1104,7 +1174,8 @@ impl CloudRuntime {
                 .header("Authorization", format!("Bearer {}", api_key))
                 .json(&request)
                 .send();
-            let send_result = tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
+            let send_result =
+                tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
             let result: Result<_, LlmError> = match send_result {
                 Ok(Ok(r)) => Ok(r),
                 Ok(Err(e)) => Err(LlmError::Network(e.to_string())),
@@ -1160,12 +1231,10 @@ impl CloudRuntime {
                     // so a 60s zero-chunk gap is unambiguously a dead connection.
                     // `unwrap_or(None)` treats a stall as end-of-stream: the loop
                     // exits and the [DONE] flush path below still runs.
-                    while let Some(chunk_result) = tokio::time::timeout(
-                        read_idle_timeout,
-                        stream.next(),
-                    )
-                    .await
-                    .unwrap_or(None)
+                    while let Some(chunk_result) =
+                        tokio::time::timeout(read_idle_timeout, stream.next())
+                            .await
+                            .unwrap_or(None)
                     {
                         // If the consumer dropped the receiver (chat UI closed,
                         // agent execution cancelled/timed out), stop draining the
@@ -1385,7 +1454,8 @@ impl CloudRuntime {
                 .header("content-type", "application/json")
                 .json(&request)
                 .send();
-            let send_result = tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
+            let send_result =
+                tokio::time::timeout(std::time::Duration::from_secs(30), send_fut).await;
             let result: Result<_, LlmError> = match send_result {
                 Ok(Ok(r)) => Ok(r),
                 Ok(Err(e)) => Err(LlmError::Network(e.to_string())),
@@ -1446,12 +1516,10 @@ impl CloudRuntime {
                         (Option<String>, Option<String>, String),
                     > = std::collections::HashMap::new();
 
-                    while let Some(chunk_result) = tokio::time::timeout(
-                        read_idle_timeout,
-                        stream.next(),
-                    )
-                    .await
-                    .unwrap_or(None)
+                    while let Some(chunk_result) =
+                        tokio::time::timeout(read_idle_timeout, stream.next())
+                            .await
+                            .unwrap_or(None)
                     {
                         // If the consumer dropped the receiver (chat UI closed,
                         // agent execution cancelled/timed out), stop draining the
@@ -1732,6 +1800,7 @@ impl LlmRuntime for CloudRuntime {
             thinking_display: supports_thinking,
             supports_images: supports_multimodal,
             supports_audio,
+            reasoning: reasoning_capabilities_for(self.config.provider, supports_thinking),
         }
     }
 
@@ -1743,6 +1812,49 @@ impl LlmRuntime for CloudRuntime {
                 e.into_inner()
             })
             .clone()
+    }
+}
+
+/// Declare the reasoning/thinking capabilities for an OpenAI-compatible
+/// cloud provider, based on what `build_chat_request` actually emits:
+/// - OpenAI/Custom/GLM/Google → `reasoning_effort` (discrete levels, incl. none)
+/// - DeepSeek → `thinking: {enabled|disabled}` + `reasoning_effort`
+/// - Qwen → `enable_thinking: bool`
+/// - Anthropic → `thinking: {enabled|disabled}` (native /messages path)
+/// - MiniMax/Grok → no request-side control (read-only)
+fn reasoning_capabilities_for(
+    provider: CloudProvider,
+    supports_thinking: bool,
+) -> ReasoningCapabilities {
+    use ReasoningControl::{Boolean, Effort, ReadOnly};
+    let control = match provider {
+        CloudProvider::OpenAI
+        | CloudProvider::Custom
+        | CloudProvider::GLM
+        | CloudProvider::Google => Effort,
+        CloudProvider::DeepSeek | CloudProvider::Anthropic | CloudProvider::Qwen => Boolean,
+        CloudProvider::MiniMax | CloudProvider::Grok => ReadOnly,
+    };
+    let supported_efforts = if control != ReadOnly && supports_thinking {
+        match control {
+            Effort => vec![
+                ThinkingEffort::None,
+                ThinkingEffort::Low,
+                ThinkingEffort::Medium,
+                ThinkingEffort::High,
+                ThinkingEffort::XHigh,
+                ThinkingEffort::Max,
+            ],
+            _ => vec![ThinkingEffort::None, ThinkingEffort::High],
+        }
+    } else {
+        Vec::new()
+    };
+    ReasoningCapabilities {
+        supported_efforts,
+        default_effort: if supports_thinking { Some(ThinkingEffort::High) } else { None },
+        mandatory: false,
+        control,
     }
 }
 
@@ -1815,6 +1927,23 @@ struct ChatCompletionRequest {
     /// (ollama.rs:826-844).
     #[serde(skip_serializing_if = "Option::is_none")]
     enable_thinking: Option<bool>,
+    /// OpenAI/GPT-5-style reasoning effort (`none`/`minimal`/`low`/`medium`/
+    /// `high`/`xhigh`). Emitted for OpenAI-compatible providers that accept it
+    /// (OpenAI, Custom, GLM); others reject unknown fields so it's skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    /// DeepSeek thinking-mode toggle: `{"type":"enabled"|"disabled"}`.
+    /// DeepSeek defaults thinking ON at `high` effort, so an explicit
+    /// "disabled" is required to turn it off. Only emitted for DeepSeek.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<Thinking>,
+}
+
+/// DeepSeek thinking-mode toggle (`thinking: {"type": "enabled"|"disabled"}`).
+#[derive(Debug, Serialize)]
+struct Thinking {
+    #[serde(rename = "type")]
+    thinking_type: String,
 }
 
 /// Stream options to request usage data in final chunk
@@ -2039,6 +2168,20 @@ struct AnthropicRequest {
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<AnthropicTool>>,
+    /// Extended thinking config. `{type: "disabled"}` when the caller
+    /// explicitly disables thinking; `{type: "enabled", budget_tokens: N}`
+    /// when enabling. Omitted → Anthropic model default (adaptive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<AnthropicThinking>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum AnthropicThinking {
+    #[serde(rename = "enabled")]
+    Enabled { budget_tokens: u32 },
+    #[serde(rename = "disabled")]
+    Disabled,
 }
 
 #[derive(Debug, Serialize)]

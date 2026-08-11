@@ -18,7 +18,10 @@ pub mod tools;
 pub use llm::LlmError;
 
 // Exports
-pub use llm::backend::{BackendCapabilities, GenerationParams, LlmRuntime};
+pub use llm::backend::{
+    BackendCapabilities, GenerationParams, LlmRuntime, ReasoningCapabilities, ReasoningControl,
+    ThinkingEffort,
+};
 
 pub use message::{Content, ContentPart, Message, MessageRole};
 

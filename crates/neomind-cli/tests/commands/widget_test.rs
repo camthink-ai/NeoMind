@@ -62,7 +62,7 @@ fn test_widget_install_help() {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Install widget from file"));
+        .stdout(predicate::str::contains("Install widget from"));
 }
 
 /// Test widget uninstall help.

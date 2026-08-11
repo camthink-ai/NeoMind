@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use neomind_core::llm::backend::{
     BackendCapabilities, BackendId, BackendMetrics, FinishReason, LlmError, LlmOutput, LlmRuntime,
-    StreamChunk, StreamConfig, TokenUsage,
+    ReasoningCapabilities, ReasoningControl, StreamChunk, StreamConfig, ThinkingEffort, TokenUsage,
 };
 use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 
@@ -500,8 +500,8 @@ impl LlmRuntime for OllamaRuntime {
         let url = format!("{}/api/chat", self.config.endpoint);
         tracing::debug!("Ollama: calling URL: {}", url);
 
-        // Detect model capabilities
-        let caps = detect_model_capabilities(&model);
+        // Detect model capabilities — prefer the /api/show override.
+        let caps = request_capabilities(self.capabilities_override.as_ref(), &self.model, &model);
 
         // Handle max_tokens: increased cap for thinking models
         // Thinking models need significant budget for both thinking AND response generation
@@ -589,17 +589,12 @@ impl LlmRuntime for OllamaRuntime {
             None
         };
 
-        // Thinking: Explicitly control based on thinking_enabled parameter
-        let model_supports_thinking = caps.supports_thinking;
-        let user_requested_thinking = input.params.thinking_enabled;
-
-        // Determine the think parameter
-        let think: Option<OllamaThink> = match user_requested_thinking {
-            Some(false) => Some(OllamaThink::Bool(false)), // Explicitly disable
-            Some(true) if model_supports_thinking => Some(OllamaThink::Bool(true)), // Explicitly enable
-            Some(true) => None, // Model doesn't support thinking, don't send parameter
-            None => None,       // Use model default
-        };
+        // Thinking: unified effort (preferred) > legacy bool. See translate_thinking.
+        let think = translate_thinking(
+            caps.supports_thinking,
+            input.params.thinking_effort,
+            input.params.thinking_enabled,
+        );
 
         // When tools are present, disable thinking to prevent wasting tokens
         // and ensure tool calls are generated efficiently
@@ -746,8 +741,8 @@ impl LlmRuntime for OllamaRuntime {
         let url = format!("{}/api/chat", self.config.endpoint);
         let client = self.client.clone();
 
-        // Detect model capabilities
-        let caps = detect_model_capabilities(&model);
+        // Detect model capabilities — prefer the /api/show override.
+        let caps = request_capabilities(self.capabilities_override.as_ref(), &self.model, &model);
 
         // Handle max_tokens: increased cap for thinking models
         // Thinking models need significant budget for both thinking AND response generation
@@ -833,25 +828,22 @@ impl LlmRuntime for OllamaRuntime {
             None
         };
 
-        // Thinking: Explicitly control based on thinking_enabled parameter
-        // When thinking_enabled is Some(false), disable thinking for faster responses
-        // When thinking_enabled is Some(true) or None, use model default or enable thinking
-        let model_supports_thinking = caps.supports_thinking;
-        let user_requested_thinking = input.params.thinking_enabled;
-
-        // Determine the think parameter:
-        // - Some(false) -> explicitly disable thinking (important for multimodal!)
-        // - Some(true) -> explicitly enable thinking
-        // - None -> use model default (pass nothing)
-        let think: Option<OllamaThink> = match user_requested_thinking {
-            Some(false) => Some(OllamaThink::Bool(false)), // Explicitly disable
-            Some(true) if model_supports_thinking => Some(OllamaThink::Bool(true)), // Explicitly enable
-            Some(true) => None, // Model doesn't support thinking, don't send parameter
-            None => None,       // Use model default
-        };
+        // Thinking: unified effort (preferred) > legacy bool. See translate_thinking.
+        let think = translate_thinking(
+            caps.supports_thinking,
+            input.params.thinking_effort,
+            input.params.thinking_enabled,
+        );
 
         // Determine if we should send thinking to the client (for display purposes)
-        let should_send_thinking = user_requested_thinking.unwrap_or(model_supports_thinking);
+        // — effective unless the user explicitly disabled it.
+        let effective_thinking = input
+            .params
+            .thinking_effort
+            .map(|e| !e.is_disabled())
+            .or(input.params.thinking_enabled)
+            .unwrap_or(caps.supports_thinking);
+        let should_send_thinking = effective_thinking;
 
         // Convert messages with tool injection for non-native models
         let messages = self.messages_to_ollama_with_tools(
@@ -1275,15 +1267,15 @@ impl LlmRuntime for OllamaRuntime {
                                             } else {
                                                 // Skip thinking content - model generated it but we don't want it
                                                 tracing::debug!(
-                                                        "Ollama generated thinking (len={}, total_thinking={}) but filtering it out (user_requested={:?}, model_supports={})",
+                                                        "Ollama generated thinking (len={}, total_thinking={}) but filtering it out (effort={:?}, model_supports={})",
                                                         ollama_chunk
                                                             .message
                                                             .thinking
                                                             .chars()
                                                             .count(),
                                                         thinking_chars,
-                                                        user_requested_thinking,
-                                                        model_supports_thinking
+                                                        input.params.thinking_effort,
+                                                        caps.supports_thinking
                                                     );
                                                 // Don't send thinking chunks to the client
                                             }
@@ -1387,7 +1379,11 @@ impl LlmRuntime for OllamaRuntime {
     }
 
     fn supports_multimodal(&self) -> bool {
-        true
+        // Prefer the /api/show override; fall back to name detection.
+        self.capabilities_override
+            .as_ref()
+            .map(|c| c.supports_multimodal)
+            .unwrap_or_else(|| detect_model_capabilities(&self.model).supports_multimodal)
     }
 
     fn capabilities(&self) -> BackendCapabilities {
@@ -1415,6 +1411,28 @@ impl LlmRuntime for OllamaRuntime {
         if caps.supports_audio {
             builder = builder.audio();
         }
+
+        // Ollama supports both `think: true/false` and `think: "low"|"medium"|"high"`
+        // (see OllamaThink), so declare discrete effort levels when the model thinks.
+        builder = builder.reasoning(ReasoningCapabilities {
+            supported_efforts: if caps.supports_thinking {
+                vec![
+                    ThinkingEffort::None,
+                    ThinkingEffort::Low,
+                    ThinkingEffort::Medium,
+                    ThinkingEffort::High,
+                ]
+            } else {
+                Vec::new()
+            },
+            default_effort: if caps.supports_thinking {
+                Some(ThinkingEffort::High)
+            } else {
+                None
+            },
+            mandatory: false,
+            control: ReasoningControl::Level,
+        });
 
         builder.build()
     }
@@ -1448,7 +1466,7 @@ struct OllamaChatRequest {
 }
 
 /// Thinking level for Ollama models that support reasoning.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 enum OllamaThink {
     /// Boolean enable/disable
@@ -1508,6 +1526,42 @@ struct OllamaOptions {
     stop: Option<Vec<String>>,
 }
 
+/// Translate the unified `thinking_effort` (falling back to the legacy
+/// `thinking_enabled` bool) into Ollama's `think` parameter.
+///
+/// Precedence: `thinking_effort` > `thinking_enabled`. When the model doesn't
+/// support thinking, we never force-enable (send nothing → model default).
+/// `None` maps to `Bool(false)` (explicitly disable); `Low`/`Medium` map to
+/// Ollama's `think: "low"/"medium"` levels (Ollama 0.6.x+); `High` and above
+/// map to `Bool(true)` (full thinking).
+fn translate_thinking(
+    model_supports_thinking: bool,
+    effort: Option<ThinkingEffort>,
+    enabled: Option<bool>,
+) -> Option<OllamaThink> {
+    match effort {
+        Some(ThinkingEffort::None) => Some(OllamaThink::Bool(false)),
+        Some(ThinkingEffort::Low) if model_supports_thinking => {
+            Some(OllamaThink::Level("low".into()))
+        }
+        Some(ThinkingEffort::Medium) if model_supports_thinking => {
+            Some(OllamaThink::Level("medium".into()))
+        }
+        Some(ThinkingEffort::High | ThinkingEffort::XHigh | ThinkingEffort::Max)
+            if model_supports_thinking =>
+        {
+            Some(OllamaThink::Bool(true))
+        }
+        // Fall back to the legacy boolean control.
+        None => match enabled {
+            Some(false) => Some(OllamaThink::Bool(false)),
+            Some(true) if model_supports_thinking => Some(OllamaThink::Bool(true)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Model capability information
 #[derive(Debug, Clone)]
 pub struct ModelCapability {
@@ -1519,6 +1573,30 @@ pub struct ModelCapability {
     pub supports_audio: bool,
     /// Maximum context window in tokens
     pub max_context: usize,
+}
+
+/// Resolve capabilities for a request.
+///
+/// Prefer the accurate `capabilities_override` populated from Ollama's
+/// `/api/show` (or a user capability override), falling back to name-based
+/// heuristics. The override is only used when the request targets `self.model`
+/// — if the caller overrides `input.model` to something else, the cached
+/// override may not apply to it, so we fall back to name detection for that
+/// model. This mirrors `capabilities()`/`max_context_length()` (which already
+/// prefer the override); it fixes `generate`/`generate_stream`, which used
+/// name heuristics directly and could send `think: true` to a distilled
+/// qwen3 with no attention heads, or never enable thinking for `qwq`/`glm-z1`.
+fn request_capabilities(
+    self_override: Option<&ModelCapability>,
+    self_model: &str,
+    model: &str,
+) -> ModelCapability {
+    if model == self_model {
+        if let Some(caps) = self_override {
+            return caps.clone();
+        }
+    }
+    detect_model_capabilities(model)
 }
 
 /// Detect model capabilities from model name
@@ -1537,20 +1615,11 @@ pub struct ModelCapability {
 fn detect_model_capabilities(model_name: &str) -> ModelCapability {
     let name_lower = model_name.to_lowercase();
 
-    // Models that support thinking/reasoning (from official Ollama docs)
-    // - Qwen 3 family (qwen3, qwen3-vl, qwen3:2b, etc.)
-    // - GPT-OSS (uses low/medium/high levels)
-    // - DeepSeek-v3.1
-    // - DeepSeek R1 (deepseek-r1)
-    // - Also catch models with "thinking" in the name for future compatibility
-    let supports_thinking = name_lower.starts_with("qwen3")
-        || name_lower.contains("qwen3-")
-        || name_lower.contains("gpt-oss")
-        || name_lower.contains("deepseek-r1")
-        || name_lower.contains("deepseek-r")
-        || name_lower.contains("deepseek v3.1")
-        || name_lower.contains("deepseek-v3.1")
-        || name_lower.contains("thinking"); // Future-proofing
+    // Models that support thinking/reasoning — single source of truth in
+    // neomind-core (`detect_thinking`), covering Qwen3/GPT-OSS/DeepSeek-R1/
+    // QwQ/GLM-Z1/o1/o3. The old per-family list here missed `qwq`/`glm-z1`
+    // and diverged from the API handler's rule.
+    let supports_thinking = neomind_core::llm::detect_thinking(model_name);
 
     // Models that support function calling
     // Note: Smaller models like gemma3:270m do NOT support tools
@@ -1915,5 +1984,88 @@ mod tests {
     fn test_ollama_config_with_endpoint() {
         let config = OllamaConfig::new("qwen3-vl:2b").with_endpoint("http://192.168.1.100:11434");
         assert_eq!(config.endpoint, "http://192.168.1.100:11434");
+    }
+
+    #[test]
+    fn test_request_capabilities_prefers_override_for_self_model() {
+        let override_caps = ModelCapability {
+            supports_tools: true,
+            supports_thinking: true,
+            supports_multimodal: true,
+            supports_audio: false,
+            max_context: 65536,
+        };
+
+        // Request targets self.model → the accurate /api/show override wins
+        // over the name heuristic.
+        let caps = request_capabilities(Some(&override_caps), "qwen3:32b", "qwen3:32b");
+        assert_eq!(caps.max_context, 65536);
+        assert!(caps.supports_multimodal);
+        assert!(caps.supports_thinking);
+    }
+
+    #[test]
+    fn test_translate_thinking() {
+        // effort takes precedence over the legacy bool.
+        assert_eq!(
+            translate_thinking(true, Some(ThinkingEffort::None), Some(true)),
+            Some(OllamaThink::Bool(false))
+        );
+        assert_eq!(
+            translate_thinking(true, Some(ThinkingEffort::Low), None),
+            Some(OllamaThink::Level("low".into()))
+        );
+        assert_eq!(
+            translate_thinking(true, Some(ThinkingEffort::Medium), None),
+            Some(OllamaThink::Level("medium".into()))
+        );
+        assert_eq!(
+            translate_thinking(true, Some(ThinkingEffort::High), Some(false)),
+            Some(OllamaThink::Bool(true))
+        );
+        // Fallback to legacy bool when effort is None.
+        assert_eq!(
+            translate_thinking(true, None, Some(false)),
+            Some(OllamaThink::Bool(false))
+        );
+        assert_eq!(
+            translate_thinking(true, None, Some(true)),
+            Some(OllamaThink::Bool(true))
+        );
+        // Never force-enable on a model that doesn't support thinking.
+        assert_eq!(
+            translate_thinking(false, Some(ThinkingEffort::High), None),
+            None
+        );
+        assert_eq!(
+            translate_thinking(false, Some(ThinkingEffort::None), None),
+            Some(OllamaThink::Bool(false))
+        );
+    }
+
+    #[test]
+    fn test_request_capabilities_falls_back_to_name_detection_for_other_model() {
+        let override_caps = ModelCapability {
+            supports_tools: true,
+            supports_thinking: true,
+            supports_multimodal: true,
+            supports_audio: false,
+            max_context: 65536,
+        };
+
+        // The override is for self.model; a request targeting a different
+        // model must NOT inherit it — name heuristics apply instead.
+        let caps = request_capabilities(Some(&override_caps), "qwen3:32b", "gemma3:4b");
+        assert_ne!(
+            caps.max_context, 65536,
+            "must not inherit the other model's override"
+        );
+    }
+
+    #[test]
+    fn test_request_capabilities_no_override_uses_detection() {
+        let caps = request_capabilities(None, "qwen3:32b", "qwen3:32b");
+        // No override → name heuristics: qwen3 detects as thinking-capable.
+        assert!(caps.supports_thinking);
     }
 }

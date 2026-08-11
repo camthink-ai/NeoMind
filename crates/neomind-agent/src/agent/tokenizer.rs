@@ -137,8 +137,18 @@ pub fn truncate_to_tokens(s: &str, max_tokens: usize) -> String {
         return s.to_string();
     }
     let total_chars = s.chars().count();
+    // Fast path: if the content is far over budget, trim to a conservative
+    // char ceiling first (≈3.5 chars/token is an upper bound — CJK is ~1.8,
+    // ASCII ~4 — so the prefix can't drop below the token budget). This keeps
+    // the binary search below operating on a small string instead of scanning
+    // a 20K-char CJK file ~15 times per call.
+    let start = if total_chars > max_tokens * 4 {
+        max_tokens * 4
+    } else {
+        total_chars
+    };
     let mut lo: usize = 0;
-    let mut hi: usize = total_chars;
+    let mut hi: usize = start;
     while lo < hi {
         let mid = lo + (hi - lo).div_ceil(2);
         if estimate_tokens(split_at_char(s, mid)) <= max_tokens {

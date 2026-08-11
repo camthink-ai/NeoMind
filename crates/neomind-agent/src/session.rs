@@ -59,6 +59,7 @@ fn convert_capabilities(
         modalities: Vec::new(),
         supports_images: storage_caps.supports_multimodal,
         supports_audio: storage_caps.supports_audio,
+        reasoning: neomind_core::ReasoningCapabilities::default(),
     }
 }
 
@@ -251,7 +252,7 @@ pub struct SessionManager {
     skill_registry: crate::skills::SharedSkillRegistry,
     /// Cancel signal senders for active streaming sessions (session_id → watch::Sender)
     cancel_senders: Arc<RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
-    /// Per-session direct event subscribers. ChatSessionCapabilityProvider
+    /// Per-session event subscribers. ChatSessionCapabilityProvider
     /// registers one mpsc::Sender per session-stream subscription. Each
     /// AgentEvent yielded by `process_message_events` is teed (best-effort,
     /// `try_send`) to all subscribers of the session. Voice-assistant and
@@ -262,6 +263,13 @@ pub struct SessionManager {
     /// extension. A slow subscriber that fills its channel just drops events
     /// (deliberate: voice workloads should never accumulate backlog).
     event_subscribers: Arc<RwLock<HashMap<String, Vec<tokio::sync::mpsc::Sender<AgentEvent>>>>>,
+    /// Per-session frozen memory snapshot (loaded once, cached for the session).
+    /// `MemorySnapshot::load` reads 3 files synchronously + token-truncates on
+    /// every call; the "frozen snapshot" design (snapshot.rs) loads once per
+    /// session, so re-reading on each message was redundant work on the hot
+    /// path. Memory-tool writes intentionally do NOT invalidate this — the
+    /// snapshot stays frozen for the session and is re-read on the next one.
+    memory_snapshots: Arc<RwLock<HashMap<String, crate::memory::MemorySnapshot>>>,
 }
 
 impl SessionManager {
@@ -292,6 +300,7 @@ impl SessionManager {
             skill_registry: crate::skills::create_shared_registry(None),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
+            memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -312,6 +321,7 @@ impl SessionManager {
             skill_registry: crate::skills::create_shared_registry(Some(data_dir)),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
+            memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Restore sessions from database on startup
@@ -1037,6 +1047,41 @@ impl SessionManager {
             .unwrap_or(false)
     }
 
+    /// Ensure the session's frozen memory snapshot is loaded and set on the
+    /// agent. Loads once per session and caches the result — `MemorySnapshot`
+    /// is a "frozen snapshot" (see `memory/snapshot.rs`) that reads 3 files
+    /// synchronously per load, so reloading on every message was redundant
+    /// work on the hot path. Memory-tool writes deliberately do NOT invalidate
+    /// this cache: the snapshot stays frozen for the session and is re-read on
+    /// the next session, matching the original frozen-snapshot semantics.
+    async fn ensure_memory_snapshot(&self, session_id: &str, agent: &Arc<Agent>) {
+        if !self.is_memory_enabled(session_id).await {
+            return;
+        }
+        {
+            let cache = self.memory_snapshots.read().await;
+            if let Some(snapshot) = cache.get(session_id) {
+                if !snapshot.is_empty() {
+                    agent.set_memory_snapshot(snapshot.clone()).await;
+                }
+                return;
+            }
+        }
+        let memory_store = neomind_storage::MarkdownMemoryStore::new("data/memory");
+        let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
+        if !snapshot.is_empty() {
+            tracing::info!(
+                session_id = %session_id,
+                "Loaded memory snapshot for session"
+            );
+            self.memory_snapshots
+                .write()
+                .await
+                .insert(session_id.to_string(), snapshot.clone());
+            agent.set_memory_snapshot(snapshot).await;
+        }
+    }
+
     /// List all active sessions with their metadata.
     /// Returns sessions from both memory and database (for persistence after restart).
     pub async fn list_sessions_with_info(&self) -> Vec<SessionInfo> {
@@ -1193,17 +1238,7 @@ impl SessionManager {
         let agent = self.get_session(session_id).await?;
 
         // Load memory snapshot if enabled and not yet loaded (parity with process_message_events)
-        if self.is_memory_enabled(session_id).await {
-            let memory_store = neomind_storage::MarkdownMemoryStore::new("data/memory");
-            let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
-            if !snapshot.is_empty() {
-                tracing::info!(
-                    session_id = %session_id,
-                    "Loaded memory snapshot for session (REST path)"
-                );
-                agent.set_memory_snapshot(snapshot).await;
-            }
-        }
+        self.ensure_memory_snapshot(session_id, &agent).await;
 
         let response = agent.process(message).await?;
 
@@ -1267,17 +1302,7 @@ impl SessionManager {
         let agent = self.get_session(session_id).await?;
 
         // Load memory snapshot if enabled and not yet loaded
-        if self.is_memory_enabled(session_id).await {
-            let memory_store = neomind_storage::MarkdownMemoryStore::new("data/memory");
-            let snapshot = crate::memory::MemorySnapshot::load(&memory_store);
-            if !snapshot.is_empty() {
-                tracing::info!(
-                    session_id = %session_id,
-                    "Loaded memory snapshot for session"
-                );
-                agent.set_memory_snapshot(snapshot).await;
-            }
-        }
+        self.ensure_memory_snapshot(session_id, &agent).await;
 
         // Read conversation summary from session metadata for context compression
         let (conversation_summary, summary_up_to_index) = self
@@ -1699,6 +1724,7 @@ impl Default for SessionManager {
                 skill_registry: crate::skills::create_shared_registry(None),
                 cancel_senders: Arc::new(RwLock::new(HashMap::new())),
                 event_subscribers: Arc::new(RwLock::new(HashMap::new())),
+                memory_snapshots: Arc::new(RwLock::new(HashMap::new())),
             }
         })
     }

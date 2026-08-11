@@ -65,6 +65,10 @@ pub struct CreateBackendRequest {
     #[serde(default = "default_thinking_enabled")]
     pub thinking_enabled: bool,
 
+    /// Unified thinking/reasoning effort (preferred over `thinking_enabled`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_effort: Option<neomind_core::ThinkingEffort>,
+
     /// Model capabilities (optional, from Ollama model detection)
     #[serde(default)]
     pub capabilities: Option<BackendCapabilities>,
@@ -113,6 +117,9 @@ pub struct UpdateBackendRequest {
     /// Enable thinking/reasoning mode for models that support it
     pub thinking_enabled: Option<bool>,
 
+    /// Unified thinking/reasoning effort (preferred over `thinking_enabled`).
+    pub thinking_effort: Option<neomind_core::ThinkingEffort>,
+
     /// Model capabilities (optional, from Ollama model detection)
     #[serde(default)]
     pub capabilities: Option<BackendCapabilities>,
@@ -133,6 +140,7 @@ pub struct BackendInstanceDto {
     pub top_k: usize,
     pub max_tokens: usize,
     pub thinking_enabled: bool,
+    pub thinking_effort: Option<neomind_core::ThinkingEffort>,
     pub capabilities: BackendCapabilities,
     pub updated_at: i64,
     pub healthy: Option<bool>,
@@ -155,6 +163,7 @@ impl From<LlmBackendInstance> for BackendInstanceDto {
             top_k: instance.top_k,
             max_tokens: instance.max_tokens,
             thinking_enabled: instance.thinking_enabled,
+            thinking_effort: instance.thinking_effort,
             capabilities: instance.capabilities,
             updated_at: instance.updated_at,
             healthy: None, // Populated separately
@@ -392,6 +401,7 @@ pub async fn create_backend_handler(
         max_tokens: default_max_tokens(),
         top_k: req.top_k.unwrap_or(20), // Default to 20 for faster responses
         thinking_enabled: req.thinking_enabled,
+        thinking_effort: req.thinking_effort,
         capabilities,
         updated_at: chrono::Utc::now().timestamp(),
     };
@@ -492,6 +502,17 @@ pub async fn update_backend_handler(
             prev_thinking_enabled = prev,
             new_thinking_enabled = thinking_enabled,
             "User thinking_enabled setting updated"
+        );
+    }
+    if let Some(thinking_effort) = req.thinking_effort {
+        let prev = instance.thinking_effort;
+        instance.thinking_effort = Some(thinking_effort);
+        tracing::info!(
+            backend_id = %id,
+            model = %instance.model,
+            prev_thinking_effort = ?prev,
+            new_thinking_effort = ?thinking_effort,
+            "User thinking_effort setting updated"
         );
     }
     if let Some(mut capabilities) = req.capabilities {
@@ -727,6 +748,7 @@ pub async fn activate_backend_handler(
             modalities: Vec::new(),
             supports_images: storage_caps.supports_multimodal,
             supports_audio: storage_caps.supports_audio,
+            reasoning: neomind_core::ReasoningCapabilities::default(),
         }
     }
 
@@ -1195,23 +1217,13 @@ async fn get_model_capabilities_from_show(
 
 /// Detect thinking capability from model name only
 ///
-/// Ollama's API doesn't provide thinking capability, so we infer it from model naming patterns.
+/// Ollama's API doesn't provide thinking capability, so we infer it from model
+/// naming patterns. Delegates to neomind-core's single `detect_thinking` to
+/// stay consistent with the Ollama/llama.cpp runtimes (historically this
+/// duplicated the rule and disagreed with them — e.g. it excluded `-vl` while
+/// the runtime allowed modern multimodal+thinking models).
 fn detect_thinking_from_name(model_name: &str) -> bool {
-    let name_lower = model_name.to_lowercase();
-
-    // Vision models typically don't support extended thinking
-    if name_lower.contains("-vl") || name_lower.ends_with("vl") {
-        return false;
-    }
-
-    name_lower.starts_with("qwen3")
-        || name_lower.contains("qwen3-")
-        || name_lower.contains("gpt-oss")
-        || name_lower.contains("deepseek-r1")
-        || name_lower.contains("deepseek-r")
-        || name_lower.contains("deepseek v3.1")
-        || name_lower.contains("deepseek-v3.1")
-        || name_lower.contains("thinking")
+    neomind_core::llm::detect_thinking(model_name)
 }
 
 /// Fallback: Detect capabilities from model name when /api/show is not available.
@@ -1538,12 +1550,7 @@ fn adjust_capabilities_for_model(model_name: &str, capabilities: &mut BackendCap
     // support both vision and thinking. The old "vision blocks thinking" rule
     // was correct for 2024-era llava-class models but is now stale; users can
     // always override via PATCH /capabilities.
-    capabilities.supports_thinking = name_lower.starts_with("qwen3")
-        || name_lower.starts_with("qwen2.5")
-        || name_lower.contains("deepseek-r1")
-        || name_lower.contains("thinking")
-        || name_lower.contains("o1")
-        || name_lower.contains("o3");
+    capabilities.supports_thinking = neomind_core::llm::detect_thinking(&name_lower);
 
     // === Tool support ===
     // Very small models (< 1B params) typically don't support tool calling

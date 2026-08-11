@@ -372,41 +372,18 @@ impl AgentExecutor {
 
             // --- Per-round tool call cap ---
             // Prevent single-round explosion (e.g. 17 parallel device queries).
-            // Keep only the first N calls and tell the LLM to defer the rest.
+            // Execute ALL calls the model asked for (the executor semaphore +
+            // per-batch concurrency below bound in-flight work) — truncating
+            // here would silently drop calls the model explicitly wanted. Only
+            // log the batch size for observability.
             const MAX_TOOL_CALLS_PER_ROUND: usize = 6;
             if tool_calls.len() > MAX_TOOL_CALLS_PER_ROUND {
-                let total = tool_calls.len();
-                let deferred_names: Vec<String> = tool_calls[MAX_TOOL_CALLS_PER_ROUND..]
-                    .iter()
-                    .map(|tc| {
-                        tc.arguments
-                            .get("command")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(&tc.name)
-                            .split_whitespace()
-                            .take(4)
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    })
-                    .collect();
                 tracing::info!(
                     agent_id = %agent.id,
                     round = round + 1,
-                    total,
-                    kept = MAX_TOOL_CALLS_PER_ROUND,
-                    "Capping tool calls per round"
+                    total = tool_calls.len(),
+                    "Executing full tool-call batch"
                 );
-                tool_calls.truncate(MAX_TOOL_CALLS_PER_ROUND);
-                // Inject hint so LLM knows there's more work to do
-                messages.push(Message::new(
-                    MessageRole::User,
-                    Content::text(format!(
-                        "[System] {} tool call(s) were deferred to save time. Remaining tasks: {}. \
-                         Continue in the next round if needed.",
-                        total - MAX_TOOL_CALLS_PER_ROUND,
-                        deferred_names.join("; ")
-                    )),
-                ));
             }
 
             // --- Intra-round + Cross-round deduplication ---
@@ -509,6 +486,16 @@ impl AgentExecutor {
             // Resolve `$cached:<key>` references in tool arguments against this
             // execution's LargeDataCache so image-aware tools receive the full
             // binary payload (the LLM only sees the slim summary in its prompt).
+            //
+            // Hallucinated CLI-domain tools → shell: weak models sometimes emit
+            // a whole `neomind ...` command or a CLI domain (e.g. `device(...)`,
+            // `rule(...)`) as the tool name instead of calling `shell`. The chat
+            // path auto-routes these to `shell` (tool_exec.rs) before executing;
+            // the scheduled path previously only emitted a text hint and burned
+            // an extra LLM round re-emitting the same call. Mirror the chat
+            // behavior here: resolve through the shared mapper, and when it maps
+            // to `shell`, convert the structured args into the CLI command string
+            // `ShellTool` expects ({"command": "neomind <domain> ..."}).
             let calls: Vec<_> = tool_calls
                 .iter()
                 .map(|tc| {
@@ -516,15 +503,55 @@ impl AgentExecutor {
                         .get(&tc.name)
                         .cloned()
                         .unwrap_or_else(|| tc.name.clone());
-                    let resolved_args =
-                        resolve_cached_arguments(&tc.arguments, &large_data_cache, &original_name);
+                    let (exec_name, exec_args) = if original_name == "shell" {
+                        // Real shell call — pass through, resolve $cached refs as-is.
+                        (
+                            original_name.clone(),
+                            resolve_cached_arguments(
+                                &tc.arguments,
+                                &large_data_cache,
+                                &original_name,
+                            ),
+                        )
+                    } else if crate::tools::resolve_tool_name(&original_name) == "shell"
+                        && original_name != "shell"
+                    {
+                        // Hallucinated CLI-domain tool → convert to a shell command.
+                        match crate::tools::mapper::build_cli_command(&original_name, &tc.arguments)
+                        {
+                            Some(args) => ("shell".to_string(), args),
+                            None => (
+                                original_name.clone(),
+                                resolve_cached_arguments(
+                                    &tc.arguments,
+                                    &large_data_cache,
+                                    &original_name,
+                                ),
+                            ),
+                        }
+                    } else {
+                        (
+                            original_name.clone(),
+                            resolve_cached_arguments(
+                                &tc.arguments,
+                                &large_data_cache,
+                                &original_name,
+                            ),
+                        )
+                    };
                     crate::toolkit::registry::ToolCall {
-                        name: original_name,
-                        args: resolved_args,
+                        name: exec_name,
+                        args: exec_args,
                         id: Some(tc.id.clone()),
                     }
                 })
                 .collect();
+            // Execute tools in batches of MAX_TOOL_CALLS_PER_ROUND so a large
+            // batch (e.g. 17 device queries) never runs unbounded-parallel
+            // (JoinSet spawns everything at once; the semaphore only bounds
+            // the batch, not per-tool work). All calls execute — nothing is
+            // dropped. Results are reassembled in original order (execute_parallel
+            // returns in input order, so positions line up).
             let results = if calls.is_empty() {
                 Vec::new()
             } else {
@@ -548,71 +575,70 @@ impl AgentExecutor {
                     })
                     .collect();
 
-                if blocked.is_empty() {
-                    let _permit = match self.tool_concurrency.acquire().await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            tracing::error!("Tool concurrency semaphore closed: {}", e);
-                            stop_reason = StopReason::Cancelled;
-                            break;
-                        }
-                    };
-                    registry.execute_parallel(calls).await
-                } else {
-                    for (_, reason) in &blocked {
-                        tracing::warn!(
-                            agent_id = %agent.id,
-                            "Tool call blocked by safety policy: {}",
+                // Split into blocked + permitted so we can run only permitted calls.
+                let blocked_set: HashSet<usize> = blocked.iter().map(|(i, _)| *i).collect();
+                let mut assembled: Vec<Option<crate::toolkit::ToolResult>> =
+                    (0..calls.len()).map(|_| None).collect();
+                let permitted: Vec<(usize, crate::toolkit::registry::ToolCall)> = calls
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !blocked_set.contains(i))
+                    .map(|(i, c)| (i, c.clone()))
+                    .collect();
+
+                // Insert the policy-blocked synthetic errors first.
+                for (i, reason) in &blocked {
+                    assembled[*i] = Some(crate::toolkit::ToolResult {
+                        name: calls[*i].name.clone(),
+                        result: Err(crate::toolkit::error::ToolError::Execution(format!(
+                            "Blocked by safety policy: {}",
                             reason
-                        );
-                    }
-                    let blocked_map: HashMap<usize, String> = blocked.into_iter().collect();
-                    let permitted: Vec<_> = calls
-                        .iter()
-                        .enumerate()
-                        .filter(|(i, _)| !blocked_map.contains_key(i))
-                        .map(|(_, c)| c.clone())
-                        .collect();
-                    let mut exec_results = if permitted.is_empty() {
-                        Vec::new()
-                    } else {
+                        ))),
+                    });
+                }
+
+                if !permitted.is_empty() {
+                    // Run permitted calls in bounded batches, preserving order.
+                    for batch in permitted.chunks(MAX_TOOL_CALLS_PER_ROUND) {
+                        // RAII: held for the duration of each batch.
                         let _permit = match self.tool_concurrency.acquire().await {
                             Ok(p) => p,
                             Err(e) => {
                                 tracing::error!("Tool concurrency semaphore closed: {}", e);
                                 stop_reason = StopReason::Cancelled;
+                                // Give unexecuted calls a Cancelled result so the
+                                // loop below doesn't panic on missing slots.
+                                for (i, _) in batch {
+                                    assembled[*i] = Some(crate::toolkit::ToolResult {
+                                        name: calls[*i].name.clone(),
+                                        result: Err(crate::toolkit::error::ToolError::Canceled),
+                                    });
+                                }
                                 break;
                             }
                         };
-                        registry.execute_parallel(permitted).await
-                    };
-                    // Reassemble in original order: blocked positions get a
-                    // policy error, others get their executed result.
-                    let mut assembled: Vec<crate::toolkit::ToolResult> =
-                        Vec::with_capacity(calls.len());
-                    let mut exec_iter = exec_results.drain(..);
-                    for (i, c) in calls.iter().enumerate() {
-                        if let Some(reason) = blocked_map.get(&i) {
-                            assembled.push(crate::toolkit::ToolResult {
-                                name: c.name.clone(),
-                                result: Err(crate::toolkit::error::ToolError::Execution(format!(
-                                    "Blocked by safety policy: {}",
-                                    reason
-                                ))),
-                            });
-                        } else {
-                            assembled.push(exec_iter.next().unwrap_or_else(|| {
-                                crate::toolkit::ToolResult {
-                                    name: c.name.clone(),
-                                    result: Err(crate::toolkit::error::ToolError::Execution(
-                                        "No result".to_string(),
-                                    )),
-                                }
-                            }));
+                        let batch_calls: Vec<crate::toolkit::registry::ToolCall> =
+                            batch.iter().map(|(_, c)| c.clone()).collect();
+                        let batch_results = registry.execute_parallel(batch_calls).await;
+                        for ((idx, _), res) in batch.iter().zip(batch_results) {
+                            assembled[*idx] = Some(res);
                         }
                     }
-                    assembled
                 }
+
+                // Any slot still None (shouldn't happen) gets a placeholder.
+                assembled
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, opt)| {
+                        opt.unwrap_or_else(|| crate::toolkit::ToolResult {
+                            name: calls[i].name.clone(),
+                            result: Err(crate::toolkit::error::ToolError::Execution(
+                                "No result".to_string(),
+                            )),
+                        })
+                    })
+                    .collect()
             };
 
             // Feed this round's (action, outcome) pairs into the stuck detector.
@@ -654,6 +680,7 @@ impl AgentExecutor {
                     execution_id,
                     step_num,
                     &mut large_data_cache,
+                    context_window,
                 )
                 .await;
             step_num = new_step_num;

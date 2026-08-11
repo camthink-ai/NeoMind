@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use neomind_core::llm::backend::{
     BackendCapabilities, BackendId, BackendMetrics, FinishReason, LlmError, LlmOutput, LlmRuntime,
-    StreamChunk, TokenUsage,
+    ReasoningCapabilities, ReasoningControl, StreamChunk, ThinkingEffort, TokenUsage,
 };
 use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 
@@ -884,6 +884,18 @@ impl LlmRuntime for LlamaCppRuntime {
             thinking_display: supports_thinking,
             supports_images: supports_multimodal,
             supports_audio,
+            // llama.cpp has no request-side thinking toggle — thinking follows
+            // the model default and is only readable via `reasoning_content`.
+            reasoning: ReasoningCapabilities {
+                supported_efforts: Vec::new(),
+                default_effort: if supports_thinking {
+                    Some(ThinkingEffort::High)
+                } else {
+                    None
+                },
+                mandatory: false,
+                control: ReasoningControl::ReadOnly,
+            },
         }
     }
 

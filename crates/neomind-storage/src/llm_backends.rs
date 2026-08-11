@@ -65,6 +65,11 @@ pub struct LlmBackendInstance {
     #[serde(default = "default_thinking_enabled")]
     pub thinking_enabled: bool,
 
+    /// Unified thinking/reasoning effort (preferred over `thinking_enabled`).
+    /// `None` = not explicitly set; the backend falls back to `thinking_enabled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_effort: Option<neomind_core::ThinkingEffort>,
+
     /// Backend capabilities
     #[serde(default)]
     pub capabilities: BackendCapabilities,
@@ -110,6 +115,14 @@ pub struct BackendCapabilities {
     #[serde(default)]
     pub supports_thinking: bool,
 
+    /// Declared reasoning/thinking capabilities — which effort levels this
+    /// backend can honor, how thinking is controlled, and whether it's
+    /// mandatory. Populated from the runtime's `capabilities().reasoning`
+    /// (which reflects the actual backend + model); drives the frontend's
+    /// thinking-effort UI. `None` on rows predating this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningCapabilities>,
+
     /// Supports function/tool calling
     #[serde(default)]
     pub supports_tools: bool,
@@ -124,6 +137,26 @@ pub struct BackendCapabilities {
     /// Maximum context window size
     #[serde(default = "default_max_context")]
     pub max_context: usize,
+}
+
+/// Declared reasoning/thinking capabilities, serialized to the frontend.
+/// Mirrors `neomind_core::ReasoningCapabilities`; kept storage-local to avoid
+/// a core dependency in the serialized schema. Populated from the runtime's
+/// `capabilities().reasoning` so the UI can render the right control.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReasoningCapabilities {
+    /// Effort levels this backend can honor. Empty = unknown.
+    #[serde(default)]
+    pub supported_efforts: Vec<String>,
+    /// The model's default effort when nothing is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_effort: Option<String>,
+    /// Whether thinking is mandatory (cannot be turned off).
+    #[serde(default)]
+    pub mandatory: bool,
+    /// How the backend controls thinking: "readonly" | "boolean" | "level" | "effort".
+    #[serde(default)]
+    pub control: String,
 }
 
 /// Connection test result
@@ -329,6 +362,7 @@ impl LlmBackendInstance {
             max_tokens: default_max_tokens(),
             top_k: default_top_k(),
             thinking_enabled: default_thinking_enabled(),
+            thinking_effort: None,
             capabilities,
             updated_at: Utc::now().timestamp(),
         }

@@ -11,11 +11,11 @@ pub mod registry;
 
 pub use backend::{
     BackendCapabilities, BackendId, FinishReason, GenerationParams, LlmError, LlmInput, LlmOutput,
-    LlmRuntime, StreamChunk, TokenUsage,
+    LlmRuntime, ReasoningCapabilities, ReasoningControl, StreamChunk, ThinkingEffort, TokenUsage,
 };
 pub use capability::{
-    detect_vision_capability, get_max_context, model_supports, CapabilityDetectionResult,
-    CapabilityDetector,
+    detect_thinking, detect_vision_capability, get_max_context, model_supports,
+    CapabilityDetectionResult, CapabilityDetector,
 };
 pub use compaction::{
     compact_messages, estimate_tokens, CompactionConfig, CompactionResult, MessagePriority,

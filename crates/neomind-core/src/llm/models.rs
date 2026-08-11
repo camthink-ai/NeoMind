@@ -14,6 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Model provider type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -772,9 +773,17 @@ pub fn get_builtin_models() -> HashMap<String, ModelInfo> {
     models
 }
 
+/// Lazily-built builtin registry. `get_model_info`/`model_supports` are called
+/// on every Ollama request; building the ~30-entry HashMap fresh each call is
+/// wasted work. The table is static, so cache it once.
+static BUILTIN_MODELS: OnceLock<HashMap<String, ModelInfo>> = OnceLock::new();
+
 /// Get model info by model ID
 pub fn get_model_info(model_id: &str) -> Option<ModelInfo> {
-    get_builtin_models().get(model_id).cloned()
+    BUILTIN_MODELS
+        .get_or_init(get_builtin_models)
+        .get(model_id)
+        .cloned()
 }
 
 /// Detect provider from model name

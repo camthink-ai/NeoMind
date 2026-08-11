@@ -207,13 +207,9 @@ impl CapabilityDetector {
     }
 
     /// Detect reasoning capability (o1, o3, deepseek-r1, etc).
+    /// Delegates to the shared [`detect_thinking`] so all callers agree.
     fn detect_reasoning(&self, model: &str) -> bool {
-        model.contains("o1")
-            || model.contains("o3")
-            || model.contains("r1")
-            || model.contains("reasoning")
-            || model.contains("qwq") // Qwen reasoning models
-            || model.contains("glm-z1")
+        detect_thinking(model)
     }
 
     /// Estimate max context length based on model name.
@@ -371,6 +367,56 @@ pub fn detect_vision_capability(model: &str) -> bool {
     detector.detect_vision(model)
 }
 
+/// Detect whether a model supports extended thinking/reasoning (Qwen3,
+/// DeepSeek-R1, GPT-OSS, o1/o3, QwQ, GLM-Z1).
+///
+/// Single source of truth for "thinking model" decisions across the codebase.
+/// Historically four sites implemented this independently with divergent
+/// rules (`qwen3-vl` was thinking on one path and not another; `qwen2.5`
+/// was wrongly flagged; `qwq`/`glm-z1`/`gpt-oss` were missed). All callers
+/// should use this function.
+///
+/// Note: modern multimodal models (qwen3-vl, gemini-flash-thinking, etc.)
+/// support both vision and thinking, so `-vl` is NOT excluded here.
+pub fn detect_thinking(model: &str) -> bool {
+    let name_lower = model.to_lowercase();
+
+    // Qwen3 family (qwen3, qwen3:2b, qwen3-vl, qwen3.5-plus, …)
+    if name_lower.starts_with("qwen3") || name_lower.contains("qwen3-") {
+        return true;
+    }
+    // GPT-OSS (OpenAI's reasoning model)
+    if name_lower.contains("gpt-oss") {
+        return true;
+    }
+    // DeepSeek reasoning models (deepseek-r1, deepseek-r1-distill-*, deepseek v3.1)
+    if name_lower.contains("deepseek-r1")
+        || name_lower.contains("deepseek-r")
+        || name_lower.contains("deepseek v3.1")
+        || name_lower.contains("deepseek-v3.1")
+    {
+        return true;
+    }
+    // Reasoning families
+    if name_lower.contains("qwq")
+        || name_lower.contains("glm-z1")
+        || name_lower.contains("thinking")
+        || name_lower.contains("reasoning")
+    {
+        return true;
+    }
+    // o1 / o3 family (use word-ish matching to avoid hitting "o10", "ro1", etc.)
+    if name_lower.contains("o1-preview")
+        || name_lower.contains("o1-mini")
+        || name_lower.contains("o1-pro")
+        || name_lower.contains("o3-mini")
+        || name_lower.contains("o3-pro")
+    {
+        return true;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +496,32 @@ mod tests {
         assert!(detector.detect_reasoning("qwq-32b-preview"));
         assert!(detector.detect_reasoning("glm-z1"));
         assert!(!detector.detect_reasoning("gpt-4o"));
+    }
+
+    #[test]
+    fn test_detect_thinking() {
+        // Thinking models
+        assert!(detect_thinking("qwen3:32b"));
+        assert!(detect_thinking("qwen3-vl:2b"), "multimodal + thinking");
+        assert!(detect_thinking("qwen3.5-plus"));
+        assert!(detect_thinking("deepseek-r1"));
+        assert!(detect_thinking("deepseek-r1-distill-llama-8b"));
+        assert!(detect_thinking("gpt-oss-20b"));
+        assert!(detect_thinking("qwq-32b-preview"));
+        assert!(detect_thinking("glm-z1"));
+        assert!(detect_thinking("o1-preview"));
+        assert!(detect_thinking("o3-mini"));
+
+        // Non-thinking models
+        assert!(
+            !detect_thinking("qwen2.5:0.5b"),
+            "qwen2.5 is not a thinking model"
+        );
+        assert!(!detect_thinking("qwen2:7b"));
+        assert!(!detect_thinking("llama3.1:8b"));
+        assert!(!detect_thinking("gemma3:4b"));
+        assert!(!detect_thinking("gpt-4o"));
+        assert!(!detect_thinking("mistral"));
     }
 
     #[test]

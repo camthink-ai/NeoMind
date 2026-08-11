@@ -284,6 +284,31 @@ pub struct LlmInterface {
 }
 
 impl LlmInterface {
+    /// Resolve the thinking control for a request.
+    ///
+    /// Priority: local override (bool) > active instance's `thinking_effort`
+    /// (unified) > instance's legacy `thinking_enabled` (bool) > model default.
+    async fn resolve_thinking_control(
+        &self,
+    ) -> (Option<bool>, Option<neomind_core::ThinkingEffort>) {
+        let local_thinking = *self.thinking_enabled.read().await;
+        if let Some(local) = local_thinking {
+            // A local override pins both: effort derives from the bool.
+            return (
+                Some(local),
+                Some(neomind_core::ThinkingEffort::from_bool(local)),
+            );
+        }
+        if self.uses_instance_manager() {
+            if let Some(manager) = &self.instance_manager {
+                if let Some(inst) = manager.get_active_instance() {
+                    return (Some(inst.thinking_enabled), inst.thinking_effort);
+                }
+            }
+        }
+        (None, None)
+    }
+
     /// Create a new LLM interface.
     pub fn new(config: ChatConfig) -> Self {
         let concurrent_limit = config.concurrent_limit;
@@ -460,16 +485,40 @@ impl LlmInterface {
         // Use more conservative budget for small contexts
         // < 8k: 50% for prompt, 50% for generation + overhead
         // < 16k: 60%, >= 16k: 70%
-        let prompt_ratio = if max_ctx < 8192 {
-            50
-        } else if max_ctx < 16384 {
-            60
+        // Thinking/reasoning models burn a large chunk of the GENERATION budget
+        // on CoT tokens (Anthropic: thinking counts toward max_tokens), so trim
+        // the prompt share further for them to avoid the model exhausting its
+        // output budget mid-thinking.
+        let thinking = self
+            .model
+            .read()
+            .await
+            .as_deref()
+            .map(neomind_core::llm::detect_thinking)
+            .unwrap_or(false);
+        let prompt_ratio = if thinking {
+            if max_ctx < 8192 {
+                45
+            } else if max_ctx < 16384 {
+                55
+            } else {
+                65
+            }
         } else {
-            70
+            if max_ctx < 8192 {
+                50
+            } else if max_ctx < 16384 {
+                60
+            } else {
+                70
+            }
         };
         let prompt_budget = (max_ctx * prompt_ratio) / 100;
 
-        // Estimate tool definition overhead in tokens using estimate_tokens
+        // Estimate tool definition overhead in tokens using estimate_tokens.
+        // Serialize each tool to its actual API JSON shape ({"type":"function",
+        // "function":{"name","description","parameters"}}) so the JSON syntax
+        // tokens are counted — the old per-field estimate undercounted.
         let tool_overhead_tokens = if include_tools {
             let tools = self.tool_definitions.read().await;
             if tools.is_empty() {
@@ -478,10 +527,15 @@ impl LlmInterface {
                 tools
                     .iter()
                     .map(|t| {
-                        estimate_tokens(&t.name)
-                            + estimate_tokens(&t.description)
-                            + estimate_tokens(&t.parameters.to_string())
-                            + 10 // formatting overhead per tool
+                        let json = serde_json::json!({
+                            "type": "function",
+                            "function": {
+                                "name": t.name,
+                                "description": t.description,
+                                "parameters": t.parameters,
+                            }
+                        });
+                        estimate_tokens(&json.to_string())
                     })
                     .sum::<usize>()
             }
@@ -582,22 +636,27 @@ impl LlmInterface {
         let system_prompt = self.build_system_prompt_with_tools(None).await;
         let prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
 
-        // Tool definitions: serialize to JSON and measure
+        // Tool definitions: serialize to the actual API JSON shape and measure.
+        // (The old per-field estimate undercounted JSON syntax tokens, notably
+        // for large descriptions like the shell tool's ~3KB.)
         let tools = self.tool_definitions.read().await;
         let tools_tokens = if tools.is_empty() {
             0
         } else {
-            // Each tool definition is roughly: {"type":"function","function":{"name":"...","description":"...","parameters":{...}}}
-            // Estimate by serializing key fields
-            let mut total = 0;
-            for tool in tools.iter() {
-                // Base overhead per tool definition: ~15 tokens for JSON structure
-                total += 15;
-                total += crate::agent::tokenizer::estimate_tokens(&tool.name);
-                total += crate::agent::tokenizer::estimate_tokens(&tool.description);
-                total += crate::agent::tokenizer::estimate_tokens(&tool.parameters.to_string());
-            }
-            total
+            tools
+                .iter()
+                .map(|t| {
+                    let json = serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        }
+                    });
+                    crate::agent::tokenizer::estimate_tokens(&json.to_string())
+                })
+                .sum()
         };
 
         let overhead = prompt_tokens + tools_tokens;
@@ -1097,25 +1156,8 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled - priority: local setting > instance setting
-        // This allows per-request override (e.g., disable thinking for multimodal)
-        let local_thinking = *self.thinking_enabled.read().await;
-        let thinking_enabled = if local_thinking.is_some() {
-            // Local override takes precedence
-            local_thinking
-        } else if self.uses_instance_manager() {
-            // Fall back to instance setting
-            if let Some(manager) = &self.instance_manager {
-                manager
-                    .get_active_instance()
-                    .map(|inst| inst.thinking_enabled)
-            } else {
-                None
-            }
-        } else {
-            // Direct mode with no local override
-            None
-        };
+        // Get thinking control - priority: local setting > instance setting.
+        let (thinking_enabled, thinking_effort) = self.resolve_thinking_control().await;
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,
@@ -1139,6 +1181,7 @@ impl LlmInterface {
             frequency_penalty: None,
             presence_penalty: None,
             thinking_enabled,
+            thinking_effort,
             max_context: None,
         };
 
@@ -1299,25 +1342,8 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled - priority: local setting > instance setting
-        // This allows per-request override (e.g., disable thinking for multimodal)
-        let local_thinking = *self.thinking_enabled.read().await;
-        let thinking_enabled = if local_thinking.is_some() {
-            // Local override takes precedence
-            local_thinking
-        } else if self.uses_instance_manager() {
-            // Fall back to instance setting
-            if let Some(manager) = &self.instance_manager {
-                manager
-                    .get_active_instance()
-                    .map(|inst| inst.thinking_enabled)
-            } else {
-                None
-            }
-        } else {
-            // Direct mode with no local override
-            None
-        };
+        // Get thinking control - priority: local setting > instance setting.
+        let (thinking_enabled, thinking_effort) = self.resolve_thinking_control().await;
 
         // Get effective parameters from backend instance or local config
         let (eff_temp, eff_top_p, eff_top_k, _static_max_tokens) =
@@ -1335,6 +1361,7 @@ impl LlmInterface {
             frequency_penalty: None,
             presence_penalty: None,
             thinking_enabled,
+            thinking_effort,
             max_context: None,
         };
 
@@ -1569,25 +1596,8 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled - priority: local setting > instance setting
-        // This allows per-request override (e.g., disable thinking for multimodal)
-        let local_thinking = *self.thinking_enabled.read().await;
-        let thinking_enabled = if local_thinking.is_some() {
-            // Local override takes precedence
-            local_thinking
-        } else if self.uses_instance_manager() {
-            // Fall back to instance setting
-            if let Some(manager) = &self.instance_manager {
-                manager
-                    .get_active_instance()
-                    .map(|inst| inst.thinking_enabled)
-            } else {
-                None
-            }
-        } else {
-            // Direct mode with no local override
-            None
-        };
+        // Get thinking control - priority: local setting > instance setting.
+        let (thinking_enabled, thinking_effort) = self.resolve_thinking_control().await;
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,
@@ -1611,6 +1621,7 @@ impl LlmInterface {
             frequency_penalty: None,
             presence_penalty: None,
             thinking_enabled,
+            thinking_effort,
             max_context: None,
         };
 
@@ -1824,26 +1835,14 @@ impl LlmInterface {
             }
         };
 
-        // Get thinking_enabled - priority: thinking_override > local setting > instance setting
-        // This allows per-request override (e.g., disable thinking for post-tool rounds)
-        let thinking_enabled = if thinking_override.is_some() {
-            // Explicit per-call override takes highest priority
-            thinking_override
+        // Get thinking control - priority: thinking_override > local setting > instance setting.
+        // (Explicit per-call override takes highest priority; otherwise resolve
+        // local/instance — effort preferred over the legacy bool.)
+        let (thinking_enabled, thinking_effort) = if thinking_override.is_some() {
+            let eff = thinking_override.map(neomind_core::ThinkingEffort::from_bool);
+            (thinking_override, eff)
         } else {
-            let local_thinking = *self.thinking_enabled.read().await;
-            if local_thinking.is_some() {
-                local_thinking
-            } else if self.uses_instance_manager() {
-                if let Some(manager) = &self.instance_manager {
-                    manager
-                        .get_active_instance()
-                        .map(|inst| inst.thinking_enabled)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            self.resolve_thinking_control().await
         };
 
         tracing::debug!(
@@ -1899,6 +1898,7 @@ impl LlmInterface {
             frequency_penalty: None,
             presence_penalty: None,
             thinking_enabled,
+            thinking_effort,
             max_context: None,
         };
 
@@ -2102,6 +2102,7 @@ impl LlmInterface {
                                     frequency_penalty: None,
                                     presence_penalty: None,
                                     thinking_enabled: None, // Disable thinking on retry
+                                    thinking_effort: None,
                                     max_context: None,
                                 },
                                 model: Some(model.clone()),

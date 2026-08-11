@@ -121,7 +121,9 @@ fn test_extension_list_command() {
 }
 
 /// Test extension list with verbose flag.
+/// Requires a running server (same as `test_extension_list_command`).
 #[test]
+#[ignore]
 fn test_extension_list_verbose() {
     let mut cmd = Command::cargo_bin("neomind").unwrap();
     cmd.arg("extension").arg("list").arg("--verbose");

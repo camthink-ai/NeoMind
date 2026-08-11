@@ -82,6 +82,7 @@ pub use settings::{
 
 pub use llm_backends::{
     BackendCapabilities, ConnectionTestResult, LlmBackendInstance, LlmBackendStore,
+    ReasoningCapabilities,
 };
 
 pub use instances::InstanceRecord;

@@ -525,6 +525,54 @@ impl LlmBackendInstanceManager {
             }
         };
 
+        // Backfill the declared reasoning capabilities from the runtime back
+        // into the persisted instance capabilities, so the frontend can render
+        // the correct thinking-effort control (ReadOnly vs Boolean vs Level).
+        // Best-effort: a stale DB row with no reasoning gets populated; a
+        // failure to persist is non-fatal (in-memory value stays current).
+        let reasoning = runtime.capabilities().reasoning.clone();
+        let stored = instance.capabilities.reasoning.as_ref().map(|r| {
+            (
+                r.supported_efforts.clone(),
+                r.default_effort.clone(),
+                r.mandatory,
+                r.control.clone(),
+            )
+        });
+        let runtime_tuple = (
+            reasoning
+                .supported_efforts
+                .iter()
+                .map(|e| e.as_str().to_string())
+                .collect::<Vec<_>>(),
+            reasoning.default_effort.map(|e| e.as_str().to_string()),
+            reasoning.mandatory,
+            match reasoning.control {
+                neomind_core::ReasoningControl::ReadOnly => "readonly",
+                neomind_core::ReasoningControl::Boolean => "boolean",
+                neomind_core::ReasoningControl::Level => "level",
+                neomind_core::ReasoningControl::Effort => "effort",
+            }
+            .to_string(),
+        );
+        if stored.as_ref() != Some(&runtime_tuple) {
+            let mut updated = instance.clone();
+            updated.capabilities.reasoning = Some(neomind_storage::ReasoningCapabilities {
+                supported_efforts: runtime_tuple.0,
+                default_effort: runtime_tuple.1,
+                mandatory: runtime_tuple.2,
+                control: runtime_tuple.3,
+            });
+            if let Err(e) = self.storage.save_instance(&updated) {
+                tracing::warn!(
+                    error = %e,
+                    instance_id = %instance.id,
+                    "Failed to persist backfilled reasoning capabilities; in-memory value is current"
+                );
+            }
+            self.instances.insert(instance.id.clone(), updated);
+        }
+
         Ok(runtime)
     }
 
@@ -1387,6 +1435,7 @@ mod tests {
             max_tokens: 4096,
             top_k: 0,
             thinking_enabled: false,
+            thinking_effort: None,
             capabilities: BackendCapabilities {
                 supports_streaming: true,
                 // Stale: deepseek-v4-flash is text-only but DB says true.
@@ -1397,6 +1446,7 @@ mod tests {
                 supports_tools: true,
                 supports_audio: false,
                 max_context: 128000,
+                reasoning: None,
             },
             updated_at: 0,
         };
@@ -1428,6 +1478,7 @@ mod tests {
             max_tokens: 4096,
             top_k: 0,
             thinking_enabled: false,
+            thinking_effort: None,
             capabilities: BackendCapabilities {
                 supports_streaming: true,
                 // Wrong vs. detection, but user override is sacred.
@@ -1438,6 +1489,7 @@ mod tests {
                 supports_tools: true,
                 supports_audio: false,
                 max_context: 128000,
+                reasoning: None,
             },
             updated_at: 0,
         };
@@ -1453,16 +1505,12 @@ mod tests {
         );
     }
 
-
     /// Open a throwaway store at a unique temp path. The store layer keeps a
     /// process-global singleton keyed by path, so distinct paths yield isolated
     /// databases — ":memory:" would be shared across tests and leak instances.
     fn test_store(tag: &str) -> Arc<LlmBackendStore> {
-        let path = std::env::temp_dir().join(format!(
-            "neomind-test-{}-{}.redb",
-            tag,
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("neomind-test-{}-{}.redb", tag, std::process::id()));
         let _ = std::fs::remove_file(&path);
         LlmBackendStore::open(&path).expect("open test store")
     }
@@ -1474,7 +1522,10 @@ mod tests {
     #[serial_test::serial]
     async fn test_auto_register_llamacpp_skips_when_unreachable() {
         let manager = LlmBackendInstanceManager::new(test_store("skips-unreach"));
-        std::env::set_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT", "http://127.0.0.1:9"); // refused
+        std::env::set_var(
+            "NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT",
+            "http://127.0.0.1:9",
+        ); // refused
         manager.auto_register_llamacpp().await;
         std::env::remove_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT");
         assert!(
@@ -1496,10 +1547,17 @@ mod tests {
             ))
             .await
             .unwrap();
-        std::env::set_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT", "http://127.0.0.1:9");
+        std::env::set_var(
+            "NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT",
+            "http://127.0.0.1:9",
+        );
         manager.auto_register_llamacpp().await;
         std::env::remove_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT");
-        assert_eq!(manager.list_instances().len(), 1, "existing instance must not be duplicated");
+        assert_eq!(
+            manager.list_instances().len(),
+            1,
+            "existing instance must not be duplicated"
+        );
     }
 
     #[cfg(feature = "llamacpp")]
@@ -1528,7 +1586,9 @@ mod tests {
                 "supports_parallel_tool_calls":true,"supports_system_role":true}}"#;
         let server = tokio::spawn(async move {
             loop {
-                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
                 let mut buf = [0u8; 4096];
                 let _ = socket.read(&mut buf).await;
                 let body = format!(
@@ -1550,11 +1610,18 @@ mod tests {
         server.abort();
 
         let instances = manager.list_instances();
-        assert_eq!(instances.len(), 1, "reachable server must create one backend");
+        assert_eq!(
+            instances.len(),
+            1,
+            "reachable server must create one backend"
+        );
         let inst = &instances[0];
         assert!(matches!(inst.backend_type, LlmBackendType::LlamaCpp));
         assert_eq!(inst.capabilities.max_context, 16384);
-        assert!(inst.capabilities.supports_multimodal, "mmproj reports vision=true");
+        assert!(
+            inst.capabilities.supports_multimodal,
+            "mmproj reports vision=true"
+        );
         assert!(inst.capabilities.supports_tools);
         assert!(
             manager.get_active_instance().is_some(),
