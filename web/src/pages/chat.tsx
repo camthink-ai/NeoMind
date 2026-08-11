@@ -1429,7 +1429,7 @@ export function ChatPage() {
                         <ChevronDown className="h-3.5 w-3.5 shrink-0" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-72 max-h-[50vh] overflow-y-auto p-0">
+                    <DropdownMenuContent align="start" className="w-72 max-h-[50vh] overflow-y-auto scrollbar-none p-0">
                       <div className="sticky top-0 z-10 bg-popover px-3 py-2 border-b border-border">
                         <span className="font-semibold text-sm">{t('chat:input.selectLLMModel')}</span>
                       </div>
