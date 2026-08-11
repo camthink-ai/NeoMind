@@ -42,13 +42,36 @@ impl CapabilityDetector {
             return Some(cached.clone());
         }
 
-        // Try built-in registry first
+        // Try built-in registry first. The hand-curated table (models.rs) is
+        // small and can go stale / disagree with the LiteLLM registry (e.g. an
+        // old `gpt-4.5` entry marked reasoning:false while the registry says
+        // supports_reasoning:true). So after a table hit we OVERRIDE the
+        // authoritative fields with the registry's values, which are
+        // community-maintained and refreshed. Fields the registry doesn't
+        // cover (provider, json_mode, audio, …) keep the table's value.
         if let Some(info) = get_model_info(model) {
+            let mut caps = info.capabilities.clone();
+            let mut from_registry = false;
+            // Reasoning: registry wins over the table.
+            if let Some(r) = crate::llm::registry::lookup_reasoning(model) {
+                caps.reasoning = r;
+                from_registry = true;
+            }
+            // Vision: registry wins over the table.
+            if let Some(v) = crate::llm::registry::lookup_vision(model) {
+                caps.vision = v;
+                from_registry = true;
+            }
+            // Max context: registry's max_input_tokens wins when present.
+            if let Some(ctx) = crate::llm::registry::lookup_max_input_tokens(model) {
+                caps.max_context = Some(ctx);
+                from_registry = true;
+            }
             let result = CapabilityDetectionResult {
                 model: model.to_string(),
                 provider: info.provider,
-                capabilities: info.capabilities.clone(),
-                from_registry: true,
+                capabilities: caps,
+                from_registry,
             };
             self.cache.insert(model.to_string(), result.clone());
             return Some(result);
@@ -558,6 +581,24 @@ mod tests {
         // gpt-4o has no supports_reasoning field in the current registry → None.
         assert_eq!(lookup_reasoning("gpt-4o"), None);
         assert_eq!(lookup_reasoning("definitely-not-a-real-model-xyz"), None);
+    }
+
+    #[test]
+    fn test_detect_registry_overrides_manual_table() {
+        // gpt-5 is in BOTH the manual table (models.rs, max_context=1_000_000)
+        // and the LiteLLM registry (max_input_tokens=272000). detect() must
+        // let the registry's authoritative max_context win over the stale
+        // manual value.
+        let mut detector = CapabilityDetector::new();
+        let result = detector
+            .detect("gpt-5")
+            .expect("gpt-5 is in the manual table");
+        assert_eq!(
+            result.capabilities.max_context,
+            Some(272000),
+            "registry max_input_tokens overrides manual table max_context"
+        );
+        assert!(result.from_registry, "overridden fields flag from_registry");
     }
 
     #[test]
