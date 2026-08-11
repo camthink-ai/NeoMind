@@ -155,7 +155,7 @@ Actions: search (find by keywords), load (full guide by ID — auto-resolves par
 Available skill IDs (load when relevant, partial name auto-resolves):
 - device-onboarding (devices/MQTT/webhook), dashboard-management, rule-management, agent-management, message-management, transform-management, extension-development, widget-development, widget-management, extension-management, connector-management, data-push-management, llm-management, settings-management, system-info
 
-When to load: create/update/delete any entity, unsure of CLI syntax, or command failed → load the domain skill FIRST."##
+When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, cross-domain) or when a command failed and you don't know why. For standard CRUD (list/get/update/delete by id), use `shell` (`neomind <domain> <subcommand>`) directly."##
     }
 
     fn parameters(&self) -> Value {
