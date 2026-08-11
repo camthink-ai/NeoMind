@@ -163,8 +163,7 @@ pub async fn test_instance_handler(
                 "Instance URL targets a blocked address ({}). \
                  Use the local API for localhost instances.",
                 target
-            ))
-            .into());
+            )));
         }
     }
 

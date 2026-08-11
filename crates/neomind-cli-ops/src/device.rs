@@ -292,7 +292,7 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     let (mime, is_base64) = {
         let parts: Vec<&str> = mime_part.split(';').collect();
         let mime = parts.first()?; // "image/jpeg"
-        let is_base64 = parts.iter().any(|p| *p == "base64");
+        let is_base64 = parts.contains(&"base64");
         (mime.to_string(), is_base64)
     };
     if !is_base64 {
@@ -336,11 +336,10 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     let filepath = metric_dir.join(&filename);
 
     // Dedup: skip write if file already exists with same content hash
-    if !filepath.exists() {
-        if std::fs::write(&filepath, &bytes).is_err() {
+    if !filepath.exists()
+        && std::fs::write(&filepath, &bytes).is_err() {
             return None;
         }
-    }
 
     let url = format!("/api/images/{}/{}/{}", device_id, metric_name, filename);
 
@@ -388,7 +387,7 @@ fn build_example(current_data: &serde_json::Value) -> (serde_json::Value, serde_
     let mut field_names: Vec<serde_json::Value> = Vec::new();
     if let Some(metrics_obj) = metrics.and_then(|m| m.as_object()) {
         for (name, info) in metrics_obj {
-            if info.get("value").map_or(false, |v| !v.is_null()) {
+            if info.get("value").is_some_and(|v| !v.is_null()) {
                 field_names.push(json!(name));
             }
         }

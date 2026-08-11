@@ -423,7 +423,7 @@ fn path_str(p: &Path) -> Result<&str> {
     p.to_str().ok_or_else(|| anyhow!("non-UTF-8 path: {:?}", p))
 }
 
-fn tarball_str(p: &PathBuf) -> Result<&str> {
+fn tarball_str(p: &Path) -> Result<&str> {
     path_str(p)
 }
 

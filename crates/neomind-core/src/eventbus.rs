@@ -165,7 +165,7 @@ impl EventBusReceiver {
             match self.rx.recv().await {
                 Ok(event) => return Some(event),
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    let total = self.dropped.fetch_add(n as u64, Ordering::Relaxed) + n as u64;
+                    let total = self.dropped.fetch_add(n, Ordering::Relaxed) + n;
                     tracing::warn!(
                         dropped_total = total,
                         this_batch = n,
@@ -240,7 +240,7 @@ where
                     // Event didn't match filter, continue waiting
                 }
                 Err(broadcast::error::RecvError::Lagged(n)) => {
-                    let total = self.dropped.fetch_add(n as u64, Ordering::Relaxed) + n as u64;
+                    let total = self.dropped.fetch_add(n, Ordering::Relaxed) + n;
                     tracing::warn!(
                         dropped_total = total,
                         this_batch = n,

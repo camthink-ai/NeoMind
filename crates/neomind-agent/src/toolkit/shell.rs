@@ -914,7 +914,6 @@ impl ShellTool {
         // Find the first non-env-assignment token. Skips `KEY=value` prefixes
         // like `DISPLAY=:0` so the bare-command check lands on the real binary.
         let first = command
-            .trim()
             .split_whitespace()
             .find(|t| !t.contains('='))?
             .trim_matches('"');

@@ -1705,7 +1705,7 @@ impl TransformEngine {
                 device_id: device_id.to_string(),
                 transform_id: None,
                 metric: rendered_output,
-                value: value.into(),
+                value: value,
                 timestamp,
                 quality: Some(1.0),
             });
@@ -1766,7 +1766,7 @@ impl TransformEngine {
             device_id: device_id.to_string(),
             transform_id: None,
             metric: output.to_string(),
-            value: value.into(),
+            value: value,
             timestamp,
             quality: Some(1.0),
         })
@@ -2464,7 +2464,7 @@ impl TransformEngine {
             device_id: device_id.to_string(),
             transform_id: None,
             metric: output.to_string(),
-            value: value.into(),
+            value: value,
             timestamp,
             quality: Some(1.0),
         }])
@@ -2511,7 +2511,7 @@ impl TransformEngine {
             device_id: device_id.to_string(),
             transform_id: None,
             metric: output.to_string(),
-            value: value.into(),
+            value: value,
             timestamp,
             quality: Some(1.0),
         }])

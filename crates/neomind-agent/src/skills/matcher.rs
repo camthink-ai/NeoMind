@@ -184,7 +184,7 @@ pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
     if let Some(idx) = description.find("e.g. ") {
         let seg = &description[idx + "e.g. ".len()..];
         let end = seg
-            .find(|c: char| c == ')' || c == '.' || c == '\n')
+            .find([')', '.', '\n'])
             .unwrap_or(seg.len());
         for piece in seg[..end].split([';', '；', ',']) {
             let p = piece.trim().trim_end_matches(')').trim();

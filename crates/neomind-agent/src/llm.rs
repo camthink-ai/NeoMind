@@ -504,14 +504,12 @@ impl LlmInterface {
             } else {
                 65
             }
+        } else if max_ctx < 8192 {
+            50
+        } else if max_ctx < 16384 {
+            60
         } else {
-            if max_ctx < 8192 {
-                50
-            } else if max_ctx < 16384 {
-                60
-            } else {
-                70
-            }
+            70
         };
         let prompt_budget = (max_ctx * prompt_ratio) / 100;
 
