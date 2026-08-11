@@ -350,6 +350,20 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
         supports_tools: model.supports_tools,
         max_context: model.max_context,
       })
+      // Editing + switching models: re-sync the multimodal override's
+      // `effective` value to the newly selected model. Without this,
+      // `detectedCapabilities` (drives whether the Vision row shows) updates
+      // to the new model while `overrideState.effective` (drives the switch)
+      // stays stuck on the previous model — so a newly-selected vision model
+      // shows the row with the toggle off. A user-pinned override is
+      // preserved (stays authoritative); only the Auto value follows.
+      if (isEditing) {
+        setOverrideState((prev) => ({
+          ...prev,
+          effective:
+            prev.override != null ? prev.override : model.supports_multimodal,
+        }))
+      }
     }
   }
 
