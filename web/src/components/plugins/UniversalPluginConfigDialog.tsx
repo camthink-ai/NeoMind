@@ -570,9 +570,11 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
         if (!isEditing) {
           return (
             <FormField label={t("plugins:llm.capabilityVision")} horizontal>
-              <Badge variant="outline" className="text-xs">
-                {t("plugins:llm.capabilityVisionSupported", { defaultValue: "Supported" })}
-              </Badge>
+              <div className="flex items-center h-8">
+                <Badge variant="outline" className="text-xs">
+                  {t("plugins:llm.capabilityVisionSupported", { defaultValue: "Supported" })}
+                </Badge>
+              </div>
             </FormField>
           )
         }
@@ -581,7 +583,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
         const source = overrideState.source
         return (
           <FormField label={t("plugins:llm.capabilityVision")} horizontal>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center h-8 gap-2">
               <Switch
                 checked={effective}
                 onCheckedChange={handleToggleMultimodalOverride}
@@ -618,22 +620,24 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
         if (!isEditing || isReadOnly) {
           return (
             <FormField label={t('plugins:llm.capabilityThinking')} horizontal>
-              <Badge variant="outline" className="text-xs">
-                {t('plugins:llm.capabilityThinkingReadOnly', { defaultValue: 'Thinking (model default)' })}
-              </Badge>
+              <div className="flex items-center h-8">
+                <Badge variant="outline" className="text-xs">
+                  {t('plugins:llm.capabilityThinkingReadOnly', { defaultValue: 'Thinking (model default)' })}
+                </Badge>
+              </div>
             </FormField>
           )
         }
         const showLevels = control !== 'boolean'
         return (
           <FormField label={t('plugins:llm.capabilityThinking')} horizontal>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center h-8 gap-2">
               <Select
                 value={thinkingState.effort}
                 onValueChange={(v) => patchEffort(v as ThinkingEffort)}
                 disabled={thinkingState.pending}
               >
-                <SelectTrigger className="w-[140px]" aria-label={t("plugins:llm.capabilityThinking")}>
+                <SelectTrigger className="w-[140px] h-8" aria-label={t("plugins:llm.capabilityThinking")}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -657,18 +661,22 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
       {/* Tools */}
       {detectedCapabilities.supports_tools && (
         <FormField label={t("plugins:llm.capabilityTools")} horizontal>
-          <Badge variant="outline" className="text-xs">
-            {t("plugins:llm.capabilityToolsSupported", { defaultValue: "Supported" })}
-          </Badge>
+          <div className="flex items-center h-8">
+            <Badge variant="outline" className="text-xs">
+              {t("plugins:llm.capabilityToolsSupported", { defaultValue: "Supported" })}
+            </Badge>
+          </div>
         </FormField>
       )}
       {/* Context window */}
       <FormField label={t("plugins:llm.capabilityContext", { defaultValue: "Context Window" })} horizontal>
-        <span className="text-sm text-muted-foreground">
-          {detectedCapabilities.max_context >= 100000
-            ? `${Math.round(detectedCapabilities.max_context / 1000)}k tokens`
-            : `${detectedCapabilities.max_context} tokens`}
-        </span>
+        <div className="flex items-center h-8">
+          <span className="text-sm text-muted-foreground">
+            {detectedCapabilities.max_context >= 100000
+              ? `${Math.round(detectedCapabilities.max_context / 1000)}k tokens`
+              : `${detectedCapabilities.max_context} tokens`}
+          </span>
+        </div>
       </FormField>
     </div>
   )
