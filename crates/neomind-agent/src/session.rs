@@ -58,7 +58,6 @@ fn convert_capabilities(
         multiple_models: false,
         modalities: Vec::new(),
         supports_images: storage_caps.supports_multimodal,
-        supports_audio: storage_caps.supports_audio,
         reasoning: neomind_core::ReasoningCapabilities::default(),
     }
 }

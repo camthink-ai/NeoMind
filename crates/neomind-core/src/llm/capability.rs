@@ -94,25 +94,6 @@ pub fn detect_thinking(model: &str) -> bool {
     false
 }
 
-/// Detect audio capability from model name.
-///
-/// Only explicitly audio-named variants match. Bare `gpt-4o` does NOT match
-/// (`gpt-4o-mini` and most `gpt-4o-*` are text/vision only) — too-broad
-/// matching causes the pipeline to emit audio content parts the API rejects.
-/// Same class of bug as the historical over-broad vision heuristic.
-pub fn supports_audio(model: &str) -> bool {
-    let n = model.to_lowercase();
-    n.contains("audio")
-        || n.contains("tts")
-        || n.contains("asr")
-        || n.contains("whisper")
-        || n.contains("gpt-4o-audio")
-        || n.contains("qwen-audio")
-        || n.contains("qwen-tts")
-        || n.contains("qwen-omni")
-        || n.contains("minimax-speech")
-}
-
 /// Detect tool/function-calling capability from model name.
 ///
 /// Registry-first: the LiteLLM `supports_function_calling` field is
@@ -242,34 +223,5 @@ mod tests {
 
         // Name fallback: normal-sized unknown models assumed tool-capable.
         assert!(detect_tools_capability("custom-model-7b"));
-    }
-
-    #[test]
-    fn test_supports_audio_no_false_positive() {
-        // Regression: bare `gpt-4o` substring used to match every gpt-4o*
-        // variant including gpt-4o-mini (text/vision only). This caused the
-        // pipeline to send audio content parts to text-only backends. Only
-        // the explicitly audio-named variants should match.
-        assert!(supports_audio("gpt-4o-audio"));
-        assert!(supports_audio("gpt-4o-audio-preview"));
-        assert!(supports_audio("gpt-4o-audio-2024-10-01"));
-
-        // Critical: these MUST NOT match.
-        assert!(!supports_audio("gpt-4o"));
-        assert!(!supports_audio("gpt-4o-mini"));
-        assert!(!supports_audio("gpt-4o-2024-08-06"));
-        assert!(!supports_audio("gpt-4o-2024-11-20"));
-
-        // Positive cases for other audio families still work.
-        assert!(supports_audio("qwen-omni-turbo"));
-        assert!(supports_audio("qwen2-audio-7b"));
-        assert!(supports_audio("whisper-large-v3"));
-        assert!(supports_audio("tts-1"));
-
-        // Sanity: non-audio models stay negative.
-        assert!(!supports_audio("gpt-4-turbo"));
-        assert!(!supports_audio("claude-3-5-sonnet"));
-        assert!(!supports_audio("qwen-max"));
-        assert!(!supports_audio("deepseek-chat"));
     }
 }

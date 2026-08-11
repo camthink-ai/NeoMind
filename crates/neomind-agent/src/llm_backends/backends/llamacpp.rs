@@ -125,10 +125,6 @@ pub struct LlamaCppCapabilities {
     pub supports_thinking: bool,
     pub supports_tools: bool,
     pub max_context: usize,
-    /// Reported by `/props` `modalities.audio`. Currently informational — the
-    /// agent pipeline does not yet emit audio `ContentPart`s — but surfaced so
-    /// the capability report is honest.
-    pub supports_audio: bool,
 }
 
 /// llama.cpp runtime backend.
@@ -175,14 +171,12 @@ impl LlamaCppRuntime {
         supports_thinking: bool,
         supports_tools: bool,
         max_context: usize,
-        supports_audio: bool,
     ) -> Self {
         self.capabilities_override = Some(LlamaCppCapabilities {
             supports_multimodal,
             supports_thinking,
             supports_tools,
             max_context,
-            supports_audio,
         });
         self
     }
@@ -215,7 +209,6 @@ impl LlamaCppRuntime {
             .unwrap_or(128000);
 
         let supports_multimodal = props.modalities.as_ref().map(|m| m.vision).unwrap_or(false);
-        let supports_audio = props.modalities.as_ref().map(|m| m.audio).unwrap_or(false);
 
         let supports_tools = props
             .chat_template_caps
@@ -240,7 +233,6 @@ impl LlamaCppRuntime {
             model = model_name,
             n_ctx,
             supports_multimodal,
-            supports_audio,
             supports_tools,
             supports_thinking,
             "Detected llama.cpp capabilities from /props"
@@ -251,7 +243,6 @@ impl LlamaCppRuntime {
             supports_thinking,
             supports_tools,
             max_context: n_ctx,
-            supports_audio,
         })
     }
 
@@ -858,24 +849,18 @@ impl LlmRuntime for LlamaCppRuntime {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
-        let (
-            supports_multimodal,
-            supports_function_calling,
-            supports_thinking,
-            max_context,
-            supports_audio,
-        ) = if let Some(ref caps) = self.capabilities_override {
-            (
-                caps.supports_multimodal,
-                caps.supports_tools,
-                caps.supports_thinking,
-                caps.max_context,
-                caps.supports_audio,
-            )
-        } else {
-            // Default: llama.cpp supports streaming and tools via --jinja flag
-            (false, true, true, 4096, false)
-        };
+        let (supports_multimodal, supports_function_calling, supports_thinking, max_context) =
+            if let Some(ref caps) = self.capabilities_override {
+                (
+                    caps.supports_multimodal,
+                    caps.supports_tools,
+                    caps.supports_thinking,
+                    caps.max_context,
+                )
+            } else {
+                // Default: llama.cpp supports streaming and tools via --jinja flag
+                (false, true, true, 4096)
+            };
 
         BackendCapabilities {
             streaming: true,
@@ -886,7 +871,6 @@ impl LlmRuntime for LlamaCppRuntime {
             modalities: vec!["text".to_string()],
             thinking_display: supports_thinking,
             supports_images: supports_multimodal,
-            supports_audio,
             // llama.cpp has no request-side thinking toggle — thinking follows
             // the model default and is only readable via `reasoning_content`.
             reasoning: ReasoningCapabilities {
@@ -1221,13 +1205,12 @@ mod tests {
         let config = LlamaCppConfig::default();
         let runtime = LlamaCppRuntime::new(config)
             .unwrap()
-            .with_capabilities_override(true, true, true, 32768, true);
+            .with_capabilities_override(true, true, true, 32768);
         let caps = runtime.capabilities();
         assert!(caps.streaming);
         assert!(caps.multimodal);
         assert!(caps.function_calling);
         assert!(caps.thinking_display);
         assert_eq!(caps.max_context, Some(32768));
-        assert!(caps.supports_audio);
     }
 }

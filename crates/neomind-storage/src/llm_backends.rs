@@ -127,13 +127,6 @@ pub struct BackendCapabilities {
     #[serde(default)]
     pub supports_tools: bool,
 
-    /// Supports audio input (e.g. qwen-omni, gpt-4o-audio, whisper-class models).
-    /// Currently informational — the agent pipeline does not yet emit audio
-    /// `ContentPart`s. Surfaced so the frontend/user can see whether a backend
-    /// reports audio capability without lying.
-    #[serde(default)]
-    pub supports_audio: bool,
-
     /// Maximum context window size
     #[serde(default = "default_max_context")]
     pub max_context: usize,

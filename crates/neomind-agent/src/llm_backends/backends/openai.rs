@@ -293,7 +293,6 @@ struct CloudCapabilities {
     supports_thinking: bool,
     supports_tools: bool,
     max_context: usize,
-    supports_audio: bool,
 }
 
 impl CloudRuntime {
@@ -349,14 +348,12 @@ impl CloudRuntime {
         supports_thinking: bool,
         supports_tools: bool,
         max_context: usize,
-        supports_audio: bool,
     ) -> Self {
         self.capabilities_override = Some(CloudCapabilities {
             supports_multimodal,
             supports_thinking,
             supports_tools,
             max_context,
-            supports_audio,
         });
         self
     }
@@ -1752,43 +1749,34 @@ impl LlmRuntime for CloudRuntime {
 
     fn capabilities(&self) -> BackendCapabilities {
         // Use override if available (from storage), otherwise detect from name
-        let (
-            supports_multimodal,
-            supports_function_calling,
-            supports_thinking,
-            max_context,
-            supports_audio,
-        ) = if let Some(ref caps) = self.capabilities_override {
-            (
-                caps.supports_multimodal,
-                caps.supports_tools,
-                caps.supports_thinking,
-                caps.max_context,
-                caps.supports_audio,
-            )
-        } else {
-            // Fall back to name-based heuristics
-            let supports_multimodal = self.supports_multimodal();
-            let supports_function_calling = matches!(
-                self.config.provider,
-                CloudProvider::OpenAI
-                    | CloudProvider::Qwen
-                    | CloudProvider::DeepSeek
-                    | CloudProvider::GLM
-                    | CloudProvider::MiniMax
-                    | CloudProvider::Google
-                    | CloudProvider::Grok
-            );
-            let model_lower = self.model.to_lowercase();
-            let supports_audio = is_audio_model(&self.config.provider, &model_lower);
-            (
-                supports_multimodal,
-                supports_function_calling,
-                false, // thinking not detected by name
-                self.max_context_length(),
-                supports_audio,
-            )
-        };
+        let (supports_multimodal, supports_function_calling, supports_thinking, max_context) =
+            if let Some(ref caps) = self.capabilities_override {
+                (
+                    caps.supports_multimodal,
+                    caps.supports_tools,
+                    caps.supports_thinking,
+                    caps.max_context,
+                )
+            } else {
+                // Fall back to name-based heuristics
+                let supports_multimodal = self.supports_multimodal();
+                let supports_function_calling = matches!(
+                    self.config.provider,
+                    CloudProvider::OpenAI
+                        | CloudProvider::Qwen
+                        | CloudProvider::DeepSeek
+                        | CloudProvider::GLM
+                        | CloudProvider::MiniMax
+                        | CloudProvider::Google
+                        | CloudProvider::Grok
+                );
+                (
+                    supports_multimodal,
+                    supports_function_calling,
+                    false, // thinking not detected by name
+                    self.max_context_length(),
+                )
+            };
 
         BackendCapabilities {
             streaming: true,
@@ -1799,7 +1787,6 @@ impl LlmRuntime for CloudRuntime {
             modalities: vec!["text".to_string()],
             thinking_display: supports_thinking,
             supports_images: supports_multimodal,
-            supports_audio,
             reasoning: reasoning_capabilities_for(self.config.provider, supports_thinking),
         }
     }
@@ -2340,41 +2327,6 @@ fn known_vision_family(model_name: &str) -> bool {
     false
 }
 
-/// Detect audio-capable models by name. Used only when no override is set
-/// (i.e. the instance manager / runtime was constructed without consulting
-/// the LiteLLM registry or runtime API).
-///
-/// Match surface is intentionally narrow — only explicit audio branding.
-/// `gpt-4o-audio` here is the audio variant family; OpenAI text tiers (`gpt-4`,
-/// `gpt-4-turbo`, `gpt-4.1`, bare `gpt-4o`) are deliberately excluded.
-fn is_audio_model(
-    // `_provider` is currently unused but reserved for future per-provider
-    // audio quirks (e.g. some providers expose audio only on specific
-    // regional endpoints, or brand audio-capable tiers differently). Keeping
-    // the param avoids a breaking signature churn at every call site when
-    // that distinction is needed.
-    _provider: &CloudProvider,
-    model_name: &str,
-) -> bool {
-    // Primary: centralized detector. After the C1 fix this shortlists
-    // `audio/tts/asr/whisper/gpt-4o-audio/qwen-audio/qwen-tts/qwen-omni` —
-    // bare `gpt-4o` and `gpt-4o-mini` are intentionally NOT matched.
-    // Authoritative for registered models.
-    if neomind_core::llm::capability::supports_audio(model_name) {
-        return true;
-    }
-    let m = model_name.to_lowercase();
-    // Fallback: explicit audio branding not in the registry shortlist.
-    m.contains("qwen2-audio")
-        || m.contains("qwen2.5-omni")
-        || m.contains("qwen3-omni")
-        || m.contains("qwen-omni")
-        || m.contains("audio-preview")
-        || m.contains("gpt-4o-audio")
-        || m.contains("step-1o")
-        || m.contains("step-audio")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2504,40 +2456,6 @@ mod tests {
         assert!(!is_vision_model(&CloudProvider::Qwen, "qwen-7b"));
         assert!(!is_vision_model(&CloudProvider::Qwen, "qwen-14b"));
         assert!(!is_vision_model(&CloudProvider::Qwen, "qwen-72b"));
-    }
-
-    /// `is_audio_model` should match explicit audio-branding (qwen-omni /
-    /// qwen2-audio / gpt-4o-audio / whisper / etc.) but NOT match generic
-    /// text/vision tiers. The centralized detector (post-C1 fix) already
-    /// excludes bare `gpt-4o` / `gpt-4o-mini` from the audio shortlist, so
-    /// we verify both paths: the centralized shortlist via the positive
-    /// audio-branded cases below, and the local fallback via `step-audio`
-    /// and the dated `gpt-4o-audio-*` variants.
-    #[test]
-    fn test_is_audio_model_patterns() {
-        // Explicit audio branding — should match.
-        assert!(is_audio_model(&CloudProvider::Qwen, "qwen-omni-turbo"));
-        assert!(is_audio_model(&CloudProvider::Qwen, "qwen2-audio-7b"));
-        assert!(is_audio_model(&CloudProvider::Qwen, "qwen2.5-omni-7b"));
-        assert!(is_audio_model(&CloudProvider::Qwen, "qwen3-omni"));
-        assert!(is_audio_model(
-            &CloudProvider::OpenAI,
-            "gpt-4o-audio-preview"
-        ));
-        assert!(is_audio_model(&CloudProvider::OpenAI, "gpt-4o-audio"));
-        assert!(is_audio_model(&CloudProvider::Custom, "step-audio-1"));
-
-        // Text-only / vision-only — MUST stay false.
-        assert!(!is_audio_model(&CloudProvider::OpenAI, "gpt-4-turbo"));
-        assert!(!is_audio_model(&CloudProvider::OpenAI, "gpt-4.1"));
-        assert!(!is_audio_model(
-            &CloudProvider::Anthropic,
-            "claude-3-5-sonnet"
-        ));
-        assert!(!is_audio_model(&CloudProvider::Qwen, "qwen-max"));
-        assert!(!is_audio_model(&CloudProvider::Qwen, "qwen-plus"));
-        assert!(!is_audio_model(&CloudProvider::Qwen, "qwen3-vl-plus"));
-        assert!(!is_audio_model(&CloudProvider::DeepSeek, "deepseek-chat"));
     }
 
     /// Regression: a text-only model must never receive `image_url` content

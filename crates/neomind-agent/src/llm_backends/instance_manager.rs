@@ -243,7 +243,7 @@ impl LlmBackendInstanceManager {
             // fall back to stored capabilities
             let detected = ollama_runtime.fetch_capabilities_from_api().await;
 
-            let (multimodal, thinking, tools, max_ctx, audio) = match &detected {
+            let (multimodal, thinking, tools, max_ctx) = match &detected {
                 Some(caps) => {
                     // Update stored capabilities if detection succeeded and values differ.
                     // CRITICAL: respect user override — only update fields that aren't
@@ -256,7 +256,6 @@ impl LlmBackendInstanceManager {
                     let other_changed = instance.capabilities.supports_thinking
                         != caps.supports_thinking
                         || instance.capabilities.supports_tools != caps.supports_tools
-                        || instance.capabilities.supports_audio != caps.supports_audio
                         || instance.capabilities.max_context != caps.max_context;
                     if multimodal_changed || other_changed {
                         tracing::info!(
@@ -277,7 +276,6 @@ impl LlmBackendInstanceManager {
                         }
                         updated.capabilities.supports_thinking = caps.supports_thinking;
                         updated.capabilities.supports_tools = caps.supports_tools;
-                        updated.capabilities.supports_audio = caps.supports_audio;
                         let cap = std::env::var("NEOMIND_MAX_CONTEXT")
                             .ok()
                             .and_then(|v| v.parse::<usize>().ok())
@@ -306,7 +304,6 @@ impl LlmBackendInstanceManager {
                         caps.supports_thinking,
                         caps.supports_tools,
                         caps.max_context,
-                        caps.supports_audio,
                     )
                 }
                 None => {
@@ -333,13 +330,12 @@ impl LlmBackendInstanceManager {
                         caps.supports_thinking,
                         caps.supports_tools,
                         max_ctx,
-                        caps.supports_audio,
                     )
                 }
             };
 
             let ollama_runtime = ollama_runtime
-                .with_capabilities_override(multimodal, thinking, tools, max_ctx, audio);
+                .with_capabilities_override(multimodal, thinking, tools, max_ctx);
 
             Arc::new(ollama_runtime) as Arc<dyn LlmRuntime>
         } else if matches!(instance.backend_type, LlmBackendType::LlamaCpp) {
@@ -366,7 +362,7 @@ impl LlmBackendInstanceManager {
                 // fall back to stored capabilities
                 let detected = llamacpp_runtime.detect_capabilities().await;
 
-                let (multimodal, thinking, tools, max_ctx, audio) = match &detected {
+                let (multimodal, thinking, tools, max_ctx) = match &detected {
                     Some(caps) => {
                         // Update stored capabilities if detection succeeded and values differ.
                         // Respect user override — only update fields that aren't explicitly
@@ -376,8 +372,7 @@ impl LlmBackendInstanceManager {
                             user_override.unwrap_or(instance.capabilities.supports_multimodal);
                         let multimodal_changed = old_multimodal != caps.supports_multimodal;
                         let other_changed = instance.capabilities.max_context != caps.max_context
-                            || instance.capabilities.supports_tools != caps.supports_tools
-                            || instance.capabilities.supports_audio != caps.supports_audio;
+                            || instance.capabilities.supports_tools != caps.supports_tools;
                         if multimodal_changed || other_changed {
                             tracing::info!(
                                 backend_id = %instance.id,
@@ -396,7 +391,6 @@ impl LlmBackendInstanceManager {
                             }
                             updated.capabilities.supports_thinking = caps.supports_thinking;
                             updated.capabilities.supports_tools = caps.supports_tools;
-                            updated.capabilities.supports_audio = caps.supports_audio;
                             updated.capabilities.max_context = caps.max_context;
                             if let Err(e) = self.storage.save_instance(&updated) {
                                 tracing::warn!(
@@ -413,7 +407,6 @@ impl LlmBackendInstanceManager {
                             caps.supports_thinking,
                             caps.supports_tools,
                             caps.max_context,
-                            caps.supports_audio,
                         )
                     }
                     None => {
@@ -427,13 +420,12 @@ impl LlmBackendInstanceManager {
                             caps.supports_thinking,
                             caps.supports_tools,
                             caps.max_context,
-                            caps.supports_audio,
                         )
                     }
                 };
 
                 let llamacpp_runtime = llamacpp_runtime
-                    .with_capabilities_override(multimodal, thinking, tools, max_ctx, audio);
+                    .with_capabilities_override(multimodal, thinking, tools, max_ctx);
 
                 Arc::new(llamacpp_runtime) as Arc<dyn LlmRuntime>
             }
@@ -497,7 +489,6 @@ impl LlmBackendInstanceManager {
                             caps.supports_thinking,
                             caps.supports_tools,
                             caps.max_context,
-                            caps.supports_audio,
                         );
 
                         Arc::new(runtime) as Arc<dyn LlmRuntime>
@@ -770,7 +761,6 @@ impl LlmBackendInstanceManager {
 
             if let Some(caps) = runtime.detect_capabilities().await {
                 let changed = instance.capabilities.supports_multimodal != caps.supports_multimodal
-                    || instance.capabilities.supports_audio != caps.supports_audio
                     || instance.capabilities.max_context != caps.max_context
                     || instance.capabilities.supports_tools != caps.supports_tools;
                 if changed {
@@ -779,15 +769,12 @@ impl LlmBackendInstanceManager {
                         model = %instance.model,
                         old_multimodal = instance.capabilities.supports_multimodal,
                         new_multimodal = caps.supports_multimodal,
-                        old_audio = instance.capabilities.supports_audio,
-                        new_audio = caps.supports_audio,
                         old_ctx = instance.capabilities.max_context,
                         new_ctx = caps.max_context,
                         "Startup: updated llama.cpp capabilities from /props"
                     );
                     let mut updated = instance.clone();
                     updated.capabilities.supports_multimodal = caps.supports_multimodal;
-                    updated.capabilities.supports_audio = caps.supports_audio;
                     updated.capabilities.supports_thinking = caps.supports_thinking;
                     updated.capabilities.supports_tools = caps.supports_tools;
                     updated.capabilities.max_context = caps.max_context;
@@ -883,7 +870,6 @@ impl LlmBackendInstanceManager {
         instance.capabilities.multimodal_source = Some("runtime_api".to_string());
         instance.capabilities.supports_thinking = caps.supports_thinking;
         instance.capabilities.supports_tools = caps.supports_tools;
-        instance.capabilities.supports_audio = caps.supports_audio;
         // Respect the global context cap, mirroring the Ollama path.
         let cap = std::env::var("NEOMIND_MAX_CONTEXT")
             .ok()
@@ -1230,13 +1216,10 @@ impl LlmBackendInstanceManager {
             };
 
             let new_multimodal = new_caps.supports_multimodal;
-            let new_audio = new_caps.supports_audio;
 
             // Skip if nothing actually changed — avoids spurious writes &
             // runtime-cache invalidations on every refresh tick.
-            if inst.capabilities.supports_multimodal == new_multimodal
-                && inst.capabilities.supports_audio == new_audio
-            {
+            if inst.capabilities.supports_multimodal == new_multimodal {
                 continue;
             }
 
@@ -1266,13 +1249,10 @@ impl LlmBackendInstanceManager {
                 model = %current.model,
                 old_multimodal = current.capabilities.supports_multimodal,
                 new_multimodal,
-                old_audio = current.capabilities.supports_audio,
-                new_audio,
                 source = "runtime_api",
                 "Refreshed capabilities from runtime API"
             );
             current.capabilities.supports_multimodal = new_multimodal;
-            current.capabilities.supports_audio = new_audio;
             current.capabilities.multimodal_source = Some("runtime_api".to_string());
             current.updated_at = chrono::Utc::now().timestamp();
 
@@ -1305,7 +1285,7 @@ impl LlmBackendInstanceManager {
     }
 
     /// Query an Ollama instance's `/api/show` to determine current
-    /// multimodal + audio capability. Returns `None` if the API is unavailable.
+    /// multimodal capability. Returns `None` if the API is unavailable.
     /// Returns the full `ModelCapability` so the caller can refresh every
     /// runtime-detected field in one pass without re-querying.
     async fn query_ollama_capabilities(
@@ -1444,7 +1424,6 @@ mod tests {
                 multimodal_source: None,
                 supports_thinking: false,
                 supports_tools: true,
-                supports_audio: false,
                 max_context: 128000,
                 reasoning: None,
             },
@@ -1487,7 +1466,6 @@ mod tests {
                 multimodal_source: Some("user_override".to_string()),
                 supports_thinking: false,
                 supports_tools: true,
-                supports_audio: false,
                 max_context: 128000,
                 reasoning: None,
             },

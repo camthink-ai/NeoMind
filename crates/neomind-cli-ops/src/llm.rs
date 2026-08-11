@@ -35,13 +35,6 @@ pub async fn list_backends(client: &ApiClient) -> Result<CliResponse> {
                     tags.push("vision".to_string());
                 }
                 if caps
-                    .get("supports_audio")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    tags.push("audio".to_string());
-                }
-                if caps
                     .get("function_calling")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)

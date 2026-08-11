@@ -835,9 +835,6 @@ pub struct BackendCapabilities {
     /// Supports image input
     pub supports_images: bool,
 
-    /// Supports audio input
-    pub supports_audio: bool,
-
     /// Declared reasoning/thinking capabilities (effort levels, mandatory, control).
     pub reasoning: ReasoningCapabilities,
 }
@@ -905,12 +902,6 @@ impl BackendCapabilitiesBuilder {
         if !self.capabilities.reasoning.supported_efforts.is_empty() {
             self.capabilities.thinking_display = true;
         }
-        self
-    }
-
-    /// Enable audio input.
-    pub fn audio(mut self) -> Self {
-        self.capabilities.supports_audio = true;
         self
     }
 

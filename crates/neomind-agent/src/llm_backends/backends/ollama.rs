@@ -159,13 +159,11 @@ impl OllamaRuntime {
         supports_thinking: bool,
         supports_tools: bool,
         max_context: usize,
-        supports_audio: bool,
     ) -> Self {
         self.capabilities_override = Some(ModelCapability {
             supports_tools,
             supports_thinking,
             supports_multimodal,
-            supports_audio,
             max_context,
         });
         self
@@ -201,16 +199,9 @@ impl OllamaRuntime {
                             .map(|cap| max_context.min(cap))
                             .unwrap_or(max_context);
 
-                        // Ollama's /api/show doesn't expose audio modality; derive
-                        // from model name via the centralized detector (covers
-                        // qwen-audio / qwen-omni / whisper / gpt-4o-audio etc.).
-                        let supports_audio =
-                            neomind_core::llm::capability::supports_audio(&self.model);
-
                         tracing::info!(
                             model = %self.model,
                             multimodal = %supports_multimodal,
-                            audio = %supports_audio,
                             thinking = %supports_thinking,
                             tools = %supports_tools,
                             max_context = %max_context,
@@ -221,7 +212,6 @@ impl OllamaRuntime {
                             supports_multimodal,
                             supports_thinking,
                             supports_tools,
-                            supports_audio,
                             max_context,
                         })
                     }
@@ -1408,9 +1398,6 @@ impl LlmRuntime for OllamaRuntime {
         if caps.supports_tools {
             builder = builder.function_calling();
         }
-        if caps.supports_audio {
-            builder = builder.audio();
-        }
 
         // Ollama supports both `think: true/false` and `think: "low"|"medium"|"high"`
         // (see OllamaThink), so declare discrete effort levels when the model thinks.
@@ -1568,9 +1555,6 @@ pub struct ModelCapability {
     pub supports_tools: bool,
     pub supports_thinking: bool,
     pub supports_multimodal: bool,
-    /// Supports audio input. Currently informational — Ollama's `/api/show`
-    /// does not expose audio modality, so this is name-derived only.
-    pub supports_audio: bool,
     /// Maximum context window in tokens
     pub max_context: usize,
 }
@@ -1635,10 +1619,6 @@ fn detect_model_capabilities(model_name: &str) -> ModelCapability {
     // by the `runtime_capabilities()` method on this struct).
     let supports_multimodal = neomind_core::llm::detect_vision_capability(model_name);
 
-    // Audio capability — same centralized detector. Covers qwen-audio /
-    // qwen-omni / whisper / gpt-4o-audio and similar.
-    let supports_audio = neomind_core::llm::capability::supports_audio(model_name);
-
     // Maximum context window: prefer LiteLLM registry (curated, model-specific)
     // then fall back to Ollama-specific context sizes tuned for local models.
     let max_context = neomind_core::llm::registry::lookup_max_input_tokens(model_name)
@@ -1648,7 +1628,6 @@ fn detect_model_capabilities(model_name: &str) -> ModelCapability {
         supports_tools,
         supports_thinking,
         supports_multimodal,
-        supports_audio,
         max_context,
     }
 }
@@ -1985,7 +1964,6 @@ mod tests {
             supports_tools: true,
             supports_thinking: true,
             supports_multimodal: true,
-            supports_audio: false,
             max_context: 65536,
         };
 
@@ -2042,7 +2020,6 @@ mod tests {
             supports_tools: true,
             supports_thinking: true,
             supports_multimodal: true,
-            supports_audio: false,
             max_context: 65536,
         };
 

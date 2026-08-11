@@ -525,14 +525,6 @@ pub async fn update_backend_handler(
         let saved_user_override = instance.capabilities.multimodal_user_override;
         let saved_source = instance.capabilities.multimodal_source.clone();
         let saved_multimodal = instance.capabilities.supports_multimodal;
-        // supports_audio is also not rendered by the frontend, so save it
-        // before the request body overwrites the whole capabilities struct.
-        // The frontend sends a partial capabilities object (typically omitting
-        // audio); without this, every unrelated PUT (e.g. temperature change)
-        // would silently reset audio capability to its serde default (false)
-        // and a backend that the runtime had detected as audio-capable would
-        // appear to lose it until the next capability refresh cycle.
-        let saved_supports_audio = instance.capabilities.supports_audio;
 
         // Adjust capabilities based on model name
         adjust_capabilities_for_model(&instance.model, &mut capabilities);
@@ -570,19 +562,6 @@ pub async fn update_backend_handler(
         }
 
         instance.capabilities = capabilities;
-        // Restore supports_audio — the frontend doesn't render an audio toggle
-        // and the request body (deserialized as a whole capabilities struct)
-        // would otherwise leave this at the serde default (false). The
-        // centralized capability detector / runtime refresh loop is the only
-        // path that should re-author this field.
-        //
-        // TODO(audio-override): once a PATCH `/capabilities` audio field is
-        // added (symmetric with `multimodal`), this restore must switch to
-        // the same conditional pattern used for `multimodal_user_override`
-        // above — otherwise the restore would silently drop an audio user
-        // override that the frontend finally learned how to send. Audio has
-        // no override surface today (plumbing-only); see review Minor 1.
-        instance.capabilities.supports_audio = saved_supports_audio;
     }
     instance.updated_at = chrono::Utc::now().timestamp();
 
@@ -747,7 +726,6 @@ pub async fn activate_backend_handler(
             multiple_models: false,
             modalities: Vec::new(),
             supports_images: storage_caps.supports_multimodal,
-            supports_audio: storage_caps.supports_audio,
             reasoning: neomind_core::ReasoningCapabilities::default(),
         }
     }
@@ -1633,8 +1611,6 @@ struct LlamaCppPropsParams {
 struct LlamaCppModalities {
     #[serde(default)]
     vision: Option<bool>,
-    #[serde(default)]
-    audio: Option<bool>,
 }
 
 impl LlamaCppPropsLight {
@@ -1837,12 +1813,6 @@ pub async fn list_llamacpp_server_info_handler(
                         // Multimodal from modalities field
                         if let Some(vision) = props.modalities.as_ref().and_then(|m| m.vision) {
                             capabilities.supports_multimodal = vision;
-                        }
-                        // Audio from modalities field (llama.cpp server reports
-                        // `modalities.audio` when the loaded model has an audio
-                        // projector, e.g. Qwen2-Audio / Ultravox).
-                        if let Some(audio) = props.modalities.as_ref().and_then(|m| m.audio) {
-                            capabilities.supports_audio = audio;
                         }
 
                         // Version from build_info
