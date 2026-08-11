@@ -17,6 +17,7 @@ import { extractErrorMessage } from "@/lib/notify"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { PluginConfigSchema } from "@/types"
+import type { ReasoningCapabilities, ThinkingEffort } from "@/types/llm-backend"
 
 /**
  * Ollama model with capabilities
@@ -143,7 +144,13 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
   const [loadingLlamacppInfo, setLoadingLlamacppInfo] = useState(false)
 
   // Auto-detected capabilities state
-  const [detectedCapabilities, setDetectedCapabilities] = useState({
+  const [detectedCapabilities, setDetectedCapabilities] = useState<{
+    supports_multimodal: boolean
+    supports_thinking: boolean
+    supports_tools: boolean
+    max_context: number
+    reasoning?: ReasoningCapabilities
+  }>({
     supports_multimodal: false,
     supports_thinking: false,
     supports_tools: true,
@@ -162,11 +169,11 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
     pending: boolean
   }>({ override: null, effective: false, source: null, pending: false })
 
-  // Thinking toggle state. Unlike multimodal, thinking is a plain backend
+  // Thinking effort state. Unlike multimodal, thinking is a plain backend
   // config field (not an override) — the user choice IS the effective value.
-  // Default true (matches backend storage default_thinking_enabled()).
-  const [thinkingState, setThinkingState] = useState<{ enabled: boolean; pending: boolean }>({
-    enabled: true,
+  // `effort: "high"` = thinking on (default), `"none"` = off.
+  const [thinkingState, setThinkingState] = useState<{ effort: ThinkingEffort; pending: boolean }>({
+    effort: "high",
     pending: false,
   })
 
@@ -244,7 +251,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
       // will re-initialise it from the editing instance's saved capabilities.
       setOverrideState({ override: null, effective: false, source: null, pending: false })
       // Reset thinking state too; re-initialised below from instance config.
-      setThinkingState({ enabled: true, pending: false })
+      setThinkingState({ effort: "high", pending: false })
 
       if (editingInstance && (editingInstance as any).capabilities) {
         const existingCaps = (editingInstance as any).capabilities
@@ -253,6 +260,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
           supports_thinking: existingCaps.supports_thinking ?? false,
           supports_tools: existingCaps.supports_tools ?? true,
           max_context: existingCaps.max_context ?? 8192,
+          reasoning: existingCaps.reasoning ?? undefined,
         })
         // Initialise multimodal override state from saved instance capabilities.
         // In create mode this branch is skipped — overrideState stays at its default
@@ -263,11 +271,16 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
           source: existingCaps.multimodal_source ?? null,
           pending: false,
         })
-        // Initialise thinking state from saved backend config (defaults to true
-        // if the field is absent — matches backend storage default).
-        const savedThinking = (editingInstance.config as any)?.thinking_enabled
+        // Initialise thinking effort from saved backend config. Prefer the
+        // unified `thinking_effort`; fall back to the legacy `thinking_enabled`
+        // bool (true → "high", false → "none"). Defaults to "high" if absent.
+        const savedEffort = (editingInstance.config as any)?.thinking_effort as
+          | ThinkingEffort
+          | undefined
+        const savedEnabled = (editingInstance.config as any)?.thinking_enabled
+        const initEffort: ThinkingEffort = savedEffort ?? (savedEnabled === false ? "none" : "high")
         setThinkingState({
-          enabled: typeof savedThinking === "boolean" ? savedThinking : true,
+          effort: initEffort,
           pending: false,
         })
         if (pluginType.id === "ollama") {
@@ -519,24 +532,22 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
     patchMultimodalOverride(!overrideState.effective)
   const handleResetMultimodalOverride = () => patchMultimodalOverride(null)
 
-  // PATCH thinking_enabled directly on the backend (not via capabilities
+  // PATCH thinking_effort directly on the backend (not via capabilities
   // override endpoint — thinking is a plain config field, not an override).
   // Optimistic update with rollback on error, mirroring patchMultimodalOverride.
   //
   // After success, refresh the parent list so the next dialog open sees the
   // persisted value. The dialog is rendered via portal as a sibling of the
   // list, so refreshing the list does not unmount this dialog mid-interaction.
-  const patchThinking = async (value: boolean) => {
+  const patchEffort = async (effort: ThinkingEffort) => {
     if (!editingInstance || thinkingState.pending) return
     const prev = thinkingState
-    setThinkingState({ enabled: value, pending: true })
+    setThinkingState({ effort, pending: true })
     try {
-      await api.updateLlmBackend(editingInstance.id, { thinking_enabled: value })
-      setThinkingState({ enabled: value, pending: false })
+      await api.updateLlmBackend(editingInstance.id, { thinking_effort: effort })
+      setThinkingState({ effort, pending: false })
       showSuccess(t("plugins:llm.thinkingSavedToast"))
       // Refresh parent so reopen-without-Save shows the persisted value.
-      // Patched into thinking (and intentionally NOT into patchMultimodalOverride
-      // to limit scope); if multimodal needs the same fix later, mirror this.
       if (onRefresh) {
         try { await onRefresh() } catch { /* parent refresh is best-effort */ }
       }
@@ -544,7 +555,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
       setThinkingState(prev)
       const isNotFound = (error as { status?: number })?.status === 404
       handleError(error as Error, {
-        operation: "Update thinking mode",
+        operation: "Update thinking effort",
         userMessage: isNotFound
           ? t("plugins:llm.backendNotFound")
           : t("plugins:llm.thinkingSaveFailed", { message: extractErrorMessage(error) }),
@@ -616,32 +627,53 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
         )
       })()}
       {(() => {
-        // Same pattern as multimodal above: read-only badge in create mode,
-        // interactive Switch in edit mode. Hidden entirely when the model
-        // doesn't support thinking — no point showing a disabled control.
-        if (!detectedCapabilities.supports_thinking) return null
-        if (!isEditing) {
+        // Thinking effort — ALWAYS visible (unlike the old supports_thinking
+        // gate, which hid the control entirely for models detected as
+        // non-thinking, making it impossible to override a wrong detection).
+        // The widget adapts to the backend's declared reasoning control:
+        //   readonly → read-only badge (thinking follows model default, cannot
+        //              be toggled) — e.g. llama.cpp
+        //   boolean  → On/Off dropdown (only none/high)
+        //   level/effort (or unknown) → full effort dropdown (none/low/medium/high)
+        const control = detectedCapabilities.reasoning?.control
+        const isReadOnly = control === 'readonly' || control === undefined
+
+        // Create mode (no backend id → no PATCH) or ReadOnly → read-only badge.
+        if (!isEditing || isReadOnly) {
+          const label = isReadOnly
+            ? t('plugins:llm.capabilityThinkingReadOnly', { defaultValue: 'Thinking (model default)' })
+            : t('plugins:llm.capabilityThinking')
           return (
             <Badge variant="outline" className="text-xs">
               <Brain className="h-4 w-4 mr-1" />
-              {t("plugins:llm.capabilityThinking")}
+              {label}
             </Badge>
           )
         }
+
+        // Boolean control: only none/high are meaningful (no low/medium).
+        const showLevels = control !== 'boolean'
         return (
           <div className="flex items-center gap-2">
-            <Switch
-              checked={thinkingState.enabled}
-              onCheckedChange={patchThinking}
+            <Select
+              value={thinkingState.effort}
+              onValueChange={(v) => patchEffort(v as ThinkingEffort)}
               disabled={thinkingState.pending}
-              aria-label={t("plugins:llm.capabilityThinking")}
-              title={t("plugins:llm.thinkingToggleHint")}
-            />
-            <span className="text-xs">
-              {thinkingState.enabled
-                ? t("plugins:llm.thinkingOnLabel")
-                : t("plugins:llm.thinkingOffLabel")}
-            </span>
+            >
+              <SelectTrigger className="h-7 w-[110px] text-xs" aria-label={t("plugins:llm.capabilityThinking")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{t("plugins:llm.effortNone")}</SelectItem>
+                {showLevels && (
+                  <>
+                    <SelectItem value="low">{t("plugins:llm.effortLow")}</SelectItem>
+                    <SelectItem value="medium">{t("plugins:llm.effortMedium")}</SelectItem>
+                  </>
+                )}
+                <SelectItem value="high">{t("plugins:llm.effortHigh")}</SelectItem>
+              </SelectContent>
+            </Select>
             {thinkingState.pending && (
               <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
             )}
@@ -928,9 +960,14 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
                       )}
                     </div>
                   )}
-                  {renderCapabilityBadges()}
                 </div>
               )}
+
+              {/* Capabilities — always visible for llama.cpp, independent of
+                  server connectivity. (llama.cpp is ReadOnly for thinking —
+                  thinking follows the model default — but the control must not
+                  silently disappear.) */}
+              {renderCapabilityBadges()}
 
               {/* Error state */}
               {llamacppServerInfo && llamacppServerInfo.status !== "ok" && (

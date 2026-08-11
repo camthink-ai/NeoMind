@@ -12,6 +12,19 @@ export interface BackendCapabilities {
   supports_thinking: boolean
   supports_tools: boolean
   max_context: number
+  /** Declared reasoning/thinking capabilities (drives the effort UI). */
+  reasoning?: ReasoningCapabilities
+}
+
+export interface ReasoningCapabilities {
+  /** Effort levels this backend can honor. Empty = unknown. */
+  supported_efforts?: ThinkingEffort[]
+  /** The model's default effort when nothing is set. */
+  default_effort?: ThinkingEffort
+  /** Whether thinking is mandatory (cannot be turned off). */
+  mandatory?: boolean
+  /** How the backend controls thinking. */
+  control?: 'readonly' | 'boolean' | 'level' | 'effort'
 }
 
 export interface LlmBackendInstance {
@@ -27,10 +40,19 @@ export interface LlmBackendInstance {
   top_k: number
   max_tokens: number
   thinking_enabled: boolean  // Enable thinking/reasoning mode for models that support it
+  thinking_effort?: ThinkingEffort  // Unified reasoning effort (preferred over thinking_enabled)
   capabilities: BackendCapabilities
   updated_at: number
   healthy?: boolean  // Health check result (from API)
 }
+
+export type ThinkingEffort =
+  | 'none'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+  | 'max'
 
 export interface CreateLlmBackendRequest {
   name: string
@@ -42,6 +64,7 @@ export interface CreateLlmBackendRequest {
   top_p?: number
   top_k?: number
   thinking_enabled?: boolean  // Enable thinking/reasoning mode for models that support it
+  thinking_effort?: ThinkingEffort  // Unified reasoning effort (preferred over thinking_enabled)
   capabilities?: BackendCapabilities  // Model capabilities (from Ollama model detection)
 }
 
@@ -54,6 +77,7 @@ export interface UpdateLlmBackendRequest {
   top_p?: number
   top_k?: number
   thinking_enabled?: boolean  // Enable thinking/reasoning mode for models that support it
+  thinking_effort?: ThinkingEffort  // Unified reasoning effort (preferred over thinking_enabled)
   capabilities?: BackendCapabilities  // Model capabilities (from Ollama model detection)
 }
 
