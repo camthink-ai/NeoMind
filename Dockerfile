@@ -109,8 +109,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # apt-get upgrade patches base-image packages between refreshes (the main
 # source of "high" findings in image scans). Then add runtime deps.
+#
+# python3 + python3-pip: agents and Python-sidecar extensions (voice / TTS /
+# ASR / OCR-VL…) invoke `python3` for data processing and sidecar services.
+# Without it, `python3` in the container exits 127 and those workloads fail.
+# python-is-python3: scripts/extensions that hardcode `python` get it too.
+#
+# ffmpeg intentionally NOT included: +~326MB for media/stream pipelines
+# (stream-player, video extensions). If you need it, add `ffmpeg` to the apt
+# line below — the image then grows to ~450MB.
 RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends ca-certificates curl tzdata && \
+    apt-get install -y --no-install-recommends ca-certificates curl tzdata \
+        python3 python3-pip python-is-python3 && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --system neomind && useradd --system --gid neomind --home-dir /app neomind
 
