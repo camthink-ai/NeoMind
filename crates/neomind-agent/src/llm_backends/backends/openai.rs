@@ -2360,7 +2360,7 @@ fn is_audio_model(
     // `audio/tts/asr/whisper/gpt-4o-audio/qwen-audio/qwen-tts/qwen-omni` —
     // bare `gpt-4o` and `gpt-4o-mini` are intentionally NOT matched.
     // Authoritative for registered models.
-    if neomind_core::llm::capability::model_supports(model_name, "audio") {
+    if neomind_core::llm::capability::supports_audio(model_name) {
         return true;
     }
     let m = model_name.to_lowercase();

@@ -205,7 +205,7 @@ impl OllamaRuntime {
                         // from model name via the centralized detector (covers
                         // qwen-audio / qwen-omni / whisper / gpt-4o-audio etc.).
                         let supports_audio =
-                            neomind_core::llm::capability::model_supports(&self.model, "audio");
+                            neomind_core::llm::capability::supports_audio(&self.model);
 
                         tracing::info!(
                             model = %self.model,
@@ -1644,7 +1644,7 @@ fn detect_model_capabilities(model_name: &str) -> ModelCapability {
 
     // Audio capability — same centralized detector. Covers qwen-audio /
     // qwen-omni / whisper / gpt-4o-audio and similar.
-    let supports_audio = neomind_core::llm::capability::model_supports(model_name, "audio");
+    let supports_audio = neomind_core::llm::capability::supports_audio(model_name);
 
     // Maximum context window: prefer LiteLLM registry (curated, model-specific)
     // then fall back to Ollama-specific context sizes tuned for local models.

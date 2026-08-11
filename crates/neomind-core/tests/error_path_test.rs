@@ -15,8 +15,13 @@ use neomind_core::config::{agent, agent_env_vars};
 use neomind_core::extension::system::{
     ExtensionError, MetricDataType, ParamMetricValue, ParameterDefinition,
 };
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::RwLock;
+
+/// Serialize tests that mutate process-wide env vars. Several tests below set
+/// the same env key (e.g. `MAX_CONTEXT_TOKENS`) to different values; running
+/// them in parallel races on the shared key and produces flaky failures.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 // ============================================================================
 // Extension Error Path Tests
@@ -150,6 +155,7 @@ fn test_config_default_values_valid() {
 #[test]
 fn test_config_env_var_parsing_invalid() {
     // Test that invalid env var values fall back to defaults
+    let _g = ENV_LOCK.lock().unwrap();
     let orig = std::env::var(agent_env_vars::MAX_CONTEXT_TOKENS);
 
     unsafe {
@@ -171,6 +177,7 @@ fn test_config_env_var_parsing_invalid() {
 #[test]
 fn test_config_env_var_parsing_zero() {
     // Test edge case of zero value
+    let _g = ENV_LOCK.lock().unwrap();
     let orig = std::env::var(agent_env_vars::MAX_CONTEXT_TOKENS);
 
     unsafe {
@@ -193,6 +200,7 @@ fn test_config_env_var_parsing_zero() {
 #[test]
 fn test_config_env_var_parsing_overflow() {
     // Test very large values that might overflow
+    let _g = ENV_LOCK.lock().unwrap();
     let orig = std::env::var(agent_env_vars::MAX_TOKENS);
 
     // Use usize::MAX which is valid but may cause issues
