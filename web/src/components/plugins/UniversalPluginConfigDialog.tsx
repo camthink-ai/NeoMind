@@ -563,95 +563,70 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
   }
 
   const renderCapabilityBadges = () => (
-    <div className="mt-2 space-y-2">
-      {/* Row 1: Multimodal / Vision + Tools + ctx — compact badge row */}
-      <div className="flex flex-wrap gap-2 items-center">
-        {/* Multimodal / Vision — interactive override in edit mode, read-only badge in create mode */}
-        {(() => {
-          // Create mode: no backend id → no PATCH possible → original read-only badge.
-          if (!isEditing) {
-            return detectedCapabilities.supports_multimodal ? (
-            <Badge variant="outline" className="text-xs">
-              <Eye className="h-4 w-4 mr-1" />
-              {t("plugins:llm.capabilityVision")}
-            </Badge>
-          ) : null
+    <div className="space-y-3">
+      {/* Vision / multimodal — interactive override in edit mode, read-only in create */}
+      {(() => {
+        if (!detectedCapabilities.supports_multimodal) return null
+        if (!isEditing) {
+          return (
+            <FormField label={t("plugins:llm.capabilityVision")} horizontal>
+              <Badge variant="outline" className="text-xs">
+                {t("plugins:llm.capabilityVisionSupported", { defaultValue: "Supported" })}
+              </Badge>
+            </FormField>
+          )
         }
-
-        // Edit mode: Switch + optional Reset button. Switch reflects the
-        // *effective* value (override when set, else auto-detected). Toggling
-        // pins the new value via PATCH. Label stays short — on/off is conveyed
-        // by the Switch position; source provenance and the "click to override"
-        // hint go into the Switch's `title` tooltip to keep the row compact
-        // alongside Thinking/Tools/ctx badges.
         const effective = overrideState.effective
         const override = overrideState.override
         const source = overrideState.source
-
         return (
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={effective}
-              onCheckedChange={handleToggleMultimodalOverride}
-              disabled={overrideState.pending}
-              aria-label={t("plugins:llm.capabilityVision")}
-              title={
-                override == null
-                  ? source
-                    ? `${t("plugins:llm.overrideHint")} (${source})`
-                    : t("plugins:llm.overrideHint")
-                  : undefined
-              }
-            />
-            <span className="text-xs">
-              {override != null
-                ? t("plugins:llm.capabilityVisionOverrideLabelText")
-                : t("plugins:llm.capabilityVisionAutoLabel")}
-            </span>
-            {override != null && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 w-6 p-0"
-                onClick={handleResetMultimodalOverride}
+          <FormField label={t("plugins:llm.capabilityVision")} horizontal>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={effective}
+                onCheckedChange={handleToggleMultimodalOverride}
                 disabled={overrideState.pending}
-                aria-label={t("plugins:llm.resetToAuto")}
-                title={t("plugins:llm.resetToAuto")}
-              >
-                <RotateCcw className="h-3 w-3" />
-              </Button>
-            )}
-            {overrideState.pending && (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            )}
-          </div>
+                aria-label={t("plugins:llm.capabilityVision")}
+              />
+              <span className="text-xs text-muted-foreground">
+                {override != null
+                  ? t("plugins:llm.capabilityVisionOverrideLabelText")
+                  : t("plugins:llm.capabilityVisionAutoLabel")}
+              </span>
+              {override != null && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={handleResetMultimodalOverride}
+                  disabled={overrideState.pending}
+                  aria-label={t("plugins:llm.resetToAuto")}
+                  title={t("plugins:llm.resetToAuto")}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </Button>
+              )}
+            </div>
+          </FormField>
         )
       })()}
+      {/* Thinking effort */}
       {(() => {
-        // Thinking effort — standard FormField + Select, matching the model
-        // selector style. On its own row, not mixed into the multimodal switch
-        // row. Hidden for models that don't support thinking.
-        if (!detectedCapabilities.supports_thinking) {
-          return null
-        }
+        if (!detectedCapabilities.supports_thinking) return null
         const control = detectedCapabilities.reasoning?.control
         const isReadOnly = control === 'readonly' || control === undefined
-
-        // Create mode (no backend id → no PATCH) or ReadOnly → read-only badge.
         if (!isEditing || isReadOnly) {
           return (
-            <FormField label={t('plugins:llm.capabilityThinking')}>
+            <FormField label={t('plugins:llm.capabilityThinking')} horizontal>
               <Badge variant="outline" className="text-xs">
                 {t('plugins:llm.capabilityThinkingReadOnly', { defaultValue: 'Thinking (model default)' })}
               </Badge>
             </FormField>
           )
         }
-
-        // Boolean control: only none/high are meaningful (no low/medium).
         const showLevels = control !== 'boolean'
         return (
-          <FormField label={t('plugins:llm.capabilityThinking')}>
+          <FormField label={t('plugins:llm.capabilityThinking')} horizontal>
             <div className="flex items-center gap-2">
               <Select
                 value={thinkingState.effort}
@@ -679,18 +654,22 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
           </FormField>
         )
       })()}
+      {/* Tools */}
       {detectedCapabilities.supports_tools && (
-        <Badge variant="outline" className="text-xs">
-          <Wrench className="h-4 w-4 mr-1" />
-          Tools
-        </Badge>
+        <FormField label={t("plugins:llm.capabilityTools")} horizontal>
+          <Badge variant="outline" className="text-xs">
+            {t("plugins:llm.capabilityToolsSupported", { defaultValue: "Supported" })}
+          </Badge>
+        </FormField>
       )}
-      <Badge variant="secondary" className="text-xs">
-        {detectedCapabilities.max_context >= 100000
-          ? `${Math.round(detectedCapabilities.max_context / 1000)}k ctx`
-          : `${detectedCapabilities.max_context} ctx`}
-      </Badge>
-      </div>
+      {/* Context window */}
+      <FormField label={t("plugins:llm.capabilityContext", { defaultValue: "Context Window" })} horizontal>
+        <span className="text-sm text-muted-foreground">
+          {detectedCapabilities.max_context >= 100000
+            ? `${Math.round(detectedCapabilities.max_context / 1000)}k tokens`
+            : `${detectedCapabilities.max_context} tokens`}
+        </span>
+      </FormField>
     </div>
   )
 
