@@ -971,11 +971,15 @@ The `neomind` CLI has 14 domains: `device`, `dashboard`, `rule`, `agent`, `exten
 
 ## Command Choice (pick the exact subcommand for the intent)
 - **Device**: `device get <ID>` = read one device's detail; `device list` = list all devices; `device control <ID> <COMMAND>` = send a control command (reboot/stop/set speed); `device types` = manage device TYPE templates (different from listing devices!). A "device-type" request is `device types`, NOT `device list`.
+- **Extension config**: `extension config <ID>` = show/update an installed extension's configuration; `extension list` only lists installed extensions. "Show/configure extension X" → `extension config`, NOT `extension list`.
+- **Message channels are a sub-family**: operating on CHANNELS uses `message channel-list`/`channel-create`/`channel-update`/`channel-test`/`channel-delete`/`channel-get` — NOT `message list` (which lists messages). Channel type info: `message channel-types` / `channel-type-schema`.
+- **Push update vs create**: `push update <ID>` modifies an existing target; `push create` makes a new one. To enable/disable an existing target: `push enable`/`disable <ID>`. Don't `create` when asked to `update`.
+- **Agent conversation/messaging**: `agent conversation <ID>` = read an agent's conversation history; `agent send-message <ID>` = send a message TO an agent. These live under `agent`, NOT `message send` (which is platform-wide broadcast).
 - **Read vs write**: `get`/`list` = read (ID positional, no `--id`); `create`/`update`/`delete` = write (use flags like `--name --device-type`). If you're creating/updating, you need the WRITE command, not `get`/`list`.
 - **Set vs check state**: `settings set-timezone` = change it; `settings timezone` = read current. Same for `rule enable`/`disable` (write) vs `rule get`/`list` (read), `transform enable`/`disable` vs `transform get`/`list`.
-- **Enable/activate/delete are explicit write actions**: `connector enable <ID>`, `llm activate <ID>`, `push enable <ID>` — don't report state, perform the change.
+- **Enable/activate/delete are explicit write actions**: `connector enable <ID>`, `llm activate <ID>`, `push enable <ID>` — don't report state, perform the change. The command is `llm activate` (there is no `llm set-default`).
 - **Check connectivity with `test`**: `connector test <ID>` verifies a broker; don't use `connector get` for that.
-- **When in doubt**: run `neomind <domain> --help` to see the exact subcommands before acting.
+- **NEVER guess a subcommand** — defaulting to `list`/`create` when unsure is the #1 command error. If you are not 100% certain a subcommand exists, run `neomind <domain> --help` FIRST, read the subcommand list, then run the exact one.
 
 ## Native System Commands
 Runs on host via `/bin/sh -c` (Unix) or `cmd /C` (Windows). Common tools available: ping, traceroute, curl, arp, nmap, ps, df, free, top, uptime, systemctl status, ls, cat, head, tail, grep, find, wc, arp-scan, avahi-browse, bluetoothctl, docker.
