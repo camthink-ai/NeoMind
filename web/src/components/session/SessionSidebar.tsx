@@ -560,10 +560,6 @@ export function SessionSidebar({
           className={cn(
             // bg-popover (opaque, semantic "floating layer" token) unifies
             // the persistent chat list with all other side drawers / popups.
-            // Previously bg-bg-50 (50% white) was a frosted layer that let
-            // the aurora gradient bleed through; it created a visible color
-            // gap against the opaque chat content area and the bg-popover
-            // dialogs opened on top of it.
             "h-full bg-popover border-r border-border flex flex-col transition-[width] duration-200 overflow-hidden",
             collapsed ? "w-12" : "w-64"
           )}

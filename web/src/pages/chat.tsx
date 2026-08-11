@@ -1302,14 +1302,8 @@ export function ChatPage() {
             chat root's `height: 100dvh` shrinks naturally on keyboard open
             (iOS 16.4+ / Android Chrome), and `shrink-0` keeps the input
             pinned to the bottom of the visible area — no fixed-position
-            hacks needed. No background: the chat column sits over the
-            decorative aurora layer (App.tsx `.aurora-bg`, z-0) and the
-            conversation area above is transparent, showing aurora over body
-            --background. Adding any opaque (bg-background) or frosted
-            (bg-bg-95 backdrop-blur) bg here blocks/alters that aurora and
-            creates a color seam vs the conversation area — the same
-            aurora-bleed bug seen in SessionSidebar / DashboardListSidebar.
-            Transparent matches the conversation area and the desktop input. */}
+            hacks needed. No background: transparent to match the
+            conversation area above and the desktop input. */}
         <div
           className="shrink-0 px-2.5 sm:px-4 pt-3 pb-5 sm:pt-3 sm:pb-6 safe-bottom border-0"
           style={isDesktop ? undefined : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 12px))' }}

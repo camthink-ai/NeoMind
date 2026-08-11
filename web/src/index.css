@@ -294,9 +294,9 @@ html {
        insets (code blocks) inside those white surfaces. */
     --background: oklch(0.975 0 0);
     /* Solid white for stable chrome layers (TopNav, tab strips, toolbars,
-       page headers). These anchor the layout — they should NOT float with
-       the aurora the way the scrollable content area does. In dark mode
-       this token falls back to --card so the same class works in both. */
+       page headers). These anchor the layout as a distinct elevated layer
+       above the gray content canvas. In dark mode this token falls back to
+       --card so the same class works in both. */
     --chrome: oklch(1 0 0);
     --foreground: oklch(0.21 0.01 264);
     --card: oklch(1 0 0);
@@ -631,40 +631,11 @@ html {
     --syntax-scrollbar-hover: oklch(0.42 0.008 264);
   }
 
-  /* Aurora background - animated flowing gradient layer.
-     Very low opacity (≤10% light / ≤14% dark) so it never competes with
-     content readability; content areas use opaque bg-background/bg-card that
-     fully cover it, so aurora only shows through the translucent nav chrome.
-     Animation is gentle (30s) to minimize repaint cost. */
-  .aurora-bg {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background:
-      radial-gradient(ellipse 800px 500px at 10% 5%, oklch(0.55 0.15 280 / 10%) 0%, transparent 70%),
-      radial-gradient(ellipse 600px 600px at 85% 90%, oklch(0.55 0.18 300 / 7%) 0%, transparent 70%),
-      radial-gradient(ellipse 1000px 400px at 50% 40%, oklch(0.60 0.08 250 / 5%) 0%, transparent 70%);
-    background-size: 150% 150%;
-    animation: aurora-shift 30s ease-in-out infinite alternate;
-  }
-
-  .dark .aurora-bg {
-    background:
-      radial-gradient(ellipse 800px 500px at 15% 10%, oklch(0.55 0.18 280 / 14%) 0%, transparent 70%),
-      radial-gradient(ellipse 600px 600px at 85% 90%, oklch(0.62 0.20 300 / 12%) 0%, transparent 70%),
-      radial-gradient(ellipse 1000px 400px at 50% 50%, oklch(0.55 0.10 250 / 8%) 0%, transparent 70%);
-    background-size: 150% 150%;
-  }
-
-  /* Respect reduced-motion: freeze the aurora gradient (still visible, just
-     static) AND neutralize decorative animations/transitions app-wide. The
-     0.01ms duration (not `none`) lets Radix enter/exit animations still fire
-     their animationend/unmount so nothing gets stuck mid-transition. */
+  /* Respect reduced-motion: neutralize decorative animations/transitions
+     app-wide. The 0.01ms duration (not `none`) lets Radix enter/exit
+     animations still fire their animationend/unmount so nothing gets stuck
+     mid-transition. */
   @media (prefers-reduced-motion: reduce) {
-    .aurora-bg {
-      animation: none;
-    }
     *,
     *::before,
     *::after {
@@ -673,12 +644,6 @@ html {
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
-  }
-
-  @keyframes aurora-shift {
-    0%   { background-position: 0% 0%; }
-    50%  { background-position: 50% 50%; }
-    100% { background-position: 100% 100%; }
   }
 }
 

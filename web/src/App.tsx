@@ -543,7 +543,6 @@ function App() {
             element={
               <ProtectedRoute>
                 <div className="flex flex-col" style={{height: 'var(--app-height, 100vh)'}}>
-                  <div className="aurora-bg" />
                   {!isMobile && <TopNav />}
                   <MobileNav />
                   {/* Skip link — keyboard users tab past the nav straight to content.

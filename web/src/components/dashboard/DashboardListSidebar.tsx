@@ -414,9 +414,7 @@ export function DashboardListSidebar({
       <div
         className={cn(
           // bg-popover: opaque, unified with SessionSidebar and all other
-          // popups/drawers. Previously bg-bg-50 (translucent) which let
-          // aurora bleed through and produced a color split vs the opaque
-          // dashboard canvas to the right.
+          // popups/drawers.
           "h-full w-64 bg-popover border-r border-border flex flex-col",
           className
         )}
