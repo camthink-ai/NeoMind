@@ -1,8 +1,8 @@
 //! Curated model capability registry, embedded at compile time.
 //!
 //! The data file `data/model_registry.json` is sourced from LiteLLM's
-//! community-maintained `model_prices_and_context_window.json` (2753 entries
-//! at the time of writing, 761 marked `supports_vision: true`).
+//! community-maintained `model_prices_and_context_window.json` (2988 entries
+//! as of 2026-08-11, 778 marked `supports_reasoning: true`).
 //!
 //! This module implements the same 3-tier fallback chain LiteLLM uses:
 //!
@@ -109,6 +109,20 @@ pub fn lookup_vision(model: &str) -> Option<bool> {
 /// Look up the max input tokens for a model.
 pub fn lookup_max_input_tokens(model: &str) -> Option<usize> {
     lookup_field(model, "max_input_tokens", |e, k| e.usize_field(k))
+}
+
+/// Look up whether a model supports reasoning/thinking.
+///
+/// Returns:
+/// - `Some(true)` if the registry marks it `supports_reasoning: true`
+/// - `Some(false)` if the registry marks it `supports_reasoning: false`
+/// - `None` if the model is not in the registry (or has no field set)
+///
+/// Mirrors `lookup_vision` (same 3-tier + alias resolution). This is the
+/// authoritative data source for `detect_thinking` — the name heuristic is
+/// only a fallback for models absent from the registry.
+pub fn lookup_reasoning(model: &str) -> Option<bool> {
+    lookup_field(model, "supports_reasoning", |e, k| e.bool_field(k))
 }
 
 /// Resolve well-known short aliases to their registry canonical keys.

@@ -229,9 +229,12 @@ impl LlamaCppRuntime {
             .as_deref()
             .or(props.model_path.as_deref())
             .unwrap_or("");
-        let supports_thinking = model_name.to_lowercase().contains("thinking")
-            || model_name.to_lowercase().contains("deepseek-r1")
-            || model_name.to_lowercase().contains("qwen3");
+        // Use the unified thinking detector (covers qwen3 / deepseek-r1 /
+        // qwq / glm-z1 / gpt-oss / "thinking"-suffixed models). The old
+        // inline rule only matched a subset and missed e.g. qwq-32b, so a
+        // thinking model could be misdetected as non-thinking and the UI
+        // would hide the thinking control entirely.
+        let supports_thinking = neomind_core::llm::detect_thinking(model_name);
 
         tracing::info!(
             model = model_name,

@@ -1118,7 +1118,7 @@ pub async fn list_ollama_models_handler(
         };
 
         models_with_caps.push(OllamaModelWithCapabilities {
-            name: model.name,
+            name: model.name.clone(),
             size: model.size,
             modified_at: model.modified_at,
             digest: model.digest,
@@ -1127,6 +1127,7 @@ pub async fn list_ollama_models_handler(
             supports_thinking: caps.supports_thinking,
             supports_tools: caps.supports_tools,
             max_context: caps.max_context,
+            reasoning: reasoning_for_ollama_model(&model.name, caps.supports_thinking),
         });
     }
 
@@ -1320,6 +1321,45 @@ struct OllamaModelWithCapabilities {
     supports_thinking: bool,
     supports_tools: bool,
     max_context: usize,
+    /// Declared reasoning control for this model — drives the frontend's
+    /// thinking-effort widget (readonly / boolean / level / effort).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<ReasoningCapabilitiesDto>,
+}
+
+/// Reasoning capabilities surfaced per-model in the Ollama list (and the
+/// llama.cpp server-info probe). Mirrors the fields the frontend reads.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReasoningCapabilitiesDto {
+    supported_efforts: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_effort: Option<String>,
+    mandatory: bool,
+    control: String,
+}
+
+/// Reasoning capabilities for an Ollama model in the list API.
+/// Ollama controls thinking via `think: true/false/low/medium/high`, so a
+/// thinking-capable model gets a Level control with the full effort set.
+fn reasoning_for_ollama_model(
+    model_name: &str,
+    supports_thinking: bool,
+) -> Option<ReasoningCapabilitiesDto> {
+    // Use the unified thinking detector as an additional check — /api/show
+    // reports `supports_thinking` from attention heads, but the name check
+    // covers models the API probe might miss (e.g. qwq-* naming).
+    if !supports_thinking && !neomind_core::llm::detect_thinking(model_name) {
+        return None;
+    }
+    Some(ReasoningCapabilitiesDto {
+        supported_efforts: ["none", "low", "medium", "high"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        default_effort: Some("high".to_string()),
+        mandatory: false,
+        control: "level".to_string(),
+    })
 }
 
 /// Detect maximum context window size for a model (works across all backends)

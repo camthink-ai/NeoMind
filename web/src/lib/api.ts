@@ -108,6 +108,7 @@ import type {
   MemorySystemConfig,
 } from '@/types'
 import type { SkillSummary, SkillDetail } from '@/types/skill'
+import type { ReasoningCapabilities } from '@/types/llm-backend'
 import { notifyFromError, notifySuccess } from './notify'
 import { tokenManager as unifiedTokenManager } from './auth'
 
@@ -950,6 +951,7 @@ export const api = {
         supports_thinking: boolean
         supports_tools: boolean
         max_context: number
+        reasoning?: ReasoningCapabilities
       }>
       count: number
     }>(`/llm-backends/ollama/models${endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ''}`),

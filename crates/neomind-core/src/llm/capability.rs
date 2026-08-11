@@ -379,6 +379,15 @@ pub fn detect_vision_capability(model: &str) -> bool {
 /// Note: modern multimodal models (qwen3-vl, gemini-flash-thinking, etc.)
 /// support both vision and thinking, so `-vl` is NOT excluded here.
 pub fn detect_thinking(model: &str) -> bool {
+    // Authoritative source first: the LiteLLM registry's `supports_reasoning`
+    // field (620+ models marked true, incl. qwen3.5-plus / gpt-5 / deepseek-v4).
+    // A definitive Some(false) wins over the name heuristic below — the
+    // registry is curated and knows a model is non-reasoning even when its
+    // name looks reasoning-ish. None (not in registry) falls through.
+    if let Some(reg) = crate::llm::registry::lookup_reasoning(model) {
+        return reg;
+    }
+
     let name_lower = model.to_lowercase();
 
     // Qwen3 family (qwen3, qwen3:2b, qwen3-vl, qwen3.5-plus, …)
@@ -522,6 +531,33 @@ mod tests {
         assert!(!detect_thinking("gemma3:4b"));
         assert!(!detect_thinking("gpt-4o"));
         assert!(!detect_thinking("mistral"));
+    }
+
+    #[test]
+    fn test_detect_thinking_uses_registry() {
+        // The registry is the authoritative source. qwen3.5-plus is marked
+        // supports_reasoning=true there, so detect_thinking must agree even
+        // though it also matches the name heuristic.
+        assert!(detect_thinking("dashscope/qwen3.5-plus"));
+        assert!(
+            detect_thinking("qwen3.5-plus"),
+            "bare alias falls back to name heuristic"
+        );
+
+        // gpt-4o has no supports_reasoning field → falls through to the name
+        // heuristic, which correctly says non-thinking.
+        assert!(!detect_thinking("gpt-4o"));
+    }
+
+    #[test]
+    fn test_lookup_reasoning() {
+        use crate::llm::registry::lookup_reasoning;
+        // Provider-prefixed key resolves; a model without the field returns
+        // None (unknown), and an unknown model returns None too.
+        assert_eq!(lookup_reasoning("dashscope/qwen3.5-plus"), Some(true));
+        // gpt-4o has no supports_reasoning field in the current registry → None.
+        assert_eq!(lookup_reasoning("gpt-4o"), None);
+        assert_eq!(lookup_reasoning("definitely-not-a-real-model-xyz"), None);
     }
 
     #[test]

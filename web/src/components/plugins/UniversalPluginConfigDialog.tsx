@@ -200,6 +200,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
             supports_thinking: modelWithCaps.supports_thinking,
             supports_tools: modelWithCaps.supports_tools,
             max_context: modelWithCaps.max_context,
+            reasoning: modelWithCaps.reasoning,
           })
         }
       }
@@ -627,14 +628,17 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
         )
       })()}
       {(() => {
-        // Thinking effort — ALWAYS visible (unlike the old supports_thinking
-        // gate, which hid the control entirely for models detected as
-        // non-thinking, making it impossible to override a wrong detection).
-        // The widget adapts to the backend's declared reasoning control:
+        // Thinking effort — visible when the model supports thinking; hidden
+        // entirely for non-thinking models (a "thinking" badge on a text-only
+        // model would be misleading — it isn't thinking). The widget adapts to
+        // the backend's declared reasoning control:
         //   readonly → read-only badge (thinking follows model default, cannot
         //              be toggled) — e.g. llama.cpp
         //   boolean  → On/Off dropdown (only none/high)
         //   level/effort (or unknown) → full effort dropdown (none/low/medium/high)
+        if (!detectedCapabilities.supports_thinking) {
+          return null
+        }
         const control = detectedCapabilities.reasoning?.control
         const isReadOnly = control === 'readonly' || control === undefined
 
