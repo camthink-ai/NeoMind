@@ -125,6 +125,16 @@ pub fn lookup_reasoning(model: &str) -> Option<bool> {
     lookup_field(model, "supports_reasoning", |e, k| e.bool_field(k))
 }
 
+/// Look up whether a model supports function/tool calling.
+///
+/// Returns `Some(bool)` when the registry has a `supports_function_calling`
+/// field for the model, else `None`. Mirrors `lookup_vision` / `lookup_reasoning`
+/// (same 3-tier + alias resolution). Authoritative source for
+/// `detect_tools_capability`.
+pub fn lookup_function_calling(model: &str) -> Option<bool> {
+    lookup_field(model, "supports_function_calling", |e, k| e.bool_field(k))
+}
+
 /// Resolve well-known short aliases to their registry canonical keys.
 ///
 /// Many providers accept short aliases like `claude-3-5-sonnet` or `gpt-4-turbo`

@@ -1613,21 +1613,14 @@ fn request_capabilities(
 /// - Gemma: 8k
 /// - Phi: 32k for Phi-3
 fn detect_model_capabilities(model_name: &str) -> ModelCapability {
-    let name_lower = model_name.to_lowercase();
-
     // Models that support thinking/reasoning — single source of truth in
     // neomind-core (`detect_thinking`), covering Qwen3/GPT-OSS/DeepSeek-R1/
     // QwQ/GLM-Z1/o1/o3. The old per-family list here missed `qwq`/`glm-z1`
     // and diverged from the API handler's rule.
     let supports_thinking = neomind_core::llm::detect_thinking(model_name);
 
-    // Models that support function calling
-    // Note: Smaller models like gemma3:270m do NOT support tools
-    let supports_tools = !name_lower.contains("270m")
-        && !name_lower.contains("1b")
-        && !name_lower.contains("tiny")
-        && !name_lower.contains("micro")
-        && !name_lower.contains("nano");
+    // Tool calling — registry (supports_function_calling) with name fallback.
+    let supports_tools = neomind_core::llm::detect_tools_capability(model_name);
 
     // Multimodal (vision) capability — delegate to neomind-core's layered
     // detection: LiteLLM registry → conservative heuristic → false.

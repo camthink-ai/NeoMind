@@ -113,6 +113,25 @@ pub fn supports_audio(model: &str) -> bool {
         || n.contains("minimax-speech")
 }
 
+/// Detect tool/function-calling capability from model name.
+///
+/// Registry-first: the LiteLLM `supports_function_calling` field is
+/// authoritative when present (community-curated, covers cloud models). For
+/// models absent from the registry (local/Ollama, regional), fall back to a
+/// conservative name heuristic that assumes tool support except for very
+/// small models whose names flag them as sub-1B / tiny.
+pub fn detect_tools_capability(model: &str) -> bool {
+    if let Some(v) = registry::lookup_function_calling(model) {
+        return v;
+    }
+    let n = model.to_lowercase();
+    !n.contains("270m")
+        && !n.contains("1b")
+        && !n.contains("tiny")
+        && !n.contains("micro")
+        && !n.contains("nano")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +216,32 @@ mod tests {
         // gpt-4o has no supports_reasoning field in the current registry → None.
         assert_eq!(lookup_reasoning("gpt-4o"), None);
         assert_eq!(lookup_reasoning("definitely-not-a-real-model-xyz"), None);
+    }
+
+    #[test]
+    fn test_lookup_function_calling() {
+        use crate::llm::registry::lookup_function_calling;
+        // Unknown model returns None (caller falls back to name heuristic).
+        assert_eq!(
+            lookup_function_calling("definitely-not-a-real-model-xyz"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_detect_tools_capability() {
+        // Registry-marked tool-capable cloud models.
+        assert!(detect_tools_capability("gpt-4o"));
+        assert!(detect_tools_capability("claude-3-5-sonnet"));
+
+        // Name fallback: very small models whose names contain explicit
+        // size hints (270m / tiny / nano / 1b / micro) are excluded.
+        assert!(!detect_tools_capability("gemma3:270m"));
+        assert!(!detect_tools_capability("tinyllama"));
+        assert!(!detect_tools_capability("nano-3b"));
+
+        // Name fallback: normal-sized unknown models assumed tool-capable.
+        assert!(detect_tools_capability("custom-model-7b"));
     }
 
     #[test]

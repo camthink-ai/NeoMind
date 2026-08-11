@@ -1177,13 +1177,9 @@ async fn get_model_capabilities_from_show(
     // Thinking capability is NOT provided by Ollama's API, need to infer from model name
     let supports_thinking = detect_thinking_from_name(model_name);
 
-    // Tools support - most models support tools except very small ones
-    let name_lower = model_name.to_lowercase();
-    let supports_tools = !name_lower.contains("270m")
-        && !name_lower.contains("1b")
-        && !name_lower.contains("tiny")
-        && !name_lower.contains("micro")
-        && !name_lower.contains("nano");
+    // Tool calling — registry (supports_function_calling) with a conservative
+    // name fallback for models absent from the registry.
+    let supports_tools = neomind_core::llm::detect_tools_capability(model_name);
 
     // Detect max context from model info or details
     let max_context = if let Some(model_info) = show_response["model_info"].as_object() {
@@ -1230,18 +1226,12 @@ fn detect_thinking_from_name(model_name: &str) -> bool {
 /// Fallback: Detect capabilities from model name when /api/show is not available.
 /// Uses neomind-core's unified detect_vision_capability for consistency.
 fn detect_ollama_model_capabilities_from_name(model_name: &str) -> BackendCapabilities {
-    let name_lower = model_name.to_lowercase();
-
     // Use unified vision detection from neomind-core
     let supports_multimodal = detect_vision_capability(model_name);
 
     let supports_thinking = detect_thinking_from_name(model_name);
 
-    let supports_tools = !name_lower.contains("270m")
-        && !name_lower.contains("1b")
-        && !name_lower.contains("tiny")
-        && !name_lower.contains("micro")
-        && !name_lower.contains("nano");
+    let supports_tools = neomind_core::llm::detect_tools_capability(model_name);
 
     let max_context = detect_ollama_model_context(model_name);
 
@@ -1593,10 +1583,12 @@ fn adjust_capabilities_for_model(model_name: &str, capabilities: &mut BackendCap
     capabilities.supports_thinking = neomind_core::llm::detect_thinking(&name_lower);
 
     // === Tool support ===
-    // Very small models (< 1B params) typically don't support tool calling
-    if name_lower.contains(":0.5") || name_lower.contains(":0.5b") {
-        capabilities.supports_tools = false;
-    }
+    // registry (supports_function_calling) with name fallback, plus an
+    // explicit guard for sub-1B models whose names don't contain the
+    // fallback's "1b"/"tiny" keywords (e.g. `:0.5`).
+    capabilities.supports_tools = neomind_core::llm::detect_tools_capability(model_name)
+        && !name_lower.contains(":0.5")
+        && !name_lower.contains(":0.5b");
 
     // Detect max context from model name
     capabilities.max_context = detect_model_context(model_name);
