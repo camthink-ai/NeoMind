@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
-import { RefreshCw, Eye, Brain, Wrench, Loader2, Server, RotateCcw, Info } from "lucide-react"
+import { RefreshCw, Eye, Brain, Wrench, Loader2, Server, RotateCcw, Info, Text } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -562,28 +562,51 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
     }
   }
 
-  const renderCapabilityBadges = () => (
-    <div className="space-y-3">
-      {/* Vision / multimodal — interactive override in edit mode, read-only in create */}
-      {(() => {
-        if (!detectedCapabilities.supports_multimodal) return null
-        if (!isEditing) {
-          return (
-            <FormField label={t("plugins:llm.capabilityVision")} horizontal>
-              <div className="flex items-center h-8">
-                <Badge variant="outline" className="text-xs">
-                  {t("plugins:llm.capabilityVisionSupported", { defaultValue: "Supported" })}
-                </Badge>
-              </div>
-            </FormField>
+  const renderCapabilityBadges = () => {
+    // Spec-row layout: each capability is one row — [icon] name on the left,
+    // value/control right-aligned. Deliberately NOT FormField: this is a
+    // capability summary panel, and wrapping mixed read-only/interactive items
+    // in form-field chrome reads as "weird half-form". A bordered tinted panel
+    // with iconified rows reads as a spec sheet instead.
+    const renderRow = (
+      key: string,
+      icon: ReactNode,
+      label: string,
+      children: ReactNode
+    ) => (
+      <div key={key} className="flex items-center justify-between gap-3 min-h-8">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="shrink-0">{icon}</span>
+          <span className="text-sm truncate">{label}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">{children}</div>
+      </div>
+    )
+
+    const rows: ReactNode[] = []
+
+    // Vision / multimodal — interactive override in edit mode, read-only in create
+    if (detectedCapabilities.supports_multimodal) {
+      if (!isEditing) {
+        rows.push(
+          renderRow(
+            "vision",
+            <Eye className="h-4 w-4 text-info" />,
+            t("plugins:llm.capabilityVision"),
+            <Badge variant="outline" className="text-xs h-6">
+              {t("plugins:llm.capabilityVisionSupported", { defaultValue: "Supported" })}
+            </Badge>
           )
-        }
+        )
+      } else {
         const effective = overrideState.effective
         const override = overrideState.override
-        const source = overrideState.source
-        return (
-          <FormField label={t("plugins:llm.capabilityVision")} horizontal>
-            <div className="flex items-center h-8 gap-2">
+        rows.push(
+          renderRow(
+            "vision",
+            <Eye className="h-4 w-4 text-info" />,
+            t("plugins:llm.capabilityVision"),
+            <>
               <Switch
                 checked={effective}
                 onCheckedChange={handleToggleMultimodalOverride}
@@ -608,30 +631,35 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
                   <RotateCcw className="h-3 w-3" />
                 </Button>
               )}
-            </div>
-          </FormField>
-        )
-      })()}
-      {/* Thinking effort */}
-      {(() => {
-        if (!detectedCapabilities.supports_thinking) return null
-        const control = detectedCapabilities.reasoning?.control
-        const isReadOnly = control === 'readonly' || control === undefined
-        if (!isEditing || isReadOnly) {
-          return (
-            <FormField label={t('plugins:llm.capabilityThinking')} horizontal>
-              <div className="flex items-center h-8">
-                <Badge variant="outline" className="text-xs">
-                  {t('plugins:llm.capabilityThinkingReadOnly', { defaultValue: 'Thinking (model default)' })}
-                </Badge>
-              </div>
-            </FormField>
+            </>
           )
-        }
-        const showLevels = control !== 'boolean'
-        return (
-          <FormField label={t('plugins:llm.capabilityThinking')} horizontal>
-            <div className="flex items-center h-8 gap-2">
+        )
+      }
+    }
+
+    // Thinking effort — read-only badge when model-controlled or non-edit, else dropdown
+    if (detectedCapabilities.supports_thinking) {
+      const control = detectedCapabilities.reasoning?.control
+      const isReadOnly = control === "readonly" || control === undefined
+      if (!isEditing || isReadOnly) {
+        rows.push(
+          renderRow(
+            "thinking",
+            <Brain className="h-4 w-4 text-accent-purple" />,
+            t("plugins:llm.capabilityThinking"),
+            <Badge variant="outline" className="text-xs h-6">
+              {t("plugins:llm.capabilityThinkingReadOnly", { defaultValue: "Thinking (model default)" })}
+            </Badge>
+          )
+        )
+      } else {
+        const showLevels = control !== "boolean"
+        rows.push(
+          renderRow(
+            "thinking",
+            <Brain className="h-4 w-4 text-accent-purple" />,
+            t("plugins:llm.capabilityThinking"),
+            <>
               <Select
                 value={thinkingState.effort}
                 onValueChange={(v) => patchEffort(v as ThinkingEffort)}
@@ -654,32 +682,48 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
               {thinkingState.pending && (
                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
               )}
-            </div>
-          </FormField>
+            </>
+          )
         )
-      })()}
-      {/* Tools */}
-      {detectedCapabilities.supports_tools && (
-        <FormField label={t("plugins:llm.capabilityTools")} horizontal>
-          <div className="flex items-center h-8">
-            <Badge variant="outline" className="text-xs">
-              {t("plugins:llm.capabilityToolsSupported", { defaultValue: "Supported" })}
-            </Badge>
-          </div>
-        </FormField>
-      )}
-      {/* Context window */}
-      <FormField label={t("plugins:llm.capabilityContext", { defaultValue: "Context Window" })} horizontal>
-        <div className="flex items-center h-8">
-          <span className="text-sm text-muted-foreground">
-            {detectedCapabilities.max_context >= 100000
-              ? `${Math.round(detectedCapabilities.max_context / 1000)}k tokens`
-              : `${detectedCapabilities.max_context} tokens`}
-          </span>
-        </div>
-      </FormField>
-    </div>
-  )
+      }
+    }
+
+    // Tools — read-only
+    if (detectedCapabilities.supports_tools) {
+      rows.push(
+        renderRow(
+          "tools",
+          <Wrench className="h-4 w-4 text-accent-orange" />,
+          t("plugins:llm.capabilityTools"),
+          <Badge variant="outline" className="text-xs h-6">
+            {t("plugins:llm.capabilityToolsSupported", { defaultValue: "Supported" })}
+          </Badge>
+        )
+      )
+    }
+
+    // Context window — read-only
+    rows.push(
+      renderRow(
+        "context",
+        <Text className="h-4 w-4 text-accent-cyan" />,
+        t("plugins:llm.capabilityContext", { defaultValue: "Context Window" }),
+        <span className="text-sm text-muted-foreground tabular-nums">
+          {detectedCapabilities.max_context >= 100000
+            ? `${Math.round(detectedCapabilities.max_context / 1000)}k tokens`
+            : `${detectedCapabilities.max_context} tokens`}
+        </span>
+      )
+    )
+
+    if (rows.length === 0) return null
+
+    return (
+      <div className="rounded-lg border border-border bg-muted-30 p-3 space-y-2">
+        {rows}
+      </div>
+    )
+  }
 
   const getModelIcon = (model: OllamaModel) => {
     const icons = []
