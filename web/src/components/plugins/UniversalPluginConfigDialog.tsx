@@ -537,9 +537,11 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
   // override endpoint — thinking is a plain config field, not an override).
   // Optimistic update with rollback on error, mirroring patchMultimodalOverride.
   //
-  // After success, refresh the parent list so the next dialog open sees the
-  // persisted value. The dialog is rendered via portal as a sibling of the
-  // list, so refreshing the list does not unmount this dialog mid-interaction.
+  // We deliberately do NOT call `onRefresh()` here: the parent's loadData
+  // flips setLoading(true) which replaces the whole tab with a page-level
+  // loading skeleton — that unmounts this dialog mid-interaction and wipes
+  // any in-progress form edits. The PATCH response is authoritative, so local
+  // state stays correct; the card list reconciles on the next natural refresh.
   const patchEffort = async (effort: ThinkingEffort) => {
     if (!editingInstance || thinkingState.pending) return
     const prev = thinkingState
@@ -548,10 +550,6 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
       await api.updateLlmBackend(editingInstance.id, { thinking_effort: effort })
       setThinkingState({ effort, pending: false })
       showSuccess(t("plugins:llm.thinkingSavedToast"))
-      // Refresh parent so reopen-without-Save shows the persisted value.
-      if (onRefresh) {
-        try { await onRefresh() } catch { /* parent refresh is best-effort */ }
-      }
     } catch (error) {
       setThinkingState(prev)
       const isNotFound = (error as { status?: number })?.status === 404
@@ -565,12 +563,14 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
   }
 
   const renderCapabilityBadges = () => (
-    <div className="flex flex-wrap gap-2 mt-2 items-center">
-      {/* Multimodal / Vision — interactive override in edit mode, read-only badge in create mode */}
-      {(() => {
-        // Create mode: no backend id → no PATCH possible → original read-only badge.
-        if (!isEditing) {
-          return detectedCapabilities.supports_multimodal ? (
+    <div className="mt-2 space-y-2">
+      {/* Row 1: Multimodal / Vision + Tools + ctx — compact badge row */}
+      <div className="flex flex-wrap gap-2 items-center">
+        {/* Multimodal / Vision — interactive override in edit mode, read-only badge in create mode */}
+        {(() => {
+          // Create mode: no backend id → no PATCH possible → original read-only badge.
+          if (!isEditing) {
+            return detectedCapabilities.supports_multimodal ? (
             <Badge variant="outline" className="text-xs">
               <Eye className="h-4 w-4 mr-1" />
               {t("plugins:llm.capabilityVision")}
@@ -628,14 +628,9 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
         )
       })()}
       {(() => {
-        // Thinking effort — visible when the model supports thinking; hidden
-        // entirely for non-thinking models (a "thinking" badge on a text-only
-        // model would be misleading — it isn't thinking). The widget adapts to
-        // the backend's declared reasoning control:
-        //   readonly → read-only badge (thinking follows model default, cannot
-        //              be toggled) — e.g. llama.cpp
-        //   boolean  → On/Off dropdown (only none/high)
-        //   level/effort (or unknown) → full effort dropdown (none/low/medium/high)
+        // Thinking effort — standard FormField + Select, matching the model
+        // selector style. On its own row, not mixed into the multimodal switch
+        // row. Hidden for models that don't support thinking.
         if (!detectedCapabilities.supports_thinking) {
           return null
         }
@@ -644,44 +639,44 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
 
         // Create mode (no backend id → no PATCH) or ReadOnly → read-only badge.
         if (!isEditing || isReadOnly) {
-          const label = isReadOnly
-            ? t('plugins:llm.capabilityThinkingReadOnly', { defaultValue: 'Thinking (model default)' })
-            : t('plugins:llm.capabilityThinking')
           return (
-            <Badge variant="outline" className="text-xs">
-              <Brain className="h-4 w-4 mr-1" />
-              {label}
-            </Badge>
+            <FormField label={t('plugins:llm.capabilityThinking')}>
+              <Badge variant="outline" className="text-xs">
+                {t('plugins:llm.capabilityThinkingReadOnly', { defaultValue: 'Thinking (model default)' })}
+              </Badge>
+            </FormField>
           )
         }
 
         // Boolean control: only none/high are meaningful (no low/medium).
         const showLevels = control !== 'boolean'
         return (
-          <div className="flex items-center gap-2">
-            <Select
-              value={thinkingState.effort}
-              onValueChange={(v) => patchEffort(v as ThinkingEffort)}
-              disabled={thinkingState.pending}
-            >
-              <SelectTrigger className="h-7 w-[110px] text-xs" aria-label={t("plugins:llm.capabilityThinking")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">{t("plugins:llm.effortNone")}</SelectItem>
-                {showLevels && (
-                  <>
-                    <SelectItem value="low">{t("plugins:llm.effortLow")}</SelectItem>
-                    <SelectItem value="medium">{t("plugins:llm.effortMedium")}</SelectItem>
-                  </>
-                )}
-                <SelectItem value="high">{t("plugins:llm.effortHigh")}</SelectItem>
-              </SelectContent>
-            </Select>
-            {thinkingState.pending && (
-              <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-            )}
-          </div>
+          <FormField label={t('plugins:llm.capabilityThinking')}>
+            <div className="flex items-center gap-2">
+              <Select
+                value={thinkingState.effort}
+                onValueChange={(v) => patchEffort(v as ThinkingEffort)}
+                disabled={thinkingState.pending}
+              >
+                <SelectTrigger className="w-[140px]" aria-label={t("plugins:llm.capabilityThinking")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t("plugins:llm.effortNone")}</SelectItem>
+                  {showLevels && (
+                    <>
+                      <SelectItem value="low">{t("plugins:llm.effortLow")}</SelectItem>
+                      <SelectItem value="medium">{t("plugins:llm.effortMedium")}</SelectItem>
+                    </>
+                  )}
+                  <SelectItem value="high">{t("plugins:llm.effortHigh")}</SelectItem>
+                </SelectContent>
+              </Select>
+              {thinkingState.pending && (
+                <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+              )}
+            </div>
+          </FormField>
         )
       })()}
       {detectedCapabilities.supports_tools && (
@@ -695,6 +690,7 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
           ? `${Math.round(detectedCapabilities.max_context / 1000)}k ctx`
           : `${detectedCapabilities.max_context} ctx`}
       </Badge>
+      </div>
     </div>
   )
 
