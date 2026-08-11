@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
 use neomind_core::llm::backend::{LlmError, LlmInput, LlmRuntime};
@@ -756,6 +756,114 @@ impl LlmBackendInstanceManager {
         }
     }
 
+    #[cfg(feature = "llamacpp")]
+    /// Auto-register a local llama.cpp backend if a llama-server is reachable.
+    ///
+    /// Idempotent: skips entirely if a llama.cpp instance already exists, if the
+    /// operator opted out (empty endpoint env), or if the endpoint is unreachable.
+    /// Called once at startup before `detect_llamacpp_capabilities`, so the freshly
+    /// created instance's capabilities are refreshed in the same pass.
+    pub async fn auto_register_llamacpp(&self) {
+        // Idempotency guard (commit 76bd555a lesson): never seed a backend the
+        // user didn't ask for. We only act when the endpoint is provably reachable,
+        // but we still never create a second llama.cpp instance.
+        let already_exists = self
+            .instances
+            .iter()
+            .any(|item| matches!(item.value().backend_type, LlmBackendType::LlamaCpp));
+        if already_exists {
+            return;
+        }
+
+        // Endpoint: env override lets the Docker companion (http://llama:8080) or a
+        // native llama-server (default http://127.0.0.1:8080) be targeted.
+        // An empty value = operator opted out of auto-registration.
+        let endpoint = std::env::var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT")
+            .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+        if endpoint.trim().is_empty() {
+            return;
+        }
+        let endpoint = endpoint.trim().to_string();
+
+        // Probe reachability + detect capabilities in one pass (GET /props).
+        // Retry briefly: the server may be up but the model still loading.
+        let config = LlamaCppConfig::new("")
+            .with_endpoint(&endpoint)
+            .with_timeout_secs(10);
+        let runtime = match LlamaCppRuntime::new(config) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, endpoint = %endpoint, "llama.cpp auto-register: failed to build runtime; skipping");
+                return;
+            }
+        };
+        let mut caps = None;
+        for attempt in 0..3 {
+            caps = runtime.detect_capabilities().await;
+            if caps.is_some() {
+                break;
+            }
+            tracing::info!(
+                endpoint = %endpoint,
+                attempt = attempt + 1,
+                "llama.cpp auto-register: server not reachable, retrying"
+            );
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let caps = match caps {
+            Some(c) => c,
+            None => {
+                tracing::info!(endpoint = %endpoint, "llama.cpp auto-register: server not reachable; skipping");
+                return;
+            }
+        };
+
+        // Build instance. new() gives the LlamaCpp defaults (endpoint
+        // http://127.0.0.1:8080, empty model, max_context 4096); we override the
+        // endpoint + probed capabilities.
+        let id = LlmBackendStore::generate_id("llamacpp");
+        let mut instance = LlmBackendInstance::new(
+            id.clone(),
+            "llama.cpp (auto)".to_string(),
+            LlmBackendType::LlamaCpp,
+        );
+        instance.endpoint = Some(endpoint.clone());
+        // Mark multimodal source as runtime API so ensure_instance_capabilities
+        // (called by list_instances) doesn't re-derive it from the (empty) model
+        // name and clobber the /props result — same provenance as Ollama /api/show.
+        instance.capabilities.supports_multimodal = caps.supports_multimodal;
+        instance.capabilities.multimodal_source = Some("runtime_api".to_string());
+        instance.capabilities.supports_thinking = caps.supports_thinking;
+        instance.capabilities.supports_tools = caps.supports_tools;
+        instance.capabilities.supports_audio = caps.supports_audio;
+        // Respect the global context cap, mirroring the Ollama path.
+        let cap = std::env::var("NEOMIND_MAX_CONTEXT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(usize::MAX);
+        instance.capabilities.max_context = caps.max_context.min(cap);
+
+        // Persist + insert into the in-memory cache.
+        if let Err(e) = self.upsert_instance(instance).await {
+            tracing::warn!(error = %e, "llama.cpp auto-register: failed to persist instance; skipping");
+            return;
+        }
+
+        // Set active ONLY if no active backend exists — never steal active status
+        // from a user-configured backend.
+        if self.get_active_instance().is_none() {
+            if let Err(e) = self.set_active(&id).await {
+                tracing::warn!(error = %e, id = %id, "llama.cpp auto-register: failed to set active");
+                return;
+            }
+        }
+
+        tracing::info!(id = %id, endpoint = %endpoint, "Auto-registered llama.cpp backend");
+    }
+
+    #[cfg(not(feature = "llamacpp"))]
+    pub async fn auto_register_llamacpp(&self) {}
+
     #[cfg(not(feature = "llamacpp"))]
     pub async fn detect_llamacpp_capabilities(&self) {}
 
@@ -1342,6 +1450,115 @@ mod tests {
         assert_eq!(
             refreshed.capabilities.multimodal_source.as_deref(),
             Some("user_override"),
+        );
+    }
+
+
+    /// Open a throwaway store at a unique temp path. The store layer keeps a
+    /// process-global singleton keyed by path, so distinct paths yield isolated
+    /// databases — ":memory:" would be shared across tests and leak instances.
+    fn test_store(tag: &str) -> Arc<LlmBackendStore> {
+        let path = std::env::temp_dir().join(format!(
+            "neomind-test-{}-{}.redb",
+            tag,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        LlmBackendStore::open(&path).expect("open test store")
+    }
+
+    // ==== auto_register_llamacpp ====
+
+    #[cfg(feature = "llamacpp")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_auto_register_llamacpp_skips_when_unreachable() {
+        let manager = LlmBackendInstanceManager::new(test_store("skips-unreach"));
+        std::env::set_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT", "http://127.0.0.1:9"); // refused
+        manager.auto_register_llamacpp().await;
+        std::env::remove_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT");
+        assert!(
+            manager.list_instances().is_empty(),
+            "unreachable server must not create a backend"
+        );
+    }
+
+    #[cfg(feature = "llamacpp")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_auto_register_llamacpp_is_idempotent() {
+        let manager = LlmBackendInstanceManager::new(test_store("is-idempotent"));
+        manager
+            .upsert_instance(LlmBackendInstance::new(
+                "llamacpp_existing".into(),
+                "Existing".into(),
+                LlmBackendType::LlamaCpp,
+            ))
+            .await
+            .unwrap();
+        std::env::set_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT", "http://127.0.0.1:9");
+        manager.auto_register_llamacpp().await;
+        std::env::remove_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT");
+        assert_eq!(manager.list_instances().len(), 1, "existing instance must not be duplicated");
+    }
+
+    #[cfg(feature = "llamacpp")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_auto_register_llamacpp_opt_out_with_empty_endpoint() {
+        let manager = LlmBackendInstanceManager::new(test_store("opt-out"));
+        std::env::set_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT", ""); // empty → opt out
+        manager.auto_register_llamacpp().await;
+        std::env::remove_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT");
+        assert!(manager.list_instances().is_empty());
+    }
+
+    #[cfg(feature = "llamacpp")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_auto_register_llamacpp_creates_active_backend() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let props = r#"{"default_generation_settings":{"n_ctx":16384},
+            "model_alias":"gemma-4-E2B_q4_0-it",
+            "modalities":{"vision":true,"audio":false},
+            "chat_template_caps":{"supports_tool_calls":true,"supports_tools":true,
+                "supports_parallel_tool_calls":true,"supports_system_role":true}}"#;
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else { break };
+                let mut buf = [0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                let body = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    props.len(),
+                    props
+                );
+                let _ = socket.write_all(body.as_bytes()).await;
+            }
+        });
+
+        let manager = LlmBackendInstanceManager::new(test_store("auto-reg"));
+        std::env::set_var(
+            "NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT",
+            format!("http://{}", addr),
+        );
+        manager.auto_register_llamacpp().await;
+        std::env::remove_var("NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT");
+        server.abort();
+
+        let instances = manager.list_instances();
+        assert_eq!(instances.len(), 1, "reachable server must create one backend");
+        let inst = &instances[0];
+        assert!(matches!(inst.backend_type, LlmBackendType::LlamaCpp));
+        assert_eq!(inst.capabilities.max_context, 16384);
+        assert!(inst.capabilities.supports_multimodal, "mmproj reports vision=true");
+        assert!(inst.capabilities.supports_tools);
+        assert!(
+            manager.get_active_instance().is_some(),
+            "no active backend → auto-registered instance must be active"
         );
     }
 }

@@ -433,12 +433,14 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             // Initialize AI Agent event listener
             bg_state.init_agent_events().await;
 
-            // Detect llama.cpp backend capabilities from /props endpoint
+            // Auto-register a reachable llama.cpp server (if none exists yet),
+            // then refresh capabilities from /props for all llama.cpp backends.
             {
                 let mut retry_interval = tokio::time::interval(Duration::from_secs(5));
                 for _ in 0..12 {
                     retry_interval.tick().await;
                     if let Ok(instance_manager) = neomind_agent::get_instance_manager() {
+                        instance_manager.auto_register_llamacpp().await;
                         instance_manager.detect_llamacpp_capabilities().await;
                         break;
                     }

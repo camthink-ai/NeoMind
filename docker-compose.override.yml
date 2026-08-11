@@ -1,0 +1,63 @@
+# =============================================================================
+# NeoMind local AI companion — llama.cpp server (Gemma4-E2B)
+# =============================================================================
+# docker-compose.override.yml is auto-loaded by `docker compose`. It adds:
+#   llama-init — one-shot container that downloads the GGUF + mmproj into the
+#                `llama-models` named volume (resumable, idempotent)
+#   llama      — llama.cpp server serving the model on :8080
+#   neomind    — waits for `llama` to be healthy and auto-registers the backend
+# On first `docker compose up`, ~4.3 GB is downloaded; later runs reuse it.
+#
+# To disable local AI: delete/rename this file, or keep the server but disable
+# auto-registration by setting NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT= in .env.
+# =============================================================================
+
+services:
+  llama-init:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: llama-init
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/llama-init.sh"]
+    volumes:
+      - ./deploy/llama-init.sh:/scripts/llama-init.sh:ro
+      - llama-models:/models
+    environment:
+      - LLAMA_MODEL_URL=${LLAMA_MODEL_URL:-https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf}
+      - LLAMA_MODEL_FILE=${LLAMA_MODEL_FILE:-gemma-4-E2B_q4_0-it.gguf}
+      - LLAMA_MMPROJ_URL=${LLAMA_MMPROJ_URL:-https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B-it-mmproj.gguf}
+      - LLAMA_MMPROJ_FILE=${LLAMA_MMPROJ_FILE:-gemma-4-E2B-it-mmproj.gguf}
+      - LLAMA_MODEL_DIR=/models
+
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: llama
+    restart: unless-stopped
+    depends_on:
+      llama-init:
+        condition: service_completed_successfully
+    ports:
+      - "${LLAMA_PORT:-8080}:8080"
+    volumes:
+      - llama-models:/models
+    command: >
+      --model /models/${LLAMA_MODEL_FILE:-gemma-4-E2B_q4_0-it.gguf}
+      --mmproj /models/${LLAMA_MMPROJ_FILE:-gemma-4-E2B-it-mmproj.gguf}
+      --ctx-size ${LLAMA_CTX_SIZE:-16384}
+      --host 0.0.0.0
+      --port 8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
+  neomind:
+    depends_on:
+      llama:
+        condition: service_healthy
+    environment:
+      - NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT=${NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT:-http://llama:8080}
+
+volumes:
+  llama-models:

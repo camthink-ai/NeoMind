@@ -195,6 +195,45 @@ volumes:
 
 Then in NeoMind Web UI, set Ollama endpoint to `http://ollama:11434`.
 
+### Local AI Companion: llama.cpp (optional but recommended)
+
+`docker-compose.override.yml` in the repo root is auto-loaded by `docker compose`.
+It adds a local llama.cpp server running **Gemma4-E2B (QAT)**, so `docker compose up -d`
+gives NeoMind a working local LLM with no external API keys:
+
+- **`llama-init`** — one-shot container that downloads the text GGUF (3.35 GB)
+  + vision mmproj (0.99 GB) into the `llama-models` named volume on first start;
+  resumable and idempotent.
+- **`llama`** — llama.cpp server exposing the model on `:8080`, reachable by the
+  NeoMind container at `http://llama:8080`. Vision enabled via `--mmproj`.
+- **Auto-registration** — on startup NeoMind probes the endpoint; if a llama.cpp
+  backend does not already exist and the server is reachable, it creates one and
+  (only if no active backend exists) makes it active. Idempotent and never
+  overrides a backend you configured.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLAMA_PORT` | `8080` | Host port for the llama.cpp server |
+| `LLAMA_CTX_SIZE` | `16384` | Context window in tokens (E2B Q4 + 16k ctx ≈ 3.6 GB RAM) |
+| `LLAMA_MODEL_URL` | HF `gemma-4-E2B_q4_0-it.gguf` | Text GGUF download URL |
+| `LLAMA_MODEL_FILE` | `gemma-4-E2B_q4_0-it.gguf` | Text model file name in the volume |
+| `LLAMA_MMPROJ_URL` | HF `gemma-4-E2B-it-mmproj.gguf` | Vision projector URL |
+| `LLAMA_MMPROJ_FILE` | `gemma-4-E2B-it-mmproj.gguf` | Vision projector file name |
+| `NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT` | `http://llama:8080` | Endpoint neomind probes; empty disables auto-registration |
+
+First run downloads the model (~4.3 GB), then starts the server. Later runs reuse
+the volume. **To disable local AI**, delete/rename `docker-compose.override.yml`;
+to keep the server but skip auto-registration, set an empty
+`NEOMIND_LLAMACPP_AUTOREGISTER_ENDPOINT` in `.env`.
+
+> **Note**: Gemma4-E2B reasons by default (thinking is streamed into
+> `reasoning_content`); NeoMind displays it. Context size is configurable via
+> `LLAMA_CTX_SIZE` — bump to 32768 for longer conversations if RAM allows.
+
+GPU: add an NVIDIA `deploy.resources.reservations.devices` block to the `llama`
+service and pass `--n-gpu-layers 999` in `command` to offload. If host port 8080
+is taken, set `LLAMA_PORT=18080` in `.env`.
+
 ### Troubleshooting
 
 **Container won't start:**
