@@ -423,6 +423,23 @@ def cmd_smoke(args):
     return 0
 
 
+def _filter_multimodal(cases: list[Path], skip: bool) -> list[Path]:
+    """Exclude `requires_multimodal` cases when the config is non-multimodal.
+
+    The tools/vision cases carry requires_multimodal:true; on a non-multimodal
+    backend they fail at image-input validation (not model behavior) and inflate
+    the fail count. `--skip-multimodal` drops them and reports the count.
+    """
+    if not skip:
+        return cases
+    kept = [p for p in cases if not _load_case(p).get("requires_multimodal")]
+    dropped = len(cases) - len(kept)
+    if dropped:
+        print(f"  (--skip-multimodal: excluded {dropped} requires_multimodal case(s))",
+              file=sys.stderr)
+    return kept
+
+
 def _select_cases(root: Path, lang: str, workflows: list[str] | None, case_id: str | None) -> list[Path]:
     out = []
     for p in _walk_json_files(root):
@@ -481,6 +498,7 @@ def cmd_run(args):
         return 1
     root = Path(args.root)
     cases = _select_cases(root, args.lang, args.workflow, args.case_id)
+    cases = _filter_multimodal(cases, args.skip_multimodal)
     if not cases:
         print("no matching cases", file=sys.stderr)
         return 1
@@ -618,6 +636,7 @@ def cmd_regression(args):
         with scores_path.open("w") as sf:
             for cid in case_ids:
                 paths = _select_cases(root, args.lang, None, cid)
+                paths = _filter_multimodal(paths, args.skip_multimodal)
                 if not paths:
                     print(f"  {cid}: NOT FOUND in {root}", file=sys.stderr)
                     continue
@@ -775,6 +794,8 @@ def main():
     p.add_argument("--run-dir", default=None)
     p.add_argument("--skip-preflight", action="store_true",
                    help="skip LLM-endpoint pre-flight (for confirmed cloud/versioned endpoints)")
+    p.add_argument("--skip-multimodal", action="store_true",
+                   help="exclude requires_multimodal cases (non-multimodal backend config)")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="aggregate scores.jsonl → grade-card.md")
@@ -806,6 +827,8 @@ def main():
     p.add_argument("--run-dir", default=None)
     p.add_argument("--skip-preflight", action="store_true",
                    help="skip LLM-endpoint pre-flight (for confirmed cloud/versioned endpoints)")
+    p.add_argument("--skip-multimodal", action="store_true",
+                   help="exclude requires_multimodal cases (non-multimodal backend config)")
     p.set_defaults(func=cmd_regression)
 
     args = ap.parse_args()
