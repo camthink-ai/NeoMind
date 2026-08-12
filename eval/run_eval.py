@@ -477,7 +477,7 @@ def _run_preflight() -> int:
 
 
 def cmd_run(args):
-    if _run_preflight() != 0:
+    if not args.skip_preflight and _run_preflight() != 0:
         return 1
     root = Path(args.root)
     cases = _select_cases(root, args.lang, args.workflow, args.case_id)
@@ -591,7 +591,7 @@ def cmd_regression(args):
     Requires AGENT_LLM_* env vars (same as `run`) and a freshly-built
     target/release/neomind — a stale binary invalidates the result.
     """
-    if _run_preflight() != 0:
+    if not args.skip_preflight and _run_preflight() != 0:
         return 1
     root = Path(args.root)
     set_path = Path(args.regression_set) if args.regression_set else Path(__file__).parent / "regression_set.txt"
@@ -773,6 +773,8 @@ def main():
     p.add_argument("--case-id", default=None)
     p.add_argument("--judge", action="store_true", help="invoke Claude judge")
     p.add_argument("--run-dir", default=None)
+    p.add_argument("--skip-preflight", action="store_true",
+                   help="skip LLM-endpoint pre-flight (for confirmed cloud/versioned endpoints)")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("report", help="aggregate scores.jsonl → grade-card.md")
@@ -802,6 +804,8 @@ def main():
     p.add_argument("--update-baseline", action="store_true",
                    help="save this run as the new baseline instead of comparing")
     p.add_argument("--run-dir", default=None)
+    p.add_argument("--skip-preflight", action="store_true",
+                   help="skip LLM-endpoint pre-flight (for confirmed cloud/versioned endpoints)")
     p.set_defaults(func=cmd_regression)
 
     args = ap.parse_args()
