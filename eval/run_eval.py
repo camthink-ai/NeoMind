@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent / "lib"))
 import fallback  # noqa: E402
 import hard_signal  # noqa: E402
 import judge  # noqa: E402
+import preflight  # noqa: E402
 import report  # noqa: E402
 import seed  # noqa: E402
 import server  # noqa: E402
@@ -446,7 +447,38 @@ def _select_cases(root: Path, lang: str, workflows: list[str] | None, case_id: s
     return out
 
 
+def _run_preflight() -> int:
+    """Fail-fast if the agent's LLM endpoint is misconfigured.
+
+    Returns 0 if reachable + parseable, 1 (after a clear message) otherwise.
+    Catches the misconfig class that otherwise silently fails every case and
+    looks like a model-capability regression: dead server, wrong port,
+    doubly-pathed /v1, non-JSON proxy, or unset env. See lib/preflight.py.
+    """
+    backend_type = os.environ.get("AGENT_LLM_BACKEND_TYPE", "openai")
+    endpoint = os.environ.get("AGENT_LLM_ENDPOINT", "")
+    model = os.environ.get("AGENT_LLM_MODEL", "")
+    api_key = os.environ.get("AGENT_LLM_API_KEY")
+    if not (endpoint and model and api_key):
+        print(
+            "\n!! LLM endpoint pre-flight FAILED: AGENT_LLM_ENDPOINT, "
+            "AGENT_LLM_MODEL, and AGENT_LLM_API_KEY must all be set "
+            "(same contract as lib/server.py; use a dummy key for local "
+            "no-auth servers).",
+            file=sys.stderr,
+        )
+        return 1
+    ok, msg = preflight.probe_llm_endpoint(backend_type, endpoint, model, api_key)
+    if not ok:
+        print(f"\n!! LLM endpoint pre-flight FAILED:\n   {msg}\n", file=sys.stderr)
+        return 1
+    print(f"   pre-flight: {msg}", file=sys.stderr)
+    return 0
+
+
 def cmd_run(args):
+    if _run_preflight() != 0:
+        return 1
     root = Path(args.root)
     cases = _select_cases(root, args.lang, args.workflow, args.case_id)
     if not cases:
@@ -559,6 +591,8 @@ def cmd_regression(args):
     Requires AGENT_LLM_* env vars (same as `run`) and a freshly-built
     target/release/neomind — a stale binary invalidates the result.
     """
+    if _run_preflight() != 0:
+        return 1
     root = Path(args.root)
     set_path = Path(args.regression_set) if args.regression_set else Path(__file__).parent / "regression_set.txt"
     if not set_path.exists():
