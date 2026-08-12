@@ -975,6 +975,11 @@ The `neomind` CLI has 14 domains: `device`, `dashboard`, `rule`, `agent`, `exten
 - **Set vs check state**: `settings set-timezone` = change it; `settings timezone` = read current. Same for `rule enable`/`disable` (write) vs `rule get`/`list` (read), `transform enable`/`disable` vs `transform get`/`list`.
 - **Enable/activate/delete are explicit write actions**: `connector enable <ID>`, `llm activate <ID>`, `push enable <ID>` — don't report state, perform the change.
 - **Check connectivity with `test`**: `connector test <ID>` verifies a broker; don't use `connector get` for that.
+- **extension**: `extension list` = all installed; `extension get <ID>` = one extension's details (NOT `info`); `extension status <ID>` / `extension logs <ID>` = runtime state; `extension config <ID>` = edit config; `extension install`/`uninstall`/`reload`/`build` = write ops.
+- **message**: notification channels are `message channel-create`/`channel-get`/`channel-update`/`channel-test`/`channel-delete`/`channel-type-schema` — NOT under `connector` (connector = external MQTT brokers, a separate subsystem).
+- **agent**: `agent executions <ID>` / `agent latest-execution <ID>` = execution history; `agent memory <ID>` / `agent clear-memory <ID>` = memory; `agent get <ID>` is details only, not executions.
+- **widget**: `widget bundle` = build a widget bundle; `widget list` / `widget get <ID>` = read.
+- **transform**: `transform metrics <ID>` = transform output metrics; `transform data-sources <ID>` = its input sources — distinct subcommands.
 - **When in doubt**: run `neomind <domain> --help` to see the exact subcommands before acting.
 
 ## Native System Commands
@@ -1112,6 +1117,29 @@ mod tests {
             enabled: true,
             timeout_secs: 10,
             max_output_chars: 5000,
+        }
+    }
+
+    /// Regression guard: the shell tool's Command Choice must keep the exact
+    /// subcommand disambiguation for the domains GLM-5.2 failed on
+    /// (extension/message/agent/widget/transform-metrics). A prompt slim that
+    /// drops these lines silently reintroduces command-variant failures — the
+    /// model then improvises subcommands (extension info↔get, data-sources↔metrics)
+    /// because those domains aren't in the always-present reference.
+    #[test]
+    fn command_choice_covers_failure_domains() {
+        let d = ShellTool::new(test_config()).description().to_lowercase();
+        for needle in [
+            "extension get",
+            "channel-create",
+            "agent executions",
+            "widget bundle",
+            "transform metrics",
+        ] {
+            assert!(
+                d.contains(needle),
+                "Command Choice must keep subcommand coverage for {needle:?}"
+            );
         }
     }
 

@@ -989,10 +989,12 @@ impl LlmInterface {
             }
         }
 
-        // Auto-load skill guides — DISABLED: TOOL_STRATEGY already contains complete CLI reference.
-        // Skills are only loaded on-demand via the skill tool (search/load) when the LLM needs
-        // domain-specific guidance beyond what TOOL_STRATEGY provides (complex workflows, error troubleshooting).
-        // This saves ~3000 tokens per turn by avoiding duplication with the always-present TOOL_STRATEGY.
+        // Auto-load skill guides — DISABLED: the slim prompt (default) dropped the
+        // full CLI reference table, and the shell tool's Command Choice covers only
+        // a subset of domains. Skills are loaded on-demand via the skill tool
+        // (search/load) when the LLM needs domain-specific guidance beyond the
+        // always-present Command Choice (complex workflows, error troubleshooting).
+        // Re-enabling auto-load would re-add ~3000 tokens per turn.
 
         // Inject transient skill context (from skill tool calls in current turn's multi-round loop)
         // This content is NOT in session history — only available during the current turn.
