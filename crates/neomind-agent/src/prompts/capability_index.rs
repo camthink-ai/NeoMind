@@ -81,7 +81,7 @@ impl CapabilityIndex {
 - Image metrics (e.g. ne101 `values.image`, ne301 `image_data`): `device get <id>` returns image values as `/api/images/...` URLs. Pass the URL directly to `vision(image="/api/images/...", prompt=...)`. Do NOT pipe to python or save-to-file — the URL works as-is. If vision can't see the image, pass `model="minicpm-v4.6"` to force the right VLM.
 - Output is structured JSON (NEOMIND_JSON=1); errors carry a `suggestion` field with recovery hints
 - The shell tool runs neomind in-process — no shell pipes/redirects (`|`, `>`, `2>&1`, `head`). Filter/limit with command flags (`--device-type`, `--status`, `--limit`), not shell plumbing.
-- For create/update commands with many fields, `skill load` the matching skill first (rule-management, agent-management, etc.) — field schemas live there, not here.
+- For create/update commands with many unfamiliar fields, `skill load` the matching skill (rule-management, agent-management, etc.) — field schemas live there. For simple create/update with known fields, run the CLI directly.
 "###
             .to_string()
     }
