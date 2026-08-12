@@ -7,17 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
-### Agent Reliability
-- **Local-backend stream idle timeout**: the openai/anthropic streaming read-idle timeout (0.9.15) is extended to llama.cpp and Ollama. A stalled upstream SSE connection (bytes stop arriving but the socket stays open — e.g. llama-server mid-thinking-loop) now force-completes the round instead of blocking `bytes_stream().next()` indefinitely and hanging the chat/eval turn. Routed through a shared `next_bytes_or_end` helper (mirrors the agent-layer `next_chunk_or_timeout`).
-
-### Eval (internal dev/CI tooling — not shipped to users)
-- **Regression gate** (`run_eval.py regression`): a curated 30-case stable set compared against a committed baseline, flagging only confirmed PASS→FAIL regressions; robust against the ~7pp run-to-run noise floor via multi-round verdicts; per-case wall-clock timeout (SIGALRM) so a wedged agent can't hang the whole gate.
-- **LLM endpoint pre-flight**: `run` and `regression` now probe the agent's LLM backend before the first case — a dead server, wrong port, doubly-pathed `/v1`, or non-JSON proxy fails fast with a clear message instead of silently failing every case and reading as a model-capability regression.
-
----
-
 ## [0.9.16] - 2026-08-11
 
 LLM capability detection consolidated to a single track (registry + name heuristic) + unified thinking-effort control + slim prompt for small local models + built-in local AI (Docker llama.cpp).
@@ -45,9 +34,14 @@ Focus: collapse the duplicated capability detection (manual table + CapabilityDe
 - Docker image now ships llama.cpp + Gemma4-E2B and auto-registers an Ollama-style backend on first boot.
 - Python3 added to the image (agents + python-sidecar extensions).
 
+### Agent Reliability
+- **Local-backend stream idle timeout**: the openai/anthropic streaming read-idle timeout (0.9.15) is extended to llama.cpp and Ollama. A stalled upstream SSE connection (bytes stop, socket open — e.g. llama-server mid-thinking-loop) now force-completes the round instead of blocking `bytes_stream().next()` forever and hanging the turn. Shared `next_bytes_or_end` helper mirrors the agent-layer `next_chunk_or_timeout`.
+
 ### Eval / Test
 - 23 en capability-dimension cases + 20 en scenario cases (full bilingual parity with the zh set).
 - Fixed: data-push `targets` collection key in state_query, `latest_telemetry` None crash, telemetry-history expectation, widget-full-lifecycle negative sq.
+- **Regression gate** (`run_eval.py regression`): curated 30-case stable set vs a committed baseline, flagging only confirmed PASS→FAIL regressions; multi-round verdicts absorb the ~7pp run-to-run noise floor; per-case SIGALRM timeout so a wedged agent can't hang the gate.
+- **LLM endpoint pre-flight**: `run`/`regression` probe the agent's LLM backend before the first case — dead server / wrong port / doubly-pathed `/v1` / non-JSON proxy fails fast with a clear message instead of reading as a model-capability regression.
 
 ### Web
 - PWA status-bar color syncs with full-screen dialogs; chat model-select scrollbar hidden; CSS keyframe dedupe + prose consolidation; mostly-hidden aurora background removed.
