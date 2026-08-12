@@ -863,6 +863,11 @@ impl LlmRuntime for OllamaRuntime {
 
         // Capture stream_config for use in async block
         let stream_config = self.stream_config.clone();
+        // Idle timeout for the streaming byte read (see `next_bytes_or_end`): a
+        // stalled upstream SSE connection must force-complete the loop instead
+        // of hanging `bytes_stream().next()` forever. openai already had this
+        // (commit 162c73ff); ollama was missed.
+        let read_idle_timeout = self.config.timeout();
 
         tokio::spawn(async move {
             let request = OllamaChatRequest {
@@ -915,7 +920,6 @@ impl LlmRuntime for OllamaRuntime {
                     }
 
                     // Handle SSE stream
-                    use futures::StreamExt as _;
                     let mut byte_stream = response.bytes_stream();
                     let mut buffer = Vec::new();
                     let mut _sent_done = false;
@@ -934,7 +938,9 @@ impl LlmRuntime for OllamaRuntime {
                     let mut last_warning_index = 0usize; // Track last warning threshold sent
                     let mut terminate_early_reason: Option<String> = None; // Track reason for early termination
 
-                    while let Some(chunk_result) = byte_stream.next().await {
+                    while let Some(chunk_result) =
+                        super::next_bytes_or_end(&mut byte_stream, read_idle_timeout).await
+                    {
                         // If consumer dropped the receiver, stop consuming the
                         // upstream Ollama body — otherwise we keep the local
                         // model running (wasting GPU/CPU) until it finishes.

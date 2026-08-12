@@ -12,7 +12,7 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -595,6 +595,12 @@ impl LlmRuntime for LlamaCppRuntime {
 
         // Capture max_context for error reporting inside spawned task
         let max_context_capture = self.max_context_length();
+        // Idle timeout for the streaming byte read (see `next_bytes_or_end`): a
+        // stalled upstream SSE connection must force-complete the loop instead
+        // of hanging `bytes_stream().next()` forever. openai already had this
+        // (commit 162c73ff); llamacpp was missed — root cause of the eval
+        // mid-stream wedge on thinking-loop stalls.
+        let read_idle_timeout = self.config.timeout();
 
         tokio::spawn(async move {
             let mut req_builder = client.post(&url).json(&req_body);
@@ -665,7 +671,9 @@ impl LlmRuntime for LlamaCppRuntime {
                         AccumulatedToolCall,
                     > = std::collections::HashMap::new();
 
-                    while let Some(chunk_result) = stream.next().await {
+                    while let Some(chunk_result) =
+                        super::next_bytes_or_end(&mut stream, read_idle_timeout).await
+                    {
                         match chunk_result {
                             Ok(chunk) => {
                                 buffer.extend_from_slice(&chunk);
