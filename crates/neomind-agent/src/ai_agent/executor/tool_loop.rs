@@ -121,7 +121,7 @@ impl AgentExecutor {
             if round > 0 && !skill_reference.is_empty() && !skill_injected {
                 if let Some(sys_msg) = messages.first_mut() {
                     sys_msg.content = Content::text(format!(
-                        "{}\n\n## Skill Reference\n{}",
+                        "{}\n\n## Skill Reference\nCommands in this skill are canonical — use them exactly; don't guess subcommand names.\n\n{}",
                         sys_msg.content.as_text(),
                         skill_reference
                     ));

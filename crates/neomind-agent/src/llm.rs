@@ -998,6 +998,7 @@ impl LlmInterface {
         // This content is NOT in session history — only available during the current turn.
         if let Some(skill_content) = self.get_skill_context().await {
             prompt.push_str("\n## Skill Reference\n");
+            prompt.push_str("Commands in this skill are canonical — use them exactly; don't guess subcommand names.\n\n");
             prompt.push_str(&skill_content);
             prompt.push('\n');
         }

@@ -1,7 +1,7 @@
 ---
 id: connector-management
 name: Connector Management & MQTT Configuration
-description: Use when the user wants to configure external MQTT brokers or connectors — adding/removing external brokers, subscriptions, testing connections, remote/cloud brokers. Covers connector create/list/update/test/subscriptions even without saying 'connector' (e.g. '连到远程 MQTT', '订阅一个外部主题'). Includes 连接器/外部 broker/远程 MQTT/订阅.
+description: Use when the user wants to configure external MQTT brokers or connectors — adding/removing external brokers, subscriptions, testing connections, remote/cloud brokers. Covers connector create/list/update/enable/disable/test/subscriptions even without saying 'connector' (e.g. '连到远程 MQTT', '订阅一个外部主题'). Includes 连接器/外部 broker/远程 MQTT/订阅. NOT notification channels — use message-management for those.
 category: connector
 origin: builtin
 priority: 80
