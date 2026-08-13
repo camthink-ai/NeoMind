@@ -1699,6 +1699,9 @@ pub enum MessageCommand {
         /// Channel config as JSON. Run `channel-type-schema <TYPE>` for field details.
         #[arg(long)]
         config: String,
+        /// Enable the channel on creation (default: enabled).
+        #[arg(long, default_value_t = true)]
+        enabled: bool,
     },
     /// Update channel configuration.
     ///

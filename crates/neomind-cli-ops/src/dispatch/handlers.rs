@@ -735,7 +735,8 @@ pub async fn run_message_cmd(cmd: MessageCommand) -> Result<(CliResponse, Output
             name,
             channel_type,
             config,
-        } => create_channel(&client, &name, &channel_type, &config).await?,
+            enabled,
+        } => create_channel(&client, &name, &channel_type, &config, enabled).await?,
         MessageCommand::ChannelUpdate { name, config } => {
             update_channel(&client, &name, &config).await?
         }

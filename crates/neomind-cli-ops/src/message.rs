@@ -143,6 +143,7 @@ pub async fn create_channel(
     name: &str,
     channel_type: &str,
     config: &str,
+    enabled: bool,
 ) -> Result<CliResponse> {
     // 1. Validate name is non-empty
     if name.is_empty() {
@@ -243,6 +244,11 @@ pub async fn create_channel(
     if let serde_json::Value::Object(mut map) = config_value {
         body.as_object_mut().unwrap().append(&mut map);
     }
+    // Explicit --enabled flag wins over any config.enabled (flattens into the
+    // request, which the factory reads via config.enabled).
+    body.as_object_mut()
+        .unwrap()
+        .insert("enabled".to_string(), json!(enabled));
     let data = client.post("/messages/channels", &body).await?;
     let data = extract_inner_data(data);
     let meta = BuildMeta {
