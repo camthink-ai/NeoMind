@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixes
+- **Log export no longer ships ANSI color codes**: the CLI and desktop file layers wrote `tracing` SGR escapes (`ESC[2m` / `ESC[32m` / …) into every line of the daily `neomind.log.*` files because `fmt::layer()` defaults `with_ansi` to true (it does no TTY detection, unlike `fmt()`). Both appenders now set `.with_ansi(false)`, and `/api/logs/download` strips residual ANSI sequences from archived files so logs produced by older server builds export as readable plain text too.
+
 ## [0.9.16] - 2026-08-11
 
 LLM capability detection consolidated to a single track (registry + name heuristic) + unified thinking-effort control + slim prompt for small local models + built-in local AI (Docker llama.cpp).

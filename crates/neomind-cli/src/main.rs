@@ -84,9 +84,14 @@ async fn main() -> Result<()> {
                 .boxed()
         };
 
+        // Never write ANSI color codes into the on-disk log: `fmt::layer()`
+        // defaults `with_ansi` to true (no TTY detection, unlike `fmt()`), so
+        // without this every line would be wrapped in `\x1b[...m` escapes and
+        // the /api/logs/download archive would ship them verbatim.
         let file_layer = tracing_subscriber::fmt::layer()
             .with_target(true)
             .with_writer(file_appender)
+            .with_ansi(false)
             .with_filter(env_filter);
 
         tracing_subscriber::registry()

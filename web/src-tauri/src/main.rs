@@ -266,6 +266,7 @@ fn start_axum_server(
     let file_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
         .with_writer(file_appender)
+        .with_ansi(false)
         .with_filter(filter);
 
     tracing_subscriber::registry()

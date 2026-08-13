@@ -44,6 +44,38 @@ fn parse_log_file_date(name: &str) -> Option<NaiveDate> {
     NaiveDate::parse_from_str(suffix, "%Y-%m-%d").ok()
 }
 
+/// Strip ANSI escape sequences from log bytes.
+///
+/// Older NeoMind builds wrote SGR color codes (`ESC [ <params> m`) into the
+/// daily log files because the file layer defaulted `with_ansi` to true (see
+/// the `neomind-cli` / Tauri `main.rs` file layers). The download endpoint is
+/// the one place every archived file passes through, so it normalizes them
+/// here — support recipients get readable plain text regardless of which
+/// server version produced the logs. Only well-formed CSI SGR sequences are
+/// removed; all other bytes pass through untouched.
+fn strip_ansi(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        // CSI: ESC '[' then parameter/intermediate bytes (< 0x40) and a single
+        // final byte in 0x40..=0x7E. The SGR codes tracing emits are
+        // `ESC [ <digits> ; <digits> m`.
+        if data[i] == 0x1b && i + 1 < data.len() && data[i + 1] == b'[' {
+            let mut j = i + 2;
+            while j < data.len() && data[j] < 0x40 {
+                j += 1;
+            }
+            if j < data.len() && (0x40..=0x7e).contains(&data[j]) {
+                i = j + 1;
+                continue;
+            }
+        }
+        out.push(data[i]);
+        i += 1;
+    }
+    out
+}
+
 /// Maximum bytes a single log file may contribute to the archive. Acts as a
 /// sanity guard against pathological logs filling memory on low-RAM edge
 /// devices — daily-rotated files are normally well under this size.
@@ -210,6 +242,10 @@ pub async fn download_logs_handler(
                 }
             };
             total_bytes_read = total_bytes_read.saturating_add(data.len() as u64);
+            // Older builds wrote ANSI color codes into the daily files (the
+            // file layer defaulted `with_ansi` on); strip them so the archive
+            // stays readable plain text no matter which server produced it.
+            let data = strip_ansi(&data);
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -323,5 +359,38 @@ mod tests {
         assert!(today >= cutoff);
         let seven_days_ago = today - chrono::Duration::days(7);
         assert!(seven_days_ago < cutoff, "8th day ago should be excluded");
+    }
+
+    #[test]
+    fn strip_ansi_removes_sgr_color_codes() {
+        // Real-world shape: the file layer emitted `ESC[2m`, `ESC[32m`,
+        // `ESC[3m`, `ESC[0m` wrapping every line.
+        let input =
+            b"\x1b[2m2026-08-13T00:00:21Z\x1b[0m \x1b[32m INFO\x1b[0m \x1b[2mneomind\x1b[0m: ok";
+        let text = String::from_utf8(strip_ansi(input)).unwrap();
+        assert!(!text.contains('\u{1b}'), "no escape bytes may remain");
+        assert!(text.starts_with("2026-08-13T00:00:21Z"));
+        assert!(text.contains(" INFO"));
+        assert!(text.contains("neomind: ok"));
+    }
+
+    #[test]
+    fn strip_ansi_handles_parameter_lists_and_mixed_content() {
+        let input = b"\x1b[33;1mWARN\x1b[0m plain \x1b[3mfield=1\x1b[0m";
+        assert_eq!(strip_ansi(input).as_slice(), b"WARN plain field=1");
+    }
+
+    #[test]
+    fn strip_ansi_leaves_plain_log_lines_untouched() {
+        let input = b"2026-08-13T00:00:21Z  INFO neomind: no ansi here\n";
+        assert_eq!(strip_ansi(input).as_slice(), input);
+    }
+
+    #[test]
+    fn strip_ansi_handles_unterminated_escape_gracefully() {
+        // A truncated `ESC[2` with no final byte must not panic or eat the
+        // trailing text — the ESC is preserved as-is.
+        let input = b"tail \x1b[2";
+        assert_eq!(strip_ansi(input).as_slice(), b"tail \x1b[2");
     }
 }
