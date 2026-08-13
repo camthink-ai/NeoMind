@@ -220,6 +220,12 @@
     "typing": "Typing",
     "wait": "Wait"
   },
+  "code": {
+    "copy": "Copy",
+    "copied": "Copied"
+  },
+  "scrollToBottom": "Scroll to bottom",
+  "copyMessage": "Copy message",
   "footer": {
     "disclaimer": "Disclaimer"
   }

@@ -220,6 +220,12 @@
     "typing": "输入中",
     "wait": "等待中"
   },
+  "code": {
+    "copy": "复制",
+    "copied": "已复制"
+  },
+  "scrollToBottom": "回到底部",
+  "copyMessage": "复制消息",
   "footer": {
     "disclaimer": "免责声明"
   }

@@ -3,8 +3,9 @@ import { type Message, type UserInfo } from "@/types"
 import { ThinkingBlock } from "./ThinkingBlock"
 import { ToolProcessBlock } from "./ToolCallVisualization"
 import { MarkdownMessage } from "./MarkdownMessage"
+import { CopyMessageButton } from "./CopyMessageButton"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Bot } from "lucide-react"
+import { Sparkles } from "lucide-react"
 import { formatTimestamp } from "@/lib/utils/format"
 
 interface MessageItemProps {
@@ -23,13 +24,13 @@ export const MessageItem = React.memo<MessageItemProps>(
 
     return (
       <div
-        className={`flex gap-3 items-start animate-fade-in-up ${
+        className={`group flex gap-3 items-start animate-fade-in-up ${
           isAssistant ? "justify-start" : "justify-end"
         }`}
       >
         {isAssistant && (
-          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-accent-orange-bg flex items-center justify-center">
-            <Bot className="h-4 w-4 text-accent-orange" />
+          <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-foreground flex items-center justify-center">
+            <Sparkles className="h-4 w-4 text-background" />
           </div>
         )}
 
@@ -55,9 +56,12 @@ export const MessageItem = React.memo<MessageItemProps>(
             )}
 
             {/* Timestamp */}
-            <p className="text-xs text-muted-foreground mt-1.5 px-3">
-              {formatTimestamp(message.timestamp, false)}
-            </p>
+            <div className="flex items-center gap-1 mt-1.5 px-3">
+              <p className="text-xs text-muted-foreground">
+                {formatTimestamp(message.timestamp, false)}
+              </p>
+              <CopyMessageButton content={message.content || ""} />
+            </div>
           </div>
         ) : (
           /* User: keep bubble with natural width */
@@ -70,9 +74,12 @@ export const MessageItem = React.memo<MessageItemProps>(
                 <MarkdownMessage content={message.content} variant="user" />
               )}
             </div>
-            <p className="text-xs text-muted-foreground mt-1 px-1">
-              {formatTimestamp(message.timestamp, false)}
-            </p>
+            <div className="flex items-center gap-1 mt-1 px-1">
+              <p className="text-xs text-muted-foreground">
+                {formatTimestamp(message.timestamp, false)}
+              </p>
+              <CopyMessageButton content={message.content || ""} />
+            </div>
           </div>
         )}
 

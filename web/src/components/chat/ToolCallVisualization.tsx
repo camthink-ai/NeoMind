@@ -16,7 +16,7 @@ import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { Wrench, ChevronDown, CheckCircle2, Loader2, Code, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { textBody, textMini } from "@/design-system/tokens/typography"
+import { textMini } from "@/design-system/tokens/typography"
 import type { ToolCall } from "@/types"
 import { BuildCard, parseBuildResponse } from "@/components/chat/BuildCard"
 
@@ -153,7 +153,7 @@ export function ToolProcessBlock({
             <Wrench className="h-2.5 w-2.5" />
           )}
         </div>
-        <span className={cn(textBody, "font-medium text-foreground")}>
+        <span className={cn("text-[13px] sm:text-sm", "font-medium text-foreground")}>
           {isStreaming
             ? `${completedCount}/${toolCalls.length} ${t("toolCall.status.running")}`
             : `${toolCalls.length} ${t("toolCall.title")} · ${steps.length} ${t("toolCall.rounds")}`
@@ -229,7 +229,7 @@ function RoundContent({ content }: { content: string }) {
       </button>
       {isExpanded && (
         <div className="px-3 pb-2">
-          <div className={cn(textBody, "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
+          <div className={cn("text-[13px] sm:text-sm", "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
             {content}
           </div>
         </div>
@@ -270,7 +270,14 @@ function ToolCallItem({
 
   return (
     <div className="px-3 py-1">
-      <div className="flex items-center gap-2">
+      <button
+        onClick={() => { if (hasDetails) setIsExpanded(!isExpanded) }}
+        className={cn(
+          "w-full flex items-center gap-2 rounded text-left transition-colors",
+          hasDetails && "hover:bg-muted-30"
+        )}
+        aria-label={hasDetails ? t("toolCall.toggleDetails") : undefined}
+      >
         <div className={cn(
           "h-3.5 w-3.5 rounded-full flex items-center justify-center shrink-0",
           status === "completed" && "text-accent-emerald",
@@ -285,7 +292,7 @@ function ToolCallItem({
             <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
           )}
         </div>
-        <span className={cn(textBody, "truncate text-muted-foreground")}>{getToolDisplayName(toolCall.name, toolCall.arguments)}</span>
+        <span className={cn("text-[13px] sm:text-sm", "truncate text-muted-foreground")}>{getToolDisplayName(toolCall.name, toolCall.arguments)}</span>
         {status === "running" && (
           <span className={cn(textMini, "px-1.5 py-0.5 rounded bg-warning-light text-warning shrink-0")}>
             {statusLabels[status]}
@@ -293,19 +300,12 @@ function ToolCallItem({
         )}
         <div className="flex-1" />
         {hasDetails && (
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            // -mr-1 + p-1: pull the button's right edge out by 4px so the
-            // 16px chevron inside (centered with 4px right padding) lands
-            // at exactly parent_right - 12, matching ThinkingBlock /
-            // ToolProcessBlock / RoundContent chevrons.
-            className="-mr-1 p-1 rounded text-muted-foreground hover:bg-muted-30 hover:text-muted-foreground shrink-0 transition-colors"
-            aria-label={t("toolCall.toggleDetails")}
-          >
-            <ChevronDown className={cn("h-4 w-4 transition-transform duration-200", isExpanded && "rotate-180")} />
-          </button>
+          <ChevronDown className={cn(
+            "h-4 w-4 text-muted-foreground transition-transform duration-200 shrink-0",
+            isExpanded && "rotate-180"
+          )} />
         )}
-      </div>
+      </button>
       {isExpanded && hasDetails && (
         <div className="ml-5.5 mt-0.5 mb-1 space-y-1">
           {hasArguments && (

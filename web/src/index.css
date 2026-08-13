@@ -292,7 +292,7 @@ html {
        page + white raised surfaces (cards, tab strips, table headers) float
        on it for strong hierarchy. --muted stays a touch darker for true
        insets (code blocks) inside those white surfaces. */
-    --background: oklch(0.975 0 0);
+    --background: oklch(0.985 0 0);
     /* Solid white for stable chrome layers (TopNav, tab strips, toolbars,
        page headers). These anchor the layout as a distinct elevated layer
        above the gray content canvas. In dark mode this token falls back to
@@ -443,6 +443,17 @@ html {
     --msg-user-text: oklch(1 0 0);
     --msg-ai-bg: oklch(0.97 0.003 270);
     --msg-ai-text: oklch(0.18 0.02 270);
+    /* Syntax-highlighting palette (rehype-highlight / hljs). GitHub-based,
+       tuned for the muted code background. Light theme. */
+    --syn-text: oklch(0.20 0.01 270);
+    --syn-keyword: oklch(0.54 0.22 25);
+    --syn-string: oklch(0.37 0.10 235);
+    --syn-comment: oklch(0.55 0.01 270);
+    --syn-number: oklch(0.50 0.18 265);
+    --syn-function: oklch(0.53 0.20 305);
+    --syn-builtin: oklch(0.50 0.18 265);
+    --syn-variable: oklch(0.45 0.13 28);
+    --syn-tag: oklch(0.50 0.15 145);
     --msg-system-bg: oklch(0.95 0.003 270);
     --msg-system-text: oklch(0.45 0.01 270);
 
@@ -593,6 +604,16 @@ html {
     --msg-user-text: oklch(0.15 0.02 270);
     --msg-ai-bg: oklch(0.18 0.008 270);
     --msg-ai-text: oklch(0.90 0.005 270);
+    /* Syntax-highlighting palette — dark theme */
+    --syn-text: oklch(0.92 0.004 270);
+    --syn-keyword: oklch(0.70 0.19 18);
+    --syn-string: oklch(0.82 0.07 230);
+    --syn-comment: oklch(0.63 0.01 270);
+    --syn-number: oklch(0.78 0.12 240);
+    --syn-function: oklch(0.80 0.13 310);
+    --syn-builtin: oklch(0.78 0.12 240);
+    --syn-variable: oklch(0.80 0.16 55);
+    --syn-tag: oklch(0.75 0.15 145);
     --msg-system-bg: oklch(0.20 0.008 270);
     --msg-system-text: oklch(0.58 0.012 270);
 
@@ -1128,6 +1149,70 @@ html {
   background-color: var(--muted) !important;
   color: inherit !important;
 }
+
+/* ============================================================================
+ * CODE SYNTAX HIGHLIGHTING (rehype-highlight / highlight.js)
+ * Colors come from --syn-* tokens (defined per-theme above). The !important +
+ * class specificity here are deliberate: the bubble prose rules above use
+ * `.prose[data-variant] * { color !important }`, which would otherwise flatten
+ * every hljs span to a single color and erase all highlighting.
+ * ============================================================================ */
+.hljs {
+  color: var(--syn-text) !important;
+  background: transparent !important;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--syn-comment) !important;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag,
+.hljs-type,
+.hljs-section {
+  color: var(--syn-keyword) !important;
+}
+.hljs-string,
+.hljs-meta .hljs-string,
+.hljs-addition {
+  color: var(--syn-string) !important;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-meta,
+.hljs-template-tag,
+.hljs-template-variable {
+  color: var(--syn-number) !important;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-selector-id,
+.hljs-selector-class {
+  color: var(--syn-function) !important;
+}
+.hljs-built_in,
+.hljs-class .hljs-title,
+.hljs-params {
+  color: var(--syn-builtin) !important;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable {
+  color: var(--syn-variable) !important;
+}
+.hljs-tag,
+.hljs-name,
+.hljs-regexp,
+.hljs-link,
+.hljs-deletion {
+  color: var(--syn-tag) !important;
+}
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
 
 /* Agent Monitor Widget - Sci-fi animations */
 @keyframes shimmer-sweep {

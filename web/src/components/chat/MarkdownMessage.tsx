@@ -1,10 +1,13 @@
-import React from 'react'
+import React, { useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
 import type { Components } from 'react-markdown'
+import { useTranslation } from 'react-i18next'
 import { cn } from "@/lib/utils"
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
-import { textBody, textCode, textHeading } from "@/design-system/tokens/typography"
+import { textCode } from "@/design-system/tokens/typography"
+import { Copy, Check } from "@/design-system/icons"
 
 interface MarkdownMessageProps {
   content: string
@@ -26,13 +29,70 @@ function dedupeRepeatedContent(content: string): string {
   return content
 }
 
+/**
+ * Code block with a language label and a copy button, replacing the bare <pre>.
+ *
+ * The inner <code> keeps the hljs highlight spans produced by rehype-highlight;
+ * this component only wraps it with a header bar (language name + copy button).
+ * Copying reads `pre.innerText` so it captures the raw source text regardless of
+ * the highlight spans inside. The language is extracted from the <code>
+ * element's `className` (`language-xxx`), which react-markdown sets from the
+ * fenced code fence info string.
+ */
+function CodeBlock({ children, ...props }: React.ComponentProps<'pre'>) {
+  const preRef = useRef<HTMLPreElement>(null)
+  const [copied, setCopied] = useState(false)
+  const { t } = useTranslation()
+
+  // children is the inner <code> element; pull the language from its className.
+  const child: any = Array.isArray(children) ? children[0] : children
+  const codeClass: string = child?.props?.className ?? ""
+  const langMatch = /language-([\w+-]+)/.exec(codeClass)
+  const lang = langMatch ? langMatch[1] : ""
+
+  const handleCopy = async () => {
+    const text = preRef.current?.innerText ?? ""
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* clipboard blocked (permissions / non-secure context) — silent */
+    }
+  }
+
+  return (
+    <div className="code-block group relative my-2 overflow-hidden rounded-lg bg-muted">
+      <div className="flex items-center justify-between px-3 pt-1.5 pb-1">
+        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{lang || "text"}</span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted-50 hover:text-foreground"
+          aria-label={copied ? t("chat:code.copied", "已复制") : t("chat:code.copy", "复制代码")}
+          title={copied ? t("chat:code.copied", "已复制") : t("chat:code.copy", "复制代码")}
+        >
+          {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+      <pre
+        ref={preRef}
+        className="m-0 overflow-x-auto px-3 pb-3 pt-0.5 text-foreground"
+        {...props}
+      >
+        {children}
+      </pre>
+    </div>
+  )
+}
+
 // Static component overrides — hoisted to module scope to avoid re-allocating
 // a new object (and new closure functions) on every render / streaming chunk.
 const MARKDOWN_COMPONENTS: Components = {
   pre: ({ node, className, children, ...props }) => (
-    <pre className={cn("overflow-x-auto", className)} {...(props as any)}>
+    <CodeBlock className={className} {...(props as any)}>
       {children}
-    </pre>
+    </CodeBlock>
   ),
   code: ({ node, className, children, ...props }) => {
     const isBlock = !!className
@@ -70,10 +130,10 @@ const MARKDOWN_COMPONENTS: Components = {
 /**
  * Markdown message renderer with support for:
  * - GitHub Flavored Markdown (GFM) via remark-gfm
- * - Code blocks with syntax highlighting
+ * - Code blocks with syntax highlighting (rehype-highlight / hljs)
+ * - Copy button + language label on code blocks
  * - Tables, lists, links, images
  * - Styled for chat interface
- * - Auto-scrolls during streaming, fully expands after
  *
  * Memoized: only re-renders when content/className/variant change.
  * Component overrides are module-scope (no per-render allocation).
@@ -88,12 +148,12 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
       <div
         className={cn(
           // Base prose classes — use prose for structure, override size to 13px
-          "prose max-w-none", textBody,
+          "prose max-w-none", "text-[13px] sm:text-sm",
           // Text wrapping
           "break-words overflow-wrap-anywhere",
           "prose-p:leading-relaxed prose-p:my-1",
-          "prose-headings:font-semibold prose-headings:my-2",
-          "prose-h1:text-[15px] prose-h2:text-[13px] prose-h3:text-[12px]",
+          "prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2",
+          "prose-h1:text-[16px] prose-h2:text-[15px] prose-h3:text-[14px]",
           // Links inherit text color (see MARKDOWN_COMPONENTS.a) so they stay
           // readable on both user and assistant bubble backgrounds. Underline
           // alone provides the link affordance — do NOT set a prose-a color
@@ -103,16 +163,17 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
           "prose-strong:font-semibold",
           "prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-[12px] prose-code:font-mono",  // text-[12px] kept for Tailwind prose modifier
           "prose-code:break-all prose-code:whitespace-pre-wrap",
-          "prose-pre:bg-muted prose-pre:p-3 prose-pre:rounded-lg prose-pre:my-2",
+          // Code block chrome (border, bg, padding, language bar, copy button)
+          // is owned by CodeBlock — only keep overflow + inline-code reset here.
           "prose-pre:overflow-x-auto prose-pre:max-w-full",
           "prose-pre:prose-code:bg-transparent prose-pre:prose-code:p-0 prose-pre:prose-code:text-foreground",
-          "prose-blockquote:border-l-2 prose-blockquote:border-muted-foreground prose-blockquote:pl-3 prose-blockquote:italic",
+          "prose-blockquote:border-l-2 prose-blockquote:border-muted-foreground prose-blockquote:bg-muted-30 prose-blockquote:pl-3 prose-blockquote:pr-3 prose-blockquote:py-1 prose-blockquote:rounded-r-md prose-blockquote:italic",
           "prose-ul:my-1 prose-ul:pl-4 prose-ul:list-disc",
           "prose-ol:my-1 prose-ol:pl-4 prose-ol:list-decimal",
-          "prose-li:my-0.5",
-          "prose-table:my-2 prose-table:text-[12px]",  // text-[12px] kept for Tailwind prose modifier
-          "prose-th:px-2 prose-th:py-1 prose-th:border prose-th:border-border prose-th:bg-muted-50",
-          "prose-td:px-2 prose-td:py-1 prose-td:border prose-td:border-border",
+          "prose-li:my-0.5 prose-li:marker:text-muted-foreground",
+          "prose-table:my-2 prose-table:text-[13px]",
+          "prose-th:px-2 prose-th:py-1.5 prose-th:border-b-2 prose-th:border-border prose-th:bg-muted-50 prose-th:font-semibold",
+          "prose-td:px-2 prose-td:py-1.5 prose-td:border-b prose-td:border-muted-30",
           "prose-hr:my-2 prose-hr:border-border",
           "text-inherit"
           // Removed max height limit - messages now fully expand
@@ -120,7 +181,11 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
         data-variant={variant}
       >
         <ErrorBoundary resetKey={displayContent}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+            components={MARKDOWN_COMPONENTS}
+          >
             {displayContent}
           </ReactMarkdown>
         </ErrorBoundary>

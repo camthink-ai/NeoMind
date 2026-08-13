@@ -9,9 +9,9 @@
 
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
-import { BrainCircuit, ChevronDown } from "lucide-react"
+import { Brain, ChevronDown } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { textBody, textMini, textNano } from "@/design-system/tokens/typography"
+import { textMini, textNano } from "@/design-system/tokens/typography"
 
 interface ThinkingBlockProps {
   thinking?: string
@@ -53,11 +53,11 @@ export function ThinkingBlock({
           onClick={() => setIsExpanded(!isExpanded)}
           className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-muted-30 transition-colors"
         >
-          <BrainCircuit className={cn(
+          <Brain className={cn(
             "h-4 w-4",
             isStreaming ? "text-info" : "text-muted-foreground"
           )} />
-          <span className={cn(textBody, "font-medium")}>{t("thinking.title")}</span>
+          <span className={cn("text-[13px] sm:text-sm", "font-medium")}>{t("thinking.title")}</span>
           <div className="flex-1" />
           <ChevronDown className={cn(
             "h-4 w-4 text-muted-foreground transition-transform duration-200",
@@ -69,7 +69,7 @@ export function ThinkingBlock({
             {hasRoundThinking ? (
               <PerRoundThinking rounds={roundThinking!} isStreaming={isStreaming} compact />
             ) : (
-              <div className={cn(textBody, "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words")}>
+              <div className={cn("text-[13px] sm:text-sm", "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words")}>
                 {thinking}
                 {isStreaming && <span className="inline-block w-1 h-3.5 bg-muted-foreground animate-pulse ml-0.5 align-middle" />}
               </div>
@@ -87,7 +87,7 @@ export function ThinkingBlock({
         onClick={() => setIsExpanded(!isExpanded)}
         className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted-30 transition-colors"
       >
-        <BrainCircuit className={cn(
+        <Brain className={cn(
           "h-4 w-4",
           isStreaming ? "text-info" : "text-muted-foreground"
         )} />
@@ -150,7 +150,7 @@ function PerRoundThinking({
     const [, text] = sortedRounds[0]
     return (
       <div className={cn(
-        "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words", textBody,
+        "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words", "text-[13px] sm:text-sm",
       )}>
         {text}
         {isStreaming && <span className={cn(
@@ -177,7 +177,7 @@ function PerRoundThinking({
           </div>
           {/* Round thinking text */}
           <div className={cn(
-            "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words pl-6", textBody,
+            "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words pl-6", "text-[13px] sm:text-sm",
           )}>
             {text}
             {idx === sortedRounds.length - 1 && isStreaming && (

@@ -16,6 +16,7 @@ import {
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
 import { MarkdownMessage } from "@/components/chat/MarkdownMessage"
+import { CopyMessageButton } from "@/components/chat/CopyMessageButton"
 import { ThinkingBlock } from "@/components/chat/ThinkingBlock"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
@@ -362,6 +363,7 @@ export function ChatPage() {
   // scrolled up to read history, auto-scrolling would yank them back down —
   // extremely annoying when waiting for a long response while reviewing context.
   const isPinnedToBottomRef = useRef(true)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
 
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current
@@ -370,6 +372,10 @@ export function ChatPage() {
     // diffs and the gap inserted by smooth-scroll inertia.
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     isPinnedToBottomRef.current = distanceFromBottom < 80
+    // Reveal the "scroll to bottom" button once the user scrolls a meaningful
+    // amount up. setState with an unchanged boolean bails out (no re-render),
+    // so this stays cheap even though scroll fires very frequently.
+    setShowScrollToBottom(distanceFromBottom >= 240)
   }, [])
 
   // Auto-scroll to bottom by directly setting scrollTop on the scroll container
@@ -1081,7 +1087,7 @@ export function ChatPage() {
           <div
             ref={scrollContainerRef}
             onScroll={handleScroll}
-            className="touch-scroll flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4 pb-4"
+            className="touch-scroll relative flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4 pb-4"
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
               if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
@@ -1124,10 +1130,17 @@ export function ChatPage() {
                 }
                 return allMessages.map((message, idx) => {
                   const isCurrentlyStreaming = !!(message as any)._isStreaming
+                  // Copy the message as the user sees it: user messages verbatim;
+                  // assistant messages with tool calls strip embedded JSON.
+                  const copyContent = message.role === "user"
+                    ? (message.content || "")
+                    : (message.tool_calls && message.tool_calls.length > 0
+                        ? cleanToolCallJson(message.content || "")
+                        : (message.content || ""))
                   return (
                 <div
                   key={message.id || `msg-${idx}`}
-                  className={`flex gap-2 sm:gap-3 ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                  className={`group flex gap-2 sm:gap-3 animate-fade-in-up ${message.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   {message.role === "assistant" && (
                     <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-foreground flex items-center justify-center">
@@ -1142,7 +1155,7 @@ export function ChatPage() {
                     <div
                       className={cn(
                         message.role === "user"
-                          ? "rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-foreground text-background"
+                          ? "rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-[var(--msg-user-bg)] text-[var(--msg-user-text)]"
                           : ""
                       )}
                     >
@@ -1253,9 +1266,14 @@ export function ChatPage() {
                       </div>
                     </div>
 
-                    <p className="text-xs text-muted-foreground mt-2 px-3">
-                      {formatTimestamp(message.timestamp, false)}
-                    </p>
+                    <div className="flex items-center gap-1 mt-1.5 px-3">
+                      <p className="text-xs text-muted-foreground">
+                        {formatTimestamp(message.timestamp, false)}
+                      </p>
+                      {!isCurrentlyStreaming && (
+                        <CopyMessageButton content={copyContent} />
+                      )}
+                    </div>
                   </div>
 
                   {message.role === "user" && user && (
@@ -1271,6 +1289,16 @@ export function ChatPage() {
 
               <div ref={messagesEndRef} />
             </div>
+            {showScrollToBottom && (
+              <button
+                type="button"
+                onClick={scrollToBottom}
+                className="absolute bottom-4 right-4 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-md transition-all hover:bg-muted active:scale-95"
+                aria-label={t("chat:scrollToBottom", "回到底部")}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+            )}
           </div>
         ) : (
           /* Empty chat - shown on /chat/:sessionId with no messages yet */
