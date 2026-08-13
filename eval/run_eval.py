@@ -440,6 +440,19 @@ def _filter_multimodal(cases: list[Path], skip: bool) -> list[Path]:
     return kept
 
 
+def _resume_cases(cases: list[Path], done_keys: set) -> list[Path]:
+    """Filter out cases already recorded in a resume run dir.
+
+    Keyed on (lang, id) — the zh/en sets are mirrors (identical case ids), so
+    keying on id alone treats a done en case as "zh done too" and skips the
+    whole zh set once en finishes.
+    """
+    if not done_keys:
+        return cases
+    return [p for p in cases
+            if (_load_case(p).get("lang"), _load_case(p).get("id")) not in done_keys]
+
+
 def _select_cases(root: Path, lang: str, workflows: list[str] | None, case_id: str | None) -> list[Path]:
     out = []
     for p in _walk_json_files(root):
@@ -505,15 +518,46 @@ def cmd_run(args):
 
     ts = time.strftime("%Y%m%d-%H%M%S")
     run_dir = Path(args.run_dir or f"eval/runs/{ts}")
-    run_dir.mkdir(parents=True, exist_ok=True)
+    mode = "w"
+    if args.resume:
+        resume_dir = Path(args.resume)
+        done: set = set()
+        sp = resume_dir / "scores.jsonl"
+        if sp.exists():
+            for line in sp.read_text().splitlines():
+                if line.strip():
+                    try:
+                        r = json.loads(line)
+                        done.add((r.get("lang"), r["case_id"]))
+                    except Exception:  # noqa: BLE001
+                        pass
+        cases = _resume_cases(cases, done)
+        if not cases:
+            print(f"(resume: all {len(done)} cases already scored in {resume_dir})",
+                  file=sys.stderr)
+            return 0
+        print(f"(resume: {len(done)} done, {len(cases)} remaining — appending)",
+              file=sys.stderr)
+        run_dir = resume_dir
+        mode = "a"
+    else:
+        run_dir.mkdir(parents=True, exist_ok=True)
 
     cases_jsonl_path = run_dir / "cases.jsonl"
     scores_jsonl_path = run_dir / "scores.jsonl"
 
-    with cases_jsonl_path.open("w") as cf, scores_jsonl_path.open("w") as sf:
+    # Per-case wall-clock cap (mirrors regression) — a wedged agent (e.g. a slow
+    # local model stuck in an endless thinking stream) would otherwise hang the
+    # whole run for hours. --resume + this cap make a killed/wedged run recoverable.
+    cap = max(30, int(args.case_timeout))
+    old_handler = signal.signal(signal.SIGALRM, _on_alarm)
+    timed_out: list[str] = []
+    with cases_jsonl_path.open(mode) as cf, scores_jsonl_path.open(mode) as sf:
         for p in cases:
             print(f"--- {p} ---", file=sys.stderr)
-            rec = run_case(str(p))
+            rec, did_timeout = _run_case_timeout(p, cap)
+            if did_timeout and str(p) not in timed_out:
+                timed_out.append(str(p))
             cf.write(json.dumps(rec, ensure_ascii=False) + "\n")
             cf.flush()
 
@@ -557,6 +601,11 @@ def cmd_run(args):
                 tail += " (+judge)"
             print(f"  case_id={score.get('case_id')} {vtag}{tail}", file=sys.stderr)
 
+    signal.signal(signal.SIGALRM, old_handler)
+    if timed_out:
+        print(f"  timed out (agent wedged): {len(timed_out)} case(s) — {', '.join(sorted(timed_out))}",
+              file=sys.stderr)
+
     print(f"\nRun dir: {run_dir}", file=sys.stderr)
 
     scores_text = scores_jsonl_path.read_text()
@@ -591,6 +640,26 @@ class _CaseTimeout(Exception):
 
 def _on_alarm(signum, frame):
     raise _CaseTimeout()
+
+
+def _run_case_timeout(p: Path, cap: int):
+    """run_case bounded by a per-case wall-clock cap (SIGALRM).
+
+    A wedged agent (e.g. a slow local model stuck in an endless thinking stream)
+    would otherwise hang the whole run for hours. run_case's
+    `finally: srv.shutdown()` kills the spawned server as the timeout unwinds.
+    Returns (record, timed_out_flag).
+    """
+    signal.alarm(cap)
+    try:
+        return run_case(str(p)), False
+    except _CaseTimeout:
+        case = _load_case(p)
+        return (_error_record(case, "timeout",
+                              f"exceeded {cap}s wall-clock — agent likely wedged"),
+                True)
+    finally:
+        signal.alarm(0)
 
 
 def cmd_regression(args):
@@ -790,8 +859,13 @@ def main():
     p.add_argument("--lang", choices=["zh", "en", "both"], default="both")
     p.add_argument("--workflow", help="comma-separated workflow names", default=None)
     p.add_argument("--case-id", default=None)
+    p.add_argument("--case-timeout", type=int, default=600,
+                   help="per-case wall-clock cap in seconds (default 600); a wedged agent "
+                        "is killed and marked timed-out instead of hanging the run")
     p.add_argument("--judge", action="store_true", help="invoke Claude judge")
     p.add_argument("--run-dir", default=None)
+    p.add_argument("--resume", default=None,
+                   help="resume from an existing run dir (skip already-scored cases, append)")
     p.add_argument("--skip-preflight", action="store_true",
                    help="skip LLM-endpoint pre-flight (for confirmed cloud/versioned endpoints)")
     p.add_argument("--skip-multimodal", action="store_true",
