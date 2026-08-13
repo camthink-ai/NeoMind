@@ -121,6 +121,13 @@ impl MessageChannel for SlackChannel {
             )));
         }
 
+        // Slack returns HTTP 200 with a non-ok body ("invalid_payload" or
+        // {"ok":false}) for semantic errors. Validate the body.
+        let text = response.text().await.unwrap_or_default();
+        if let Some(err) = super::detect_error_body(&text) {
+            return Err(Error::SendFailed(format!("Slack reported error: {err}")));
+        }
+
         Ok(())
     }
 }

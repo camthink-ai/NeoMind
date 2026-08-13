@@ -132,6 +132,13 @@ impl MessageChannel for DingTalkChannel {
             )));
         }
 
+        // DingTalk returns HTTP 200 with {"errcode":N,"errmsg":"..."} for
+        // semantic errors (bad token, keyword block). Validate the body.
+        let text = response.text().await.unwrap_or_default();
+        if let Some(err) = super::detect_error_body(&text) {
+            return Err(Error::SendFailed(format!("DingTalk reported error: {err}")));
+        }
+
         Ok(())
     }
 }

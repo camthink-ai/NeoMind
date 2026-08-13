@@ -1187,14 +1187,21 @@ pub fn get_channel_schema(channel_type: &str) -> Option<serde_json::Value> {
 pub(crate) fn detect_error_body(body: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
     let obj = v.as_object()?;
-    // Feishu/DingTalk/WeCom style: {"code": N, "msg": "..."} — code != 0 is an error.
-    if let Some(code) = obj.get("code").and_then(|c| c.as_i64()) {
-        if code != 0 {
-            let msg = obj.get("msg").and_then(|m| m.as_str()).unwrap_or("");
-            return Some(format!("code {code}: {msg}"));
+    // Feishu/DingTalk/WeCom style: {"code": N, "msg": "..."} or {"errcode": N,
+    // "errmsg": "..."} — a non-zero code is an error.
+    for key in ["code", "errcode"] {
+        if let Some(code) = obj.get(key).and_then(|c| c.as_i64()) {
+            if code != 0 {
+                let msg = obj
+                    .get("msg")
+                    .and_then(|m| m.as_str())
+                    .or_else(|| obj.get("errmsg").and_then(|m| m.as_str()))
+                    .unwrap_or("");
+                return Some(format!("{key} {code}: {msg}"));
+            }
         }
     }
-    // Generic style: {"success": false} / {"ok": false}
+    // Telegram/Slack style: {"ok": false} / generic {"success": false}
     if matches!(obj.get("success").and_then(|s| s.as_bool()), Some(false)) {
         return Some("body reports success=false".to_string());
     }
@@ -1213,6 +1220,17 @@ mod tests {
         assert_eq!(detect_error_body(r#"{"code":0,"msg":"success"}"#), None);
         let e = detect_error_body(r#"{"code":19001,"msg":"invalid msg_type"}"#).unwrap();
         assert!(e.contains("19001") && e.contains("invalid msg_type"), "{e}");
+    }
+
+    #[test]
+    fn detect_error_body_flags_errcode_and_ok() {
+        // DingTalk/WeCom: errcode != 0
+        let e = detect_error_body(r#"{"errcode":93000,"errmsg":"invalid webhook"}"#).unwrap();
+        assert!(e.contains("93000") && e.contains("invalid webhook"), "{e}");
+        assert_eq!(detect_error_body(r#"{"errcode":0,"errmsg":"ok"}"#), None);
+        // Telegram/Slack: ok false
+        assert!(detect_error_body(r#"{"ok":false,"description":"chat not found"}"#).is_some());
+        assert_eq!(detect_error_body(r#"{"ok":true}"#), None);
     }
 
     #[test]

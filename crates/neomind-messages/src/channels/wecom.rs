@@ -121,6 +121,13 @@ impl MessageChannel for WeComChannel {
             )));
         }
 
+        // WeCom returns HTTP 200 with {"errcode":N,"errmsg":"..."} for semantic
+        // errors (bad key, keyword block). Validate the body.
+        let text = response.text().await.unwrap_or_default();
+        if let Some(err) = super::detect_error_body(&text) {
+            return Err(Error::SendFailed(format!("WeCom reported error: {err}")));
+        }
+
         Ok(())
     }
 }

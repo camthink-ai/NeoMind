@@ -144,6 +144,13 @@ impl MessageChannel for TelegramChannel {
             )));
         }
 
+        // Telegram returns HTTP 200 with {"ok":false,"description":"..."} for
+        // semantic errors (bad chat_id, blocked bot). Validate the body.
+        let text = response.text().await.unwrap_or_default();
+        if let Some(err) = super::detect_error_body(&text) {
+            return Err(Error::SendFailed(format!("Telegram reported error: {err}")));
+        }
+
         Ok(())
     }
 }
