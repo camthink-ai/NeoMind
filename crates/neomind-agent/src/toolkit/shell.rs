@@ -979,6 +979,8 @@ The `neomind` CLI has 14 domains: `device`, `dashboard`, `rule`, `agent`, `exten
 - **Device drafts**: `device drafts` = list pending draft devices (approval workflow); NOT `device list`.
 - **Extension market**: `extension market-list` / `extension search` / `extension install` = browse/install from the marketplace; `extension list` = only already-installed. "Browse/find available extensions" → `market-list`, NOT `list`.
 - **Read vs write**: `get`/`list` = read (ID positional, no `--id`); `create`/`update`/`delete` = write (use flags like `--name --device-type`). If you're creating/updating, you need the WRITE command, not `get`/`list`.
+- **Read before write**: before `create`/`update`/`control`/`delete` on a specific entity, FIRST run `get <ID>` (or `list`) to confirm it exists and read its current state — do NOT skip the read step and jump straight to the write.
+- **Complete the full flow**: a multi-step request (discover THEN act, create THEN update, diagnose THEN fix) requires EVERY step — do not stop after the first action.
 - **Set vs check state**: `settings set-timezone` = change it; `settings timezone` = read current. Same for `rule enable`/`disable` (write) vs `rule get`/`list` (read), `transform enable`/`disable` vs `transform get`/`list`.
 - **Enable/activate/delete are explicit write actions**: `connector enable <ID>`, `llm activate <ID>`, `push enable <ID>` — don't report state, perform the change. The command is `llm activate` (there is no `llm set-default`).
 - **Check connectivity with `test`**: `connector test <ID>` verifies a broker; don't use `connector get` for that.
@@ -1146,6 +1148,20 @@ mod tests {
             assert!(
                 d.contains(needle),
                 "Command Choice must keep subcommand coverage for {needle:?}"
+            );
+        }
+    }
+
+    /// Sequence directives: Ling-3.0-tiny's device/rule failures were dominated
+    /// by "skip the read step before write" and "don't finish multi-step flows".
+    /// Guard the two directives that nudge read-before-write + complete-the-flow.
+    #[test]
+    fn command_choice_directs_sequence() {
+        let d = ShellTool::new(test_config()).description().to_lowercase();
+        for needle in ["read before write", "complete the full flow"] {
+            assert!(
+                d.contains(needle),
+                "Command Choice must keep sequence directive {needle:?}"
             );
         }
     }
