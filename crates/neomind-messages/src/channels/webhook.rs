@@ -109,6 +109,16 @@ impl MessageChannel for WebhookChannel {
             )));
         }
 
+        // HTTP 200 can still be a semantic error ({"code":N,"msg":...} or
+        // {"success":false}). Validate the body so channel-test doesn't report a
+        // false success when the target silently rejects the payload.
+        let text = response.text().await.unwrap_or_default();
+        if let Some(err) = super::detect_error_body(&text) {
+            return Err(Error::SendFailed(format!(
+                "Webhook target reported error: {err}"
+            )));
+        }
+
         Ok(())
     }
 }

@@ -147,6 +147,14 @@ impl MessageChannel for FeishuChannel {
             )));
         }
 
+        // Feishu returns HTTP 200 with a JSON body {"code": N, "msg": "..."} even
+        // for semantic errors (invalid msg_type, disabled bot, bad hook). Don't
+        // report success on HTTP 200 alone — validate the body's code.
+        let text = response.text().await.unwrap_or_default();
+        if let Some(err) = super::detect_error_body(&text) {
+            return Err(Error::SendFailed(format!("Feishu API error: {err}")));
+        }
+
         Ok(())
     }
 }

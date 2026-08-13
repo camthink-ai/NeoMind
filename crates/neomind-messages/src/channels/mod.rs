@@ -1177,9 +1177,57 @@ pub fn get_channel_schema(channel_type: &str) -> Option<serde_json::Value> {
     }
 }
 
+/// Detect an error signal in a webhook/channel response body.
+///
+/// Many webhook APIs (Feishu, DingTalk, WeCom, …) return HTTP 200 with an error
+/// code in the JSON body for semantic errors (invalid payload, disabled bot, bad
+/// token). Checking HTTP status alone hides these as false "success" — the
+/// channel-test reports success but no message actually arrives. Returns
+/// `Some(error description)` when the body signals an error, `None` otherwise.
+pub(crate) fn detect_error_body(body: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(body.trim()).ok()?;
+    let obj = v.as_object()?;
+    // Feishu/DingTalk/WeCom style: {"code": N, "msg": "..."} — code != 0 is an error.
+    if let Some(code) = obj.get("code").and_then(|c| c.as_i64()) {
+        if code != 0 {
+            let msg = obj.get("msg").and_then(|m| m.as_str()).unwrap_or("");
+            return Some(format!("code {code}: {msg}"));
+        }
+    }
+    // Generic style: {"success": false} / {"ok": false}
+    if matches!(obj.get("success").and_then(|s| s.as_bool()), Some(false)) {
+        return Some("body reports success=false".to_string());
+    }
+    if matches!(obj.get("ok").and_then(|s| s.as_bool()), Some(false)) {
+        return Some("body reports ok=false".to_string());
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detect_error_body_flags_feishu_code() {
+        assert_eq!(detect_error_body(r#"{"code":0,"msg":"success"}"#), None);
+        let e = detect_error_body(r#"{"code":19001,"msg":"invalid msg_type"}"#).unwrap();
+        assert!(e.contains("19001") && e.contains("invalid msg_type"), "{e}");
+    }
+
+    #[test]
+    fn detect_error_body_flags_generic_false() {
+        assert!(detect_error_body(r#"{"success":false}"#).is_some());
+        assert!(detect_error_body(r#"{"ok":false}"#).is_some());
+        assert_eq!(detect_error_body(r#"{"success":true}"#), None);
+    }
+
+    #[test]
+    fn detect_error_body_ignores_non_error_bodies() {
+        assert_eq!(detect_error_body(""), None);
+        assert_eq!(detect_error_body("not json"), None);
+        assert_eq!(detect_error_body(r#"{"data":{"x":1}}"#), None);
+    }
 
     /// Mock channel for testing purposes only.
     struct MockChannel {
