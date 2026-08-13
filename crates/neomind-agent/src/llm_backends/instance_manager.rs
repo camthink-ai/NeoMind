@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use dashmap::DashMap;
 use neomind_core::llm::backend::{LlmError, LlmInput, LlmRuntime};
@@ -843,7 +843,7 @@ impl LlmBackendInstanceManager {
                 attempt = attempt + 1,
                 "llama.cpp auto-register: server not reachable, retrying"
             );
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         let caps = match caps {
             Some(c) => c,
@@ -1486,6 +1486,7 @@ mod tests {
     /// Open a throwaway store at a unique temp path. The store layer keeps a
     /// process-global singleton keyed by path, so distinct paths yield isolated
     /// databases — ":memory:" would be shared across tests and leak instances.
+    #[cfg(feature = "llamacpp")]
     fn test_store(tag: &str) -> Arc<LlmBackendStore> {
         let path =
             std::env::temp_dir().join(format!("neomind-test-{}-{}.redb", tag, std::process::id()));
