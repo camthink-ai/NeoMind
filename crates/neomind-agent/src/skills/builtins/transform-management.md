@@ -137,8 +137,8 @@ neomind transform data-sources
 
 **Output format depends on context**:
 
-- **Rules** use DataSourceId format: `transform:<output_prefix>:<field>` (colon-separated)
-- **Dashboards** use extension-metric binding (dot in metric name):
+- **Rules** use DataSourceId format: `transform:<transform_id>:<field>` (colon-separated) — `transform_id` is the transform's `id` from `transform list`, NOT `output_prefix`; `field` is the plain field name.
+- **Dashboards** use extension-metric binding (dot in metric name, using `output_prefix`):
 ```json
 {"type":"extension-metric","extensionId":"transform","extensionMetric":"<output_prefix>.<field>"}
 ```

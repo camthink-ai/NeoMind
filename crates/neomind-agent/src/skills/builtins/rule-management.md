@@ -110,7 +110,7 @@ What does the user want?
 
 - `device:<device_id>:<metric>` — most common
 - `extension:<ext_id>:<metric>` — needs `neomind extension get <id>` first
-- `transform:<output_prefix>:<field>` — needs `neomind transform list` first
+- `transform:<transform_id>:<field>` — needs `neomind transform list` first. **`transform_id` is the transform's `id` from `transform list` (NOT its `output_prefix`). `field` is the plain output field name (e.g. `roi_count`, `full_dustbin_count`) — NOT a dotted `extension.field`, and NOT the `output_prefix`.**
 
 ### Action Types
 
