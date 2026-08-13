@@ -5,15 +5,30 @@
   "workflow": "tools-filesystem",
   "scenario_type": "single_turn",
   "description": "通过 file_write 工具（或 shell `cat >`）落盘一个 JSON 配置文件并确认写入成功（覆盖非-CLI 工具链）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "请把这份配置写到 /tmp/eval-config.json：{\"scene\":\"eval\",\"version\":1,\"tags\":[\"a\",\"b\"]}。写完后告诉我文件大小。" }
+    {
+      "user": "请把这份配置写到 /tmp/eval-config.json：{\"scene\":\"eval\",\"version\":1,\"tags\":[\"a\",\"b\"]}。写完后告诉我文件大小。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `file_write` 工具，或 shell 中 `cat > /tmp/eval-config.json`，落盘指定内容"
     ],
     "overall": "Agent 应通过工具实际写入文件（不是只描述步骤），并报告结果"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "eval-config.json"
+    }
+  ]
 }

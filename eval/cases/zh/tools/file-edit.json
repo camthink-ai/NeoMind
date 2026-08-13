@@ -5,17 +5,34 @@
   "workflow": "tools-files",
   "scenario_type": "multi_turn",
   "description": "多轮：先 file_write 创建文件 → file_edit 修改其中一段。评估沙箱限制 file_* 工具在 sandbox 目录内，case 用 /tmp/... 路径会触发 permission denied，因此接受 (a) file_* 工具 或 (b) shell 兜底 (printf/sed) 作为有效路径。",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "用 file_write 工具在 /tmp/eval-edit-target.txt 写入内容：'color=red\\nsize=10\\nshape=circle'。" },
-    { "user": "用 file_edit 工具把 /tmp/eval-edit-target.txt 中的 'color=red' 改成 'color=blue'。" }
+    {
+      "user": "用 file_write 工具在 /tmp/eval-edit-target.txt 写入内容：'color=red\\nsize=10\\nshape=circle'。"
+    },
+    {
+      "user": "用 file_edit 工具把 /tmp/eval-edit-target.txt 中的 'color=red' 改成 'color=blue'。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 要么 (a) 调用 `file_write(path='/tmp/eval-edit-target.txt', content='color=red\\nsize=10\\nshape=circle')`（如果沙箱允许），要么 (b) 先尝试 file_write 被沙箱拒绝后，用 shell（如 printf/cat）兜底写入文件且内容正确。两条路径都有效。",
       "Turn 2: Agent 要么 (a) 调用 `file_edit(path='/tmp/eval-edit-target.txt', old_string='color=red', new_string='color=blue')`（绝不能用 file_write 覆盖整个文件），要么 (b) 因 Turn 1 沙箱拒绝已知 file_edit 也会失败，转而用 shell（如 sed -i）完成原地替换。两条路径都有效，但必须只替换 color=red→color=blue，不能覆盖其他行。"
     ],
     "overall": "Turn 2 必须实际完成 'color=red' → 'color=blue' 的原地替换（保留 size=10 / shape=circle 不变），通过 file_edit 或 shell+sed 均可。"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "eval-edit-target.txt"
+    }
+  ]
 }

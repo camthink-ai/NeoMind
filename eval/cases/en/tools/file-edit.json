@@ -5,17 +5,34 @@
   "workflow": "tools-files",
   "scenario_type": "multi_turn",
   "description": "Multi-turn: file_write to create -> file_edit to mutate a section. The eval sandbox restricts file_* tools to a sandbox dir; the /tmp/... path triggers permission denied, so accept EITHER (a) file_* tool OR (b) shell fallback (printf/sed) as valid.",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Use the file_write tool to write to /tmp/eval-edit-target.txt with content: 'color=red\\nsize=10\\nshape=circle'." },
-    { "user": "Use the file_edit tool to change 'color=red' to 'color=blue' in /tmp/eval-edit-target.txt." }
+    {
+      "user": "Use the file_write tool to write to /tmp/eval-edit-target.txt with content: 'color=red\\nsize=10\\nshape=circle'."
+    },
+    {
+      "user": "Use the file_edit tool to change 'color=red' to 'color=blue' in /tmp/eval-edit-target.txt."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "context_retention", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "context_retention",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent EITHER (a) invokes `file_write(path='/tmp/eval-edit-target.txt', content='color=red\\nsize=10\\nshape=circle')` (if sandbox permits), OR (b) first tries file_write, observes the sandbox permission-denied error, then falls back to a shell command (printf/cat) that writes the file with correct content. Both paths are valid.",
       "Turn 2: Agent EITHER (a) invokes `file_edit(path='/tmp/eval-edit-target.txt', old_string='color=red', new_string='color=blue')` (must NOT overwrite the whole file via file_write), OR (b) — knowing from Turn 1 that file_edit would also be denied — uses a shell in-place substitution (e.g. sed -i) to replace only 'color=red' with 'color=blue'. Both paths are valid; the other lines (size=10, shape=circle) MUST be preserved."
     ],
     "overall": "Turn 2 must actually perform an in-place replacement 'color=red' -> 'color=blue' (preserving size=10 and shape=circle), via either file_edit or shell+sed."
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "eval-edit-target.txt"
+    }
+  ]
 }

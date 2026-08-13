@@ -5,15 +5,30 @@
   "workflow": "tools-web",
   "scenario_type": "single_turn",
   "description": "通过 web_fetch 工具抓取 example.com 并报告页面标题/正文摘要（覆盖非-CLI 工具链）",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "请帮我抓取 https://example.com 的内容，告诉我这个页面的主标题和正文大意。" }
+    {
+      "user": "请帮我抓取 https://example.com 的内容，告诉我这个页面的主标题和正文大意。"
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent 调用 `web_fetch` 工具（url=https://example.com），并基于抓取结果报告"
     ],
     "overall": "响应中必须出现 \"Example Domain\" 标题或等价描述；不能凭空编造"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "Example Domain"
+    }
+  ]
 }

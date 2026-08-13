@@ -5,15 +5,30 @@
   "workflow": "tools-filesystem",
   "scenario_type": "single_turn",
   "description": "Persist a JSON config file via the file_write tool (or shell `cat >`) and confirm the write (covers the non-CLI toolchain)",
-  "setup": { "fixture": "seed-empty" },
+  "setup": {
+    "fixture": "seed-empty"
+  },
   "turns": [
-    { "user": "Please write this config to /tmp/eval-config.json: {\"scene\":\"eval\",\"version\":1,\"tags\":[\"a\",\"b\"]}. Tell me the file size after writing." }
+    {
+      "user": "Please write this config to /tmp/eval-config.json: {\"scene\":\"eval\",\"version\":1,\"tags\":[\"a\",\"b\"]}. Tell me the file size after writing."
+    }
   ],
-  "applies": ["tool_accuracy", "task_completion", "response_quality", "language_adherence"],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "response_quality",
+    "language_adherence"
+  ],
   "expectations": {
     "per_turn": [
       "Turn 1: Agent invokes the `file_write` tool, or shell `cat > /tmp/eval-config.json`, to persist the specified content"
     ],
     "overall": "Agent must actually write the file via a tool (not just describe the steps) and report the result"
-  }
+  },
+  "state_queries": [
+    {
+      "type": "response_contains",
+      "expected": "eval-config.json"
+    }
+  ]
 }
