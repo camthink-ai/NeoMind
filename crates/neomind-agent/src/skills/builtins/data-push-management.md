@@ -151,6 +151,9 @@ Use `--sources` to filter which data sources get forwarded. Format: `{type}:{id}
 # Push all data from an extension
 --sources "extension:weather:*"
 
+# Push a transform's output metric (transform's id + plain field, NOT output_prefix)
+--sources "transform:<transform_id>:roi_count"
+
 # Push everything (default, omit --sources)
 ```
 

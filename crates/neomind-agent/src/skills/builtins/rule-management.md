@@ -198,7 +198,7 @@ neomind rule history <ID>                 # evaluation log
 | Error | Cause | Solution |
 |-------|-------|----------|
 | "Missing 'name' field" | JSON body missing name | Add `"name": "..."` |
-| "Invalid DataSourceId" | Wrong source format | Use `device:ID:METRIC` / `extension:ID:METRIC` / `transform:PREFIX:FIELD` |
+| "Invalid DataSourceId" | Wrong source format | Use `device:ID:METRIC` / `extension:ID:METRIC` / `transform:ID:FIELD` |
 | "Device not found in condition" | Wrong device ID (guessed) | Run Phase 1 discovery |
 | "Unknown metric" | Wrong metric name (guessed) | Run `device list` (check `metric_fields`) or `device get <ID>` |
 | Rule not triggering | Disabled | `neomind rule enable <ID>` |
