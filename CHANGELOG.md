@@ -27,7 +27,7 @@ Focus: collapse the duplicated capability detection (manual table + CapabilityDe
 
 ### Slim Prompt + Tool Descriptions (for small local models)
 - Slim system prompt is now the default (`NEOMIND_FULL_PROMPT=1` opts back into the verbose one); adds Device Onboarding guidance.
-- Tool descriptions slimmed (image_edit / memory / skill / file_write / file_edit); shell tool gained command-choice disambiguation hints (device read-vs-write, set-vs-check, enable-activate).
+- Tool descriptions slimmed (image_edit / memory / skill / file_write / file_edit); shell tool gained command-choice disambiguation hints (device read-vs-write, set-vs-check, enable-activate) and sequence directives (read the entity before a write, complete every step of a multi-step flow).
 - ~45% prompt token reduction with no eval regression (verified across the 154-case bilingual sweep using a stable-case yardstick).
 
 ### Built-in Local AI (Docker)
@@ -44,6 +44,7 @@ Focus: collapse the duplicated capability detection (manual table + CapabilityDe
 - **LLM endpoint pre-flight**: `run`/`regression` probe the agent's LLM backend before the first case — dead server / wrong port / doubly-pathed `/v1` / non-JSON proxy fails fast with a clear message instead of reading as a model-capability regression.
 
 ### Web
+- **Chat UI overhaul**: code blocks gain syntax highlighting (rehype-highlight) + copy button + language label (borderless immersed block, slim header); whole-message copy button (desktop hover / mobile always); scroll-to-bottom button; both chat surfaces unified (Sparkles avatar, `--msg-user-bg` token, fade-in-up); body 14px desktop (13px mobile); heading hierarchy + table booktabs + blockquote background + muted list markers; `--background` 0.985 + `--syn-*` dual-theme syntax tokens; Brain thinking icon; tool expand as full-row hover; `web/docs/MARKDOWN_STYLE.md` spec.
 - PWA status-bar color syncs with full-screen dialogs; chat model-select scrollbar hidden; CSS keyframe dedupe + prose consolidation; mostly-hidden aurora background removed.
 
 ---
