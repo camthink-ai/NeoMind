@@ -400,7 +400,7 @@ impl StreamConfig {
     }
 
     fn default_max_stream_duration_secs() -> u64 {
-        1200
+        2400
     }
 
     fn default_warning_thresholds() -> Vec<u64> {

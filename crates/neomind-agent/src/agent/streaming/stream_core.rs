@@ -78,10 +78,10 @@ pub struct StreamSafeguards {
 impl Default for StreamSafeguards {
     fn default() -> Self {
         Self {
-            // Synchronized with StreamConfig::max_stream_duration_secs (1200s)
+            // Synchronized with StreamConfig::max_stream_duration_secs (2400s)
             // This provides adequate time for thinking models like qwen3-vl:2b
             // to complete extended reasoning before generating content.
-            max_stream_duration: Duration::from_secs(1200),
+            max_stream_duration: Duration::from_secs(2400),
 
             // No limit on thinking content - let the LLM backend enforce limits
             max_thinking_length: usize::MAX,
@@ -908,7 +908,27 @@ pub async fn process_stream_events_with_safeguards(
                     }
                 })).buffer_unordered(MAX_TOOL_CONCURRENCY);
 
-                let mut tool_results_executed: Vec<_> = tool_futures.collect().await;
+                // [keep-alive] Tool execution can legitimately run for minutes
+                // (extension build/install, async agent exec waits). The stream
+                // is otherwise silent during this phase — the chunk-loop
+                // heartbeat (line ~521) only fires between stream chunks, so a
+                // long tool yields NO events and WS listeners (chat UI / eval)
+                // see an event gap and kill the turn. Yield heartbeats on an
+                // independent timer while the tool batch runs.
+                let collect_fut = tool_futures.collect::<Vec<_>>();
+                tokio::pin!(collect_fut);
+                let mut tool_heartbeat = tokio::time::interval(safeguards.heartbeat_interval);
+                // tokio interval's first tick completes immediately — consume it
+                // so the first heartbeat lands one interval in, not instantly.
+                tool_heartbeat.tick().await;
+                let mut tool_results_executed: Vec<_> = loop {
+                    tokio::select! {
+                        _ = tool_heartbeat.tick() => {
+                            yield AgentEvent::heartbeat();
+                        }
+                        done = &mut collect_fut => break done,
+                    }
+                };
                 // Restore LLM-emission order (buffer_unordered completes in arbitrary order).
                 tool_results_executed.sort_by_key(|(i, _, _)| *i);
 
