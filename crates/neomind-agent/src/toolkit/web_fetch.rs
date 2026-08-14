@@ -261,6 +261,11 @@ impl Tool for WebFetchTool {
 Use this tool to retrieve web pages, API responses, or any HTTP-accessible content.
 Returns text with HTML tags stripped by default.
 
+Use for EXTERNAL web content — documentation pages, reference material, public APIs,
+or a search-engine results URL when you need to look something up online.
+For NeoMind platform data (devices, rules, agents, telemetry, etc.) use `shell`
+(`neomind ...`), NOT this tool — the platform's own data never needs a web fetch.
+
 Security: Cannot access private/local network addresses (localhost, 127.0.0.1, 10.x, 192.168.x, etc.).
 Redirects to private addresses are also blocked.
 Timeout: 15 seconds. Max response: 1MB."#

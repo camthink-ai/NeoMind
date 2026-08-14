@@ -135,6 +135,36 @@ impl ShellTool {
         })
     }
 
+    /// [context-injection prototype] On a failed `neomind <domain> ...` call,
+    /// fetch that domain's `--help` (compact subcommand reference) so the model
+    /// sees the exact syntax and can correct on retry. ON-DEMAND: fetched only
+    /// on failure, never injected into the static tool description (keeps the
+    /// description short so ≤3B models still select `shell`).
+    async fn domain_help(domain: &str) -> Option<String> {
+        if domain.is_empty() {
+            return None;
+        }
+        let exe = std::env::current_exe().ok()?;
+        let out = tokio::process::Command::new(exe)
+            .arg(domain)
+            .arg("--help")
+            .output()
+            .await
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let body: String = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .take(28)
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!(
+            "\n\n[Reference — `neomind {}` subcommands — retry with the exact one]:\n{}",
+            domain, body
+        ))
+    }
+
     /// Attempt in-process dispatch for `neomind` data commands.
     ///
     /// Returns `Some(output)` if the command was handled in-process (either
@@ -271,12 +301,21 @@ impl ShellTool {
         match tokio::time::timeout(timeout, neomind_cli_ops::dispatch::dispatch(&argv)).await {
             Ok(Ok(resp)) => {
                 let exit_code = if resp.success { 0 } else { 1 };
-                let stdout = serde_json::to_string_pretty(&resp).unwrap_or_else(|e| {
+                let mut stdout = serde_json::to_string_pretty(&resp).unwrap_or_else(|e| {
                     format!(
                         "{{\"success\":false,\"error\":\"serialize failed: {}\"}}",
                         e
                     )
                 });
+                // [context-injection] on failure, append the domain's --help so
+                // the model sees exact subcommand syntax and corrects on retry.
+                if !resp.success {
+                    if let Some(domain) = argv.get(1) {
+                        if let Some(help) = Self::domain_help(domain.as_str()).await {
+                            stdout.push_str(&help);
+                        }
+                    }
+                }
                 Some(CommandOutput {
                     exit_code: Some(exit_code),
                     stdout,
@@ -293,12 +332,21 @@ impl ShellTool {
                 );
                 None
             }
-            Ok(Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg))) => Some(CommandOutput {
-                exit_code: Some(2),
-                stdout: String::new(),
-                stderr: format!("error: {}", msg),
-                timed_out: false,
-            }),
+            Ok(Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg))) => {
+                let mut stderr = format!("error: {}", msg);
+                // [context-injection] bad subcommand/args → append domain --help.
+                if let Some(domain) = argv.get(1) {
+                    if let Some(help) = Self::domain_help(domain.as_str()).await {
+                        stderr.push_str(&help);
+                    }
+                }
+                Some(CommandOutput {
+                    exit_code: Some(2),
+                    stdout: String::new(),
+                    stderr,
+                    timed_out: false,
+                })
+            }
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::Api(msg))) => Some(CommandOutput {
                 exit_code: Some(1),
                 stdout: String::new(),
@@ -954,50 +1002,21 @@ impl Tool for ShellTool {
         // constraints) + CLI concept, drops the defensive knowledge
         // (easy-to-miss list, GUI guard) — those are discoverable via
         // `neomind <domain> <action> --help` or the skill tool on demand.
-        static SLIM: &str = r#"Execute shell commands on the host system.
+        static SLIM: &str = r#"Execute shell commands on the host. This is your PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI (14 domains: device, dashboard, rule, agent, extension, widget, transform, llm, message, connector, push, settings, system, api-key). All commands return JSON by default — do NOT pass --json.
 
-Use this tool to run any system command. For NeoMind platform operations, use the `neomind` CLI.
+Quick reference (run `neomind <domain> --help` or load the `skill` guide for full syntax):
+- Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
+- Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
+- Control / enable / activate are explicit writes: `device control <ID> <CMD>`, `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
+- History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
+- Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 
-## Critical Syntax Rules (apply to ALL neomind domains)
-- **ID usage by command type**: READ commands (`device get <ID>`, `rule get <ID>`) take ID as a positional arg — NEVER `--id`. CREATE commands (`device create`, `rule create`) accept an optional `--id <id>` flag when the user supplies a specific ID — pass it through, never silently auto-generate. Correct create: `neomind device create --name X --device-type Y --id cam-lobby`. Wrong: `neomind device create cam-lobby`.
-- **NEVER guess metric names**. Discover first via `neomind device list` (returns `metric_fields` per type) or `neomind device get <ID>` (full metric names + values), then use exact names in `--metric`, rule conditions, transform code, or dashboard bindings. The same applies to extension fields — discover via `neomind extension info <ID>`.
-- **"unexpected argument" error** = you used a flag where positional was expected. Rewrite without the flag.
-- On command failure, check the `suggestion` field in the JSON output for recovery hints.
+Critical rules:
+- NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
+- Read before write: `get <ID>` before create/update/control/delete.
+- On error, read the `suggestion` field in the JSON output for recovery.
 
-## NeoMind CLI Domain Syntax
-The `neomind` CLI has 14 domains: `device`, `dashboard`, `rule`, `agent`, `extension`, `widget`, `transform`, `llm`, `message`, `connector`, `push`, `settings`, `system`, `api-key`.
-
-**Domain-specific command syntax, flags, and copy-paste templates live in skill docs** — use the `skill` tool to load the matching guide before any create/update/delete/control operation, or run `neomind <domain> <action> --help` for flags and examples. All commands return JSON by default (controlled by `NEOMIND_JSON`) — do NOT pass any `--json` flag.
-
-## Command Choice (pick the exact subcommand for the intent)
-- **Device**: `device get <ID>` = read one device's detail; `device list` = list all devices; `device control <ID> <COMMAND>` = send a control command (reboot/stop/set speed); `device types` = manage device TYPE templates (different from listing devices!). A "device-type" request is `device types`, NOT `device list`.
-- **Extension config**: `extension config <ID>` = show/update an installed extension's configuration; `extension list` only lists installed extensions. "Show/configure extension X" → `extension config`, NOT `extension list`.
-- **Message channels are a sub-family**: operating on CHANNELS uses `message channel-list`/`channel-create`/`channel-update`/`channel-test`/`channel-delete`/`channel-get` — NOT `message list` (which lists messages). Channel type info: `message channel-types` / `channel-type-schema`.
-- **Push update vs create**: `push update <ID>` modifies an existing target; `push create` makes a new one. To enable/disable an existing target: `push enable`/`disable <ID>`. Don't `create` when asked to `update`.
-- **Agent conversation/messaging**: `agent conversation <ID>` = read an agent's conversation history; `agent send-message <ID>` = send a message TO an agent. These live under `agent`, NOT `message send` (which is platform-wide broadcast).
-- **Agent activity/history**: `agent executions <ID>` / `agent latest-execution <ID>` = view an agent's run history; NOT `agent list` or `agent conversation`.
-- **Device drafts**: `device drafts` = list pending draft devices (approval workflow); NOT `device list`.
-- **Extension market**: `extension market-list` / `extension search` / `extension install` = browse/install from the marketplace; `extension list` = only already-installed. "Browse/find available extensions" → `market-list`, NOT `list`.
-- **Read vs write**: `get`/`list` = read (ID positional, no `--id`); `create`/`update`/`delete` = write (use flags like `--name --device-type`). If you're creating/updating, you need the WRITE command, not `get`/`list`.
-- **Read before write**: before `create`/`update`/`control`/`delete` on a specific entity, FIRST run `get <ID>` (or `list`) to confirm it exists and read its current state — do NOT skip the read step and jump straight to the write.
-- **Complete the full flow**: a multi-step request (discover THEN act, create THEN update, diagnose THEN fix) requires EVERY step — do not stop after the first action.
-- **Set vs check state**: `settings set-timezone` = change it; `settings timezone` = read current. Same for `rule enable`/`disable` (write) vs `rule get`/`list` (read), `transform enable`/`disable` vs `transform get`/`list`.
-- **Enable/activate/delete are explicit write actions**: `connector enable <ID>`, `llm activate <ID>`, `push enable <ID>` — don't report state, perform the change. The command is `llm activate` (there is no `llm set-default`).
-- **Check connectivity with `test`**: `connector test <ID>` verifies a broker; don't use `connector get` for that.
-- **extension**: `extension list` = all installed; `extension get <ID>` = one extension's details (NOT `info`); `extension status <ID>` / `extension logs <ID>` = runtime state; `extension config <ID>` = edit config; `extension install`/`uninstall`/`reload`/`build` = write ops.
-- **message**: notification channels are `message channel-create`/`channel-get`/`channel-update`/`channel-test`/`channel-delete`/`channel-type-schema` — NOT under `connector` (connector = external MQTT brokers, a separate subsystem).
-- **agent**: `agent executions <ID>` / `agent latest-execution <ID>` = execution history; `agent memory <ID>` / `agent clear-memory <ID>` = memory; `agent get <ID>` is details only, not executions.
-- **widget**: `widget bundle` = build a widget bundle; `widget list` / `widget get <ID>` = read.
-- **transform**: `transform metrics <ID>` = transform output metrics; `transform data-sources <ID>` = its input sources — distinct subcommands.
-- **NEVER guess a subcommand** — defaulting to `list`/`create` when unsure is the #1 command error. If you are not 100% certain a subcommand exists, run `neomind <domain> --help` FIRST, read the subcommand list, then run the exact one.
-
-## Native System Commands
-Runs on host via `/bin/sh -c` (Unix) or `cmd /C` (Windows). Common tools available: ping, traceroute, curl, arp, nmap, ps, df, free, top, uptime, systemctl status, ls, cat, head, tail, grep, find, wc, arp-scan, avahi-browse, bluetoothctl, docker.
-
-## Execution Notes
-- Each command runs in a fresh process — no persistent shell state between calls.
-- `neomind` commands are dispatched in-process (no subprocess); they return a structured `CliResponse` as pretty-printed JSON on stdout.
-- Output may be truncated for very long responses."#;
+Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, docker, …"#;
         SLIM
     }
 
