@@ -226,7 +226,11 @@ def run_case(case_path: str) -> dict:
                 return _error_record_at(
                     case,
                     "agent_error",
-                    f"turn failed ({turn['user']!r}): {e}",
+                    # Include the exception CLASS: some exceptions (notably
+                    # asyncio.TimeoutError with no args) str() to an EMPTY
+                    # string, which left "turn failed (...): " with no
+                    # diagnosis at all (2026-08-14, 4 cases).
+                    f"turn failed ({turn['user']!r}): {type(e).__name__}: {e}",
                     turn_records,
                 )
             elapsed_ms = int((time.monotonic() - t0) * 1000)

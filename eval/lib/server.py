@@ -316,8 +316,8 @@ class TestServer:
             "endpoint": endpoint,
             "model": model,
             "api_key": api_key,
-            "temperature": 0.6,
-            "top_p": 0.85,
+            "temperature": float(os.environ.get("AGENT_LLM_TEMPERATURE", "0.6")),
+            "top_p": float(os.environ.get("AGENT_LLM_TOP_P", "0.85")),
             "thinking_enabled": thinking,
         }
         r = self.post("/llm-backends", body)
@@ -363,8 +363,16 @@ class TestServer:
         data = body.get("data", body)
         return data.get("messages", []) or []
 
-    def chat(self, session_id: str, message: str, timeout: float = 900.0,
+    def chat(self, session_id: str, message: str, timeout: float | None = None,
              images: list[str] | None = None) -> dict:
+        # timeout: env-tunable (EVAL_CHAT_TIMEOUT, default 1400). Raised 900→1400
+        # (2026-08-14) because the chat path's own turn bound is
+        # max_stream_duration=1200s — a 900s outer bound killed turns the agent
+        # would have completed (empty-error agent_failed). Slow local models
+        # (60-90 tok/s) make 20+-round deploy cases legitimately long; set
+        # EVAL_CHAT_TIMEOUT=2400 etc. when re-running the heavyweight cases.
+        if timeout is None:
+            timeout = float(os.environ.get("EVAL_CHAT_TIMEOUT", "1400"))
         """One chat turn via WebSocket (production chat UI path).
 
         Routes through `ws://.../api/chat?api_key=...` →
@@ -537,6 +545,7 @@ async def _ws_chat_async(
     tool_calls_stream: list[dict] = []
     pending_tool_calls: dict[int, dict] = {}  # round → in-flight ToolCallStart info
     error_msg: str | None = None
+    got_end = False  # terminal "end" event received (successful completion)
     server_msg_buffer: list[str] = []  # all raw event JSON, for forensic use
 
     try:
@@ -575,16 +584,22 @@ async def _ws_chat_async(
             # Drain events until terminal.
             # Inner gap timeout must exceed the server's Heartbeat interval
             # (HEARTBEAT_INTERVAL_SECS = 30s in sessions.rs) so a thinking
-            # pause between tool rounds doesn't kill a long run. Use 180s
-            # (6x heartbeat) — production agent execution can run up to 5
-            # minutes (300s) and the first LLM response on long prompts may
-            # take 90-150s on slow models. Outer `timeout` (900s) bounds
-            # total wall clock for very multi-tool runs (raised from 600s
-            # to handle complex lifecycle cases: extension build, widget
-            # tar/gzip, multi-turn state parsing). Inner gap raised to
-            # 240s (8x heartbeat) for thinking models on slow endpoints.
+            # pause between tool rounds doesn't kill a long run. Outer
+            # `timeout` (900s) bounds total wall clock for very multi-tool
+            # runs. Inner gap raised to 240s (8x heartbeat) for thinking
+            # models on slow endpoints, then to 600s (2026-08-14): the chat
+            # path's own turn bound is max_stream_duration=1200s and long
+            # single tool executions (extension build/install, async agent
+            # exec waits) are legitimately silent >240s on local models —
+            # the stream_core heartbeat only fires between stream chunks,
+            # so a blocking tool phase emits nothing. 240s was killing
+            # turns the agent would have completed (~13% of 2.6B full-eval
+            # cases died with an empty-error gap timeout). 600s stays under
+            # the 900s outer deadline so a truly-hung attempt still
+            # terminates; the agent's own 1200s turn bound is the real
+            # completion mechanism.
             deadline = time.monotonic() + timeout
-            inner_gap = 240.0
+            inner_gap = 600.0
             while time.monotonic() < deadline:
                 remaining = max(0.0, deadline - time.monotonic())
                 try:
@@ -636,6 +651,7 @@ async def _ws_chat_async(
                     error_msg = evt.get("message", "unknown error")
                     break
                 elif etype == "end":
+                    got_end = True
                     break
                 elif etype in ("intermediate_end", "Intent", "Plan", "Progress",
                                "Warning", "Heartbeat", "system", "session_created",
@@ -648,6 +664,17 @@ async def _ws_chat_async(
                     pass
     except Exception as e:
         error_msg = f"WS chat failed: {e}"
+
+    # Deadline-exit observability: the drain loop can exit because the outer
+    # deadline passed (while-condition false) WITHOUT any error path setting
+    # error_msg — that left a None/empty error that surfaced upstream as
+    # "turn failed (): " with no diagnosis (2026-08-14: 3 extension cases).
+    # Distinguish it explicitly so the failure is diagnosable.
+    if error_msg is None and not got_end and time.monotonic() >= deadline:
+        error_msg = (
+            f"chat deadline exceeded ({timeout:.0f}s) — the agent turn did not "
+            f"complete within the outer bound (its own max_stream_duration is 1200s)"
+        )
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
 
