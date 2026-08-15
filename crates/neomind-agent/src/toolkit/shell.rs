@@ -63,9 +63,8 @@ struct CommandOutput {
 /// [context-injection] Domains whose `--help` reference has been injected
 /// once already this process (first-use injection, channel C). See
 /// `ShellTool::domain_help` for the rationale.
-static INJECTED_DOMAINS: std::sync::OnceLock<
-    std::sync::Mutex<std::collections::HashSet<String>>,
-> = std::sync::OnceLock::new();
+static INJECTED_DOMAINS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
 
 pub struct ShellTool {
     config: ShellConfig,
@@ -346,8 +345,11 @@ impl ShellTool {
                     let help: Option<String> = if !resp.success {
                         Self::domain_help(domain.as_str(), "retry with the exact one").await
                     } else if !Self::domain_injected(domain.as_str()) {
-                        let h =
-                            Self::domain_help(domain.as_str(), "use the exact one for the next steps").await;
+                        let h = Self::domain_help(
+                            domain.as_str(),
+                            "use the exact one for the next steps",
+                        )
+                        .await;
                         if h.is_some() {
                             Self::mark_domain_injected(domain.as_str());
                         }
@@ -379,7 +381,9 @@ impl ShellTool {
                 let mut stderr = format!("error: {}", msg);
                 // [context-injection] bad subcommand/args → append domain --help.
                 if let Some(domain) = argv.get(1) {
-                    if let Some(help) = Self::domain_help(domain.as_str(), "retry with the exact one").await {
+                    if let Some(help) =
+                        Self::domain_help(domain.as_str(), "retry with the exact one").await
+                    {
                         stderr.push_str(&help);
                     }
                 }
@@ -1201,20 +1205,42 @@ mod tests {
     /// model then improvises subcommands (extension info↔get, data-sources↔metrics)
     /// because those domains aren't in the always-present reference.
     #[test]
-    fn command_choice_covers_failure_domains() {
-        let d = ShellTool::new(test_config()).description().to_lowercase();
+    /// The skeleton description replaced the old dense per-domain Command
+    /// Choice block (6510 chars) — that block suppressed tool SELECTION on
+    /// ≤3B models (they avoided the huge description and grabbed `skill`
+    /// instead; verified A/B on LFM2.5-VL-3B). The load-bearing property is
+    /// that the description stays SHORT; per-domain subcommand syntax is
+    /// delivered on demand via `--help` injection (see `domain_help`).
+    #[test]
+    fn skeleton_description_stays_concise() {
+        let tool = ShellTool::new(test_config());
+        let d = tool.description();
+        assert!(
+            d.len() < 2600,
+            "shell description grew to {} chars — dense descriptions suppress \
+             tool selection on <=3B models; move detail to on-demand injection",
+            d.len()
+        );
+        // Skeleton essentials
+        let dl = d.to_lowercase();
         for needle in [
-            "extension get",
-            "channel-create",
-            "agent executions",
-            "widget bundle",
-            "transform metrics",
+            "primary tool",      // positions shell as the default
+            "quick reference",   // points at --help / skill for detail
+            "read before write", // sequence directive
+            "complete the full flow",
+            "never guess", // discover-before-use
         ] {
             assert!(
-                d.contains(needle),
-                "Command Choice must keep subcommand coverage for {needle:?}"
+                dl.contains(needle),
+                "skeleton description must keep {needle:?}"
             );
         }
+        // The worked multi-step example (small models follow examples, not
+        // directives — the connector create→enable→test sequence).
+        assert!(
+            dl.contains("connector create") && dl.contains("connector enable"),
+            "worked multi-step example must stay"
+        );
     }
 
     /// Sequence directives: Ling-3.0-tiny's device/rule failures were dominated

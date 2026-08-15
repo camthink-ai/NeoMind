@@ -164,7 +164,7 @@ impl AgentExecutor {
                     let agent_id_for_log = agent.id.clone();
                     let recent_executions_clone = self.recent_executions.clone();
 
-                    tokio::spawn(async move {
+                    let handle = tokio::spawn(async move {
                         // Acquire per-backend semaphore (WAIT, not fail)
                         Self::acquire_backend_permit(
                             &executor_config.backend_semaphores,
@@ -231,6 +231,13 @@ impl AgentExecutor {
                             }
                         }
                     });
+                    // [cancellation] register the handle so shutdown can abort it;
+                    // prune finished entries to keep the registry bounded.
+                    {
+                        let mut handles = self.event_task_handles.lock();
+                        handles.retain(|h| !h.is_finished());
+                        handles.push(handle);
+                    }
                 }
             }
         }
@@ -337,7 +344,7 @@ impl AgentExecutor {
             let agent_id_for_log = agent.id.clone();
             let recent_executions_clone = self.recent_executions.clone();
 
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 // Acquire per-backend semaphore (WAIT, not fail)
                 Self::acquire_backend_permit(
                     &executor_config.backend_semaphores,
@@ -403,6 +410,13 @@ impl AgentExecutor {
                     }
                 }
             });
+            // [cancellation] register the handle so shutdown can abort it;
+            // prune finished entries to keep the registry bounded.
+            {
+                let mut handles = self.event_task_handles.lock();
+                handles.retain(|h| !h.is_finished());
+                handles.push(handle);
+            }
         }
 
         Ok(())

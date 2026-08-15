@@ -42,6 +42,14 @@ pub async fn shutdown_signal() {
 pub async fn cleanup_resources(state: &ServerState) {
     tracing::info!("Cleaning up resources...");
 
+    // 0. Abort in-flight event-triggered agent executions. These spawn
+    // detached from the scheduler (which only aborts scheduled tasks), so
+    // without this they keep running through shutdown, bounded only by
+    // their execution timeout.
+    if let Some(manager) = state.agents.agent_manager.read().await.clone() {
+        manager.executor().abort_event_tasks();
+    }
+
     // 1. Stop MQTT adapter through DeviceService (with timeout)
     let device_service = state.devices.service.clone();
     let mqtt_task = tokio::spawn(async move {

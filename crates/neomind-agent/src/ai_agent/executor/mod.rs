@@ -337,6 +337,12 @@ pub struct AgentExecutor {
     pub(crate) backend_semaphores: Option<crate::ai_agent::scheduler::BackendSemaphores>,
     /// Semaphore limiting concurrent tool executions (default: 6)
     pub(crate) tool_concurrency: Arc<Semaphore>,
+    /// JoinHandles of event-triggered executions spawned by this executor.
+    /// Previously these were fully detached: `AgentScheduler::stop()` could
+    /// only abort scheduled tasks, so event executions kept running through
+    /// shutdown. Registered here so `abort_event_tasks()` can cancel them.
+    /// Finished handles are pruned on each registration.
+    pub(crate) event_task_handles: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 /// Parse the LLM's final text response to extract situation_analysis, conclusion, and confidence.
@@ -376,7 +382,22 @@ impl AgentExecutor {
             tool_concurrency: Arc::new(Semaphore::new(
                 neomind_storage::AgentDefaults::get().tool_concurrency,
             )),
+            event_task_handles: parking_lot::Mutex::new(Vec::new()),
         })
+    }
+
+    /// Abort all in-flight event-triggered executions spawned by this
+    /// executor. Called on shutdown so event agents don't keep running
+    /// (bounded only by their execution timeout) after the scheduler stops.
+    pub fn abort_event_tasks(&self) {
+        let mut handles = self.event_task_handles.lock();
+        let n = handles.len();
+        for h in handles.drain(..) {
+            h.abort();
+        }
+        if n > 0 {
+            tracing::info!(count = n, "Aborted in-flight event-triggered executions");
+        }
     }
 
     /// Set the LLM runtime for intent parsing.

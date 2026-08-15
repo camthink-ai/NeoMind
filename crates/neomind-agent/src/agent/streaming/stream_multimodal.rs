@@ -12,11 +12,11 @@ use futures::{Stream, StreamExt};
 use super::context::{build_context_window_with_summary, ToolExecutionResult};
 use super::dedup::deduplicate_tool_results;
 use super::intent::build_list_only_dead_end_prompt;
+use super::next_chunk_or_timeout;
 use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
 use super::sanitize::sanitize_tool_result_for_prompt;
 use super::stream_core::StreamSafeguards;
-use super::next_chunk_or_timeout;
 use super::tool_detect::detect_json_tool_calls;
 use super::tool_exec::execute_tool_with_retry;
 use crate::agent::tool_parser::{
@@ -288,7 +288,22 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 }
             })).buffer_unordered(6);
 
-            let tool_results_executed: Vec<_> = tool_futures.collect().await;
+            // [keep-alive] Same as stream_core: tool execution can run for
+            // minutes and the stream is otherwise silent during this phase,
+            // so WS listeners see an event gap and kill the turn. Yield
+            // heartbeats on an independent timer while the tool batch runs.
+            let collect_fut = tool_futures.collect::<Vec<_>>();
+            tokio::pin!(collect_fut);
+            let mut tool_heartbeat = tokio::time::interval(safeguards.heartbeat_interval);
+            tool_heartbeat.tick().await; // consume the immediate first tick
+            let tool_results_executed: Vec<_> = loop {
+                tokio::select! {
+                    _ = tool_heartbeat.tick() => {
+                        yield AgentEvent::heartbeat();
+                    }
+                    done = &mut collect_fut => break done,
+                }
+            };
 
             // Process results
             let mut tool_calls_with_results: Vec<ToolCall> = Vec::new();
