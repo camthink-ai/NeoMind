@@ -59,6 +59,26 @@ fn create_hmac(key: &[u8]) -> Result<HmacSha256, AuthError> {
 // Table definitions
 const USERS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("users");
 
+/// Active sessions (token-hash → `SessionInfo`), persisted so a server
+/// restart doesn't invalidate every login. The persisted `.jwt_secret`
+/// keeps token *signatures* valid across restarts; this table keeps the
+/// stateful-revocation allowlist valid across restarts too (previously the
+/// in-memory map was rebuilt empty on boot, so `validate_token` rejected
+/// every pre-restart token with `SessionRevoked` — defeating the persisted
+/// secret and logging everyone out on every restart). Keys are
+/// SHA-256(token) — raw tokens are never written at rest.
+const SESSIONS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("user_sessions");
+
+/// Stable lookup key for a session token — SHA-256 hex. Used as BOTH the
+/// in-memory map key and the persisted row key, so the allowlist can be
+/// rebuilt from disk at boot without ever storing raw tokens.
+fn token_key(token: &str) -> String {
+    use sha2::Digest;
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// Clock-skew tolerance (seconds) applied to JWT `exp` during validation, and
 /// mirrored by the sessions reaper so it never evicts a session whose token is
 /// still within this grace window. Hoisted to module scope to keep the two
@@ -254,6 +274,17 @@ impl AuthUserState {
         // Load users from database
         // If no users exist, the setup wizard will handle creating the first admin
         let users = Self::load_users_from_db(db_path).unwrap_or_default();
+        // Load persisted sessions so tokens issued before this boot stay
+        // valid (expired ones are dropped + purged inside the loader).
+        let sessions = Self::load_sessions_from_db(db_path);
+        if !sessions.is_empty() {
+            info!(
+                category = "auth",
+                count = sessions.len(),
+                "Restored {} active session(s) from database (restart-surviving logins)",
+                sessions.len()
+            );
+        }
 
         if users.is_empty() {
             info!(
@@ -264,7 +295,7 @@ impl AuthUserState {
 
         Self {
             users: Arc::new(RwLock::new(users)),
-            sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            sessions: Arc::new(std::sync::RwLock::new(sessions)),
             db_path,
             jwt_secret,
             session_duration: 7 * 24 * 60 * 60, // 7 days
@@ -274,13 +305,14 @@ impl AuthUserState {
     /// Create a new auth state with custom configuration (for testing).
     pub fn with_config(db_path: String, jwt_secret: String) -> Self {
         let users = Self::load_users_from_db(&db_path).unwrap_or_default();
+        let sessions = Self::load_sessions_from_db(&db_path);
         // Leak the strings to get &'static str for db_path
         let db_path_static: &'static str = Box::leak(db_path.into_boxed_str());
         let jwt_secret_owned = jwt_secret;
 
         Self {
             users: Arc::new(RwLock::new(users)),
-            sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            sessions: Arc::new(std::sync::RwLock::new(sessions)),
             db_path: db_path_static,
             jwt_secret: jwt_secret_owned,
             session_duration: 7 * 24 * 60 * 60,
@@ -334,6 +366,104 @@ impl AuthUserState {
         }
 
         Ok(users)
+    }
+
+    /// Load persisted sessions at boot, keeping only unexpired ones and
+    /// purging expired rows. Errors are non-fatal: an unreadable session
+    /// table degrades to "everyone re-logins" (the old behavior), never to
+    /// a failed boot.
+    fn load_sessions_from_db(path: &str) -> HashMap<String, SessionInfo> {
+        let mut out: HashMap<String, SessionInfo> = HashMap::new();
+        if path == ":memory:" || !std::path::Path::new(path).exists() {
+            return out;
+        }
+        let now = chrono::Utc::now().timestamp();
+        let mut expired: Vec<String> = Vec::new();
+
+        if let Ok(db) = Database::open(path) {
+            if let Ok(read_txn) = db.begin_read() {
+                if let Ok(table) = read_txn.open_table(SESSIONS_TABLE) {
+                    if let Ok(iter) = table.iter() {
+                        for item in iter.flatten() {
+                            let (k, v) = item;
+                            if let Ok(info) = bincode::deserialize::<SessionInfo>(v.value()) {
+                                // Same grace as the login-time reaper, so a
+                                // boot never drops a session whose token is
+                                // still inside the clock-skew window.
+                                if info.expires_at + JWT_CLOCK_SKEW_SECS > now {
+                                    out.insert(k.value().to_string(), info);
+                                } else {
+                                    expired.push(k.value().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !expired.is_empty() {
+            if let Ok(db) = Database::open(path) {
+                if let Ok(mut w) = db.begin_write() {
+                    if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
+                        for k in &expired {
+                            let _ = t.remove(k.as_str());
+                        }
+                    }
+                    let _ = w.commit();
+                }
+            }
+        }
+        out
+    }
+
+    /// Persist one session row (write-through on login/register). Best-effort:
+    /// a failed write only means the session won't survive a restart.
+    fn save_session_to_db(path: &str, key: &str, info: &SessionInfo) {
+        if path == ":memory:" {
+            return;
+        }
+        let Ok(bytes) = bincode::serialize(info) else {
+            return;
+        };
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let db = if std::path::Path::new(path).exists() {
+            match Database::open(path) {
+                Ok(d) => d,
+                Err(_) => return,
+            }
+        } else {
+            match Database::create(path) {
+                Ok(d) => d,
+                Err(_) => return,
+            }
+        };
+        if let Ok(mut w) = db.begin_write() {
+            let mut inserted = false;
+            if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
+                inserted = t.insert(key, bytes.as_slice()).is_ok();
+            }
+            if inserted {
+                let _ = w.commit();
+            }
+        }
+    }
+
+    /// Remove one session row (write-through on logout). Best-effort.
+    fn delete_session_from_db(path: &str, key: &str) {
+        if path == ":memory:" || !std::path::Path::new(path).exists() {
+            return;
+        }
+        let Ok(db) = Database::open(path) else {
+            return;
+        };
+        if let Ok(mut w) = db.begin_write() {
+            if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
+                let _ = t.remove(key);
+            }
+            let _ = w.commit();
+        }
     }
 
     /// Save user to database synchronously.
@@ -507,7 +637,14 @@ impl AuthUserState {
         // Stateful revocation: the token must still be in the active sessions
         // map. login/register insert, logout removes — without this check
         // logout is a no-op (a JWT's signature/exp alone cannot be revoked).
-        if !self.sessions.read().unwrap().contains_key(token) {
+        // Map keys are SHA-256(token); the same hash is the persisted row
+        // key, so a session restored from disk at boot matches here.
+        if !self
+            .sessions
+            .read()
+            .unwrap()
+            .contains_key(&token_key(token))
+        {
             return Err(AuthError::SessionRevoked);
         }
 
@@ -587,10 +724,9 @@ impl AuthUserState {
                 created_at: chrono::Utc::now().timestamp(),
                 expires_at: chrono::Utc::now().timestamp() + self.session_duration,
             };
-            self.sessions
-                .write()
-                .unwrap()
-                .insert(token.clone(), session_info);
+            let key = token_key(&token);
+            Self::save_session_to_db(self.db_path, &key, &session_info);
+            self.sessions.write().unwrap().insert(key, session_info);
         }
 
         info!(
@@ -652,7 +788,9 @@ impl AuthUserState {
             expires_at: chrono::Utc::now().timestamp() + self.session_duration,
         };
         let mut sessions = self.sessions.write().unwrap();
-        sessions.insert(token.clone(), session_info);
+        let key = token_key(&token);
+        Self::save_session_to_db(self.db_path, &key, &session_info);
+        sessions.insert(key, session_info);
         // Piggyback: reap expired sessions on each login (was: never cleaned →
         // unbounded growth over months of operation). Honor the same
         // JWT_CLOCK_SKEW_SECS grace the validator grants, so a login-triggered
@@ -678,8 +816,9 @@ impl AuthUserState {
 
     /// Logout user (invalidate session).
     pub async fn logout(&self, token: &str) -> Result<(), AuthError> {
-        let mut sessions = self.sessions.write().unwrap();
-        sessions.remove(token);
+        let key = token_key(token);
+        Self::delete_session_from_db(self.db_path, &key);
+        self.sessions.write().unwrap().remove(&key);
         Ok(())
     }
 
@@ -938,6 +1077,42 @@ mod tests {
         let response = auth.login("testuser", "password123").await.unwrap();
         assert_eq!(response.user.username, "testuser");
         assert!(!response.token.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_session_survives_restart() {
+        // The whole point of session persistence: a token issued before a
+        // restart must stay valid after it (same db + same secret), unless
+        // logged out. Previously the in-memory allowlist was rebuilt empty
+        // on boot → every pre-restart token got SessionRevoked.
+        let (auth, db_path) = make_test_auth("session_restart");
+        auth.register("testuser", "password123", UserRole::User)
+            .await
+            .unwrap();
+        let response = auth.login("testuser", "password123").await.unwrap();
+        let token = response.token;
+
+        // Simulate a restart: brand-new state from the same database.
+        let restarted = AuthUserState::with_config(
+            db_path.display().to_string(),
+            "test_secret_key_12345678".to_string(),
+        );
+        assert!(
+            restarted.validate_token(&token).is_ok(),
+            "token must survive a restart"
+        );
+
+        // Logout revokes persistently too: a further restart must NOT
+        // resurrect the logged-out session.
+        restarted.logout(&token).await.unwrap();
+        let restarted2 = AuthUserState::with_config(
+            db_path.display().to_string(),
+            "test_secret_key_12345678".to_string(),
+        );
+        assert!(
+            restarted2.validate_token(&token).is_err(),
+            "logged-out token must stay revoked across restarts"
+        );
     }
 
     #[tokio::test]
