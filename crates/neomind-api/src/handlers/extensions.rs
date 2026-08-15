@@ -235,11 +235,7 @@ pub async fn list_extensions_handler(
     let loaded_extensions = state.extensions.runtime.list().await;
 
     // Also get all extension records from storage (including failed ones)
-    let stored_records = if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
-        store.load_all().unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    let stored_records = state.extensions.store.load_all().unwrap_or_default();
 
     // Build a set of loaded extension IDs for quick lookup
     let loaded_ids: std::collections::HashSet<String> = loaded_extensions
@@ -251,7 +247,7 @@ pub async fn list_extensions_handler(
 
     // First, add all successfully loaded extensions
     for info in loaded_extensions {
-        extensions.push(extension_info_to_dto(&info));
+        extensions.push(extension_info_to_dto(&info, &state.extensions.store));
     }
 
     // Then, add extensions from storage that failed to load
@@ -296,15 +292,16 @@ pub async fn list_extensions_handler(
 }
 
 /// Helper function to convert ExtensionInfo to ExtensionDto
-fn extension_info_to_dto(info: &neomind_core::extension::ExtensionRuntimeInfo) -> ExtensionDto {
+fn extension_info_to_dto(
+    info: &neomind_core::extension::ExtensionRuntimeInfo,
+    store: &ExtensionStore,
+) -> ExtensionDto {
     use neomind_core::extension::system::ParamMetricValue;
 
     // Load persisted record (if any) to get enabled flag + disabled_commands.
     // Defaults: enabled=true, no disabled commands. Same lookup is reused for
     // health_status below, so we cache it once.
-    let record_opt: Option<ExtensionRecord> = ExtensionStore::open("data/extensions.redb")
-        .ok()
-        .and_then(|store| store.load(&info.metadata.id).ok().flatten());
+    let record_opt: Option<ExtensionRecord> = store.load(&info.metadata.id).ok().flatten();
     let (enabled, disabled_commands): (bool, Vec<String>) = record_opt
         .as_ref()
         .map(|r| (r.enabled, r.disabled_commands.clone()))
@@ -433,7 +430,7 @@ pub async fn get_extension_handler(
         .await
         .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
 
-    ok(extension_info_to_dto(&info))
+    ok(extension_info_to_dto(&info, &state.extensions.store))
 }
 
 /// GET /api/extensions/types
@@ -500,7 +497,8 @@ pub async fn register_extension_handler(
 
     // Save to persistent storage for auto-load on server restart
     // V2: Use empty string for extension_type (storage API still requires it)
-    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+    let store = state.extensions.store.clone();
+    {
         let record = neomind_storage::ExtensionRecord::new(
             ext_id.clone(),
             ext_name.clone(),
@@ -540,11 +538,7 @@ pub async fn unregister_extension_handler(
 
     // Check if extension exists in memory or storage
     let in_memory = runtime.contains(&id).await;
-    let in_storage = if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
-        store.load(&id).ok().flatten().is_some()
-    } else {
-        false
-    };
+    let in_storage = state.extensions.store.load(&id).ok().flatten().is_some();
 
     // Extension must exist somewhere to unregister
     if !in_memory && !in_storage {
@@ -564,7 +558,8 @@ pub async fn unregister_extension_handler(
 
     // Mark as uninstalled in storage (instead of deleting) to prevent auto-discovery
     // from re-registering it on server restart
-    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+    let store = state.extensions.store.clone();
+    {
         if let Err(e) = store.mark_uninstalled(&id) {
             tracing::warn!("Failed to mark extension as uninstalled: {}", e);
         }
@@ -1102,10 +1097,7 @@ pub async fn list_extension_commands_handler(
 
     // Load persisted disable state so `disabled` flag reflects current setting.
     let (ext_enabled, disabled_cmds): (bool, std::collections::HashSet<String>) =
-        match ExtensionStore::open("data/extensions.redb")
-            .ok()
-            .and_then(|s| s.load(&id).ok().flatten())
-        {
+        match state.extensions.store.load(&id).ok().flatten() {
             Some(r) => (r.enabled, r.disabled_commands.iter().cloned().collect()),
             None => (true, Default::default()),
         };
@@ -1148,7 +1140,8 @@ async fn refresh_tool_registry_disabled(state: &ServerState) {
     };
 
     let mut disabled: std::collections::HashSet<String> = std::collections::HashSet::new();
-    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+    let store = state.extensions.store.clone();
+    {
         if let Ok(records) = store.load_all() {
             for r in records {
                 if !r.enabled {
@@ -1187,8 +1180,9 @@ pub async fn set_extension_enabled_handler(
 ) -> HandlerResult<serde_json::Value> {
     validate_extension_id(&id)?;
 
-    let store = ExtensionStore::open("data/extensions.redb")
-        .map_err(|e| ErrorResponse::internal(format!("Extension store: {e}")))?;
+    // Shared pre-opened store from ServerState (was: per-request
+    // ExtensionStore::open, whose failure swallowed into a 500).
+    let store = state.extensions.store.clone();
     let mut record = store
         .load(&id)
         .map_err(|e| ErrorResponse::internal(format!("Load extension: {e}")))?
@@ -1228,8 +1222,9 @@ pub async fn set_extension_command_enabled_handler(
         ));
     }
 
-    let store = ExtensionStore::open("data/extensions.redb")
-        .map_err(|e| ErrorResponse::internal(format!("Extension store: {e}")))?;
+    // Shared pre-opened store from ServerState (was: per-request
+    // ExtensionStore::open, whose failure swallowed into a 500).
+    let store = state.extensions.store.clone();
     let mut record = store
         .load(&id)
         .map_err(|e| ErrorResponse::internal(format!("Load extension: {e}")))?
@@ -2572,7 +2567,8 @@ pub async fn install_marketplace_extension_handler(
                             .to_string();
 
                         // Save to storage
-                        if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                        let store = state.extensions.store.clone();
+                        {
                             let record = ExtensionRecord::new(
                                 ext_id.clone(),
                                 ext_metadata.name.clone(),
@@ -2833,7 +2829,8 @@ pub async fn install_marketplace_extension_handler(
         match runtime.load(&file_path).await {
             Ok(_) => {
                 // Save to persistent storage
-                if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                let store = state.extensions.store.clone();
+                {
                     let record = ExtensionRecord::new(
                         metadata.id.clone(),
                         metadata.name.clone(),
@@ -2959,12 +2956,13 @@ pub async fn get_extension_config_handler(
         .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
 
     // Get current config from storage
-    let current_config: Option<serde_json::Value> =
-        if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
-            store.load(&id).ok().flatten().and_then(|r| r.config)
-        } else {
-            None
-        };
+    let current_config: Option<serde_json::Value> = state
+        .extensions
+        .store
+        .load(&id)
+        .ok()
+        .flatten()
+        .and_then(|r| r.config);
 
     // Build config schema from extension metadata
     let config_schema = if let Some(config_params) = &ext_info.metadata.config_parameters {
@@ -3008,7 +3006,8 @@ pub async fn update_extension_config_handler(
     }
 
     // Save config to storage
-    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+    let store = state.extensions.store.clone();
+    {
         if let Ok(Some(mut record)) = store.load(&id) {
             record.config = Some(config.clone());
             store.save(&record)?;
@@ -3079,12 +3078,13 @@ pub async fn reload_extension_handler(
     let file_path = ext_info.path.clone();
 
     // Get current config
-    let config: Option<serde_json::Value> =
-        if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
-            store.load(&id).ok().flatten().and_then(|r| r.config)
-        } else {
-            None
-        };
+    let config: Option<serde_json::Value> = state
+        .extensions
+        .store
+        .load(&id)
+        .ok()
+        .flatten()
+        .and_then(|r| r.config);
 
     // Unload the extension
     runtime
@@ -3099,7 +3099,8 @@ pub async fn reload_extension_handler(
         match runtime.load(path).await {
             Ok(metadata) => {
                 // Clear error status on successful reload
-                if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                let store = state.extensions.store.clone();
+                {
                     if let Ok(Some(mut record)) = store.load(&id) {
                         record.health_status = "ok".to_string();
                         record.last_error = None;
@@ -3142,7 +3143,8 @@ pub async fn reload_extension_handler(
             }
             Err(e) => {
                 // Record the reload failure in storage so the UI shows Error state
-                if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+                let store = state.extensions.store.clone();
+                {
                     let _ = store.update_error_status(&id, &format!("Reload failed: {}", e));
                 }
                 return Err(ErrorResponse::internal(format!(
@@ -3903,7 +3905,8 @@ pub async fn upload_extension_package_handler(
         .map_err(|e| ErrorResponse::internal(format!("Failed to load extension binary: {}", e)))?;
 
     // Save to storage
-    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+    let store = state.extensions.store.clone();
+    {
         let record = ExtensionRecord::new(
             ext_id.clone(),
             name.clone(),
@@ -4041,7 +4044,8 @@ pub async fn uninstall_extension_handler(
     }
 
     // Mark as uninstalled in storage
-    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+    let store = state.extensions.store.clone();
+    {
         if let Err(e) = store.mark_uninstalled(&id) {
             tracing::warn!("Failed to mark extension as uninstalled: {}", e);
         }
@@ -4234,7 +4238,8 @@ pub async fn upload_extension_file_handler(
         .to_string();
 
     // Save to storage
-    if let Ok(store) = ExtensionStore::open("data/extensions.redb") {
+    let store = state.extensions.store.clone();
+    {
         let record = ExtensionRecord::new(
             ext_id.clone(),
             metadata.name.clone(),
