@@ -196,7 +196,16 @@ impl From<neomind_rules::RuleError> for ErrorResponse {
 
 impl From<neomind_storage::Error> for ErrorResponse {
     fn from(e: neomind_storage::Error) -> Self {
-        Self::internal(format!("Storage error: {}", e))
+        // Map semantically: NotFound → 404, InvalidInput → 400, everything
+        // else → 500. Previously EVERY variant collapsed to 500, which
+        // forced handlers to hand-roll `.map_err` for 404s on get/delete
+        // paths — hundreds of call sites — and any path that forgot one
+        // returned INTERNAL_ERROR for a plain missing resource.
+        match e {
+            neomind_storage::Error::NotFound(msg) => Self::not_found(msg),
+            neomind_storage::Error::InvalidInput(msg) => Self::validation(msg),
+            other => Self::internal(format!("Storage error: {}", other)),
+        }
     }
 }
 
