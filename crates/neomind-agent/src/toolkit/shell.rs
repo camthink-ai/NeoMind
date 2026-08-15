@@ -60,6 +60,13 @@ struct CommandOutput {
 }
 
 /// Shell tool — executes system commands.
+/// [context-injection] Domains whose `--help` reference has been injected
+/// once already this process (first-use injection, channel C). See
+/// `ShellTool::domain_help` for the rationale.
+static INJECTED_DOMAINS: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::OnceLock::new();
+
 pub struct ShellTool {
     config: ShellConfig,
 }
@@ -135,12 +142,37 @@ impl ShellTool {
         })
     }
 
-    /// [context-injection prototype] On a failed `neomind <domain> ...` call,
-    /// fetch that domain's `--help` (compact subcommand reference) so the model
-    /// sees the exact syntax and can correct on retry. ON-DEMAND: fetched only
-    /// on failure, never injected into the static tool description (keeps the
-    /// description short so ≤3B models still select `shell`).
-    async fn domain_help(domain: &str) -> Option<String> {
+    /// [context-injection] Domains whose `--help` reference has been injected
+    /// once already (first-use injection). Process-local: the eval spawns a
+    /// fresh server per case (each case gets one injection per domain); a
+    /// long-running server injects each domain on first use only — later
+    /// turns find it in the conversation history.
+    fn domain_injected(domain: &str) -> bool {
+        INJECTED_DOMAINS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+            .lock()
+            .map(|s| s.contains(domain))
+            .unwrap_or(false)
+    }
+
+    fn mark_domain_injected(domain: &str) {
+        if let Some(m) = INJECTED_DOMAINS.get() {
+            if let Ok(mut s) = m.lock() {
+                s.insert(domain.to_string());
+            }
+        }
+    }
+
+    /// [context-injection] Fetch a domain's `--help` (compact subcommand
+    /// reference) so the model sees exact syntax. Two channels:
+    /// (B) on a FAILED `neomind <domain> ...` call → "retry with the exact one"
+    /// (C) on the FIRST successful call in a domain → reference for the
+    ///     upcoming steps of a multi-step flow (create→test→enable...).
+    /// Both keep the static tool description short so ≤3B models still
+    /// SELECT `shell`; channel C is deterministic (fires only after the
+    /// model already chose shell), so there is no intent-detection
+    /// overtrigger risk.
+    async fn domain_help(domain: &str, note: &str) -> Option<String> {
         if domain.is_empty() {
             return None;
         }
@@ -160,8 +192,8 @@ impl ShellTool {
             .collect::<Vec<_>>()
             .join("\n");
         Some(format!(
-            "\n\n[Reference — `neomind {}` subcommands — retry with the exact one]:\n{}",
-            domain, body
+            "\n\n[Reference — `neomind {}` subcommands — {}]:\n{}",
+            domain, note, body
         ))
     }
 
@@ -307,13 +339,24 @@ impl ShellTool {
                         e
                     )
                 });
-                // [context-injection] on failure, append the domain's --help so
-                // the model sees exact subcommand syntax and corrects on retry.
-                if !resp.success {
-                    if let Some(domain) = argv.get(1) {
-                        if let Some(help) = Self::domain_help(domain.as_str()).await {
-                            stdout.push_str(&help);
+                // [context-injection] (B) failure → --help to correct on
+                // retry; (C) FIRST successful call in a domain → --help as
+                // reference for the upcoming steps of multi-step flows.
+                if let Some(domain) = argv.get(1) {
+                    let help: Option<String> = if !resp.success {
+                        Self::domain_help(domain.as_str(), "retry with the exact one").await
+                    } else if !Self::domain_injected(domain.as_str()) {
+                        let h =
+                            Self::domain_help(domain.as_str(), "use the exact one for the next steps").await;
+                        if h.is_some() {
+                            Self::mark_domain_injected(domain.as_str());
                         }
+                        h
+                    } else {
+                        None
+                    };
+                    if let Some(help) = help {
+                        stdout.push_str(&help);
                     }
                 }
                 Some(CommandOutput {
@@ -336,7 +379,7 @@ impl ShellTool {
                 let mut stderr = format!("error: {}", msg);
                 // [context-injection] bad subcommand/args → append domain --help.
                 if let Some(domain) = argv.get(1) {
-                    if let Some(help) = Self::domain_help(domain.as_str()).await {
+                    if let Some(help) = Self::domain_help(domain.as_str(), "retry with the exact one").await {
                         stderr.push_str(&help);
                     }
                 }
@@ -1014,6 +1057,7 @@ Quick reference (run `neomind <domain> --help` or load the `skill` guide for ful
 Critical rules:
 - NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
 - Read before write: `get <ID>` before create/update/control/delete.
+- COMPLETE THE FULL FLOW: a multi-step request ("create X then enable it", "deploy then verify") requires EVERY step — do not stop after the first action.
 - On error, read the `suggestion` field in the JSON output for recovery.
 
 Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, docker, …"#;
