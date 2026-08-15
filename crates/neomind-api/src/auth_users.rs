@@ -76,7 +76,11 @@ fn token_key(token: &str) -> String {
     use sha2::Digest;
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
-    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 /// Clock-skew tolerance (seconds) applied to JWT `exp` during validation, and
