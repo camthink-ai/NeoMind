@@ -1058,6 +1058,8 @@ Critical rules:
 - NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
 - Read before write: `get <ID>` before create/update/control/delete.
 - COMPLETE THE FULL FLOW: a multi-step request ("create X then enable it", "deploy then verify") requires EVERY step — do not stop after the first action.
+  Worked example — "create an MQTT connector named c1 to 192.168.1.100, enable and test it" is ONE request = THREE commands:
+  `neomind connector create --name c1 --host 192.168.1.100 --port 1883` → `neomind connector enable c1` → `neomind connector test c1`. Run them all.
 - On error, read the `suggestion` field in the JSON output for recovery.
 
 Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, docker, …"#;
