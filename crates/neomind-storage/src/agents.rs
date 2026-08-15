@@ -634,7 +634,17 @@ impl AgentStore {
 
     /// Query agents with filters.
     pub async fn query_agents(&self, filter: AgentFilter) -> Result<Vec<AiAgent>, Error> {
-        let read_txn = self.db.begin_read()?;
+        // [fake-async fix] Full-table scan + deserialize + sort on every call
+        // blocks the executor thread; push it onto the blocking pool. Only
+        // the database handle is needed.
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || Self::query_agents_impl(&db, filter))
+            .await
+            .map_err(|e| Error::Storage(format!("query_agents join error: {}", e)))?
+    }
+
+    fn query_agents_impl(db: &Database, filter: AgentFilter) -> Result<Vec<AiAgent>, Error> {
+        let read_txn = db.begin_read()?;
         let table = read_txn.open_table(AGENTS_TABLE)?;
 
         let mut agents = Vec::new();
@@ -649,7 +659,7 @@ impl AgentStore {
                 }
             };
 
-            if self.matches_agent_filter(&agent, &filter) {
+            if Self::matches_agent_filter(&agent, &filter) {
                 agents.push(agent);
             }
         }
@@ -1099,7 +1109,7 @@ impl AgentStore {
     }
 
     /// Check if an agent matches the given filter.
-    fn matches_agent_filter(&self, agent: &AiAgent, filter: &AgentFilter) -> bool {
+    fn matches_agent_filter(agent: &AiAgent, filter: &AgentFilter) -> bool {
         if let Some(status) = filter.status {
             if agent.status != status {
                 return false;

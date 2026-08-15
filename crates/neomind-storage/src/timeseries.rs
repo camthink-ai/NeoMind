@@ -1067,31 +1067,43 @@ impl TimeSeriesStore {
         metric: &str,
         points: Vec<DataPoint>,
     ) -> Result<(), Error> {
-        let write_txn = self.db.begin_write()?;
-        {
-            let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
-            for point in &points {
-                let key = (source_id, metric, point.timestamp);
-                let value = serde_json::to_vec(point)?;
-                table.insert(key, value.as_slice())?;
+        // [fake-async fix] The redb write transaction blocks the executor
+        // thread — every device metric write used to stall a tokio worker.
+        // Run the transaction on the blocking pool; the lock-free in-memory
+        // cache updates below stay on the async side.
+        let now = Utc::now().timestamp();
+        let last_ts = points.last().map(|p| p.timestamp).unwrap_or(now);
+        let count = points.len();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), Error> {
+            let write_txn = db.begin_write()?;
+            {
+                let mut table = write_txn.open_table(TIMESERIES_TABLE)?;
+                for point in &points {
+                    let key = (src.as_str(), met.as_str(), point.timestamp);
+                    let value = serde_json::to_vec(point)?;
+                    table.insert(key, value.as_slice())?;
+                }
             }
-        }
-        write_txn.commit()?;
+            write_txn.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("write_batch join error: {}", e)))??;
 
         // Update metrics info - DashMap entry API is lock-free
         let metric_key = format!("{}:{}", source_id, metric);
-        let now = Utc::now().timestamp();
-        let last_ts = points.last().map(|p| p.timestamp).unwrap_or(now);
 
         self.metrics_info
             .entry(metric_key)
             .and_modify(|entry| {
                 entry.last_update = last_ts;
-                entry.point_count += points.len() as u64;
+                entry.point_count += count as u64;
             })
             .or_insert_with(|| MetricInfo {
                 last_update: last_ts,
-                point_count: points.len() as u64,
+                point_count: count as u64,
             });
 
         // Mark metrics_info as populated (prevents cold-start full scan in list_metrics)
@@ -1114,7 +1126,28 @@ impl TimeSeriesStore {
         end: i64,
         limit: Option<usize>,
     ) -> Result<TimeSeriesResult, Error> {
-        let read_txn = self.db.begin_read()?;
+        // [fake-async fix] The full-range redb iteration below blocks the
+        // executor thread (every dashboard read used to stall a worker).
+        // The body only needs the database handle, so an Arc clone is all
+        // that crosses to the blocking pool.
+        let db = self.db.clone();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        tokio::task::spawn_blocking(move || {
+            Self::query_range_impl(&db, &src, &met, start, end, limit)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("query_range join error: {}", e)))?
+    }
+
+    fn query_range_impl(
+        db: &Database,
+        source_id: &str,
+        metric: &str,
+        start: i64,
+        end: i64,
+        limit: Option<usize>,
+    ) -> Result<TimeSeriesResult, Error> {
+        let read_txn = db.begin_read()?;
 
         // Handle case where table doesn't exist yet (no data has been written)
         let table = match read_txn.open_table(TIMESERIES_TABLE) {
