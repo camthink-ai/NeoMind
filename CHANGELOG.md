@@ -9,8 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Platform trust
+- **Logins survive server restarts**: the session-revocation allowlist was an in-memory map rebuilt empty on every boot, so `validate_token` rejected every pre-restart token (`SessionRevoked`) — defeating the persisted JWT secret and logging everyone out on every restart. Sessions now persist to a `user_sessions` table in `users.redb` (write-through on login, delete-through on logout; keys are SHA-256(token) so raw tokens are never written at rest; boot load drops and purges expired rows). Logout stays revoked across restarts.
+- **`/health/ready` tells the truth**: every dependency was hardcoded `true` and `all_ready()` used `||`. Now: `database` = a real redb open+read; `llm` = an active backend configured; `mqtt` = the embedded broker actually running (absent → `false` plus an explanatory note covering external-broker mode vs failed-to-start); `ready = database && llm`, with `notes[]` explaining every unready gate. A full MQTT outage (stale process squatting port 1883) previously stayed invisible to readiness.
+- **Storage `NotFound` maps to 404** (was 500 for every storage variant): the blanket `From<storage::Error>` now maps NotFound → 404 and InvalidInput → 400, fixing paths that returned INTERNAL_ERROR for a plain missing resource.
+
+### Agent (small-model friendliness + reliability)
+- **Concise `shell` tool description + on-demand command guidance**: the shell description had grown to 6510 chars of per-domain "Command Choice" rules, which suppressed tool *selection* on models at/below the 3B tool-calling floor (they avoided the huge description and grabbed the shorter `skill` tool instead — LFM2.5-VL-3B scored 0% cmd_ok purely from this). The description is now a ~1400-char skeleton; exact subcommand syntax is delivered contextually instead: on a FAILED `neomind <domain> …` dispatch the domain's `--help` subcommand table is appended to the tool result (+8pp cmd_ok on the 30-case regression), and on the FIRST successful dispatch per domain it is appended as a reference for multi-step flows (deterministic, fires only after the model already chose `shell` — no intent-detection overtrigger). The "COMPLETE THE FULL FLOW" directive (multi-step requests need every step) is restored in the skeleton.
+- **`web_fetch` boundary clarified**: external web content (docs, reference, search-result URLs) vs NeoMind platform data which must use `shell` (was grabbed as a wrong tool in 9/118 eval cases).
+- **Heartbeat during tool execution**: the keep-alive heartbeat only fired between stream chunks, so a long single tool execution (extension build/install, async agent-exec waits) emitted no events — WS listeners killed turns the agent would have completed (~13% of LFM2.5-2.6B full-eval cases died this way with an empty error string). The tool batch is now wrapped in a `select!` with an independent 10s heartbeat timer.
+- **Chat stream bound 1200s → 2400s** (`StreamConfig` default + the synced chat safeguards): slow local models (60–90 tok/s) legitimately need 20+ minutes for multi-round deploy scenarios.
+
 ### Fixes
 - **Log export no longer ships ANSI color codes**: the CLI and desktop file layers wrote `tracing` SGR escapes (`ESC[2m` / `ESC[32m` / …) into every line of the daily `neomind.log.*` files because `fmt::layer()` defaults `with_ansi` to true (it does no TTY detection, unlike `fmt()`). Both appenders now set `.with_ansi(false)`, and `/api/logs/download` strips residual ANSI sequences from archived files so logs produced by older server builds export as readable plain text too.
+
+### Eval / Test
+- **Time budgets retuned for slow local models**: four eval-side/agent-side limits were each tuned for cloud endpoints and collectively killed every legitimately-slow local run (a 20-round deploy case on a 60–90 tok/s model needs 10–20+ min): WS event gap 240s → 600s; chat outer timeout 900s → env-tunable (`EVAL_CHAT_TIMEOUT`, default 1400); per-case `--case-timeout` for heavyweight cases; deadline-exit now sets a real error instead of propagating `None`.
+- **Turn-failure messages include the exception class**: bare `asyncio.TimeoutError()`-style exceptions `str()` to an empty string, which left `turn failed (…): ` with no diagnosis; the class name identified the hidden per-case SIGALRM limit in one shot.
 
 ## [0.9.16] - 2026-08-11
 
