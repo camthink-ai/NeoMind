@@ -287,7 +287,8 @@ impl SessionManager {
             let temp_path = std::env::temp_dir()
                 .join(format!("sessions_fallback_{}.redb", uuid::Uuid::new_v4()));
             tracing::debug!(path = ?temp_path, "Using fallback path for session store");
-            SessionStore::open_isolated(&temp_path).expect("Failed to create fallback session store")
+            SessionStore::open_isolated(&temp_path)
+                .expect("Failed to create fallback session store")
         });
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),

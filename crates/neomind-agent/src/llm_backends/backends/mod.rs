@@ -205,7 +205,10 @@ mod tests {
             idle,
             elapsed
         );
-        assert!(outcome.is_ok(), "should return None before deadline, not hang");
+        assert!(
+            outcome.is_ok(),
+            "should return None before deadline, not hang"
+        );
         assert_eq!(outcome.unwrap(), None);
     }
 }

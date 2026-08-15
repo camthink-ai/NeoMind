@@ -183,9 +183,7 @@ pub(crate) fn description_intent_phrases(description: &str) -> Vec<String> {
     // 3. "e.g. X" examples — split on ',' / '；' inside the e.g. clause.
     if let Some(idx) = description.find("e.g. ") {
         let seg = &description[idx + "e.g. ".len()..];
-        let end = seg
-            .find([')', '.', '\n'])
-            .unwrap_or(seg.len());
+        let end = seg.find([')', '.', '\n']).unwrap_or(seg.len());
         for piece in seg[..end].split([';', '；', ',']) {
             let p = piece.trim().trim_end_matches(')').trim();
             if p.len() >= 3 {
@@ -367,7 +365,11 @@ Control a device."#;
         // the rule anti-trigger must exclude it).
         let m = match_skills(&registry, "device 温度超过30就创建规则告警", budget);
         let has = m.iter().any(|x| x.skill_id == "device-onboarding");
-        assert!(!has, "anti-trigger rule should exclude, got {:?}", m.iter().map(|x| &x.skill_id).collect::<Vec<_>>());
+        assert!(
+            !has,
+            "anti-trigger rule should exclude, got {:?}",
+            m.iter().map(|x| &x.skill_id).collect::<Vec<_>>()
+        );
     }
 
     #[test]

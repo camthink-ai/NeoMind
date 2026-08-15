@@ -813,7 +813,10 @@ mod tests {
             {\"name\": \"obs-target\", \"type\": \"webhook\", \"url\": \"https://example.com/obs\"}\n\
             No deliveries yet.";
         let (content, calls) = parse_tool_calls(text).unwrap();
-        assert!(calls.is_empty(), "quoted data object must not be parsed as a tool call");
+        assert!(
+            calls.is_empty(),
+            "quoted data object must not be parsed as a tool call"
+        );
         assert_eq!(content, text, "content must be preserved verbatim");
     }
 
@@ -831,7 +834,10 @@ mod tests {
     fn test_remove_tool_calls_preserves_quoted_object_in_prose() {
         let text = "Logs for {\"name\": \"obs-target\", \"type\": \"webhook\"} show 0 deliveries.";
         let cleaned = remove_tool_calls_from_response(text);
-        assert_eq!(cleaned, text, "quoted data object in prose must not be stripped");
+        assert_eq!(
+            cleaned, text,
+            "quoted data object in prose must not be stripped"
+        );
     }
 
     #[test]

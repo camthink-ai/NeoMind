@@ -682,10 +682,7 @@ impl CloudRuntime {
                 | CloudProvider::GLM
                 | CloudProvider::Google
         ) {
-            input
-                .params
-                .thinking_effort
-                .map(|e| e.as_str().to_string())
+            input.params.thinking_effort.map(|e| e.as_str().to_string())
         } else {
             None
         };
@@ -1839,7 +1836,11 @@ fn reasoning_capabilities_for(
     };
     ReasoningCapabilities {
         supported_efforts,
-        default_effort: if supports_thinking { Some(ThinkingEffort::High) } else { None },
+        default_effort: if supports_thinking {
+            Some(ThinkingEffort::High)
+        } else {
+            None
+        },
         mandatory: false,
         control,
     }

@@ -334,8 +334,8 @@ impl LlmBackendInstanceManager {
                 }
             };
 
-            let ollama_runtime = ollama_runtime
-                .with_capabilities_override(multimodal, thinking, tools, max_ctx);
+            let ollama_runtime =
+                ollama_runtime.with_capabilities_override(multimodal, thinking, tools, max_ctx);
 
             Arc::new(ollama_runtime) as Arc<dyn LlmRuntime>
         } else if matches!(instance.backend_type, LlmBackendType::LlamaCpp) {
