@@ -26,7 +26,7 @@ pub struct DependencyStatus {
 
 impl DependencyStatus {
     pub fn all_ready(&self) -> bool {
-        self.llm || self.mqtt || self.database // At least one dependency is ready
+        self.llm && self.mqtt && self.database
     }
 }
 
@@ -35,6 +35,10 @@ impl DependencyStatus {
 pub struct ReadinessStatus {
     pub ready: bool,
     pub dependencies: DependencyStatus,
+    /// Caveats for dependency checks that cannot be fully verified
+    /// (e.g. external-broker deployments have no cheap MQTT probe).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 /// Basic health check handler (public endpoint).
@@ -65,19 +69,58 @@ pub async fn liveness_handler() -> Json<serde_json::Value> {
     }))
 }
 
-/// Readiness probe - check if dependencies are ready.
+/// Readiness probe - check real dependency status.
+///
+/// Previously every dependency was hardcoded `true` ("we can't easily
+/// check"), which hid real outages — during a 2026-08-14 eval session the
+/// embedded broker failed to start on EVERY server instance (stale process
+/// squatting port 1883) and `/health/ready` kept reporting ready=true the
+/// whole time. Now each check is real:
+///
+/// - `database`: open the settings redb and read a value (proves redb is
+///   accessible and readable, not just that a handle exists).
+/// - `llm`: an active LLM backend is configured. NOT a reachability probe
+///   (that would add an upstream round-trip per readiness call) — an
+///   unreachable configured backend still reports true here.
+/// - `mqtt`: the embedded broker handle exists AND reports running.
+///   External-broker deployments don't run the embedded broker; there is
+///   no cheap outbound-connection probe, so this is reported as a note
+///   rather than a false "down".
+///
+/// `ready` gates on what can be truly verified: database && llm (a chat
+/// platform minimally needs storage + a configured model). MQTT status is
+/// surfaced for diagnosis but does not gate readiness in external mode.
 pub async fn readiness_handler(State(state): State<ServerState>) -> Json<ReadinessStatus> {
-    // Check if session manager is working (just check if we can access it)
-    let _sessions = state.agents.session_manager.list_sessions().await;
+    // Database: a real redb open + read proves storage is accessible.
+    let database = crate::config::open_settings_store()
+        .map(|store| store.load("health_probe").is_ok())
+        .unwrap_or(false);
 
-    // Check if LLM might be configured (best effort check)
-    let llm = true; // We can't easily check this without making a call
+    // LLM: an active backend is configured (cheap; no upstream probe).
+    let llm = neomind_agent::llm_backends::get_instance_manager()
+        .ok()
+        .and_then(|m| m.get_active_instance())
+        .is_some();
 
-    // Check MQTT status (assume it's working if we got this far)
-    let mqtt = true; // MqttDeviceManager doesn't expose a simple is_connected
-
-    // Check if database/storage is accessible
-    let database = true; // TimeSeriesStorage doesn't have an is_ready method
+    // MQTT: embedded broker actually running. `None` means either an
+    // external-broker deployment or a broker that failed to start — the
+    // two are indistinguishable without more plumbing, so `None` reports
+    // false with an explanatory note instead of silently claiming ok.
+    let mut notes = Vec::new();
+    let (mqtt, embedded_present) = match state.embedded_broker() {
+        Some(broker) => (broker.is_running(), true),
+        None => (false, false),
+    };
+    if !embedded_present {
+        notes.push(
+            "embedded broker not present — either an external-broker deployment (not probed) \
+             or the broker failed to start; check server logs for 'Failed to start embedded broker'"
+                .to_string(),
+        );
+    }
+    if !llm {
+        notes.push("no active LLM backend configured".to_string());
+    }
 
     let dependencies = DependencyStatus {
         llm,
@@ -85,11 +128,12 @@ pub async fn readiness_handler(State(state): State<ServerState>) -> Json<Readine
         database,
     };
 
-    let ready = true; // If server is responding, we're ready
+    let ready = database && llm;
 
     Json(ReadinessStatus {
         ready,
         dependencies,
+        notes,
     })
 }
 
