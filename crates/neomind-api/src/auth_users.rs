@@ -250,21 +250,37 @@ impl AuthUserState {
             {
                 use std::io::Write;
                 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-                if let Ok(mut f) = std::fs::OpenOptions::new()
+                let write_result = std::fs::OpenOptions::new()
                     .write(true)
                     .create(true)
                     .truncate(true)
                     .mode(0o600)
                     .open(&secret_path)
-                {
-                    let _ = f.write_all(new_secret.as_bytes());
+                    .and_then(|mut f| f.write_all(new_secret.as_bytes()));
+                // Surface persistence failures: a failed write silently
+                // falls back to an in-memory-only secret that rotates on the
+                // next restart (every user logged out) with no trace of why.
+                if let Err(e) = write_result {
+                    error!(
+                        category = "auth",
+                        error = %e,
+                        path = %secret_path,
+                        "Failed to persist JWT secret — it will rotate on next restart and all sessions will be invalidated"
+                    );
                 }
                 let _ =
                     std::fs::set_permissions(&secret_path, std::fs::Permissions::from_mode(0o600));
             }
             #[cfg(not(unix))]
             {
-                let _ = std::fs::write(&secret_path, &new_secret);
+                if let Err(e) = std::fs::write(&secret_path, &new_secret) {
+                    error!(
+                        category = "auth",
+                        error = %e,
+                        path = %secret_path,
+                        "Failed to persist JWT secret — it will rotate on next restart and all sessions will be invalidated"
+                    );
+                }
             }
             tracing::warn!(
                 category = "auth",

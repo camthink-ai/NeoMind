@@ -124,17 +124,45 @@ impl CryptoService {
             let _ = std::fs::create_dir_all(parent);
         }
 
-        if let Err(e) = std::fs::write(key_file, &key_hex) {
-            warn!(
-                category = "crypto",
-                error = %e,
-                "Failed to persist encryption key to file"
-            );
-        } else {
-            info!(
-                category = "crypto",
-                "Generated and persisted encryption key to {}", key_file
-            );
+        // Write with 0600 perms: this key encrypts every API key in
+        // api_keys.redb (and auto_auth decrypts the default admin key with
+        // it), so a world-readable file lets any local user recover the
+        // wildcard API key. std::fs::write creates files 0644 — create the
+        // file explicitly with restrictive mode, then write through it.
+        // Best-effort chmod afterwards covers pre-existing files too.
+        #[cfg(unix)]
+        let write_result: std::io::Result<()> = {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(key_file)
+                .and_then(|mut f| f.write_all(key_hex.as_bytes()))
+                .and_then(|_| {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(key_file, std::fs::Permissions::from_mode(0o600))
+                })
+        };
+        #[cfg(not(unix))]
+        let write_result: std::io::Result<()> = std::fs::write(key_file, &key_hex);
+
+        match write_result {
+            Ok(()) => {
+                info!(
+                    category = "crypto",
+                    "Generated and persisted encryption key (0600) to {}", key_file
+                );
+            }
+            Err(e) => {
+                warn!(
+                    category = "crypto",
+                    error = %e,
+                    "Failed to persist encryption key to file"
+                );
+            }
         }
 
         let cipher = Aes256Gcm::new(&raw_key);

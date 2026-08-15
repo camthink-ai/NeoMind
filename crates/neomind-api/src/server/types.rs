@@ -3277,37 +3277,6 @@ impl ServerState {
             }
         });
     }
-
-    /// Create CapabilityServices for extension capability providers.
-    ///
-    /// This creates a service container that can be used by extension
-    /// capability providers to access real functionality.
-    pub fn create_capability_services(&self) -> neomind_core::extension::CapabilityServices {
-        use neomind_core::extension::{keys, CapabilityServices};
-
-        CapabilityServices::new()
-            .with_service(keys::DEVICE_SERVICE, self.devices.service.clone())
-            .with_service(keys::TELEMETRY_STORAGE, self.devices.telemetry.clone())
-            .with_service(keys::RULE_ENGINE, self.automation.rule_engine.clone())
-            .with_service(keys::EXTENSION_REGISTRY, self.extensions.registry.clone())
-            .with_service(
-                keys::EVENT_BUS,
-                self.core
-                    .event_bus
-                    .clone()
-                    .unwrap_or_else(|| Arc::new(neomind_core::EventBus::new())),
-            )
-    }
-
-    /// Initialize extension capability providers with real services.
-    ///
-    /// This should be called after all services are initialized.
-    pub async fn init_capability_providers(&self) {
-        let _services = self.create_capability_services();
-        // Note: Capability providers are registered via ExtensionContext
-        // when extensions are loaded
-        tracing::info!("Capability services initialized for extension providers");
-    }
 }
 
 /// Rebuild the ToolRegistry disabled set from the persisted ExtensionRecord
