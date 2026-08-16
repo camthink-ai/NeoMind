@@ -1240,7 +1240,25 @@ impl TimeSeriesStore {
         end: i64,
         limit: Option<usize>,
     ) -> Result<TimeSeriesResult, Error> {
-        let read_txn = self.db.begin_read()?;
+        // [fake-async fix] see query_range.
+        let db = self.db.clone();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        return tokio::task::spawn_blocking(move || {
+            Self::query_range_rev_impl(&db, &src, &met, start, end, limit)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("query_range_rev join error: {}", e)))?;
+    }
+
+    fn query_range_rev_impl(
+        db: &Database,
+        source_id: &str,
+        metric: &str,
+        start: i64,
+        end: i64,
+        limit: Option<usize>,
+    ) -> Result<TimeSeriesResult, Error> {
+        let read_txn = db.begin_read()?;
 
         let table = match read_txn.open_table(TIMESERIES_TABLE) {
             Ok(t) => t,
@@ -1315,7 +1333,25 @@ impl TimeSeriesStore {
         start: i64,
         end: i64,
     ) -> Result<AggregateResult, Error> {
-        let read_txn = self.db.begin_read()?;
+        // [fake-async fix] see query_range — dashboard aggregate reads were
+        // blocking a tokio worker per call.
+        let db = self.db.clone();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        return tokio::task::spawn_blocking(move || {
+            Self::aggregate_range_impl(&db, &src, &met, start, end)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("aggregate_range join error: {}", e)))?;
+    }
+
+    fn aggregate_range_impl(
+        db: &Database,
+        source_id: &str,
+        metric: &str,
+        start: i64,
+        end: i64,
+    ) -> Result<AggregateResult, Error> {
+        let read_txn = db.begin_read()?;
 
         let table = match read_txn.open_table(TIMESERIES_TABLE) {
             Ok(t) => t,

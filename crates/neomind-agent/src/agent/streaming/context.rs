@@ -110,6 +110,34 @@ pub fn build_context_window_with_config(
     }
 
     selected_messages.reverse();
+
+    // [hard budget] System/user messages bypass the per-message budget check
+    // by design (priority keep) — but on very long sessions the kept set
+    // alone could exceed max_tokens, and the oversized prompt then hard-fails
+    // at the LLM. Enforce the budget by evicting the OLDEST non-system
+    // messages until it fits. System messages are never evicted (platform
+    // prompt); the most recent user intent is preserved by evicting oldest-
+    // first. Degrades gracefully instead of failing the request.
+    let mut total: usize = selected_messages.iter().map(estimate_message_tokens).sum();
+    if total > max_tokens {
+        let mut evict_from = 0;
+        while total > max_tokens {
+            // Find the next evictable (non-system) message from the front.
+            let candidate = selected_messages[evict_from..]
+                .iter()
+                .position(|m| m.role != "system");
+            match candidate {
+                Some(offset) => {
+                    let idx = evict_from + offset;
+                    total -= estimate_message_tokens(&selected_messages[idx]);
+                    selected_messages.remove(idx);
+                    evict_from = idx;
+                }
+                None => break, // only system messages left — nothing more to evict
+            }
+        }
+    }
+
     selected_messages
 }
 

@@ -132,9 +132,26 @@ pub async fn trigger_summarization(
         }
     };
 
-    // Append to existing summary or create new one
+    // Append to existing summary or create new one.
+    // [bounded chains] Summaries used to append forever ("--- 后续对话摘要 ---"
+    // per threshold crossing) — an unbounded system message that the context
+    // window keeps with NO budget check. Cap the chain at 4 segments; beyond
+    // that, fold: the new summary REPLACES the old ones (the summarizer was
+    // given the prior summary text in its input, so nothing is lost).
+    const MAX_SUMMARY_SEGMENTS: usize = 4;
     let new_summary = match &metadata.conversation_summary {
-        Some(existing) => format!("{}\n\n--- 后续对话摘要 ---\n{}", existing, summary),
+        Some(existing) => {
+            let segments = existing.matches("--- 后续对话摘要 ---").count();
+            if segments + 1 < MAX_SUMMARY_SEGMENTS {
+                format!("{}\n\n--- 后续对话摘要 ---\n{}", existing, summary)
+            } else {
+                tracing::debug!(
+                    segments,
+                    "Summary chain at cap — folding old segments into the new summary"
+                );
+                summary
+            }
+        }
         None => summary,
     };
 

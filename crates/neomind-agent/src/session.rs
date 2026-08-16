@@ -1607,6 +1607,33 @@ impl SessionManager {
             tracing::error!(session_id = %session_id, error = %e, message = "Failed to clear history");
         }
 
+        // [ghost-summary fix] The conversation summary survives a history
+        // clear unless reset — the next turn then injected a summary of the
+        // DELETED conversation as a system message. Reset both fields so a
+        // cleared session starts truly fresh.
+        match self.store.get_session_metadata(session_id) {
+            Ok(mut meta) => {
+                if meta.conversation_summary.is_some() || meta.summary_up_to_index.is_some() {
+                    meta.conversation_summary = None;
+                    meta.summary_up_to_index = None;
+                    if let Err(e) = self.store.save_session_metadata(session_id, &meta) {
+                        tracing::error!(
+                            session_id = %session_id,
+                            error = %e,
+                            message = "Failed to reset conversation summary on clear"
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    session_id = %session_id,
+                    error = %e,
+                    "No session metadata to reset on clear"
+                );
+            }
+        }
+
         Ok(())
     }
 
