@@ -269,6 +269,10 @@ pub struct AgentExecutorConfig {
     pub backend_semaphores: Option<crate::ai_agent::scheduler::BackendSemaphores>,
     /// Skill registry for querying operation guides
     pub skill_registry: Option<crate::skills::SharedSkillRegistry>,
+    /// Global execution-count semaphore shared from the scheduler (default
+    /// 10). Event-triggered executions acquire it too, so scheduled + event
+    /// executions share one global concurrency bound.
+    pub execution_semaphore: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 /// Context for agent execution.

@@ -30,7 +30,7 @@ use crate::unified_extractor::UnifiedExtractor;
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use futures::{Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use neomind_core::EventBus;
 use neomind_core::NeoMindEvent;
 use serde_json::Value;
@@ -622,26 +622,50 @@ impl MqttAdapter {
                         error_count = 0; // Reset error count on success
                         if was_disconnected {
                             was_disconnected = false;
-                            Self::resubscribe_after_reconnect(&mqtt_clients, &broker_id_clone)
-                                .await;
+                            if let Err(panic) = std::panic::AssertUnwindSafe(
+                                Self::resubscribe_after_reconnect(&mqtt_clients, &broker_id_clone),
+                            )
+                            .catch_unwind()
+                            .await
+                            {
+                                tracing::error!(
+                                    broker = %broker_id_clone,
+                                    panic = ?panic,
+                                    "MQTT resubscribe panicked — eventloop continues"
+                                );
+                            }
                         }
-                        Self::handle_mqtt_notification(
-                            notification,
-                            &config,
-                            &event_tx,
-                            &event_bus,
-                            &device_types,
-                            &metric_cache,
-                            &telemetry_storage,
-                            &device_registry,
-                            &connection_status,
-                            &broker_id_clone,
-                            &extractor,
-                            &topic_to_device,
-                            &outbound_command_topics,
-                            data_dir_clone.read().await.as_ref(),
-                        )
-                        .await;
+                        // [panic guard] A panic inside the notification
+                        // handler (arbitrary device payloads) used to unwind
+                        // and KILL this poll task — the adapter stayed
+                        // "running" but never polled again (MQTT silently
+                        // dead until restart). Catch and keep polling.
+                        if let Err(panic) =
+                            std::panic::AssertUnwindSafe(Self::handle_mqtt_notification(
+                                notification,
+                                &config,
+                                &event_tx,
+                                &event_bus,
+                                &device_types,
+                                &metric_cache,
+                                &telemetry_storage,
+                                &device_registry,
+                                &connection_status,
+                                &broker_id_clone,
+                                &extractor,
+                                &topic_to_device,
+                                &outbound_command_topics,
+                                data_dir_clone.read().await.as_ref(),
+                            ))
+                            .catch_unwind()
+                            .await
+                        {
+                            tracing::error!(
+                                broker = %broker_id_clone,
+                                panic = ?panic,
+                                "MQTT notification handler panicked — eventloop continues"
+                            );
+                        }
                     }
                     Err(e) => {
                         error_count += 1;
@@ -943,8 +967,18 @@ impl MqttAdapter {
                         error_count = 0;
                         if was_disconnected {
                             was_disconnected = false;
-                            Self::resubscribe_after_reconnect(&mqtt_clients, &broker_id_clone2)
-                                .await;
+                            if let Err(panic) = std::panic::AssertUnwindSafe(
+                                Self::resubscribe_after_reconnect(&mqtt_clients, &broker_id_clone2),
+                            )
+                            .catch_unwind()
+                            .await
+                            {
+                                tracing::error!(
+                                    broker = %broker_id_clone2,
+                                    panic = ?panic,
+                                    "MQTT resubscribe panicked — eventloop continues"
+                                );
+                            }
                         }
                         if let Err(e) = eventloop_tx.send(notification).await {
                             warn!("Failed to send MQTT notification to channel: {}", e);

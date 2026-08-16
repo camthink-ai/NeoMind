@@ -7,9 +7,9 @@
 //!
 //! Uses the unified DataSourceId format for all data sources.
 
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::models::{RuleValue, ValueProvider};
 use neomind_core::datasource::{DataSourceId, DataSourceType};
@@ -119,7 +119,7 @@ impl UnifiedValueProvider {
         value: RuleValue,
         ttl_ms: u64,
     ) {
-        let mut cache = self.cache.write().await;
+        let mut cache = self.cache.write();
         cache.insert(
             (
                 source_type.to_string(),
@@ -196,7 +196,7 @@ impl UnifiedValueProvider {
         source_type: &str,
         source_id: &str,
     ) -> HashMap<String, RuleValue> {
-        let cache = self.cache.read().await;
+        let cache = self.cache.read();
         cache
             .iter()
             .filter(|((t, id, _), _)| t == source_type && id == source_id)
@@ -223,16 +223,18 @@ impl ValueProvider for UnifiedValueProvider {
             DataSourceType::Extension => "extension",
             DataSourceType::Transform => "transform",
         };
-        if let Ok(cache) = self.cache.try_read() {
-            let key = (
-                source_type.to_string(),
-                source.source_id.clone(),
-                source.field_path.clone(),
-            );
-            if let Some(entry) = cache.get(&key) {
-                if !entry.is_expired() {
-                    return Some(entry.value.clone());
-                }
+        // [contention-safe] parking_lot read — the old tokio try_read treated
+        // lock contention as "no value", so rule conditions evaluated as
+        // false under load and `for_duration` accumulation spuriously reset.
+        let cache = self.cache.read();
+        let key = (
+            source_type.to_string(),
+            source.source_id.clone(),
+            source.field_path.clone(),
+        );
+        if let Some(entry) = cache.get(&key) {
+            if !entry.is_expired() {
+                return Some(entry.value.clone());
             }
         }
         None

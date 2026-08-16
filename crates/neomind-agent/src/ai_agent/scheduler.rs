@@ -304,6 +304,15 @@ impl AgentScheduler {
     }
 
     /// Get a reference to the shared backend semaphores (for wiring into executor).
+    /// The global execution-count semaphore (default 10). Shared with the
+    /// event-trigger path so event-spawned executions are accounted against
+    /// the same global bound as scheduled ones (previously event executions
+    /// only held a per-backend permit, so a burst could stack past the
+    /// global limit).
+    pub fn execution_semaphore(&self) -> &Arc<tokio::sync::Semaphore> {
+        &self.execution_semaphore
+    }
+
     pub fn backend_semaphores(&self) -> &BackendSemaphores {
         &self.backend_semaphores
     }

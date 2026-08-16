@@ -165,6 +165,15 @@ impl AgentExecutor {
                     let recent_executions_clone = self.recent_executions.clone();
 
                     let handle = tokio::spawn(async move {
+                        // Acquire the GLOBAL execution semaphore first (WAIT):
+                        // scheduled executions hold this same permit, and event
+                        // bursts used to stack past the global bound because
+                        // only the per-backend permit was held. Held for the
+                        // whole run (dropped when this task ends).
+                        let _global_permit = match executor_config.execution_semaphore.clone() {
+                            Some(sem) => sem.acquire_owned().await.ok(),
+                            None => None,
+                        };
                         // Acquire per-backend semaphore (WAIT, not fail)
                         Self::acquire_backend_permit(
                             &executor_config.backend_semaphores,
@@ -345,6 +354,12 @@ impl AgentExecutor {
             let recent_executions_clone = self.recent_executions.clone();
 
             let handle = tokio::spawn(async move {
+                // Acquire the GLOBAL execution semaphore first (WAIT) — see
+                // the sibling spawn above for rationale.
+                let _global_permit = match executor_config.execution_semaphore.clone() {
+                    Some(sem) => sem.acquire_owned().await.ok(),
+                    None => None,
+                };
                 // Acquire per-backend semaphore (WAIT, not fail)
                 Self::acquire_backend_permit(
                     &executor_config.backend_semaphores,
@@ -440,6 +455,7 @@ impl AgentExecutor {
             memory_store: self.memory_store.clone(),
             backend_semaphores: self.backend_semaphores.clone(),
             skill_registry: self._config.skill_registry.clone(),
+            execution_semaphore: self._config.execution_semaphore.clone(),
         }
     }
 

@@ -129,6 +129,10 @@ impl AiAgentManager {
         // Share backend semaphores between scheduler and executor
         let mut executor_config = config;
         executor_config.backend_semaphores = Some(scheduler.backend_semaphores().clone());
+        // Share the GLOBAL execution semaphore too, so event-triggered
+        // executions (spawned from the executor, not the scheduler) are
+        // accounted against the same global concurrency bound.
+        executor_config.execution_semaphore = Some(scheduler.execution_semaphore().clone());
 
         let executor = Arc::new(AgentExecutor::new(executor_config).await?);
 

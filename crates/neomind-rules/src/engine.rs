@@ -102,7 +102,11 @@ const MAX_HISTORY_SIZE: usize = 1000;
 /// Rules are evaluated only when [`on_data_update`] is called — no polling.
 pub struct RuleEngine {
     /// All registered rules.
-    rules: Arc<RwLock<HashMap<RuleId, CompiledRule>>>,
+    // parking_lot (sync): consumed from both sync and async contexts; the
+    // tokio lock forced try_read in the sync rebuild path, which silently
+    // SKIPPED the rebuild under trigger-path contention — a rule added in
+    // that window never entered subscription_index until the next CRUD.
+    rules: Arc<StdRwLock<HashMap<RuleId, CompiledRule>>>,
     /// Subscription index: DataSourceId → Vec<RuleId>
     subscription_index: Arc<StdRwLock<HashMap<String, Arc<Vec<RuleId>>>>>,
     /// Cooldown tracking: RuleId → last trigger Instant
@@ -128,7 +132,7 @@ impl RuleEngine {
     /// Create a new engine.
     pub fn new(value_provider: Arc<dyn ValueProvider>) -> Self {
         Self {
-            rules: Arc::new(RwLock::new(HashMap::new())),
+            rules: Arc::new(StdRwLock::new(HashMap::new())),
             subscription_index: Arc::new(StdRwLock::new(HashMap::new())),
             cooldowns: Arc::new(StdRwLock::new(HashMap::new())),
             consecutive_action_failures: Arc::new(StdRwLock::new(HashMap::new())),
@@ -169,7 +173,7 @@ impl RuleEngine {
     /// Add a compiled rule. Rebuilds subscription index for the rule.
     pub async fn add_rule(&self, rule: CompiledRule) -> Result<(), RuleError> {
         let id = rule.id.clone();
-        let mut rules = self.rules.write().await;
+        let mut rules = self.rules.write();
         rules.insert(id, rule);
         drop(rules);
         // Rebuild after insert so the index reflects the new state
@@ -179,7 +183,7 @@ impl RuleEngine {
 
     /// Remove a rule and its subscription entries.
     pub async fn remove_rule(&self, id: &RuleId) -> Result<bool, RuleError> {
-        let mut rules = self.rules.write().await;
+        let mut rules = self.rules.write();
         let removed = rules.remove(id).is_some();
         drop(rules);
         if removed {
@@ -193,7 +197,7 @@ impl RuleEngine {
     /// Update an existing rule (or insert if new).
     pub async fn update_rule(&self, rule: CompiledRule) -> Result<(), RuleError> {
         let id = rule.id.clone();
-        let mut rules = self.rules.write().await;
+        let mut rules = self.rules.write();
         rules.insert(id, rule);
         drop(rules);
         // Rebuild after insert so the index reflects the new state
@@ -203,17 +207,17 @@ impl RuleEngine {
 
     /// Get a rule by ID.
     pub async fn get_rule(&self, id: &RuleId) -> Option<CompiledRule> {
-        self.rules.read().await.get(id).cloned()
+        self.rules.read().get(id).cloned()
     }
 
     /// List all rules.
     pub async fn list_rules(&self) -> Vec<CompiledRule> {
-        self.rules.read().await.values().cloned().collect()
+        self.rules.read().values().cloned().collect()
     }
 
     /// Enable / disable a rule.
     pub async fn set_enabled(&self, id: &RuleId, enabled: bool) -> Result<(), RuleError> {
-        let mut rules = self.rules.write().await;
+        let mut rules = self.rules.write();
         match rules.get_mut(id) {
             Some(rule) => {
                 rule.enabled = enabled;
@@ -227,35 +231,28 @@ impl RuleEngine {
     // -- Subscription index --
 
     fn rebuild_all_subscriptions(&self) {
-        // Use blocking read via try_read on the async RwLock.
-        // Since this is called after write lock is dropped (in update_rule/remove_rule),
-        // the lock should be uncontended.
-        let guard = self.rules.try_read();
-        match guard {
-            Ok(rules) => {
-                let mut idx = HashMap::new();
-                for rule in rules.values() {
-                    if let RuleTrigger::DataChange { sources } = &rule.trigger {
-                        for source in sources {
-                            let key = source.storage_key();
-                            idx.entry(key)
-                                .or_insert_with(Vec::new)
-                                .push(rule.id.clone());
-                        }
-                    }
+        // [contention-safe] parking_lot read — the old tokio try_read silently
+        // kept the STALE index whenever the trigger path held the write lock
+        // (update_condition_since / update_rule_state_after_trigger take it on
+        // every firing), so a rule added during active triggering could exist
+        // in `rules` but never in subscription_index — silently unevaluated
+        // until some later rule CRUD happened to succeed. A blocking read of
+        // a short critical section cannot skip.
+        let rules = self.rules.read();
+        let mut idx = HashMap::new();
+        for rule in rules.values() {
+            if let RuleTrigger::DataChange { sources } = &rule.trigger {
+                for source in sources {
+                    let key = source.storage_key();
+                    idx.entry(key)
+                        .or_insert_with(Vec::new)
+                        .push(rule.id.clone());
                 }
-                let idx: HashMap<String, Arc<Vec<RuleId>>> =
-                    idx.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
-                *self.subscription_index.write() = idx;
-            }
-            Err(_) => {
-                // Lock is contended (rare) — keep the existing index rather than wiping it.
-                // The next successful rebuild will bring it up to date.
-                tracing::debug!(
-                    "rebuild_all_subscriptions: rules lock contended, keeping existing index"
-                );
             }
         }
+        let idx: HashMap<String, Arc<Vec<RuleId>>> =
+            idx.into_iter().map(|(k, v)| (k, Arc::new(v))).collect();
+        *self.subscription_index.write() = idx;
     }
 
     /// Return device_ids referenced by any rule whose subscription index entry
@@ -315,7 +312,7 @@ impl RuleEngine {
         let now = Utc::now();
 
         let rule = {
-            let rules = self.rules.read().await;
+            let rules = self.rules.read();
             rules.get(id).cloned()
         };
 
@@ -517,7 +514,7 @@ impl RuleEngine {
     /// Evaluate a single rule and fire actions if conditions are met.
     async fn evaluate_and_fire(&self, rule_id: &RuleId) -> Result<(), RuleError> {
         let rule = {
-            let rules = self.rules.read().await;
+            let rules = self.rules.read();
             rules.get(rule_id).cloned()
         };
         let Some(rule) = rule else {
@@ -830,7 +827,7 @@ impl RuleEngine {
         condition_met: bool,
     ) -> Option<chrono::DateTime<Utc>> {
         let (result, rule_snapshot) = {
-            let mut rules = self.rules.write().await;
+            let mut rules = self.rules.write();
             let Some(rule) = rules.get_mut(rule_id) else {
                 return None;
             };
@@ -862,7 +859,7 @@ impl RuleEngine {
 
     async fn update_rule_state_after_trigger(&self, rule_id: &RuleId) {
         let rule_snapshot = {
-            let mut rules = self.rules.write().await;
+            let mut rules = self.rules.write();
             if let Some(rule) = rules.get_mut(rule_id) {
                 rule.state.trigger_count += 1;
                 rule.state.last_triggered = Some(Utc::now());
@@ -912,7 +909,7 @@ impl RuleEngine {
 
     /// List only Schedule-type rules with their cron expressions.
     pub async fn list_schedule_rules(&self) -> Vec<(RuleId, String)> {
-        let rules = self.rules.read().await;
+        let rules = self.rules.read();
         rules
             .iter()
             .filter_map(|(id, rule)| {

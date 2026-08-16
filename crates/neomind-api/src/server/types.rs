@@ -2920,6 +2920,8 @@ impl ServerState {
             memory_store: Some(self.agents.system_memory_store.clone()),
             backend_semaphores: None,
             skill_registry: Some(self.agents.session_manager.skill_registry()),
+            // Populated inside AiAgentManager::new from the scheduler.
+            execution_semaphore: None,
         };
 
         let manager = neomind_agent::ai_agent::AiAgentManager::new(executor_config)
