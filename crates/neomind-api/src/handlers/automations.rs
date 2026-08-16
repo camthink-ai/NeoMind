@@ -749,25 +749,15 @@ pub async fn process_data_handler(
                 transform_result.metrics.len()
             );
 
-            // Publish transformed metrics to event bus
-            if let Some(event_bus) = &state.core.event_bus {
-                for metric in &transform_result.metrics {
-                    // Publish as a device metric event
-                    use neomind_core::NeoMindEvent;
-                    if let Ok(_event_json) = serde_json::to_value(metric) {
-                        let _ = event_bus
-                            .publish(NeoMindEvent::DeviceMetric {
-                                device_id: metric.device_id.clone(),
-                                metric: metric.metric.clone(),
-                                value: metric.value.clone(),
-                                timestamp: metric.timestamp,
-                                quality: metric.quality,
-                                is_virtual: Some(true),
-                            })
-                            .await;
-                    }
-                }
-            }
+            // [no side effects] This endpoint used to publish the produced
+            // metrics to the LIVE event bus as is_virtual device metrics —
+            // but the rule value-provider listener does not skip virtual
+            // metrics, so a manual "process" call overwrote live rule
+            // values and could fire REAL rules (notifications, device
+            // commands) from test data. test_transform_handler already
+            // returns output without publishing; this now matches it.
+            // Use the /test endpoint to preview, or let the normal
+            // event-driven path produce virtual metrics for real.
 
             ok(json!({
                 "success": true,

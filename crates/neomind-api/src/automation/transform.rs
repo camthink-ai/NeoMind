@@ -858,7 +858,15 @@ impl TransformEngine {
             extension_registry: None,
             output_registry: Arc::new(TransformOutputRegistry::new()),
             automation_store: None,
-            http_client: reqwest::Client::new(),
+            // [bounded fetch] reqwest's default client has NO total timeout;
+            // url_to_base64 fetches device-controlled URLs — a hanging or
+            // huge response stalled the transform task (and could OOM the
+            // process). 30s total, 10MB body cap enforced at the read site.
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -872,7 +880,15 @@ impl TransformEngine {
             extension_registry: Some(extension_registry),
             output_registry: Arc::new(TransformOutputRegistry::new()),
             automation_store: None,
-            http_client: reqwest::Client::new(),
+            // [bounded fetch] reqwest's default client has NO total timeout;
+            // url_to_base64 fetches device-controlled URLs — a hanging or
+            // huge response stalled the transform task (and could OOM the
+            // process). 30s total, 10MB body cap enforced at the read site.
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -887,7 +903,15 @@ impl TransformEngine {
             extension_registry: None,
             output_registry,
             automation_store: None,
-            http_client: reqwest::Client::new(),
+            // [bounded fetch] reqwest's default client has NO total timeout;
+            // url_to_base64 fetches device-controlled URLs — a hanging or
+            // huge response stalled the transform task (and could OOM the
+            // process). 30s total, 10MB body cap enforced at the read site.
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -902,7 +926,15 @@ impl TransformEngine {
             extension_registry,
             output_registry,
             automation_store: None,
-            http_client: reqwest::Client::new(),
+            // [bounded fetch] reqwest's default client has NO total timeout;
+            // url_to_base64 fetches device-controlled URLs — a hanging or
+            // huge response stalled the transform task (and could OOM the
+            // process). 30s total, 10MB body cap enforced at the read site.
+            http_client: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
         }
     }
 
@@ -1865,8 +1897,22 @@ impl TransformEngine {
     ) -> String {
         let mut result = template.to_string();
 
-        // Replace {{variable}} patterns
-        while let Some(start) = result.find("{{") {
+        // Replace {{variable}} patterns. [loop-guard] The scan used to
+        // restart from 0 after every replacement — a replacement drawn
+        // from device data that itself contains `{{...}}` (e.g.
+        // `{"a": "{{a}}"}`) re-expanded forever, hanging the async
+        // executor worker. The cursor now advances past each replacement
+        // so substituted content is never re-expanded; a hard iteration
+        // cap bounds pathological input as belt-and-braces.
+        let mut scan_from = 0usize;
+        let mut iterations = 0usize;
+        while let Some(rel) = result[scan_from..].find("{{") {
+            let start = scan_from + rel;
+            iterations += 1;
+            if iterations > 1000 {
+                tracing::warn!("render_template: iteration cap hit, leaving rest as-is");
+                break;
+            }
             let end = match result[start..].find("}}") {
                 Some(pos) => start + pos + 2,
                 None => break,
@@ -1901,6 +1947,9 @@ impl TransformEngine {
             };
 
             result.replace_range(start..end, &replacement);
+            // Advance past the replacement — never re-expand substituted
+            // content (the infinite-loop guard).
+            scan_from = (start + replacement.len()).min(result.len());
         }
 
         result
@@ -2763,33 +2812,59 @@ async fn resolve_input_mapping(
                                 } else {
                                     // It's a URL — fetch and convert to base64
                                     match http_client.get(s).send().await {
-                                        Ok(resp) => match resp.bytes().await {
-                                            Ok(bytes) => {
-                                                use base64::Engine;
-                                                let b64 = base64::engine::general_purpose::STANDARD
+                                        Ok(resp) => {
+                                            // [size cap] reject declared-oversized bodies up
+                                            // front (a device-controlled URL could otherwise
+                                            // feed an arbitrarily large payload into base64
+                                            // + redb). The 30s client timeout bounds the
+                                            // transfer duration for lying/chunked bodies.
+                                            const MAX_FETCH_BYTES: u64 = 10 * 1024 * 1024;
+                                            if resp
+                                                .content_length()
+                                                .map(|l| l > MAX_FETCH_BYTES)
+                                                .unwrap_or(false)
+                                            {
+                                                tracing::warn!(
+                                                    "url_to_base64: body too large for {}, skipping",
+                                                    key
+                                                );
+                                                resolved.insert(key.clone(), extracted);
+                                            } else {
+                                                match resp.bytes().await {
+                                                    Ok(bytes) => {
+                                                        use base64::Engine;
+                                                        let b64 = base64::engine::general_purpose::STANDARD
                                                     .encode(&bytes);
-                                                resolved.insert(key.clone(), Value::String(b64));
+                                                        resolved.insert(
+                                                            key.clone(),
+                                                            Value::String(b64),
+                                                        );
 
-                                                // Try to get image dimensions for normalization
-                                                if let Ok(reader) = image::ImageReader::new(
-                                                    std::io::Cursor::new(&bytes),
-                                                )
-                                                .with_guessed_format()
-                                                {
-                                                    if let Ok(dims) = reader.into_dimensions() {
-                                                        image_dimensions.insert(key.clone(), dims);
+                                                        // Try to get image dimensions for normalization
+                                                        if let Ok(reader) = image::ImageReader::new(
+                                                            std::io::Cursor::new(&bytes),
+                                                        )
+                                                        .with_guessed_format()
+                                                        {
+                                                            if let Ok(dims) =
+                                                                reader.into_dimensions()
+                                                            {
+                                                                image_dimensions
+                                                                    .insert(key.clone(), dims);
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::warn!(
+                                                            "Failed to read response bytes for {}: {}",
+                                                            key,
+                                                            e
+                                                        );
+                                                        resolved.insert(key.clone(), extracted);
                                                     }
                                                 }
                                             }
-                                            Err(e) => {
-                                                tracing::warn!(
-                                                    "Failed to read response bytes for {}: {}",
-                                                    key,
-                                                    e
-                                                );
-                                                resolved.insert(key.clone(), extracted);
-                                            }
-                                        },
+                                        }
                                         Err(e) => {
                                             tracing::warn!(
                                                 "Failed to fetch URL for {}: {}",
