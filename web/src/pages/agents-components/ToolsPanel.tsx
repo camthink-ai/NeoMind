@@ -227,23 +227,23 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
             label: t("agents:detail.toolsColumnParams", "Parameters"),
           },
         ]}
-        data={tableData as unknown as Record<string, unknown>[]}
-        rowKey={(row) => (row as unknown as ToolRow).name}
+        data={tableData}
+        rowKey={(row: ToolRow) => row.name}
         loading={loading}
         onRowClick={(rowData) => {
-          const row = rowData as unknown as ToolRow
+          const row = rowData
           const tool = pagedTools.find((t2) => t2.name === row.name)
           if (tool) handleView(tool)
         }}
         getRowClassName={(rowData) => {
-          const row = rowData as unknown as ToolRow
+          const row = rowData
           // Locked/disabled row: muted bg tint + faded foreground text.
           // Badges with their own explicit text/bg colors (Disabled badge,
           // source badge) keep their accent so the state stays readable.
           return row.disabled ? "bg-muted-30 text-muted-foreground" : ""
         }}
         renderCell={(columnKey, rowData) => {
-          const row = rowData as unknown as ToolRow
+          const row = rowData
           const src = resolveSource(row.source)
           const SrcIcon = src.icon
 
@@ -356,7 +356,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
             label: t("agents:detail.toolsActionView", "View"),
             icon: <Eye className="h-4 w-4" />,
             onClick: (rowData) => {
-              const row = rowData as unknown as ToolRow
+              const row = rowData
               const tool = pagedTools.find((t2) => t2.name === row.name)
               if (tool) handleView(tool)
             },

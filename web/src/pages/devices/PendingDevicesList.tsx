@@ -461,8 +461,8 @@ export function PendingDevicesList({
             align: 'center',
           },
         ]}
-        data={paginatedDrafts as unknown as Record<string, unknown>[]}
-        rowKey={(draft) => (draft as unknown as DraftDevice).id}
+        data={paginatedDrafts}
+        rowKey={(draft: DraftDevice) => draft.id}
         loading={loading}
         emptyState={
           hasBroker === false ? (
@@ -484,7 +484,7 @@ export function PendingDevicesList({
           )
         }
         renderCell={(columnKey, rowData) => {
-          const draft = rowData as unknown as DraftDevice
+          const draft = rowData
           const hasGeneratedType = draft.generated_type && draft.status === 'waiting_processing'
           const confidence = draft.generated_type?.confidence
 
@@ -584,10 +584,10 @@ export function PendingDevicesList({
         }}
         mobileFlatHeader
         renderMobileHeaderExtra={(rowData) =>
-          getStatusBadge((rowData as unknown as DraftDevice).status)
+          getStatusBadge((rowData).status)
         }
         renderMobileBody={(rowData) => {
-          const draft = rowData as unknown as DraftDevice
+          const draft = rowData
           const hasGeneratedType = draft.generated_type && draft.status === 'waiting_processing'
           const confidence = draft.generated_type?.confidence
           const sourceLabel = draft.source.includes(':') ? draft.source.split(':')[0] : draft.source
@@ -632,7 +632,7 @@ export function PendingDevicesList({
           )
         }}
         onRowClick={(rowData) => {
-          const draft = rowData as unknown as DraftDevice
+          const draft = rowData
           handleApproveClick(draft)
         }}
       />

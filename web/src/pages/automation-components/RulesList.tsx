@@ -111,8 +111,7 @@ function RuleHistoryDialog({ rule, open, onOpenChange }: {
     { key: 'detail', label: t('automation:detail', 'Detail'), width: '45%' },
   ]
 
-  const renderCell = (columnKey: string, rowData: Record<string, unknown>) => {
-    const entry = rowData as unknown as RuleExecutionResult
+  const renderCell = (columnKey: string, entry: RuleExecutionResult) => {
     switch (columnKey) {
       case 'time':
         return (
@@ -173,12 +172,9 @@ function RuleHistoryDialog({ rule, open, onOpenChange }: {
             <div className={cn("flex-1 overflow-y-auto", isMobile ? "px-3 py-3" : "px-4 py-4")}>
               <ResponsiveTable
                 columns={columns}
-                data={pagedHistory as unknown as Record<string, unknown>[]}
+                data={pagedHistory}
                 renderCell={renderCell}
-                rowKey={(rowData) => {
-                  const entry = rowData as unknown as RuleExecutionResult
-                  return `${entry.triggered_at}-${entry.duration_ms}`
-                }}
+                rowKey={(entry: RuleExecutionResult) => `${entry.triggered_at}-${entry.duration_ms}`}
                 loading={loading}
                 flexHeight={false}
                 emptyState={
@@ -498,16 +494,16 @@ export function RulesList({
           width: '8%',
         },
       ]}
-      data={paginatedRules as unknown as Record<string, unknown>[]}
-      rowKey={(rule) => (rule as unknown as Rule).id}
+      data={paginatedRules}
+      rowKey={(rule: Rule) => rule.id}
       loading={loading}
-      onRowClick={(rowData) => onView(rowData as unknown as Rule)}
+      onRowClick={(rowData: Rule) => onView(rowData)}
       getRowClassName={(rowData) => {
-        const rule = rowData as unknown as Rule
+        const rule = rowData
         return cn(!rule.enabled && "opacity-50")
       }}
       renderCell={(columnKey, rowData) => {
-        const rule = rowData as unknown as Rule
+        const rule = rowData
 
         switch (columnKey) {
           case 'name':
@@ -624,7 +620,7 @@ export function RulesList({
           label: t('common:edit'),
           icon: <Edit className="h-4 w-4" />,
           onClick: (rowData) => {
-            const rule = rowData as unknown as Rule
+            const rule = rowData
             onEdit(rule)
           },
         },
@@ -632,7 +628,7 @@ export function RulesList({
           label: t('automation:execute'),
           icon: <Play className="h-4 w-4" />,
           onClick: (rowData) => {
-            const rule = rowData as unknown as Rule
+            const rule = rowData
             onExecute(rule)
           },
         },
@@ -640,7 +636,7 @@ export function RulesList({
           label: t('common:export'),
           icon: <Download className="h-4 w-4" />,
           onClick: (rowData) => {
-            const rule = rowData as unknown as Rule
+            const rule = rowData
             handleExportRule(rule)
           },
         },
@@ -648,7 +644,7 @@ export function RulesList({
           label: t('automation:executionHistory', 'History'),
           icon: <History className="h-4 w-4" />,
           onClick: (rowData) => {
-            const rule = rowData as unknown as Rule
+            const rule = rowData
             setHistoryRule(rule)
             setShowHistory(true)
           },
@@ -658,7 +654,7 @@ export function RulesList({
           icon: <Trash2 className="h-4 w-4" />,
           variant: 'destructive',
           onClick: (rowData) => {
-            const rule = rowData as unknown as Rule
+            const rule = rowData
             onDelete(rule)
           },
         },

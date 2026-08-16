@@ -26,26 +26,26 @@ export interface TableColumn {
   className?: string
 }
 
-export interface TableRowAction {
+export interface TableRowAction<T = Record<string, unknown>> {
   label: string
   icon?: ReactNode
-  onClick: (rowData?: Record<string, unknown>) => void
+  onClick: (rowData: T) => void
   variant?: 'default' | 'destructive'
   disabled?: boolean
-  show?: (rowData: Record<string, unknown>) => boolean
+  show?: (rowData: T) => boolean
 }
 
-export interface ResponsiveTableProps {
+export interface ResponsiveTableProps<T = Record<string, unknown>> {
   columns: TableColumn[]
-  data: Record<string, unknown>[]
-  renderCell: (columnKey: string, rowData: Record<string, unknown>) => ReactNode
-  rowKey: (rowData: Record<string, unknown>) => string
-  actions?: TableRowAction[]
-  onRowClick?: (rowData: Record<string, unknown>) => void
+  data: T[]
+  renderCell: (columnKey: string, rowData: T) => ReactNode
+  rowKey: (rowData: T) => string
+  actions?: TableRowAction<T>[]
+  onRowClick?: (rowData: T) => void
   className?: string
   loading?: boolean
   emptyState?: ReactNode
-  getRowClassName?: (rowData: Record<string, unknown>) => string
+  getRowClassName?: (rowData: T) => string
   /** Enable sticky header for table */
   stickyHeader?: boolean
   /** Max height for table body scrolling (e.g., '400px', 'calc(100vh-200px)') */
@@ -58,13 +58,13 @@ export interface ResponsiveTableProps {
    *  Use this when the default key-value layout produces asymmetric or
    *  truncated content (e.g., multi-line cells, centered badges, mixed
    *  cell shapes in one row). */
-  renderMobileBody?: (rowData: Record<string, unknown>) => ReactNode
+  renderMobileBody?: (rowData: T) => ReactNode
   /** Extra content rendered in the top-right of the mobile card header.
    *  Occupies the same slot as the actions menu (and is hidden if actions
    *  are present). Useful for surfacing a status badge or chevron when
    *  the table has no row actions but the right side of the header would
    *  otherwise be empty. */
-  renderMobileHeaderExtra?: (rowData: Record<string, unknown>) => ReactNode
+  renderMobileHeaderExtra?: (rowData: T) => ReactNode
   /** Flatten the mobile card header — drop the `bg-muted` band and the
    *  border under it so the header and body read as one continuous
    *  surface. Use when the body already provides enough visual structure
@@ -84,7 +84,7 @@ function renderColumnLabel(label: string | ReactNode): ReactNode {
  * Desktop: Standard table
  * Mobile: Card layout
  */
-export function ResponsiveTable({
+export function ResponsiveTable<T extends object>({
   columns,
   data,
   renderCell,
@@ -101,7 +101,7 @@ export function ResponsiveTable({
   renderMobileBody,
   renderMobileHeaderExtra,
   mobileFlatHeader = false,
-}: ResponsiveTableProps) {
+}: ResponsiveTableProps<T>) {
   const { t } = useTranslation('common')
   // Show empty state only on mobile when no data
   const showEmptyState = data.length === 0 && !loading

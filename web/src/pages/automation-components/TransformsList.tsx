@@ -270,16 +270,16 @@ export function TransformsList({
           width: '10%',
         },
       ]}
-      data={paginatedTransforms as unknown as Record<string, unknown>[]}
-      rowKey={(transform) => (transform as unknown as TransformAutomation).id}
-      onRowClick={(row) => onEdit(row as unknown as TransformAutomation)}
+      data={paginatedTransforms}
+      rowKey={(transform: TransformAutomation) => transform.id}
+      onRowClick={(row: TransformAutomation) => onEdit(row)}
       loading={loading}
       getRowClassName={(rowData) => {
-        const transform = rowData as unknown as TransformAutomation
+        const transform = rowData
         return cn(!transform.enabled && "opacity-50")
       }}
       renderCell={(columnKey, rowData) => {
-        const transform = rowData as unknown as TransformAutomation
+        const transform = rowData
         const scopeInfo = getScopeInfo(transform.scope)
         const ScopeIcon = scopeInfo.icon
 
@@ -350,24 +350,21 @@ export function TransformsList({
           label: t('common:edit'),
           icon: <Edit className="h-4 w-4" />,
           onClick: (rowData) => {
-            const transform = rowData as unknown as TransformAutomation
+            const transform = rowData
             onEdit(transform)
           },
         },
         ...(onExport ? [{
           label: t('common:export'),
           icon: <Download className="h-4 w-4" />,
-          onClick: (rowData: unknown) => {
-            const transform = rowData as unknown as TransformAutomation
-            onExport(transform)
-          },
+          onClick: (transform: TransformAutomation) => onExport(transform),
         }] : []),
         {
           label: t('common:delete'),
           icon: <Trash2 className="h-4 w-4" />,
           variant: 'destructive',
           onClick: (rowData) => {
-            const transform = rowData as unknown as TransformAutomation
+            const transform = rowData
             onDelete(transform)
           },
         },

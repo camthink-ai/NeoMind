@@ -7,7 +7,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useStore } from '@/store'
 import { useTranslation } from 'react-i18next'
 import { useIsMobile } from '@/hooks/useMobile'
-import { ResponsiveTable, type TableColumn, EmptyState, Pagination } from '@/components/shared'
+import { ResponsiveTable, type TableColumn, type TableRowAction, EmptyState, Pagination } from '@/components/shared'
 import { Send, Play, Square, FlaskConical, FileText, Pencil, Trash2, Loader2, Globe, Radio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { textMini, textNano } from '@/design-system/tokens/typography'
@@ -121,8 +121,7 @@ export function PushTargetsTab() {
     { key: 'actions', label: '', width: '8%' },
   ]
 
-  const renderCell = (columnKey: string, rowData: Record<string, unknown>) => {
-    const target = rowData as unknown as PushTarget
+  const renderCell = (columnKey: string, target: PushTarget) => {
     switch (columnKey) {
       case 'name':
         return (
@@ -190,35 +189,32 @@ export function PushTargetsTab() {
     }
   }
 
-  const actions = [
+  const actions: TableRowAction<PushTarget>[] = [
     {
       label: t('common:dataPush.toggle', 'Start / Stop'),
       icon: <Play className="h-4 w-4" />,
-      onClick: (rowData?: Record<string, unknown>) => handleToggle(rowData as unknown as PushTarget),
+      onClick: (target) => handleToggle(target),
     },
     {
       label: t('common:dataPush.test', 'Test'),
       icon: testingId ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />,
-      onClick: (rowData?: Record<string, unknown>) => {
-        const target = rowData as unknown as PushTarget
-        handleTest(target.id, target.name)
-      },
+      onClick: (target) => handleTest(target.id, target.name),
     },
     {
       label: t('common:dataPush.logs', 'Logs'),
       icon: <FileText className="h-4 w-4" />,
-      onClick: (rowData?: Record<string, unknown>) => setLogsTargetId((rowData as unknown as PushTarget).id),
+      onClick: (target) => setLogsTargetId(target.id),
     },
     {
       label: t('common:dataPush.edit', 'Edit'),
       icon: <Pencil className="h-4 w-4" />,
-      onClick: (rowData?: Record<string, unknown>) => setEditingPushTarget(rowData as unknown as PushTarget),
+      onClick: (target) => setEditingPushTarget(target),
     },
     {
       label: t('common:dataPush.delete', 'Delete'),
       icon: <Trash2 className="h-4 w-4" />,
       variant: 'destructive' as const,
-      onClick: (rowData?: Record<string, unknown>) => handleDelete(rowData as unknown as PushTarget),
+      onClick: (target) => handleDelete(target),
     },
   ]
 
@@ -239,10 +235,10 @@ export function PushTargetsTab() {
       {/* Table */}
       <ResponsiveTable
         columns={columns}
-        data={paginatedTargets as unknown as Record<string, unknown>[]}
+        data={paginatedTargets}
         renderCell={renderCell}
-        rowKey={(row) => (row as unknown as PushTarget).id}
-        onRowClick={(row) => setEditingPushTarget(row as unknown as PushTarget)}
+        rowKey={(row: PushTarget) => row.id}
+        onRowClick={(row: PushTarget) => setEditingPushTarget(row)}
         actions={actions}
         loading={pushTargetsLoading}
         flexHeight

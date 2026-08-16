@@ -541,15 +541,15 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
             width: "w-32",
           },
         ]}
-        data={tableData as unknown as Record<string, unknown>[]}
-        rowKey={(row) => (row as unknown as MemoryFileRow).id}
+        data={tableData}
+        rowKey={(row: MemoryFileRow) => row.id}
         onRowClick={(row) => {
-          const r = row as unknown as MemoryFileRow
+          const r = row
           handleViewEdit(r.isCustom ? r.name : r.id, r.isCustom)
         }}
         loading={loading}
         renderCell={(columnKey, rowData) => {
-          const row = rowData as unknown as MemoryFileRow
+          const row = rowData
           const Icon = row.icon
 
           switch (columnKey) {
@@ -598,7 +598,7 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
             label: t("systemMemory.viewEdit", "View/Edit"),
             icon: <Eye className="h-4 w-4" />,
             onClick: (rowData) => {
-              const row = rowData as unknown as MemoryFileRow
+              const row = rowData
               handleViewEdit(row.isCustom ? row.name : row.id, row.isCustom)
             },
           },
@@ -606,7 +606,7 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
             label: t("systemMemory.export", "Export"),
             icon: exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />,
             onClick: (rowData) => {
-              const row = rowData as unknown as MemoryFileRow
+              const row = rowData
               handleExport(row.id)
             },
           },
@@ -615,11 +615,11 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
             icon: <Trash2 className="h-4 w-4" />,
             variant: "destructive" as const,
             onClick: (rowData) => {
-              const row = rowData as unknown as MemoryFileRow
+              const row = rowData
               if (row.isCustom) handleDelete(row.name)
             },
             show: (rowData) => {
-              const row = rowData as unknown as MemoryFileRow
+              const row = rowData
               return row.isCustom
             },
           },

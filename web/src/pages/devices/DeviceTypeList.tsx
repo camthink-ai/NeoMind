@@ -175,12 +175,12 @@ export function DeviceTypeList({
             width: 'w-24',
           },
         ]}
-        data={paginatedDeviceTypes as unknown as Record<string, unknown>[]}
-        rowKey={(type) => (type as unknown as DeviceType).device_type}
-        onRowClick={(row) => onViewDetails(row as unknown as DeviceType)}
+        data={paginatedDeviceTypes}
+        rowKey={(type: DeviceType) => type.device_type}
+        onRowClick={(row: DeviceType) => onViewDetails(row)}
         loading={loading}
         renderCell={(columnKey, rowData) => {
-          const type = rowData as unknown as DeviceType
+          const type = rowData
 
           switch (columnKey) {
             case 'name':
@@ -229,7 +229,7 @@ export function DeviceTypeList({
             label: t('devices:types.actions.view'),
             icon: <Eye className="h-4 w-4" />,
             onClick: (rowData) => {
-              const type = rowData as unknown as DeviceType
+              const type = rowData
               onViewDetails(type)
             },
           },
@@ -237,7 +237,7 @@ export function DeviceTypeList({
             label: t('devices:types.actions.export'),
             icon: <Download className="h-4 w-4" />,
             onClick: (rowData) => {
-              const type = rowData as unknown as DeviceType
+              const type = rowData
               handleExport(type)
             },
           },
@@ -245,7 +245,7 @@ export function DeviceTypeList({
             label: t('common:edit'),
             icon: <Pencil className="h-4 w-4" />,
             onClick: (rowData) => {
-              const type = rowData as unknown as DeviceType
+              const type = rowData
               onEdit(type)
             },
           },
@@ -254,7 +254,7 @@ export function DeviceTypeList({
             icon: <Trash2 className="h-4 w-4" />,
             variant: 'destructive',
             onClick: (rowData) => {
-              const type = rowData as unknown as DeviceType
+              const type = rowData
               onDelete(type.device_type)
             },
           },

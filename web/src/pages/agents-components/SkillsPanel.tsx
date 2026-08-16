@@ -352,12 +352,12 @@ anti_triggers:
             width: "w-24",
           },
         ]}
-        data={tableData as unknown as Record<string, unknown>[]}
-        rowKey={(row) => (row as unknown as SkillRow).id}
+        data={tableData}
+        rowKey={(row: SkillRow) => row.id}
         loading={loading}
-        onRowClick={(rowData) => handleView((rowData as unknown as SkillRow).id)}
+        onRowClick={(row: SkillRow) => handleView(row.id)}
         renderCell={(columnKey, rowData) => {
-          const row = rowData as unknown as SkillRow
+          const row = rowData
           const catConf = categoryConfig[row.category] || categoryConfig.general
           const Icon = catConf.icon
 
@@ -438,7 +438,7 @@ anti_triggers:
             label: t("skills.actionView"),
             icon: <Eye className="h-4 w-4" />,
             onClick: (rowData) => {
-              const row = rowData as unknown as SkillRow
+              const row = rowData
               handleView(row.id)
             },
           },
@@ -446,7 +446,7 @@ anti_triggers:
             label: t("skills.actionEdit"),
             icon: <Pencil className="h-4 w-4" />,
             onClick: (rowData) => {
-              const row = rowData as unknown as SkillRow
+              const row = rowData
               handleEdit(row.id)
             },
           },
@@ -454,7 +454,7 @@ anti_triggers:
             label: t("skills.actionDelete"),
             icon: <Trash2 className="h-4 w-4" />,
             onClick: (rowData) => {
-              const row = rowData as unknown as SkillRow
+              const row = rowData
               handleDelete(row.id, row.name)
             },
           },
