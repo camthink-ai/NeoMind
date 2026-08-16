@@ -1279,40 +1279,79 @@ async fn handle_ws_socket(
                                         };
                                         // Set session ID on memory tool for session-scoped operations
                                         // (now handled inside Agent::process to avoid cross-session races)
-                                        match state.agents.session_manager.process_message_events_with_backend_and_skills(&session_id, &final_message, backend_id, &selected_skills).await {
-                                            Ok(stream) => {
-                                                // Clone the channel sender and session ID for the spawned task
-                                                let task_tx = stream_tx.clone();
-                                                let task_session_id = session_id.clone();
-                                                let task_state = state.clone();
-
-                                                // Spawn a task to process the LLM stream and send events through the channel
-                                                tokio::spawn(async move {
-                                                    process_stream_to_channel(stream, task_session_id, chat_req.message.clone(), task_tx, task_state).await;
-                                                });
-                                            }
-                                            Err(e) => {
-                                                // Fallback to non-streaming on error
-                                                tracing::error!(error = %e, session_id = %session_id, backend_id = ?chat_req.backend_id, "Streaming text failed, falling back to non-streaming");
-                                                let backend_id = chat_req.backend_id.as_deref();
-                                                let response = match state.agents.session_manager.process_message_with_backend(&session_id, &chat_req.message, backend_id).await {
-                                                    Ok(resp) => json!({
-                                                        "type": "response",
-                                                        "content": resp.message.content,
-                                                        "sessionId": session_id,
-                                                        "toolsUsed": resp.tools_used,
-                                                        "processingTimeMs": resp.processing_time_ms,
-                                                    }).to_string(),
-                                                    Err(inner_e) => json!({
-                                                        "type": "Error",
-                                                        "message": inner_e.to_string(),
-                                                    }).to_string(),
-                                                };
-
-                                                if socket.send(AxumMessage::Text(response)).await.is_err() {
-                                                    break;
+                                        // [non-blocking stream creation] Stream creation used to
+                                        // be awaited INLINE in this select arm: during the initial LLM
+                                        // request (tens of seconds on local models before the first
+                                        // chunk) no pings were sent and `__CANCEL__` frames could not
+                                        // be processed — the whole socket looked stalled. The entire
+                                        // creation + fallback path now runs in a spawned task; the
+                                        // fallback response is delivered through the event channel
+                                        // like any other stream event, so this loop keeps serving
+                                        // ping/pong and cancel frames immediately.
+                                        {
+                                            let task_tx = stream_tx.clone();
+                                            let task_session_id = session_id.clone();
+                                            let task_state = state.clone();
+                                            let task_user_message = chat_req.message.clone();
+                                            let task_backend_id = backend_id.map(|s| s.to_string());
+                                            let task_skills = selected_skills.clone();
+                                            let task_final_message = final_message;
+                                            let task_req_backend = chat_req.backend_id.clone();
+                                            tokio::spawn(async move {
+                                                match task_state
+                                                    .agents
+                                                    .session_manager
+                                                    .process_message_events_with_backend_and_skills(
+                                                        &task_session_id,
+                                                        &task_final_message,
+                                                        task_backend_id.as_deref(),
+                                                        &task_skills,
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(stream) => {
+                                                        process_stream_to_channel(
+                                                            stream,
+                                                            task_session_id,
+                                                            task_user_message,
+                                                            task_tx,
+                                                            task_state,
+                                                        )
+                                                        .await;
+                                                    }
+                                                    Err(e) => {
+                                                        // Fallback to non-streaming on error
+                                                        tracing::error!(error = %e, session_id = %task_session_id, backend_id = ?task_req_backend, "Streaming text failed, falling back to non-streaming");
+                                                        let response = match task_state
+                                                            .agents
+                                                            .session_manager
+                                                            .process_message_with_backend(
+                                                                &task_session_id,
+                                                                &task_user_message,
+                                                                task_req_backend.as_deref(),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(resp) => json!({
+                                                                "type": "response",
+                                                                "content": resp.message.content,
+                                                                "sessionId": task_session_id,
+                                                                "toolsUsed": resp.tools_used,
+                                                                "processingTimeMs": resp.processing_time_ms,
+                                                            })
+                                                            .to_string(),
+                                                            Err(inner_e) => json!({
+                                                                "type": "Error",
+                                                                "message": inner_e.to_string(),
+                                                            })
+                                                            .to_string(),
+                                                        };
+                                                        let _ = task_tx
+                                                            .send(StreamEvent { json: response })
+                                                            .await;
+                                                    }
                                                 }
-                                            }
+                                            });
                                         }
                                     }
                                 }

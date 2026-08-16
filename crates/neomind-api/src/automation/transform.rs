@@ -112,6 +112,14 @@ impl JsTransformExecutor {
 
         // Create Boa context
         let mut context = Context::default();
+        // [watchdog] User JS runs inline on the executor thread; an infinite
+        // loop (while(true)) used to hang it forever — Boa has no wall-clock
+        // interrupt, but the loop-iteration limit aborts hostile/nonterminating
+        // scripts with a runtime-limit error. 10M iterations is far above any
+        // legitimate transform and costs only seconds of CPU at worst.
+        context
+            .runtime_limits_mut()
+            .set_loop_iteration_limit(10_000_000);
 
         // Inject input data as JSON
         let input_json =
