@@ -837,8 +837,14 @@ impl TransformedMetric {
 
 /// Transform engine - executes data transformations
 pub struct TransformEngine {
-    /// Time-series data cache for window-based aggregations
-    time_series_cache: Arc<tokio::sync::RwLock<TimeSeriesCache>>,
+    /// Persistent telemetry storage for window-based aggregations.
+    /// [2026-08 fix] TimeSeriesAggregation used to read an in-RAM cache that
+    /// NOTHING ever populated (the feeding API had zero callers) — every
+    /// aggregation failed with "No data points found" while recording
+    /// Completed. It now queries the real telemetry store: full history,
+    /// restart-safe, unit-aligned (seconds — device metrics storage writes
+    /// `Utc::now().timestamp()`).
+    time_series_storage: Option<Arc<neomind_devices::TimeSeriesStorage>>,
     /// JavaScript executor for AI-generated code
     js_executor: JsTransformExecutor,
     /// Phase 4.1: Extension registry for preprocessing
@@ -861,7 +867,7 @@ impl TransformEngine {
     /// Create a new transform engine
     pub fn new() -> Self {
         Self {
-            time_series_cache: Arc::new(tokio::sync::RwLock::new(TimeSeriesCache::new())),
+            time_series_storage: None,
             js_executor: JsTransformExecutor::new(),
             extension_registry: None,
             output_registry: Arc::new(TransformOutputRegistry::new()),
@@ -878,12 +884,22 @@ impl TransformEngine {
         }
     }
 
+    /// Attach the persistent telemetry store (enables window-based
+    /// TimeSeriesAggregation over real history).
+    pub fn with_time_series_storage(
+        mut self,
+        storage: Arc<neomind_devices::TimeSeriesStorage>,
+    ) -> Self {
+        self.time_series_storage = Some(storage);
+        self
+    }
+
     /// Phase 4.1: Create a transform engine with extension registry
     pub fn with_extension_registry(
         extension_registry: Arc<neomind_core::extension::registry::ExtensionRegistry>,
     ) -> Self {
         Self {
-            time_series_cache: Arc::new(tokio::sync::RwLock::new(TimeSeriesCache::new())),
+            time_series_storage: None,
             js_executor: JsTransformExecutor::new(),
             extension_registry: Some(extension_registry),
             output_registry: Arc::new(TransformOutputRegistry::new()),
@@ -906,7 +922,7 @@ impl TransformEngine {
     /// and query Transform outputs as data sources.
     pub fn with_output_registry(output_registry: Arc<TransformOutputRegistry>) -> Self {
         Self {
-            time_series_cache: Arc::new(tokio::sync::RwLock::new(TimeSeriesCache::new())),
+            time_series_storage: None,
             js_executor: JsTransformExecutor::new(),
             extension_registry: None,
             output_registry,
@@ -929,7 +945,7 @@ impl TransformEngine {
         output_registry: Arc<TransformOutputRegistry>,
     ) -> Self {
         Self {
-            time_series_cache: Arc::new(tokio::sync::RwLock::new(TimeSeriesCache::new())),
+            time_series_storage: None,
             js_executor: JsTransformExecutor::new(),
             extension_registry,
             output_registry,
@@ -2085,22 +2101,50 @@ impl TransformEngine {
         output_metric: &str,
         device_id: &str,
     ) -> Result<TransformedMetric> {
-        // Get historical data points from cache
-        let cache = self.time_series_cache.read().await;
-        let data_points = cache.get_window(device_id, source_metric, window.duration_secs);
+        // Query the persistent telemetry store over the window. Timestamps
+        // are SECONDS (device metrics storage writes Utc::now().timestamp();
+        // the old code's millis comment was backwards).
+        let storage =
+            self.time_series_storage
+                .as_ref()
+                .ok_or_else(|| AutomationError::TransformError {
+                    operation: "TimeSeriesAggregation".to_string(),
+                    message: "Time-series storage is not available for aggregation".to_string(),
+                })?;
+        let now = Utc::now().timestamp();
+        let start = now - window.duration_secs as i64;
+        let source_id = format!("device:{}", device_id);
+        let points: Vec<neomind_devices::telemetry::DataPoint> = storage
+            .query(&source_id, source_metric, start, now)
+            .await
+            .map_err(|e| AutomationError::TransformError {
+                operation: "TimeSeriesAggregation".to_string(),
+                message: format!(
+                    "Failed to query history for '{}.{}': {}",
+                    device_id, source_metric, e
+                ),
+            })?;
 
-        if data_points.is_empty() {
+        let values: Vec<f64> = points
+            .iter()
+            .filter_map(|p| match &p.value {
+                neomind_devices::MetricValue::Float(f) => Some(*f),
+                neomind_devices::MetricValue::Integer(i) => Some(*i as f64),
+                _ => None,
+            })
+            .collect();
+
+        if values.is_empty() {
             return Err(AutomationError::TransformError {
                 operation: "TimeSeriesAggregation".to_string(),
                 message: format!("No data points found for '{}.{}'", device_id, source_metric),
             });
         }
 
-        let values: Vec<f64> = data_points.iter().map(|p| p.value).collect();
         let result = self.compute_aggregation(&values, aggregation)?;
 
-        // Use milliseconds for consistency with device metrics storage
-        let timestamp = Utc::now().timestamp_millis();
+        // Seconds, aligned with device metrics storage and sibling outputs.
+        let timestamp = Utc::now().timestamp();
 
         Ok(TransformedMetric {
             device_id: device_id.to_string(),
@@ -2353,18 +2397,6 @@ impl TransformEngine {
             // Null
             Value::Null => 0.0,
         }
-    }
-
-    /// Add a data point to the time-series cache (for TimeSeriesAggregation)
-    pub async fn add_time_series_point(
-        &self,
-        device_id: &str,
-        metric: &str,
-        value: f64,
-        timestamp: i64,
-    ) {
-        let mut cache = self.time_series_cache.write().await;
-        cache.add_point(device_id, metric, value, timestamp);
     }
 
     /// Execute GroupBy operation - group array elements by key and aggregate
@@ -3227,63 +3259,6 @@ fn extract_ref_texts(value: &Value) -> Vec<String> {
         }
     }
     texts
-}
-
-/// Time-series data cache for window-based aggregations
-#[derive(Debug)]
-struct TimeSeriesCache {
-    /// Store data points as (device_id, metric) -> Vec<(timestamp, value)>
-    data: HashMap<(String, String), Vec<(i64, f64)>>,
-    /// Maximum number of points per metric
-    max_points_per_metric: usize,
-}
-
-impl TimeSeriesCache {
-    fn new() -> Self {
-        Self {
-            data: HashMap::new(),
-            max_points_per_metric: 1000,
-        }
-    }
-
-    /// Add a data point to the cache
-    fn add_point(&mut self, device_id: &str, metric: &str, value: f64, timestamp: i64) {
-        let key = (device_id.to_string(), metric.to_string());
-        let points = self.data.entry(key).or_default();
-        points.push((timestamp, value));
-
-        // Sort by timestamp and keep only recent points
-        points.sort_by_key(|(ts, _)| *ts);
-        if points.len() > self.max_points_per_metric {
-            *points = points.split_off(points.len() - self.max_points_per_metric);
-        }
-    }
-
-    /// Get data points within a time window
-    fn get_window(&self, device_id: &str, metric: &str, window_secs: u64) -> Vec<DataPoint> {
-        let key = (device_id.to_string(), metric.to_string());
-        // Use milliseconds for consistency with stored timestamps
-        let cutoff = Utc::now().timestamp_millis() - (window_secs as i64 * 1000);
-
-        self.data
-            .get(&key)
-            .map(|points| {
-                points
-                    .iter()
-                    .filter(|(ts, _)| *ts >= cutoff)
-                    .map(|(ts, v)| DataPoint {
-                        _timestamp: *ts,
-                        value: *v,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-}
-
-struct DataPoint {
-    _timestamp: i64,
-    value: f64,
 }
 
 #[cfg(test)]

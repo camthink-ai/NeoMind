@@ -1016,6 +1016,9 @@ impl ServerState {
         // Create transform engine with extension registry and automation store support
         let transform_engine = {
             let mut engine = TransformEngine::with_extension_registry(extensions.registry.clone());
+            // Persistent telemetry history — enables TimeSeriesAggregation
+            // over real data (the old in-RAM cache was never populated).
+            engine = engine.with_time_series_storage(time_series_storage.clone());
             if let Some(ref store) = automation_store {
                 engine = engine.with_automation_store(store.clone());
             }

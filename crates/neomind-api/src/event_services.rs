@@ -510,7 +510,7 @@ impl TransformEventService {
                         let timers_for_cleanup = device_timers.clone();
                         let cleanup_id = device_id.clone();
                         let wrapped_handle = tokio::spawn(async move {
-                            timer_handle.await;
+                            let _ = timer_handle.await;
                             // Debounce task finished (fired or aborted): drop our own
                             // entry so one-shot / never-again devices don't linger.
                             timers_for_cleanup.lock().remove(&cleanup_id);
