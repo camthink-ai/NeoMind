@@ -163,6 +163,22 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         while let Some(result) = next_chunk_or_timeout(&mut stream, safeguards.max_stream_duration).await {
             let elapsed = stream_start.elapsed();
 
+            // [cancellable] Same interrupt check as stream_core — the
+            // multimodal path previously had ZERO references to the
+            // interrupt signal, so the Stop button was dead for image
+            // chats (streams ran to natural end or the 2400s bound).
+            let is_interrupted = safeguards
+                .interrupt_signal
+                .as_ref()
+                .map(|rx| *rx.borrow())
+                .unwrap_or(false);
+            if is_interrupted {
+                tracing::info!("Multimodal stream interrupted by user");
+                yield AgentEvent::content("\n\n[Interrupted]");
+                yield AgentEvent::end();
+                return;
+            }
+
             if elapsed > safeguards.max_stream_duration {
                 tracing::warn!("Stream timeout ({:?} elapsed)", elapsed);
                 yield AgentEvent::error(format!("Request timeout ({:.1}s elapsed)", elapsed.as_secs_f64()));
@@ -299,6 +315,20 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             let tool_results_executed: Vec<_> = loop {
                 tokio::select! {
                     _ = tool_heartbeat.tick() => {
+                        // [cancellable] surf the interrupt between heartbeats
+                        // so a long tool batch doesn't defer cancel for its
+                        // full duration (up to the shell timeout).
+                        let interrupted = safeguards
+                            .interrupt_signal
+                            .as_ref()
+                            .map(|rx| *rx.borrow())
+                            .unwrap_or(false);
+                        if interrupted {
+                            tracing::info!("Multimodal stream interrupted during tool batch");
+                            yield AgentEvent::content("\n\n[Interrupted]");
+                            yield AgentEvent::end();
+                            return;
+                        }
                         yield AgentEvent::heartbeat();
                     }
                     done = &mut collect_fut => break done,

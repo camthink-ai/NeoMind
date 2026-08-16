@@ -106,16 +106,44 @@ impl PushDestination for MqttTarget {
             _ => rumqttc::QoS::AtLeastOnce,
         };
 
-        client
-            .publish(&self.config.topic, qos, false, payload.as_bytes())
-            .await
-            .map_err(|e| super::DeliveryError::Other(anyhow!("MQTT publish failed: {}", e)))?;
+        // [bounded publish] client.publish() waits for channel capacity —
+        // with a dead broker the bounded (10) request queue fills and this
+        // await blocks FOREVER, wedging the target task so its select!
+        // cancel arm is unreachable and stop()/update/delete hang the API
+        // handler. A timeout converts the wedge into a retriable error.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.publish(&self.config.topic, qos, false, payload.as_bytes()),
+        )
+        .await
+        .map_err(|_| {
+            super::DeliveryError::Other(anyhow!(
+                "MQTT publish timed out — broker unreachable or request queue full"
+            ))
+        })?
+        .map_err(|e| super::DeliveryError::Other(anyhow!("MQTT publish failed: {}", e)))?;
 
-        // Poll eventloop to process the publish
+        // Poll eventloop to process the publish — and PROPAGATE errors.
+        // The old `let _ = timeout(5s, poll())` discarded connection
+        // errors entirely: deliveries to an unreachable broker were
+        // logged as Success and never retried (the whole
+        // deliver_with_retry machinery was dead code for MQTT targets).
         drop(client_guard);
         let mut el_guard = self.eventloop.lock().await;
         if let Some(ref mut eventloop) = *el_guard {
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), eventloop.poll()).await;
+            match tokio::time::timeout(std::time::Duration::from_secs(5), eventloop.poll()).await {
+                Err(_elapsed) => {
+                    // No event within 5s: not proof of failure (QoS0 sends
+                    // nothing back), leave as success.
+                }
+                Ok(Err(e)) => {
+                    return Err(super::DeliveryError::Other(anyhow!(
+                        "MQTT broker error: {}",
+                        e
+                    )))
+                }
+                Ok(Ok(_)) => {}
+            }
         }
 
         Ok(())

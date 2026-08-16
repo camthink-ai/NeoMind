@@ -763,10 +763,31 @@ impl RuleEngine {
             } => {
                 let trigger = self.agent_trigger.read().await;
                 if let Some(cb) = trigger.as_ref() {
-                    match cb(agent_id.clone(), input.clone(), data.clone()).await {
-                        Ok(()) => Ok(format!("TRIGGER_AGENT: {}", agent_id)),
-                        Err(e) => Err(format!("TRIGGER_AGENT failed: {}", e)),
-                    }
+                    // [decoupled] The full agent run used to be awaited INLINE
+                    // here — one rule with a TriggerAgent action stalled every
+                    // other rule's evaluation platform-wide for the entire
+                    // agent execution (bounded only by the global 5-min cap),
+                    // because on_data_update awaits evaluate_and_fire
+                    // sequentially per affected rule. Spawn it: rule
+                    // processing continues, and the agent's own executor
+                    // (semaphores, timeout, journaling) governs the run.
+                    let cb = cb.clone();
+                    let (spawn_id, spawn_input, spawn_data, log_id) = (
+                        agent_id.clone(),
+                        input.clone(),
+                        data.clone(),
+                        agent_id.clone(),
+                    );
+                    tokio::spawn(async move {
+                        if let Err(e) = cb(spawn_id, spawn_input, spawn_data).await {
+                            tracing::warn!(
+                                agent_id = %log_id,
+                                error = %e,
+                                "TRIGGER_AGENT execution failed"
+                            );
+                        }
+                    });
+                    Ok(format!("TRIGGER_AGENT: {} (spawned)", agent_id))
                 } else {
                     tracing::warn!("TRIGGER_AGENT: {} (no callback wired)", agent_id);
                     Err("TRIGGER_AGENT failed: agent trigger callback not initialized".to_string())

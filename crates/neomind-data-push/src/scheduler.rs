@@ -155,15 +155,25 @@ impl PushScheduler {
             let mut buffer: Vec<(String, serde_json::Value, i64)> = Vec::new();
             let mut flush_timer = tokio::time::Instant::now() + batch_interval;
             // Per-target dedup of transform's double-published virtual metrics.
-            let mut recent_virtual: std::collections::HashMap<(String, String, i64), tokio::time::Instant> =
-                std::collections::HashMap::new();
+            let mut recent_virtual: std::collections::HashMap<
+                (String, String, i64),
+                tokio::time::Instant,
+            > = std::collections::HashMap::new();
 
             loop {
                 tokio::select! {
                     _ = cancel.changed() => {
                         // Flush remaining buffer before stopping
                         if !buffer.is_empty() {
-                            flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None).await;
+                            // [bounded teardown] the final flush used to run the FULL retry loop
+                            // (endpoint timeout x retries + backoffs = minutes) with no bound - a dead
+                            // endpoint wedged stop()/update/delete, which the API handler awaits while
+                            // holding the data-push state lock. 30s cap: still attempts delivery.
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None),
+                            )
+                            .await;
                         }
                         tracing::info!(target_id = %target.id, "Event-driven target stopped");
                         return;
@@ -171,7 +181,15 @@ impl PushScheduler {
                     result = rx.recv() => {
                         if cancel.has_changed().unwrap_or(false) {
                             if !buffer.is_empty() {
-                                flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None).await;
+                                // [bounded teardown] the final flush used to run the FULL retry loop
+                                // (endpoint timeout x retries + backoffs = minutes) with no bound - a dead
+                                // endpoint wedged stop()/update/delete, which the API handler awaits while
+                                // holding the data-push state lock. 30s cap: still attempts delivery.
+                                let _ = tokio::time::timeout(
+                                    std::time::Duration::from_secs(30),
+                                    flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None),
+                                )
+                                .await;
                             }
                             return;
                         }
@@ -229,7 +247,15 @@ impl PushScheduler {
                             }
                             None => {
                                 if !buffer.is_empty() {
-                                    flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None).await;
+                                    // [bounded teardown] the final flush used to run the FULL retry loop
+                                    // (endpoint timeout x retries + backoffs = minutes) with no bound - a dead
+                                    // endpoint wedged stop()/update/delete, which the API handler awaits while
+                                    // holding the data-push state lock. 30s cap: still attempts delivery.
+                                    let _ = tokio::time::timeout(
+                                        std::time::Duration::from_secs(30),
+                                        flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None),
+                                    )
+                                    .await;
                                 }
                                 return;
                             }
@@ -273,8 +299,10 @@ impl PushScheduler {
             let mut buffer: Vec<(String, serde_json::Value, i64)> = Vec::new();
             let flush_interval = std::time::Duration::from_secs(interval_secs);
             // Per-target dedup of transform's double-published virtual metrics.
-            let mut recent_virtual: std::collections::HashMap<(String, String, i64), tokio::time::Instant> =
-                std::collections::HashMap::new();
+            let mut recent_virtual: std::collections::HashMap<
+                (String, String, i64),
+                tokio::time::Instant,
+            > = std::collections::HashMap::new();
 
             tracing::info!(target_id = %target.id, interval_secs, "Interval push target started");
 
@@ -288,7 +316,15 @@ impl PushScheduler {
                     _ = cancel.changed() => {
                         // Flush remaining buffer before stopping
                         if !buffer.is_empty() {
-                            flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None).await;
+                            // [bounded teardown] the final flush used to run the FULL retry loop
+                            // (endpoint timeout x retries + backoffs = minutes) with no bound - a dead
+                            // endpoint wedged stop()/update/delete, which the API handler awaits while
+                            // holding the data-push state lock. 30s cap: still attempts delivery.
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(30),
+                                flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None),
+                            )
+                            .await;
                         }
                         tracing::info!(target_id = %target.id, "Interval target stopped");
                         return;
@@ -296,7 +332,15 @@ impl PushScheduler {
                     result = rx.recv() => {
                         if cancel.has_changed().unwrap_or(false) {
                             if !buffer.is_empty() {
-                                flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None).await;
+                                // [bounded teardown] the final flush used to run the FULL retry loop
+                                // (endpoint timeout x retries + backoffs = minutes) with no bound - a dead
+                                // endpoint wedged stop()/update/delete, which the API handler awaits while
+                                // holding the data-push state lock. 30s cap: still attempts delivery.
+                                let _ = tokio::time::timeout(
+                                    std::time::Duration::from_secs(30),
+                                    flush_batch(&target, &store, &renderer, dest.as_ref(), &mut buffer, None),
+                                )
+                                .await;
                             }
                             return;
                         }
@@ -872,19 +916,54 @@ mod tests {
     fn virtual_dedup_skips_second_copy_within_window() {
         let mut recent = std::collections::HashMap::new();
         // First copy of a virtual metric → recorded, not a duplicate.
-        assert!(!is_duplicate_virtual(&mut recent, "device:a", "value-1", 1000));
+        assert!(!is_duplicate_virtual(
+            &mut recent,
+            "device:a",
+            "value-1",
+            1000
+        ));
         // Second copy (same source + value + ts, transform double-publish) → duplicate.
-        assert!(is_duplicate_virtual(&mut recent, "device:a", "value-1", 1000));
+        assert!(is_duplicate_virtual(
+            &mut recent,
+            "device:a",
+            "value-1",
+            1000
+        ));
         // Different value at same ts → not a duplicate (different metric).
-        assert!(!is_duplicate_virtual(&mut recent, "device:a", "value-2", 1000));
+        assert!(!is_duplicate_virtual(
+            &mut recent,
+            "device:a",
+            "value-2",
+            1000
+        ));
         // Different SOURCE, same value + ts → not a duplicate (the old key
         // collided distinct metrics that happened to serialize identically).
-        assert!(!is_duplicate_virtual(&mut recent, "device:b", "value-1", 1000));
+        assert!(!is_duplicate_virtual(
+            &mut recent,
+            "device:b",
+            "value-1",
+            1000
+        ));
         // Same value at different ts → not a duplicate (different frame).
-        assert!(!is_duplicate_virtual(&mut recent, "device:a", "value-1", 2000));
+        assert!(!is_duplicate_virtual(
+            &mut recent,
+            "device:a",
+            "value-1",
+            2000
+        ));
         // Those new (source, value, ts) keys got recorded; their repeats are dups.
-        assert!(is_duplicate_virtual(&mut recent, "device:a", "value-2", 1000));
-        assert!(is_duplicate_virtual(&mut recent, "device:a", "value-1", 2000));
+        assert!(is_duplicate_virtual(
+            &mut recent,
+            "device:a",
+            "value-2",
+            1000
+        ));
+        assert!(is_duplicate_virtual(
+            &mut recent,
+            "device:a",
+            "value-1",
+            2000
+        ));
     }
     use serde_json::json;
 
