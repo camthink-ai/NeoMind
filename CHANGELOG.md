@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Frontend type-safety
+- **`ResponsiveTable<T>` is generic** — the table's non-generic `Record<string, unknown>` surface forced ~100 typed→Record→typed double-casts across 11 table-driven pages; all migrated (project-wide `as unknown as`: 121 → 21; the remainder is non-table code). `TableRowAction.onClick`'s rowData is now required and row actions are per-row only.
+- **Device status fragment typed** in deviceSlice (10 per-field `as any` → one `Partial<DeviceStatusFragment>` per block — backend field renames now surface at compile time) and stale API-response casts dropped in main.tsx (the automation endpoints were already typed).
+- **Rule builder at zero `as any`** (was 30): the persisted source-blob UI fields (triggerType/cronExpression/cooldown\*) are declared in `types/rule.ts`, the transient React-key is a declared `UIAction` type instead of smuggled, saved actions discriminate the `RuleAction` union properly, and condition removal flows through a nullable `onChange`.
+
 ### System reliability
 - **Lock contention no longer silently misbehaves in the rule engine**: the rules map and the value cache used tokio `try_read` in sync consumers — under trigger-path contention the subscription-index rebuild kept a STALE index (a rule added in that window was silently never evaluated), and the value cache reported metrics as absent (conditions false; `for_duration` accumulation spuriously reset). Both switched to parking_lot with blocking reads of short critical sections.
 - **MQTT eventloops survive handler panics**: a panic in the notification handler (arbitrary device payloads) used to kill the poll task — the adapter stayed "running" but never polled again until restart.
