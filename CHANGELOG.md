@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.17] - 2026-08-16
 
+### REST ingestion joins the event spine
+`POST /api/devices/:id/metrics` wrote telemetry storage only — the MQTT and webhook paths both publish `DeviceMetric`, the REST path did not, so REST-ingested data silently bypassed the platform: rules never fired, dashboards didn't live-update, event-driven push never delivered, and REST-fed devices showed offline despite fresh data. The write now publishes the event (regression-tested).
+
 ### Security
 - **SSRF guard on the transform engine's device-controlled URL fetch**: `url_to_base64` fetched URLs arriving in device data and embedded the response as base64 into transform outputs — a compromised device could direct the server at cloud-metadata endpoints (credentials), the NeoMind API itself, or internal admin panels and the base64 would surface in dashboards/push targets. The private-address rules moved to a shared `neomind_core::net` guard (unit-tested: IPv4 private/CGNAT/link-local/multicast, IPv6 ULA/loopback, IPv4-mapped, `.local` names); the transform fetch enforces them plus an http(s)-only scheme check; `web_fetch` delegates to the same rules.
 
