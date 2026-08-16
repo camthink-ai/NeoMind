@@ -146,7 +146,27 @@ impl TransformOutputRegistry {
 
         // Track metric names for this transform
         let metric_names: Vec<String> = metrics.iter().map(|m| m.metric.clone()).collect();
-        transform_metrics.insert(transform_id.to_string(), metric_names);
+        transform_metrics.insert(transform_id.to_string(), metric_names.clone());
+
+        // [stale-name eviction] Metrics whose names VARY with the data
+        // (GroupBy's output_{group} keys) used to leave phantom data-source
+        // entries forever: insert() replaced the name list but never removed
+        // outputs registered by earlier runs. Drop this transform's outputs
+        // whose metric is not in the fresh set.
+        let fresh: std::collections::HashSet<&str> =
+            metric_names.iter().map(|s| s.as_str()).collect();
+        let stale_ids: Vec<String> = outputs
+            .iter()
+            .filter(|(id, info)| {
+                info.transform_id == transform_id
+                    && !fresh.contains(info.metric_name.as_str())
+                    && !id.is_empty()
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in stale_ids {
+            outputs.remove(&id);
+        }
 
         // Register each metric as a data source
         for metric in metrics {

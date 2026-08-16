@@ -75,10 +75,20 @@ impl TransformEventService {
 
                 // Track pending device data and debounce timers
                 // (device_id -> (raw_data, latest_timestamp, timer_handle))
-                let mut device_raw_data: HashMap<String, serde_json::Value> = HashMap::new();
-                let mut device_latest_ts: HashMap<String, i64> = HashMap::new();
-                let mut device_timers: HashMap<String, tokio::task::JoinHandle<()>> =
-                    HashMap::new();
+                // [bounded + shared] All three grow per device_id — dynamic MQTT
+                // client ids made them unbounded, and completed debounce handles
+                // lingered until the device's next event. Shared via
+                // parking_lot::Mutex so the debounce task can self-remove its
+                // handle; data maps are pruned by oldest timestamp at cap.
+                const MAX_TRACKED_DEVICES: usize = 1024;
+                let device_raw_data: std::sync::Arc<
+                    parking_lot::Mutex<HashMap<String, serde_json::Value>>,
+                > = std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new()));
+                let device_latest_ts: std::sync::Arc<parking_lot::Mutex<HashMap<String, i64>>> =
+                    std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new()));
+                let device_timers: std::sync::Arc<
+                    parking_lot::Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+                > = std::sync::Arc::new(parking_lot::Mutex::new(HashMap::new()));
 
                 // Throttle map for execution-stat persistence: transform_id -> last persist instant.
                 // The first execution of a transform flushes immediately (so last_executed appears
@@ -117,12 +127,37 @@ impl TransformEventService {
                             "Received device metric event for transform processing"
                         );
 
-                        // Update the latest timestamp for this device
-                        device_latest_ts.insert(device_id.clone(), timestamp);
+                        // Update the latest timestamp for this device (+ prune at cap)
+                        {
+                            let mut ts_map = device_latest_ts.lock();
+                            if ts_map.len() >= MAX_TRACKED_DEVICES
+                                && !ts_map.contains_key(&device_id)
+                            {
+                                let mut entries: Vec<(String, i64)> =
+                                    ts_map.iter().map(|(k, v)| (k.clone(), *v)).collect();
+                                entries.sort_unstable_by_key(|(_, ts)| *ts);
+                                let drop: std::collections::HashSet<String> = entries
+                                    .into_iter()
+                                    .take(MAX_TRACKED_DEVICES / 2)
+                                    .map(|(k, _)| k)
+                                    .collect();
+                                ts_map.retain(|k, _| !drop.contains(k));
+                                device_raw_data.lock().retain(|k, _| !drop.contains(k));
+                                device_timers.lock().retain(|k, _| {
+                                    if drop.contains(k) {
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                });
+                            }
+                            ts_map.insert(device_id.clone(), timestamp);
+                        }
 
                         // Build or update the device's raw data structure
+                        let mut raw_guard = device_raw_data.lock();
                         let device_entry =
-                            device_raw_data.entry(device_id.clone()).or_insert_with(|| {
+                            raw_guard.entry(device_id.clone()).or_insert_with(|| {
                                 serde_json::json!({
                                     "device_id": device_id,
                                     "timestamp": timestamp,
@@ -158,13 +193,18 @@ impl TransformEventService {
                             }
                         }
 
+                        // Snapshot the entry for the debounce task, then release
+                        // the raw-data guard before touching other maps.
+                        let device_entry_snapshot = device_entry.clone();
+                        drop(raw_guard);
+
                         // Get device type from registry (cached for the debounce task)
                         let device_type: Option<String> = device_registry
                             .get_device(&device_id)
                             .map(|d| d.device_type.clone());
 
                         // Cancel existing timer for this device if any
-                        if let Some(existing_timer) = device_timers.remove(&device_id) {
+                        if let Some(existing_timer) = device_timers.lock().remove(&device_id) {
                             existing_timer.abort();
                         }
 
@@ -173,7 +213,7 @@ impl TransformEventService {
                         let event_bus_clone = event_bus.clone();
                         let transform_engine_clone = transform_engine.clone();
                         let automation_store_clone = automation_store.clone();
-                        let device_entry_clone = device_entry.clone();
+                        let device_entry_clone = device_entry_snapshot;
                         let device_type_clone = device_type.clone();
                         let time_series_storage_inner = time_series_storage.clone();
                         let exec_flush_clone = exec_flush.clone();
@@ -465,13 +505,22 @@ impl TransformEventService {
                             }
                         });
 
-                        // Store the timer handle
-                        device_timers.insert(device_id, timer_handle);
+                        // Store the timer handle (the task self-removes it when it
+                        // completes — see the cleanup at the end of the task body).
+                        let timers_for_cleanup = device_timers.clone();
+                        let cleanup_id = device_id.clone();
+                        let wrapped_handle = tokio::spawn(async move {
+                            timer_handle.await;
+                            // Debounce task finished (fired or aborted): drop our own
+                            // entry so one-shot / never-again devices don't linger.
+                            timers_for_cleanup.lock().remove(&cleanup_id);
+                        });
+                        device_timers.lock().insert(device_id, wrapped_handle);
                     }
                 }
 
                 // Abort all pending timers when shutting down
-                for (_, timer) in device_timers {
+                for (_, timer) in device_timers.lock().drain() {
                     timer.abort();
                 }
 

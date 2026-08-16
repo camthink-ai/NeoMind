@@ -582,8 +582,18 @@ impl MarkdownMemoryStore {
         // cannot lose this update. See `write_lock` doc on the struct.
         let _lock = self.write_lock.lock().await;
 
-        atomic_write::write(&path, content)
-            .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target, e)))?;
+        // [fake-async fix] the atomic write (tmp file + rename) is blocking
+        // filesystem work — run it on the blocking pool.
+        let write_path = path.clone();
+        let target_owned = target.to_string();
+        let content_owned = content.to_string();
+        let write_result = tokio::task::spawn_blocking(move || {
+            atomic_write::write(&write_path, &content_owned)
+                .map_err(|e| Error::Storage(format!("Failed to write {}.md: {}", target_owned, e)))
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("write_file join error: {}", e)))?;
+        write_result?;
 
         info!(target = %target, chars = content.chars().count(), "Wrote persistent file");
         Ok(())
@@ -606,12 +616,22 @@ impl MarkdownMemoryStore {
             }
         };
 
-        if !path.exists() {
-            return Ok(String::new());
+        // [fake-async fix] file reads run on the blocking pool — the memory
+        // snapshot path loads these on session access.
+        let read_path = path.clone();
+        let target_owned = target.to_string();
+        match tokio::task::spawn_blocking(move || {
+            if !read_path.exists() {
+                return Ok(String::new());
+            }
+            std::fs::read_to_string(&read_path)
+                .map_err(|e| Error::Storage(format!("Failed to read {}.md: {}", target_owned, e)))
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(e) => Err(Error::Storage(format!("read_file join error: {}", e))),
         }
-
-        fs::read_to_string(&path)
-            .map_err(|e| Error::Storage(format!("Failed to read {}.md: {}", target, e)))
     }
 
     /// Read a persistent file synchronously. Returns empty string if not found.

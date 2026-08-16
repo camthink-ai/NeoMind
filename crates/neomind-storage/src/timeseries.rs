@@ -1657,7 +1657,22 @@ impl TimeSeriesStore {
         source_id: &str,
         metric: &str,
     ) -> Result<Option<DataPoint>, Error> {
-        let read_txn = self.db.begin_read()?;
+        // [fake-async fix] see query_range.
+        let db = self.db.clone();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        return tokio::task::spawn_blocking(move || {
+            Self::query_latest_uncached_impl(&db, &src, &met)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("query_latest_uncached join error: {}", e)))?;
+    }
+
+    fn query_latest_uncached_impl(
+        db: &Database,
+        source_id: &str,
+        metric: &str,
+    ) -> Result<Option<DataPoint>, Error> {
+        let read_txn = db.begin_read()?;
         let table = match read_txn.open_table(TIMESERIES_TABLE) {
             Ok(t) => t,
             Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
@@ -2248,6 +2263,15 @@ impl TimeSeriesStore {
                     if removed > 0 {
                         total_removed += removed as u64;
                         metrics_cleaned.insert(metric_key.clone());
+                        // [orphan fix] A metric whose points have ALL aged out
+                        // used to keep its metrics_info entry for the process
+                        // lifetime (only full-range deletes pruned it). Probe
+                        // for remaining points and drop the entry when empty —
+                        // the boot rebuild would prune it anyway, but between
+                        // restarts it kept dead sources in list_metrics.
+                        if !self.has_any_point(source_id, metric).await {
+                            self.metrics_info.remove(&metric_key);
+                        }
                     }
                 }
             } else {
@@ -2274,6 +2298,31 @@ impl TimeSeriesStore {
     /// many raw points exist — perfect for chart rendering.
     ///
     /// If total points ≤ target_count, returns all points without bucketing.
+    /// Cheap existence probe: does (source, metric) have at least one point?
+    async fn has_any_point(&self, source_id: &str, metric: &str) -> bool {
+        let db = self.db.clone();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        tokio::task::spawn_blocking(move || {
+            let read_txn = match db.begin_read() {
+                Ok(t) => t,
+                Err(_) => return false,
+            };
+            let table = match read_txn.open_table(TIMESERIES_TABLE) {
+                Ok(t) => t,
+                Err(_) => return false,
+            };
+            let mut range = match table.range(
+                (src.as_str(), met.as_str(), i64::MIN)..=(src.as_str(), met.as_str(), i64::MAX),
+            ) {
+                Ok(r) => r,
+                Err(_) => return false,
+            };
+            range.next().is_some()
+        })
+        .await
+        .unwrap_or(false)
+    }
+
     pub async fn query_range_bucketed(
         &self,
         source_id: &str,
@@ -2282,7 +2331,25 @@ impl TimeSeriesStore {
         end: i64,
         target_count: usize,
     ) -> Result<TimeSeriesResult, Error> {
-        let read_txn = self.db.begin_read()?;
+        // [fake-async fix] see query_range.
+        let db = self.db.clone();
+        let (src, met) = (source_id.to_string(), metric.to_string());
+        return tokio::task::spawn_blocking(move || {
+            Self::query_range_bucketed_impl(&db, &src, &met, start, end, target_count)
+        })
+        .await
+        .map_err(|e| Error::Storage(format!("query_range_bucketed join error: {}", e)))?;
+    }
+
+    fn query_range_bucketed_impl(
+        db: &Database,
+        source_id: &str,
+        metric: &str,
+        start: i64,
+        end: i64,
+        target_count: usize,
+    ) -> Result<TimeSeriesResult, Error> {
+        let read_txn = db.begin_read()?;
 
         let table = match read_txn.open_table(TIMESERIES_TABLE) {
             Ok(t) => t,

@@ -6,8 +6,16 @@ use crate::types::DataSourceFilter;
 pub struct DataSourceMatcher {
     filter: DataSourceFilter,
     /// Last known values per source_id for change detection.
+    /// [bounded] Dynamic MQTT client ids can grow this map unboundedly —
+    /// capped at MAX_LAST_VALUES entries; on overflow the map is rebuilt
+    /// from the most recent entries (order preserved by insertion via
+    /// Vec bookkeeping is overkill here — a plain retain-newest-by-rebuild
+    /// keeps behavior simple and the bound hard).
     last_values: std::collections::HashMap<String, String>,
 }
+
+/// Hard cap for the change-detection map.
+const MAX_LAST_VALUES: usize = 4096;
 
 impl DataSourceMatcher {
     pub fn new(filter: DataSourceFilter) -> Self {
@@ -29,6 +37,18 @@ impl DataSourceMatcher {
                     return false;
                 }
             }
+        }
+        if self.last_values.len() >= MAX_LAST_VALUES && !self.last_values.contains_key(source_id) {
+            // At cap with a NEW key: drop the oldest half. std HashMap has no
+            // order, so "oldest" is approximate — the goal is the hard bound,
+            // and change-detection only needs the RECENT past anyway.
+            let keep: std::collections::HashMap<String, String> = self
+                .last_values
+                .iter()
+                .take(MAX_LAST_VALUES / 2)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            self.last_values = keep;
         }
         self.last_values
             .insert(source_id.to_string(), value.to_string());
