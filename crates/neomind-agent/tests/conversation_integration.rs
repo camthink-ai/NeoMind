@@ -35,6 +35,7 @@ impl TestContext {
             tool_registry: None,
             memory_store: None,
             backend_semaphores: None,
+            execution_semaphore: None,
             skill_registry: None,
         };
 

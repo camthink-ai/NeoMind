@@ -52,6 +52,7 @@ impl RealPerfTestContext {
             tool_registry: None,
             memory_store: None,
             backend_semaphores: None,
+            execution_semaphore: None,
             skill_registry: None,
         };
         let executor = AgentExecutor::new(executor_config).await?;
@@ -331,6 +332,7 @@ async fn test_llm_vs_mock_comparison() -> anyhow::Result<()> {
         memory_store: None,
         backend_semaphores: None,
         skill_registry: None,
+        execution_semaphore: None,
     };
 
     let executor = AgentExecutor::new(executor_config).await?;
