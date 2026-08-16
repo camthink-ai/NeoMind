@@ -1842,11 +1842,14 @@ impl IsolatedExtension {
         match response {
             IpcResponse::StreamSessionClosed {
                 total_frames,
-                duration_ms,
+                duration_ms: _,
                 ..
             } => Ok(super::super::stream::SessionStats {
                 output_chunks: total_frames,
-                last_activity: duration_ms as i64,
+                // [unit fix] this wrote a DURATION into a timestamp field —
+                // the API computes now_millis - last_activity for duration_ms,
+                // so stats.last_activity must be a MILLIS timestamp.
+                last_activity: chrono::Utc::now().timestamp_millis(),
                 ..Default::default()
             }),
             IpcResponse::Error { error, .. } => Err(IsolatedExtensionError::ExecutionFailed(error)),

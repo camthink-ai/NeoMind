@@ -1437,7 +1437,10 @@ pub async fn push_extension_metrics_handler(
     let mut stored = 0;
 
     for (name, value) in &metrics {
-        let dp = neomind_devices::telemetry::DataPoint::new(timestamp_ms, value.clone());
+        // [unit fix] the extension-metrics store is SECONDS (the collection
+        // path divides by 1000 at extension_metrics.rs); this wrote millis,
+        // corrupting range queries and the metrics-data endpoint.
+        let dp = neomind_devices::telemetry::DataPoint::new(timestamp_secs, value.clone());
         if let Err(e) = state
             .extensions
             .metrics_storage

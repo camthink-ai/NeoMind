@@ -379,7 +379,14 @@ async function loadHistoryMessages(
             id: `hist-user-${um.id}`,
             type: 'user',
             content: um.content,
-            timestamp: typeof um.timestamp === 'number' ? um.timestamp : new Date(um.timestamp).getTime(),
+            // [unit fix] the API returns SECONDS (UserMessageDto ← Utc::now().
+            // timestamp()); the renderer uses ms semantics — without ×1000
+            // historical user hints rendered as Jan-1970 and sorted to the
+            // timeline front. Same normalization AgentMonitorWidget applies.
+            timestamp:
+              typeof um.timestamp === 'number'
+                ? um.timestamp * 1000
+                : new Date(um.timestamp).getTime(),
           })
         }
         // Sort all messages by timestamp

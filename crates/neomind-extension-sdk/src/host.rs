@@ -899,16 +899,19 @@ impl StreamSession {
     }
 
     /// Get the age of this session in seconds.
+    /// [unit fix] started_at is MILLIS (set in new()); this subtracted it
+    /// from SECONDS — always negative, clamped to 0, so every session
+    /// reported age 0. age_ms had the inverse bug (×1000 on an
+    /// already-millis value, inflating age 1000×) — both fixed.
     pub fn age_secs(&self) -> i64 {
-        let now = chrono::Utc::now().timestamp();
-        (now - self.started_at).max(0)
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        (now_ms - self.started_at).max(0) / 1000
     }
 
     /// Get session age in milliseconds.
     pub fn age_ms(&self) -> i64 {
         let now = chrono::Utc::now().timestamp_millis();
-        let started_ms = self.started_at * 1000;
-        (now - started_ms).max(0)
+        (now - self.started_at).max(0)
     }
 }
 
@@ -931,7 +934,10 @@ impl Default for SessionStats {
             input_bytes: 0,
             output_bytes: 0,
             errors: 0,
-            last_activity: chrono::Utc::now().timestamp(),
+            // [unit fix] every duration consumer computes now_millis - last_activity
+            // (extension_stream.rs ×3) — this was SECONDS, so durations came
+            // out ≈1.75e12 ms. MILLIS everywhere for this field.
+            last_activity: chrono::Utc::now().timestamp_millis(),
         }
     }
 }
@@ -940,21 +946,21 @@ impl SessionStats {
     /// Record an error, incrementing the error counter.
     pub fn record_error(&mut self) {
         self.errors += 1;
-        self.last_activity = chrono::Utc::now().timestamp();
+        self.last_activity = chrono::Utc::now().timestamp_millis();
     }
 
     /// Record input data.
     pub fn record_input(&mut self, bytes: u64) {
         self.input_chunks += 1;
         self.input_bytes += bytes;
-        self.last_activity = chrono::Utc::now().timestamp();
+        self.last_activity = chrono::Utc::now().timestamp_millis();
     }
 
     /// Record output data.
     pub fn record_output(&mut self, bytes: u64) {
         self.output_chunks += 1;
         self.output_bytes += bytes;
-        self.last_activity = chrono::Utc::now().timestamp();
+        self.last_activity = chrono::Utc::now().timestamp_millis();
     }
 }
 

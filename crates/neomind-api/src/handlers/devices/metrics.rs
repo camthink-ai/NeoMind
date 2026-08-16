@@ -190,11 +190,18 @@ pub async fn write_metric_handler(
     Json(req): Json<WriteMetricRequest>,
 ) -> HandlerResult<serde_json::Value> {
     let metric_value = json_to_metric_value(&req.value);
-    let timestamp = req
+    // The API contract documents milliseconds, but telemetry storage is
+    // SECONDS (every other write path uses Utc::now().timestamp()) — the
+    // old default (timestamp_millis) wrote millis into the seconds store,
+    // making the point invisible to seconds-based range queries and
+    // rendering as year ~58000 on the frontend. Convert the millis
+    // contract to seconds at the boundary.
+    let timestamp_ms = req
         .timestamp
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let timestamp_secs = timestamp_ms / 1000;
     let source_id = format!("device:{}", device_id);
-    let point = DataPoint::new(timestamp, metric_value);
+    let point = DataPoint::new(timestamp_secs, metric_value);
 
     state
         .devices
@@ -206,7 +213,7 @@ pub async fn write_metric_handler(
     ok(json!({
         "device_id": device_id,
         "metric": req.metric,
-        "timestamp": timestamp,
+        "timestamp": timestamp_ms,
         "written": true,
     }))
 }

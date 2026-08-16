@@ -341,7 +341,11 @@ impl DeviceCapabilityProvider {
                 ExtensionCapability::DeviceRegister,
             ))?;
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
+        // [unit fix] DeviceConfig.last_seen is SECONDS (every other write
+        // path uses timestamp(); the API decodes it with from_timestamp(secs)).
+        // This wrote millis — extension-registered devices showed last_seen
+        // ≈ year 58000 until their first real telemetry overwrote it.
+        let now_secs = chrono::Utc::now().timestamp();
 
         // Extract extension_id injected by the IPC layer for routing commands back
         let adapter_id = params
@@ -356,7 +360,7 @@ impl DeviceCapabilityProvider {
             adapter_type: "extension".to_string(),
             connection_config,
             adapter_id,
-            last_seen: now_ms,
+            last_seen: now_secs,
             offline_timeout_secs: None,
         };
 

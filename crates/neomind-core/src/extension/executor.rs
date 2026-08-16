@@ -190,7 +190,11 @@ impl CommandExecutor {
             command_id: command_id.to_string(),
             execution_id: execution_id.to_string(),
             args: args.clone(),
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            // [unit fix] NeoMindEvent's timestamp contract is SECONDS (DeviceMetric/
+            // DeviceOnline/RuleEvaluated all use timestamp()); these three
+            // variants wrote millis, so the WS/SSE envelope timestamp and
+            // to_value() payloads switched units by event type.
+            timestamp: chrono::Utc::now().timestamp(),
         };
 
         let metadata = EventMetadata::new(format!("extension:{}", extension_id))
@@ -218,7 +222,11 @@ impl CommandExecutor {
             args: args.clone(),
             outputs: vec![output.clone()],
             duration_ms,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            // [unit fix] NeoMindEvent's timestamp contract is SECONDS (DeviceMetric/
+            // DeviceOnline/RuleEvaluated all use timestamp()); these three
+            // variants wrote millis, so the WS/SSE envelope timestamp and
+            // to_value() payloads switched units by event type.
+            timestamp: chrono::Utc::now().timestamp(),
         };
 
         let metadata = EventMetadata::new(format!("extension:{}", extension_id))
@@ -244,7 +252,11 @@ impl CommandExecutor {
             execution_id: execution_id.to_string(),
             error: error.to_string(),
             duration_ms,
-            timestamp: chrono::Utc::now().timestamp_millis(),
+            // [unit fix] NeoMindEvent's timestamp contract is SECONDS (DeviceMetric/
+            // DeviceOnline/RuleEvaluated all use timestamp()); these three
+            // variants wrote millis, so the WS/SSE envelope timestamp and
+            // to_value() payloads switched units by event type.
+            timestamp: chrono::Utc::now().timestamp(),
         };
 
         let metadata = EventMetadata::new(format!("extension:{}", extension_id))
