@@ -459,7 +459,7 @@ impl AuthUserState {
                 Err(_) => return,
             }
         };
-        if let Ok(mut w) = db.begin_write() {
+        if let Ok(w) = db.begin_write() {
             let mut inserted = false;
             if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
                 inserted = t.insert(key, bytes.as_slice()).is_ok();
@@ -478,7 +478,7 @@ impl AuthUserState {
         let Ok(db) = Database::open(path) else {
             return;
         };
-        if let Ok(mut w) = db.begin_write() {
+        if let Ok(w) = db.begin_write() {
             if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
                 let _ = t.remove(key);
             }
