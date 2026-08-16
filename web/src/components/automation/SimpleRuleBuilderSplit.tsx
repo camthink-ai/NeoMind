@@ -237,6 +237,11 @@ interface CronTemplate {
   icon: React.ReactNode
 }
 
+/** A RuleAction carrying the builder's transient React-key field. The
+ *  builder round-trips these in its local state and strips `_key` at save
+ *  (see buildRulePayload). Typed here instead of `as any`-smuggling. */
+type UIAction = RuleAction & { _key?: string }
+
 const CRON_TEMPLATES: CronTemplate[] = [
   { id: 'every_minute', label: 'cronTemplates.everyMinuteLabel', description: 'cronTemplates.everyMinuteDesc', expression: '* * * * *', icon: <Timer className="h-4 w-4" /> },
   { id: 'every_5min', label: 'cronTemplates.every5minLabel', description: 'cronTemplates.every5minDesc', expression: '*/5 * * * *', icon: <Timer className="h-4 w-4" /> },
@@ -585,14 +590,14 @@ function ruleConditionToUiCondition(
   }
 
   // Check for logical conditions first (they have 'conditions' array)
-  if ('conditions' in ruleCond && Array.isArray((ruleCond as any).conditions)) {
-    const op = (ruleCond as any).operator
+  if ('conditions' in ruleCond && Array.isArray(ruleCond.conditions)) {
+    const op = ruleCond.operator
     if (op === 'and' || op === 'or') {
       return {
         id: generateId(),
         type: op,
         source_type: undefined,
-        conditions: ((ruleCond as any).conditions || []).map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dslPreview)),
+        conditions: (ruleCond.conditions || []).map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dslPreview)),
       }
     }
     if (op === 'not') {
@@ -600,7 +605,7 @@ function ruleConditionToUiCondition(
         id: generateId(),
         type: 'not',
         source_type: undefined,
-        conditions: [(ruleCond as any).conditions?.[0]].map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dslPreview)).filter(Boolean),
+        conditions: [ruleCond.conditions?.[0]].map((c: RuleCondition) => ruleConditionToUiCondition(c, devices, dslPreview)).filter(Boolean),
       }
     }
   }
@@ -613,7 +618,7 @@ function ruleConditionToUiCondition(
   const sourceField = sourceParts.length >= 3 ? sourceParts.slice(2).join(':') : 'value'
 
   // Check for range condition (has min/max)
-  if (ruleCond.condition_type === 'range' || ('min' in ruleCond && (ruleCond as any).min !== undefined)) {
+  if (ruleCond.condition_type === 'range' || ('min' in ruleCond && ruleCond.min !== undefined)) {
     return {
       id: generateId(),
       type: 'range',
@@ -624,15 +629,15 @@ function ruleConditionToUiCondition(
         ? { transform_id: sourceId }
         : { device_id: sourceId }),
       metric: sourceField,
-      range_min: (ruleCond as any).min,
-      range_max: (ruleCond as any).max,
+      range_min: ruleCond.min,
+      range_max: ruleCond.max,
     }
   }
 
   // Simple/comparison condition
   const thresholdValue = ruleCond.threshold
   const isStringThreshold = typeof thresholdValue === 'string'
-  const apiThresholdValue = (ruleCond as any).threshold_value as string | undefined
+  const apiThresholdValue = ruleCond.threshold_value as string | undefined
 
   return {
     id: generateId(),
@@ -1046,8 +1051,8 @@ function ConditionCanvas({
 }
 
 interface ActionCanvasProps {
-  actions: RuleAction[]
-  onActionsChange: (actions: RuleAction[]) => void
+  actions: UIAction[]
+  onActionsChange: (actions: UIAction[]) => void
   devices: Array<{
     id: string
     name: string
@@ -1083,16 +1088,16 @@ function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensio
         <Button size="sm" variant="outline" onClick={() => {
           const firstDevice = devices[0]
           const commands = firstDevice ? getCommandsForResource(firstDevice.id, devices, deviceTypes, extensions) : []
-          onActionsChange([...actions, { type: 'execute', target: firstDevice?.id || '', target_type: 'device' as const, command: commands[0]?.name || 'turn_on', params: {}, _key: generateId() } as any])
+          onActionsChange([...actions, { type: 'execute' as const, target: firstDevice?.id || '', target_type: 'device' as const, command: commands[0]?.name || 'turn_on', params: {}, _key: generateId() } as UIAction])
         }}>
           <Zap className="h-4 w-4 mr-1" />
           {tBuilder('executeCommand') || 'Execute'}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => onActionsChange([...actions, { type: 'notify', message: '', severity: 'info' as const, _key: generateId() } as any])}>
+        <Button size="sm" variant="outline" onClick={() => onActionsChange([...actions, { type: 'notify' as const, message: '', severity: 'info' as const, _key: generateId() } as UIAction])}>
           <Bell className="h-4 w-4 mr-1" />
           {tBuilder('sendNotification') || 'Notify'}
         </Button>
-        <Button size="sm" variant="outline" onClick={() => onActionsChange([...actions, { type: 'trigger_agent', agent_id: '', _key: generateId() } as any])}>
+        <Button size="sm" variant="outline" onClick={() => onActionsChange([...actions, { type: 'trigger_agent' as const, agent_id: '', _key: generateId() } as UIAction])}>
           <Bot className="h-4 w-4 mr-1" />
           {tBuilder('triggerAgent') || 'Trigger Agent'}
         </Button>
@@ -1108,7 +1113,7 @@ function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensio
         ) : (
           actions.map((action, index) => (
             <ActionEditorCompact
-              key={(action as any)._key || index}
+              key={action._key || index}
               index={index}
               action={action}
               devices={devices}
@@ -1187,18 +1192,18 @@ export function SimpleRuleBuilderSplit({
         setName(rule.name || '')
         setDescription(rule.description || '')
         setEnabled(rule.enabled ?? true)
-        setTags(rule.tags || (rule as any).source?.tags || [])
+        setTags(rule.tags || rule.source?.tags || [])
         setFormErrors({})
 
         // Restore trigger type - check trigger field or saved source
-        const savedTriggerType = (rule as any).source?.triggerType as TriggerType
-        const savedCronExpression = (rule as any).source?.cronExpression as string
+        const savedTriggerType = rule.source?.triggerType as TriggerType
+        const savedCronExpression = rule.source?.cronExpression as string
 
         if (rule.trigger?.trigger_type === 'schedule' || savedTriggerType === 'schedule') {
           setTriggerType('schedule')
-          setCronExpression(savedCronExpression || (rule.trigger as any)?.cron || '0 0 * * *')
+          setCronExpression(savedCronExpression || (rule.trigger?.trigger_type === 'schedule' ? rule.trigger.cron : undefined) || '0 0 * * *')
           // Find matching template
-          const matchingTemplate = CRON_TEMPLATES.find(t => t.expression === (savedCronExpression || (rule.trigger as any)?.cron))
+          const matchingTemplate = CRON_TEMPLATES.find(t => t.expression === (savedCronExpression || (rule.trigger?.trigger_type === 'schedule' ? rule.trigger.cron : undefined)))
           setSelectedCronTemplate(matchingTemplate?.id || 'custom')
         } else if (rule.trigger?.trigger_type === 'manual' || savedTriggerType === 'manual') {
           setTriggerType('manual')
@@ -1207,7 +1212,8 @@ export function SimpleRuleBuilderSplit({
         }
 
         // Try to restore from source.uiCondition first (exact restoration)
-        const sourceUiCond = (rule as any).source?.uiCondition
+        // Saved blob round-trips a serialized UICondition — assert once.
+        const sourceUiCond = rule.source?.uiCondition as UICondition | undefined
         if (sourceUiCond) {
           setCondition(sourceUiCond)
         } else if (rule.condition) {
@@ -1219,7 +1225,7 @@ export function SimpleRuleBuilderSplit({
         }
 
         // Restore actions - prefer source.uiActions for exact restoration
-        const sourceUiActions = (rule as any).source?.uiActions
+        const sourceUiActions = rule.source?.uiActions
         if (sourceUiActions && sourceUiActions.length > 0) {
           setActions(sourceUiActions)
         } else if (rule.actions && rule.actions.length > 0) {
@@ -1244,8 +1250,8 @@ export function SimpleRuleBuilderSplit({
         }
 
         // Restore forDuration and forUnit - prefer source values, then for_duration field
-        const sourceForDuration = (rule as any).source?.forDuration
-        const sourceForUnit = (rule as any).source?.forUnit
+        const sourceForDuration = rule.source?.forDuration
+        const sourceForUnit = rule.source?.forUnit
         if (sourceForDuration !== undefined && sourceForUnit !== undefined) {
           setForDuration(sourceForDuration)
           setForUnit(sourceForUnit)
@@ -1268,11 +1274,11 @@ export function SimpleRuleBuilderSplit({
         }
 
         // Restore cooldown - prefer source values, then cooldown field
-        const sourceCooldownValue = (rule as any).source?.cooldownValue
-        const sourceCooldownUnit = (rule as any).source?.cooldownUnit
+        const sourceCooldownValue = rule.source?.cooldownValue
+        const sourceCooldownUnit = rule.source?.cooldownUnit
         if (sourceCooldownValue !== undefined && sourceCooldownUnit !== undefined) {
           setCooldownValue(sourceCooldownValue)
-          setCooldownUnit(sourceCooldownUnit)
+          setCooldownUnit(sourceCooldownUnit as 'seconds' | 'minutes' | 'hours')
         } else if (rule.cooldown) {
           const ms = rule.cooldown
           if (ms >= 3600000 && ms % 3600000 === 0) {
@@ -1492,7 +1498,7 @@ export function SimpleRuleBuilderSplit({
         tags: tags.length > 0 ? tags : undefined,
         trigger,
         condition: finalCondition,
-        actions: actions.length > 0 ? actions.map(({ _key, ...rest }: any) => rest) as RuleAction[] : undefined,
+        actions: actions.length > 0 ? ((actions as UIAction[]).map(({ _key: _k, ...rest }) => rest) as RuleAction[]) : undefined,
         for_duration: forDurationMs,
         cooldown: cooldownMs,
         // Store original UI state in source field for proper restoration on edit

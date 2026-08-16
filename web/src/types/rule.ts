@@ -25,11 +25,18 @@ export interface Rule {
   // Frontend-only source field for storing original UI state (not sent to backend)
   source?: {
     condition?: RuleCondition
-    uiCondition?: any
+    uiCondition?: unknown
     uiActions?: RuleAction[]
     forDuration?: number
     forUnit?: 'seconds' | 'minutes' | 'hours'
     tags?: string[]
+    /** UI extras persisted by the rule builder (round-tripped, not part of
+     *  the compiled rule). Typed so consumers stop asserting via `as any`. */
+    triggerType?: string
+    cronExpression?: string
+    cron?: string
+    cooldownValue?: number
+    cooldownUnit?: string
   }
 }
 
