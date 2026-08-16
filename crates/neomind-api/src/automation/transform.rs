@@ -463,7 +463,17 @@ impl JsTransformExecutor {
                 results_json.insert(key.clone(), value.clone());
 
                 let value_json = serde_json::to_string(value).unwrap_or_default();
-                let var_name = format!("ext_result_{}", key.replace("::", "_").replace('-', "_"));
+                // Sanitize to a valid JS identifier. The old replace chain
+                // left dots intact: an extension id like `weather.ext`
+                // (this module's own doc example) produced
+                // `const ext_result_weather.ext_get_current = ...` — a JS
+                // SyntaxError that failed the whole transform even when the
+                // user only used the __extension_results__ lookup.
+                let suffix: String = key
+                    .chars()
+                    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                    .collect();
+                let var_name = format!("ext_result_{}", suffix);
 
                 let inject_code = format!("const {} = {};", var_name, value_json);
 

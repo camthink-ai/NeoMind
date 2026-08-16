@@ -316,6 +316,39 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
         });
     }
 
+    // Automation execution retention — this table was the one unbounded-growth
+    // store the 0.9.12 sweep missed (messages/agent-executions/data-push/
+    // rule-history all got tasks; automations were forgotten). 30 days,
+    // daily, mirroring the rule-history task above.
+    {
+        let automation_state = state.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+
+            const AUTOMATION_EXEC_RETENTION_DAYS: u64 = 30;
+            const RUN_INTERVAL_SECS: u64 = 24 * 60 * 60;
+
+            loop {
+                if let Some(store) = automation_state.automation.automation_store.clone() {
+                    match store.cleanup_executions(AUTOMATION_EXEC_RETENTION_DAYS).await {
+                        Ok(0) => {}
+                        Ok(n) => tracing::info!(
+                            removed = n,
+                            days = AUTOMATION_EXEC_RETENTION_DAYS,
+                            "Automation execution cleanup removed old records"
+                        ),
+                        Err(e) => tracing::warn!(
+                            category = "automation",
+                            error = %e,
+                            "Automation execution cleanup failed (will retry next cycle)"
+                        ),
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(RUN_INTERVAL_SECS)).await;
+            }
+        });
+    }
+
     // Heavy background services — extension loading, agent manager, MQTT
     {
         let bg_state = state.clone();

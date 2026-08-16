@@ -238,17 +238,17 @@ interface CronTemplate {
 }
 
 const CRON_TEMPLATES: CronTemplate[] = [
-  { id: 'every_minute', label: '每分钟', expression: '* * * * *', description: '每分钟执行', icon: <Timer className="h-4 w-4" /> },
-  { id: 'every_5min', label: '每5分钟', expression: '*/5 * * * *', description: '每5分钟执行', icon: <Timer className="h-4 w-4" /> },
-  { id: 'every_15min', label: '每15分钟', expression: '*/15 * * * *', description: '每15分钟执行', icon: <Timer className="h-4 w-4" /> },
-  { id: 'every_30min', label: '每30分钟', expression: '*/30 * * * *', description: '每30分钟执行', icon: <Timer className="h-4 w-4" /> },
-  { id: 'hourly', label: '每小时', expression: '0 * * * *', description: '每小时的第0分钟', icon: <Clock className="h-4 w-4" /> },
-  { id: 'daily_midnight', label: '每天午夜', expression: '0 0 * * *', description: '每天00:00', icon: <Calendar className="h-4 w-4" /> },
-  { id: 'daily_morning', label: '每天早上', expression: '0 8 * * *', description: '每天08:00', icon: <Calendar className="h-4 w-4" /> },
-  { id: 'daily_evening', label: '每天晚上', expression: '0 20 * * *', description: '每天20:00', icon: <Calendar className="h-4 w-4" /> },
-  { id: 'weekly_monday', label: '每周一', expression: '0 0 * * 1', description: '每周一00:00', icon: <Calendar className="h-4 w-4" /> },
-  { id: 'monthly', label: '每月1号', expression: '0 0 1 * *', description: '每月1号00:00', icon: <Calendar className="h-4 w-4" /> },
-  { id: 'workdays_morning', label: '工作日早上', expression: '0 8 * * 1-5', description: '周一至周五08:00', icon: <Calendar className="h-4 w-4" /> },
+  { id: 'every_minute', label: 'cronTemplates.everyMinuteLabel', description: 'cronTemplates.everyMinuteDesc', expression: '* * * * *', icon: <Timer className="h-4 w-4" /> },
+  { id: 'every_5min', label: 'cronTemplates.every5minLabel', description: 'cronTemplates.every5minDesc', expression: '*/5 * * * *', icon: <Timer className="h-4 w-4" /> },
+  { id: 'every_15min', label: 'cronTemplates.every15minLabel', description: 'cronTemplates.every15minDesc', expression: '*/15 * * * *', icon: <Timer className="h-4 w-4" /> },
+  { id: 'every_30min', label: 'cronTemplates.every30minLabel', description: 'cronTemplates.every30minDesc', expression: '*/30 * * * *', icon: <Timer className="h-4 w-4" /> },
+  { id: 'hourly', label: 'cronTemplates.hourlyLabel', description: 'cronTemplates.hourlyDesc', expression: '0 * * * *', icon: <Clock className="h-4 w-4" /> },
+  { id: 'daily_midnight', label: 'cronTemplates.dailyMidnightLabel', description: 'cronTemplates.dailyMidnightDesc', expression: '0 0 * * *', icon: <Calendar className="h-4 w-4" /> },
+  { id: 'daily_morning', label: 'cronTemplates.dailyMorningLabel', description: 'cronTemplates.dailyMorningDesc', expression: '0 8 * * *', icon: <Calendar className="h-4 w-4" /> },
+  { id: 'daily_evening', label: 'cronTemplates.dailyEveningLabel', description: 'cronTemplates.dailyEveningDesc', expression: '0 20 * * *', icon: <Calendar className="h-4 w-4" /> },
+  { id: 'weekly_monday', label: 'cronTemplates.weeklyMondayLabel', description: 'cronTemplates.weeklyMondayDesc', expression: '0 0 * * 1', icon: <Calendar className="h-4 w-4" /> },
+  { id: 'monthly', label: 'cronTemplates.monthlyFirstLabel', description: 'cronTemplates.monthlyFirstDesc', expression: '0 0 1 * *', icon: <Calendar className="h-4 w-4" /> },
+  { id: 'workdays_morning', label: 'cronTemplates.workdaysMorningLabel', description: 'cronTemplates.workdaysMorningDesc', expression: '0 8 * * 1-5', icon: <Calendar className="h-4 w-4" /> },
 ]
 
 
@@ -941,7 +941,7 @@ function ConditionCanvas({
                     )}
                   >
                     {template.icon}
-                    <span>{template.label}</span>
+                    <span>{t(template.label)}</span>
                   </button>
                 ))}
               </div>

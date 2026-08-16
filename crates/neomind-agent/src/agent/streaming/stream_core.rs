@@ -183,8 +183,23 @@ pub async fn process_stream_events_with_safeguards(
     // This prevents the LLM from repeating actions or calling tools again
     // Pure async - no block_in_place
     let state_guard = internal_state.read().await;
-    let history_messages = state_guard.memory.clone();
+    let mut history_messages = state_guard.memory.clone();
     drop(state_guard); // Release lock before calling LLM
+
+    // [dup-fix] The caller (process_stream_events_with_safeguards) pushes
+    // the current user message into memory BEFORE creating this stream, and
+    // the LLM layer appends the user message itself when building the
+    // request (`msgs.push(user_msg)` in llm.rs) — without dropping the
+    // trailing copy here, every text prompt carried [.., user(current),
+    // user(current)]. The multimodal path pushes after stream creation and
+    // never had this duplication.
+    if history_messages
+        .last()
+        .map(|m| m.role == "user" && m.content.as_ref() == user_message)
+        .unwrap_or(false)
+    {
+        history_messages.pop();
+    }
 
     // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
     let max_context = llm_interface.max_context_length().await;

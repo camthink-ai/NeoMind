@@ -129,6 +129,22 @@ impl AutomationStore {
             let result = table.remove(id)?.is_some();
             result
         };
+        // Also remove the automation's execution records — previously they
+        // were orphaned and stayed forever (an unbounded-growth blind spot:
+        // this table had no retention at all until the cleanup task).
+        {
+            let mut exec_table = write_txn.open_table(EXECUTIONS_TABLE)?;
+            let prefix = format!("{}:", id);
+            let stale_keys: Vec<String> = exec_table
+                .iter()?
+                .flatten()
+                .map(|(k, _)| k.value().to_string())
+                .filter(|k| k.starts_with(&prefix))
+                .collect();
+            for k in stale_keys {
+                let _ = exec_table.remove(k.as_str());
+            }
+        }
         write_txn.commit()?;
         Ok(existed)
     }
@@ -160,22 +176,68 @@ impl AutomationStore {
         let prefix = format!("{}:", automation_id);
         let mut executions = Vec::new();
 
+        // Collect ALL matching records before applying the limit: keys are
+        // `{automation_id}:{uuid}` (random order), so breaking out of the
+        // scan early returned an arbitrary subset once more records than
+        // `limit` existed — the endpoint showed a random sample, not the
+        // most recent executions.
         for result in table.iter()? {
             let (key, value) = result?;
             let key_str: &str = key.value(); // AccessGuard to &str
             if key_str.starts_with(prefix.as_str()) {
                 let execution: ExecutionRecord = serde_json::from_slice(value.value())?;
                 executions.push(execution);
-                if executions.len() >= limit {
-                    break;
-                }
             }
         }
 
         // Sort by started_at descending
         executions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        executions.truncate(limit);
 
         Ok(executions)
+    }
+
+    /// Remove execution records older than `days` (started_at is epoch
+    /// millis). Returns the number removed. This table previously had NO
+    /// retention at all — it was the one unbounded-growth table the 0.9.12
+    /// sweep missed (messages/agent-executions/data-push/rule-history all
+    /// got 30-day tasks; automations were forgotten).
+    pub fn cleanup_executions(&self, days: u64) -> Result<usize> {
+        let cutoff_ms = (chrono::Utc::now().timestamp()
+            - (days as i64) * 24 * 60 * 60)
+            * 1000;
+        let mut to_remove: Vec<String> = Vec::new();
+
+        let read_txn = self.db.begin_read()?;
+        if let Ok(table) = read_txn.open_table(EXECUTIONS_TABLE) {
+            for result in table.iter()? {
+                let (key, value) = result?;
+                match serde_json::from_slice::<ExecutionRecord>(value.value()) {
+                    Ok(rec) if rec.started_at < cutoff_ms => {
+                        to_remove.push(key.value().to_string());
+                    }
+                    Ok(_) => {}
+                    // Undecodable row: prune it too (corrupt records are
+                    // unreadable by the API anyway).
+                    Err(_) => to_remove.push(key.value().to_string()),
+                }
+            }
+        }
+        drop(read_txn);
+
+        if to_remove.is_empty() {
+            return Ok(0);
+        }
+        let n = to_remove.len();
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(EXECUTIONS_TABLE)?;
+            for k in &to_remove {
+                let _ = table.remove(k.as_str());
+            }
+        }
+        write_txn.commit()?;
+        Ok(n)
     }
 
     /// Save a template
@@ -273,6 +335,15 @@ impl SharedAutomationStore {
             .read()
             .map_err(|_| AutomationError::StorageError("Poisoned lock".to_string()))?;
         store.save_automation(automation)
+    }
+
+    /// Remove execution records older than `days` (retention task).
+    pub async fn cleanup_executions(&self, days: u64) -> Result<usize> {
+        let store = self
+            .store
+            .read()
+            .map_err(|_| AutomationError::StorageError("Poisoned lock".to_string()))?;
+        store.cleanup_executions(days)
     }
 
     /// Get an automation by ID

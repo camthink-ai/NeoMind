@@ -34,49 +34,4 @@ export function getStatusColor(status: string): 'success' | 'warning' | 'error' 
  * @param status - Status string
  * @returns Localized status label
  */
-export function getStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    // Device/Connection status
-    online: '在线',
-    offline: '离线',
-    connected: '已连接',
-    disconnected: '未连接',
-
-    // Execution status
-    active: '运行中',
-    inactive: '未激活',
-    enabled: '已启用',
-    disabled: '已禁用',
-    running: '运行中',
-    stopped: '已停止',
-    paused: '已暂停',
-    idle: '空闲',
-
-    // Task status
-    pending: '待处理',
-    waiting: '等待中',
-    completed: '已完成',
-    failed: '失败',
-    timeout: '超时',
-    retry: '重试中',
-    buffering: '缓冲中',
-
-    // Decision status
-    approved: '已批准',
-    rejected: '已拒绝',
-    executed: '已执行',
-
-    // Alert levels
-    critical: '严重',
-    warning: '警告',
-    info: '信息',
-
-    // General
-    success: '成功',
-    error: '错误',
-    unknown: '未知',
-  }
-
-  return labels[status.toLowerCase()] || status
-}
 

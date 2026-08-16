@@ -155,7 +155,7 @@ impl PushScheduler {
             let mut buffer: Vec<(String, serde_json::Value, i64)> = Vec::new();
             let mut flush_timer = tokio::time::Instant::now() + batch_interval;
             // Per-target dedup of transform's double-published virtual metrics.
-            let mut recent_virtual: std::collections::HashMap<(String, i64), tokio::time::Instant> =
+            let mut recent_virtual: std::collections::HashMap<(String, String, i64), tokio::time::Instant> =
                 std::collections::HashMap::new();
 
             loop {
@@ -184,7 +184,7 @@ impl PushScheduler {
                                     let value_str = value.to_string();
                                     if matcher.should_push(&source_id, &value_str) {
                                         if is_virtual
-                                            && is_duplicate_virtual(&mut recent_virtual, &value_str, ts)
+                                            && is_duplicate_virtual(&mut recent_virtual, &source_id, &value_str, ts)
                                         {
                                             tracing::debug!(
                                                 target_id = %target.id,
@@ -273,7 +273,7 @@ impl PushScheduler {
             let mut buffer: Vec<(String, serde_json::Value, i64)> = Vec::new();
             let flush_interval = std::time::Duration::from_secs(interval_secs);
             // Per-target dedup of transform's double-published virtual metrics.
-            let mut recent_virtual: std::collections::HashMap<(String, i64), tokio::time::Instant> =
+            let mut recent_virtual: std::collections::HashMap<(String, String, i64), tokio::time::Instant> =
                 std::collections::HashMap::new();
 
             tracing::info!(target_id = %target.id, interval_secs, "Interval push target started");
@@ -305,7 +305,7 @@ impl PushScheduler {
                                 let value_str = value.to_string();
                                 if matcher.should_push(&source_id, &value_str) {
                                     if is_virtual
-                                        && is_duplicate_virtual(&mut recent_virtual, &value_str, ts)
+                                        && is_duplicate_virtual(&mut recent_virtual, &source_id, &value_str, ts)
                                     {
                                         continue;
                                     }
@@ -430,18 +430,23 @@ fn extract_event_data(
 /// seconds is plenty.
 const VIRTUAL_DEDUP_WINDOW_SECS: u64 = 5;
 
-/// Returns `true` (without recording) if this `(value, ts)` virtual metric was
+/// Returns `true` (without recording) if this `(source, value, ts)` virtual metric was
 /// already seen within the dedup window — i.e. the second copy of a transform
 /// double-publish that a wide filter (`*` / `device:*`) matched twice.
 /// Otherwise records it and returns `false`. Keeps the map bounded.
 fn is_duplicate_virtual(
-    recent: &mut std::collections::HashMap<(String, i64), tokio::time::Instant>,
+    recent: &mut std::collections::HashMap<(String, String, i64), tokio::time::Instant>,
+    source_id: &str,
     value_str: &str,
     ts: i64,
 ) -> bool {
     let now = tokio::time::Instant::now();
     let window = std::time::Duration::from_secs(VIRTUAL_DEDUP_WINDOW_SECS);
-    let key = (value_str.to_string(), ts);
+    // Key includes source_id: two DIFFERENT virtual metrics (different
+    // devices/transforms) publishing the same serialized value within the
+    // same second-granularity timestamp used to collide and the second was
+    // silently dropped.
+    let key = (source_id.to_string(), value_str.to_string(), ts);
     if let Some(seen) = recent.get(&key) {
         if now.duration_since(*seen) < window {
             return true;
@@ -867,16 +872,19 @@ mod tests {
     fn virtual_dedup_skips_second_copy_within_window() {
         let mut recent = std::collections::HashMap::new();
         // First copy of a virtual metric → recorded, not a duplicate.
-        assert!(!is_duplicate_virtual(&mut recent, "value-1", 1000));
-        // Second copy (same value + ts, transform double-publish) → duplicate.
-        assert!(is_duplicate_virtual(&mut recent, "value-1", 1000));
+        assert!(!is_duplicate_virtual(&mut recent, "device:a", "value-1", 1000));
+        // Second copy (same source + value + ts, transform double-publish) → duplicate.
+        assert!(is_duplicate_virtual(&mut recent, "device:a", "value-1", 1000));
         // Different value at same ts → not a duplicate (different metric).
-        assert!(!is_duplicate_virtual(&mut recent, "value-2", 1000));
+        assert!(!is_duplicate_virtual(&mut recent, "device:a", "value-2", 1000));
+        // Different SOURCE, same value + ts → not a duplicate (the old key
+        // collided distinct metrics that happened to serialize identically).
+        assert!(!is_duplicate_virtual(&mut recent, "device:b", "value-1", 1000));
         // Same value at different ts → not a duplicate (different frame).
-        assert!(!is_duplicate_virtual(&mut recent, "value-1", 2000));
-        // Those new (value, ts) keys got recorded; their repeats are dups.
-        assert!(is_duplicate_virtual(&mut recent, "value-2", 1000));
-        assert!(is_duplicate_virtual(&mut recent, "value-1", 2000));
+        assert!(!is_duplicate_virtual(&mut recent, "device:a", "value-1", 2000));
+        // Those new (source, value, ts) keys got recorded; their repeats are dups.
+        assert!(is_duplicate_virtual(&mut recent, "device:a", "value-2", 1000));
+        assert!(is_duplicate_virtual(&mut recent, "device:a", "value-1", 2000));
     }
     use serde_json::json;
 
