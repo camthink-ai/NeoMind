@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Correctness & Safety (fresh subsystem sweep)
+- **Chat no longer sends the user message twice per turn**: the text path pushed the current user message into history before streaming AND the LLM layer appended it again — every prompt carried `[…, user(current), user(current)]` (double tokens, back-to-back duplicate user turns). The multimodal path never had this.
+- **Rule `TriggerAgent` no longer blocks all rule processing**: the action awaited the full agent run inline, so one rule with an agent action stalled every other rule's evaluation platform-wide for up to the 5-minute cap. The callback now spawns.
+- **Multimodal chat is cancellable** (image chats' Stop button was dead — zero interrupt checks in the multimodal stream).
+- **MQTT push targets fail honestly**: `send()` discarded the eventloop poll result — deliveries to an unreachable broker were logged Success and never retried, and `client.publish()` awaited channel capacity unboundedly (dead broker → target task wedged → `stop()`/update/delete hung the API). Publish is timeout-bounded and poll errors propagate; all final-flush teardown sites are capped at 30s.
+- **`POST /api/automations/transforms/process` is side-effect free** (it published test output to the live bus, which could fire REAL rules from test data; `/test` already behaved correctly).
+- **Transform template engine**: `render_template` could loop forever on self-referential device data (`{"a": "{{a}}"}`) — the scan cursor now advances past each replacement plus an iteration cap. The engine's fetch clients (used for device-URL → base64) gained 30s/10s timeouts and a 10MB body cap (was: no timeout, unbounded body, SSRF surface).
+- **Automation executions**: the last unbounded-growth table now has 30-day retention; `delete_automation` no longer orphans its execution rows; execution history returns the most recent records instead of a random sample over randomly-ordered keys.
+- **JS transform identifiers sanitized**: extension ids containing a dot (the docs' own `weather.ext` example) produced a JS syntax error that failed the whole transform.
+- **Data-push virtual-metric dedup key includes source_id** (two distinct metrics publishing the same value in the same second no longer collide).
+- **Cron templates are i18n'd** (11 hardcoded Chinese labels showed to English users); dead Chinese-only `getStatusLabel` removed.
+
 ### Reliability & Performance
 - **Event-triggered executions are cancellable at shutdown**: they spawned fully detached (the scheduler's `stop()` only aborts scheduled tasks), so event agents kept running through shutdown bounded only by their execution timeout. The executor now registers spawned handles and shutdown aborts them.
 - **Multimodal chat gets the tool-execution heartbeat** (same `select!` fix `stream_core` received): long tool phases no longer look like a dead stream to WS listeners.
