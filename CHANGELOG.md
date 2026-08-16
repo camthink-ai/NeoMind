@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Timestamp-unit alignment (end-to-end audit)
+Every timestamp field was audited across backend emission → API JSON → frontend consumption. Six verified mismatches fixed, including two user-visible bugs and two data-corrupting external API contracts:
+- **AI-Analyst history rendered Jan-1970** (seconds consumed with ms semantics); fixed with the same normalization AgentMonitorWidget already used.
+- **`POST /api/devices/:id/metrics` wrote millis into the seconds telemetry store** — default-written points were invisible to range queries and rendered year ~58000. The documented millis API contract is honored but converted at the store boundary.
+- **`POST /api/extensions/:id/push-metrics`** had the same millis-into-seconds corruption.
+- **Extension-registered devices showed last_seen ≈ year 58000** (millis in the seconds registry field) until first telemetry.
+- **`NeoMindEvent::ExtensionCommand*` carried millis** while every other event variant carries seconds — the WS/SSE envelope timestamp switched units by event type.
+- **SDK session math was unit-broken**: `age_secs()` always 0, `age_ms()` 1000× inflated, and `SessionStats::last_activity` mixed seconds/durations against millis consumers (session durations came out ≈1.75e12 ms). All millis timestamps now.
+
 ### TimeSeriesAggregation works for the first time
 The window-aggregation transform read an in-RAM cache that nothing ever populated (its feeding API had zero callers) — every aggregation failed with "No data points found" while recording `Completed`; users could configure a silently-dead transform. It now queries the persistent telemetry store (full history, restart-safe) via new `with_time_series_storage()` wiring, emits second-unit timestamps aligned with the store and sibling outputs (the old "milliseconds for consistency" comment was backwards — device metrics storage writes seconds), and the ~80 lines of dead cache machinery are deleted.
 
