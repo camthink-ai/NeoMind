@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### System reliability
+- **Lock contention no longer silently misbehaves in the rule engine**: the rules map and the value cache used tokio `try_read` in sync consumers — under trigger-path contention the subscription-index rebuild kept a STALE index (a rule added in that window was silently never evaluated), and the value cache reported metrics as absent (conditions false; `for_duration` accumulation spuriously reset). Both switched to parking_lot with blocking reads of short critical sections.
+- **MQTT eventloops survive handler panics**: a panic in the notification handler (arbitrary device payloads) used to kill the poll task — the adapter stayed "running" but never polled again until restart.
+- **Event-triggered executions count against the global concurrency bound** (they previously held only the per-backend permit, so bursts could stack past the scheduler's global limit).
+- **Conversation-summary fixes**: `clear_history` resets the summary (a ghost summary of the deleted conversation used to be injected into every subsequent turn); summary chains are capped at 4 segments (folded beyond); the context window enforces a hard token budget even for priority-kept system/user messages (oldest non-system messages evicted instead of failing the LLM request).
+- **Two more hot storage reads off the executor**: `query_range_rev` and `aggregate_range` (dashboard desc-order series and chart aggregates) join `write_batch`/`query_range`/`query_agents` on the blocking pool.
+- **Heartbeat monitor can actually be stopped** (its running flag was write-only); the message-cleanup task no longer runs a full scan during startup (first tick consumed); the retention task warns instead of silently no-oping forever when its redb reopens fail.
+
 ### Chat/session streaming hardening
 - **One active stream per session**: a second concurrent stream on the same session silently overwrote the first's cancel sender (making it uncancellable) and interleaved history writes into the same session state. A second stream now gets a clear rejection instead.
 - **Fixed a latent permanent deadlock** in `remove_subscriber` (re-acquiring a non-reentrant write lock through the `if let` scrutinee's guard) — would have wedged the subscriber map globally the moment the subscriber feature shipped.
