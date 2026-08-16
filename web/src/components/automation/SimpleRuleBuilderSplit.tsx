@@ -873,7 +873,7 @@ function ConditionCanvas({
             <div className="space-y-4">
               <ConditionEditor
                 condition={condition}
-                onChange={onConditionChange}
+                onChange={(c) => { if (c !== null) onConditionChange(c) }}
                 devices={devices}
                 deviceTypes={deviceTypes}
                 extensions={extensions}
@@ -1234,11 +1234,11 @@ export function SimpleRuleBuilderSplit({
             // Ensure action has correct structure based on type
             switch (action.type) {
               case 'notify':
-                return { type: 'notify', message: (action as any).message || '', severity: (action as any).severity || 'info' } as RuleAction
+                return { type: 'notify', message: action.message || '', severity: action.severity || 'info' }
               case 'execute':
-                return { type: 'execute', target: (action as any).target || (action as any).device_id || '', target_type: (action as any).target_type || 'device', command: (action as any).command || '', params: (action as any).params || {} } as RuleAction
+                return { type: 'execute', target: action.target || '', target_type: action.target_type || 'device', command: action.command || '', params: action.params || {} }
               case 'trigger_agent':
-                return { type: 'trigger_agent', agent_id: (action as any).agent_id || '', input: (action as any).input, data: (action as any).data } as RuleAction
+                return { type: 'trigger_agent', agent_id: action.agent_id || '', input: action.input, data: action.data }
               default:
                 // Unknown action type, default to notify
                 return { type: 'notify', message: 'Rule triggered', severity: 'info' } as RuleAction
@@ -1513,7 +1513,7 @@ export function SimpleRuleBuilderSplit({
           cronExpression,
           cooldownValue,
           cooldownUnit,
-        } as any,
+        },
       }
       if (rule?.id) ruleData.id = rule.id
       await onSave(ruleData)
@@ -1765,7 +1765,7 @@ export function SimpleRuleBuilderSplit({
 
 interface ConditionEditorProps {
   condition: UICondition
-  onChange: (c: UICondition) => void
+  onChange: (c: UICondition | null) => void  // null = remove this condition
   devices: Array<{
     id: string
     name: string
@@ -1787,8 +1787,9 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
     onChange({ ...condition, [field]: value })
   }
 
-  const updateNestedCondition = (index: number, updates: Partial<UICondition>) => {
+  const updateNestedCondition = (index: number, updates: Partial<UICondition> | null) => {
     if (!condition.conditions) return
+    if (updates === null) { removeNestedCondition(index); return }
     const newConditions = [...condition.conditions]
     newConditions[index] = { ...newConditions[index], ...updates }
     onChange({ ...condition, conditions: newConditions })
@@ -2015,7 +2016,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
           </Select>
 
           {renderValueInput()}
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null as any)} aria-label={tBuilder('removeCondition')}>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -2139,7 +2140,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
             placeholder={tBuilder('maxPlaceholder')}
             disabled={!hasValidId}
           />
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null as any)} aria-label={tBuilder('removeCondition')}>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -2163,7 +2164,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
           <span className="text-xs text-muted-foreground flex-1">
             {condition.type === 'and' ? tBuilder('allConditionsMustMeet') : condition.type === 'or' ? tBuilder('anyConditionMustMeet') : tBuilder('conditionNotMet')}
           </span>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null as any)} aria-label={tBuilder('removeCondition')}>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
             <X className="h-4 w-4" />
           </Button>
         </div>
