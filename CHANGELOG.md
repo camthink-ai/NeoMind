@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### TimeSeriesAggregation works for the first time
+The window-aggregation transform read an in-RAM cache that nothing ever populated (its feeding API had zero callers) — every aggregation failed with "No data points found" while recording `Completed`; users could configure a silently-dead transform. It now queries the persistent telemetry store (full history, restart-safe) via new `with_time_series_storage()` wiring, emits second-unit timestamps aligned with the store and sibling outputs (the old "milliseconds for consistency" comment was backwards — device metrics storage writes seconds), and the ~80 lines of dead cache machinery are deleted.
+
 ### Unbounded-growth closeout & hardening
 - **All per-device maps bounded**: data-push `DataSourceMatcher::last_values` (4096 cap), the transform event service's raw-data/timestamp/debounce-timer maps (1024-device cap, oldest-timestamp pruning, and debounce tasks now self-remove their handles on completion — dynamic MQTT client ids previously grew all of these forever).
 - **`metrics_info` orphan entries pruned by retention**: a metric whose points had all aged out kept its entry for the process lifetime; retention now probes for remaining points and drops empty entries.
