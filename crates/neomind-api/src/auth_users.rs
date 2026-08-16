@@ -423,7 +423,7 @@ impl AuthUserState {
         }
         if !expired.is_empty() {
             if let Ok(db) = Database::open(path) {
-                if let Ok(mut w) = db.begin_write() {
+                if let Ok(w) = db.begin_write() {
                     if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
                         for k in &expired {
                             let _ = t.remove(k.as_str());

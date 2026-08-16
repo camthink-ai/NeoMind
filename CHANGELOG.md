@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.17] - 2026-08-16
+
+### Security
+- **SSRF guard on the transform engine's device-controlled URL fetch**: `url_to_base64` fetched URLs arriving in device data and embedded the response as base64 into transform outputs — a compromised device could direct the server at cloud-metadata endpoints (credentials), the NeoMind API itself, or internal admin panels and the base64 would surface in dashboards/push targets. The private-address rules moved to a shared `neomind_core::net` guard (unit-tested: IPv4 private/CGNAT/link-local/multicast, IPv6 ULA/loopback, IPv4-mapped, `.local` names); the transform fetch enforces them plus an http(s)-only scheme check; `web_fetch` delegates to the same rules.
+
 ### Timestamp-unit alignment (end-to-end audit)
 Every timestamp field was audited across backend emission → API JSON → frontend consumption. Six verified mismatches fixed, including two user-visible bugs and two data-corrupting external API contracts:
 - **AI-Analyst history rendered Jan-1970** (seconds consumed with ms semantics); fixed with the same normalization AgentMonitorWidget already used.
