@@ -1051,7 +1051,24 @@ impl LlmInterface {
 
     /// Send a chat message and get a response.
     pub async fn chat(&self, user_message: impl Into<String>) -> AgentResult<ChatResponse> {
-        self.chat_internal(user_message, None).await
+        self.chat_internal(user_message, None, None).await
+    }
+
+    /// Send a chat message with an explicit per-call thinking override.
+    ///
+    /// [race-free background work] Background summarization used to mutate
+    /// the interface-global thinking flag (set false -> call -> restore): a
+    /// user turn started during the multi-second summary call ran with
+    /// thinking silently off, a user toggle made mid-summary was clobbered
+    /// by the restore, and an abort between set/restore left thinking
+    /// disabled forever. A per-call override touches no shared state.
+    pub async fn chat_with_thinking(
+        &self,
+        user_message: impl Into<String>,
+        thinking_override: Option<bool>,
+    ) -> AgentResult<ChatResponse> {
+        self.chat_internal(user_message, None, thinking_override)
+            .await
     }
 
     /// Send a chat message with conversation history.
@@ -1060,7 +1077,7 @@ impl LlmInterface {
         user_message: impl Into<String>,
         history: &[Message],
     ) -> AgentResult<ChatResponse> {
-        self.chat_internal(user_message, Some(history)).await
+        self.chat_internal(user_message, Some(history), None).await
     }
 
     /// Send a multimodal message (with images) with conversation history.
@@ -1079,6 +1096,7 @@ impl LlmInterface {
         &self,
         user_message: impl Into<String>,
         history: Option<&[Message]>,
+        thinking_override: Option<bool>,
     ) -> AgentResult<ChatResponse> {
         let user_message: String = user_message.into();
 
@@ -1159,6 +1177,8 @@ impl LlmInterface {
 
         // Get thinking control - priority: local setting > instance setting.
         let (thinking_enabled, thinking_effort) = self.resolve_thinking_control().await;
+        // Per-call override wins (see chat_with_thinking).
+        let thinking_enabled = thinking_override.or(thinking_enabled);
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,

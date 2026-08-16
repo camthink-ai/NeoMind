@@ -115,11 +115,15 @@ pub async fn trigger_summarization(
         conv_text
     );
 
-    // Disable thinking for this call to save tokens, then restore the prior setting
-    let prev_thinking = llm_interface.get_thinking_enabled().await;
-    llm_interface.set_thinking_enabled(false).await;
-    let summary_result = llm_interface.chat(&summary_prompt).await;
-    llm_interface.restore_thinking_enabled(prev_thinking).await;
+    // Thinking disabled via a PER-CALL override. The old pattern mutated the
+    // interface-global flag around the call (set false -> chat -> restore):
+    // a user turn starting during the multi-second summary ran with thinking
+    // silently off, a user toggle made mid-summary was clobbered by the
+    // restore, and an abort between set/restore left thinking disabled for
+    // the rest of the session.
+    let summary_result = llm_interface
+        .chat_with_thinking(&summary_prompt, Some(false))
+        .await;
     let summary = match summary_result {
         Ok(response) => response.text,
         Err(e) => {

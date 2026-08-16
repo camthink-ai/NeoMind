@@ -996,10 +996,14 @@ pub async fn process_stream_events_with_safeguards(
                                 }
                             };
 
-                            // After slimming, no large base64 remains — sanitize is
-                            // essentially a no-op but kept for defense-in-depth (e.g.
-                            // non-JSON tool outputs with stray data URLs).
-                            let display_str = sanitize_tool_result_for_prompt(&slimmed_str);
+                            // [stored-value sanitize] Sanitize the value that is
+                            // STORED too, not just the display copy. Slimming only
+                            // engages >=64KB, so data URLs / base64 between ~4KB and
+                            // 64KB used to flow verbatim into every subsequent LLM
+                            // round and into sessions.redb. The sanitizer strips
+                            // data:image URLs and large base64 blobs to placeholders.
+                            let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
+                            let display_str = sanitized_str.clone();
 
                             tool_calls_with_results.push(ToolCall {
                                 name: name.clone(),
@@ -1011,7 +1015,7 @@ pub async fn process_stream_events_with_safeguards(
 
                             yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, tool_iteration_count + 1);
 
-                            tool_call_results.push((name.clone(), slimmed_str));
+                            tool_call_results.push((name.clone(), sanitized_str));
                         }
                         Err(e) => {
                             let mut error_msg = format!("Tool execution failed: {}", e);

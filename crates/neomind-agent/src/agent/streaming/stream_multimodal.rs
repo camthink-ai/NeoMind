@@ -382,7 +382,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             }
                         };
 
-                        let display_str = sanitize_tool_result_for_prompt(&slimmed_str);
+                        // [stored-value sanitize] mirror of stream_core: the
+                        // stored value is sanitized too, not just display —
+                        // slim only engages >=64KB so 4-64KB data URLs/base64
+                        // used to reach context + sessions.redb verbatim.
+                        let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
+                        let display_str = sanitized_str.clone();
 
                         tool_calls_with_results.push(ToolCall {
                             name: name.clone(),
@@ -394,7 +399,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                         yield AgentEvent::tool_call_end(&name, &display_str, output.success);
 
-                        tool_call_results.push((name.clone(), slimmed_str));
+                        tool_call_results.push((name.clone(), sanitized_str));
                     }
                     Err(e) => {
                         let error_msg = format!("Tool execution failed: {}", e);
@@ -553,11 +558,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                             Err(_) => result_str.clone(),
                                         }
                                     };
-                                    let display_str = sanitize_tool_result_for_prompt(&slimmed_str);
+                                    // [stored-value sanitize] continuation path — same
+                                    // as the main path above.
+                                    let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
+                                    let display_str = sanitized_str.clone();
                                     yield AgentEvent::tool_call_end(&name, &display_str, output.success);
                                     let mut state = internal_state.write().await;
-                                    state.push_message(AgentMessage::tool_result(&name, &slimmed_str));
-                                    tool_call_results.push((name.clone(), slimmed_str));
+                                    state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
+                                    tool_call_results.push((name.clone(), sanitized_str));
                                 }
                                 Err(e) => {
                                     let err_msg = format!("Tool execution failed: {}", e);

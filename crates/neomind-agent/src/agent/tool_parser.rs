@@ -71,11 +71,30 @@ pub fn parse_tool_calls(text: &str) -> Result<(String, Vec<ToolCall>)> {
 fn try_parse_json_array(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> {
     let start = text.find('[')?;
 
-    // Find matching closing bracket
+    // Find matching closing bracket — STRING-AWARE (mirror of the detector
+    // in tool_detect.rs). A ']' or '[' inside a string argument — shell
+    // globs like `ls foo[1].txt`, regexes, JSON-in-JSON — used to break the
+    // balance: the string-aware detector extracted the span but this parser
+    // failed to close it, and the attempted tool call was silently swallowed.
     let mut bracket_count = 0;
+    let mut in_string = false;
+    let mut escaped = false;
     let mut end = start;
     for (i, c) in text[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
         match c {
+            '"' => in_string = true,
             '[' => bracket_count += 1,
             ']' => {
                 bracket_count -= 1;
@@ -147,11 +166,27 @@ fn try_parse_json_object(text: &str) -> Option<Result<(String, Vec<ToolCall>)>> 
         }
     }
 
-    // Find matching closing brace
+    // Find matching closing brace — STRING-AWARE (same fix as the array
+    // scanner above; a '}' inside a string argument broke the balance).
     let mut brace_count = 0;
+    let mut in_string = false;
+    let mut escaped = false;
     let mut end = start;
     for (i, c) in text[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if in_string {
+            if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
         match c {
+            '"' => in_string = true,
             '{' => brace_count += 1,
             '}' => {
                 brace_count -= 1;
@@ -867,5 +902,29 @@ mod tests {
         assert!(cleaned.contains("Checking..."));
         assert!(cleaned.contains("done"));
         assert!(!cleaned.contains("call_1"));
+    }
+}
+
+#[cfg(test)]
+mod string_aware_tests {
+    use super::*;
+
+    #[test]
+    fn json_array_tool_call_with_bracket_in_string_arg() {
+        // The detector is string-aware; the parser used not to be — a `]`
+        // inside a string argument broke the balance and the extracted call
+        // was silently swallowed.
+        let text = r#"[{"name": "shell", "arguments": {"command": "ls foo[1].txt"}}]"#;
+        let (_content, calls) = parse_tool_calls(text).expect("parse ok");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "shell");
+    }
+
+    #[test]
+    fn json_object_tool_call_with_brace_in_string_arg() {
+        let text = r#"{"name": "file_edit", "arguments": {"old_string": "fn main() {", "new_string": "fn main() {}"}}"#;
+        let (_content, calls) = parse_tool_calls(text).expect("parse ok");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "file_edit");
     }
 }

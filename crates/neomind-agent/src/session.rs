@@ -625,15 +625,24 @@ impl SessionManager {
 
     /// Register a cancel signal sender for an active streaming session.
     /// The sender is stored so that `cancel_session` can interrupt the stream.
+    ///
+    /// [single-stream mutex] Returns `false` WITHOUT registering when a
+    /// stream is already active for the session — the registration doubles
+    /// as the per-session mutual exclusion. Previously a second concurrent
+    /// stream silently OVERWROTE the first's sender (making it
+    /// uncancellable) and interleaved history writes into the same
+    /// AgentInternalState.
     pub async fn register_cancel_sender(
         &self,
         session_id: &str,
         sender: tokio::sync::watch::Sender<bool>,
-    ) {
-        self.cancel_senders
-            .write()
-            .await
-            .insert(session_id.to_string(), sender);
+    ) -> bool {
+        let mut map = self.cancel_senders.write().await;
+        if map.contains_key(session_id) {
+            return false;
+        }
+        map.insert(session_id.to_string(), sender);
+        true
     }
 
     /// Remove a cancel sender (called when streaming ends naturally).
@@ -673,11 +682,17 @@ impl SessionManager {
     /// ChatSessionCapabilityProvider). The dropped `Sender` closes the
     /// channel; the holder's `Receiver::recv` will return `None`.
     pub async fn remove_subscriber(&self, session_id: &str) {
-        if let Some(v) = self.event_subscribers.write().await.get_mut(session_id) {
+        // [deadlock fix] The old body held the write guard from the
+        // `if let` scrutinee and then acquired `.write()` AGAIN on the same
+        // non-reentrant tokio RwLock whenever the popped vec became empty —
+        // a permanent deadlock wedging `event_subscribers` globally the
+        // moment a subscriber ever registered and disconnected. Remove
+        // through the same guard instead.
+        let mut subs = self.event_subscribers.write().await;
+        if let Some(v) = subs.get_mut(session_id) {
             v.pop();
             if v.is_empty() {
-                // Free the empty Vec slot to keep the map tidy.
-                self.event_subscribers.write().await.remove(session_id);
+                subs.remove(session_id);
             }
         }
     }
@@ -1313,7 +1328,11 @@ impl SessionManager {
 
         // Create a cancel signal channel so the stream can be interrupted
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        self.register_cancel_sender(session_id, cancel_tx).await;
+        if !self.register_cancel_sender(session_id, cancel_tx).await {
+            return Err(NeoMindError::validation(
+                "A response is already being generated for this session — wait for it to finish or cancel it first",
+            ));
+        }
 
         let safeguards = super::agent::StreamSafeguards::default().with_interrupt_signal(cancel_rx);
 
@@ -1508,7 +1527,11 @@ impl SessionManager {
 
         // Create a cancel signal channel
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        self.register_cancel_sender(session_id, cancel_tx).await;
+        if !self.register_cancel_sender(session_id, cancel_tx).await {
+            return Err(NeoMindError::validation(
+                "A response is already being generated for this session — wait for it to finish or cancel it first",
+            ));
+        }
 
         let safeguards = super::agent::StreamSafeguards::default().with_interrupt_signal(cancel_rx);
 
