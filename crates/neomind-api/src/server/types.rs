@@ -1109,6 +1109,10 @@ impl ServerState {
             tokio::spawn(async move {
                 let mut cleanup_interval =
                     tokio::time::interval(tokio::time::Duration::from_secs(6 * 60 * 60));
+                // Consume the immediate first tick: tokio intervals fire at
+                // once, which used to trigger a full messages scan during
+                // startup (the agent-execution task below does the same).
+                cleanup_interval.tick().await;
                 loop {
                     cleanup_interval.tick().await;
                     if let Ok(cleaned_msgs) = mm.cleanup_old(30).await {

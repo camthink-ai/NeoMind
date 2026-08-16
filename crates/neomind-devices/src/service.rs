@@ -605,6 +605,7 @@ impl DeviceService {
         let event_bus = self.event_bus.clone();
         let heartbeat_config = self.heartbeat_config.clone();
         let heartbeat_running = self.heartbeat_running.clone();
+        let heartbeat_running_flag = self.heartbeat_running.clone();
         let registry = self.registry.clone();
 
         tokio::spawn(async move {
@@ -616,6 +617,15 @@ impl DeviceService {
 
             loop {
                 timer.tick().await;
+
+                // [stop-check] This flag was WRITE-ONLY (set true at start,
+                // false in stop_heartbeat_monitor, never read) — the monitor
+                // task could never actually be stopped. Read it here so
+                // stop_heartbeat_monitor takes effect at the next tick.
+                if !*heartbeat_running_flag.read().await {
+                    tracing::debug!("Heartbeat monitor stopping (flag cleared)");
+                    break;
+                }
 
                 let config = heartbeat_config.clone();
                 if !config.auto_mark_offline {

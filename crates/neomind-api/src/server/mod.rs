@@ -176,16 +176,40 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             const TELEMETRY_DB_PATH: &str = "data/telemetry.redb";
 
             loop {
-                // Load config on each cycle so runtime changes take effect
+                // Load config on each cycle so runtime changes take effect.
+                // [observability] Both reopen failures used to be silent —
+                // retention could no-op forever with no trace of why.
                 let config = SettingsStore::open(SETTINGS_DB_PATH)
                     .map(|s| s.get_retention_config())
-                    .unwrap_or_default();
+                    .unwrap_or_else(|e| {
+                        tracing::warn!(
+                            category = "storage",
+                            error = %e,
+                            "Retention: settings store unavailable — retention disabled this cycle"
+                        );
+                        Default::default()
+                    });
 
                 let interval_secs = config.interval_hours * 3600;
 
                 if config.enabled {
                     let policy = config.to_retention_policy();
-                    if let Ok(ts_store) = TimeSeriesStore::open(TELEMETRY_DB_PATH) {
+                    let ts_store = match TimeSeriesStore::open(TELEMETRY_DB_PATH) {
+                        Ok(store) => store,
+                        Err(e) => {
+                            tracing::warn!(
+                                category = "storage",
+                                error = %e,
+                                "Retention: telemetry store unavailable — skipping this cycle"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                interval_secs.max(3600),
+                            ))
+                            .await;
+                            continue;
+                        }
+                    };
+                    {
                         ts_store.set_retention_policy(policy).await;
                         match ts_store.apply_retention().await {
                             Ok(result) => {
