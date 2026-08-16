@@ -72,14 +72,14 @@ NeoMind is an **edge-deployed AI platform** that brings intelligence to IoT. It 
 - **Fully self-contained** — Embedded MQTT broker, redb storage, no external database or broker to install
 - **Type-safe end-to-end** — Rust backend with compile-time guarantees; agent CLI commands dispatch in-process with structured data, no fragile string parsing
 - **Crash-proof extensions** — Extensions run in isolated processes with capability-based permissions; a misbehaving extension never takes down the server
-- **Cloud-optional** — Works 100% offline with local LLMs (Ollama), or connect cloud models when you need more power
+- **Cloud-optional** — Works 100% offline with local LLMs (llama.cpp), or connect cloud models when you need more power
 
 ## Features
 
 ### AI-Powered Intelligence
 - **Natural Language Chat** — Conversational interface to query and control all connected devices
 - **Autonomous Agents** — Scheduled AI agents that monitor, analyze, and act on device data independently
-- **10+ LLM Backends** — Ollama, OpenAI, Anthropic, Google, xAI, Qwen, DeepSeek, GLM, MiniMax, and any OpenAI-compatible endpoint
+- **10+ LLM Backends** — llama.cpp (recommended), OpenAI, Anthropic, Google, xAI, Qwen, DeepSeek, GLM, MiniMax, Ollama, and any OpenAI-compatible endpoint
 - **Memory System** — Multi-tier memory (User, Knowledge, Procedures, Session) with automatic extraction and compression
 - **Skill System** — YAML+Markdown skills that guide agent behavior for specific scenarios
 - **Multimodal** — Image upload and visual analysis support
@@ -271,9 +271,21 @@ server {
 
 </details>
 
+### Recommended Local Models
+
+All three run NeoMind's full agent toolkit (tool selection, in-process CLI dispatch, multi-step tasks) — validated on our bilingual agent eval suite:
+
+| Model | Download | Size | Best for |
+|-------|----------|------|----------|
+| **Gemma 4 E2B (QAT)** | [google/gemma-4-E2B-it-qat-q4_0-gguf](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf) (official) | 3.1 GB | Tightest RAM budget (~2 GB at runtime). The official QAT int4 beats community Q4_K_M quantizations on agent accuracy (90% vs 81% on our eval set). Strong native function calling; vision via the `mmproj` file. Run with thinking disabled. |
+| **Qwen 3.5 4B** | [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) (official; GGUF quants e.g. [unsloth](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF), Q4_K_M) | ~2.5 GB | Best hard-pass rate on the full agent suite and the only one of the three with built-in vision (add the mmproj file). Run with thinking disabled. |
+| **LFM 2.5 2.6B** | [LiquidAI/LFM2.5-2.6B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF) (official) | ~2 GB | Mamba-hybrid architecture: cheap 128K context and fast ingestion (~800 tok/s), with tool-calling on par with 4B models at 2.6B params. Serve with `--jinja`; check the LFM license before redistribution. |
+
+Rule of thumb: **Gemma E2B QAT** for minimal hardware, **Qwen 3.5 4B** for vision and top reliability, **LFM 2.5** for long agent sessions on modest devices. All three are GGUF — the recommended way to serve them is [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`; add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works.
+
 ### Development
 
-**Prerequisites:** Rust 1.85+, Node.js 20+, Ollama (or other LLM backend)
+**Prerequisites:** Rust 1.85+, Node.js 20+, llama.cpp (or other LLM backend)
 
 ```bash
 # Clone
@@ -415,7 +427,7 @@ NeoMind/
 
 ### Supported LLM Backends
 
-Ollama (local), OpenAI, Anthropic, Google, xAI, Qwen, DeepSeek, GLM, MiniMax, and any OpenAI-compatible endpoint. Configure via the **Settings → LLM Backends** page in the UI.
+llama.cpp (local, recommended), OpenAI, Anthropic, Google, xAI, Qwen, DeepSeek, GLM, MiniMax, Ollama, and any OpenAI-compatible endpoint. Configure via the **Settings → LLM Backends** page in the UI.
 
 <details>
 <summary>Environment variables</summary>
@@ -511,7 +523,7 @@ Repo-local references (kept here for contributors):
 | **Backend** | Rust, Axum, Tokio, redb |
 | **Frontend** | React 18, TypeScript, Tailwind CSS, Zustand, Radix UI |
 | **Desktop** | Tauri 2.x |
-| **AI/LLM** | Ollama, OpenAI, Anthropic, and 6+ more backends |
+| **AI/LLM** | llama.cpp, OpenAI, Anthropic, and 6+ more backends |
 | **IoT** | MQTT (embedded broker), BLE, HTTP/Webhook |
 | **Extensions** | Native (.so/.dylib/.dll), WASM, process isolation |
 
