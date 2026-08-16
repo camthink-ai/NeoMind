@@ -20,6 +20,17 @@ import { BatchUpdater } from '@/lib/throttle'
 import { fetchCache } from '@/lib/utils/async'
 import { findDevice } from '@/lib/deviceUtils'
 
+/** Status fragment shared by the device detail/list DTOs and event
+ * payloads. The backend always includes these fields on device responses;
+ * typed once here so consumers stop re-asserting each field via `as any`. */
+interface DeviceStatusFragment {
+  online?: boolean
+  status?: string
+  last_seen?: string
+  transport_connected?: boolean
+  transport_changed_at?: number
+}
+
 export interface DeviceSlice extends DeviceState, TelemetryState {
   // Actions
   setSelectedDevice: (device: Device | null) => void
@@ -360,11 +371,12 @@ export const createDeviceSlice: StateCreator<
       // subscribe to useDeviceEvents) are also lost, so this is the only
       // reliable propagation path.
       if (details) {
-        const online = !!(details as any).online
-        const status = (details as any).status as string | undefined
-        const lastSeen = (details as any).last_seen as string | undefined
-        const transportConnected = (details as any).transport_connected as boolean | undefined
-        const transportChangedAt = (details as any).transport_changed_at as number | undefined
+        const frag = details as Partial<DeviceStatusFragment>
+        const online = !!frag.online
+        const status = frag.status
+        const lastSeen = frag.last_seen
+        const transportConnected = frag.transport_connected
+        const transportChangedAt = frag.transport_changed_at
         set((state) => ({
           devices: state.devices.map((d) =>
             d.id === id || d.device_id === id
@@ -437,11 +449,12 @@ export const createDeviceSlice: StateCreator<
       const newValues = buildNestedValues(data.metrics || {})
       // Sync status fields (online/status/last_seen/transport_*) back to the
       // devices list cache — same rationale as fetchDeviceDetails above.
-      const online = (data as any).online as boolean | undefined
-      const status = (data as any).status as string | undefined
-      const lastSeen = (data as any).last_seen as string | undefined
-      const transportConnected = (data as any).transport_connected as boolean | undefined
-      const transportChangedAt = (data as any).transport_changed_at as number | undefined
+      const frag = data as Partial<DeviceStatusFragment>
+      const online = frag.online
+      const status = frag.status
+      const lastSeen = frag.last_seen
+      const transportConnected = frag.transport_connected
+      const transportChangedAt = frag.transport_changed_at
       set((state) => ({
         deviceTelemetry: newValues && Object.keys(newValues).length > 0
           ? { ...state.deviceTelemetry, [deviceId]: newValues }
@@ -779,7 +792,7 @@ export const createDeviceSlice: StateCreator<
       const newDevices: Device[] = []
       for (const [id, entry] of Object.entries(results)) {
         if (existingIds.has(id)) continue
-        const cv = (entry as any)?.current_values
+        const cv = (entry as { current_values?: Record<string, unknown> })?.current_values
         if (!cv) continue
         const newValues = buildNestedValues(cv)
         if (Object.keys(newValues).length === 0) continue
