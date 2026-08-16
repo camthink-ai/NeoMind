@@ -601,7 +601,7 @@ export function DeviceDetail({
                           "group rounded-lg text-left transition-all duration-200 hover:shadow-md",
                           isMobile ? "p-3 active:scale-[0.99]" : "p-6 hover:scale-[1.02]",
                           isVirtual
-                            ? "bg-gradient-to-br from-accent-purple-light to-blue-500/5 border-accent-purple-light hover:border-accent-purple"
+                            ? "bg-gradient-to-br from-accent-purple-light to-accent-purple-light border-accent-purple-light hover:border-accent-purple"
                             : "bg-gradient-to-br from-card to-muted border-border hover:border-border"
                         )}
                       >

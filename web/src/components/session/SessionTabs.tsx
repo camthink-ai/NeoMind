@@ -18,15 +18,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { DialogContentBody } from "@/components/ui/dialog"
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogContentBody,
-} from "@/components/ui/dialog"
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { useTranslation } from "react-i18next"
 
 interface SessionTabsProps {
@@ -280,26 +280,26 @@ export function SessionTabs({ className, onSessionChange }: SessionTabsProps) {
       )}
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent className="flex flex-col z-[200]">
-          <DialogHeader>
-            <DialogTitle>{t('session.deleteTitle')}</DialogTitle>
-            <DialogDescription>
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent className="flex flex-col z-[200]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('session.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
               {t('session.deleteDescription')}
-            </DialogDescription>
-          </DialogHeader>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
           <DialogContentBody>
           </DialogContentBody>
-          <DialogFooter>
+          <AlertDialogFooter>
             <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
               {t('cancel')}
             </Button>
             <Button variant="destructive" onClick={handleDeleteConfirm}>
               {t('delete')}
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

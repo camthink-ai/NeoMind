@@ -32,6 +32,14 @@ import {
   DialogTitle,
   DialogContentBody,
 } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -940,27 +948,27 @@ export function UnifiedDeviceConnectionsTab() {
         />
 
         {/* Delete Confirmation Dialog */}
-        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-          <DialogContent className="sm:max-w-md z-[200]">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
+        <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <AlertDialogContent className="sm:max-w-md z-[200]">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5 text-error" />
                 {t('plugins:deleteConfirmTitle', { defaultValue: 'Delete Broker?' })}
-              </DialogTitle>
-              <DialogDescription>
+              </AlertDialogTitle>
+              <AlertDialogDescription>
                 {t('plugins:deleteConfirmDesc', {
                   defaultValue: 'Are you sure you want to delete "{{name}}"? This action cannot be undone.',
                   name: instanceToDelete?.name || ''
                 })}
-              </DialogDescription>
-            </DialogHeader>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
 
             <DialogContentBody className="px-4 pt-6 pb-4 sm:px-6">
               <p className="text-sm text-muted-foreground">
                 {t('plugins:deleteWarning', { defaultValue: 'This action cannot be undone.' })}
               </p>
             </DialogContentBody>
-            <DialogFooter>
+            <AlertDialogFooter>
               <Button
                 variant="outline"
                 onClick={() => setDeleteDialogOpen(false)}
@@ -982,9 +990,9 @@ export function UnifiedDeviceConnectionsTab() {
                   t('plugins:delete', { defaultValue: 'Delete' })
                 )}
               </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </>
     )
   }

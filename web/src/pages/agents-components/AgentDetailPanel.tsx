@@ -538,7 +538,7 @@ function KnowledgeFileCard({ file, formatTime }: { file: KnowledgeFileRef; forma
   const hasContent = file.content && file.content.trim().length > 0
 
   return (
-    <div className="rounded-lg bg-gradient-to-br from-accent-purple-light to-pink-500/5 border border-accent-purple-light hover:border-accent-purple transition-colors overflow-hidden">
+    <div className="rounded-lg bg-gradient-to-br from-accent-purple-light to-accent-purple-light border border-accent-purple-light hover:border-accent-purple transition-colors overflow-hidden">
       <button
         type="button"
         className="w-full p-3 text-left flex items-center justify-between gap-2"
