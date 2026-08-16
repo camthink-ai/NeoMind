@@ -2850,7 +2850,32 @@ async fn resolve_input_mapping(
                                     }
                                     resolved.insert(key.clone(), Value::String(s.to_string()));
                                 } else {
-                                    // It's a URL — fetch and convert to base64
+                                    // It's a URL — fetch and convert to base64.
+                                    // [SSRF guard] the URL comes from DEVICE DATA —
+                                    // without this check a compromised device could
+                                    // make the server fetch internal endpoints
+                                    // (cloud metadata at 169.254.169.254, admin
+                                    // panels, etc.) and exfiltrate the base64 into
+                                    // transform outputs. Same shared rules as the
+                                    // agent's web_fetch tool.
+                                    let url_allowed = reqwest::Url::parse(s)
+                                        .ok()
+                                        .and_then(|u| match u.scheme() {
+                                            "http" | "https" => u
+                                                .host_str()
+                                                .map(|h| !neomind_core::net::is_private_host(h)),
+                                            _ => Some(false),
+                                        })
+                                        .unwrap_or(false);
+                                    if !url_allowed {
+                                        tracing::warn!(
+                                            url = %s,
+                                            key = %key,
+                                            "url_to_base64: blocked non-HTTP(s) or private-network URL (SSRF guard)"
+                                        );
+                                        resolved.insert(key.clone(), extracted);
+                                        continue;
+                                    }
                                     match http_client.get(s).send().await {
                                         Ok(resp) => {
                                             // [size cap] reject declared-oversized bodies up
