@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Unbounded-growth closeout & hardening
+- **All per-device maps bounded**: data-push `DataSourceMatcher::last_values` (4096 cap), the transform event service's raw-data/timestamp/debounce-timer maps (1024-device cap, oldest-timestamp pruning, and debounce tasks now self-remove their handles on completion — dynamic MQTT client ids previously grew all of these forever).
+- **`metrics_info` orphan entries pruned by retention**: a metric whose points had all aged out kept its entry for the process lifetime; retention now probes for remaining points and drops empty entries.
+- **Transform output registry evicts stale names on re-register** — data-varying metric names (GroupBy's `output_{group}`) used to leave phantom data sources forever.
+- **User JS transforms get a loop watchdog** (Boa runtime loop-iteration limit, 10M): a `while(true)` script used to hang the executor thread forever.
+- **WS chat stream creation no longer blocks the socket**: creation ran inline in the select loop — during the initial LLM request (tens of seconds on local models) no pings were sent and Stop was unresponsive. Creation + fallback now run in a spawned task with the fallback delivered through the event channel.
+- **Remaining warm blocking reads off the executor**: `query_latest_uncached`, `query_range_bucketed`, system-memory `read_file`/`write_file`.
+- Frontend spec compliance: the last two raw-palette gradients swapped for tokens; two hand-rolled delete confirms converted to AlertDialog.
+
 ### Frontend type-safety
 - **`ResponsiveTable<T>` is generic** — the table's non-generic `Record<string, unknown>` surface forced ~100 typed→Record→typed double-casts across 11 table-driven pages; all migrated (project-wide `as unknown as`: 121 → 21; the remainder is non-table code). `TableRowAction.onClick`'s rowData is now required and row actions are per-row only.
 - **Device status fragment typed** in deviceSlice (10 per-field `as any` → one `Partial<DeviceStatusFragment>` per block — backend field renames now surface at compile time) and stale API-response casts dropped in main.tsx (the automation endpoints were already typed).
