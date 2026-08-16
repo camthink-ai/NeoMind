@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Chat/session streaming hardening
+- **One active stream per session**: a second concurrent stream on the same session silently overwrote the first's cancel sender (making it uncancellable) and interleaved history writes into the same session state. A second stream now gets a clear rejection instead.
+- **Fixed a latent permanent deadlock** in `remove_subscriber` (re-acquiring a non-reentrant write lock through the `if let` scrutinee's guard) — would have wedged the subscriber map globally the moment the subscriber feature shipped.
+- **Tool-call detection recovers past leading data arrays**: the detector anchored on the first `[` forever, so any innocuous JSON array before the real tool call (e.g. `trend: [1,2,3]`) made the call stream as visible text and never execute.
+- **Tool-call parsing is string-aware**: `]`/`}` inside string arguments (shell globs like `ls foo[1].txt`, regexes) broke bracket matching and silently swallowed the extracted call.
+- **Stored tool results are base64-sanitized** (previously only the display copy): 4–64KB data URLs stopped flowing verbatim into every subsequent LLM round and into session storage.
+- **Background summarization no longer mutates the global thinking flag** (per-call override; was: user turns could silently run with thinking off, user toggles clobbered, aborts left thinking disabled).
+
 ### Correctness & Safety (fresh subsystem sweep)
 - **Chat no longer sends the user message twice per turn**: the text path pushed the current user message into history before streaming AND the LLM layer appended it again — every prompt carried `[…, user(current), user(current)]` (double tokens, back-to-back duplicate user turns). The multimodal path never had this.
 - **Rule `TriggerAgent` no longer blocks all rule processing**: the action awaited the full agent run inline, so one rule with an agent action stalled every other rule's evaluation platform-wide for up to the 5-minute cap. The callback now spawns.
