@@ -201,7 +201,8 @@ pub async fn write_metric_handler(
         .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
     let timestamp_secs = timestamp_ms / 1000;
     let source_id = format!("device:{}", device_id);
-    let point = DataPoint::new(timestamp_secs, metric_value);
+    // Clone for the event publish below; the point takes ownership.
+    let point = DataPoint::new(timestamp_secs, metric_value.clone());
 
     state
         .devices
@@ -209,6 +210,45 @@ pub async fn write_metric_handler(
         .write(&source_id, &req.metric, point)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to write metric: {:?}", e)))?;
+
+    // Publish DeviceMetric so REST-ingested data behaves like every other
+    // ingestion path. The MQTT and webhook adapters both publish this event;
+    // this endpoint used to write storage ONLY — data arriving via the REST
+    // API silently bypassed the whole event spine: rules bound to the metric
+    // never fired, dashboards didn't live-update, event-driven data-push
+    // targets never delivered, event-triggered agents never ran, and the
+    // device's last_seen never advanced (a REST-fed device showed offline
+    // despite fresh data).
+    if let Some(bus) = &state.core.event_bus {
+        let core_value = match &metric_value {
+            MetricValue::Float(f) => neomind_core::MetricValue::Float(*f),
+            MetricValue::Integer(i) => neomind_core::MetricValue::Integer(*i),
+            MetricValue::Boolean(b) => neomind_core::MetricValue::Boolean(*b),
+            MetricValue::String(s) => neomind_core::MetricValue::String(s.clone()),
+            // devices-side has no Json variant; Binary/Null degrade to a JSON
+            // null payload (same degradation the webhook adapter applies);
+            // Array serializes into the JSON variant.
+            MetricValue::Array(items) => neomind_core::MetricValue::Json(
+                serde_json::to_value(items).unwrap_or(serde_json::json!(null)),
+            ),
+            MetricValue::Binary(_) | MetricValue::Null => {
+                neomind_core::MetricValue::Json(serde_json::json!(null))
+            }
+        };
+        let event_device_id = device_id.clone();
+        let event_metric = req.metric.clone();
+        let event_ts = timestamp_secs;
+        let _ = bus
+            .publish(neomind_core::NeoMindEvent::DeviceMetric {
+                device_id: event_device_id,
+                metric: event_metric,
+                value: core_value,
+                timestamp: event_ts,
+                quality: None,
+                is_virtual: Some(false),
+            })
+            .await;
+    }
 
     ok(json!({
         "device_id": device_id,
@@ -234,5 +274,90 @@ fn json_to_metric_value(value: &serde_json::Value) -> MetricValue {
         }
         serde_json::Value::String(s) => MetricValue::String(s.clone()),
         _ => MetricValue::String(value.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod event_publish_tests {
+    use super::*;
+    use crate::handlers::ServerState;
+    use axum::extract::{Path, State};
+    use axum::Json;
+
+    /// REST metric writes must publish DeviceMetric to the EventBus, matching
+    /// the MQTT and webhook ingestion paths. Without this, data arriving via
+    /// the REST API silently bypassed the event spine: rules never fired,
+    /// dashboards didn't live-update, event-driven push targets never
+    /// delivered, and last_seen never advanced.
+    #[tokio::test]
+    async fn rest_metric_write_publishes_device_metric_event() {
+        let state = ServerState::new_for_testing().await;
+        let bus = state
+            .core
+            .event_bus
+            .clone()
+            .expect("test state has an event bus");
+        let mut rx = bus.subscribe();
+
+        // Register a device-type template + the device (test state may not
+        // have seeded builtins).
+        use neomind_devices::DeviceTypeTemplate;
+        let _ = state
+            .devices
+            .registry
+            .register_template(DeviceTypeTemplate::new(
+                "rest-write-type",
+                "REST Write Type",
+            ))
+            .await;
+
+        // Register the device so the write path has a real target.
+        let added = super::super::crud::add_device_handler(
+            State(state.clone()),
+            Json(super::super::models::AddDeviceRequest {
+                device_id: Some("rest-write-dev".to_string()),
+                name: "REST Write Dev".to_string(),
+                device_type: "rest-write-type".to_string(),
+                adapter_type: "webhook".to_string(),
+                connection_config: serde_json::json!({}),
+            }),
+        )
+        .await;
+        assert!(added.is_ok(), "device create failed: {:?}", added.err());
+
+        let resp = write_metric_handler(
+            Path("rest-write-dev".to_string()),
+            State(state.clone()),
+            Json(WriteMetricRequest {
+                metric: "temperature".to_string(),
+                value: serde_json::json!(42.5),
+                timestamp: Some(1786890000000i64), // millis per the API contract
+            }),
+        )
+        .await;
+        assert!(resp.is_ok(), "write failed: {:?}", resp.err());
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut saw = false;
+        while std::time::Instant::now() < deadline {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv()).await {
+                Ok(Some((event, _meta))) => {
+                    if let neomind_core::NeoMindEvent::DeviceMetric {
+                        device_id, metric, ..
+                    } = &event
+                    {
+                        if device_id == "rest-write-dev" && metric == "temperature" {
+                            saw = true;
+                            break;
+                        }
+                    }
+                }
+                _ => break,
+            }
+        }
+        assert!(
+            saw,
+            "REST metric write did NOT publish DeviceMetric — rules/dashboards/push would silently miss REST-ingested data"
+        );
     }
 }
