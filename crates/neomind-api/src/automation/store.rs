@@ -203,9 +203,7 @@ impl AutomationStore {
     /// sweep missed (messages/agent-executions/data-push/rule-history all
     /// got 30-day tasks; automations were forgotten).
     pub fn cleanup_executions(&self, days: u64) -> Result<usize> {
-        let cutoff_ms = (chrono::Utc::now().timestamp()
-            - (days as i64) * 24 * 60 * 60)
-            * 1000;
+        let cutoff_ms = (chrono::Utc::now().timestamp() - (days as i64) * 24 * 60 * 60) * 1000;
         let mut to_remove: Vec<String> = Vec::new();
 
         let read_txn = self.db.begin_read()?;

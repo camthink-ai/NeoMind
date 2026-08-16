@@ -330,7 +330,10 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 
             loop {
                 if let Some(store) = automation_state.automation.automation_store.clone() {
-                    match store.cleanup_executions(AUTOMATION_EXEC_RETENTION_DAYS).await {
+                    match store
+                        .cleanup_executions(AUTOMATION_EXEC_RETENTION_DAYS)
+                        .await
+                    {
                         Ok(0) => {}
                         Ok(n) => tracing::info!(
                             removed = n,
