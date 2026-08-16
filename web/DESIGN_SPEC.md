@@ -1316,6 +1316,8 @@ Pages are in `src/pages/`, lazy-loaded via `React.lazy()` for bundle splitting:
 | `/messages`, `/messages/channels` | MessagesPage | `pages/messages.tsx` |
 | `/extensions` | ExtensionsPage | `pages/extensions.tsx` |
 
+**Settings is a dialog, not a page.** The `SettingsDialog` is mounted once at the app root (`App.tsx`); pages open it via `useStore.getState().openSettings(section?)`. The legacy `/settings` route renders a small shell (`SettingsRoute` in `App.tsx`) that opens the dialog and redirects to `/` — deep links land on chat with settings open, never a blank page. Do NOT create a settings page route.
+
 ### Protected Route Pattern
 
 ```tsx
@@ -1609,7 +1611,8 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 | data | `/data` | Database | nav.data | navShort.data |
 | messages | `/messages` | Bell | nav.messages | navShort.messages |
 | extensions | `/extensions` | Puzzle | nav.extensions | navShort.extensions |
-| settings | `/settings` | Settings | nav.settings | navShort.settings |
+
+Settings has no nav route — the gear icon / avatar menu calls `openSettings()` (dialog). On mobile the drawer's settings entry is intercepted the same way (`MobileNav.tsx` `entry.id === "settings"` → `openSettings()`), never navigating to `/settings`.
 
 ### Height Management
 

@@ -91,6 +91,17 @@ if (_isMacTauri) {
 
 // Protected Route component
 // Checks authentication first, then setup status in background
+/** Legacy /settings deep links: settings now lives in the SettingsDialog
+ * (mounted once at the app root). Open the dialog, then redirect home so
+ * closing it never leaves a blank page behind. */
+function SettingsRoute() {
+  const openSettings = useStore((state) => state.openSettings)
+  useEffect(() => {
+    openSettings()
+  }, [openSettings])
+  return <Navigate to="/" replace />
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const [setupRequired, setSetupRequired] = useState<boolean | false>(false)
 
@@ -583,7 +594,7 @@ function App() {
                       <Route path="/agents/memory" element={<AgentsPage />} />
                       <Route path="/agents/skills" element={<AgentsPage />} />
                       <Route path="/agents/tools" element={<AgentsPage />} />
-                      <Route path="/settings" element={<Navigate to="/" replace />} />
+                      <Route path="/settings" element={<SettingsRoute />} />
                       {/* Messages with tab routes */}
                       <Route path="/messages" element={<MessagesPage />} />
                       <Route path="/messages/channels" element={<MessagesPage />} />

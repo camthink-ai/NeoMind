@@ -31,6 +31,7 @@ import {
   ToggleLeft,
   Monitor,
   Grid,
+  Settings2,
 } from 'lucide-react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -1051,7 +1052,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
               <p className="text-sm mt-2">
                 {editMode ? t('visualDashboard.addComponentsHint') : t('visualDashboard.enterEditModeHint')}
               </p>
-              {editMode && (
+              {editMode ? (
                 <Button
                   variant="outline"
                   size="sm"
@@ -1060,6 +1061,16 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
                 >
                   <Plus className="h-4 w-4 mr-1" />
                   {t('visualDashboard.addComponent')}
+                </Button>
+              ) : (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => setEditMode(true)}
+                >
+                  <Settings2 className="h-4 w-4 mr-1" />
+                  {t('common:editDashboard')}
                 </Button>
               )}
             </div>

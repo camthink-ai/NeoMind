@@ -150,7 +150,7 @@
     "exitFullscreen": "Exit Fullscreen",
     "emptyDashboard": "Dashboard is empty",
     "addComponentsHint": "Click the + button to add components",
-    "enterEditModeHint": "Click Edit Layout to add components",
+    "enterEditModeHint": "Enter edit mode to add your first component",
     "deviceNotFound": "Device Not Found",
     "deviceNotFoundDesc": "The requested device could not be found",
     "metricInfo": "Metric Information",
