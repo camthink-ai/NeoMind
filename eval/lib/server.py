@@ -184,6 +184,20 @@ class TestServer:
         env["NEOMIND_DATA_DIR"] = str(tmpdir_path)
         env["NEOMIND_API_BASE"] = self.api_base
         env["NEOMIND_API_KEY"] = self.api_key
+
+        # Parallel-shard support: the embedded MQTT broker defaults to :1883
+        # and its bind FAILS (logged, server continues with degraded device
+        # flows) when another worker's broker already holds it. Serial runs
+        # are unaffected; when NEOMIND_EVAL_MQTT_PORT is set, seed a
+        # config.toml in the per-case CWD so this worker's broker binds a
+        # private port (fresh settings redb inherits from config.toml on
+        # first run — see get_embedded_broker_config).
+        mqtt_port = os.environ.get("NEOMIND_EVAL_MQTT_PORT")
+        if mqtt_port:
+            (tmpdir_path / "config.toml").write_text(
+                f"[mqtt]\nport = {int(mqtt_port)}\n"
+            )
+
         # Per-case SFT trace isolation: when NEOMIND_TRACE_ROOT is set, route
         # each case's LLM traces into its own subdir so a batch run's traces
         # stay grouped by case. The SFT renderer then joins one case's trace
