@@ -334,14 +334,21 @@ impl LlmRuntime for LlamaCppRuntime {
         let model = input.model.unwrap_or_else(|| self.model.clone());
         let url = format!("{}/v1/chat/completions", self.config.base_url());
 
-        // Handle max_tokens: llama.cpp will error if max_tokens exceeds the model's
-        // context window. When the caller delegates (sentinel usize::MAX or unset),
-        // apply a bounded generation cap instead of omitting the field — an
-        // omitted max_tokens means UNLIMITED on llama-server, and a runaway
-        // generation (observed: 22177 tokens / 7.4 min on prod T4) keeps the
-        // slot busy even after the client disconnects (llama-server does not
-        // cancel in-flight tasks). 8192 is ~4x a long legitimate answer and
-        // still cuts a runaway short.
+        // Handle max_tokens. When the caller delegates (sentinel usize::MAX or
+        // unset), apply a bounded generation cap instead of omitting the field —
+        // omitted means UNLIMITED on llama-server, and a runaway generation
+        // (observed: 22177 tokens / 7.4 min on prod T4) keeps the slot busy
+        // even after the client disconnects (llama-server does not cancel
+        // in-flight tasks). 8192 is ~4x a long legitimate answer and still cuts
+        // a runaway short.
+        //
+        // "Per remaining context" needs no client-side arithmetic: empirically
+        // (verified 2026-08-17 on b10360 AND prod's 2da6686) llama-server does
+        // NOT error when max_tokens exceeds the available context — it clamps
+        // generation at the actual context wall (finish=length). The effective
+        // bound is therefore min(cap, remaining) with the precise part
+        // enforced server-side. The old comment claimed llama.cpp "will error"
+        // on overflow; no version in production use does.
         let delegated_cap = || {
             let ctx = self.max_context_length() as u32;
             let cap = 8192u32;
