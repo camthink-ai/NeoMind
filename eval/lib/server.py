@@ -295,6 +295,10 @@ class TestServer:
         url = f"{self.api_base}{path}" if path.startswith("/") else f"{self.api_base}/{path}"
         return requests.post(url, json=body, headers=self._headers(), timeout=60)
 
+    def get(self, path: str, timeout: float = 30.0) -> requests.Response:
+        url = f"{self.api_base}{path}" if path.startswith("/") else f"{self.api_base}/{path}"
+        return requests.get(url, headers=self._headers(), timeout=timeout)
+
     def configure_llm_backend(self):
         """Configure the agent-under-test's LLM backend via API.
 

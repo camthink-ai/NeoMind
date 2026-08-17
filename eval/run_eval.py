@@ -223,7 +223,7 @@ def run_case(case_path: str) -> dict:
             except Exception as e:
                 # Record the turn we have so far, then bail with timeout-style
                 # status so the judge can mark it as agent error.
-                return _error_record_at(
+                rec = _error_record_at(
                     case,
                     "agent_error",
                     # Include the exception CLASS: some exceptions (notably
@@ -233,6 +233,15 @@ def run_case(case_path: str) -> dict:
                     f"turn failed ({turn['user']!r}): {type(e).__name__}: {e}",
                     turn_records,
                 )
+                # A wedged FIRST turn discards everything the agent did during
+                # those minutes — the tool calls live in the server-side session
+                # history, which dies with srv in the finally below. Salvage a
+                # compact copy (2026-08-17: 19 timeout cases lost all trace data
+                # and the loop pattern had to be inferred from llama-server logs).
+                salvaged = _salvage_server_history(srv, sid)
+                if salvaged:
+                    rec["server_history"] = salvaged
+                return rec
             elapsed_ms = int((time.monotonic() - t0) * 1000)
             # Use server-reported processing_time_ms when present; fall back to
             # wall clock so we always have a number for fallback detection.
@@ -550,6 +559,21 @@ def cmd_run(args):
     cases_jsonl_path = run_dir / "cases.jsonl"
     scores_jsonl_path = run_dir / "scores.jsonl"
 
+    # Config snapshot — the 2026-08-17 official-params experiment could not be
+    # verified against its launch command line (run from an agent session, no
+    # shell history), forcing a three-way indirect proof of temp=0.6 for the
+    # definitive run. Freeze the launch config into the run dir instead.
+    # Written once per run dir (resume appends to the SAME config).
+    config_path = run_dir / "llm_config.json"
+    if not config_path.exists():
+        config_path.write_text(json.dumps({
+            "llm_env": {k: os.environ[k] for k in sorted(os.environ)
+                        if k.startswith("AGENT_LLM_")},
+            "case_timeout": max(30, int(args.case_timeout)),
+            "neomind_bin": str(server._resolve_neomind_bin()),
+            "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }, ensure_ascii=False, indent=2))
+
     # Per-case wall-clock cap (mirrors regression) — a wedged agent (e.g. a slow
     # local model stuck in an endless thinking stream) would otherwise hang the
     # whole run for hours. --resume + this cap make a killed/wedged run recoverable.
@@ -644,6 +668,42 @@ class _CaseTimeout(Exception):
 
 def _on_alarm(signum, frame):
     raise _CaseTimeout()
+
+
+def _salvage_server_history(srv, sid: str, limit: int = 80):
+    """Fetch a compact copy of the server-side session history.
+
+    Used on the agent-error/timeout path: a wedged turn leaves no local
+    turn_records, and the server (holding the partial tool calls) is about to
+    be shut down. Returns a list of {role, tools, content} dicts, or None if
+    the history endpoint is unreachable (best-effort by design).
+    """
+    try:
+        r = srv.get(f"/api/sessions/{sid}/history")
+        r.raise_for_status()
+        data = r.json()
+        msgs = data.get("data") if isinstance(data, dict) else data
+        if not isinstance(msgs, list):
+            return None
+        out = []
+        for m in msgs[-limit:]:
+            if not isinstance(m, dict):
+                continue
+            tools = []
+            for tc in m.get("tool_calls") or []:
+                if isinstance(tc, dict):
+                    name = tc.get("name", "?")
+                    args = tc.get("arguments") or tc.get("args") or {}
+                    cmd = args.get("command") if isinstance(args, dict) else None
+                    tools.append(f"{name}: {cmd}" if cmd else str(name))
+            out.append({
+                "role": m.get("role"),
+                "tools": tools,
+                "content": str(m.get("content") or "")[:200],
+            })
+        return out or None
+    except Exception:  # noqa: BLE001 — best-effort salvage
+        return None
 
 
 def _run_case_timeout(p: Path, cap: int):
