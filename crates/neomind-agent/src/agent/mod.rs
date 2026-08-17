@@ -885,25 +885,67 @@ impl Agent {
                 let mut runtime =
                     OllamaRuntime::new(config).map_err(|e| NeoMindError::llm(e.to_string()))?;
 
-                // Set capabilities override if provided
-                if let Some(caps) = capabilities {
-                    tracing::debug!(
-                        multimodal = %caps.multimodal,
-                        thinking_display = %caps.thinking_display,
-                        function_calling = %caps.function_calling,
-                        max_context = %caps.max_context.unwrap_or(128000),
-                        "Applying capabilities override to OllamaRuntime"
-                    );
-                    runtime = runtime.with_capabilities_override(
-                        caps.multimodal,
-                        caps.thinking_display,
-                        caps.function_calling,
-                        caps.max_context.unwrap_or(128000),
-                    );
-                } else {
-                    tracing::debug!(
-                        "No capabilities provided for OllamaRuntime, using default detection"
-                    );
+                // [fresh runtime probe] The direct chat runtime built here is
+                // cached for the process lifetime and is NOT rebuilt when the
+                // instance manager later refreshes stored capabilities — so a
+                // creation-time registry default (max_context = 128000 for
+                // unknown models) would survive forever in the prompt budget
+                // while the server enforces its real window (measured
+                // 2026-08-17: every turn sent a full-history prompt that
+                // overflowed and got rescued by the compact-retry ladder).
+                // Probe /api/show NOW; the probe is authoritative except for
+                // an explicit user override (gotcha #3).
+                // The probe is authoritative for max_context/tools (no user
+                // override channel exists for those); multimodal/thinking keep
+                // the stored value when present — the effective stored value
+                // may already encode a user override we cannot see from here
+                // (BackendCapabilities carries no override marker; that lives
+                // on the instance record) — gotcha #3.
+                let detected = runtime.fetch_capabilities_from_api().await;
+                match (&detected, &capabilities) {
+                    (Some(d), stored) => {
+                        let (multimodal, thinking) = match stored {
+                            Some(c) => (c.multimodal, c.thinking_display),
+                            None => (d.supports_multimodal, d.supports_thinking),
+                        };
+                        tracing::info!(
+                            multimodal,
+                            thinking,
+                            tools = d.supports_tools,
+                            max_ctx = d.max_context,
+                            "OllamaRuntime capabilities resolved from /api/show"
+                        );
+                        runtime = runtime.with_capabilities_override(
+                            multimodal,
+                            thinking,
+                            d.supports_tools,
+                            d.max_context,
+                        );
+                    }
+                    (None, Some(caps)) => {
+                        // Probe failed — stored values. Conservative context
+                        // fallback: OVER-claiming context turns every turn into
+                        // an overflow-then-retry (wasted full prefill);
+                        // under-claiming only trims history.
+                        tracing::debug!(
+                            multimodal = %caps.multimodal,
+                            thinking_display = %caps.thinking_display,
+                            function_calling = %caps.function_calling,
+                            max_context = %caps.max_context.unwrap_or(8192),
+                            "Applying capabilities override to OllamaRuntime (probe failed)"
+                        );
+                        runtime = runtime.with_capabilities_override(
+                            caps.multimodal,
+                            caps.thinking_display,
+                            caps.function_calling,
+                            caps.max_context.unwrap_or(8192),
+                        );
+                    }
+                    (None, None) => {
+                        tracing::debug!(
+                            "No capabilities and no probe for OllamaRuntime, using runtime defaults"
+                        );
+                    }
                 }
 
                 (Arc::new(runtime) as Arc<dyn LlmRuntime>, model)
@@ -1126,21 +1168,59 @@ impl Agent {
                     crate::llm_backends::backends::llamacpp::LlamaCppRuntime::new(config)
                         .map_err(|e| NeoMindError::llm(e.to_string()))?;
 
-                // Set capabilities override if provided
-                if let Some(caps) = capabilities {
-                    tracing::debug!(
-                        multimodal = %caps.multimodal,
-                        thinking_display = %caps.thinking_display,
-                        function_calling = %caps.function_calling,
-                        max_context = %caps.max_context.unwrap_or(128000),
-                        "Applying capabilities override to LlamaCppRuntime"
-                    );
-                    runtime = runtime.with_capabilities_override(
-                        caps.multimodal,
-                        caps.thinking_display,
-                        caps.function_calling,
-                        caps.max_context.unwrap_or(128000),
-                    );
+                // [fresh runtime probe] Same rationale as the Ollama arm: the
+                // direct chat runtime is cached for the process lifetime, so
+                // bake the REAL window in at creation instead of trusting the
+                // stored registry default (128000). /props is authoritative
+                // for a local llama-server; only a user override wins over it.
+                // Same authority split as the Ollama arm: probe wins for
+                // max_context/tools (no override channel); multimodal/thinking
+                // keep stored when present (stored may encode a user override
+                // invisible at this layer) — gotcha #3.
+                let detected = runtime.detect_capabilities().await;
+                match (&detected, &capabilities) {
+                    (Some(d), stored) => {
+                        let (multimodal, thinking) = match stored {
+                            Some(c) => (c.multimodal, c.thinking_display),
+                            None => (d.supports_multimodal, d.supports_thinking),
+                        };
+                        tracing::info!(
+                            multimodal,
+                            thinking,
+                            tools = d.supports_tools,
+                            max_ctx = d.max_context,
+                            "LlamaCppRuntime capabilities resolved from /props"
+                        );
+                        runtime = runtime.with_capabilities_override(
+                            multimodal,
+                            thinking,
+                            d.supports_tools,
+                            d.max_context,
+                        );
+                    }
+                    (None, Some(caps)) => {
+                        // Probe failed — stored values + conservative context
+                        // fallback (over-claiming = overflow-then-retry churn;
+                        // under-claiming = harmless trimming).
+                        tracing::debug!(
+                            multimodal = %caps.multimodal,
+                            thinking_display = %caps.thinking_display,
+                            function_calling = %caps.function_calling,
+                            max_context = %caps.max_context.unwrap_or(8192),
+                            "Applying capabilities override to LlamaCppRuntime (probe failed)"
+                        );
+                        runtime = runtime.with_capabilities_override(
+                            caps.multimodal,
+                            caps.thinking_display,
+                            caps.function_calling,
+                            caps.max_context.unwrap_or(8192),
+                        );
+                    }
+                    (None, None) => {
+                        tracing::debug!(
+                            "No capabilities and no probe for LlamaCppRuntime, using runtime defaults"
+                        );
+                    }
                 }
 
                 (Arc::new(runtime) as Arc<dyn LlmRuntime>, model)
