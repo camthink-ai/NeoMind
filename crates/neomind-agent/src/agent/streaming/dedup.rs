@@ -62,6 +62,89 @@ pub(crate) fn make_result_dedup_key(name: &str, result: &str) -> String {
     format!("{}|{:016x}", name, hash)
 }
 
+/// Normalize a shell command to a similarity key: for `neomind <domain>
+/// <action> …` that is `<domain> <action>` (binary name skipped); for any
+/// other command the first two whitespace tokens. Arguments are ignored —
+/// the loops we want to catch retry the same operation with argument
+/// variations (`agent create --name probe-two`, `--name probe-two --watch …`).
+pub(crate) fn command_similarity_key(command: &str) -> String {
+    let mut tokens: Vec<String> = command.split_whitespace().map(str::to_string).collect();
+    // Unwrap `sh -c '…'` / `/bin/bash -c "…"` so the key reflects the INNER
+    // command — otherwise every wrapped host call collapses to the same key
+    // and a legitimate diagnostic sequence (ping, curl, ps, df) would trip
+    // the streak detector.
+    if tokens.len() >= 3
+        && (tokens[0].ends_with("sh") || tokens[0].ends_with("bash"))
+        && tokens[1] == "-c"
+    {
+        let inner: String = tokens[2..].join(" ");
+        let trimmed = inner.trim_matches(|c| c == '\'' || c == '"');
+        tokens = trimmed.split_whitespace().map(str::to_string).collect();
+    }
+    let start = tokens.iter().position(|t| !t.contains('=')).unwrap_or(0);
+    let tokens = &tokens[start..];
+    // For `neomind` commands the identity is <domain> <action> — skip the
+    // binary name; the action is the token right after the domain (if that
+    // token is a flag there is no action: `message --recipient X` keys as
+    // just "message"). For host commands flags ARE part of the operation
+    // (`curl -s` vs `curl -X POST`), so take tokens verbatim.
+    if tokens
+        .first()
+        .is_some_and(|t| t.ends_with("neomind") || t == "neomind")
+    {
+        let rest = &tokens[1..];
+        let domain = rest
+            .first()
+            .map(|t| t.to_ascii_lowercase())
+            .unwrap_or_default();
+        let action = rest
+            .get(1)
+            .filter(|t| !t.starts_with('-'))
+            .map(|t| t.to_ascii_lowercase());
+        match action {
+            Some(a) if !domain.is_empty() => format!("{domain} {a}"),
+            _ => domain,
+        }
+    } else {
+        tokens
+            .iter()
+            .take(2)
+            .map(|t| t.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Detect a trailing run of similar shell commands. Returns
+/// `Some((key, streak))` when the last `LOOP_STREAK_THRESHOLD` executed
+/// commands share the same similarity key — the signature of an agent
+/// circling without converging (observed in the 2026-08-17 eval: 9–15
+/// consecutive rounds of `agent create …` variants at low temperature).
+pub(crate) const LOOP_STREAK_THRESHOLD: usize = 4;
+
+pub(crate) fn similar_command_streak(
+    commands: &std::collections::VecDeque<String>,
+) -> Option<(String, usize)> {
+    if commands.len() < LOOP_STREAK_THRESHOLD {
+        return None;
+    }
+    let last_key = command_similarity_key(commands.back()?);
+    if last_key.is_empty() {
+        return None;
+    }
+    let streak = commands
+        .iter()
+        .rev()
+        .map(|c| command_similarity_key(c))
+        .take_while(|k| k == &last_key)
+        .count();
+    if streak >= LOOP_STREAK_THRESHOLD {
+        Some((last_key, streak))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,5 +193,54 @@ mod tests {
     fn test_dedup_key_fallback_for_non_json() {
         let key = make_result_dedup_key("shell", "not json at all");
         assert!(key.starts_with("shell|"));
+    }
+
+    #[test]
+    fn test_similarity_key_neomind_domain_action() {
+        assert_eq!(
+            command_similarity_key("neomind agent create --name probe-two --watch sensor-001"),
+            "agent create"
+        );
+        assert_eq!(
+            command_similarity_key("neomind message --recipient demo-agent --content 'x'"),
+            "message"
+        );
+        assert_eq!(
+            command_similarity_key("/bin/sh -c 'curl -s localhost:9375/api/health'"),
+            "curl -s"
+        );
+    }
+
+    #[test]
+    fn test_streak_detects_arg_variation_loop() {
+        use std::collections::VecDeque;
+        let mut cmds: VecDeque<String> = VecDeque::new();
+        cmds.push_back("neomind device list".into());
+        cmds.push_back("neomind agent create --name probe-two".into());
+        cmds.push_back("neomind agent create --name probe-two --watch sensor-001".into());
+        cmds.push_back("neomind agent create --name probe-two --prompt \"Watch\"".into());
+        // 3 similar trailing commands < threshold 4 → no streak yet
+        assert!(similar_command_streak(&cmds).is_none());
+        cmds.push_back("neomind agent create --name x --schedule-type event".into());
+        let (key, streak) = similar_command_streak(&cmds).expect("streak of 4");
+        assert_eq!(key, "agent create");
+        assert_eq!(streak, 4);
+    }
+
+    #[test]
+    fn test_streak_broken_by_different_command() {
+        use std::collections::VecDeque;
+        let mut cmds: VecDeque<String> = VecDeque::new();
+        for c in [
+            "neomind agent create --name a",
+            "neomind agent create --name b",
+            "neomind rule list",
+        ] {
+            cmds.push_back(c.into());
+        }
+        cmds.push_back("neomind agent create --name c".into());
+        cmds.push_back("neomind agent create --name d".into());
+        // trailing streak is only 2 (broken in the middle) → None
+        assert!(similar_command_streak(&cmds).is_none());
     }
 }

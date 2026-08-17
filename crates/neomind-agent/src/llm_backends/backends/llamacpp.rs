@@ -335,19 +335,37 @@ impl LlmRuntime for LlamaCppRuntime {
         let url = format!("{}/v1/chat/completions", self.config.base_url());
 
         // Handle max_tokens: llama.cpp will error if max_tokens exceeds the model's
-        // context window. When the caller sends a sentinel value (usize::MAX), omit
-        // max_tokens entirely and let the server use its own default.
+        // context window. When the caller delegates (sentinel usize::MAX or unset),
+        // apply a bounded generation cap instead of omitting the field — an
+        // omitted max_tokens means UNLIMITED on llama-server, and a runaway
+        // generation (observed: 22177 tokens / 7.4 min on prod T4) keeps the
+        // slot busy even after the client disconnects (llama-server does not
+        // cancel in-flight tasks). 8192 is ~4x a long legitimate answer and
+        // still cuts a runaway short.
+        let delegated_cap = || {
+            let ctx = self.max_context_length() as u32;
+            let cap = 8192u32;
+            if ctx > 0 {
+                Some(cap.min(ctx))
+            } else {
+                Some(cap)
+            }
+        };
         let max_tokens = match input.params.max_tokens {
-            Some(v) if v >= usize::MAX - 1000 => None, // sentinel → omit
+            Some(v) if v >= usize::MAX - 1000 => delegated_cap(), // delegated → bounded default
             Some(v) => {
                 let cap = self.max_context_length() as u32;
-                if cap > 0 && (v as u32) > cap {
-                    None // would exceed context → omit
+                if cap > 0 {
+                    if (v as u32) > cap {
+                        delegated_cap()
+                    } else {
+                        Some(v as u32)
+                    }
                 } else {
-                    Some((v as u32).min(cap))
+                    Some(v as u32) // context unknown → trust the caller's explicit value
                 }
             }
-            None => None,
+            None => delegated_cap(),
         };
 
         let mut req_body = serde_json::json!({
@@ -538,19 +556,34 @@ impl LlmRuntime for LlamaCppRuntime {
         let cache_prompt = self.config.cache_prompt;
 
         // Handle max_tokens: llama.cpp will error if max_tokens exceeds the model's
-        // context window. When the caller sends a sentinel value (usize::MAX), omit
-        // max_tokens entirely and let the server use its own default.
+        // context window. When the caller delegates (sentinel usize::MAX or unset),
+        // apply a bounded generation cap instead of omitting the field — omitted
+        // means UNLIMITED on llama-server and a runaway generation (observed:
+        // 22177 tokens / 7.4 min on prod T4) blocks a slot even after the client
+        // disconnects. See the non-streaming `generate` above for the rationale.
         let max_context = self.max_context_length() as u32;
+        let delegated_cap = || {
+            let cap = 8192u32;
+            if max_context > 0 {
+                Some(cap.min(max_context))
+            } else {
+                Some(cap)
+            }
+        };
         let max_tokens = match input.params.max_tokens {
-            Some(v) if v >= usize::MAX - 1000 => None, // sentinel → omit
+            Some(v) if v >= usize::MAX - 1000 => delegated_cap(), // delegated → bounded default
             Some(v) => {
-                if max_context > 0 && (v as u32) > max_context {
-                    None // would exceed context → omit
+                if max_context > 0 {
+                    if (v as u32) > max_context {
+                        delegated_cap()
+                    } else {
+                        Some(v as u32)
+                    }
                 } else {
-                    Some((v as u32).min(max_context))
+                    Some(v as u32) // context unknown → trust the caller's explicit value
                 }
             }
-            None => None,
+            None => delegated_cap(),
         };
 
         let api_messages = self.messages_to_api(&input.messages);

@@ -1041,25 +1041,35 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        // Slim description (default, matches slim system prompt): keeps Critical
-        // Syntax Rules (hard constraints) + CLI concept, drops the defensive
-        // knowledge (easy-to-miss list, GUI guard) — those are discoverable via
-        // `neomind <domain> <action> --help` or the skill tool on demand.
-        // Slim description (canonical): keeps Critical Syntax Rules (hard
-        // constraints) + CLI concept, drops the defensive knowledge
-        // (easy-to-miss list, GUI guard) — those are discoverable via
-        // `neomind <domain> <action> --help` or the skill tool on demand.
-        static SLIM: &str = r#"Execute shell commands on the host. This is your PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI (14 domains: device, dashboard, rule, agent, extension, widget, transform, llm, message, connector, push, settings, system, api-key). All commands return JSON by default — do NOT pass --json.
+        // Canonical description: Critical Syntax Rules (hard constraints) +
+        // a per-domain subcommand INDEX CARD. The index gives recall for
+        // low-frequency subcommands (the 2026-08-17 eval showed 27/46
+        // failures were "detoured via a wrong-but-succeeding command" —
+        // the failure-path help injection never fired because the detour
+        // succeeded). Index stays ~40 lines so it does not re-trigger the
+        // ≤3B description-avoidance the 6510-char wall caused. Defensive
+        // knowledge (easy-to-miss list, GUI guard) stays out — discoverable
+        // via `neomind <domain> <action> --help` or the skill tool.
+        static SLIM: &str = r#"Execute shell commands on the host. PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI. Commands return JSON — do NOT pass --json.
 
-Quick reference (run `neomind <domain> --help` or load the `skill` guide for full syntax):
-- Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
-- Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
-- Control / enable / activate are explicit writes: `device control <ID> <CMD>`, `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
-- History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
-- Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
+Quick reference — domain index of exact subcommands (ID is positional, never `--id`; `neomind <domain> --help` for flags, `skill` guide for full syntax):
+- device: list get create update delete history control <ID> <CMD> types write-metric webhook-url drafts
+- agent: list get create update delete invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talk to agents)
+- rule: list get create update delete enable disable test history
+- dashboard: list get create update delete add-components remove-components share
+- connector: list get create update delete enable disable test subscribe (external I/O: MQTT/webhook/HTTP — NOT devices)
+- extension: list get install uninstall status logs config reload create build market-list market-install validate
+- transform: list get create update delete enable disable metrics test-code data-sources
+- widget: list get create install uninstall bundle market-list market-install
+- message: list get send read channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (platform alerts — NOT agent chat; use agent send-message)
+- push: list get create update delete enable disable test logs stats
+- llm: list get models create update delete activate test
+- settings: timezone set-timezone timezones retention set-retention cleanup
+- system: info — api-key: create list delete
 
 Critical rules:
-- NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
+- NEVER guess metric or subcommand names — the index above is exhaustive; anything not listed does not exist. Discover entities via `get`/`list` first, then use exact names/IDs.
+- Write commands take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
 - Read before write: `get <ID>` before create/update/control/delete.
 - COMPLETE THE FULL FLOW: a multi-step request ("create X then enable it", "deploy then verify") requires EVERY step — do not stop after the first action.
   Worked example — "create an MQTT connector named c1 to 192.168.1.100, enable and test it" is ONE request = THREE commands:

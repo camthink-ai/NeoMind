@@ -1055,12 +1055,46 @@ pub async fn process_stream_events_with_safeguards(
                     }
                 }
                 // Track actual shell commands for list-only dead end detection
+                let shell_ran_this_round = tool_calls_to_execute
+                    .iter()
+                    .any(|tc| tc.name == "shell");
                 for tc in &tool_calls_to_execute {
                     if tc.name == "shell" {
                         if let Some(cmd) = tc.arguments.get("command").and_then(|v| v.as_str()) {
                             recently_executed_commands.push_back(cmd.to_string());
                             if recently_executed_commands.len() > 20 {
                                 recently_executed_commands.pop_front();
+                            }
+                        }
+                    }
+                }
+
+                // [loop-steering hint] Non-aborting nudge when the model keeps
+                // executing similar shell commands without converging (the
+                // 2026-08-17 full eval: 19/154 cases burned their whole budget
+                // circling at 9–15 consecutive similar commands). The hint is
+                // appended to this round's shell tool result, so the LLM sees it
+                // with the next prompt. Deliberately a HINT, not a stop — chat
+                // never force-aborts (by-design; StuckDetector is for scheduled
+                // agents only). Fires at streak 4 and every +4 after that.
+                if shell_ran_this_round {
+                    if let Some((key, streak)) =
+                        super::dedup::similar_command_streak(&recently_executed_commands)
+                    {
+                        if streak % super::dedup::LOOP_STREAK_THRESHOLD == 0 {
+                            let hint = format!(
+                                "\n\nLOOP HINT: you have now run {streak} similar \"{key}\" commands in a row without completing the goal. Change your approach: pick a different subcommand from the shell tool's Domain index, run `neomind <domain> --help` to see what exists, or re-read the original request and check each step's actual result before continuing."
+                            );
+                            if let Some(last_shell) = tool_call_results
+                                .iter_mut()
+                                .rev()
+                                .find(|(n, _)| n == "shell")
+                            {
+                                last_shell.1.push_str(&hint);
+                                tracing::info!(
+                                    "[streaming] loop-steering hint injected (streak {} of '{}')",
+                                    streak, key
+                                );
                             }
                         }
                     }
