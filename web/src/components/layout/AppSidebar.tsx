@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { useLocation, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
 import { Settings, Sun, Languages, Info, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -27,6 +27,7 @@ import { useStore } from "@/store"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { BrandLogo } from "@/components/shared/BrandName"
 import { useTheme } from "@/components/ui/theme"
 import {
   Tooltip,
@@ -214,6 +215,13 @@ export function AppSidebar() {
         }}
         onMouseDown={handleDragMouseDown}
       >
+        {/* Brand mark — top of the rail, below the traffic-light strip */}
+        <div className="flex w-full items-center justify-center pt-2 pb-1">
+          <Link to="/chat" aria-label="NeoMind" className="flex items-center justify-center">
+            <BrandLogo className="h-7 w-7" />
+          </Link>
+        </div>
+
         {/* Nav — icon rail, tooltips carry the names */}
         <nav className="flex flex-col items-center gap-1 pt-1 pb-2">
           {navItems.map(renderItem)}

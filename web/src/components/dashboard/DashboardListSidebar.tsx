@@ -254,11 +254,13 @@ function DashboardSidebarContent({
                   key={dashboard.id}
                   onClick={() => !isEditing && handleSwitch(dashboard.id)}
                   className={cn(
-                    "group relative flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all",
+                    // White-card list on the gray rail — same treatment as
+                    // the session list (selected = bordered white card)
+                    "group relative flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-all",
                     isActive
-                      ? "bg-muted"
-                      : "hover:bg-muted-50",
-                    isEditing && "bg-muted"
+                      ? "bg-background border-border shadow-md"
+                      : "border-transparent hover:bg-background hover:border-border hover:shadow-sm",
+                    isEditing && "bg-background border-border shadow-md"
                   )}
                 >
                   {isEditing ? (
