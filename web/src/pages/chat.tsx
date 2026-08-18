@@ -21,7 +21,6 @@ import { CopyMessageButton } from "@/components/chat/CopyMessageButton"
 import { ThinkingBlock } from "@/components/chat/ThinkingBlock"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
-import { PageHeader } from "@/components/layout/PageHeader"
 import { ToolProcessBlock, isThinkingDuplicate } from "@/components/chat/ToolCallVisualization"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ws, type ConnectionState } from "@/lib/websocket"
@@ -1016,16 +1015,6 @@ export function ChatPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Desktop title row — same as every other page: it absorbs the
-            floating global controls (theme/language/alerts) so they never
-            float over the message stream. */}
-        {isDesktop && (
-          <div className="shrink-0 bg-background">
-            <div className="w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3">
-              <PageHeader title={t('common:nav.dashboard')} />
-            </div>
-          </div>
-        )}
         {/* Mobile per-page header: hamburger (nav drawer) + sessions toggle + new session */}
         <MobilePageHeader
           title={(() => {
@@ -1075,7 +1064,7 @@ export function ChatPage() {
         ) : isWelcomeMode ? (
           /* Welcome Area - shown on /chat (no sessionId), scrollable on mobile */
           <div
-            className="touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 pb-6"
+            className={cn("touch-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 py-4 sm:py-6 pb-6", isDesktop && "pt-14")}
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
               if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
@@ -1086,7 +1075,7 @@ export function ChatPage() {
           </div>
         ) : isLoadingSession ? (
           /* Loading State - shown when switching sessions, with skeleton messages */
-          <div className="flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4">
+          <div className={cn("flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4", isDesktop && "pt-12")}>
             <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
               {/* Skeleton message - user */}
               <div className="flex gap-2 sm:gap-3 justify-end animate-pulse">
@@ -1126,7 +1115,7 @@ export function ChatPage() {
           <div
             ref={scrollContainerRef}
             onScroll={handleScroll}
-            className="touch-scroll relative flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4 pb-4"
+            className={cn("touch-scroll relative flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4 pb-4", isDesktop && "pt-12")}
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
               if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
