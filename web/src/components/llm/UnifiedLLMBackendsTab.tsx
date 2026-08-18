@@ -54,7 +54,7 @@ const LLM_PROVIDER_CONFIG: Record<string, {
   },
   anthropic: {
     icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-accent-orange-light text-accent-orange',
+    iconBg: 'bg-muted text-foreground',
   },
   google: {
     icon: <Server className="h-6 w-6" />,

@@ -415,9 +415,9 @@ export function DashboardListSidebar({
     return (
       <div
         className={cn(
-          // bg-popover: opaque, unified with SessionSidebar and all other
-          // popups/drawers.
-          "h-full w-64 bg-popover border-r border-border flex flex-col",
+          // Gray rail tone (same as the AppSidebar / SessionSidebar) —
+          // separates from the white content canvas by contrast, no border
+          "h-full w-64 bg-[var(--sidebar-bg)] flex flex-col",
           className
         )}
       >

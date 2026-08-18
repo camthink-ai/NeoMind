@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Style refresh toward the reference design language
-- **White canvas + gray sidebar rail** (reference palette): content sits directly on white and separates via subtle borders; the sidebar (`--sidebar-bg`, ~#F8F9FA light / below-canvas dark) is the one gray chrome layer, borderless — color contrast does the separating.
-- **Active nav row is neutral**: `bg-muted` + foreground text with only the icon in brand orange — the accent is restrained (links/icons), never a solid fill. Replaces the short-lived solid orange pill.
+- **White canvas + gray sidebar rail** (reference palette): content sits directly on white and separates via subtle borders; the sidebar (`--sidebar-bg`, ~#F8F9FA light / below-canvas dark) is the gray chrome layer, borderless — color contrast does the separating.
+- **Fewer lines**: page sidebars (chat sessions, dashboard list) join the same gray rail tone and drop their border-r; the app sidebar footer drops its border-t. Chrome layers now have zero decorative lines.
+- **Mono accent**: brand orange is OUT of UI accents — active nav rows and icons, mobile drawer, chat bot avatars/send button, FAB (now an ink circle), LLM tab tiles and About tiles are all neutral black/white. Orange survives only in the logo mark, semantic/data colors (charts, intent classification), and the login/setup brand washes.
 - **Radius ladder tightened**: base `--radius` 12px → 8px (lg 8 / md 6 / sm 4 / xl 12 / 2xl 16) — a denser, more professional feel across cards, buttons and inputs.
 
 ### Desktop navigation: top menu → sidebar

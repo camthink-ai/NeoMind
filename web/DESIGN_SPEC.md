@@ -1615,7 +1615,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 - PRIMARY group: Chat `/chat`, Agents `/agents`, Devices `/devices`, Visual Dashboard `/visual-dashboard`
 - SYSTEM group (labelled `navShort.system`): Automation, Data Explorer, Messages, Extensions
 - Footer (bottom-left): **user avatar** whose upward dropdown holds theme / language / settings / about / logout (settings has no standalone entry — the dialog opens from the avatar menu)
-- Active state: **neutral row** — `bg-muted text-foreground` with the icon in `text-brand` (reference palette: accent is restrained; never a solid accent fill). The sidebar is the `--sidebar-bg` rail (light: ~#F8F9FA on a white canvas; dark: below-canvas dark), separated from content by **color contrast, no border** — the TopBar and sidebar carry no decorative borders either
+- Active state: **neutral row** — `bg-muted text-foreground`, icon inherits foreground (mono accent language: the UI carries NO brand color; orange survives only in the logo mark, semantic/data colors, and the login/setup brand washes). The sidebar is the `--sidebar-bg` rail (light: ~#F8F9FA on a white canvas; dark: below-canvas dark), separated from content by **color contrast, no border** — page sidebars (sessions/dashboard list) share the same rail tone and carry no border-r; the sidebar footer carries no border-t either
 
 ### Collapse behavior
 

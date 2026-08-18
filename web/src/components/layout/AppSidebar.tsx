@@ -121,9 +121,8 @@ export function AppSidebar() {
         aria-current={isActive ? "page" : undefined}
         onClick={() => handleNavigate(item.path)}
       >
-        {/* Accent stays restrained (reference palette): neutral active row,
-            brand color only tints the active icon */}
-        <Icon className={cn("h-5 w-5 shrink-0", isActive && "text-brand")} />
+        {/* Mono accent language: neutral active row, no brand tint */}
+        <Icon className="h-5 w-5 shrink-0" />
         {!collapsed && <span className="truncate">{label}</span>}
       </Button>
     )
@@ -299,11 +298,11 @@ export function AppSidebar() {
 
         <div className="flex-1" />
 
-        {/* Footer — user avatar (bottom-left). Settings lives inside the
-            avatar menu; no standalone entry. */}
+        {/* Footer — user avatar (bottom-left). No divider: spacing separates
+            (fewer-lines direction). */}
         <div
           className={cn(
-            "flex flex-col gap-1 border-t border-border p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
+            "flex flex-col gap-1 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
             collapsed && "px-2.5"
           )}
         >

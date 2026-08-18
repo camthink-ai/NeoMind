@@ -558,9 +558,9 @@ export function SessionSidebar({
       <>
         <div
           className={cn(
-            // bg-popover (opaque, semantic "floating layer" token) unifies
-            // the persistent chat list with all other side drawers / popups.
-            "h-full bg-popover border-r border-border flex flex-col transition-[width] duration-200 overflow-hidden",
+            // Gray rail tone (same as the AppSidebar) — separates from the
+            // white content canvas by color contrast, no border
+            "h-full bg-[var(--sidebar-bg)] flex flex-col transition-[width] duration-200 overflow-hidden",
             collapsed ? "w-12" : "w-64"
           )}
         >

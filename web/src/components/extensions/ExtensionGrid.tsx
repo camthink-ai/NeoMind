@@ -203,10 +203,10 @@ export function ExtensionGrid({
             {marqueeItems.map((ext, i) => (
               <div
                 key={`${ext.name}-${i}`}
-                className="flex-shrink-0 w-56 mx-2 rounded-xl border bg-card backdrop-blur-sm p-3.5 hover:border-brand hover:bg-background transition-colors"
+                className="flex-shrink-0 w-56 mx-2 rounded-xl border bg-card backdrop-blur-sm p-3.5 hover:border-foreground/30 hover:bg-background transition-colors"
               >
                 <div className="flex items-start gap-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-bg text-brand">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-foreground">
                     {ext.icon}
                   </div>
                   <div className="min-w-0">

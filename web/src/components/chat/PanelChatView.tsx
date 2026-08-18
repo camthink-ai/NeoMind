@@ -504,8 +504,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             </div>
           ) : filteredMessages.length === 0 && !streamState.isStreaming ? (
             <div className="flex flex-col items-center justify-center h-full gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-accent-orange-bg flex items-center justify-center">
-                <Bot className="h-6 w-6 text-accent-orange" />
+              <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center">
+                <Bot className="h-6 w-6 text-foreground" />
               </div>
               <p className="text-sm text-muted-foreground text-center">{t("input.startNewConversation")}</p>
             </div>
@@ -554,7 +554,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           <button
             onClick={handleSend}
             disabled={!input.trim() || streamState.isStreaming}
-            className="h-[44px] w-[44px] rounded-2xl flex-shrink-0 bg-accent-orange hover:opacity-90 text-white flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-[44px] w-[44px] rounded-2xl flex-shrink-0 bg-primary hover:bg-primary-hover text-primary-foreground flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="h-5 w-5" />
           </button>

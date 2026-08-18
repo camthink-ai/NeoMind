@@ -199,7 +199,7 @@ function getRoundColor(round: number): string {
     "bg-accent-emerald-light text-accent-emerald",
     "bg-warning-light text-warning",
     "bg-accent-purple-light text-accent-purple",
-    "bg-accent-orange-light text-accent-orange",
+    "bg-muted text-foreground",
   ]
   return colors[(round - 1) % colors.length]
 }

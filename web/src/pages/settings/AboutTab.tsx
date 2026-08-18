@@ -331,7 +331,7 @@ export function AboutTab() {
             build
           </div>
           <div className="flex items-center gap-2">
-            <div className="font-mono text-2xl md:text-3xl font-semibold text-brand leading-none">
+            <div className="font-mono text-2xl md:text-3xl font-semibold text-foreground leading-none">
               [{heroVersion}]
             </div>
             {isTauriEnv() && (
@@ -494,7 +494,7 @@ export function AboutTab() {
                       className="rounded-lg border bg-muted-30 p-3 flex items-center justify-between gap-3"
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-brand-bg text-brand">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
                           <Monitor className="h-4 w-4" />
                         </div>
                         <div className="min-w-0">
