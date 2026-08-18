@@ -288,27 +288,18 @@ html {
 
 @layer base {
   :root {
-    /* Light gray workspace canvas. Classic layered pattern: gray page + white
-       raised surfaces (cards, tab strips, table headers) float on it for
-       strong hierarchy. 0.97 (~zinc-100) gives cards a clearly readable step
-       up without going muddy. --muted stays a touch darker for true insets
-       (code blocks) inside those white surfaces. */
-    --background: oklch(0.97 0 0);
+    /* White canvas (reference palette): content sits directly on white and
+       separates via subtle borders; the sidebar is the gray layer, not the
+       page. Cards/inputs share the white canvas. */
+    --background: oklch(1 0 0);
     /* Solid white for stable chrome layers (TopNav, tab strips, toolbars,
        page headers). These anchor the layout as a distinct elevated layer
        above the gray content canvas. In dark mode this token falls back to
        --card so the same class works in both. */
     --chrome: oklch(1 0 0);
-    /* Sidebar rail — a shade below the canvas, separating from content by
-       COLOR CONTRAST instead of a border (reference design language: no
-       decorative borders between chrome layers). */
-    --sidebar-bg: oklch(0.955 0 0);
-    /* Solid active-nav pill (reference: solid accent row for the active
-       item). Light uses the deeper brand tone for contrast against white
-       text; dark (below) uses the brighter brand against dark text. */
-    --nav-active-bg: oklch(0.56 0.21 37);
-    --nav-active-hover-bg: oklch(0.50 0.20 37);
-    --nav-active-fg: oklch(1 0 0);
+    /* Sidebar rail — the one gray chrome layer (~#F8F9FA), separating from
+       the white canvas by color contrast; no border (reference palette). */
+    --sidebar-bg: oklch(0.97 0 0);
     --foreground: oklch(0.21 0.01 264);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.21 0.01 264);
@@ -534,12 +525,6 @@ html {
     /* Sidebar rail — BELOW the canvas lightness (reference: darker rail,
        color-contrast separation, no border). */
     --sidebar-bg: oklch(0.115 0.01 270);
-    /* Solid active-nav pill — brighter brand against dark text (inverse of
-       light mode's deeper-orange/white; each theme uses the direction that
-       keeps text contrast). */
-    --nav-active-bg: oklch(0.70 0.19 40);
-    --nav-active-hover-bg: oklch(0.76 0.185 40);
-    --nav-active-fg: oklch(0.13 0.008 270);
     --card-foreground: oklch(0.95 0.006 270);
     /* Popovers/menus float above cards — one step up, just under chrome. */
     --popover: oklch(0.19 0.01 270);

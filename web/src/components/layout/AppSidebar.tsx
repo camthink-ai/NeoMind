@@ -110,18 +110,20 @@ export function AppSidebar() {
         variant="ghost"
         aria-label={label}
         className={cn(
-          // w-full so every item — and the active pill — spans the sidebar
+          // w-full so every item — and the active row — spans the sidebar
           // uniformly instead of sizing to its label
           "h-10 w-full gap-3 px-3 justify-start font-normal no-press-scale",
           collapsed && "w-10 min-w-0 px-0 justify-center",
           isActive
-            ? "bg-[var(--nav-active-bg)] text-[var(--nav-active-fg)] font-medium hover:bg-[var(--nav-active-hover-bg)]"
+            ? "bg-muted text-foreground font-medium hover:bg-muted"
             : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
         )}
         aria-current={isActive ? "page" : undefined}
         onClick={() => handleNavigate(item.path)}
       >
-        <Icon className="h-5 w-5 shrink-0" />
+        {/* Accent stays restrained (reference palette): neutral active row,
+            brand color only tints the active icon */}
+        <Icon className={cn("h-5 w-5 shrink-0", isActive && "text-brand")} />
         {!collapsed && <span className="truncate">{label}</span>}
       </Button>
     )
