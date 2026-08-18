@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
 import { Settings, Sun, Languages, Info, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -28,7 +28,6 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useTheme } from "@/components/ui/theme"
-import { BrandLogo } from "@/components/shared/BrandName"
 import {
   Tooltip,
   TooltipContent,
@@ -206,25 +205,17 @@ export function AppSidebar() {
     <TooltipProvider delayDuration={500}>
       <aside
         className="flex shrink-0 flex-col items-center bg-[var(--sidebar-bg)]"
-        style={{ width: SIDEBAR_WIDTH_PX }}
-        aria-label={t("nav.primary")}
+        style={{
+          width: SIDEBAR_WIDTH_PX,
+          // Top strip: reserves the macOS traffic-light inset + safe area
+          // (no brand mark anymore — the nav starts right below it) and
+          // serves as the window drag region
+          paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
+        }}
+        onMouseDown={handleDragMouseDown}
       >
-        {/* Header — brand; reserves the macOS traffic-light strip and is the
-            window drag region. */}
-        <div
-          className="flex w-full items-center justify-center h-12"
-          style={{
-            paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
-          }}
-          onMouseDown={handleDragMouseDown}
-        >
-          <Link to="/chat" aria-label="NeoMind" className="flex items-center justify-center">
-            <BrandLogo className="h-7 w-7" />
-          </Link>
-        </div>
-
         {/* Nav — icon rail, tooltips carry the names */}
-        <nav className="flex flex-col items-center gap-1 pt-3 pb-2">
+        <nav className="flex flex-col items-center gap-1 pt-1 pb-2">
           {navItems.map(renderItem)}
         </nav>
 
