@@ -679,7 +679,7 @@ export function ChannelEditorDialog({
                       )}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
-                      <span className="text-[11px] font-medium leading-none truncate w-full text-center">
+                      <span className="text-mini font-medium leading-none truncate w-full text-center">
                         {t(ct.labelKey)}
                       </span>
                     </button>

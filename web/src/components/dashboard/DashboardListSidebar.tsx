@@ -196,7 +196,7 @@ function DashboardSidebarContent({
                 }
               }}
               placeholder={t('sidebar.namePlaceholder')}
-              className="h-8 flex-1 rounded-lg placeholder:text-[11px]"
+              className="h-8 flex-1 rounded-lg placeholder:text-mini"
               autoFocus
             />
             <button

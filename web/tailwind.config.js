@@ -11,6 +11,18 @@ export default {
         sans: ['"Plus Jakarta Sans"', '"Noto Sans SC"', 'system-ui', '-apple-system', 'sans-serif'],
         mono: ['"JetBrains Mono"', '"Fira Code"', 'ui-monospace', 'SFMono-Regular', '"SF Mono"', 'Menlo', 'Consolas', 'monospace'],
       },
+      // Semantic type scale below text-xs (12px) — the app's dense UI sizes.
+      // Single source for both the text-* utilities and the JS constants in
+      // design-system/tokens/typography.ts. Adjust sizes HERE, never by
+      // reintroducing text-[Npx] literals (DESIGN_SPEC §2).
+      fontSize: {
+        micro: "9px",   // extreme micro labels, data type labels
+        nano: "10px",   // timestamps, tiny metadata, compact badges
+        mini: "11px",   // badge text, secondary labels, tab labels
+        code: "12px",   // inline code, code snippets
+        body: "13px",   // chat messages, tool call text, markdown body
+        heading: "15px", // markdown headings
+      },
       colors: {
         border: "var(--border)",
         input: "var(--input)",
@@ -64,7 +76,6 @@ export default {
         },
         error: {
           DEFAULT: "var(--color-error)",
-          foreground: "var(--error-foreground)",
           light: "var(--color-error-bg)",
         },
         info: {

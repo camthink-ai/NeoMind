@@ -579,7 +579,7 @@ function LayerItemComponent({
                       }}
                     />
                     {(item.deviceName || item.deviceId) && (
-                      <span className="absolute bottom-0 inset-x-0 px-1.5 py-0.5 text-[10px] text-white bg-overlay-medium truncate">
+                      <span className="absolute bottom-0 inset-x-0 px-1.5 py-0.5 text-nano text-white bg-overlay-medium truncate">
                         {item.deviceName || item.deviceId}
                       </span>
                     )}

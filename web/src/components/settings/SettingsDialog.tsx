@@ -163,7 +163,7 @@ export function SettingsDialog() {
                 )}
               >
                 <span className="[&>svg]:h-5 [&>svg]:w-5">{s.icon}</span>
-                <span className="text-[10px] font-medium leading-tight truncate w-full text-center">
+                <span className="text-nano font-medium leading-tight truncate w-full text-center">
                   {s.label}
                 </span>
               </button>

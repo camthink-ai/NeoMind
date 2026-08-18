@@ -1112,7 +1112,7 @@ export function ExtensionDetailsDialog({
             )}
           >
             <s.icon className="h-4 w-4 shrink-0" />
-            <span className="text-[11px] font-medium leading-none truncate w-full text-center">
+            <span className="text-mini font-medium leading-none truncate w-full text-center">
               {s.label}
             </span>
           </button>
@@ -1185,7 +1185,7 @@ export function ExtensionDetailsDialog({
               {t("common:cancel", { defaultValue: "Cancel" })}
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-error-foreground hover:bg-destructive-hover"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive-hover"
               onClick={confirmDisable}
             >
               {t("extensions:tools.confirmDisableAction", {

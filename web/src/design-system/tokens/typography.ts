@@ -9,22 +9,22 @@
  */
 
 // Micro: extreme micro labels, data type labels, execution step indicators
-export const textMicro = 'text-[9px]'
+export const textMicro = 'text-micro'
 
 // Nano: timestamps, tiny metadata, compact badges
-export const textNano = 'text-[10px]'
+export const textNano = 'text-nano'
 
 // Mini: badge text, secondary labels, tab labels
-export const textMini = 'text-[11px]'
+export const textMini = 'text-mini'
 
 // Body: chat messages, tool call text, markdown body
-export const textBody = 'text-[13px]'
+export const textBody = 'text-body'
 
 // Code inline: inline code in markdown, code snippets
-export const textCode = 'text-[12px]'
+export const textCode = 'text-code'
 
 // Heading: markdown headings
-export const textHeading = 'text-[15px]'
+export const textHeading = 'text-heading'
 
 // Font family
 export const fontMonoClass = 'font-mono'
@@ -37,7 +37,7 @@ export const fontMonoStack =
  * Badge text size presets
  */
 export const badgeSize = {
-  micro: 'text-[9px]',   // data type badges in execution details
-  small: 'text-[10px]',  // status badges, data type badges
-  default: 'text-[11px]', // standard badges
+  micro: 'text-micro',   // data type badges in execution details
+  small: 'text-nano',    // status badges, data type badges
+  default: 'text-mini',  // standard badges
 } as const

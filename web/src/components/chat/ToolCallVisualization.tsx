@@ -153,7 +153,7 @@ export function ToolProcessBlock({
             <Wrench className="h-2.5 w-2.5" />
           )}
         </div>
-        <span className={cn("text-[13px] sm:text-sm", "font-medium text-foreground")}>
+        <span className={cn("text-body sm:text-sm", "font-medium text-foreground")}>
           {isStreaming
             ? `${completedCount}/${toolCalls.length} ${t("toolCall.status.running")}`
             : `${toolCalls.length} ${t("toolCall.title")} · ${steps.length} ${t("toolCall.rounds")}`
@@ -229,7 +229,7 @@ function RoundContent({ content }: { content: string }) {
       </button>
       {isExpanded && (
         <div className="px-3 pb-2">
-          <div className={cn("text-[13px] sm:text-sm", "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
+          <div className={cn("text-body sm:text-sm", "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
             {content}
           </div>
         </div>
@@ -292,7 +292,7 @@ function ToolCallItem({
             <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
           )}
         </div>
-        <span className={cn("text-[13px] sm:text-sm", "truncate text-muted-foreground")}>{getToolDisplayName(toolCall.name, toolCall.arguments)}</span>
+        <span className={cn("text-body sm:text-sm", "truncate text-muted-foreground")}>{getToolDisplayName(toolCall.name, toolCall.arguments)}</span>
         {status === "running" && (
           <span className={cn(textMini, "px-1.5 py-0.5 rounded bg-warning-light text-warning shrink-0")}>
             {statusLabels[status]}

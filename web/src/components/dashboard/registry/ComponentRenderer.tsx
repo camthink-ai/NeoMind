@@ -161,7 +161,7 @@ function ComponentErrorFallback({ className }: ComponentErrorFallbackProps) {
           <AlertTriangle className="h-4 w-4 text-error" />
         </div>
         <p className="text-xs font-medium text-error">Component Error</p>
-        <p className="text-[10px] text-muted-foreground mt-1">Check config or remove this component</p>
+        <p className="text-nano text-muted-foreground mt-1">Check config or remove this component</p>
       </div>
     </Card>
   )

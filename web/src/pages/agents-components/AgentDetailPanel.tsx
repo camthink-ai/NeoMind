@@ -250,7 +250,7 @@ export function AgentDetailPanel({
               value="overview"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-[11px] leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
                   : "h-7 text-sm"
               )}
             >
@@ -261,7 +261,7 @@ export function AgentDetailPanel({
               value="history"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-[11px] leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
                   : "h-7 text-sm"
               )}
             >
@@ -272,7 +272,7 @@ export function AgentDetailPanel({
               value="memory"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-[11px] leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
                   : "h-7 text-sm"
               )}
             >
@@ -283,7 +283,7 @@ export function AgentDetailPanel({
               value="messages"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-[11px] leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
                   : "h-7 text-sm"
               )}
             >

@@ -106,7 +106,7 @@ export const valueCardSize = {
     headerPadding: 'pb-1.5',
     // Text: value is primary, keep it readable
     titleText: 'text-xs',
-    labelText: 'text-[11px]',
+    labelText: 'text-mini',
     valueText: 'text-sm font-semibold',
     // Icons: smaller but still visible
     iconSize: 'w-3.5 h-3.5',
@@ -123,7 +123,7 @@ export const valueCardSize = {
     headerPadding: 'pb-2',
     // Text: stronger value/label contrast for data focus
     titleText: 'text-xs uppercase tracking-wide',
-    labelText: 'text-[11px]',
+    labelText: 'text-mini',
     valueText: 'text-lg font-semibold tracking-tight tabular-nums',
     // Icons: standard size
     iconSize: 'w-4 h-4',
@@ -166,7 +166,7 @@ export const dashboardComponentSize = {
     headerPadding: 'pb-1.5',
     // Text sizes
     titleText: 'text-xs',
-    labelText: 'text-[10px]',
+    labelText: 'text-nano',
     valueText: 'text-xs',
     // Icons
     iconSize: 'w-3 h-3',

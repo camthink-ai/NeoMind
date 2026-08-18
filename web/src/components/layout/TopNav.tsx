@@ -62,7 +62,6 @@ import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
 import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, startTransition } from "react"
 import { setTopNavHeight } from "@/hooks/useVisualViewport"
-import { useIsMobile } from "@/hooks/useMobile"
 
 type PageType = "dashboard" | "visual-dashboard" | "data" | "devices" | "automation" | "agents" | "messages" | "extensions" | "settings"
 
@@ -88,10 +87,7 @@ const navItems: NavItem[] = [
 
 export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   const innerRef = useRef<HTMLDivElement>(null)
-  const tabBarRef = useRef<HTMLDivElement>(null)
-  const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
 
-  const isMobile = useIsMobile()
   // macOS Tauri overlay title bar: reserve a top strip for the traffic lights
   // (their own row, not pushing the logo right); the top bar doubles as the
   // drag region.
@@ -218,20 +214,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
       currentPath.startsWith(`${item.path}/`)
   }, [currentPath])
 
-  // Update underline indicator position and scroll active tab into view
-  useEffect(() => {
-    if (!isMobile || !tabBarRef.current) return
-
-    const activeTab = tabBarRef.current.querySelector('[data-active="true"]') as HTMLElement | null
-    if (activeTab) {
-      setIndicatorStyle({
-        left: activeTab.offsetLeft,
-        width: activeTab.offsetWidth,
-      })
-      activeTab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
-    }
-  }, [currentPath, isMobile])
-
   return (
     <TooltipProvider delayDuration={500}>
       <nav
@@ -269,7 +251,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                       )}
                       onClick={() => startTransition(() => navigate(item.path))}
                     >
-                      <Icon className={cn("h-5 w-5", isActive && "dark:brand-icon-stroke")} />
+                      <Icon className={cn("h-5 w-5", isActive && "brand-icon-stroke")} />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="text-xs px-2 py-1">
@@ -345,7 +327,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                     <BellRing className="h-4 w-4 text-muted-foreground" />
                     <span className="font-semibold text-sm">{t('alerts.title')}</span>
                     {unreadCount > 0 && (
-                      <span className="inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-semibold tabular-nums">
+                      <span className="inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-destructive text-destructive-foreground text-nano font-semibold tabular-nums">
                         {unreadCount}
                       </span>
                     )}
@@ -518,42 +500,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
             )}
           </div>
         </div>
-
-        {/* Mobile: Scrollable text tab bar with underline indicator */}
-        {isMobile && (
-          <div
-            className="relative border-b border-glass-border"
-          >
-            <div
-              ref={tabBarRef}
-              className="relative flex overflow-x-auto scrollbar-none px-3"
-            >
-              {navItems.map((item) => {
-                const isActive = isItemActive(item)
-                return (
-                  <button
-                    key={item.id}
-                    data-active={isActive || undefined}
-                    className={cn(
-                      "flex-shrink-0 px-4 py-2.5 text-base whitespace-nowrap transition-all select-none",
-                      isActive
-                        ? "text-brand font-bold"
-                        : "text-muted-foreground active:text-foreground"
-                    )}
-                    onClick={() => startTransition(() => navigate(item.path))}
-                  >
-                    {t(item.mobileLabelKey || item.labelKey)}
-                  </button>
-                )
-              })}
-              {/* Animated underline indicator */}
-              <div
-                className="absolute bottom-0 h-[3px] bg-brand transition-all duration-250 ease-out rounded-full"
-                style={{ left: indicatorStyle.left, width: indicatorStyle.width }}
-              />
-            </div>
-          </div>
-        )}
       </nav>
 
       {/* Instance Manager Dialog */}

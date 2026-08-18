@@ -53,7 +53,7 @@ export function Confirmer() {
             onClick={handleConfirm}
             className={
               dialog.variant === "destructive"
-                ? "bg-destructive text-error-foreground hover:bg-destructive-hover"
+                ? "bg-destructive text-destructive-foreground hover:bg-destructive-hover"
                 : ""
             }
           >

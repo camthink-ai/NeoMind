@@ -1425,7 +1425,7 @@ export function ChatPage() {
                   ) : attachedImages.length > 0 ? (
                     <div className="relative">
                       <ImageIcon className="h-4 w-4" />
-                      <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-[10px] rounded-full h-4 w-4 flex items-center justify-center font-semibold tabular-nums">
+                      <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-nano rounded-full h-4 w-4 flex items-center justify-center font-semibold tabular-nums">
                         {attachedImages.length}
                       </span>
                     </div>

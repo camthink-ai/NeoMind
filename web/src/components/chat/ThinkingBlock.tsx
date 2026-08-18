@@ -57,7 +57,7 @@ export function ThinkingBlock({
             "h-4 w-4",
             isStreaming ? "text-info" : "text-muted-foreground"
           )} />
-          <span className={cn("text-[13px] sm:text-sm", "font-medium")}>{t("thinking.title")}</span>
+          <span className={cn("text-body sm:text-sm", "font-medium")}>{t("thinking.title")}</span>
           <div className="flex-1" />
           <ChevronDown className={cn(
             "h-4 w-4 text-muted-foreground transition-transform duration-200",
@@ -69,7 +69,7 @@ export function ThinkingBlock({
             {hasRoundThinking ? (
               <PerRoundThinking rounds={roundThinking!} isStreaming={isStreaming} compact />
             ) : (
-              <div className={cn("text-[13px] sm:text-sm", "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words")}>
+              <div className={cn("text-body sm:text-sm", "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words")}>
                 {thinking}
                 {isStreaming && <span className="inline-block w-1 h-3.5 bg-muted-foreground animate-pulse ml-0.5 align-middle" />}
               </div>
@@ -150,7 +150,7 @@ function PerRoundThinking({
     const [, text] = sortedRounds[0]
     return (
       <div className={cn(
-        "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words", "text-[13px] sm:text-sm",
+        "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words", "text-body sm:text-sm",
       )}>
         {text}
         {isStreaming && <span className={cn(
@@ -177,7 +177,7 @@ function PerRoundThinking({
           </div>
           {/* Round thinking text */}
           <div className={cn(
-            "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words pl-6", "text-[13px] sm:text-sm",
+            "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words pl-6", "text-body sm:text-sm",
           )}>
             {text}
             {idx === sortedRounds.length - 1 && isStreaming && (

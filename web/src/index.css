@@ -315,9 +315,6 @@ html {
     --accent-foreground: oklch(0.21 0.01 264);
     --destructive: oklch(0.577 0.245 27);
     --destructive-foreground: oklch(1 0 0);
-    /* Alias: some components use text-error-foreground; map it to the same
-       white so red buttons/toasts render correctly (was missing → black text) */
-    --error-foreground: oklch(1 0 0);
     --border: oklch(0.21 0.01 264 / 9%);
     --input: oklch(0.21 0.01 264 / 10%);
     /* Focus ring — neutral foreground tint, NOT brand orange. The previous
@@ -523,7 +520,6 @@ html {
     --accent-foreground: oklch(0.95 0.006 270);
     --destructive: oklch(0.577 0.245 27);
     --destructive-foreground: oklch(0.95 0.006 270);
-    --error-foreground: oklch(0.95 0.006 270);
     --border: oklch(1 0 0 / 9%);
     --input: oklch(1 0 0 / 11%);
     /* Neutral focus ring (see light-mode --ring rationale). */
@@ -1344,11 +1340,15 @@ html {
   }
 }
 
-/* Brand icon gradient — paints an SVG icon's stroke with the logo's
-   segmented #FF8C00 → #FF4500 orange gradient (see <BrandGradientDef/>).
-   CSS `stroke`/`stroke-width` (specificity 0,1,0) override lucide's
-   stroke="currentColor" / stroke-width="2" presentation attributes. */
-.brand-icon-stroke {
+/* Brand icon gradient (dark mode only) — paints an SVG icon's stroke with the
+   logo's segmented #FF8C00 → #FF4500 orange gradient (see <BrandGradientDef/>).
+   Active nav icons use solid text-brand in light mode and this gradient stroke
+   in dark mode, where a flat orange reads too heavy. CSS `stroke`/`stroke-width`
+   (specificity 0,2,0) override lucide's stroke="currentColor" /
+   stroke-width="2" presentation attributes. NOTE: consumers apply the plain
+   `brand-icon-stroke` class — a `dark:`-prefixed variant can't work (Tailwind
+   generates variants only for its own utilities, not custom classes). */
+.dark .brand-icon-stroke {
   stroke: url(#brand-icon-gradient);
   stroke-width: 2.5;
 }

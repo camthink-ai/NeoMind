@@ -73,7 +73,7 @@ function Card({ card }: { card: CardDef }) {
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-foreground">{t(card.titleKey)}</span>
         {card.descKey && (
-          <span className="block truncate text-[11px] text-muted-foreground">{t(card.descKey)}</span>
+          <span className="block truncate text-mini text-muted-foreground">{t(card.descKey)}</span>
         )}
       </span>
       {card.trailing ?? (
@@ -99,7 +99,7 @@ function CardWithDropdown({
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-foreground">{t(card.titleKey)}</span>
         {card.descKey && (
-          <span className="block truncate text-[11px] text-muted-foreground">{t(card.descKey)}</span>
+          <span className="block truncate text-mini text-muted-foreground">{t(card.descKey)}</span>
         )}
       </span>
       <span className="shrink-0">{children}</span>
@@ -109,7 +109,7 @@ function CardWithDropdown({
 
 function SectionLabel({ children }: { children: ReactNode }) {
   return (
-    <div className="px-4 pb-1.5 pt-4 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="px-4 pb-1.5 pt-4 text-mini font-semibold uppercase tracking-wide text-muted-foreground">
       {children}
     </div>
   )
@@ -264,7 +264,7 @@ export default function SystemPage() {
           <BrandLogoWithName logoClassName="h-8" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-lg font-bold leading-tight text-foreground">{brandName}</div>
-            <div className="truncate text-[11px] text-muted-foreground">
+            <div className="truncate text-mini text-muted-foreground">
               {t("system.version", { version: "0.8.19" })}
             </div>
           </div>
@@ -272,13 +272,13 @@ export default function SystemPage() {
         {user && (
           <div className="mt-2 flex items-center gap-2 rounded-lg bg-muted-30 px-2.5 py-1.5">
             <Avatar className="h-6 w-6 rounded-full">
-              <AvatarFallback className="bg-muted text-[10px] font-medium text-foreground">
+              <AvatarFallback className="bg-muted text-nano font-medium text-foreground">
                 {userInitials}
               </AvatarFallback>
             </Avatar>
             <span className="truncate text-xs text-foreground">{user.username}</span>
             {user.role && (
-              <Badge variant="outline" className="ml-auto text-[10px]">
+              <Badge variant="outline" className="ml-auto text-nano">
                 {user.role}
               </Badge>
             )}

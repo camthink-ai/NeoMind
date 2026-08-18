@@ -16,7 +16,7 @@ const badgeVariants = cva(
         muted: 'bg-muted text-muted-foreground',
       },
       size: {
-        sm: 'px-1.5 py-0.5 text-[10px]', // textNano token - kept as static string for CVA variant
+        sm: 'px-1.5 py-0.5 text-nano', // textNano token - kept as static string for CVA variant
         md: 'px-2 py-0.5 text-xs',
         lg: 'px-2.5 py-1 text-sm',
       },

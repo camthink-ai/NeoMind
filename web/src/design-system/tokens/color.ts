@@ -5,15 +5,18 @@
  * Uses OKLCH for perceptual uniformity.
  */
 
-// Chart colors — vibrant, high-contrast palette for data visualization
-// Each color has distinct lightness/chroma for visual hierarchy and accessibility
+// Chart colors — SINGLE SOURCE: the `--chart-1..6` CSS variables in
+// src/index.css. Keep these values byte-identical with the CSS vars (and the
+// hexes below with accurate sRGB conversions of them) — chart series must not
+// render a different palette depending on whether a component reads the CSS
+// var or this JS constant (SVG attribute contexts can't use var()).
 export const chartColors = {
-  1: 'oklch(0.62 0.22 270)',   // Indigo-Blue — primary series
-  2: 'oklch(0.65 0.20 155)',   // Emerald — growth/positive
-  3: 'oklch(0.72 0.17 65)',    // Amber — warm accent
-  4: 'oklch(0.67 0.20 25)',    // Orange — energy/alert
-  5: 'oklch(0.65 0.18 340)',   // Rose — highlight/attention
-  6: 'oklch(0.68 0.12 210)',   // Sky Blue — cool complement
+  1: 'oklch(0.65 0.18 300)',   // Purple — primary series
+  2: 'oklch(0.65 0.17 155)',   // Emerald — growth/positive
+  3: 'oklch(0.72 0.16 85)',    // Amber — warm accent
+  4: 'oklch(0.637 0.237 41)',  // Brand orange — energy/alert
+  5: 'oklch(0.65 0.17 20)',    // Coral — highlight/attention
+  6: 'oklch(0.65 0.12 210)',   // Sky Blue — cool complement
 } as const
 
 export type ChartColor = keyof typeof chartColors
@@ -21,12 +24,12 @@ export type ChartColor = keyof typeof chartColors
 // Hex equivalents for SVG rendering (Recharts needs hex, not OKLCH)
 // These are accurate sRGB conversions of the OKLCH values above
 export const chartColorsHex = [
-  '#6360ef', // Indigo-Blue  (chartColors[1])
-  '#36b37e', // Emerald      (chartColors[2])
-  '#e8a735', // Amber        (chartColors[3])
-  '#e07838', // Orange       (chartColors[4])
-  '#d86098', // Rose         (chartColors[5])
-  '#4ca8c8', // Sky Blue     (chartColors[6])
+  '#a170eb', // Purple       (chartColors[1])
+  '#00ac5f', // Emerald      (chartColors[2])
+  '#d29a00', // Amber        (chartColors[3])
+  '#f83c00', // Brand orange (chartColors[4])
+  '#e45b63', // Coral        (chartColors[5])
+  '#00a2b7', // Sky Blue     (chartColors[6])
 ] as const
 
 // Status colors — tuned for semantic meaning with good contrast

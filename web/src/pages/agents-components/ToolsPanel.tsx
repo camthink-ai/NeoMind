@@ -265,12 +265,12 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
                         {row.name}
                       </span>
                       {row.deprecated && (
-                        <span className="text-[10px] uppercase tracking-wide text-error shrink-0">
+                        <span className="text-nano uppercase tracking-wide text-error shrink-0">
                           {t("agents:detail.toolsDeprecated")}
                         </span>
                       )}
                       {row.disabled && (
-                        <span className="text-[10px] uppercase tracking-wide text-warning shrink-0 bg-warning-light border border-warning-light rounded px-1">
+                        <span className="text-nano uppercase tracking-wide text-warning shrink-0 bg-warning-light border border-warning-light rounded px-1">
                           {t("agents:detail.toolsDisabled", { defaultValue: "Disabled" })}
                         </span>
                       )}
@@ -319,7 +319,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
                     <span
                       key={name}
                       className={cn(
-                        "text-[11px] font-mono px-1.5 py-0.5 rounded border",
+                        "text-mini font-mono px-1.5 py-0.5 rounded border",
                         requiredSet.has(name)
                           ? "bg-accent-orange-light text-accent-orange border-accent-orange-light"
                           : "bg-muted text-muted-foreground border-border"
@@ -330,7 +330,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
                     </span>
                   ))}
                   {row.param_names.length > 6 && (
-                    <span className="text-[11px] text-muted-foreground self-center">
+                    <span className="text-mini text-muted-foreground self-center">
                       +{row.param_names.length - 6}
                     </span>
                   )}
@@ -482,7 +482,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
 function MetaItem({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+      <span className="text-nano uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
       <div className="text-sm">{children}</div>

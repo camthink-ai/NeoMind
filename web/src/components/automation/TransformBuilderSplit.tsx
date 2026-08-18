@@ -441,7 +441,7 @@ function VariablesRail({
               type="button"
               onClick={() => setVarTab(tab.id)}
               className={cn(
-                "flex items-center gap-1 px-1.5 h-6 text-[11px] font-medium rounded-md transition-colors",
+                "flex items-center gap-1 px-1.5 h-6 text-mini font-medium rounded-md transition-colors",
                 activeTab === tab.id
                   ? "bg-card text-foreground shadow-sm border border-border"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -450,7 +450,7 @@ function VariablesRail({
               <span>{tab.label}</span>
               {tab.count > 0 && (
                 <span className={cn(
-                  "inline-flex items-center justify-center rounded-full min-w-[15px] h-[15px] text-[9px] leading-none px-1 font-semibold",
+                  "inline-flex items-center justify-center rounded-full min-w-[15px] h-[15px] text-micro leading-none px-1 font-semibold",
                   activeTab === tab.id
                     ? "bg-muted text-foreground"
                     : "bg-muted text-muted-foreground"

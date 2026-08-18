@@ -888,7 +888,7 @@ export function PushTargetDialog() {
                                         )}
                                       >
                                         <Checkbox checked={allSelected} />
-                                        <span className="text-[13px] font-medium truncate">{displayName}</span>
+                                        <span className="text-body font-medium truncate">{displayName}</span>
                                         {someSelected && (
                                           <Badge variant="secondary" className={cn(textNano, "h-4 px-1 shrink-0")}>
                                             {sourceItems.filter(s => selectedSources.has(s.id)).length}
@@ -923,7 +923,7 @@ export function PushTargetDialog() {
                                             <span className="text-xs truncate">{src.field_display_name}</span>
                                             {src.data_type && (
                                               <span className={cn(
-                                                'ml-auto px-1.5 py-0.5 rounded text-[10px] font-mono shrink-0',
+                                                'ml-auto px-1.5 py-0.5 rounded text-nano font-mono shrink-0',
                                                 badgeClass
                                               )}>
                                                 {src.data_type}

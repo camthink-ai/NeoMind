@@ -211,13 +211,13 @@ export function ExtensionGrid({
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{ext.name}</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2 leading-tight">
+                    <p className="text-mini text-muted-foreground mt-0.5 line-clamp-2 leading-tight">
                       {ext.desc}
                     </p>
                   </div>
                 </div>
                 <div className="mt-2">
-                  <span className="inline-flex items-center rounded-full bg-muted-50 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  <span className="inline-flex items-center rounded-full bg-muted-50 px-2 py-0.5 text-nano font-medium text-muted-foreground">
                     {ext.category}
                   </span>
                 </div>
@@ -320,7 +320,7 @@ export function ExtensionGrid({
                 {option.icon}
                 <span>{option.label}</span>
                 <span className={cn(
-                  "inline-flex items-center justify-center min-w-[18px] h-[16px] px-1 rounded text-[10px] font-semibold tabular-nums",
+                  "inline-flex items-center justify-center min-w-[18px] h-[16px] px-1 rounded text-nano font-semibold tabular-nums",
                   isSelected
                     ? "bg-white/20 text-primary-foreground"
                     : "bg-muted text-muted-foreground"

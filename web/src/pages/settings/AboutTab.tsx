@@ -162,7 +162,7 @@ function UsageGauge({
         ))}
       </div>
       {footer && (
-        <div className="flex justify-between text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
+        <div className="flex justify-between text-nano font-mono uppercase tracking-wide text-muted-foreground">
           <span>{footer}</span>
         </div>
       )}
@@ -327,7 +327,7 @@ export function AboutTab() {
         </div>
 
         <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
-          <div className="font-mono text-[10px] text-muted-foreground uppercase tracking-wide">
+          <div className="font-mono text-nano text-muted-foreground uppercase tracking-wide">
             build
           </div>
           <div className="flex items-center gap-2">
@@ -509,7 +509,7 @@ export function AboutTab() {
                           <div className="font-mono text-base font-bold leading-none">
                             {(gpu.total_memory_mb / 1024).toFixed(1)}
                           </div>
-                          <div className="text-[10px] text-muted-foreground uppercase tracking-wide mt-1">
+                          <div className="text-nano text-muted-foreground uppercase tracking-wide mt-1">
                             GB VRAM
                           </div>
                         </div>

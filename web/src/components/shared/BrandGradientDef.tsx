@@ -3,8 +3,9 @@
  * `#FF8C00 → #FF4500` vertical orange gradient — once at the app root.
  *
  * Any SVG element can then reference it via `stroke="url(#brand-icon-gradient)"`
- * or the `.brand-icon-stroke` CSS class (see index.css). Rendered as a 0×0
- * hidden SVG: it only contributes the `<defs>`, no layout or visual.
+ * or the `.brand-icon-stroke` CSS class (see index.css; dark-mode scoped).
+ * Rendered as a 0×0 hidden SVG: it only contributes the `<defs>`, no layout
+ * or visual.
  *
  * Fixed hex stops (not theme-aware) on purpose: the logo itself uses these
  * exact colors on both light and dark, and an icon has no text sitting on it,

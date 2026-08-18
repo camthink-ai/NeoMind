@@ -64,7 +64,7 @@ function CodeBlock({ children, ...props }: React.ComponentProps<'pre'>) {
   return (
     <div className="code-block group relative my-2 overflow-hidden rounded-lg bg-muted">
       <div className="flex items-center justify-between px-3 pt-1.5 pb-1">
-        <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">{lang || "text"}</span>
+        <span className="font-mono text-nano uppercase tracking-wider text-muted-foreground">{lang || "text"}</span>
         <button
           type="button"
           onClick={handleCopy}
@@ -148,12 +148,12 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
       <div
         className={cn(
           // Base prose classes — use prose for structure, override size to 13px
-          "prose max-w-none", "text-[13px] sm:text-sm",
+          "prose max-w-none", "text-body sm:text-sm",
           // Text wrapping
           "break-words overflow-wrap-anywhere",
           "prose-p:leading-relaxed prose-p:my-1",
           "prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2",
-          "prose-h1:text-[16px] prose-h2:text-[15px] prose-h3:text-[14px]",
+          "prose-h1:text-base prose-h2:text-heading prose-h3:text-sm",
           // Links inherit text color (see MARKDOWN_COMPONENTS.a) so they stay
           // readable on both user and assistant bubble backgrounds. Underline
           // alone provides the link affordance — do NOT set a prose-a color
@@ -161,7 +161,7 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
           // light-theme invisibility bug on user bubbles.
           "prose-a:text-inherit prose-a:underline prose-a:underline-offset-2",
           "prose-strong:font-semibold",
-          "prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-[12px] prose-code:font-mono",  // text-[12px] kept for Tailwind prose modifier
+          "prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-code prose-code:font-mono",  // text-code kept for Tailwind prose modifier
           "prose-code:break-all prose-code:whitespace-pre-wrap",
           // Code block chrome (border, bg, padding, language bar, copy button)
           // is owned by CodeBlock — only keep overflow + inline-code reset here.
@@ -171,7 +171,7 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
           "prose-ul:my-1 prose-ul:pl-4 prose-ul:list-disc",
           "prose-ol:my-1 prose-ol:pl-4 prose-ol:list-decimal",
           "prose-li:my-0.5 prose-li:marker:text-muted-foreground",
-          "prose-table:my-2 prose-table:text-[13px]",
+          "prose-table:my-2 prose-table:text-body",
           "prose-th:px-2 prose-th:py-1.5 prose-th:border-b-2 prose-th:border-border prose-th:bg-muted-50 prose-th:font-semibold",
           "prose-td:px-2 prose-td:py-1.5 prose-td:border-b prose-td:border-muted-30",
           "prose-hr:my-2 prose-hr:border-border",

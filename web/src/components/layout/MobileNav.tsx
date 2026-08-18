@@ -166,7 +166,7 @@ export function MobileNav() {
         )}
       >
         <Icon
-          className={cn("h-5 w-5 shrink-0", active ? "text-brand dark:brand-icon-stroke" : "text-muted-foreground")}
+          className={cn("h-5 w-5 shrink-0", active ? "text-brand brand-icon-stroke" : "text-muted-foreground")}
         />
         <span
           className={cn(

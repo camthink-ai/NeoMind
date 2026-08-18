@@ -582,7 +582,7 @@ export function SessionSidebar({
               </AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleConfirmDelete}
-                className="bg-destructive text-error-foreground hover:bg-destructive-hover"
+                className="bg-destructive text-destructive-foreground hover:bg-destructive-hover"
               >
                 {t('delete')}
               </AlertDialogAction>
@@ -636,7 +636,7 @@ export function SessionSidebar({
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={handleConfirmDelete}
-              className="bg-destructive text-error-foreground hover:bg-destructive-hover"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive-hover"
             >
               {t('delete')}
             </AlertDialogAction>
