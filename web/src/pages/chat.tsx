@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
+import { usePageSidebarSlot, PageSidebarColumn } from "@/components/layout/PageSidebarSlot"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
@@ -206,6 +207,7 @@ export function ChatPage() {
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number } | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const pageSidebarSlot = usePageSidebarSlot()
   // Track the ID of the last assistant message for tool call result updates
   const [lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null)
 
@@ -877,9 +879,9 @@ export function ChatPage() {
   return (
     <>
     <div className="fixed left-0 right-0 flex flex-row overflow-hidden safe-top" style={{
-      // Offset past the desktop AppSidebar (0 on mobile, where the sidebar
-      // is unmounted and the var resets to 0px).
-      left: 'var(--app-sidebar-width, 0px)',
+      // Offset past BOTH the desktop AppSidebar and the page sidebar column
+      // (sessions list, hoisted to the shell slot). Both are 0 on mobile.
+      left: 'calc(var(--app-sidebar-width, 0px) + var(--page-sidebar-width, 0px))',
       // Anchor to the top of the VISIBLE area, not the layout viewport. iOS
       // PWA standalone doesn't honor `interactive-widget=resizes-content`, so
       // when the soft keyboard opens iOS scrolls the visualViewport
@@ -956,8 +958,23 @@ export function ChatPage() {
         getPortalRoot()
       )}
 
-      {/* Desktop Sidebar - always show when there are sessions or in chat mode */}
+      {/* Desktop Sidebar - always show when there are sessions or in chat mode.
+          Hoisted to the shell's full-height slot (left of the TopBar) so it
+          sits level with the AppSidebar; falls back to in-flow if the slot
+          is unavailable. */}
       {isDesktop && (sessions.length > 0 || !isWelcomeMode) && (
+        pageSidebarSlot ? createPortal(
+          <PageSidebarColumn>
+            <SessionSidebar
+              open={true}
+              onClose={() => {}}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+              isDesktop={true}
+            />
+          </PageSidebarColumn>,
+          pageSidebarSlot
+        ) : (
         <div className="shrink-0 self-stretch">
           <SessionSidebar
             open={true}
@@ -967,14 +984,26 @@ export function ChatPage() {
             isDesktop={true}
           />
         </div>
+        )
       )}
       {/* Desktop sidebar skeleton while sessions are loading (only when sidebar isn't shown yet) */}
       {isDesktop && !sessionsLoaded && !(sessions.length > 0 || !isWelcomeMode) && (
+        pageSidebarSlot ? createPortal(
+          <PageSidebarColumn>
+            <div className="w-64 h-full border-r flex flex-col p-3 space-y-2">
+              <div className="h-8 w-full bg-muted rounded-lg animate-pulse" />
+              <div className="h-8 w-full bg-muted rounded-lg animate-pulse" />
+              <div className="h-8 w-2/3 bg-muted rounded-lg animate-pulse" />
+            </div>
+          </PageSidebarColumn>,
+          pageSidebarSlot
+        ) : (
         <div className="shrink-0 self-stretch w-64 border-r flex flex-col p-3 space-y-2">
           <div className="h-8 w-full bg-muted rounded-lg animate-pulse" />
           <div className="h-8 w-full bg-muted rounded-lg animate-pulse" />
           <div className="h-8 w-2/3 bg-muted rounded-lg animate-pulse" />
         </div>
+        )
       )}
 
       {/* Mobile Sidebar - drawer */}

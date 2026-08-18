@@ -9,6 +9,7 @@ import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react'
 import '@/lib/debug-scroll' // Auto-inits if DEBUG_SCROLL=true in localStorage
 import { createPortal } from 'react-dom'
 import { getPortalRoot } from '@/lib/portal'
+import { usePageSidebarSlot, PageSidebarColumn } from '@/components/layout/PageSidebarSlot'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { shallow } from 'zustand/shallow'
@@ -234,6 +235,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
   // Mobile editing state
   const isMobile = useIsMobile()
   const isDesktop = !isMobile
+  const pageSidebarSlot = usePageSidebarSlot()
   const [mobileSelectedId, setMobileSelectedId] = useState<string | null>(null)
   const [mobileEditBarOpen, setMobileEditBarOpen] = useState(false)
 
@@ -977,22 +979,44 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         getPortalRoot()
       )}
 
-      {/* Sidebar - separate column (only in sidebar layout mode) */}
+      {/* Sidebar - separate column (only in sidebar layout mode). On desktop
+          it's hoisted to the shell's full-height slot (left of the TopBar,
+          level with the AppSidebar); mobile keeps the drawer. */}
       {!isFullscreen && layoutMode === 'sidebar' && (
-        <DashboardListSidebar
-          dashboards={sortedDashboards}
-          currentDashboardId={currentDashboardId}
-          onSwitch={handleDashboardSwitch}
-          onCreate={handleDashboardCreate}
-          onRename={handleDashboardRename}
-          onDuplicate={handleDashboardDuplicate}
-          onDelete={handleDashboardDelete}
-          onReorder={(newOrder) => useStore.getState().reorderDashboards(newOrder)}
-          open={sidebarOpen}
-          onOpenChange={setSidebarOpen}
-          isDesktop={isDesktop}
-          onSwitchToTabs={handleSwitchToTabs}
-        />
+        isDesktop && pageSidebarSlot ? createPortal(
+          <PageSidebarColumn>
+            <DashboardListSidebar
+              dashboards={sortedDashboards}
+              currentDashboardId={currentDashboardId}
+              onSwitch={handleDashboardSwitch}
+              onCreate={handleDashboardCreate}
+              onRename={handleDashboardRename}
+              onDuplicate={handleDashboardDuplicate}
+              onDelete={handleDashboardDelete}
+              onReorder={(newOrder) => useStore.getState().reorderDashboards(newOrder)}
+              open={sidebarOpen}
+              onOpenChange={setSidebarOpen}
+              isDesktop={true}
+              onSwitchToTabs={handleSwitchToTabs}
+            />
+          </PageSidebarColumn>,
+          pageSidebarSlot
+        ) : (
+          <DashboardListSidebar
+            dashboards={sortedDashboards}
+            currentDashboardId={currentDashboardId}
+            onSwitch={handleDashboardSwitch}
+            onCreate={handleDashboardCreate}
+            onRename={handleDashboardRename}
+            onDuplicate={handleDashboardDuplicate}
+            onDelete={handleDashboardDelete}
+            onReorder={(newOrder) => useStore.getState().reorderDashboards(newOrder)}
+            open={sidebarOpen}
+            onOpenChange={setSidebarOpen}
+            isDesktop={isDesktop}
+            onSwitchToTabs={handleSwitchToTabs}
+          />
+        )
       )}
 
       {/* Main content area */}

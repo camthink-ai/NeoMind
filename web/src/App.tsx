@@ -556,6 +556,11 @@ function App() {
               <ProtectedRoute>
                 <div className="flex" style={{height: 'var(--app-height, 100vh)'}}>
                   {!isMobile && <AppSidebar />}
+                  {/* Full-height slot for page-owned sidebars (chat sessions,
+                      dashboard list) — they portal in here to sit level with
+                      the AppSidebar, so the TopBar spans only the content
+                      area. Empty (0 width) on pages that don't use it. */}
+                  {!isMobile && <div id="page-sidebar-slot" className="flex shrink-0" />}
                   <div className="flex flex-col flex-1 min-w-0">
                     {!isMobile && <TopBar />}
                     <MobileNav />
