@@ -562,6 +562,7 @@ function App() {
                       area. Empty (0 width) on pages that don't use it. */}
                   {!isMobile && <div id="page-sidebar-slot" className="flex shrink-0" />}
                   <div className="flex flex-col flex-1 min-w-0">
+                    {!isMobile && <GlobalUtilityBar />}
                     <MobileNav />
                     {/* Skip link — keyboard users tab past the nav straight to content.
                         Visually hidden until focused. */}
@@ -576,7 +577,6 @@ function App() {
                       tabIndex={-1}
                       className="relative flex flex-1 min-h-0 overflow-hidden focus:outline-none"
                     >
-                    {!isMobile && <GlobalUtilityBar />}
                     <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">
