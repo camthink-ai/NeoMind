@@ -1,29 +1,25 @@
 /**
- * AppSidebar — the desktop app navigation column.
+ * AppSidebar — the desktop app's entire chrome: navigation + utilities.
  *
- * Navigation lives here (not in the TopBar): grouped entries in the body;
- * the footer carries the settings entry and, at the very bottom-left, the
- * user avatar whose dropdown holds theme / language / settings / about /
- * logout. The TopBar keeps the instance selector, onboarding guide and
- * alerts bell. Mobile keeps its own drawer (MobileNav); this column renders
- * nothing below md.
+ * There is NO top bar — the sidebar is a full-height 60px ICON RAIL holding
+ * the brand mark, the nav icons, and the utilities (instance, theme,
+ * settings, alerts, onboarding, user avatar at the very bottom). The whole
+ * window height belongs to content.
  *
- * Layout contract: in-flow flex column (not fixed/overlay) — the app shell
- * (App.tsx) lays out [AppSidebar][TopBar + main] side by side. The header
- * row aligns with the TopBar's h-12 and both carry border-b, so the top
- * chrome band reads as one continuous surface with a single dividing line.
+ * Fixed COLLAPSED width (60px, no labels — hover tooltips carry the names,
+ * no expand/collapse duality). Fixed width keeps --app-sidebar-width stable
+ * for the fixed surfaces that offset past it (chat's keyboard container,
+ * PageLayout's footer).
  *
- * macOS Tauri overlay titlebar: the traffic lights float over the TOP-LEFT
- * of the window — this sidebar's header. The header reserves
- * `--titlebar-inset` (set by TopBar) above the brand row, and doubles as a
- * window drag region alongside the TopBar.
+ * macOS Tauri overlay titlebar: the traffic lights float over this header —
+ * it reserves `--titlebar-inset` (set here) and is the window drag region.
  */
 
-import { useCallback, useLayoutEffect } from "react"
+import { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
-import { PanelLeftClose, PanelLeftOpen, Settings, Sun, Languages, Info, LogOut } from "lucide-react"
+import { Rocket, Settings, Sun, Languages, Info, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isTauriEnv } from "@/lib/api"
 import { getCurrentWindow } from "@tauri-apps/api/window"
@@ -32,7 +28,10 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useTheme } from "@/components/ui/theme"
-import { BrandLogoWithName } from "@/components/shared/BrandName"
+import { BrandLogo } from "@/components/shared/BrandName"
+import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
+import { useOnboarding } from "@/hooks/useOnboarding"
+import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 import {
   Tooltip,
   TooltipContent,
@@ -52,18 +51,19 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
+import { AlertsMenu } from "./AlertsMenu"
+import { InstanceSelector } from "./InstanceSelector"
+import { ThemeToggle } from "./ThemeToggle"
 import {
   navItems,
   isNavItemActive,
   type NavItem,
 } from "./navItems"
-import { ThemeToggle } from "./ThemeToggle"
 
-const HEADER_ROW_H = "h-12"
+const SIDEBAR_WIDTH_PX = 60
 
-// Tauri window drag — same contract as the TopBar: startDragging on mousedown
-// over non-interactive areas (unreliable to use data-tauri-drag-region in
-// Tauri 2 overlay mode).
+// Tauri window drag — startDragging on mousedown over non-interactive areas
+// (data-tauri-drag-region is unreliable in Tauri 2 overlay mode).
 const handleDragMouseDown = (e: React.MouseEvent) => {
   if (!isTauriEnv()) return
   const target = e.target as HTMLElement
@@ -75,61 +75,67 @@ export function AppSidebar() {
   const { t, i18n } = useTranslation("common")
   const location = useLocation()
   const navigate = useNavigate()
-  const collapsed = useStore((s) => s.appSidebarCollapsed)
-  const toggleCollapsed = useStore((s) => s.toggleAppSidebar)
   const openSettings = useStore((s) => s.openSettings)
   const user = useStore((s) => s.user)
   const logout = useStore((s) => s.logout)
   const { theme, setTheme } = useTheme()
+  const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
+  const [onboardingOpen, setOnboardingOpen] = useState(false)
+
+  // macOS Tauri overlay titlebar: expose the traffic-light inset so this
+  // header and full-screen overlays (settings, onboarding) reserve it.
+  const isMacTauri = isTauriEnv() && /Mac/i.test(navigator.platform || navigator.userAgent)
+  useEffect(() => {
+    document.documentElement.style.setProperty("--titlebar-inset", isMacTauri ? "24px" : "0px")
+  }, [isMacTauri])
+
+  // Onboarding status for the footer entry's badge
+  const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
+  useEffect(() => {
+    fetchOnboardingStatus()
+  }, [fetchOnboardingStatus])
+  const onboardingIncomplete =
+    !!onboardingStatus &&
+    !onboardingStatus.dismissed &&
+    (!onboardingStatus.steps.llm.completed || !onboardingStatus.steps.device.completed)
 
   const handleNavigate = useCallback(
     (path: string) => startTransition(() => navigate(path)),
     [navigate]
   )
 
-  // Export the sidebar width as a CSS var so fixed full-bleed surfaces (e.g.
-  // ChatPage's keyboard-aware container) can offset left of it. Unmounts
-  // (mobile) reset to 0. Layout effect so the var is set before first paint.
-  const widthPx = collapsed ? 60 : 240
+  // Fixed-width rail exported for fixed full-bleed surfaces (ChatPage's
+  // keyboard-aware container, PageLayout's footer). 0 on unmount (mobile).
   useLayoutEffect(() => {
-    document.documentElement.style.setProperty("--app-sidebar-width", `${widthPx}px`)
+    document.documentElement.style.setProperty("--app-sidebar-width", `${SIDEBAR_WIDTH_PX}px`)
     return () => {
       document.documentElement.style.setProperty("--app-sidebar-width", "0px")
     }
-  }, [widthPx])
+  }, [])
 
   const renderItem = (item: NavItem) => {
     const Icon = item.icon
     const isActive = isNavItemActive(item, location.pathname)
     const label = t(item.labelKey)
 
-    const button = (
-      <Button
-        variant="ghost"
-        aria-label={label}
-        className={cn(
-          // w-full so every item — and the active row — spans the sidebar
-          // uniformly instead of sizing to its label
-          "h-10 w-full gap-3 px-3 justify-start font-normal no-press-scale",
-          collapsed && "w-10 min-w-0 px-0 justify-center",
-          isActive
-            ? "bg-muted text-foreground font-medium hover:bg-muted"
-            : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
-        )}
-        aria-current={isActive ? "page" : undefined}
-        onClick={() => handleNavigate(item.path)}
-      >
-        {/* Mono accent language: neutral active row, no brand tint */}
-        <Icon className="h-5 w-5 shrink-0" />
-        {!collapsed && <span className="truncate">{label}</span>}
-      </Button>
-    )
-
-    if (!collapsed) return <div key={item.id}>{button}</div>
-
     return (
       <Tooltip key={item.id}>
-        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            aria-label={label}
+            aria-current={isActive ? "page" : undefined}
+            className={cn(
+              "h-10 w-10 px-0 justify-center font-normal no-press-scale",
+              isActive
+                ? "bg-muted text-foreground hover:bg-muted"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
+            )}
+            onClick={() => handleNavigate(item.path)}
+          >
+            <Icon className="h-5 w-5 shrink-0" />
+          </Button>
+        </TooltipTrigger>
         <TooltipContent side="right" className="text-xs px-2 py-1">
           {label}
         </TooltipContent>
@@ -139,29 +145,20 @@ export function AppSidebar() {
 
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
 
-  // User entry — bottom-left. Avatar + name (expanded) / avatar only
-  // (collapsed); dropdown opens upward.
+  // User entry — avatar at the very bottom; dropdown opens upward
   const userEntry = user && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
           aria-label={user.username}
-          className={cn(
-            "h-10 w-full gap-3 px-2 justify-start font-normal text-muted-foreground hover:text-foreground hover:bg-muted-50 no-press-scale",
-            collapsed && "w-10 min-w-0 px-0 justify-center"
-          )}
+          className="h-10 w-10 px-0 justify-center font-normal no-press-scale"
         >
-          <Avatar className="h-7 w-7 shrink-0 cursor-pointer rounded-full ring-2 ring-background">
+          <Avatar className="h-7 w-7 cursor-pointer rounded-full ring-2 ring-background">
             <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
               {getUserInitials(user.username)}
             </AvatarFallback>
           </Avatar>
-          {!collapsed && (
-            <span className="truncate text-sm font-medium text-foreground">
-              {user.username}
-            </span>
-          )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
@@ -226,94 +223,93 @@ export function AppSidebar() {
   return (
     <TooltipProvider delayDuration={500}>
       <aside
-        className={cn(
-          "flex shrink-0 flex-col bg-[var(--sidebar-bg)]",
-          "transition-[width] duration-normal ease-out"
-        )}
-        style={{ width: collapsed ? 60 : 240 }}
+        className="flex shrink-0 flex-col items-center bg-[var(--sidebar-bg)]"
+        style={{ width: SIDEBAR_WIDTH_PX }}
         aria-label={t("nav.primary")}
       >
-        {/* Header — brand + collapse toggle. Reserves the macOS traffic-light
-            strip (--titlebar-inset) and doubles as a drag region. No border:
-            layers separate by background contrast (sidebar rail vs chrome). */}
+        {/* Header — brand; reserves the macOS traffic-light strip and is the
+            window drag region. */}
         <div
-          className={cn(
-            "flex items-center gap-1.5 px-3",
-            HEADER_ROW_H,
-            collapsed && "px-0 justify-center gap-0"
-          )}
+          className="flex w-full items-center justify-center h-12"
           style={{
             paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))",
           }}
           onMouseDown={handleDragMouseDown}
         >
-          {!collapsed && (
-            <Link
-              to="/chat"
-              className="flex min-w-0 flex-1 items-center justify-start"
-            >
-              <BrandLogoWithName />
-            </Link>
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-muted-foreground hover:text-foreground no-press-scale"
-                onClick={toggleCollapsed}
-                aria-label={t(collapsed ? "nav.expandSidebar" : "nav.collapseSidebar")}
-                aria-expanded={!collapsed}
-              >
-                {collapsed ? (
-                  <PanelLeftOpen className="h-4 w-4" />
-                ) : (
-                  <PanelLeftClose className="h-4 w-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs px-2 py-1">
-              {t(collapsed ? "nav.expandSidebar" : "nav.collapseSidebar")}
-            </TooltipContent>
-          </Tooltip>
+          <Link to="/chat" aria-label="NeoMind" className="flex items-center justify-center">
+            <BrandLogo className="h-7 w-7" />
+          </Link>
         </div>
 
-        {/* Nav — flat list, no grouping (8 items scan fine as one list) */}
-        <nav className={cn("flex flex-col gap-1 px-2 pt-3 pb-2", collapsed && "px-2.5")}>
+        {/* Nav — icon rail, tooltips carry the names */}
+        <nav className="flex flex-col items-center gap-1 pt-3 pb-2">
           {navItems.map(renderItem)}
         </nav>
 
         <div className="flex-1" />
 
-        {/* Footer — quick toggles on top, avatar LAST at the very bottom */}
-        <div
-          className={cn(
-            "flex flex-col gap-1 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
-            collapsed && "px-2.5"
-          )}
-        >
-          <div className={cn("flex items-center gap-1", collapsed && "flex-col")}>
-            <ThemeToggle />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={t("nav.settings")}
-                  className="shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
-                  onClick={() => openSettings()}
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side={collapsed ? "right" : "top"} className="text-xs px-2 py-1">
-                {t("nav.settings")}
-              </TooltipContent>
-            </Tooltip>
-          </div>
+        {/* Footer — utilities stacked, avatar at the very bottom */}
+        <div className="flex flex-col items-center gap-1 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <InstanceSelector compact onManageInstances={() => setInstanceManagerOpen(true)} />
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs px-2 py-1">
+              {t("instances.title", { defaultValue: "Instances" })}
+            </TooltipContent>
+          </Tooltip>
+          <ThemeToggle />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("nav.settings")}
+                className="text-muted-foreground hover:text-foreground no-press-scale"
+                onClick={() => openSettings()}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs px-2 py-1">
+              {t("nav.settings")}
+            </TooltipContent>
+          </Tooltip>
+          <AlertsMenu compact align="start" side="top" tooltipSide="right" />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("onboarding.title")}
+                className="relative text-muted-foreground hover:text-foreground no-press-scale"
+                onClick={() => setOnboardingOpen(true)}
+              >
+                <Rocket className="h-4 w-4" />
+                {onboardingIncomplete && (
+                  <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs px-2 py-1">
+              {t("onboarding.title")}
+            </TooltipContent>
+          </Tooltip>
           {userEntry}
         </div>
       </aside>
+
+      {/* Dialogs owned by the footer entries */}
+      <InstanceManagerDialog
+        open={instanceManagerOpen}
+        onOpenChange={setInstanceManagerOpen}
+      />
+      <OnboardingDialog
+        open={onboardingOpen}
+        onOpenChange={setOnboardingOpen}
+        status={onboardingStatus}
+        onDismiss={dismissOnboarding}
+      />
     </TooltipProvider>
   )
 }

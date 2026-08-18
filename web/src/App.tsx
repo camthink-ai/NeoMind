@@ -5,7 +5,6 @@ import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
 import { BrandGradientDef } from "@/components/shared/BrandGradientDef"
 import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
-import { TopBar } from "@/components/layout/TopBar"
 import { AppSidebar } from "@/components/layout/AppSidebar"
 import { MobileNav } from "@/components/layout/MobileNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
@@ -562,7 +561,6 @@ function App() {
                       area. Empty (0 width) on pages that don't use it. */}
                   {!isMobile && <div id="page-sidebar-slot" className="flex shrink-0" />}
                   <div className="flex flex-col flex-1 min-w-0">
-                    {!isMobile && <TopBar />}
                     <MobileNav />
                     {/* Skip link — keyboard users tab past the nav straight to content.
                         Visually hidden until focused. */}

@@ -1601,33 +1601,24 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 
 ---
 
-## 28. Navigation (AppSidebar + TopBar)
+## 28. Navigation (AppSidebar icon rail)
 
 ### Architecture (desktop)
 
-- **AppSidebar** (`components/layout/AppSidebar.tsx`): persistent in-flow left column — the app's primary navigation. NOT a fixed overlay: the shell (`App.tsx`) lays out `[AppSidebar][column: TopBar + main]` as flex-row. The sidebar header and the TopBar both carry `border-b`, so the top chrome band reads as one surface with a continuous dividing line.
-- **TopBar** (`components/layout/TopBar.tsx`): slim 48px (`h-12`) in-flow chrome bar — the global action cluster: instance selector, onboarding guide, alerts bell (`AlertsMenu`). Doubles as the macOS Tauri window drag region.
-- **navItems.ts** (`components/layout/navItems.ts`): the shared nav definition (paths, icons, i18n keys, groups, active-route logic). The sidebar and MobileNav must not fork these.
+- **AppSidebar** (`components/layout/AppSidebar.tsx`): the desktop's ENTIRE chrome — a fixed 60px icon rail, full height. There is NO top bar: the shell (`App.tsx`) lays out `[AppSidebar][page-sidebar slot][main]`, and the whole window height belongs to content.
+- **navItems.ts** (`components/layout/navItems.ts`): the shared nav definition (paths, icons, i18n keys, active-route logic). The rail and MobileNav must not fork these.
 
-### Sidebar structure
+### Rail structure (top → bottom)
 
-- Header: brand logo + collapse toggle; reserves the macOS traffic-light strip (`--titlebar-inset`) and doubles as a drag region
-- PRIMARY group: Chat `/chat`, Agents `/agents`, Devices `/devices`, Visual Dashboard `/visual-dashboard`
-- SYSTEM group (labelled `navShort.system`): Automation, Data Explorer, Messages, Extensions
-- Footer (bottom-left): **user avatar** whose upward dropdown holds theme / language / settings / about / logout (settings has no standalone entry — the dialog opens from the avatar menu)
-- Active state: **neutral row** — `bg-muted text-foreground`, icon inherits foreground (mono accent language: the UI carries NO brand color; orange survives only in the logo mark, semantic/data colors, and the login/setup brand washes). The sidebar is the `--sidebar-bg` rail (light: ~#F8F9FA on a white canvas; dark: below-canvas dark), separated from content by **color contrast, no border** — page sidebars (sessions/dashboard list) share the same rail tone and carry no border-r; the sidebar footer carries no border-t either
+- Header: brand mark; reserves the macOS traffic-light strip (`--titlebar-inset`, set here) and is the window drag region
+- Nav: flat icon list (8 items, no grouping) — hover tooltips on `side="right"` carry the names; active icon = `bg-muted` square
+- Footer utilities: instance selector (compact square), theme toggle, settings, alerts (`AlertsMenu`, badge + upward dropdown), onboarding rocket — then the **user avatar LAST at the very bottom** (upward dropdown: theme / language / settings / about / logout)
 
-### Collapse behavior
+### Fixed width
 
-Two states: expanded `240px` (icon + label) ↔ collapsed `60px` icon rail (tooltips on `side="right"` keep names accessible; buttons retain `aria-label`). State lives in `uiSlice.appSidebarCollapsed`, persisted via the store (`neomind-store`). The current width is exported as `--app-sidebar-width` on `<html>` — fixed full-bleed surfaces (ChatPage's keyboard-aware container, PageLayout's fixed footer) offset with `left: var(--app-sidebar-width, 0px)`. **Any new fixed element must do the same.**
+60px, always — no expand/collapse duality. `--app-sidebar-width` (60px desktop, 0 mobile) is exported on `<html>`; fixed full-bleed surfaces (ChatPage's keyboard-aware container, PageLayout's fixed footer) offset with `left: var(--app-sidebar-width, 0px)`. **Any new fixed element must do the same.** `--topnav-height` is 0 everywhere (no top bar).
 
-### Mobile Navigation (unchanged)
-
-Mobile keeps its own system — the sidebar unmounts below `md`: per-page `MobilePageHeader` (hamburger) → `MobileNav` Sheet drawer (`PRIMARY` + `SYSTEM_ENTRIES` from navItems groups), plus per-page bottom tab bars and swipe gestures. `--topnav-height` is `0px` on mobile; on desktop it still carries the TopBar's measured height (set via `setTopNavHeight`).
-
-### Height Management
-
-TopBar height is tracked via `setTopNavHeight()` and exposed as `--topnav-height` for legacy consumers (e.g. ChatPage's fixed container padding). Since the TopBar is in-flow, `main` needs no compensating padding.
+Style: mono accent language — the UI carries NO brand color (orange survives only in the logo mark, semantic/data colors, and the login/setup brand washes). The rail is `--sidebar-bg` (light: ~#F8F9FA on a white canvas; dark: below-canvas dark), separated from content by **color contrast, no border**; page sidebars (sessions/dashboard list) share the rail tone, no border-r, no header/footer divider lines, no count footers.
 
 ---
 

@@ -896,12 +896,8 @@ export function ChatPage() {
       // visible area. Use --visual-viewport-offset-top to follow the visible
       // area. Always 0 in Safari (where the layout viewport itself shrinks).
       top: 'var(--visual-viewport-offset-top, 0px)',
-      // Desktop: TopNav height (set by useVisualViewport via --topnav-height).
-      // Mobile: --topnav-height is 0 (no global nav); safe-top class handles
-      // the notch via env(safe-area-inset-top). Don't combine them in a
-      // `var()` fallback — when the variable is explicitly "0px" the fallback
-      // is ignored and chat content ends up under the notch.
-      paddingTop: 'var(--topnav-height, 0px)',
+      // No global top bar anymore (desktop chrome = sidebar rail) — the
+      // safe-top class handles the mobile notch; desktop needs no top pad.
       // Drive height from `--app-height` (visualViewport.height) so the chat
       // page shrinks with the soft keyboard on iOS PWA standalone, where
       // `interactive-widget=resizes-content` is NOT honored and 100dvh stays

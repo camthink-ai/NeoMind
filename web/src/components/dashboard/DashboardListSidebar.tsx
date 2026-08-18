@@ -142,7 +142,7 @@ function DashboardSidebarContent({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 h-11 border-b border-border">
+      <div className="flex items-center justify-between px-3 h-11">
         <h2 className="text-sm font-semibold">{t('sidebar.title')}</h2>
         <div className="flex items-center gap-0.5">
           {isDesktop && onSwitchToTabs && (
@@ -384,13 +384,6 @@ function DashboardSidebarContent({
           )}
         </div>
       </ScrollArea>
-
-      {/* Footer */}
-      <div className="p-2 border-t border-border">
-        <p className={cn(textNano, "text-muted-foreground text-center")}>
-          {t('sidebar.dashboardCount', { count: dashboards.length })}
-        </p>
-      </div>
     </>
   )
 }

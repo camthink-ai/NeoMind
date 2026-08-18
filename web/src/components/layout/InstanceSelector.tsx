@@ -12,9 +12,11 @@ import { Server } from 'lucide-react'
 
 interface InstanceSelectorProps {
   onManageInstances: () => void
+  /** Icon-only square for the sidebar rail (no name/status text) */
+  compact?: boolean
 }
 
-export function InstanceSelector({ onManageInstances }: InstanceSelectorProps) {
+export function InstanceSelector({ onManageInstances, compact = false }: InstanceSelectorProps) {
   const { t } = useTranslation('instances')
   const instances = useStore((s) => s.instances)
   const currentInstanceId = useStore((s) => s.currentInstanceId)
@@ -37,22 +39,26 @@ export function InstanceSelector({ onManageInstances }: InstanceSelectorProps) {
       disabled={isSwitching}
       onClick={onManageInstances}
       className={cn(
-        // Compact pill for the 48px TopBar — py-1 keeps ~32px so the bar
-        // breathes around it instead of the pill crowding the top edge
-        "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors",
-        "cursor-pointer hover:opacity-80 disabled:opacity-50",
+        "rounded-lg text-xs font-medium transition-colors cursor-pointer hover:opacity-80 disabled:opacity-50",
+        compact
+          ? "flex items-center justify-center h-9 w-9"
+          : "flex items-center gap-1.5 px-2.5 py-1",
         isOnline
-          ? "bg-success-light text-success border border-success-light"
+          ? cn("bg-success-light text-success", !compact && "border border-success-light")
           : "text-error bg-muted"
       )}
     >
       <Server className="h-4 w-4 shrink-0" />
-      <span className="hidden sm:inline max-w-[120px] truncate">
-        {currentInstance?.name || t('local')}
-      </span>
-      <span className="sm:hidden">
-        {isOnline ? t('status.online') : t('status.offline')}
-      </span>
+      {!compact && (
+        <>
+          <span className="hidden sm:inline max-w-[120px] truncate">
+            {currentInstance?.name || t('local')}
+          </span>
+          <span className="sm:hidden">
+            {isOnline ? t('status.online') : t('status.offline')}
+          </span>
+        </>
+      )}
     </button>
   )
 }
