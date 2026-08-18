@@ -141,10 +141,12 @@ export function PageLayout({
         />
       )}
       {/* Desktop: PageHeader with title + actions (descriptions removed —
-          the title row is a single compact line now). */}
+          the title row is a single compact line now). mx-auto + maxWidth
+          mirror the scroll container so the title and content share the
+          same left edge. */}
       {title && !isMobile && (
         <div className="shrink-0 bg-background">
-          <div className={cn('w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3', maxWidthClass[maxWidth], className)}>
+          <div className={cn('mx-auto w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3', maxWidthClass[maxWidth], className)}>
             <PageHeader
               title={title}
               actions={actions}
