@@ -130,7 +130,10 @@ export function PageTabsBar({
   // SINGLE scrollable row (no wrapping): overflowing tabs scroll
   // horizontally at natural size instead of squeezing labels together.
   return (
-    <div className="flex h-11 shrink-0 items-center gap-3 bg-[var(--chrome)] px-4 sm:px-6">
+    // py-2 (not fixed h-11): the capsule's bottom border needs breathing
+    // room above the content area, otherwise the table's top border sits
+    // flush against it and reads as a line slicing the tab's bottom edge
+    <div className="flex shrink-0 items-center gap-3 bg-[var(--chrome)] px-4 py-2 sm:px-6">
       <div
         className={cn(
           'flex min-w-0 max-w-full items-center overflow-x-auto scrollbar-none rounded-lg border border-border bg-card p-1 gap-1',
