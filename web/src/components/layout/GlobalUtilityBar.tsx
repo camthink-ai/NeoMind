@@ -21,6 +21,7 @@ import { useOnboarding } from "@/hooks/useOnboarding"
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import {
@@ -44,7 +45,7 @@ export function GlobalUtilityBar() {
     (!onboardingStatus.steps.llm.completed || !onboardingStatus.steps.device.completed)
 
   return (
-    <>
+    <TooltipProvider delayDuration={500}>
       <div
         className="pointer-events-none absolute right-4 sm:right-6 z-20 flex items-center gap-1.5"
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}
@@ -121,6 +122,6 @@ export function GlobalUtilityBar() {
         status={onboardingStatus}
         onDismiss={dismissOnboarding}
       />
-    </>
+    </TooltipProvider>
   )
 }
