@@ -1,15 +1,9 @@
-/// <reference types="vitest" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import viteCompression from 'vite-plugin-compression'
 
 export default defineConfig({
-  test: {
-    environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts'],
-    css: false,
-  },
   plugins: [
     react({
       // Faster development builds
@@ -206,6 +200,9 @@ export default defineConfig({
           // CodeMirror - editor used in extension code editing
           if (
             id.includes('node_modules/@codemirror/') ||
+            id.includes('node_modules/codemirror/') ||
+            id.includes('node_modules/@uiw/react-codemirror') ||
+            id.includes('node_modules/@marijn/') ||
             id.includes('node_modules/@lezer/') ||
             id.includes('node_modules/crelt/') ||
             id.includes('node_modules/w3c-keyname/') ||
@@ -227,6 +224,39 @@ export default defineConfig({
           // jszip — lazy loaded via dynamic import()
           if (id.includes('node_modules/jszip')) {
             return 'vendor-export'
+          }
+
+          // Markdown + syntax-highlight stack (react-markdown / remark /
+          // rehype / micromark / lowlight / highlight.js) — only the chat
+          // pages import it; keeping it out of the catch-all vendor means
+          // the initial shell doesn't pay for it.
+          if (
+            id.includes('node_modules/react-markdown') ||
+            id.includes('node_modules/remark') ||
+            id.includes('node_modules/rehype') ||
+            id.includes('node_modules/unified') ||
+            id.includes('node_modules/micromark') ||
+            id.includes('node_modules/mdast-') ||
+            id.includes('node_modules/hast-') ||
+            id.includes('node_modules/unist-') ||
+            id.includes('node_modules/vfile') ||
+            id.includes('node_modules/property-information') ||
+            id.includes('node_modules/space-separated-tokens') ||
+            id.includes('node_modules/trim-lines') ||
+            id.includes('node_modules/trough') ||
+            id.includes('node_modules/bail') ||
+            id.includes('node_modules/devlop') ||
+            id.includes('node_modules/zwitch') ||
+            id.includes('node_modules/esc') ||
+            id.includes('node_modules/web-namespaces') ||
+            id.includes('node_modules/html-url-entities') ||
+            id.includes('node_modules/decode-named-character-reference') ||
+            id.includes('node_modules/character-') ||
+            id.includes('node_modules/highlight.js') ||
+            id.includes('node_modules/lowlight') ||
+            false
+          ) {
+            return 'vendor-markdown'
           }
 
           // All other node_modules go into a single vendor bundle

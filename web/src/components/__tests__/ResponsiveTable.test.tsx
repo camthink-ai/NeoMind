@@ -30,7 +30,7 @@ describe('ResponsiveTable (desktop)', () => {
         <ResponsiveTable
           columns={columns}
           data={data}
-          renderCell={(key, row) => String((row as Record<string, unknown>)[key] ?? '')}
+          renderCell={(key, row) => String((row as unknown as Record<string, unknown>)[key] ?? '')}
           rowKey={(row) => (row as Row).name}
         />
       </ThemeProvider>
@@ -47,7 +47,7 @@ describe('ResponsiveTable (desktop)', () => {
         <ResponsiveTable
           columns={columns}
           data={data}
-          renderCell={(key, row) => String((row as Record<string, unknown>)[key] ?? '')}
+          renderCell={(key, row) => String((row as unknown as Record<string, unknown>)[key] ?? '')}
           rowKey={(row) => (row as Row).name}
         />
       </ThemeProvider>
@@ -63,7 +63,7 @@ describe('ResponsiveTable (desktop)', () => {
         <ResponsiveTable
           columns={columns}
           data={data}
-          renderCell={(key, row) => String((row as Record<string, unknown>)[key] ?? '')}
+          renderCell={(key, row) => String((row as unknown as Record<string, unknown>)[key] ?? '')}
           rowKey={(row) => (row as Row).name}
         />
       </ThemeProvider>
@@ -79,7 +79,7 @@ describe('ResponsiveTable (desktop)', () => {
         <ResponsiveTable
           columns={columns}
           data={data}
-          renderCell={(key, row) => String((row as Record<string, unknown>)[key] ?? '')}
+          renderCell={(key, row) => String((row as unknown as Record<string, unknown>)[key] ?? '')}
           rowKey={(row) => (row as Row).name}
         />
       </ThemeProvider>

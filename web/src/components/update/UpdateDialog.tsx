@@ -14,9 +14,13 @@ import { Check, Download, AlertCircle, Loader2, Rocket } from 'lucide-react'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 import { useAppStore } from '@/store'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { lazy, Suspense } from 'react'
 import type { Components } from 'react-markdown'
+
+// Lazy: keeps the markdown/highlight vendor chunk out of the initial graph
+const ReleaseNotes = lazy(() =>
+  import('./ReleaseNotes').then((m) => ({ default: m.ReleaseNotes }))
+)
 import { cn } from '@/lib/utils'
 
 // react-markdown overrides for the release-notes panel. Links open in a new
@@ -251,9 +255,9 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
         {currentUpdateInfo?.body && installStatus === 'idle' && (
           <div className="max-h-[60vh] overflow-y-auto rounded-md border p-3 text-sm">
             <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={releaseNotesComponents}>
-                {updateInfo?.body ?? ''}
-              </ReactMarkdown>
+              <Suspense fallback={null}>
+                <ReleaseNotes body={updateInfo?.body ?? ''} components={releaseNotesComponents} />
+              </Suspense>
             </div>
           </div>
         )}

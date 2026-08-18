@@ -8,13 +8,18 @@
  * The panel chat has its own independent session — does not affect the main chat page.
  */
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, lazy, Suspense } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
 import { useTranslation } from "react-i18next"
 import { MessageSquare } from "lucide-react"
-import { PanelChatView } from "./PanelChatView"
 import { notifyInfo } from "@/lib/notify"
+
+// Lazy: the panel drags the whole markdown/syntax-highlight stack
+// (vendor-markdown ~325KB) — only pay for it when the FAB is actually opened.
+const PanelChatView = lazy(() =>
+  import("./PanelChatView").then((m) => ({ default: m.PanelChatView }))
+)
 import { cn } from "@/lib/utils"
 
 type PanelState = "closed" | "opening" | "open" | "closing"
@@ -106,12 +111,14 @@ export function GlobalChatFab() {
       >
         {/* Only render content when visible */}
         {panelState !== "closed" && (
-          <PanelChatView
-            onClose={handleClose}
-            onStreamingChange={setIsStreaming}
-            showMinimize
-            onNavigateToSettings={() => openSettings()}
-          />
+          <Suspense fallback={null}>
+              <PanelChatView
+                onClose={handleClose}
+                onStreamingChange={setIsStreaming}
+                showMinimize
+                onNavigateToSettings={() => openSettings()}
+              />
+            </Suspense>
         )}
       </div>
     </>
