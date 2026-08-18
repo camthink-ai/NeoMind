@@ -287,7 +287,7 @@ Every page must use `PageLayout` from `@/components/layout/PageLayout`.
 ```
 
 **Rules:**
-- Desktop title row: single compact line via PageHeader — **no description/subtitle rendered** (deprecated prop kept for compat); the row is `mx-auto` + maxWidth so the title left-aligns with the content below
+- Desktop title row via PageHeader: **title + one-line description** (subtitle prop); the row is `mx-auto` + maxWidth so the title left-aligns with the content below. The visual-dashboard page is the exception — title only (its toolbar with the dashboard name follows)
 - Content area uses `overflow-auto` via PageLayout's scroll container — do NOT add your own scroll
 - Fixed headers (tabs/toolbars) go in `headerContent` prop — toolbar rows use `px-4 sm:px-6 md:px-8` matching the title row; NO border-b under the row (content separation is the capsule/toolbar's own affordances)
 - Fixed footers (pagination) go in `footer` prop; the footer offsets past both sidebars via `--app-sidebar-width`
