@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom"
 import { usePageSidebarSlot, PageSidebarColumn } from "@/components/layout/PageSidebarSlot"
+import { GlobalControlsFloating } from "@/components/layout/GlobalControls"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
@@ -905,6 +906,8 @@ export function ChatPage() {
       // notch. Falls back to 100dvh when --app-height is unset.
       height: 'var(--app-height, 100dvh)',
     }}>
+      {/* Global entry points — chat has no toolbar, so they float top-right */}
+      {isDesktop && <GlobalControlsFloating />}
       {/* Pending stream recovery dialog */}
       {pendingStream?.hasPending && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg-80 backdrop-blur-sm">

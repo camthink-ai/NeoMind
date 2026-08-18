@@ -6,7 +6,6 @@ import { BrandGradientDef } from "@/components/shared/BrandGradientDef"
 import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { AppSidebar } from "@/components/layout/AppSidebar"
-import { GlobalUtilityBar } from "@/components/layout/GlobalUtilityBar"
 import { MobileNav } from "@/components/layout/MobileNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
@@ -576,7 +575,6 @@ function App() {
                       tabIndex={-1}
                       className="relative flex flex-1 min-h-0 overflow-hidden focus:outline-none"
                     >
-                    {!isMobile && <GlobalUtilityBar />}
                     <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">

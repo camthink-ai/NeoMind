@@ -34,6 +34,7 @@ import {
 import { cn } from '@/lib/utils'
 import { textMini } from "@/design-system/tokens/typography"
 import { useMobileHeaderActionsRegistrar } from '@/components/layout/MobileHeaderActionsContext'
+import { GlobalControls } from '@/components/layout/GlobalControls'
 
 export interface TabAction {
   label: string
@@ -129,12 +130,7 @@ export function PageTabsBar({
   // horizontally, keeping each tab at its natural size instead of squeezing
   // labels together.
   return (
-    <div
-      className="px-4 sm:px-6 md:px-8 py-2"
-      // Right-pad past the floating top-right utility cluster so the tabs'
-      // action buttons don't sit under it
-      style={{ paddingRight: "calc(var(--utility-bar-width, 0px) + 0.75rem)" }}
-    >
+    <div className="px-4 sm:px-6 md:px-8 py-2">
       <div className={cn('mx-auto', maxWidthClass[maxWidth])}>
         <div className="flex items-center gap-3">
           <div
@@ -188,6 +184,9 @@ export function PageTabsBar({
               {actionsExtra}
             </div>
           )}
+
+          {/* Global entry points — same aligned row on every page's toolbar */}
+          <GlobalControls />
         </div>
       </div>
     </div>

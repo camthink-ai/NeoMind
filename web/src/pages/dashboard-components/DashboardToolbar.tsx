@@ -17,6 +17,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DashboardTabBar } from '@/components/dashboard/DashboardTabBar'
+import { GlobalControls } from '@/components/layout/GlobalControls'
 import { ComponentLibrarySidebar } from './ComponentLibrarySidebar'
 import type { Dashboard } from '@/types/dashboard'
 import type { ComponentCategory } from './componentLibraryUtils'
@@ -122,12 +123,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
   const { t } = useTranslation('dashboardComponents')
 
   return (
-    <header
-      className="shrink-0 flex items-center justify-between px-4 h-11 border-b border-border bg-[var(--chrome)] z-10"
-      // Right-pad past the floating top-right utility cluster so its buttons
-      // don't overlap the toolbar's action buttons
-      style={{ paddingRight: "calc(var(--utility-bar-width, 0px) + 0.75rem)" }}
-    >
+    <header className="shrink-0 flex items-center justify-between px-4 h-11 border-b border-border bg-[var(--chrome)] z-10">
       {/* Mobile: always show the dropdown switcher regardless of layoutMode.
           Sidebar-mode's "open the list drawer" pattern has no trigger on
           touch devices, so we route through DashboardTabBar's mobile UI. */}
@@ -246,6 +242,9 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
             <TooltipContent side="bottom">{t('visualDashboard.fullscreen')}</TooltipContent>
           </Tooltip>
         </div>
+
+        {/* Global entry points — same aligned row on every page's toolbar */}
+        <GlobalControls />
       </TooltipProvider>
     </header>
   )
