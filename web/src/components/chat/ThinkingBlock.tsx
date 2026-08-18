@@ -69,7 +69,7 @@ export function ThinkingBlock({
             {hasRoundThinking ? (
               <PerRoundThinking rounds={roundThinking!} isStreaming={isStreaming} compact />
             ) : (
-              <div className={cn("text-body sm:text-sm", "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words")}>
+              <div className={cn("text-sm", "leading-relaxed text-muted-foreground whitespace-pre-wrap break-words")}>
                 {thinking}
                 {isStreaming && <span className="inline-block w-1 h-3.5 bg-muted-foreground animate-pulse ml-0.5 align-middle" />}
               </div>
@@ -81,7 +81,7 @@ export function ThinkingBlock({
   }
 
   return (
-    <div className="mb-3 overflow-hidden rounded-lg border border-border bg-muted/30">
+    <div className="mb-3 overflow-hidden rounded-lg bg-muted/40">
       {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}

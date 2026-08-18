@@ -16,7 +16,7 @@ import { useState, useEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { Wrench, ChevronDown, CheckCircle2, Loader2, Code, FileText } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { textMini } from "@/design-system/tokens/typography"
+import { textMini, textCode } from "@/design-system/tokens/typography"
 import type { ToolCall } from "@/types"
 import { BuildCard, parseBuildResponse } from "@/components/chat/BuildCard"
 
@@ -133,7 +133,7 @@ export function ToolProcessBlock({
   const manyCalls = toolCalls.length > 4
 
   return (
-    <div className="mb-4 overflow-hidden rounded-lg border border-border bg-muted/30">
+    <div className="mb-4 overflow-hidden rounded-lg bg-muted/40">
       {/* Summary header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
@@ -289,7 +289,7 @@ function ToolCallItem({
             <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
           )}
         </div>
-        <span className={cn("text-body sm:text-sm", "truncate text-muted-foreground")}>{getToolDisplayName(toolCall.name, toolCall.arguments)}</span>
+        <span className={cn("text-sm", "truncate text-muted-foreground")}>{getToolDisplayName(toolCall.name, toolCall.arguments)}</span>
         {status === "running" && (
           <span className={cn(textMini, "px-1.5 py-0.5 rounded bg-warning-light text-warning shrink-0")}>
             {statusLabels[status]}
@@ -310,7 +310,7 @@ function ToolCallItem({
               <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
                 <Code className="h-3 w-3" />{t("toolCall.arguments")}
               </div>
-              <pre className={cn(textMini, "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
+              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed")}>
                 {formatJson(toolCall.arguments)}
               </pre>
             </div>
@@ -322,7 +322,7 @@ function ToolCallItem({
               <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
                 <CheckCircle2 className="h-3 w-3" />{t("toolCall.result")}
               </div>
-              <pre className={cn(textMini, "font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed")}>
+              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap break-words max-h-32 overflow-y-auto leading-relaxed")}>
                 {formatJson(toolCall.result)}
               </pre>
             </div>
