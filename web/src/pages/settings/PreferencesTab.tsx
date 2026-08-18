@@ -146,10 +146,10 @@ export function PreferencesTab() {
 
       {/* Language & Region Settings */}
       <section>
-        <h3 className="text-base font-semibold mb-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
           {t("settings:languageRegion")}
         </h3>
-        <div className="rounded-xl bg-muted-30 p-5 space-y-4">
+        <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
           {/* Language */}
           <SettingsRow
             label={t("settings:language")}
@@ -176,10 +176,10 @@ export function PreferencesTab() {
 
       {/* Time Settings */}
       <section>
-        <h3 className="text-base font-semibold mb-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
           {t("settings:timeSettings")}
         </h3>
-        <div className="rounded-xl bg-muted-30 p-5 space-y-4">
+        <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
           {/* Time Format */}
           <SettingsRow
             label={t("settings:timeFormat")}
@@ -346,10 +346,10 @@ function AgentDefaultsSection() {
 
   return (
     <section>
-      <h3 className="text-base font-semibold mb-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
         {t("settings:agentDefaults")}
       </h3>
-      <div className="rounded-xl bg-muted-30 p-5 space-y-4">
+      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
         <SettingsRow label={t("settings:maxRounds")} description={t("settings:maxRoundsDesc")}>
           <Select value={String(config.max_rounds)} onValueChange={(v) => saveConfig({ max_rounds: +v })}>
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
@@ -447,10 +447,10 @@ function DeviceDefaultsSection() {
 
   return (
     <section>
-      <h3 className="text-base font-semibold mb-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
         {t("settings:deviceDefaults")}
       </h3>
-      <div className="rounded-xl bg-muted-30 p-5 space-y-4">
+      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
         <SettingsRow label={t("settings:defaultOfflineTimeout")} description={t("settings:defaultOfflineTimeoutDesc")}>
           <Select value={String(config.default_offline_timeout_secs)} onValueChange={(v) => saveConfig({ default_offline_timeout_secs: +v })}>
             <SelectTrigger className="w-full sm:w-[180px]"><SelectValue /></SelectTrigger>
@@ -520,10 +520,10 @@ function DataManagementSection() {
 
   return (
     <section>
-      <h3 className="text-base font-semibold mb-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
         {t("settings:dataManagement")}
       </h3>
-      <div className="rounded-xl bg-muted-30 p-5 space-y-5">
+      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-5">
         {/* Auto Cleanup Toggle */}
         <SettingsRow
           label={t("settings:autoCleanup")}
@@ -629,10 +629,10 @@ function DiagnosticDataSection() {
 
   return (
     <section>
-      <h3 className="text-base font-semibold mb-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
         {t("settings:diagnosticData")}
       </h3>
-      <div className="rounded-xl bg-muted-30 p-5 space-y-4">
+      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
         <SettingsRow
           label={t("settings:logTimeRange")}
           description={t("settings:diagnosticDataDesc")}
