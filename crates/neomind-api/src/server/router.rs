@@ -1235,6 +1235,12 @@ pub fn create_router_with_state(state: ServerState) -> Router {
     let router = assets::configure_static_file_serving(router);
 
     router
+        // Data-change events: publish DataChanged after successful mutating
+        // requests on data domains (AI/CLI/any actor) so clients refresh.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::server::middleware::data_change_publisher,
+        ))
         // Cache-Control for static assets: immutable for hashed files, no-cache for HTML.
         // Only adds headers when not already set (API responses keep their own headers).
         .layer(middleware::from_fn(cache_headers_middleware))

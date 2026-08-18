@@ -5,6 +5,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useStore } from '@/store'
+import { useDataVersion } from '@/hooks/useDataVersion'
 import { useTranslation } from 'react-i18next'
 import { useIsMobile } from '@/hooks/useMobile'
 import { ResponsiveTable, type TableColumn, type TableRowAction, EmptyState, Pagination } from '@/components/shared'
@@ -39,9 +40,10 @@ export function PushTargetsTab() {
   const [testingId, setTestingId] = useState<string | null>(null)
   const [page, setPage] = useState(1)
 
+  const dataVersion = useDataVersion('data-push')
   useEffect(() => {
     fetchPushTargets()
-  }, [fetchPushTargets])
+  }, [fetchPushTargets, dataVersion])
 
   const handleToggle = useCallback(async (target: PushTarget) => {
     if (target.enabled) {

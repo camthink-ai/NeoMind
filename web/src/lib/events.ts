@@ -33,7 +33,18 @@ export type EventType =
   | 'ExtensionLifecycle'
   | 'FrontendComponentLifecycle'
   | 'DashboardUpdated'
+  | 'DataChanged'
   | 'Custom'
+
+export interface DataChangedEvent extends NeoMindEvent {
+  type: 'DataChanged'
+  /** Data domain, from the mutating path segment (e.g. "devices", "automations") */
+  domain: string
+  /** HTTP method of the mutating request */
+  method: string
+  /** Full request path */
+  path: string
+}
 
 export interface CustomEvent extends NeoMindEvent {
   type: 'Custom'

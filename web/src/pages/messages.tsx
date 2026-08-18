@@ -9,6 +9,7 @@ import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination, Responsive
 import { MessageSquare, Network, Settings, Filter as FilterIcon, Inbox, Loader2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useStore } from '@/store'
+import { useDataVersion } from '@/hooks/useDataVersion'
 import { useToast } from '@/hooks/use-toast'
 import { confirm } from '@/hooks/use-confirm'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
@@ -527,6 +528,7 @@ export default function MessagesPage() {
   }, [selectedSeverities, selectedStatuses, selectedCategories])
 
   // Fetch on mount and when page/filters change
+  const dataVersion = useDataVersion('messages', 'message-channels', 'im-bridges')
   useEffect(() => {
     if (activeTab === 'messages') {
       fetchMessages()
@@ -534,7 +536,7 @@ export default function MessagesPage() {
       fetchChannels()
     }
     // 'im' tab manages its own data lifecycle via ImSessionsTab
-  }, [activeTab, fetchMessages, fetchChannels])
+  }, [activeTab, fetchMessages, fetchChannels, dataVersion])
 
   // Message actions - using messages API endpoints
   const handleAcknowledge = async (id: string) => {

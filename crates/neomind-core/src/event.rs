@@ -418,6 +418,21 @@ pub enum NeoMindEvent {
         timestamp: i64,
     },
 
+    /// A mutating REST request (POST/PUT/PATCH/DELETE) succeeded on a data
+    /// domain. Published by the API's data-change middleware for ANY actor —
+    /// the AI agent driving the neomind CLI, another client, a background
+    /// job — so web pages can refresh their caches without manual reload.
+    DataChanged {
+        /// Data domain, derived from the path segment (e.g. "devices",
+        /// "automations", "dashboards", "extensions").
+        domain: String,
+        /// HTTP method of the mutating request.
+        method: String,
+        /// Full request path (for debugging / fine-grained client handling).
+        path: String,
+        timestamp: i64,
+    },
+
     /// Custom event for extensions and plugins
     ///
     /// Allows third-party components to publish their own events
@@ -513,6 +528,7 @@ impl NeoMindEvent {
             Self::ExtensionCommandCompleted { .. } => "ExtensionCommandCompleted",
             Self::ExtensionCommandFailed { .. } => "ExtensionCommandFailed",
             Self::DashboardUpdated { .. } => "DashboardUpdated",
+            Self::DataChanged { .. } => "DataChanged",
             Self::Custom { .. } => "Custom",
             Self::AgentStreamChunk { .. } => "AgentStreamChunk",
             Self::AgentStreamEnd { .. } => "AgentStreamEnd",
@@ -568,6 +584,7 @@ impl NeoMindEvent {
             | Self::ExtensionCommandCompleted { timestamp, .. }
             | Self::ExtensionCommandFailed { timestamp, .. }
             | Self::DashboardUpdated { timestamp, .. }
+            | Self::DataChanged { timestamp, .. }
             | Self::AgentStreamChunk { timestamp, .. }
             | Self::AgentStreamEnd { timestamp, .. } => *timestamp,
             Self::Custom { .. } => {

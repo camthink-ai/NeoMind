@@ -99,3 +99,117 @@ pub async fn webhook_rate_limit_middleware(
         }
     }
 }
+
+/// Data-change publisher middleware.
+///
+/// After a successful mutating request (POST/PUT/PATCH/DELETE) on a data
+/// domain, publishes a `NeoMindEvent::DataChanged` on the event bus so
+/// connected clients (web pages, the chat panel) refresh their caches —
+/// changes made by ANY actor (AI agent via CLI, another user, background
+/// job) show up without a manual reload.
+///
+/// Domain allow-list (first path segment after /api/): keeps telemetry
+/// ingestion and auth/event chatter off the bus. Device webhook ingestion
+/// paths are excluded explicitly — they are data-plane, not CRUD.
+pub async fn data_change_publisher(
+    State(state): State<ServerState>,
+    request: Request<Body>,
+    next: Next,
+) -> axum::response::Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    let response = next.run(request).await;
+
+    if !response.status().is_success() {
+        return response;
+    }
+    let is_mutating = method == axum::http::Method::POST
+        || method == axum::http::Method::PUT
+        || method == axum::http::Method::PATCH
+        || method == axum::http::Method::DELETE;
+    if !is_mutating {
+        return response;
+    }
+    let Some(domain) = data_change_domain(&path) else {
+        return response;
+    };
+
+    if let Some(bus) = state.core.event_bus.clone() {
+        let event = neomind_core::NeoMindEvent::DataChanged {
+            domain,
+            method: method.to_string(),
+            path,
+            timestamp: chrono::Utc::now().timestamp_millis(),
+        };
+        tokio::spawn(async move {
+            bus.publish(event).await;
+        });
+    }
+    response
+}
+
+/// Resolve the data domain for a mutating path, or None if the path should
+/// not emit change events.
+fn data_change_domain(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/api/")?;
+    let domain = rest.split('/').next()?;
+    if domain.is_empty() {
+        return None;
+    }
+    match domain {
+        "devices" if path.contains("/webhook") => None, // telemetry ingestion
+        "devices"
+        | "device-types"
+        | "automations"
+        | "rules"
+        | "dashboards"
+        | "data-push"
+        | "message-channels"
+        | "im-bridges"
+        | "brokers"
+        | "extensions"
+        | "frontend-components"
+        | "agents"
+        | "skills"
+        | "instances"
+        | "sessions"
+        | "users"
+        | "llm" => Some(domain.to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod data_change_tests {
+    use super::data_change_domain;
+
+    #[test]
+    fn crud_domains_resolve() {
+        assert_eq!(
+            data_change_domain("/api/devices"),
+            Some("devices".to_string())
+        );
+        assert_eq!(
+            data_change_domain("/api/automations/transforms"),
+            Some("automations".to_string())
+        );
+        assert_eq!(
+            data_change_domain("/api/extensions/pkg-1/enable"),
+            Some("extensions".to_string())
+        );
+    }
+
+    #[test]
+    fn ingestion_and_chatter_are_excluded() {
+        // device data-plane webhook → no event storm
+        assert_eq!(data_change_domain("/api/devices/dev-1/webhook"), None);
+        assert_eq!(data_change_domain("/api/devices/webhook"), None);
+        // auth / events / telemetry / chat-ws never emit
+        assert_eq!(data_change_domain("/api/auth/login"), None);
+        assert_eq!(data_change_domain("/api/events/publish"), None);
+        assert_eq!(data_change_domain("/api/telemetry/query"), None);
+        assert_eq!(data_change_domain("/api/chat/anything"), None);
+        // GET-style non-api path
+        assert_eq!(data_change_domain("/assets/index.js"), None);
+    }
+}

@@ -8,6 +8,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
+import { useDataVersion } from "@/hooks/useDataVersion"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { PageLayout } from "@/components/layout/PageLayout"
@@ -203,9 +204,10 @@ export function AgentsPage() {
   }, [editorResourcesLoaded, handleError])
 
   // Load items on mount
+  const dataVersion = useDataVersion('agents', 'skills')
   useEffect(() => {
     loadItems()
-  }, [loadItems])
+  }, [loadItems, dataVersion])
 
   // Listen to WebSocket events for real-time agent status updates
   useEvents({

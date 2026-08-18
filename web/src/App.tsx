@@ -11,6 +11,7 @@ import { MobileNav } from "@/components/layout/MobileNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
 import { useIsMobile } from "@/hooks/useMobile"
+import { useDataChangeEvents } from "@/hooks/useDataChangeEvents"
 import { Toaster } from "@/components/ui/toaster"
 import { Confirmer } from "@/components/ui/confirmer"
 import { tokenManager, getApiBase, isTauriEnv, setApiBase, getApiKey } from "@/lib/api"
@@ -248,6 +249,8 @@ const handleWindowDragMouseDown = (e: React.MouseEvent) => {
 function App() {
   const isMobile = useIsMobile()
   const { t } = useTranslation("common")
+  // AI/other-client data changes → auto-refresh domain caches & pages
+  useDataChangeEvents()
   const extensionComponents = useExtensionComponents({ autoSync: true, syncInterval: 60000 })
   const extensionSyncRef = useRef(extensionComponents.sync)
   

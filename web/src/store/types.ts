@@ -121,6 +121,13 @@ export type PageName =
 
 export interface UIState {
   wsConnected: boolean
+  /**
+   * Per-domain data version counters. Bumped whenever a DataChanged event
+   * arrives for that domain (any actor: AI agent, another client, background
+   * job). Pages loading data locally add the counter to their fetch-effect
+   * deps to refetch without a manual reload.
+   */
+  dataVersions: Record<string, number>
 }
 
 // ============================================================================

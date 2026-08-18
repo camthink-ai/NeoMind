@@ -47,6 +47,13 @@ function recordSelfSync(dashboardId: string): void {
   }
 }
 
+/** Any dashboard synced within the echo window? Used by the DataChanged
+ *  listener to skip refetches that would overwrite in-progress edits. */
+export function hasAnyRecentSelfSync(): boolean {
+  const now = Date.now()
+  return recentSelfSyncTimestamps.some((ts) => now - ts <= SELF_SYNC_ECHO_MS)
+}
+
 /** Should we ignore this DashboardUpdated SSE event (echo of our own sync)? */
 export function isSelfSyncEcho(eventDashboardId: string): boolean {
   const now = Date.now()

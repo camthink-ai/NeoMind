@@ -7,6 +7,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
+import { useDataVersion } from "@/hooks/useDataVersion"
 import { useTranslation } from "react-i18next"
 import { useNavigate, useLocation } from "react-router-dom"
 import { PageLayout } from "@/components/layout/PageLayout"
@@ -178,10 +179,12 @@ export function AutomationPage() {
     }
   }, [resourcesLoaded, resourcesLoading, handleError])
 
-  // Load tab data when tab changes
+  // Load tab data when tab changes (or when a DataChanged event bumps the
+  // domain version — e.g. the AI panel created a rule via the CLI)
+  const dataVersion = useDataVersion('automations', 'rules')
   useEffect(() => {
     loadTabData()
-  }, [loadTabData])
+  }, [loadTabData, dataVersion])
 
   // Legacy alias for refresh button and import/export handlers
   const loadItems = loadTabData
