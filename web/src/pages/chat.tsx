@@ -6,7 +6,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Settings, Send, Sparkles, MessageSquare, ChevronDown, X, Image as ImageIcon, Loader2, RotateCcw, Plus, Check, ArrowUp } from "lucide-react"
+import { Settings, Sparkles, MessageSquare, ChevronDown, X, Image as ImageIcon, Loader2, RotateCcw, Plus, Check, ArrowUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -278,7 +278,7 @@ export function ChatPage() {
   // Onboarding auto-detect: show getting-started dialog for new installations
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const hasShownOnboarding = useRef(false)
-  const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
+  const { status: onboardingStatus, dismiss: dismissOnboarding } = useOnboarding()
 
   useEffect(() => {
     if (hasShownOnboarding.current || !onboardingStatus) return

@@ -88,7 +88,6 @@ export interface PageTabsBarProps {
   secondaryActions?: TabAction[]
   actionsExtra?: ReactNode
   tabsClassName?: string
-  maxWidth?: 'md' | 'lg' | 'xl' | '2xl' | 'full'
 }
 
 export function PageTabsBar({
@@ -99,17 +98,9 @@ export function PageTabsBar({
   secondaryActions = [],
   actionsExtra,
   tabsClassName,
-  maxWidth = 'full',
 }: PageTabsBarProps) {
   const isMobile = useIsMobile()
 
-  const maxWidthClass = {
-    md: 'max-w-4xl',
-    lg: 'max-w-6xl',
-    xl: 'max-w-7xl',
-    '2xl': 'max-w-7xl',
-    full: 'max-w-full',
-  }
 
   // On mobile, lift all actions into the MobilePageHeader via context.
   // secondaryActions are appended so MobileTabActionsCompact naturally
