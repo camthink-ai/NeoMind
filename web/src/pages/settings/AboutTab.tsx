@@ -83,7 +83,7 @@ function MetricTile({
   mono?: boolean
 }) {
   return (
-    <div className="rounded-lg border bg-muted-30 p-4 space-y-2 transition-colors hover:bg-muted-50">
+    <div className="rounded-lg border bg-card p-4 space-y-2 transition-colors hover:bg-muted-50">
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <Icon className="h-3.5 w-3.5" />
         <span className="uppercase tracking-wide truncate">{label}</span>
@@ -123,7 +123,7 @@ function UsageGauge({
   const textColor = clamped >= 80 ? "text-error" : clamped >= 60 ? "text-info" : "text-success"
 
   return (
-    <div className="rounded-lg border bg-muted-30 p-4 space-y-3">
+    <div className="rounded-lg border bg-card p-4 space-y-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1">
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -203,7 +203,7 @@ function TelemetrySkeleton() {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="rounded-lg border bg-muted-30 p-4 space-y-2.5">
+        <div key={i} className="rounded-lg border bg-card p-4 space-y-2.5">
           <Skeleton className="h-3 w-16" />
           <Skeleton className="h-7 w-20" />
           <Skeleton className="h-3 w-12" />
@@ -364,7 +364,7 @@ export function AboutTab() {
 
       {/* System Information */}
       <section>
-        <h3 className="text-base font-semibold">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {t("settings:systemInfo")}
         </h3>
         <div className="mt-4 space-y-4">
@@ -452,7 +452,7 @@ export function AboutTab() {
 
               {/* Network interfaces */}
               {(systemInfo.networks ?? []).length > 0 && (
-                <div className="rounded-lg border bg-muted-30 p-4">
+                <div className="rounded-lg border bg-card p-4">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
                     <Wifi className="h-3.5 w-3.5" />
                     <span className="uppercase tracking-wide">{t("settings:network", "Network")}</span>
@@ -491,7 +491,7 @@ export function AboutTab() {
                   {systemInfo.gpus.map((gpu, idx) => (
                     <div
                       key={idx}
-                      className="rounded-lg border bg-muted-30 p-3 flex items-center justify-between gap-3"
+                      className="rounded-lg border bg-card p-3 flex items-center justify-between gap-3"
                     >
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
@@ -531,10 +531,10 @@ export function AboutTab() {
 
       {/* Project Information */}
       <section>
-        <h3 className="text-base font-semibold">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {t("settings:projectInfo")}
         </h3>
-        <div className="mt-4 rounded-xl bg-muted-30 p-5">
+        <div className="mt-4 rounded-lg border border-border shadow-sm bg-card p-5">
           <div>
             <InfoRow label={t("settings:version")}>
               <div className="flex items-center gap-2">
