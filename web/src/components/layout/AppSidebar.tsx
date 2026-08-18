@@ -19,7 +19,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
-import { Settings, Sun, Languages, Info, LogOut } from "lucide-react"
+import { Rocket, Settings, Sun, Languages, Info, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isTauriEnv } from "@/lib/api"
 import { getCurrentWindow } from "@tauri-apps/api/window"
@@ -53,6 +53,10 @@ import {
   isNavItemActive,
   type NavItem,
 } from "./navItems"
+import { InstanceSelector } from "./InstanceSelector"
+import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
+import { useOnboarding } from "@/hooks/useOnboarding"
+import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 
 const SIDEBAR_WIDTH_PX = 60
 
@@ -73,6 +77,16 @@ export function AppSidebar() {
   const user = useStore((s) => s.user)
   const logout = useStore((s) => s.logout)
   const { theme, setTheme } = useTheme()
+  const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
+  const [onboardingOpen, setOnboardingOpen] = useState(false)
+  const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
+  useEffect(() => {
+    fetchOnboardingStatus()
+  }, [fetchOnboardingStatus])
+  const onboardingIncomplete =
+    !!onboardingStatus &&
+    !onboardingStatus.dismissed &&
+    (!onboardingStatus.steps.llm.completed || !onboardingStatus.steps.device.completed)
 
   // macOS Tauri overlay titlebar: expose the traffic-light inset so this
   // header and full-screen overlays (settings, onboarding) reserve it.
@@ -229,10 +243,36 @@ export function AppSidebar() {
 
         <div className="flex-1" />
 
-        {/* Footer — settings + user avatar. Instance / theme / language /
-            alerts / onboarding all live in the GlobalUtilityBar (content
-            top-right); the rail keeps the quiet essentials only. */}
+        {/* Footer — instance / onboarding / settings / user avatar.
+            Theme, language and alerts live top-right (GlobalControls). */}
         <div className="flex flex-col items-center gap-1 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <InstanceSelector compact onManageInstances={() => setInstanceManagerOpen(true)} />
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs px-2 py-1">
+              {t("instances.title", { defaultValue: "Instances" })}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("onboarding.title")}
+                className="relative text-muted-foreground hover:text-foreground no-press-scale"
+                onClick={() => setOnboardingOpen(true)}
+              >
+                <Rocket className="h-5 w-5" />
+                {onboardingIncomplete && (
+                  <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="text-xs px-2 py-1">
+              {t("onboarding.title")}
+            </TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -252,6 +292,18 @@ export function AppSidebar() {
           {userEntry}
         </div>
       </aside>
+
+      {/* Dialogs owned by the rail entries */}
+      <InstanceManagerDialog
+        open={instanceManagerOpen}
+        onOpenChange={setInstanceManagerOpen}
+      />
+      <OnboardingDialog
+        open={onboardingOpen}
+        onOpenChange={setOnboardingOpen}
+        status={onboardingStatus}
+        onDismiss={dismissOnboarding}
+      />
     </TooltipProvider>
   )
 }
