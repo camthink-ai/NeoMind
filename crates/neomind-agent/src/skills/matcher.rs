@@ -85,10 +85,25 @@ pub fn match_skills(
     user_input: &str,
     budget: TokenBudgetConfig,
 ) -> Vec<SkillMatch> {
+    // BM25 component (IDF-weighted lexical ranking over the skill corpus).
+    // Gated: only raw scores above 1.0 contribute (×0.3), so weak lexical
+    // overlap alone never newly triggers a skill the flat signals excluded —
+    // auto-inject overtrigger is a documented past failure mode. Strong
+    // rare-term overlap (raw ≥ 3.0 ≈ a LoRaWAN-class hit) adds ~0.6+, enough
+    // to lift the owning skill above generic keyword ties.
+    let skills = registry.list();
+    let corpus: Vec<String> = skills.iter().map(|s| searchable_text(s)).collect();
+    let index = super::bm25::Bm25Index::build(corpus);
+    let query_tokens = super::bm25::tokenize(user_input);
+
     let mut candidates: Vec<SkillMatch> = Vec::new();
 
-    for skill in registry.list() {
-        let score = score_skill(skill, user_input);
+    for (i, skill) in skills.iter().enumerate() {
+        let mut score = score_skill(skill, user_input);
+        let bm25_raw = index.score(i, &query_tokens);
+        if bm25_raw > 1.0 {
+            score += (bm25_raw - 1.0) * 0.3;
+        }
         if score > 0.0 {
             let body = skill.body_within_budget();
             let token_count = body.len() / 4;
@@ -134,6 +149,23 @@ pub fn match_skills(
     }
 
     result
+}
+
+/// The BM25-indexable text of a skill: the fields users actually phrase
+/// queries against (name + description intent text + keywords + tool
+/// targets). The body is excluded — it is instructions, not trigger
+/// vocabulary, and would drown the short fields' IDF signal.
+fn searchable_text(skill: &Skill) -> String {
+    let mut parts: Vec<String> = vec![
+        skill.metadata.name.clone(),
+        skill.metadata.description.clone(),
+    ];
+    parts.extend(skill.metadata.triggers.keywords.iter().cloned());
+    for t in &skill.metadata.triggers.tool_target {
+        parts.push(t.tool.clone());
+        parts.extend(t.actions.iter().cloned());
+    }
+    parts.join(" ")
 }
 
 /// Extract intent phrases from a skill description for matching.

@@ -17,6 +17,7 @@
 //! [IDENTITY] → [TOOL_STRATEGY] → [TOOL_DEFINITIONS] → [SKILL_GUIDES] → [INTENT] → [CONTEXT]
 //! ```
 
+pub mod bm25;
 pub mod matcher;
 pub mod parser;
 pub mod registry;
