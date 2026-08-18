@@ -301,7 +301,7 @@ export function SessionSidebar({
     <>
       {/* Header */}
       {showHeader && (
-        <div className="flex items-center justify-between px-3 py-2" onMouseDown={handleWindowDragMouseDown}>
+        <div className="relative z-[1] flex items-center justify-between px-3 py-2" onMouseDown={handleWindowDragMouseDown}>
           <h2 className="text-base font-semibold">{t('session.sessions')}</h2>
           {!isDesktop && (
             <Button
@@ -485,7 +485,7 @@ export function SessionSidebar({
           // (light: white vs #F8F9FA rail; dark: 0.20 vs 0.115 rail), so
           // the page sidebar reads as a separate surface. Right border
           // separates it from the white content area. Fixed width.
-          "h-full w-64 bg-background border-r border-border flex flex-col overflow-hidden"
+          "relative h-full w-64 bg-background border-r border-border flex flex-col overflow-hidden"
         )}
         style={{
           // Safe top clearance: the drawer starts below the window chrome /
@@ -493,6 +493,14 @@ export function SessionSidebar({
           paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 0.25rem)",
         }}
       >
+          {/* Window drag strip — covers the top clearance zone + header row
+              behind it; the header content sits above (z-[1]) so its
+              buttons stay clickable */}
+          <div
+            className="absolute inset-x-0 top-0 z-0"
+            style={{ height: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 2.75rem)" }}
+            onMouseDown={handleWindowDragMouseDown}
+          />
           {SidebarContent({})}
         </div>
 

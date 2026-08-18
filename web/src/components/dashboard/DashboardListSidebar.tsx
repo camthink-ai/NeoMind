@@ -143,7 +143,7 @@ function DashboardSidebarContent({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 h-11" onMouseDown={handleWindowDragMouseDown}>
+      <div className="relative z-[1] flex items-center justify-between px-3 h-11" onMouseDown={handleWindowDragMouseDown}>
         <h2 className="text-base font-semibold">{t('sidebar.title')}</h2>
         <div className="flex items-center gap-0.5">
           {isDesktop && onSwitchToTabs && (
@@ -414,7 +414,7 @@ export function DashboardListSidebar({
           // Chrome panel — one step brighter than the rail in BOTH themes,
           // matching the session list's surface. Right border separates it
           // from the white content area.
-          "h-full w-64 bg-background border-r border-border flex flex-col",
+          "relative h-full w-64 bg-background border-r border-border flex flex-col",
           className
         )}
         style={{
@@ -423,6 +423,14 @@ export function DashboardListSidebar({
           paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 0.25rem)",
         }}
       >
+        {/* Window drag strip — covers the top clearance zone + header row
+            behind it; the header content sits above (z-[1]) so its
+            buttons stay clickable */}
+        <div
+          className="absolute inset-x-0 top-0 z-0"
+          style={{ height: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 2.75rem)" }}
+          onMouseDown={handleWindowDragMouseDown}
+        />
         <DashboardSidebarContent
           dashboards={dashboards}
           currentDashboardId={currentDashboardId}
