@@ -484,7 +484,7 @@ export function SessionSidebar({
           // (light: white vs #F8F9FA rail; dark: 0.20 vs 0.115 rail), so
           // the page sidebar reads as a separate surface. Right border
           // separates it from the white content area. Fixed width.
-          "h-full w-64 bg-[var(--chrome)] border-r border-border rounded-l-lg flex flex-col overflow-hidden"
+          "h-full w-64 bg-[var(--chrome)] border-r border-border flex flex-col overflow-hidden"
         )}
       >
           {SidebarContent({})}

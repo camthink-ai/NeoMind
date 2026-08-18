@@ -413,7 +413,7 @@ export function DashboardListSidebar({
           // Chrome panel — one step brighter than the rail in BOTH themes,
           // matching the session list's surface. Right border separates it
           // from the white content area.
-          "h-full w-64 bg-[var(--chrome)] border-r border-border rounded-l-lg flex flex-col",
+          "h-full w-64 bg-[var(--chrome)] border-r border-border flex flex-col",
           className
         )}
       >
