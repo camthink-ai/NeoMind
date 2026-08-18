@@ -447,7 +447,7 @@ export function DashboardTabBar({
                 <div
                   key={dashboard.id}
                   data-dashboard-id={dashboard.id}
-                  className="group flex items-center bg-muted text-foreground font-medium rounded-md shrink-0 h-8 overflow-hidden max-w-[200px]"
+                  className="group flex items-center bg-foreground text-background font-medium rounded-md shadow-sm shrink-0 h-8 overflow-hidden max-w-[200px]"
                 >
                   <button
                     type="button"
