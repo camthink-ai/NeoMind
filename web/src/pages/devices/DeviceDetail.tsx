@@ -403,8 +403,13 @@ export function DeviceDetail({
     <>
       <div className="flex flex-col flex-1 h-full overflow-hidden bg-gradient-to-b from-background to-muted">
         {/* Header — relative z-20: sits above the app's window-drag strip
-            (z-10, top 56px) so the back/edit/delete buttons stay clickable */}
-        <div className={cn("relative z-20 flex items-center justify-between shrink-0 gap-2", isMobile ? "px-3 py-3" : "px-6 py-5")}>
+            (z-10, top 56px) so the back/edit/delete buttons stay clickable.
+            Top padding adds the traffic-light / safe-area clearance (the
+            detail view is full-bleed with no page title row). */}
+        <div
+          className={cn("relative z-20 flex items-center justify-between shrink-0 gap-2", isMobile ? "px-3 py-3" : "px-6 py-5")}
+          style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 1.25rem)" }}
+        >
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <Button
               variant="outline"
