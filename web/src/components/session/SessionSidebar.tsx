@@ -480,10 +480,10 @@ export function SessionSidebar({
       <>
       <div
         className={cn(
-          // Gray rail tone (same as the AppSidebar) — separates from the
-          // white content canvas by color contrast, no border. Fixed width:
-          // the session list never collapses.
-          "h-full w-64 bg-[var(--sidebar-bg)] flex flex-col overflow-hidden"
+          // Chrome panel — one step brighter than the rail in BOTH themes
+          // (light: white vs #F8F9FA rail; dark: 0.20 vs 0.115 rail), so
+          // the page sidebar reads as a separate surface. Fixed width.
+          "h-full w-64 bg-[var(--chrome)] flex flex-col overflow-hidden"
         )}
       >
           {SidebarContent({})}
