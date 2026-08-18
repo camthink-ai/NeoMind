@@ -118,19 +118,17 @@ export function ResponsiveTable<T extends object>({
     const skeletonRows = 8
     return (
       <>
-        {/* Desktop skeleton — w-fit min-w-full lets the wrapper grow to the
-            table's natural width so the PAGE scroll container provides
-            horizontal scrolling on narrow windows (overflow-hidden alone
-            clipped it) */}
-        <div className="hidden md:block w-fit min-w-full rounded-lg border bg-card overflow-hidden">
-          <table className={cn("w-full caption-bottom text-sm", className)}>
+        {/* Desktop skeleton — wrapper scrolls internally when the table
+            outgrows it (min-w-full keeps the table filling the container) */}
+        <div className="hidden md:block w-full overflow-x-auto rounded-lg border bg-card">
+          <table className={cn("min-w-full caption-bottom text-sm", className)}>
             <thead className="[&_tr]:border-b">
               <tr className="rounded-t-lg">
                 {columns.map((column) => (
                   <th
                     key={column.key}
                     className={cn(
-                      "h-12 px-4 align-middle text-mini font-semibold uppercase tracking-wider text-foreground",
+                      "h-12 px-4 align-middle text-nano font-semibold uppercase tracking-wider text-foreground",
                       column.align === 'center' && 'text-center',
                       column.align === 'right' && 'text-right',
                       !column.align && 'text-left',
@@ -187,12 +185,11 @@ export function ResponsiveTable<T extends object>({
 
   return (
     <>
-      {/* Desktop Table - uses page scroll with sticky header. w-fit
-          min-w-full: wrapper grows to the table's natural width when columns
-          can't fit, so the page scroll container scrolls horizontally
-          instead of overflow-hidden clipping the table */}
-      <div className="hidden md:block w-fit min-w-full rounded-lg border bg-card overflow-hidden">
-        <table className={cn("w-full caption-bottom text-sm", className)}>
+      {/* Desktop Table - w-full wrapper scrolls internally (overflow-x-auto)
+          when the table outgrows it; min-w-full keeps the table filling the
+          container width so it adapts to window resizes */}
+      <div className="hidden md:block w-full overflow-x-auto rounded-lg border bg-card">
+        <table className={cn("min-w-full caption-bottom text-sm", className)}>
           <thead className={cn(
             "[&_tr]:border-b",
             stickyHeader && "sticky top-0 z-10 bg-card"
@@ -202,7 +199,7 @@ export function ResponsiveTable<T extends object>({
                 <th
                   key={column.key}
                   className={cn(
-                    "h-12 px-4 align-middle text-mini font-semibold uppercase tracking-wider text-foreground",
+                    "h-12 px-4 align-middle text-nano font-semibold uppercase tracking-wider text-foreground",
                     column.align === 'center' && 'text-center',
                     column.align === 'right' && 'text-right',
                     !column.align && 'text-left',
