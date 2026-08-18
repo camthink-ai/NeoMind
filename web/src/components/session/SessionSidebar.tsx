@@ -490,7 +490,7 @@ export function SessionSidebar({
         style={{
           // Safe top clearance: the drawer starts below the window chrome /
           // traffic-light strip instead of touching the window edge
-          paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 0.25rem)",
+          paddingTop: "calc(env(safe-area-inset-top, 0px) + 1rem)",
         }}
       >
           {/* Window drag strip — covers the top clearance zone + header row
