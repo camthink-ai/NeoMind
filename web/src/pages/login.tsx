@@ -427,13 +427,9 @@ export function LoginPage() {
       >
         <div className="w-full max-w-md">
           <div
-            className="backdrop-blur-xl rounded-2xl p-6 sm:p-8 border shadow-md animate-fade-in-up"
-            style={{
-              backgroundColor: 'color-mix(in oklch, var(--background) 72%, transparent)',
-              borderColor: 'color-mix(in oklch, var(--border) 55%, transparent)',
-            }}
+            className="rounded-lg p-6 sm:p-8 border border-border bg-card shadow-lg animate-fade-in-up"
           >
-            <h2 className="text-2xl sm:text-3xl font-semibold mb-4 sm:mb-6 text-center">{t('auth:login')}</h2>
+            <h2 className="text-xl sm:text-2xl font-semibold mb-4 sm:mb-6 text-center">{t('auth:login')}</h2>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4 sm:gap-5">
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
