@@ -58,7 +58,10 @@ import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 
-const SIDEBAR_WIDTH_PX = 60
+// 80px — wide enough that the macOS traffic lights (three buttons, ~14px
+// to ~70px from the window edge) sit comfortably inside the rail instead of
+// crowding its full width.
+const SIDEBAR_WIDTH_PX = 80
 
 // Tauri window drag — startDragging on mousedown over non-interactive areas
 // (data-tauri-drag-region is unreliable in Tauri 2 overlay mode).
