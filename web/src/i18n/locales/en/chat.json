@@ -228,5 +228,6 @@
   "copyMessage": "Copy message",
   "footer": {
     "disclaimer": "Disclaimer"
-  }
+  },
+  "toolLoopProgress": "Working · tool round {{round}}"
 }

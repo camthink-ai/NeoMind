@@ -228,5 +228,6 @@
   "copyMessage": "复制消息",
   "footer": {
     "disclaimer": "免责声明"
-  }
+  },
+  "toolLoopProgress": "工具调用中 · 第 {{round}} 轮"
 }

@@ -239,6 +239,11 @@ export function ChatPage() {
   // Round tracking for multi-round tool calling
   const [roundContents, setRoundContents] = useState<Record<number, string>>({})
   const [streamingRoundThinking, setStreamingRoundThinking] = useState<Record<number, string>>({})
+  // Active tool-loop round, derived from the last in-flight tool call — no
+  // own state to reset (all streaming resets clear streamingToolCalls).
+  const activeToolRound = streamingToolCalls.length > 0
+    ? (streamingToolCalls[streamingToolCalls.length - 1].round ?? null)
+    : null
   const currentRoundRef = useRef(1)
   const roundContentsAccumulatorRef = useRef<Record<number, string>>({})
   // Accumulate thinking across all rounds (interleaved thinking pattern)
@@ -1379,6 +1384,20 @@ export function ChatPage() {
                   state={connectionState}
                   onManualReconnect={handleManualReconnect}
                 />
+              </div>
+            )}
+
+            {/* Tool-loop progress — surfaces the round count while the agent
+                works through multi-round tool calling. On slow local models a
+                legitimate loop can run minutes; without this it reads as a
+                hang (0.9.18 plan item: the eval data showed single cases
+                running 30 rounds). Zero noise when not tool-calling. */}
+            {isStreaming && activeToolRound !== null && (
+              <div className="flex justify-center mb-2">
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                  {t('chat:toolLoopProgress', { round: activeToolRound })}
+                </span>
               </div>
             )}
 

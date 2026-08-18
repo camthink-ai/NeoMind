@@ -83,3 +83,26 @@ Gemma4-E2B.
 | Agent picks `skill`/wrong tool constantly on a ≤3B model | You are on an old NeoMind build with the bloated `shell` description — upgrade (fixed 2026-08; small models avoid huge tool descriptions) |
 | Long multi-step deploys die mid-run | Chat turn bound was raised to 2400s; if you run a custom harness, make sure *its* per-turn and per-case budgets exceed the model's realistic completion time (~20+ min for 20-round deploys at edge speeds) |
 | Vision works in isolation but agent never "sees" images | The active (text) backend not being multimodal is fine for tool-routed vision, but *user-uploaded chat images* currently require a multimodal active backend — upload via the vision flow instead |
+
+## Sampling: keep temp 0.6 — official 0.1 measured (2026-08-17/18)
+
+LiquidAI's model card recommends `--temp 0.1 --top-k 50 --repeat-penalty 1.1`.
+We ran the full 154-case agent suite both ways on 0.9.17:
+
+| Config | cmd_ok (all) | cmd_ok (ex-timeout) | wedged >600s |
+|---|---|---|---|
+| NeoMind default (temp 0.6 / top_p 0.85) | 65.0% | 65.0% | 0 |
+| Official (temp 0.1 / top-k 50 / rp 1.1) | 63.9% | 72.8% | **19 (12.3%)** |
+
+Low temperature makes completed cases *more* accurate (+7.8pp) but turns
+multi-step failures into deterministic loops — no sampling noise to escape
+them — and 12% of cases burn their whole budget circling. For unattended
+edge agents the wedge rate is disqualifying: **use temp 0.6**. Both runs are
+archived under `eval/baselines/` as a negative control.
+
+Related: LFM2.5's thinking is integral — do NOT try to disable it. The
+template ignores `--reasoning off` and `enable_thinking:false`; the
+mechanically-working `--reasoning-budget 0` costs -33pp cmd_ok AND is slower
+(failure loops eat the generation savings; 2026-08-18 A/B). Thinking tokens
+also bypass `max_tokens`, which is why NeoMind caps delegated max_tokens and
+injects loop-steering hints instead.
