@@ -21,6 +21,7 @@ import { CopyMessageButton } from "@/components/chat/CopyMessageButton"
 import { ThinkingBlock } from "@/components/chat/ThinkingBlock"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
+import { PageHeader } from "@/components/layout/PageHeader"
 import { ToolProcessBlock, isThinkingDuplicate } from "@/components/chat/ToolCallVisualization"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ws, type ConnectionState } from "@/lib/websocket"
@@ -1015,6 +1016,16 @@ export function ChatPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        {/* Desktop title row — same as every other page: it absorbs the
+            floating global controls (theme/language/alerts) so they never
+            float over the message stream. */}
+        {isDesktop && (
+          <div className="shrink-0 bg-background">
+            <div className="w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3">
+              <PageHeader title={t('common:nav.dashboard')} />
+            </div>
+          </div>
+        )}
         {/* Mobile per-page header: hamburger (nav drawer) + sessions toggle + new session */}
         <MobilePageHeader
           title={(() => {
