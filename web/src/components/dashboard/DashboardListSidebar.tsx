@@ -143,7 +143,7 @@ function DashboardSidebarContent({
     <>
       {/* Header */}
       <div className="flex items-center justify-between px-3 h-11">
-        <h2 className="text-sm font-semibold">{t('sidebar.title')}</h2>
+        <h2 className="text-base font-semibold">{t('sidebar.title')}</h2>
         <div className="flex items-center gap-0.5">
           {isDesktop && onSwitchToTabs && (
             <TooltipProvider delayDuration={300}>
@@ -416,6 +416,11 @@ export function DashboardListSidebar({
           "h-full w-64 bg-[var(--chrome)] border-r border-border flex flex-col",
           className
         )}
+        style={{
+          // Safe top clearance: the drawer starts below the window chrome /
+          // traffic-light strip instead of touching the window edge
+          paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 0.5rem)",
+        }}
       >
         <DashboardSidebarContent
           dashboards={dashboards}

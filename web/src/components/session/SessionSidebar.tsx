@@ -300,8 +300,8 @@ export function SessionSidebar({
     <>
       {/* Header */}
       {showHeader && (
-        <div className="flex items-center justify-between p-3">
-          <h2 className="text-sm font-semibold">{t('session.sessions')}</h2>
+        <div className="flex items-center justify-between px-3 py-2">
+          <h2 className="text-base font-semibold">{t('session.sessions')}</h2>
           {!isDesktop && (
             <Button
               variant="ghost"
@@ -486,6 +486,11 @@ export function SessionSidebar({
           // separates it from the white content area. Fixed width.
           "h-full w-64 bg-[var(--chrome)] border-r border-border flex flex-col overflow-hidden"
         )}
+        style={{
+          // Safe top clearance: the drawer starts below the window chrome /
+          // traffic-light strip instead of touching the window edge
+          paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 0.5rem)",
+        }}
       >
           {SidebarContent({})}
         </div>
