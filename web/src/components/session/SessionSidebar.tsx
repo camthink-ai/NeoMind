@@ -365,14 +365,13 @@ export function SessionSidebar({
                         key={session.sessionId}
                         onClick={() => !isEditing && handleSwitchSession(session.sessionId)}
                         className={cn(
-                          // White-card list on the gray rail: resting items
-                          // are transparent, hover/selected lift to a white
-                          // bordered card (selected keeps a shadow)
-                          "group relative flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-all",
+                          // Flat list: selected = plain muted block (no
+                          // raised card / shadow — the 3D look was overkill)
+                          "group relative flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors",
                           isActive
-                            ? "bg-background border-border shadow-md"
-                            : "border-transparent hover:bg-background hover:border-border hover:shadow-sm",
-                          isEditing && "bg-background border-border shadow-md"
+                            ? "bg-muted"
+                            : "hover:bg-muted-50",
+                          isEditing && "bg-muted"
                         )}
                       >
                         {isEditing ? (

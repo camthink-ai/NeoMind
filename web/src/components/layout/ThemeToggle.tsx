@@ -14,10 +14,10 @@ export function ThemeToggle() {
   const { theme, setTheme, resolvedTheme } = useTheme()
 
   const getIcon = () => {
-    if (theme === "system") return <Monitor className="h-4 w-4 transition-transform duration-300" />
+    if (theme === "system") return <Monitor className="h-5 w-5 transition-transform duration-300" />
     return resolvedTheme === "dark"
-      ? <Sun className="h-4 w-4 transition-transform duration-300 rotate-180" />
-      : <Moon className="h-4 w-4 transition-transform duration-300" />
+      ? <Sun className="h-5 w-5 transition-transform duration-300 rotate-180" />
+      : <Moon className="h-5 w-5 transition-transform duration-300" />
   }
 
   return (

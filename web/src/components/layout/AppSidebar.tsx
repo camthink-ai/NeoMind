@@ -216,14 +216,14 @@ export function AppSidebar() {
         onMouseDown={handleDragMouseDown}
       >
         {/* Brand mark — top of the rail, below the traffic-light strip */}
-        <div className="flex w-full items-center justify-center pt-2 pb-1">
+        <div className="flex w-full items-center justify-center pt-2 pb-2">
           <Link to="/chat" aria-label="NeoMind" className="flex items-center justify-center">
             <BrandLogo className="h-7 w-7" />
           </Link>
         </div>
 
         {/* Nav — icon rail, tooltips carry the names */}
-        <nav className="flex flex-col items-center gap-1 pt-1 pb-2">
+        <nav className="flex flex-col items-center gap-1 pt-2 pb-2">
           {navItems.map(renderItem)}
         </nav>
 
@@ -242,7 +242,7 @@ export function AppSidebar() {
                 className="text-muted-foreground hover:text-foreground no-press-scale"
                 onClick={() => openSettings()}
               >
-                <Settings className="h-4 w-4" />
+                <Settings className="h-5 w-5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right" className="text-xs px-2 py-1">

@@ -60,7 +60,7 @@ function Controls({ alignDropdowns = "end" }: { alignDropdowns?: "start" | "end"
               aria-label={t('userMenu.language', { defaultValue: 'Language' })}
               className="shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
             >
-              <Languages className="h-4 w-4" />
+              <Languages className="h-5 w-5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-32">
@@ -84,7 +84,7 @@ function Controls({ alignDropdowns = "end" }: { alignDropdowns?: "start" | "end"
               className="relative shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
               onClick={() => setOnboardingOpen(true)}
             >
-              <Rocket className="h-4 w-4" />
+              <Rocket className="h-5 w-5" />
               {onboardingIncomplete && (
                 <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
               )}

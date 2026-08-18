@@ -254,13 +254,13 @@ function DashboardSidebarContent({
                   key={dashboard.id}
                   onClick={() => !isEditing && handleSwitch(dashboard.id)}
                   className={cn(
-                    // White-card list on the gray rail — same treatment as
-                    // the session list (selected = bordered white card)
-                    "group relative flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-all",
+                    // Flat list — same treatment as the session list:
+                    // selected = plain muted block, no raised card/shadow
+                    "group relative flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors",
                     isActive
-                      ? "bg-background border-border shadow-md"
-                      : "border-transparent hover:bg-background hover:border-border hover:shadow-sm",
-                    isEditing && "bg-background border-border shadow-md"
+                      ? "bg-muted"
+                      : "hover:bg-muted-50",
+                    isEditing && "bg-muted"
                   )}
                 >
                   {isEditing ? (
@@ -410,9 +410,9 @@ export function DashboardListSidebar({
     return (
       <div
         className={cn(
-          // Gray rail tone (same as the AppSidebar / SessionSidebar) —
-          // separates from the white content canvas by contrast, no border
-          "h-full w-64 bg-[var(--sidebar-bg)] flex flex-col",
+          // White panel — distinct from the app rail's gray tone, matching
+          // the session list's surface
+          "h-full w-64 bg-background flex flex-col",
           className
         )}
       >
