@@ -19,7 +19,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
-import { Rocket, Settings, Sun, Languages, Info, LogOut } from "lucide-react"
+import { Settings, Sun, Languages, Info, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isTauriEnv } from "@/lib/api"
 import { getCurrentWindow } from "@tauri-apps/api/window"
@@ -29,8 +29,6 @@ import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { useTheme } from "@/components/ui/theme"
 import { BrandLogo } from "@/components/shared/BrandName"
-import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
-import { useOnboarding } from "@/hooks/useOnboarding"
 import {
   Tooltip,
   TooltipContent,
@@ -50,7 +48,6 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
-import { AlertsMenu } from "./AlertsMenu"
 import {
   navItems,
   isNavItemActive,
@@ -76,7 +73,6 @@ export function AppSidebar() {
   const user = useStore((s) => s.user)
   const logout = useStore((s) => s.logout)
   const { theme, setTheme } = useTheme()
-  const [onboardingOpen, setOnboardingOpen] = useState(false)
 
   // macOS Tauri overlay titlebar: expose the traffic-light inset so this
   // header and full-screen overlays (settings, onboarding) reserve it.
@@ -84,16 +80,6 @@ export function AppSidebar() {
   useEffect(() => {
     document.documentElement.style.setProperty("--titlebar-inset", isMacTauri ? "24px" : "0px")
   }, [isMacTauri])
-
-  // Onboarding status for the footer entry's badge
-  const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
-  useEffect(() => {
-    fetchOnboardingStatus()
-  }, [fetchOnboardingStatus])
-  const onboardingIncomplete =
-    !!onboardingStatus &&
-    !onboardingStatus.dismissed &&
-    (!onboardingStatus.steps.llm.completed || !onboardingStatus.steps.device.completed)
 
   const handleNavigate = useCallback(
     (path: string) => startTransition(() => navigate(path)),
@@ -244,8 +230,9 @@ export function AppSidebar() {
 
         <div className="flex-1" />
 
-        {/* Footer — alerts / onboarding / settings / user. Instance, theme &
-            language live in the GlobalUtilityBar (content top-right). */}
+        {/* Footer — settings + user avatar. Instance / theme / language /
+            alerts / onboarding all live in the GlobalUtilityBar (content
+            top-right); the rail keeps the quiet essentials only. */}
         <div className="flex flex-col items-center gap-1 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -263,37 +250,9 @@ export function AppSidebar() {
               {t("nav.settings")}
             </TooltipContent>
           </Tooltip>
-          <AlertsMenu compact align="start" side="top" tooltipSide="right" />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("onboarding.title")}
-                className="relative text-muted-foreground hover:text-foreground no-press-scale"
-                onClick={() => setOnboardingOpen(true)}
-              >
-                <Rocket className="h-4 w-4" />
-                {onboardingIncomplete && (
-                  <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs px-2 py-1">
-              {t("onboarding.title")}
-            </TooltipContent>
-          </Tooltip>
           {userEntry}
         </div>
       </aside>
-
-      {/* Onboarding dialog — instance manager moved to the GlobalUtilityBar */}
-      <OnboardingDialog
-        open={onboardingOpen}
-        onOpenChange={setOnboardingOpen}
-        status={onboardingStatus}
-        onDismiss={dismissOnboarding}
-      />
     </TooltipProvider>
   )
 }
