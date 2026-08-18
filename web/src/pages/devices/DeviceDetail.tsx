@@ -407,7 +407,7 @@ export function DeviceDetail({
             Top padding adds the traffic-light / safe-area clearance (the
             detail view is full-bleed with no page title row). */}
         <div
-          className={cn("relative z-20 flex items-center justify-between shrink-0 gap-2", isMobile ? "px-3 py-3" : "px-4 sm:px-6 md:px-8 py-5")}
+          className={cn("relative z-[15] flex items-center justify-between shrink-0 gap-2", isMobile ? "px-3 py-3" : "px-4 sm:px-6 md:px-8 py-5")}
           style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 2.75rem)" }}
         >
           <div className="flex items-center gap-3 min-w-0 flex-1">
