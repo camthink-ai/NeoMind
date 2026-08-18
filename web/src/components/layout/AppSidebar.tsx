@@ -237,7 +237,7 @@ export function AppSidebar() {
         {/* Brand mark — top of the rail, below the traffic-light strip */}
         <div className="flex w-full items-center justify-center pt-2 pb-2">
           <Link to="/chat" aria-label="NeoMind" className="flex items-center justify-center">
-            <BrandLogo className="h-7 w-7" />
+            <BrandLogo className="h-7 w-7 rounded-lg" />
           </Link>
         </div>
 
