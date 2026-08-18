@@ -9,6 +9,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { getPortalRoot } from '@/lib/portal'
+import { handleWindowDragMouseDown } from "@/lib/windowDrag"
 import {
   LayoutDashboard,
   Plus,
@@ -142,7 +143,7 @@ function DashboardSidebarContent({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between px-3 h-11">
+      <div className="flex items-center justify-between px-3 h-11" onMouseDown={handleWindowDragMouseDown}>
         <h2 className="text-base font-semibold">{t('sidebar.title')}</h2>
         <div className="flex items-center gap-0.5">
           {isDesktop && onSwitchToTabs && (

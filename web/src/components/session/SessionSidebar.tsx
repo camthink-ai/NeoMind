@@ -5,6 +5,7 @@
  */
 
 import { getPortalRoot } from '@/lib/portal'
+import { handleWindowDragMouseDown } from "@/lib/windowDrag"
 import { useState, useEffect, useRef, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate, useParams } from "react-router-dom"
@@ -300,7 +301,7 @@ export function SessionSidebar({
     <>
       {/* Header */}
       {showHeader && (
-        <div className="flex items-center justify-between px-3 py-2">
+        <div className="flex items-center justify-between px-3 py-2" onMouseDown={handleWindowDragMouseDown}>
           <h2 className="text-base font-semibold">{t('session.sessions')}</h2>
           {!isDesktop && (
             <Button
