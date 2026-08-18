@@ -402,10 +402,16 @@ export function DeviceDetail({
   return (
     <>
       <div className="flex flex-col flex-1 h-full overflow-hidden bg-gradient-to-b from-background to-muted">
-        {/* Header */}
-        <div className={cn("flex items-center justify-between shrink-0 gap-2", isMobile ? "px-3 py-3" : "px-6 py-5")}>
+        {/* Header — relative z-20: sits above the app's window-drag strip
+            (z-10, top 56px) so the back/edit/delete buttons stay clickable */}
+        <div className={cn("relative z-20 flex items-center justify-between shrink-0 gap-2", isMobile ? "px-3 py-3" : "px-6 py-5")}>
           <div className="flex items-center gap-3 min-w-0 flex-1">
-            <Button variant="ghost" size="icon" onClick={onBack} className="rounded-full shrink-0 hidden md:inline-flex">
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={onBack}
+              className="rounded-full shrink-0 bg-background hidden md:inline-flex"
+            >
               <ChevronLeft className="h-5 w-5" />
             </Button>
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
