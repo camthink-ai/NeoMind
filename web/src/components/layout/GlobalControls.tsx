@@ -33,7 +33,7 @@ function Controls() {
               aria-label={t('userMenu.language', { defaultValue: 'Language' })}
               className="shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
             >
-              <Languages className="h-5 w-5" />
+              <Languages className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-32">
@@ -64,7 +64,7 @@ export function GlobalControls() {
 export function GlobalControlsFloating() {
   return (
     <div className="pointer-events-none absolute right-4 sm:right-6 z-20" style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}>
-      <div className="pointer-events-auto rounded-full border border-border bg-background/90 px-1.5 py-1 shadow-sm backdrop-blur-sm">
+      <div className="pointer-events-auto rounded-full border border-border bg-background/90 px-1 py-0.5 shadow-sm backdrop-blur-sm">
         <Controls />
       </div>
     </div>

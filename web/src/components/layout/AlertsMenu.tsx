@@ -101,7 +101,7 @@ export function AlertsMenu({
           : "w-full gap-3 px-3 justify-start"
       )}
     >
-      <BellRing className="h-5 w-5 shrink-0" />
+      <BellRing className="h-4 w-4 shrink-0" />
       {!compact && (
         <>
           <span className="truncate">{t("alerts.title")}</span>

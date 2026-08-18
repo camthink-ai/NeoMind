@@ -523,9 +523,10 @@ html {
        read as a distinct elevated layer, mirroring how light-mode --chrome
        (pure white) sits above --background. */
     --chrome: oklch(0.20 0.008 270);
-    /* Sidebar rail — BELOW the canvas lightness (reference: darker rail,
-       color-contrast separation, no border). */
-    --sidebar-bg: oklch(0.115 0.01 270);
+    /* Sidebar rail — clearly BELOW the page/drawer background (0.135) so
+       the rail vs content step reads in dark mode just like light mode
+       (#F8F9FA rail vs white content). */
+    --sidebar-bg: oklch(0.10 0.01 270);
     --card-foreground: oklch(0.95 0.006 270);
     /* Popovers/menus float above cards — one step up, just under chrome. */
     --popover: oklch(0.19 0.01 270);
