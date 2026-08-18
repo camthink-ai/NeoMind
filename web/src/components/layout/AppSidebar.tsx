@@ -92,7 +92,10 @@ export function AppSidebar() {
   // header and full-screen overlays (settings, onboarding) reserve it.
   const isMacTauri = isTauriEnv() && /Mac/i.test(navigator.platform || navigator.userAgent)
   useEffect(() => {
-    document.documentElement.style.setProperty("--titlebar-inset", isMacTauri ? "24px" : "0px")
+    // 32px — generous clearance for the macOS traffic lights (close/min/
+    // zoom) floating over the rail's top-left, plus room for future custom
+    // window controls. Full-screen overlays reserve the same strip.
+    document.documentElement.style.setProperty("--titlebar-inset", isMacTauri ? "32px" : "0px")
   }, [isMacTauri])
 
   const handleNavigate = useCallback(
