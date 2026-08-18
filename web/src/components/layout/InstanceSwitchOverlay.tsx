@@ -62,7 +62,7 @@ export function InstanceSwitchOverlay() {
         )}
 
         {switchingState === 'error' && (
-          <div className="bg-surface border border-glass-border rounded-2xl shadow-xl p-8 max-w-sm w-full mx-4 text-center">
+          <div className="bg-surface border border-glass-border rounded-xl shadow-xl p-8 max-w-sm w-full mx-4 text-center">
             <AlertTriangle className="h-10 w-10 mx-auto mb-4 text-warning" />
             <p className="text-sm font-medium mb-2">{t('switch.error')}</p>
             {switchingError && (

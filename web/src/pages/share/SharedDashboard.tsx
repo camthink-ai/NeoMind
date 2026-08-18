@@ -212,7 +212,7 @@ export function SharedDashboard() {
   return (
     <div className="flex h-screen flex-col bg-background">
       {/* Header */}
-      <header className="shrink-0 flex items-center justify-between px-4 py-2.5 border-b border-border bg-background z-10">
+      <header className="shrink-0 flex items-center justify-between px-4 py-2.5  bg-background z-10">
         <div className="flex items-center gap-2">
           <h1 className="text-sm font-semibold">{data.dashboard.name}</h1>
           <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded ${textNano} font-medium bg-muted text-muted-foreground`}>

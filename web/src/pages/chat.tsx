@@ -1077,7 +1077,7 @@ export function ChatPage() {
               {/* Skeleton message - user */}
               <div className="flex gap-2 sm:gap-3 justify-end animate-pulse">
                 <div className="max-w-[85%] sm:max-w-[80%]">
-                  <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-muted">
+                  <div className="rounded-lg px-3 py-2 sm:px-4 sm:py-3 bg-muted">
                     <div className="h-4 w-48 bg-muted rounded" />
                   </div>
                 </div>
@@ -1087,7 +1087,7 @@ export function ChatPage() {
               <div className="flex gap-2 sm:gap-3 justify-start animate-pulse">
                 <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-muted" />
                 <div className="max-w-[85%] sm:max-w-[80%]">
-                  <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-muted">
+                  <div className="rounded-lg px-3 py-2 sm:px-4 sm:py-3 bg-muted">
                     <div className="space-y-2">
                       <div className="h-4 w-full bg-muted rounded" />
                       <div className="h-4 w-3/4 bg-muted rounded" />
@@ -1099,7 +1099,7 @@ export function ChatPage() {
               {/* Another skeleton message - user */}
               <div className="flex gap-2 sm:gap-3 justify-end animate-pulse">
                 <div className="max-w-[85%] sm:max-w-[80%]">
-                  <div className="rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-muted">
+                  <div className="rounded-lg px-3 py-2 sm:px-4 sm:py-3 bg-muted">
                     <div className="h-4 w-32 bg-muted rounded" />
                   </div>
                 </div>
@@ -1180,7 +1180,7 @@ export function ChatPage() {
                     <div
                       className={cn(
                         message.role === "user"
-                          ? "rounded-2xl px-3 py-2 sm:px-4 sm:py-3 bg-[var(--msg-user-bg)] text-[var(--msg-user-text)]"
+                          ? "rounded-lg px-3 py-2 sm:px-4 sm:py-3 bg-[var(--msg-user-bg)] text-[var(--msg-user-text)]"
                           : ""
                       )}
                     >
@@ -1339,7 +1339,7 @@ export function ChatPage() {
             }}
           >
             <div className="text-center space-y-4 max-w-md">
-              <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto">
+              <div className="w-16 h-16 rounded-xl bg-muted flex items-center justify-center mx-auto">
                 <Sparkles className="h-8 w-8 text-muted-foreground" />
               </div>
               <div>
@@ -1415,7 +1415,7 @@ export function ChatPage() {
             )}
 
             {/* Single unified input box — everything inside one container */}
-            <div className="rounded-2xl border border-input bg-card shadow-sm transition-colors">
+            <div className="rounded-lg border border-input bg-card shadow-sm transition-colors">
               {/* Textarea — fills the top, borderless */}
               <textarea
                 ref={inputRef}
@@ -1453,11 +1453,11 @@ export function ChatPage() {
                 />
                 <Button
                   variant="ghost"
-                  size="icon"
+                  size="icon-sm"
                   onClick={() => fileInputRef.current?.click()}
                   disabled={isStreaming || !supportsMultimodal}
                   className={cn(
-                    "h-8 w-8 rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
+                    "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
                     !supportsMultimodal && "opacity-50"
                   )}
                   title={supportsMultimodal ? t('chat:model.addImage') : t('chat:model.notSupportImage')}

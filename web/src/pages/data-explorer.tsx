@@ -477,7 +477,7 @@ export function DataExplorerPage() {
                       {(() => {
                         const v = selectedSource.current_value
                         if (v === undefined || v === null) {
-                          return <span className="text-lg text-muted-foreground">{t('data:noData', 'No current data')}</span>
+                          return <span className="text-sm text-muted-foreground">{t('data:noData', 'No current data')}</span>
                         }
                         // Image base64
                         if (typeof v === 'string' && isBase64Image(v)) {
@@ -547,7 +547,7 @@ export function DataExplorerPage() {
                           <div className="flex items-baseline gap-2 flex-wrap">
                             <span className="font-mono text-2xl md:text-3xl font-semibold break-all">{str}</span>
                             {selectedSource.unit && (
-                              <span className="font-mono text-lg text-muted-foreground">{selectedSource.unit}</span>
+                              <span className="font-mono text-sm text-muted-foreground">{selectedSource.unit}</span>
                             )}
                           </div>
                         )

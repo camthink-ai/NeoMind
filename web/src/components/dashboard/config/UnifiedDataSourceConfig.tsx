@@ -1465,7 +1465,7 @@ export function UnifiedDataSourceConfig({
         ) : (
           <div className="flex-1 flex overflow-hidden">
             {/* Left: Device list */}
-            <div className="w-56 border-r shrink-0 overflow-hidden flex flex-col">
+            <div className="w-56 shrink-0 overflow-hidden flex flex-col">
               {renderDeviceList()}
             </div>
 
@@ -1487,7 +1487,7 @@ export function UnifiedDataSourceConfig({
         ) : (
           <div className="flex-1 flex overflow-hidden">
             {/* Left: Extension list */}
-            <div className="w-56 border-r shrink-0 overflow-hidden flex flex-col">
+            <div className="w-56 shrink-0 overflow-hidden flex flex-col">
               {renderExtensionList()}
             </div>
 

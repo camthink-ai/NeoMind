@@ -586,7 +586,7 @@ export function LayerEditorDialog({
     >
       <div className="flex-1 flex overflow-hidden min-h-0">
         {/* Left Panel - Bindings List */}
-        <div className="w-72 border-r bg-muted-20 flex flex-col shrink-0">
+        <div className="w-72 bg-muted-20 flex flex-col shrink-0">
           <div className="px-4 py-2 border-b bg-muted-30 shrink-0">
             <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
               {t('customLayer.boundItems')} ({bindings.length})

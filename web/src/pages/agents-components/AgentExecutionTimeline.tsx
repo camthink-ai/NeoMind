@@ -366,7 +366,7 @@ export function AgentExecutionTimeline({
                                 {/* ② Execution Process — reasoning_steps with tool_call cards */}
                                 {detail.decision_process?.reasoning_steps && detail.decision_process.reasoning_steps.length > 0 && (
                                   <TimelineSection
-                                    icon={<ChevronRight className="h-4 w-4 text-accent-orange" />}
+                                    icon={<ChevronRight className="h-4 w-4 text-muted-foreground" />}
                                     title={t('agents:memory.executionProcess')}
                                   >
                                     <div className="space-y-2">
@@ -739,11 +739,11 @@ function ReasoningStepItem({ step, showRoundSeparator, roundNumber }: { step: Re
       <div>
         {showRoundSeparator && roundNumber !== undefined && (
           <div className="flex items-center gap-2 mb-3 -mt-1">
-            <div className="h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent" />
+            <div className="h-px flex-1 bg-border" />
             <span className="text-xs text-muted-foreground font-medium shrink-0 px-2">
               {t('agents:memory.round', 'Round {{round}}', { round: roundNumber })}
             </span>
-            <div className="h-px flex-1 bg-gradient-to-l from-transparent via-border to-transparent" />
+            <div className="h-px flex-1 bg-border" />
           </div>
         )}
         <div className="text-xs text-muted-foreground italic py-1 px-2 rounded bg-muted-30 mb-1">
@@ -771,11 +771,11 @@ function ReasoningStepItem({ step, showRoundSeparator, roundNumber }: { step: Re
     <div>
       {showRoundSeparator && roundNumber !== undefined && (
         <div className="flex items-center gap-2 mb-3 -mt-1">
-          <div className="h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent" />
+          <div className="h-px flex-1 bg-border" />
           <span className="text-xs text-muted-foreground font-medium shrink-0 px-2">
             {t('agents:memory.round', 'Round {{round}}', { round: roundNumber })}
           </span>
-          <div className="h-px flex-1 bg-gradient-to-l from-transparent via-border to-transparent" />
+          <div className="h-px flex-1 bg-border" />
         </div>
       )}
       <div className="flex gap-3 min-w-0">

@@ -184,7 +184,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
     if (ble.scanning) {
       return (
         <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
-          <div className="w-16 h-16 rounded-2xl bg-primary-light flex items-center justify-center">
+          <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
             <Loader2 className="w-8 h-8 text-primary animate-spin" />
           </div>
           <div className="text-center space-y-2">
@@ -248,7 +248,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
     // Idle: show scan button
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
-        <div className="w-16 h-16 rounded-2xl bg-primary-light flex items-center justify-center">
+        <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
           <Bluetooth className="w-8 h-8 text-primary" />
         </div>
         <div className="text-center">
@@ -291,7 +291,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   if (phase === 'connecting' || (ble.connecting && phase !== 'provisioning')) {
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
-        <div className="w-16 h-16 rounded-2xl bg-primary-light flex items-center justify-center">
+        <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
           <Loader2 className="w-8 h-8 text-primary animate-spin" />
         </div>
         <div className="text-center space-y-2">
@@ -306,7 +306,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   if (phase === 'done') {
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-4 px-4">
-        <div className="w-16 h-16 rounded-2xl bg-success-light flex items-center justify-center">
+        <div className="w-16 h-16 rounded-xl bg-success-light flex items-center justify-center">
           <CheckCircle2 className="w-8 h-8 text-success" />
         </div>
         <div className="text-center">
@@ -329,7 +329,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   if (phase === 'failed') {
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
-        <div className="w-16 h-16 rounded-2xl bg-error-light flex items-center justify-center">
+        <div className="w-16 h-16 rounded-xl bg-error-light flex items-center justify-center">
           <XCircle className="w-8 h-8 text-error" />
         </div>
         <div className="text-center">

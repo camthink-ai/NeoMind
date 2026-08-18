@@ -230,7 +230,7 @@ export function AlertsMenu({
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      className="h-6 w-6 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className=" shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={() => handleAcknowledgeAlert(alert.id)}
                       title={t("alerts.acknowledge")}
                     >

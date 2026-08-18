@@ -334,7 +334,7 @@ export function ResponsiveTable<T extends object>({
                   "px-3 py-2.5",
                   mobileFlatHeader
                     ? "pb-1"
-                    : "bg-muted border-b border-border rounded-t-xl",
+                    : "bg-muted border-b border-border rounded-t-lg",
                 )}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
@@ -443,7 +443,7 @@ export function MobileCard({ title, subtitle, icon, actions, children, className
   return (
     <Card className={cn('overflow-hidden border-border rounded-lg shadow-sm', onClick && 'cursor-pointer active:scale-[0.99] transition-all', className)}>
       {/* Card Header */}
-      <div className="bg-muted px-3 py-2.5 border-b border-border rounded-t-xl">
+      <div className="bg-muted px-3 py-2.5 border-b border-border rounded-t-lg">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
             {icon && <div className="shrink-0">{icon}</div>}

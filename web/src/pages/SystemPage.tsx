@@ -259,7 +259,7 @@ export default function SystemPage() {
     <div className="h-full overflow-y-auto overscroll-contain bg-background">
       <MobilePageHeader title={t("system.pageTitle")} />
       {/* Brand + user header (mobile ~70px) */}
-      <div className="border-b border-border bg-background px-4 pb-3 pt-3">
+      <div className=" bg-background px-4 pb-3 pt-3">
         <div className="flex items-center gap-2.5">
           <BrandLogoWithName logoClassName="h-8" />
           <div className="min-w-0 flex-1">

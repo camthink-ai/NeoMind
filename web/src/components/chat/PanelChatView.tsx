@@ -444,7 +444,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       >
         {!llmBackendLoading && (!llmBackends || llmBackends.length === 0) ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
-              <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center">
+              <div className="w-14 h-14 rounded-xl bg-muted flex items-center justify-center">
                 <Settings className="h-7 w-7 text-muted-foreground" />
               </div>
               <h3 className="text-sm font-semibold mt-1">{t("notConfigured.title")}</h3>
@@ -471,7 +471,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
                 <div className="flex gap-3 justify-start animate-pulse">
                   <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-muted" />
                   <div className="max-w-[80%]">
-                    <div className="rounded-2xl px-4 py-3 bg-muted">
+                    <div className="rounded-lg px-4 py-3 bg-muted">
                       <div className="space-y-2">
                         <div className="h-3.5 w-full bg-muted-foreground rounded" />
                         <div className="h-3.5 w-3/4 bg-muted-foreground rounded" />
@@ -482,7 +482,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
                 {/* Skeleton - user bubble */}
                 <div className="flex gap-3 justify-end animate-pulse">
                   <div className="max-w-[70%]">
-                    <div className="rounded-2xl px-4 py-2.5 bg-muted">
+                    <div className="rounded-lg px-4 py-2.5 bg-muted">
                       <div className="h-3.5 w-32 bg-muted-foreground rounded" />
                     </div>
                   </div>
@@ -491,7 +491,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
                 <div className="flex gap-3 justify-start animate-pulse">
                   <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-muted" />
                   <div className="max-w-[80%]">
-                    <div className="rounded-2xl px-4 py-3 bg-muted">
+                    <div className="rounded-lg px-4 py-3 bg-muted">
                       <div className="space-y-2">
                         <div className="h-3.5 w-full bg-muted-foreground rounded" />
                         <div className="h-3.5 w-2/3 bg-muted-foreground rounded" />
@@ -504,7 +504,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             </div>
           ) : filteredMessages.length === 0 && !streamState.isStreaming ? (
             <div className="flex flex-col items-center justify-center h-full gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center">
+              <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
                 <Bot className="h-6 w-6 text-foreground" />
               </div>
               <p className="text-sm text-muted-foreground text-center">{t("input.startNewConversation")}</p>
@@ -544,7 +544,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               placeholder={streamState.isStreaming ? t("status.wait", "请等待...") : t("input.placeholder")}
               rows={1}
               disabled={streamState.isStreaming}
-              className="flex-1 px-4 py-2.5 rounded-2xl resize-none text-base border border-input bg-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none transition-all duration-200 min-h-[44px] max-h-32 disabled:opacity-60"
+              className="flex-1 px-4 py-2.5 rounded-lg resize-none text-sm border border-input bg-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none transition-all duration-200 min-h-[44px] max-h-32 disabled:opacity-60"
               onInput={(e) => {
                 const el = e.target as HTMLTextAreaElement
                 el.style.height = "auto"
@@ -554,7 +554,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           <button
             onClick={handleSend}
             disabled={!input.trim() || streamState.isStreaming}
-            className="h-[44px] w-[44px] rounded-2xl flex-shrink-0 bg-primary hover:bg-primary-hover text-primary-foreground flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="h-[44px] w-[44px] rounded-lg flex-shrink-0 bg-primary hover:bg-primary-hover text-primary-foreground flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Send className="h-5 w-5" />
           </button>

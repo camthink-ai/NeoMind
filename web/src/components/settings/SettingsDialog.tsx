@@ -119,7 +119,7 @@ export function SettingsDialog() {
             <main className="flex-1 min-w-0 min-h-0 overflow-y-auto scrollbar-none">
               <div className="max-w-6xl mx-auto">
                 {activeSection !== "about" && (
-                  <h2 className="text-2xl font-semibold tracking-tight mb-8">
+                  <h2 className="text-lg sm:text-2xl font-semibold tracking-tight mb-8">
                     {sections.find((s) => s.value === activeSection)?.label}
                   </h2>
                 )}

@@ -305,7 +305,7 @@ export function MarketplaceDialog({
   return (
     <FullScreenDialog open={open} onOpenChange={(v) => { if (!v) handleClose(); else onOpenChange(v) }}>
       {showDetail ? (
-        <header className="shrink-0 flex items-center justify-between gap-3 px-3 md:px-5 py-3 md:py-4 border-b border-border">
+        <header className="shrink-0 flex items-center justify-between gap-3 px-3 md:px-5 py-3 md:py-4 ">
           <div className="flex items-center gap-2 min-w-0">
             <Button variant="ghost" size={isMobile ? "icon" : "sm"} onClick={handleBack} disabled={installing} className="-ml-2 shrink-0">
               <ChevronLeft className="h-4 w-4" />
@@ -549,7 +549,7 @@ function ExtensionDetailView({
       {/* Header */}
       <div className="border-b pb-4">
         <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <h2 className="text-xl font-semibold">{extension.name}</h2>
+          <h2 className="text-lg font-semibold">{extension.name}</h2>
           <Badge variant="outline">{extension.version}</Badge>
           {extension.package_url && (
             <Badge variant="default" className="text-xs">

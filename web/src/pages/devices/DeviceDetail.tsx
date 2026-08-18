@@ -664,7 +664,7 @@ export function DeviceDetail({
                       key={cmd.name}
                       onClick={() => handleCommandClick(cmd)}
                       className={cn(
-                        "group bg-gradient-to-br from-card to-muted rounded-lg text-left transition-all duration-200 hover:shadow-md border border-border hover:border-border",
+                        "group bg-card rounded-lg text-left transition-all duration-200 hover:shadow-md border border-border hover:border-border",
                         isMobile ? "p-3 active:scale-[0.99]" : "p-6 hover:scale-[1.02]"
                       )}
                     >

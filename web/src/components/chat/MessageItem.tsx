@@ -66,7 +66,7 @@ export const MessageItem = React.memo<MessageItemProps>(
         ) : (
           /* User: keep bubble with natural width */
           <div className="max-w-[80%] order-1">
-            <div className="rounded-2xl px-4 py-3 overflow-hidden bg-[var(--msg-user-bg)] text-[var(--msg-user-text)]">
+            <div className="rounded-lg px-4 py-3 overflow-hidden bg-[var(--msg-user-bg)] text-[var(--msg-user-text)]">
               {message.images && message.images.length > 0 && (
                 <MessageImages images={message.images} />
               )}

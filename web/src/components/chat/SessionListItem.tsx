@@ -80,7 +80,7 @@ export const SessionListItem = React.memo<SessionListItemProps>(
             <Button
               variant="ghost"
               size="icon"
-              className={cn("h-6 w-6 shrink-0",
+              className={cn(" shrink-0",
                 isActive ? "hover:bg-white/20" : ""
               )}
               onClick={(e) => onRename(e, session.sessionId!, session.title || session.preview || "")}
@@ -91,7 +91,7 @@ export const SessionListItem = React.memo<SessionListItemProps>(
             <Button
               variant="ghost"
               size="icon"
-              className={cn("h-6 w-6 shrink-0",
+              className={cn(" shrink-0",
                 isActive ? "hover:bg-white/20" : ""
               )}
               onClick={(e) => onDelete(e, session.sessionId!)}

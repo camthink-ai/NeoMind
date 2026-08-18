@@ -9,7 +9,7 @@ export default function NotFound() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center px-4 text-center animate-fade-in-up">
-      <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+      <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-xl bg-muted text-muted-foreground">
         <FileQuestion className="h-16 w-16" />
       </div>
       <h1 className="text-2xl font-bold">{t('notFound.title')}</h1>

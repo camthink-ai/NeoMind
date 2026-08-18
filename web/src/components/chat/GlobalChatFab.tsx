@@ -95,7 +95,7 @@ export function GlobalChatFab() {
           "transition-all duration-300 ease-out",
           // State-dependent positioning & sizing
           panelState !== "closed"
-            ? "bottom-[calc(6rem+var(--keyboard-offset,0px))] right-6 w-[calc(100dvw-3rem)] h-[70dvh] sm:w-[380px] sm:h-[560px] rounded-2xl opacity-100 scale-100"
+            ? "bottom-[calc(6rem+var(--keyboard-offset,0px))] right-6 w-[calc(100dvw-3rem)] h-[70dvh] sm:w-[380px] sm:h-[560px] rounded-xl opacity-100 scale-100"
             : "bottom-20 right-6 w-14 h-14 rounded-full opacity-0 scale-0 pointer-events-none",
           "backdrop-blur-2xl",
           "border border-glass-border",

@@ -891,7 +891,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           )}
           {/* Skeleton main content */}
           <div className="flex-1 flex flex-col">
-            <div className="flex items-center justify-between px-4 h-11 border-b border-border">
+            <div className="flex items-center justify-between px-4 h-11 ">
               {isTabMode ? (
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   {/* Left: toggle + add skeletons */}

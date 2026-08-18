@@ -149,7 +149,7 @@ export const valueCardSize = {
     contentGap: 'gap-3',
     itemGap: 'gap-2',
     // Border radius
-    radius: 'rounded-xl',
+    radius: 'rounded-lg',
   },
 } as const
 
@@ -216,7 +216,7 @@ export const dashboardComponentSize = {
     iconContainer: 'w-10 h-10',
     contentGap: 'gap-4',
     itemGap: 'gap-2.5',
-    radius: 'rounded-xl',
+    radius: 'rounded-lg',
   },
 } as const
 
