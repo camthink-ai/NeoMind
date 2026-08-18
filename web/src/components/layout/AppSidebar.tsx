@@ -115,15 +115,13 @@ export function AppSidebar() {
           "h-10 w-full gap-3 px-3 justify-start font-normal no-press-scale",
           collapsed && "w-10 min-w-0 px-0 justify-center",
           isActive
-            ? "bg-brand-bg text-brand hover:bg-brand-bg hover:text-brand"
+            ? "bg-[var(--nav-active-bg)] text-[var(--nav-active-fg)] font-medium hover:bg-[var(--nav-active-hover-bg)]"
             : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
         )}
         aria-current={isActive ? "page" : undefined}
         onClick={() => handleNavigate(item.path)}
       >
-        <Icon
-          className={cn("h-5 w-5 shrink-0", isActive && "brand-icon-stroke")}
-        />
+        <Icon className="h-5 w-5 shrink-0" />
         {!collapsed && <span className="truncate">{label}</span>}
       </Button>
     )
@@ -233,19 +231,18 @@ export function AppSidebar() {
     <TooltipProvider delayDuration={500}>
       <aside
         className={cn(
-          "flex shrink-0 flex-col bg-[var(--chrome)] border-r border-border",
+          "flex shrink-0 flex-col bg-[var(--sidebar-bg)]",
           "transition-[width] duration-normal ease-out"
         )}
         style={{ width: collapsed ? 60 : 240 }}
         aria-label={t("nav.primary")}
       >
         {/* Header — brand + collapse toggle. Reserves the macOS traffic-light
-            strip (--titlebar-inset), doubles as a drag region, and carries
-            the same border-b as the TopBar so the top chrome band reads as
-            one surface with a continuous dividing line. */}
+            strip (--titlebar-inset) and doubles as a drag region. No border:
+            layers separate by background contrast (sidebar rail vs chrome). */}
         <div
           className={cn(
-            "flex items-center gap-1.5 px-3 border-b border-border",
+            "flex items-center gap-1.5 px-3",
             HEADER_ROW_H,
             collapsed && "px-0 justify-center gap-0"
           )}

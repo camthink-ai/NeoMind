@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Style refresh toward the reference design language
+- **Sidebar becomes a borderless rail**: new `--sidebar-bg` token (light: gray below the canvas; dark: below-canvas dark) — chrome layers now separate by color contrast, with no decorative borders on the sidebar, its header, or the TopBar.
+- **Active nav item is a solid accent pill** (`--nav-active-bg/-hover-bg/-fg`): deep orange + white in light, bright orange + dark in dark — each theme uses the direction that keeps text contrast.
+- **Radius ladder tightened**: base `--radius` 12px → 8px (lg 8 / md 6 / sm 4 / xl 12 / 2xl 16) — a denser, more professional feel across cards, buttons and inputs.
+
 ### Desktop navigation: top menu → sidebar
 The desktop top nav (icon rail) is replaced by a persistent **AppSidebar** plus a slim **TopBar** (48px, global actions only). The sidebar groups PRIMARY (Chat/Agents/Devices/Visual Dashboard) and SYSTEM (Automation/Data/Messages/Extensions) entries — same split as the mobile drawer — collapses to a 60px icon rail (state persisted), and carries the brand header, macOS traffic-light inset and window-drag region. Nav definitions are single-sourced in `navItems.ts`. The mobile navigation system is untouched. Fixed full-bleed surfaces (chat's keyboard-aware container, PageLayout's footer) offset past the sidebar via the new `--app-sidebar-width` CSS var. DESIGN_SPEC §28 rewritten.
 

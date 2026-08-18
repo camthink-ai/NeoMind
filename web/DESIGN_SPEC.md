@@ -1093,14 +1093,14 @@ const { values, errors, setValue, handleSubmit, isSubmitting } = useForm({
 
 ## 16. Spacing & Radius
 
-Use Tailwind's standard spacing utilities (`p-2`, `gap-4`, etc.) and the predefined radius tokens:
+Use Tailwind's standard spacing utilities (`p-2`, `gap-4`, etc.) and the predefined radius tokens. Base `--radius` is 8px — a tight, professional feel (reference design language); Tailwind derives the ladder from it:
 
 | Token | Value | Class |
 |-------|-------|-------|
-| sm | 6px | `rounded-sm` |
-| md | 8px | `rounded-md` |
-| lg | 10px | `rounded-lg` |
-| xl | 15px | `rounded-xl` |
+| sm | 4px | `rounded-sm` |
+| md | 6px | `rounded-md` |
+| lg | 8px | `rounded-lg` |
+| xl | 12px | `rounded-xl` |
 | 2xl | 16px | `rounded-2xl` |
 | full | circle | `rounded-full` |
 
@@ -1615,7 +1615,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 - PRIMARY group: Chat `/chat`, Agents `/agents`, Devices `/devices`, Visual Dashboard `/visual-dashboard`
 - SYSTEM group (labelled `navShort.system`): Automation, Data Explorer, Messages, Extensions
 - Footer (bottom-left): **user avatar** whose upward dropdown holds theme / language / settings / about / logout (settings has no standalone entry — the dialog opens from the avatar menu)
-- Active state: `bg-brand-bg text-brand` pill + `brand-icon-stroke` icon gradient (dark)
+- Active state: **solid accent pill** — `bg-[var(--nav-active-bg)] text-[var(--nav-active-fg)]` (light: deep orange + white; dark: bright orange + dark). The sidebar itself is the `--sidebar-bg` rail (light: gray below canvas; dark: below-canvas dark), separated from content by **color contrast, no border** — the TopBar and sidebar carry no decorative borders either
 
 ### Collapse behavior
 
