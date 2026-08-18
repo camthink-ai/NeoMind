@@ -59,11 +59,8 @@ body,
    never apply, which causes downstream var() fallbacks to kick in. This was
    the root cause of PWA content overflowing the top safe area on iOS. */
 :root {
-  /* No global top bar (desktop chrome = sidebar rail) — kept at 0 for any
-     legacy consumers; mobile has never had one either. */
-  --topnav-height: 0px;
-  /* Chat page top padding: TopNav + Mobile Header + safe area */
-  --chat-content-padding-top: calc(6.5rem + env(safe-area-inset-top, 0px));
+  /* (Empty — the topbar-era vars were removed; --titlebar-inset is set at
+     runtime by the AppSidebar.) */
 }
 @supports (padding: env(safe-area-inset-top)) {
   .safe-top {

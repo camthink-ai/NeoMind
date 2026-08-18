@@ -30,7 +30,6 @@ import {
   Plus,
   Minimize,
   Hash,
-  ToggleLeft,
   Monitor,
   Grid,
   Settings2,

@@ -34,7 +34,7 @@ export function useOnboarding() {
   }, [fetchStatus])
 
   // Poll for status updates while dialog is relevant (incomplete steps, not dismissed).
-  // Benefits the TopNav Rocket button badge and CLI-path users who configure via terminal.
+  // Benefits the rail's onboarding rocket badge and CLI-path users.
   useEffect(() => {
     if (!status || status.dismissed) return
     if (status.steps.llm.completed && status.steps.device.completed) return

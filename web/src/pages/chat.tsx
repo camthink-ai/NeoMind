@@ -6,7 +6,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Settings, Send, Sparkles, PanelLeft, MessageSquare, Zap, ChevronDown, X, Image as ImageIcon, Loader2, Eye, Wrench, RotateCcw, Plus, Check, ArrowUp } from "lucide-react"
+import { Settings, Send, Sparkles, MessageSquare, ChevronDown, X, Image as ImageIcon, Loader2, RotateCcw, Plus, Check, ArrowUp } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -27,7 +27,7 @@ import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import type { Message, ServerMessage, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
-import { textNano, textMini, textMicro } from "@/design-system/tokens/typography"
+import { textNano, textMicro } from "@/design-system/tokens/typography"
 import { getPortalRoot } from "@/lib/portal"
 import { formatTimestamp } from "@/lib/utils/format"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
@@ -371,7 +371,6 @@ export function ChatPage() {
   // scrolled up to read history, auto-scrolling would yank them back down —
   // extremely annoying when waiting for a long response while reviewing context.
   const isPinnedToBottomRef = useRef(true)
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
 
   const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current
@@ -380,10 +379,6 @@ export function ChatPage() {
     // diffs and the gap inserted by smooth-scroll inertia.
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
     isPinnedToBottomRef.current = distanceFromBottom < 80
-    // Reveal the "scroll to bottom" button once the user scrolls a meaningful
-    // amount up. setState with an unchanged boolean bails out (no re-render),
-    // so this stays cheap even though scroll fires very frequently.
-    setShowScrollToBottom(distanceFromBottom >= 120)
   }, [])
 
   // Auto-scroll to bottom by directly setting scrollTop on the scroll container

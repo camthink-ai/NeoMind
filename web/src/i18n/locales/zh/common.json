@@ -310,21 +310,7 @@
     "messages": "消息",
     "extensions": "扩展",
     "settings": "设置",
-    "primary": "主导航",
-    "collapseSidebar": "收起侧边栏",
-    "expandSidebar": "展开侧边栏"
-  },
-  "navShort": {
-    "dashboard": "对话",
-    "visual-dashboard": "看板",
-    "devices": "设备",
-    "automation": "自动化",
-    "agents": "智能体",
-    "data": "数据",
-    "messages": "消息",
-    "extensions": "扩展",
-    "settings": "设置",
-    "system": "系统"
+    "primary": "主导航"
   },
   "add": "添加",
   "edit": "编辑",
@@ -602,7 +588,6 @@
     "search": "搜索...",
     "noSessions": "暂无会话",
     "noMatch": "没有找到匹配的会话",
-    "totalSessions": "共 {{count}} 个会话",
     "messages": "{{count}} 条消息",
     "defaultTitle": "新对话",
     "deleteTitle": "删除会话",

@@ -1,9 +1,9 @@
 /**
  * Page sidebar slot — lets a page hoist its own left column (chat sessions,
- * dashboard list) to FULL HEIGHT, left of the TopBar, next to the AppSidebar.
+ * dashboard list) to FULL HEIGHT, next to the AppSidebar.
  * The shell renders the empty `#page-sidebar-slot` flex child; pages portal
  * their column into it. Without this, page sidebars render inside `main`,
- * below the TopBar, and the top chrome band spans their full width instead
+ * below the content top, and the page chrome spans their full width instead
  * of only the content area.
  *
  * `PageSidebarColumn` wraps the portaled content and tracks its width in

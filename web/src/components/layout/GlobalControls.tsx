@@ -1,8 +1,7 @@
 /**
- * GlobalControls — the top-right entry points: theme, language, alerts.
- * (Instance selector and onboarding live in the AppSidebar rail.)
- * Self-contained; rendered inline at the right of every page's top toolbar,
- * or floating (GlobalControlsFloating) for toolbar-less pages (chat).
+ * GlobalControlsFloating — the top-right floating cluster: theme, language,
+ * alerts. (Instance selector and onboarding live in the AppSidebar rail.)
+ * Floats over the content area's top-right on desktop.
  */
 
 import { useTranslation } from "react-i18next"
@@ -18,10 +17,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-function Controls() {
+export function GlobalControlsFloating() {
   const { t, i18n } = useTranslation("common")
 
+  // Low-key floating cluster: no border/shadow (it only ever overlaps
+  // content in narrow windows), just a faint surface so scrolled content
+  // stays readable.
   return (
+    <div className="pointer-events-none absolute right-4 sm:right-6 z-20" style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}>
+      <div className="pointer-events-auto rounded-full bg-background/60 px-1 py-0.5 backdrop-blur-sm">
     <TooltipProvider delayDuration={500}>
       <div className="flex shrink-0 items-center gap-1.5">
         <ThemeToggle />
@@ -50,22 +54,6 @@ function Controls() {
         <AlertsMenu compact align="end" side="bottom" tooltipSide="bottom" />
       </div>
     </TooltipProvider>
-  )
-}
-
-/** Inline cluster — embed at the right of a page toolbar. */
-export function GlobalControls() {
-  return <Controls />
-}
-
-/** Floating cluster — for pages without a toolbar (chat): top-right overlay.
-    Low-key by default: no border/shadow (it only ever overlaps content in
-    narrow windows), just a faint surface so scrolled content stays readable. */
-export function GlobalControlsFloating() {
-  return (
-    <div className="pointer-events-none absolute right-4 sm:right-6 z-20" style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}>
-      <div className="pointer-events-auto rounded-full bg-background/60 px-1 py-0.5 backdrop-blur-sm">
-        <Controls />
       </div>
     </div>
   )

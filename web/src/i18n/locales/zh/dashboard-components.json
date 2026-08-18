@@ -1093,7 +1093,6 @@
     "namePlaceholder": "仪表板名称...",
     "create": "创建",
     "newDashboard": "新建仪表板",
-    "dashboardCount": "{{count}} 个仪表板",
     "switchToTabs": "切换到标签栏",
     "moveUp": "上移",
     "moveDown": "下移",

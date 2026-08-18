@@ -84,7 +84,7 @@ window.addEventListener('unhandledrejection', (event) => {
   }
 })
 
-// Set the macOS Tauri title-bar inset globally (login/setup pages don't have TopNav).
+// Set the macOS Tauri title-bar inset globally (login/setup pages have no sidebar rail).
 const _isMacTauri = typeof window !== 'undefined' && '__TAURI__' in window && /Mac/i.test(navigator.platform || navigator.userAgent)
 if (_isMacTauri) {
   document.documentElement.style.setProperty('--titlebar-inset', '24px')

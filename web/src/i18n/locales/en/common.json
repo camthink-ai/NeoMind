@@ -310,21 +310,7 @@
     "messages": "Messages",
     "extensions": "Extensions",
     "settings": "Settings",
-    "primary": "Main navigation",
-    "collapseSidebar": "Collapse sidebar",
-    "expandSidebar": "Expand sidebar"
-  },
-  "navShort": {
-    "dashboard": "Chat",
-    "visual-dashboard": "Dashboard",
-    "devices": "Devices",
-    "automation": "Auto",
-    "agents": "Agents",
-    "data": "Data",
-    "messages": "Messages",
-    "extensions": "Extensions",
-    "settings": "Settings",
-    "system": "System"
+    "primary": "Main navigation"
   },
   "add": "Add",
   "edit": "Edit",
@@ -606,7 +592,6 @@
     "search": "Search...",
     "noSessions": "No sessions yet",
     "noMatch": "No matching sessions",
-    "totalSessions": "Total {{count}} sessions",
     "messages": "{{count}} messages",
     "defaultTitle": "New Chat",
     "deleteTitle": "Delete Session",

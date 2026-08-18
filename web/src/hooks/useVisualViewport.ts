@@ -21,7 +21,6 @@ import { useEffect } from 'react'
 
 let keyboardHeight = 0
 let initialHeight = 0
-let topNavHeight = 64 // Default 4rem = 64px
 
 /**
  * Initialize global VisualViewport tracking
@@ -146,37 +145,8 @@ function updateAppHeight() {
   const effectiveHeight = visualHeight ?? window.innerHeight
   document.documentElement.style.setProperty('--app-height', `${effectiveHeight}px`)
 
-  // Mobile layout: no global TopNav. Each page renders its own MobilePageHeader
-  // (with hamburger + page title + actions) as the first child of its content.
-  // The header carries its own safe-top padding, so the main element's top
-  // padding collapses to 0.
-  const isMobileViewport = window.innerWidth < 768
-  if (isMobileViewport) {
-    document.documentElement.style.setProperty('--topnav-height', '0px')
-    document.documentElement.style.setProperty('--bottom-nav-height', '0px')
-    return
-  }
-
-  // Desktop: measure the actual top bar. Query by id — a generic 'nav'
-  // selector would match the AppSidebar's item <nav> (several hundred px
-  // tall) since the top bar is a <header> now, corrupting --topnav-height
-  // for fixed consumers (chat's keyboard-aware container pads by it).
-  document.documentElement.style.setProperty('--bottom-nav-height', '0px')
-  const topNavEl = document.querySelector('#app-topbar')
-  if (topNavEl) {
-    topNavHeight = topNavEl.getBoundingClientRect().height
-    document.documentElement.style.setProperty('--topnav-height', `${topNavHeight}px`)
-  }
-}
-
-/**
- * Set the topnav height (call from TopNav component after mount)
- */
-export function setTopNavHeight(height: number) {
-  topNavHeight = height
-  if (typeof window !== 'undefined') {
-    document.documentElement.style.setProperty('--topnav-height', `${height}px`)
-  }
+  // (No global top bar exists — desktop chrome is the fixed sidebar rail.
+  // Nothing to measure.)
 }
 
 /**

@@ -147,10 +147,6 @@ export const useStore = create<NeoMindStore>()(
           // This prevents QuotaExceededError during long conversations.
           // When the user switches sessions, messages are loaded from the backend.
           sessionId: state.sessionId,
-          // Only persist essential UI state (appSidebarCollapsed replaced the
-          // legacy, never-consumed sidebarOpen key — old clients' persisted
-          // sidebarOpen lingers in storage harmlessly)
-          appSidebarCollapsed: state.appSidebarCollapsed,
           // NOTE: updateInfo / updateDialogOpen are intentionally NOT persisted.
           // They are transient per-check UI state. Persisting updateDialogOpen
           // meant a dialog left open (true) in the old version was read back
@@ -163,6 +159,9 @@ export const useStore = create<NeoMindStore>()(
         }),
         migrate: (persisted, version) => {
           const old = persisted as Record<string, unknown>
+          // Drop stale UI keys from removed features (sidebar collapse)
+          delete old.appSidebarCollapsed
+          delete old.sidebarOpen
           if (version < 2) {
             // v0/v1→v2: remove stale currentInstanceId that overrides
             // the one managed by instanceSlice's own localStorage key.

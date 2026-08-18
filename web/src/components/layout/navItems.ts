@@ -1,7 +1,7 @@
 /**
- * Shared navigation item definitions — the single source for the desktop
- * AppSidebar and the mobile MobileNav drawer. Both group these items
- * differently but must stay in sync on paths/icons/i18n keys.
+ * Shared navigation item definitions — consumed by the desktop AppSidebar
+ * (and available to any nav surface). The mobile MobileNav drawer currently
+ * maintains its own entry list.
  */
 
 import {
@@ -15,7 +15,7 @@ import {
   Puzzle,
 } from "lucide-react"
 
-export type PageType =
+type PageType =
   | "dashboard"
   | "agents"
   | "visual-dashboard"
@@ -37,19 +37,15 @@ export interface NavItem {
 
 /** Route order = display order in the sidebar's PRIMARY group */
 export const navItems: NavItem[] = [
-  { id: "dashboard", path: "/chat", icon: MessageSquare, labelKey: "nav.dashboard", mobileLabelKey: "navShort.dashboard" },
-  { id: "agents", path: "/agents", icon: Bot, labelKey: "nav.agents", mobileLabelKey: "navShort.agents" },
-  { id: "devices", path: "/devices", icon: Cpu, labelKey: "nav.devices", mobileLabelKey: "navShort.devices" },
-  { id: "visual-dashboard", path: "/visual-dashboard", icon: LayoutDashboard, labelKey: "nav.visual-dashboard", mobileLabelKey: "navShort.visual-dashboard" },
-  { id: "automation", path: "/automation", icon: Workflow, labelKey: "nav.automation", mobileLabelKey: "navShort.automation" },
-  { id: "data", path: "/data", icon: Database, labelKey: "nav.data", mobileLabelKey: "navShort.data" },
-  { id: "messages", path: "/messages", icon: Bell, labelKey: "nav.messages", mobileLabelKey: "navShort.messages" },
-  { id: "extensions", path: "/extensions", icon: Puzzle, labelKey: "nav.extensions", mobileLabelKey: "navShort.extensions" },
+  { id: "dashboard", path: "/chat", icon: MessageSquare, labelKey: "nav.dashboard" },
+  { id: "agents", path: "/agents", icon: Bot, labelKey: "nav.agents" },
+  { id: "devices", path: "/devices", icon: Cpu, labelKey: "nav.devices" },
+  { id: "visual-dashboard", path: "/visual-dashboard", icon: LayoutDashboard, labelKey: "nav.visual-dashboard" },
+  { id: "automation", path: "/automation", icon: Workflow, labelKey: "nav.automation" },
+  { id: "data", path: "/data", icon: Database, labelKey: "nav.data" },
+  { id: "messages", path: "/messages", icon: Bell, labelKey: "nav.messages" },
+  { id: "extensions", path: "/extensions", icon: Puzzle, labelKey: "nav.extensions" },
 ]
-
-/** Sidebar groups — mirrors MobileNav's PRIMARY/SYSTEM split */
-export const PRIMARY_NAV_IDS: PageType[] = ["dashboard", "agents", "devices", "visual-dashboard"]
-export const SYSTEM_NAV_IDS: PageType[] = ["automation", "data", "messages", "extensions"]
 
 /** Active-route check, shared by sidebar and any nav surface */
 export function isNavItemActive(item: NavItem, currentPath: string): boolean {
