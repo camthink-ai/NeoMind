@@ -13,9 +13,9 @@ import { mergeMessagesForDisplay as mergeAssistantMessages } from '@/lib/message
 import type { SessionState } from '../types'
 import type { ChatSession } from '@/types'
 import { api } from '@/lib/api'
-
-// Must match PANEL_SESSION_KEY in PanelChatView.tsx
-const PANEL_SESSION_KEY = 'neomind:panelSessionId'
+// Must match PANEL_SESSION_PREFIX in pageAssistant.ts — panel sessions are
+// stored per page (each carries its own system-prompt suffix / tool profile)
+import { PANEL_SESSION_PREFIX } from '@/components/chat/pageAssistant'
 import { normalizeSessions, normalizeSessionsResponse } from '@/lib/api/transforms'
 import { fetchCache } from '@/lib/utils/async'
 
@@ -217,12 +217,15 @@ export const createSessionSlice: StateCreator<
   deleteSession: async (sessionIdToDelete: string) => {
     fetchCache.invalidate('sessions')
 
-    // If the deleted session is the panel's persisted session, clear it
-    // so the floating chat doesn't try to switch to a deleted session
+    // If the deleted session is any page's persisted panel session, clear
+    // that bucket so the floating chat doesn't try to switch to a deleted
+    // session. Panel sessions are keyed per page — scan the prefix.
     try {
-      const panelId = localStorage.getItem(PANEL_SESSION_KEY)
-      if (panelId === sessionIdToDelete) {
-        localStorage.removeItem(PANEL_SESSION_KEY)
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i)
+        if (k && k.startsWith(PANEL_SESSION_PREFIX) && localStorage.getItem(k) === sessionIdToDelete) {
+          localStorage.removeItem(k)
+        }
       }
     } catch { /* localStorage may be unavailable */ }
 

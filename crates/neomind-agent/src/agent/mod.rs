@@ -1266,12 +1266,11 @@ impl Agent {
     pub async fn update_tool_definitions(&self) {
         use neomind_core::llm::backend::ToolDefinition as CoreToolDefinition;
 
-        // definitions_for_llm() already filters out disabled tools (master-off
-        // extension or per-command disable). Use it directly instead of
-        // iterating list() + get() so the chat path can't leak disabled tools.
+        // allowed_tool_defs() already filters out disabled tools AND applies
+        // the per-session allowlist. Use it instead of iterating list() + get()
+        // so the chat path can't leak disabled or out-of-profile tools.
         let core_defs: Vec<CoreToolDefinition> = self
-            .tools
-            .definitions_for_llm()
+            .allowed_tool_defs()
             .into_iter()
             .map(|def| CoreToolDefinition {
                 name: def.name,
@@ -1291,6 +1290,25 @@ impl Agent {
             "Updated {} tool definitions for LLM (from registry)",
             tool_count
         );
+    }
+
+    /// Tool definitions visible to this session's LLM: the registry's
+    /// definitions (disabled tools already excluded) filtered through
+    /// `config.allowed_tools`. Empty allowlist = all tools. The
+    /// user-interaction tools (ask_user / confirm_action / clarify_intent)
+    /// are never filtered out — they are UX, not domain capability.
+    fn allowed_tool_defs(&self) -> Vec<crate::toolkit::tool::ToolDefinition> {
+        let defs = self.tools.definitions_for_llm();
+        if self.config.allowed_tools.is_empty() {
+            return defs;
+        }
+        const ALWAYS_KEEP: [&str; 3] = ["ask_user", "confirm_action", "clarify_intent"];
+        defs.into_iter()
+            .filter(|d| {
+                ALWAYS_KEEP.contains(&d.name.as_str())
+                    || self.config.allowed_tools.iter().any(|a| a == &d.name)
+            })
+            .collect()
     }
 
     /// Generate a dynamic system prompt with tool descriptions.
@@ -1332,9 +1350,10 @@ impl Agent {
 
         prompt.push_str("\n\n## Available Tools (Quick Reference)\n\n");
 
-        // definitions_for_llm() filters out disabled tools so the text prompt
-        // stays in sync with the function-calling schema.
-        let defs = self.tools.definitions_for_llm();
+        // allowed_tool_defs() filters out disabled tools and applies the
+        // per-session allowlist so the text prompt stays in sync with the
+        // function-calling schema.
+        let defs = self.allowed_tool_defs();
         let extension_defs: Vec<_> = defs.iter().filter(|d| d.name.contains(':')).collect();
 
         for def in defs.iter().filter(|d| !d.name.contains(':')) {
@@ -3190,6 +3209,44 @@ mod tests {
 
         let state = agent.state().await;
         assert_eq!(state.id, "test_session");
+    }
+
+    #[tokio::test]
+    async fn allowed_tools_filters_definitions_but_keeps_interaction_tools() {
+        // A per-session allowlist trims domain tools from BOTH the
+        // function-calling schema and the text quick-reference prompt, while
+        // the user-interaction tools always survive (they are UX, not domain
+        // capability).
+        use crate::toolkit::ToolRegistryBuilder;
+        let mut registry = ToolRegistryBuilder::new().build();
+        registry.register(std::sync::Arc::new(MockShellTool));
+        registry.register(std::sync::Arc::new(MockListRulesTool));
+        use crate::tools::{AskUserTool, ClarifyIntentTool, ConfirmActionTool};
+        registry.register(std::sync::Arc::new(AskUserTool::new()));
+        registry.register(std::sync::Arc::new(ConfirmActionTool::new()));
+        registry.register(std::sync::Arc::new(ClarifyIntentTool::new()));
+
+        let mut config = AgentConfig::default();
+        config.allowed_tools = vec!["shell".to_string()];
+        let agent = Agent::with_tools(
+            config,
+            "allowlist-test".to_string(),
+            std::sync::Arc::new(registry),
+        );
+        agent.update_tool_definitions().await;
+
+        let defs = agent.llm_interface().get_tool_definitions().await;
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"shell"), "allowlisted tool must be kept");
+        for ux in ["ask_user", "confirm_action", "clarify_intent"] {
+            assert!(names.contains(&ux), "interaction tool {ux} must survive allowlisting");
+        }
+        assert!(!names.contains(&"list_rules"), "out-of-profile tool must be filtered");
+
+        // Text quick-reference prompt stays in sync with the schema
+        let prompt = agent.generate_dynamic_system_prompt().await;
+        assert!(prompt.contains("**shell**"));
+        assert!(!prompt.contains("**list_rules**"));
     }
 
     #[tokio::test]

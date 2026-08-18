@@ -21,9 +21,9 @@ import {
   selectLlmBackendState,
   selectChatActions,
 } from "@/store/selectors"
-import { usePageContext } from "@/hooks/usePageContext"
 import { useToast } from "@/hooks/use-toast"
-import { pickPageAssistant } from "./pageAssistant"
+import type { SkillSummary } from "@/types/skill"
+import { pickPageAssistant, panelSessionKey } from "./pageAssistant"
 import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
@@ -31,8 +31,21 @@ import { X, Minimize2, Bot, Plus, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { ChatImage } from "@/types"
 
-// Shared with GlobalChatFab for panel session persistence
-export const PANEL_SESSION_KEY = "neomind:panelSessionId"
+/** Pin at most this many page-matched skills per send (prompt-budget guard). */
+const MAX_PINNED_SKILLS = 5
+
+/** Match installed skills against a page's domain keywords (name/category/keywords). */
+function matchSkills(skills: SkillSummary[], keywords: string[]): string[] {
+  if (keywords.length === 0) return []
+  const kw = keywords.map((k) => k.toLowerCase())
+  return skills
+    .filter((s) => {
+      const hay = [s.name, s.category, ...(s.keywords || [])].join(" ").toLowerCase()
+      return kw.some((k) => hay.includes(k))
+    })
+    .slice(0, MAX_PINNED_SKILLS)
+    .map((s) => s.id)
+}
 
 interface PanelChatViewProps {
   onClose: () => void
@@ -193,16 +206,21 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // Page context — reactive, only read when sending first message.
-  // The page-scoped assistant adds a focus directive so the model
-  // specializes to the current page's domain (devices/agents/…).
-  const pageContext = usePageContext()
+  // The page-scoped assistant specializes the panel per route: its
+  // systemPromptSuffix is baked into the session's REAL system prompt at
+  // creation (sessionConfig), its tool list becomes the session allowlist,
+  // and matching skills get pinned on every send.
   const location = useLocation()
   const { i18n } = useTranslation()
   const assistant = useMemo(
     () => pickPageAssistant(location.pathname, i18n.language),
     [location.pathname, i18n.language]
   )
-  const hasInjectedContextRef = useRef(false)
+  // Current page bucket ('devices' | … | 'default') — drives the per-page
+  // session key. Kept in a ref for stable callbacks.
+  const currentPageKeyRef = useRef(assistant?.key ?? "default")
+  // Skill ids matched for the current page (refreshed on page change)
+  const matchedSkillIdsRef = useRef<string[]>([])
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -229,14 +247,45 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setPanelMessages(prev => [...prev, msg])
   }, [])
 
-  // Initialize panel: load backends + create/load independent session
+  // Create a new panel session for the current page. The page profile
+  // (system-prompt suffix + tool allowlist) rides the creation request —
+  // the backend honors sessionConfig only at this moment.
+  const createPanelSession = useCallback(async () => {
+    try {
+      const cfg = assistant
+        ? { systemPromptSuffix: assistant.systemPromptSuffix, allowedTools: assistant.tools }
+        : undefined
+      const result = await api.createSession(cfg)
+      if (result?.sessionId) {
+        panelSessionIdRef.current = result.sessionId
+        localStorage.setItem(panelSessionKey(currentPageKeyRef.current), result.sessionId)
+        ws.setSessionId(result.sessionId)
+        setPanelMessages([])
+      }
+    } catch { /* ignore — panel just won't work until backend is available */ }
+    setIsHistoryLoading(false)
+  }, [assistant])
+
+  // Initialize/re-init the panel for the current page. Runs on mount AND on
+  // route change — each page bucket has its own session (own system prompt
+  // and tools), so switching pages switches the conversation.
   useEffect(() => {
     loadBackends()
 
-    // Try to reuse persisted panel session, otherwise create new
-    const persistedId = localStorage.getItem(PANEL_SESSION_KEY)
+    const pageKey = assistant?.key ?? "default"
+    currentPageKeyRef.current = pageKey
+    matchedSkillIdsRef.current = []
+
+    // Reset transient state from the previous page's conversation
+    panelSessionIdRef.current = null
+    setPanelMessages([])
+    setIsHistoryLoading(true)
+    dispatch({ type: 'RESET' })
+
+    const storageKey = panelSessionKey(pageKey)
+    const persistedId = localStorage.getItem(storageKey)
     if (persistedId) {
-      // Load history for persisted session
+      // Load history for this page's persisted session
       api.getSessionHistory(persistedId, { skipErrorToast: true }).then(result => {
         panelSessionIdRef.current = persistedId
         ws.setSessionId(persistedId)
@@ -244,36 +293,30 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         setPanelMessages(merged)
         setIsHistoryLoading(false)
       }).catch(() => {
-        // Session no longer exists — silently create a new one
-        localStorage.removeItem(PANEL_SESSION_KEY)
-        createPanelSession()
+        // Session no longer exists — clear the bucket; a fresh one (with the
+        // page profile) is created lazily on first send.
+        localStorage.removeItem(storageKey)
+        setIsHistoryLoading(false)
       })
     } else {
-      createPanelSession()
+      // Lazy creation on first send — the profile must be fresh at that point
+      setIsHistoryLoading(false)
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Create a new panel session
-  const createPanelSession = useCallback(async () => {
-    try {
-      const result = await api.createSession()
-      if (result?.sessionId) {
-        panelSessionIdRef.current = result.sessionId
-        localStorage.setItem(PANEL_SESSION_KEY, result.sessionId)
-        ws.setSessionId(result.sessionId)
-        setPanelMessages([])
-      }
-    } catch { /* ignore — panel just won't work until backend is available */ }
-    setIsHistoryLoading(false)
-  }, [])
+    // Best-effort skill matching for this page's domain
+    if (assistant && assistant.skillKeywords.length > 0) {
+      api.listSkills(1, 100).then(res => {
+        matchedSkillIdsRef.current = matchSkills(res.skills || [], assistant.skillKeywords)
+      }).catch(() => { /* skills stay unpinned */ })
+    }
+  }, [location.pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // New conversation handler
+  // New conversation handler — resets the CURRENT page's bucket
   const handleNewConversation = useCallback(async () => {
     if (streamState.isStreaming) return
-    localStorage.removeItem(PANEL_SESSION_KEY)
+    localStorage.removeItem(panelSessionKey(currentPageKeyRef.current))
     panelSessionIdRef.current = null
     setPanelMessages([])
-    hasInjectedContextRef.current = false
     dispatch({ type: 'RESET' })
     await createPanelSession()
   }, [streamState.isStreaming, createPanelSession])
@@ -406,14 +449,12 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     const streamMsgId = generateId()
     setCurrentStreamMessageId(streamMsgId)
     currentStreamMessageIdRef.current = streamMsgId
-    // Inject page context + assistant focus directive on first message only
-    const contextToSend = !hasInjectedContextRef.current
-      ? [pageContext, assistant?.focusHint].filter(Boolean).join("\n") || undefined
-      : undefined
-    if (!hasInjectedContextRef.current) hasInjectedContextRef.current = true
-    ws.sendMessage(text, sentImages, undefined, contextToSend)
+    // Page-matched skills ride every send (backend pins them per message);
+    // the page's system focus already lives in the session's system prompt.
+    const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
+    ws.sendMessage(text, sentImages, skillIds, undefined)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [input, attachedImages, streamState.isStreaming, addPanelMessage, createPanelSession, pageContext, supportsMultimodal, toast, t, assistant])
+  }, [input, attachedImages, streamState.isStreaming, addPanelMessage, createPanelSession, supportsMultimodal, toast, t])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 

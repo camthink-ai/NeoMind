@@ -387,7 +387,23 @@ pub async fn create_session_handler(
     // layer being None means "no override requested" → fall back to default.
     let req = body.and_then(|Json(b)| b);
 
-    let session_id = match req.and_then(|r| r.config) {
+    let (session_patch, legacy_cfg) = match req {
+        Some(r) => (r.session_config, r.config),
+        None => (None, None),
+    };
+
+    let session_id = match session_patch {
+        Some(patch) => {
+            // Preferred path: `sessionConfig` patch (systemPromptSuffix /
+            // allowedTools / …) merged on top of the platform default.
+            state
+                .agents
+                .session_manager
+                .create_session_with_options(patch.into())
+                .await
+                .map_err(|e| ErrorResponse::with_message(e.to_string()))?
+        }
+        None => match legacy_cfg {
         Some(cfg) => {
             // Legacy `config: AgentConfig` path — full struct. Translate to
             // options patch (only the four commonly-overridden fields flow
@@ -397,6 +413,7 @@ pub async fn create_session_handler(
                 temperature: Some(cfg.temperature),
                 model: Some(cfg.model),
                 enable_tools: Some(cfg.enable_tools),
+                ..Default::default()
             };
             state
                 .agents
@@ -405,12 +422,13 @@ pub async fn create_session_handler(
                 .await
                 .map_err(|e| ErrorResponse::with_message(e.to_string()))?
         }
-        None => state
-            .agents
-            .session_manager
-            .create_session()
-            .await
-            .map_err(|e| ErrorResponse::with_message(e.to_string()))?,
+            None => state
+                .agents
+                .session_manager
+                .create_session()
+                .await
+                .map_err(|e| ErrorResponse::with_message(e.to_string()))?,
+        },
     };
 
     Ok(Json(ApiResponse::success(json!({

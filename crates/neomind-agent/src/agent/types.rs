@@ -273,6 +273,12 @@ pub struct AgentConfig {
     /// Number of recent tool results to keep intact (default: 2)
     #[serde(default = "default_keep_tool_results")]
     pub keep_recent_tool_results: usize,
+    /// Per-session tool allowlist (empty = all available tools). Applied to
+    /// both the function-calling schema and the text quick-reference prompt.
+    /// The user-interaction tools (ask_user / confirm_action / clarify_intent)
+    /// are always kept — they are UX, not domain capability.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
 }
 
 /// Default value for max tool calls per request.
@@ -312,6 +318,7 @@ impl Default for AgentConfig {
             api_key: std::env::var("OPENAI_API_KEY").ok(),
             max_tool_calls: default_max_tool_calls(),
             keep_recent_tool_results: default_keep_tool_results(),
+            allowed_tools: Vec::new(),
         }
     }
 }

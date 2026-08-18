@@ -1149,9 +1149,10 @@ export const api = {
   // Note: Backend returns paginated response with data as array (auto-unwrapped by fetchAPI)
   listSessions: (page = 1, pageSize = 10) =>
     fetchAPI<ChatSession[]>(`/sessions?page=${page}&page_size=${pageSize}`),
-  createSession: () =>
+  createSession: (sessionConfig?: { systemPromptSuffix?: string; allowedTools?: string[] }) =>
     fetchAPI<{ sessionId: string }>('/sessions', {
       method: 'POST',
+      body: sessionConfig ? JSON.stringify({ sessionConfig }) : undefined,
     }),
   getSession: (id: string) => fetchAPI<{ sessionId: string; state: { id: string; created_at: number; last_activity: number; message_count: number } }>(`/sessions/${id}`),
   updateSession: (id: string, title?: string) =>

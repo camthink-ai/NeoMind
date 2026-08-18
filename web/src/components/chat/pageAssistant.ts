@@ -1,11 +1,20 @@
 /**
  * Page-scoped assistant config — the floating/docked chat panel specializes
- * per route: a focus directive appended to the first message's page context,
- * a greeting, and quick-action prompts. Groundwork for the full
- * "page-dedicated agent" (which will ride the agent/skills system).
+ * per route. Three backend-level levers (applied when the page's panel
+ * session is created — see PanelChatView):
  *
- * v1 keeps copy inline (zh/en picked by i18n.language); migrate to
- * chat.json namespaces if the copy stabilizes.
+ * - systemPromptSuffix: appended to the agent's REAL system prompt
+ *   (`sessionConfig.systemPromptSuffix` → CreateSessionOptions), not baked
+ *   into any user message.
+ * - tools: a per-session tool allowlist (`sessionConfig.allowedTools`);
+ *   the interaction tools (ask_user/confirm_action/clarify_intent) are
+ *   always kept server-side.
+ * - skillKeywords: matched against installed skills (keywords/category/
+ *   name); matches are pinned via selectedSkills on every send.
+ *
+ * Plus the pure-UI pieces: greeting + quick actions.
+ * Copy stays inline (zh/en picked by i18n.language); migrate to chat.json
+ * namespaces if the copy stabilizes.
  */
 
 export interface PageQuickAction {
@@ -14,24 +23,39 @@ export interface PageQuickAction {
 }
 
 export interface PageAssistantConfig {
-  /** Appended to the [context] header sent with the first panel message */
-  focusHint: { zh: string; en: string }
+  /** Persistent system-prompt suffix for this page's panel session */
+  systemPromptSuffix: { zh: string; en: string }
+  /** Tool allowlist for the session (empty = all tools) */
+  tools: string[]
+  /** Keywords used to match installed skills for this page */
+  skillKeywords: string[]
   /** Panel welcome line while the session is empty */
   greeting: { zh: string; en: string }
   quickActions: PageQuickAction[]
 }
 
+export interface ResolvedPageAssistant {
+  /** Route key ('devices' | 'agents' | …), used for per-page session storage */
+  key: string
+  systemPromptSuffix: string
+  tools: string[]
+  skillKeywords: string[]
+  greeting: string
+  quickActions: { label: string; prompt: string }[]
+}
+
 const pick = (lang: string, c: { zh: string; en: string }) =>
   lang.startsWith('zh') ? c.zh : c.en
 
-export function pickPageAssistant(
-  pathname: string,
-  lang: string
-): { focusHint: string; greeting: string; quickActions: { label: string; prompt: string }[] } | null {
-  const cfg = PAGE_ASSISTANTS[routeKey(pathname)]
+export function pickPageAssistant(pathname: string, lang: string): ResolvedPageAssistant | null {
+  const key = routeKey(pathname)
+  const cfg = PAGE_ASSISTANTS[key]
   if (!cfg) return null
   return {
-    focusHint: pick(lang, cfg.focusHint),
+    key,
+    systemPromptSuffix: pick(lang, cfg.systemPromptSuffix),
+    tools: cfg.tools,
+    skillKeywords: cfg.skillKeywords,
     greeting: pick(lang, cfg.greeting),
     quickActions: cfg.quickActions.map((a) => ({
       label: pick(lang, a.label),
@@ -41,16 +65,32 @@ export function pickPageAssistant(
 }
 
 function routeKey(pathname: string): string {
-  const seg = pathname.split('/')[1] || ''
-  return seg
+  return pathname.split('/')[1] || ''
 }
+
+/**
+ * localStorage key for a page's panel session. v2: sessions are per-page so
+ * each page's session can carry its own system-prompt suffix + tool profile
+ * (v1 was one shared session, which froze the first page's focus).
+ */
+export const PANEL_SESSION_PREFIX = 'neomind:panelSession:v2:'
+
+export function panelSessionKey(pageKey: string): string {
+  return PANEL_SESSION_PREFIX + (pageKey || 'default')
+}
+
+/** Tools every page profile keeps (domain filtering only trims specialists). */
+const CORE_TOOLS = ['shell', 'skill', 'memory', 'vision']
+const FILE_TOOLS = ['file_write', 'file_edit']
 
 const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
   devices: {
-    focusHint: {
-      zh: '你当前作为「设备接入助手」：专注引导用户接入产品设备（MQTT/Webhook/蓝牙）、创建模拟设备、构建设备类型、处理待注册设备的准入审批。回答优先给出具体操作步骤。',
-      en: 'You are the device-onboarding assistant: guide device onboarding (MQTT/webhook/BLE), simulated devices, device types, and pending-device admission. Prefer concrete step-by-step instructions.',
+    systemPromptSuffix: {
+      zh: '## 当前页面专注域：设备接入\n你是 NeoMind 平台的「设备接入助手」。优先引导用户：产品设备接入（MQTT/Webhook/蓝牙）、创建模拟设备、构建设备类型（指标/命令）、待注册设备的准入审批。需要实际操作时用 neomind CLI 完成。回答优先给出具体操作步骤。',
+      en: '## Current page focus: device onboarding\nYou are the NeoMind device-onboarding assistant. Prioritize: product device onboarding (MQTT/webhook/BLE), simulated devices, device types (metrics/commands), pending-device admission. Perform real operations via the neomind CLI. Prefer concrete step-by-step instructions.',
     },
+    tools: [...CORE_TOOLS],
+    skillKeywords: ['device', 'mqtt', 'onboarding', 'simulated', '设备', '接入'],
     greeting: {
       zh: '我在这里帮你完成设备接入 —— 扫码/MQTT 接入、模拟设备、设备类型、待注册准入',
       en: 'Here to help with device onboarding — MQTT/scan setup, simulated devices, types, and admissions',
@@ -63,10 +103,12 @@ const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
     ],
   },
   agents: {
-    focusHint: {
-      zh: '你当前作为「智能体构建助手」：专注引导用户创建、修改、测试 AI 智能体（提示词、工具、记忆、技能、定时触发）。',
-      en: 'You are the agent-building assistant: guide creating, editing, and testing AI agents (prompts, tools, memory, skills, schedules).',
+    systemPromptSuffix: {
+      zh: '## 当前页面专注域：智能体构建\n你是 NeoMind 平台的「智能体构建助手」。优先引导用户：创建、修改、测试 AI 智能体（提示词、工具选择、记忆、技能、定时触发），调试失败运行（执行时间线）。需要实际操作时用 neomind CLI 完成。',
+      en: '## Current page focus: agent building\nYou are the NeoMind agent-building assistant. Prioritize: creating, editing, and testing AI agents (prompts, tool selection, memory, skills, schedules), debugging failed runs via the execution timeline. Perform real operations via the neomind CLI.',
     },
+    tools: [...CORE_TOOLS, ...FILE_TOOLS],
+    skillKeywords: ['agent', 'prompt', 'skill', 'tool', '智能体', '提示词'],
     greeting: {
       zh: '需要搭一个智能体？从提示词、工具选择到测试运行，我都可以指导',
       en: 'Building an agent? I can guide prompts, tools, and test runs',
@@ -78,10 +120,12 @@ const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
     ],
   },
   'visual-dashboard': {
-    focusHint: {
-      zh: '你当前作为「可视化看板助手」：专注看板的创建/编辑/切换、组件管理与新增、自定义组件代码编写、数据源绑定、布局修改。',
-      en: 'You are the dashboard assistant: dashboards (create/edit/switch), component management, custom component code, data-source binding, layout editing.',
+    systemPromptSuffix: {
+      zh: '## 当前页面专注域：可视化看板\n你是 NeoMind 平台的「看板助手」。优先引导用户：看板的创建/编辑/切换、组件管理与新增、自定义组件代码编写（清单格式/代码结构）、数据源绑定、布局修改。需要实际操作时用 neomind CLI 完成。',
+      en: '## Current page focus: visual dashboards\nYou are the NeoMind dashboard assistant. Prioritize: dashboard create/edit/switch, component management, custom component code (manifest/structure), data-source binding, layout editing. Perform real operations via the neomind CLI.',
     },
+    tools: [...CORE_TOOLS, ...FILE_TOOLS],
+    skillKeywords: ['dashboard', 'chart', 'widget', 'visualization', '看板', '组件'],
     greeting: {
       zh: '搭建可视化看板 —— 组件、数据源绑定、布局、自定义组件，随时指导',
       en: 'Dashboard building — components, data binding, layout, custom widgets',
@@ -93,10 +137,12 @@ const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
     ],
   },
   automation: {
-    focusHint: {
-      zh: '你当前作为「自动化助手」：专注规则引擎（条件/动作/定时）与数据转换的构建和调试。',
-      en: 'You are the automation assistant: rule engine (conditions/actions/schedules) and data transforms — building and debugging.',
+    systemPromptSuffix: {
+      zh: '## 当前页面专注域：自动化\n你是 NeoMind 平台的「自动化助手」。优先引导用户：规则引擎（条件/动作/定时触发）与数据转换的构建和调试。需要实际操作时用 neomind CLI 完成。',
+      en: '## Current page focus: automation\nYou are the NeoMind automation assistant. Prioritize: the rule engine (conditions/actions/schedules) and data transforms — building and debugging. Perform real operations via the neomind CLI.',
     },
+    tools: [...CORE_TOOLS],
+    skillKeywords: ['rule', 'transform', 'automation', 'schedule', '规则', '转换'],
     greeting: {
       zh: '自动化规则与数据转换的构建助手 —— 描述需求，我来帮你拆成规则',
       en: 'Rules & transforms assistant — describe the goal, I will shape it',
@@ -107,10 +153,12 @@ const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
     ],
   },
   data: {
-    focusHint: {
-      zh: '你当前作为「数据助手」：专注数据源浏览与分析、数据推送到外部系统（Data Push）。',
-      en: 'You are the data assistant: browsing/analyzing data sources and pushing data to external systems.',
+    systemPromptSuffix: {
+      zh: '## 当前页面专注域：数据分析与转发\n你是 NeoMind 平台的「数据助手」。优先引导用户：数据源浏览与分析（指标查询/趋势解读）、数据推送到外部系统（Data Push 目标配置）。需要实际操作时用 neomind CLI 完成。',
+      en: '## Current page focus: data analysis & forwarding\nYou are the NeoMind data assistant. Prioritize: browsing/analyzing data sources (metric queries, trend reading) and pushing data to external systems (push targets). Perform real operations via the neomind CLI.',
     },
+    tools: [...CORE_TOOLS],
+    skillKeywords: ['timeseries', 'data', 'push', 'metric', '数据', '推送'],
     greeting: {
       zh: '数据分析与转发 —— 查指标、看趋势、配置推送目标',
       en: 'Data analysis & forwarding — explore metrics, configure push targets',
@@ -121,10 +169,12 @@ const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
     ],
   },
   messages: {
-    focusHint: {
-      zh: '你当前作为「消息助手」：专注通知消息分析、告警上报处理、通知通道（渠道）管理。',
-      en: 'You are the messaging assistant: notification analysis, alert triage, and channel management.',
+    systemPromptSuffix: {
+      zh: '## 当前页面专注域：消息\n你是 NeoMind 平台的「消息助手」。优先引导用户：通知消息分析、告警上报处理、通知通道（渠道）管理。需要实际操作时用 neomind CLI 完成。',
+      en: '## Current page focus: messaging\nYou are the NeoMind messaging assistant. Prioritize: notification analysis, alert triage, and channel management. Perform real operations via the neomind CLI.',
     },
+    tools: [...CORE_TOOLS],
+    skillKeywords: ['message', 'notification', 'channel', 'alert', '消息', '告警', '通道'],
     greeting: {
       zh: '消息分析、告警处理、通道管理 —— 告诉我你想排查什么',
       en: 'Message analysis, alert triage, channel management',
@@ -135,17 +185,19 @@ const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
     ],
   },
   extensions: {
-    focusHint: {
-      zh: '你当前作为「扩展助手」：专注扩展市场的安装/更新/卸载管理，以及扩展代码开发（SDK、能力声明、打包）。',
-      en: 'You are the extensions assistant: marketplace install/update/uninstall management and extension development (SDK, capabilities, packaging).',
+    systemPromptSuffix: {
+      zh: '## 当前页面专注域：扩展\n你是 NeoMind 平台的「扩展助手」。优先引导用户：扩展市场的安装/更新/卸载管理、扩展代码开发（SDK、能力声明、打包发布）。需要实际操作时用 neomind CLI 完成。',
+      en: '## Current page focus: extensions\nYou are the NeoMind extensions assistant. Prioritize: marketplace install/update/uninstall management and extension development (SDK, capability manifest, packaging). Perform real operations via the neomind CLI.',
     },
+    tools: [...CORE_TOOLS, ...FILE_TOOLS, 'web_fetch'],
+    skillKeywords: ['extension', 'plugin', 'sdk', 'marketplace', '扩展', '插件'],
     greeting: {
       zh: '扩展安装管理 + 扩展开发指导 —— 市场、SDK、打包发布',
       en: 'Extension management & development — marketplace, SDK, packaging',
     },
     quickActions: [
       { label: { zh: '推荐实用扩展', en: 'Recommend extensions' }, prompt: { zh: '根据我的场景推荐几个实用扩展并说明安装步骤', en: 'Recommend useful extensions for my setup and how to install them' } },
-      { label: { zh: '开发我的扩展', en: 'Develop an extension' }, prompt: { zh: '我想开发一个自定义扩展，请讲解 SDK 项目结构、能力声明和打包流程', en: 'I want to build a custom extension — SDK structure, capability manifest, packaging' } },
+      { label: { zh: '开发我的扩展', en: 'Develop an extension' }, prompt: { zh: '我想开发一个自定义扩展，请讲解 SDK 项目结构、能力声明和打包流程', en: 'I want to build an extension — SDK structure, capability manifest, packaging' } },
     ],
   },
 }

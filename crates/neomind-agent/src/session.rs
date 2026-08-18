@@ -36,12 +36,19 @@ use neomind_storage::LlmBackendInstance;
 pub struct CreateSessionOptions {
     /// Override the agent's system prompt.
     pub system_prompt: Option<String>,
+    /// Append to the agent's system prompt (keeps the platform default as
+    /// the base). Ignored when `system_prompt` is also set — an explicit
+    /// full override wins.
+    pub system_prompt_suffix: Option<String>,
     /// Override the LLM sampling temperature.
     pub temperature: Option<f32>,
     /// Override the model identifier (e.g. "qwen3:1.7b").
     pub model: Option<String>,
     /// Enable or disable tool calling.
     pub enable_tools: Option<bool>,
+    /// Restrict the session to these tools (empty/absent = all tools).
+    /// The user-interaction tools are always kept regardless.
+    pub allowed_tools: Vec<String>,
 }
 
 /// Convert an LlmBackendInstance to LlmBackend enum for agent configuration.
@@ -802,6 +809,13 @@ impl SessionManager {
         let mut cfg = self.default_config.clone();
         if let Some(sp) = opts.system_prompt {
             cfg.system_prompt = sp;
+        } else if let Some(suffix) = opts.system_prompt_suffix {
+            if !suffix.trim().is_empty() {
+                // Append on top of the platform default — page-scoped focus
+                // without losing the base agent instructions.
+                cfg.system_prompt =
+                    format!("{}\n\n{}", cfg.system_prompt.trim_end(), suffix.trim());
+            }
         }
         if let Some(t) = opts.temperature {
             cfg.temperature = t;
@@ -811,6 +825,9 @@ impl SessionManager {
         }
         if let Some(et) = opts.enable_tools {
             cfg.enable_tools = et;
+        }
+        if !opts.allowed_tools.is_empty() {
+            cfg.allowed_tools = opts.allowed_tools;
         }
         cfg
     }
@@ -1832,6 +1849,7 @@ mod tests {
             temperature: Some(0.1),
             model: None,        // inherit default
             enable_tools: None, // inherit default
+            ..Default::default()
         };
 
         let session_id = manager.create_session_with_options(opts).await.unwrap();
@@ -1844,6 +1862,44 @@ mod tests {
         // without poking at backend internals; the override is exercised
         // end-to-end in the API integration tests. The system_prompt check
         // above is the load-bearing assertion for the patch mechanism.
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_options_suffix_appends_to_default() {
+        // system_prompt_suffix appends to the platform default instead of
+        // replacing it — page-scoped focus without losing the base prompt.
+        let manager = create_temp_manager();
+        let default_prompt = manager.default_config.system_prompt.clone();
+
+        let opts = CreateSessionOptions {
+            system_prompt_suffix: Some("## Current page focus: devices".to_string()),
+            ..Default::default()
+        };
+        let session_id = manager.create_session_with_options(opts).await.unwrap();
+        let agent = manager.get_session(&session_id).await.unwrap();
+        let sp = agent.llm_interface().get_system_prompt().await;
+
+        assert!(
+            sp.starts_with(&default_prompt),
+            "suffix must keep the platform default as the base"
+        );
+        assert!(sp.ends_with("## Current page focus: devices"));
+        // And the merge must not mutate the manager default
+        assert_eq!(manager.default_config.system_prompt, default_prompt);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_options_full_override_wins_over_suffix() {
+        // An explicit system_prompt replaces wholesale; the suffix is ignored.
+        let manager = create_temp_manager();
+        let opts = CreateSessionOptions {
+            system_prompt: Some("full override".to_string()),
+            system_prompt_suffix: Some("appended?".to_string()),
+            ..Default::default()
+        };
+        let session_id = manager.create_session_with_options(opts).await.unwrap();
+        let agent = manager.get_session(&session_id).await.unwrap();
+        assert_eq!(agent.llm_interface().get_system_prompt().await, "full override");
     }
 
     #[tokio::test]

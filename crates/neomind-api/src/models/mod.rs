@@ -66,6 +66,10 @@ pub struct SessionConfigPatch {
     /// Override the agent's system prompt.
     #[serde(rename = "systemPrompt")]
     pub system_prompt: Option<String>,
+    /// Append to the agent's (default) system prompt — page-scoped focus
+    /// without replacing the platform base. Ignored when `systemPrompt` is set.
+    #[serde(rename = "systemPromptSuffix")]
+    pub system_prompt_suffix: Option<String>,
     /// Override the LLM sampling temperature.
     pub temperature: Option<f32>,
     /// Override the model identifier.
@@ -73,15 +77,20 @@ pub struct SessionConfigPatch {
     /// Enable or disable tool calling for this session.
     #[serde(rename = "enableTools")]
     pub enable_tools: Option<bool>,
+    /// Restrict the session to these tool names (empty = all tools).
+    #[serde(rename = "allowedTools", default)]
+    pub allowed_tools: Vec<String>,
 }
 
 impl From<SessionConfigPatch> for neomind_agent::CreateSessionOptions {
     fn from(p: SessionConfigPatch) -> Self {
         Self {
             system_prompt: p.system_prompt,
+            system_prompt_suffix: p.system_prompt_suffix,
             temperature: p.temperature,
             model: p.model,
             enable_tools: p.enable_tools,
+            allowed_tools: p.allowed_tools,
         }
     }
 }
@@ -108,8 +117,12 @@ pub struct ChatResponse {
 /// Create session request.
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
-    /// Optional agent configuration.
+    /// Optional agent configuration (legacy full-struct form; only the four
+    /// commonly-overridden fields flow through).
     pub config: Option<AgentConfig>,
+    /// Optional session config patch — preferred over `config` when present.
+    #[serde(rename = "sessionConfig", default)]
+    pub session_config: Option<SessionConfigPatch>,
 }
 
 /// Create session response.
