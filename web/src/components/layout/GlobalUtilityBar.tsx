@@ -8,7 +8,7 @@
  * used to live in the rail footer now lives here.
  */
 
-import { useEffect, useState } from "react"
+import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Languages, Rocket } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -35,6 +35,24 @@ export function GlobalUtilityBar() {
   const { t, i18n } = useTranslation("common")
   const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
+  const barRef = useRef<HTMLDivElement>(null)
+
+  // Publish the cluster's live width as --utility-bar-width so pages whose
+  // own top toolbar occupies the top-right (dashboard toolbar, PageTabsBar
+  // actions) can pad right of it instead of overlapping the floating cluster.
+  useLayoutEffect(() => {
+    const el = barRef.current
+    if (!el) return
+    const apply = () =>
+      document.documentElement.style.setProperty("--utility-bar-width", `${el.offsetWidth}px`)
+    apply()
+    const observer = new ResizeObserver(apply)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      document.documentElement.style.setProperty("--utility-bar-width", "0px")
+    }
+  }, [])
   const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
   useEffect(() => {
     fetchOnboardingStatus()
@@ -47,6 +65,7 @@ export function GlobalUtilityBar() {
   return (
     <TooltipProvider delayDuration={500}>
       <div
+        ref={barRef}
         className="pointer-events-none absolute right-4 sm:right-6 z-20 flex items-center gap-1.5"
         style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}
       >
