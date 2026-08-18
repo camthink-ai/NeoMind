@@ -125,20 +125,19 @@ export function PageTabsBar({
     )
   }
 
-  // Desktop: Show full tabs bar — the tab strip is a SINGLE scrollable row
-  // (no wrapping): when tabs overflow the content width they scroll
-  // horizontally, keeping each tab at its natural size instead of squeezing
-  // labels together.
+  // Desktop: page toolbar — the SAME shape as the dashboard toolbar
+  // (h-11 chrome row with bottom border): tabs capsule left, page actions
+  // center-right, global entry points at the far right. The tab strip is a
+  // SINGLE scrollable row (no wrapping): overflowing tabs scroll
+  // horizontally at natural size instead of squeezing labels together.
   return (
-    <div className="px-4 sm:px-6 md:px-8 py-2">
-      <div className={cn('mx-auto', maxWidthClass[maxWidth])}>
-        <div className="flex items-center gap-3">
-          <div
-            className={cn(
-              'flex min-w-0 max-w-full items-center overflow-x-auto scrollbar-none rounded-lg border border-border bg-card p-1 gap-1',
-              tabsClassName
-            )}
-          >
+    <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-[var(--chrome)] px-4 sm:px-6">
+      <div
+        className={cn(
+          'flex min-w-0 max-w-full items-center overflow-x-auto scrollbar-none rounded-lg border border-border bg-card p-1 gap-1',
+          tabsClassName
+        )}
+      >
             {tabs.map((tab) => {
               const isActive = activeTab === tab.value
               return (
@@ -161,7 +160,7 @@ export function PageTabsBar({
           </div>
 
           {(actions.length > 0 || secondaryActions.length > 0 || actionsExtra) && (
-            <div className="flex shrink-0 flex-wrap gap-2">
+            <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
               {actions.map((action) => (
                 <Button
                   key={action.label}
@@ -185,10 +184,9 @@ export function PageTabsBar({
             </div>
           )}
 
-          {/* Global entry points — same aligned row on every page's toolbar */}
+          {/* Global entry points — far right of the page toolbar */}
+          {actions.length === 0 && secondaryActions.length === 0 && !actionsExtra && <div className="ml-auto" />}
           <GlobalControls />
-        </div>
-      </div>
     </div>
   )
 }
