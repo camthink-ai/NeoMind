@@ -573,9 +573,9 @@ export function AboutTab() {
         </div>
       </section>
 
-      {/* Footer — safe-bottom so the copyright clears the home-indicator /
-          bottom safe area on mobile and in the Tauri window */}
-      <div className="text-center text-xs text-muted-foreground safe-bottom">
+      {/* Footer — pb-8 keeps it off the window edge everywhere; safe-bottom
+          additionally clears the home indicator / safe area when present */}
+      <div className="pb-8 text-center text-xs text-muted-foreground safe-bottom">
         © 2025–2026 CamThink · NeoMind
       </div>
     </div>
