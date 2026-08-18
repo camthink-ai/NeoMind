@@ -14,14 +14,16 @@ export default {
       // Semantic type scale below text-xs (12px) — the app's dense UI sizes.
       // Single source for both the text-* utilities and the JS constants in
       // design-system/tokens/typography.ts. Adjust sizes HERE, never by
-      // reintroducing text-[Npx] literals (DESIGN_SPEC §2).
+      // reintroducing text-[Npx] literals (DESIGN_SPEC §2). Each size pairs
+      // a tuned line-height (~1.3–1.45) so plain usage gets a healthy rhythm;
+      // explicit leading-* still overrides.
       fontSize: {
-        micro: "9px",   // extreme micro labels, data type labels
-        nano: "10px",   // timestamps, tiny metadata, compact badges
-        mini: "11px",   // badge text, secondary labels, tab labels
-        code: "12px",   // inline code, code snippets
-        body: "13px",   // chat messages, tool call text, markdown body
-        heading: "15px", // markdown headings
+        micro: ["9px", { lineHeight: "12px" }],     // extreme micro labels, data type labels
+        nano: ["10px", { lineHeight: "14px" }],     // timestamps, tiny metadata, compact badges
+        mini: ["11px", { lineHeight: "16px" }],     // badge text, secondary labels, tab labels
+        code: ["12px", { lineHeight: "17px" }],     // inline code, code snippets
+        body: ["13px", { lineHeight: "19px" }],     // chat messages, tool call text, markdown body
+        heading: ["15px", { lineHeight: "22px" }],  // markdown headings
       },
       colors: {
         border: "var(--border)",
@@ -106,6 +108,8 @@ export default {
         // Glass tokens
         brand: {
           DEFAULT: "var(--brand)",
+          hover: "var(--brand-hover)",
+          active: "var(--brand-active)",
           bg: "var(--brand-bg)",
           foreground: "var(--brand-foreground)",
         },

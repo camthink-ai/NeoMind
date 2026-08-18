@@ -288,11 +288,12 @@ html {
 
 @layer base {
   :root {
-    /* Light gray workspace canvas (~#F1F1F2). Classic layered pattern: gray
-       page + white raised surfaces (cards, tab strips, table headers) float
-       on it for strong hierarchy. --muted stays a touch darker for true
-       insets (code blocks) inside those white surfaces. */
-    --background: oklch(0.985 0 0);
+    /* Light gray workspace canvas. Classic layered pattern: gray page + white
+       raised surfaces (cards, tab strips, table headers) float on it for
+       strong hierarchy. 0.97 (~zinc-100) gives cards a clearly readable step
+       up without going muddy. --muted stays a touch darker for true insets
+       (code blocks) inside those white surfaces. */
+    --background: oklch(0.97 0 0);
     /* Solid white for stable chrome layers (TopNav, tab strips, toolbars,
        page headers). These anchor the layout as a distinct elevated layer
        above the gray content canvas. In dark mode this token falls back to
@@ -341,7 +342,11 @@ html {
     --radius-2xl: 1.25rem;
     --radius-full: 9999px;
 
-    /* Chart colors */
+    /* Chart colors. CONSTRAINT: keep light and dark values identical — charts
+       are driven by the JS constants in design-system/tokens/color.ts, which
+       are theme-blind; diverging here would split the palette by consumer
+       type. A per-theme chart palette requires reading these vars at runtime
+       (getComputedStyle) at the chart layer. */
     --chart-1: oklch(0.65 0.18 300);
     --chart-2: oklch(0.65 0.17 155);
     --chart-3: oklch(0.72 0.16 85);
@@ -398,11 +403,13 @@ html {
     --accent-indigo: oklch(0.48 0.18 280);
     --accent-indigo-bg: oklch(0.48 0.18 280 / 8%);
 
-    /* Shadow system */
-    --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 5%);
-    --shadow-md: 0 2px 4px -1px oklch(0 0 0 / 8%);
-    --shadow-lg: 0 4px 12px -2px oklch(0 0 0 / 8%);
-    --shadow-xl: 0 8px 20px -4px oklch(0 0 0 / 10%);
+    /* Shadow system — layered (contact + ambient) for soft, realistic
+       elevation. Each step up adds a wider, fainter ambient layer rather than
+       just scaling one shadow. */
+    --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 6%);
+    --shadow-md: 0 1px 2px 0 oklch(0 0 0 / 5%), 0 2px 6px -1px oklch(0 0 0 / 7%);
+    --shadow-lg: 0 1px 2px 0 oklch(0 0 0 / 5%), 0 4px 12px -2px oklch(0 0 0 / 9%), 0 12px 24px -8px oklch(0 0 0 / 6%);
+    --shadow-xl: 0 2px 4px 0 oklch(0 0 0 / 5%), 0 8px 20px -4px oklch(0 0 0 / 10%), 0 20px 40px -12px oklch(0 0 0 / 8%);
 
     /* Glass-specific tokens (light) */
     --glass: oklch(1 0 0 / 55%);
@@ -414,8 +421,11 @@ html {
     --shadow-glass-lg: 0 2px 8px 0 oklch(0 0 0 / 8%);
     --shadow-brand: 0 2px 12px 0 oklch(0.647 0.289 71 / 15%);
 
-    /* Brand color - NeoMind orange (#E05727) */
+    /* Brand color - NeoMind orange (#E05727), full scale. hover = press-deep,
+       active = pressed, bg = soft tint for selected/active states (nav pills). */
     --brand: oklch(0.63 0.21 37);
+    --brand-hover: oklch(0.56 0.21 37);
+    --brand-active: oklch(0.50 0.20 37);
     --brand-bg: oklch(0.63 0.21 37 / 10%);
     --brand-foreground: oklch(1 0 0);
     /* Drop-shadow color for the 3D brand wordmark (fixed hex — drop-shadow
@@ -502,13 +512,18 @@ html {
        brand warmth (hue 280→270 with slight chroma) for a richer dark mode. */
     --background: oklch(0.135 0.01 270 / 97%);
     --foreground: oklch(0.95 0.006 270);
-    --card: oklch(0.165 0.01 270 / 82%);
+    /* Surface ladder (dark): background 0.135 < card 0.175 < popover 0.19 <
+       chrome 0.20 — each elevation step raises lightness so layers separate
+       without relying on shadows (which barely read on dark). Card keeps a
+       slight translucency for depth over colorful dashboard content. */
+    --card: oklch(0.175 0.01 270 / 85%);
     /* Dark-mode chrome: slightly lighter than background so nav/toolbars
        read as a distinct elevated layer, mirroring how light-mode --chrome
        (pure white) sits above --background. */
     --chrome: oklch(0.20 0.008 270);
     --card-foreground: oklch(0.95 0.006 270);
-    --popover: oklch(0.165 0.01 270);
+    /* Popovers/menus float above cards — one step up, just under chrome. */
+    --popover: oklch(0.19 0.01 270);
     --popover-foreground: oklch(0.95 0.006 270);
     --primary: oklch(0.95 0.006 270);
     --primary-foreground: oklch(0.135 0.01 270);
@@ -520,8 +535,8 @@ html {
     --accent-foreground: oklch(0.95 0.006 270);
     --destructive: oklch(0.577 0.245 27);
     --destructive-foreground: oklch(0.95 0.006 270);
-    --border: oklch(1 0 0 / 9%);
-    --input: oklch(1 0 0 / 11%);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 12%);
     /* Neutral focus ring (see light-mode --ring rationale). */
     --ring: color-mix(in oklch, var(--foreground) 35%, transparent);
 
@@ -556,10 +571,13 @@ html {
     --accent-indigo: oklch(0.68 0.16 280);
     --accent-indigo-bg: oklch(0.68 0.16 280 / 12%);
 
-    --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 20%);
-    --shadow-md: 0 2px 6px -1px oklch(0 0 0 / 25%);
-    --shadow-lg: 0 4px 16px -3px oklch(0 0 0 / 25%);
-    --shadow-xl: 0 8px 24px -5px oklch(0 0 0 / 30%);
+    /* Shadow system (dark) — deeper blacks than light (shadows barely read
+       on dark surfaces), still layered. Real dark elevation comes from the
+       surface lightness ladder + borders above; shadows add depth cue only. */
+    --shadow-sm: 0 1px 2px 0 oklch(0 0 0 / 25%);
+    --shadow-md: 0 1px 2px 0 oklch(0 0 0 / 20%), 0 2px 8px -1px oklch(0 0 0 / 30%);
+    --shadow-lg: 0 2px 4px 0 oklch(0 0 0 / 20%), 0 4px 16px -3px oklch(0 0 0 / 40%), 0 10px 28px -8px oklch(0 0 0 / 25%);
+    --shadow-xl: 0 2px 6px 0 oklch(0 0 0 / 22%), 0 8px 24px -5px oklch(0 0 0 / 45%), 0 18px 40px -12px oklch(0 0 0 / 30%);
 
     --glass: oklch(0.20 0.008 270 / 50%);
     --glass-heavy: oklch(0.18 0.008 270 / 80%);
@@ -570,8 +588,12 @@ html {
     --shadow-glass-lg: 0 4px 16px 0 oklch(0 0 0 / 25%);
     --shadow-brand: 0 2px 12px 0 oklch(0.647 0.289 71 / 15%);
 
-    /* Brand color - NeoMind orange (brighter for dark bg) */
+    /* Brand color - NeoMind orange (brighter for dark bg), full scale.
+       Dark hover/active go BRIGHTER (light-mode goes darker) — the surface
+       direction that reads as "engaged" against a dark canvas. */
     --brand: oklch(0.70 0.19 40);
+    --brand-hover: oklch(0.76 0.185 40);
+    --brand-active: oklch(0.82 0.17 40);
     --brand-bg: oklch(0.70 0.19 40 / 14%);
     --brand-foreground: oklch(0.13 0.008 270);
     --brand-shadow: #eb4c27;
@@ -589,6 +611,8 @@ html {
     --secondary-hover: oklch(0.20 0.008 270 / 80%);
     --destructive-hover: oklch(0.577 0.245 27 / 90%);
 
+    /* Chart colors — MUST mirror the light-theme values exactly (see the
+       constraint note in the :root block). */
     --chart-1: oklch(0.65 0.18 300);
     --chart-2: oklch(0.65 0.17 155);
     --chart-3: oklch(0.72 0.16 85);
