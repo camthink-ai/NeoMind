@@ -157,9 +157,12 @@ function updateAppHeight() {
     return
   }
 
-  // Desktop: measure the actual nav element.
+  // Desktop: measure the actual top bar. Query by id — a generic 'nav'
+  // selector would match the AppSidebar's item <nav> (several hundred px
+  // tall) since the top bar is a <header> now, corrupting --topnav-height
+  // for fixed consumers (chat's keyboard-aware container pads by it).
   document.documentElement.style.setProperty('--bottom-nav-height', '0px')
-  const topNavEl = document.querySelector('nav')
+  const topNavEl = document.querySelector('#app-topbar')
   if (topNavEl) {
     topNavHeight = topNavEl.getBoundingClientRect().height
     document.documentElement.style.setProperty('--topnav-height', `${topNavHeight}px`)

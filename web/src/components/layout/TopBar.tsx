@@ -174,6 +174,7 @@ export const TopBar = forwardRef<HTMLDivElement>((props, ref) => {
   return (
     <TooltipProvider delayDuration={500}>
       <header
+        id="app-topbar"
         ref={innerRef}
         className="relative z-20 flex shrink-0 items-center bg-[var(--chrome)] border-b border-border px-4 sm:px-6 h-12"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
