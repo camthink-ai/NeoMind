@@ -1605,8 +1605,8 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 
 ### Architecture (desktop)
 
-- **AppSidebar** (`components/layout/AppSidebar.tsx`): persistent in-flow left column — the app's primary navigation. NOT a fixed overlay: the shell (`App.tsx`) lays out `[AppSidebar][column: TopBar + main]` as flex-row.
-- **TopBar** (`components/layout/TopBar.tsx`): slim 48px (`h-12`) in-flow chrome bar — global actions only (instance selector, onboarding, alerts, settings, user menu), no navigation items, no logo. Doubles as the macOS Tauri window drag region.
+- **AppSidebar** (`components/layout/AppSidebar.tsx`): persistent in-flow left column — the app's primary navigation. NOT a fixed overlay: the shell (`App.tsx`) lays out `[AppSidebar][column: TopBar + main]` as flex-row. The sidebar header and the TopBar both carry `border-b`, so the top chrome band reads as one surface with a continuous dividing line.
+- **TopBar** (`components/layout/TopBar.tsx`): slim 48px (`h-12`) in-flow chrome bar — the global action cluster: instance selector, onboarding guide, alerts bell (`AlertsMenu`). Doubles as the macOS Tauri window drag region.
 - **navItems.ts** (`components/layout/navItems.ts`): the shared nav definition (paths, icons, i18n keys, groups, active-route logic). The sidebar and MobileNav must not fork these.
 
 ### Sidebar structure
@@ -1614,7 +1614,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 - Header: brand logo + collapse toggle; reserves the macOS traffic-light strip (`--titlebar-inset`) and doubles as a drag region
 - PRIMARY group: Chat `/chat`, Agents `/agents`, Devices `/devices`, Visual Dashboard `/visual-dashboard`
 - SYSTEM group (labelled `navShort.system`): Automation, Data Explorer, Messages, Extensions
-- Footer: Settings entry (calls `openSettings()` — dialog, never a route)
+- Footer (bottom-left): Settings entry (calls `openSettings()` — dialog, never a route) + **user avatar** whose upward dropdown holds theme / language / settings / about / logout
 - Active state: `bg-brand-bg text-brand` pill + `brand-icon-stroke` icon gradient (dark)
 
 ### Collapse behavior

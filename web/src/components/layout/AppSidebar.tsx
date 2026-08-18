@@ -1,17 +1,20 @@
 /**
  * AppSidebar — the desktop app navigation column.
  *
- * Replaces the nav icons that used to live in the TopNav: a persistent left
- * column with grouped entries, collapsible to an icon rail. Mobile keeps its
- * own drawer (MobileNav) — this component renders nothing below md.
+ * Navigation lives here (not in the TopBar): grouped entries in the body;
+ * the footer carries the settings entry and, at the very bottom-left, the
+ * user avatar whose dropdown holds theme / language / settings / about /
+ * logout. The TopBar keeps the instance selector, onboarding guide and
+ * alerts bell. Mobile keeps its own drawer (MobileNav); this column renders
+ * nothing below md.
  *
- * Layout contract: the sidebar is an in-flow flex column (not fixed/overlay),
- * so the app shell (App.tsx) lays out [AppSidebar][TopBar + main] side by
- * side. Height matches the shell; the header row aligns with the TopBar's
- * h-12 so the top edges read as one continuous chrome band.
+ * Layout contract: in-flow flex column (not fixed/overlay) — the app shell
+ * (App.tsx) lays out [AppSidebar][TopBar + main] side by side. The header
+ * row aligns with the TopBar's h-12 and both carry border-b, so the top
+ * chrome band reads as one continuous surface with a single dividing line.
  *
- * macOS Tauri overlay titlebar: the traffic lights float over the TOP-LEFT of
- * the window — which is this sidebar's header. The header therefore reserves
+ * macOS Tauri overlay titlebar: the traffic lights float over the TOP-LEFT
+ * of the window — this sidebar's header. The header reserves
  * `--titlebar-inset` (set by TopBar) above the brand row, and doubles as a
  * window drag region alongside the TopBar.
  */
@@ -20,12 +23,15 @@ import { useCallback, useLayoutEffect } from "react"
 import { useTranslation } from "react-i18next"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
-import { PanelLeftClose, PanelLeftOpen, Settings } from "lucide-react"
+import { PanelLeftClose, PanelLeftOpen, Settings, Sun, Languages, Info, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isTauriEnv } from "@/lib/api"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { useStore } from "@/store"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { useTheme } from "@/components/ui/theme"
 import { BrandLogoWithName } from "@/components/shared/BrandName"
 import {
   Tooltip,
@@ -33,6 +39,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  DropdownMenuSub,
+  DropdownMenuSubTrigger,
+  DropdownMenuSubContent,
+  DropdownMenuPortal,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+} from "@/components/ui/dropdown-menu"
 import {
   navItems,
   isNavItemActive,
@@ -55,12 +74,15 @@ const handleDragMouseDown = (e: React.MouseEvent) => {
 }
 
 export function AppSidebar() {
-  const { t } = useTranslation("common")
+  const { t, i18n } = useTranslation("common")
   const location = useLocation()
   const navigate = useNavigate()
   const collapsed = useStore((s) => s.appSidebarCollapsed)
   const toggleCollapsed = useStore((s) => s.toggleAppSidebar)
   const openSettings = useStore((s) => s.openSettings)
+  const user = useStore((s) => s.user)
+  const logout = useStore((s) => s.logout)
+  const { theme, setTheme } = useTheme()
 
   const handleNavigate = useCallback(
     (path: string) => startTransition(() => navigate(path)),
@@ -121,6 +143,107 @@ export function AppSidebar() {
   const primaryItems = navItems.filter((i) => PRIMARY_NAV_IDS.includes(i.id))
   const systemItems = navItems.filter((i) => SYSTEM_NAV_IDS.includes(i.id))
 
+  const settingsEntry = (
+    <Button
+      variant="ghost"
+      aria-label={t("nav.settings")}
+      className={cn(
+        "h-10 w-full gap-3 px-3 justify-start font-normal text-muted-foreground hover:text-foreground hover:bg-muted-50 no-press-scale",
+        collapsed && "w-10 min-w-0 px-0 justify-center"
+      )}
+      onClick={() => openSettings()}
+    >
+      <Settings className="h-5 w-5 shrink-0" />
+      {!collapsed && <span className="truncate">{t("nav.settings")}</span>}
+    </Button>
+  )
+
+  const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
+
+  // User entry — bottom-left. Avatar + name (expanded) / avatar only
+  // (collapsed); dropdown opens upward.
+  const userEntry = user && (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          aria-label={user.username}
+          className={cn(
+            "h-10 w-full gap-3 px-2 justify-start font-normal text-muted-foreground hover:text-foreground hover:bg-muted-50 no-press-scale",
+            collapsed && "w-10 min-w-0 px-0 justify-center"
+          )}
+        >
+          <Avatar className="h-7 w-7 shrink-0 cursor-pointer rounded-full ring-2 ring-background">
+            <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
+              {getUserInitials(user.username)}
+            </AvatarFallback>
+          </Avatar>
+          {!collapsed && (
+            <span className="truncate text-sm font-medium text-foreground">
+              {user.username}
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="start" className="w-56">
+        <div className="px-3 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-medium truncate">{user.username}</p>
+            {user.role && (
+              <Badge variant="outline" className="text-xs shrink-0">
+                {user.role}
+              </Badge>
+            )}
+          </div>
+        </div>
+        <DropdownMenuSeparator />
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Sun className="h-4 w-4 mr-2" />
+            {t('theme.title', { defaultValue: 'Theme' })}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuSubContent>
+              <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as "light" | "dark" | "system")}>
+                <DropdownMenuRadioItem value="light">{t('theme.light')}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="dark">{t('theme.dark')}</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="system">{t('theme.system')}</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuPortal>
+        </DropdownMenuSub>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <Languages className="h-4 w-4 mr-2" />
+            {t('userMenu.language', { defaultValue: 'Language' })}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuPortal>
+            <DropdownMenuSubContent>
+              <DropdownMenuRadioGroup value={i18n.language} onValueChange={(v) => i18n.changeLanguage(v)}>
+                <DropdownMenuRadioItem value="zh">中文</DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="en">English</DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuPortal>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => openSettings()}>
+          <Settings className="h-4 w-4 mr-2" />
+          {t('nav.settings')}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => openSettings('about')}>
+          <Info className="h-4 w-4 mr-2" />
+          {t('userMenu.about')}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={logout} className="text-error focus:text-error">
+          <LogOut className="h-4 w-4 mr-2" />
+          {t('logout')}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+
   return (
     <TooltipProvider delayDuration={500}>
       <aside
@@ -132,10 +255,12 @@ export function AppSidebar() {
         aria-label={t("nav.primary")}
       >
         {/* Header — brand + collapse toggle. Reserves the macOS traffic-light
-            strip (--titlebar-inset) and doubles as a drag region. */}
+            strip (--titlebar-inset), doubles as a drag region, and carries
+            the same border-b as the TopBar so the top chrome band reads as
+            one surface with a continuous dividing line. */}
         <div
           className={cn(
-            "flex items-center gap-1.5 px-3",
+            "flex items-center gap-1.5 px-3 border-b border-border",
             HEADER_ROW_H,
             collapsed && "px-0 justify-center gap-0"
           )}
@@ -176,7 +301,7 @@ export function AppSidebar() {
         </div>
 
         {/* Nav groups */}
-        <nav className={cn("flex flex-col gap-1 px-2 pb-2", collapsed && "px-2.5")}>
+        <nav className={cn("flex flex-col gap-1 px-2 pt-3 pb-2", collapsed && "px-2.5")}>
           {primaryItems.map(renderItem)}
 
           <div className={cn("mt-3 mb-1", collapsed && "mx-auto my-3 h-px w-6 bg-border")} />
@@ -190,20 +315,15 @@ export function AppSidebar() {
 
         <div className="flex-1" />
 
-        {/* Footer — settings entry (dialog, not a route) */}
-        <div className={cn("border-t border-border p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]", collapsed && "px-2.5")}>
-          <Button
-            variant="ghost"
-            className={cn(
-              "h-10 w-full gap-3 px-3 justify-start font-normal text-muted-foreground hover:text-foreground hover:bg-muted-50 no-press-scale",
-              collapsed && "w-10 min-w-0 px-0 justify-center"
-            )}
-            aria-label={t("nav.settings")}
-            onClick={() => openSettings()}
-          >
-            <Settings className="h-5 w-5 shrink-0" />
-            {!collapsed && <span className="truncate">{t("nav.settings")}</span>}
-          </Button>
+        {/* Footer — settings entry + user avatar (bottom-left) */}
+        <div
+          className={cn(
+            "flex flex-col gap-1 border-t border-border p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
+            collapsed && "px-2.5"
+          )}
+        >
+          {settingsEntry}
+          {userEntry}
         </div>
       </aside>
     </TooltipProvider>
