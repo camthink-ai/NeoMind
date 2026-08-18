@@ -305,9 +305,9 @@ function DashboardSidebarContent({
                     </div>
                   ) : (
                     <>
-                      <div className="flex items-start gap-2 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
                         <LayoutDashboard className={cn(
-                          "h-4 w-4 mt-0.5 shrink-0",
+                          "h-4 w-4 shrink-0",
                           isActive ? "text-foreground" : "text-muted-foreground"
                         )} />
                         <div className="min-w-0 flex-1">
