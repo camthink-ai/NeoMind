@@ -4,11 +4,12 @@
  */
 
 import { useEffect, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { api } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
-import { MessageSquare, Sparkles, ArrowRight } from "lucide-react"
+import { MessageSquare, Sparkles, ArrowRight, Bell } from "lucide-react"
 import { useBrandMessages } from "@/hooks/useBrand"
 
 interface WelcomeAreaProps {
@@ -25,6 +26,7 @@ interface SystemStats {
 
 export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
   const { t } = useTranslation("common")
+  const navigate = useNavigate()
   const { getWelcomeMessage } = useBrandMessages()
   const { handleError } = useErrorHandler()
 
@@ -103,9 +105,15 @@ export function WelcomeArea({ className, onQuickAction }: WelcomeAreaProps) {
               </span>
             )}
             {stats.pendingAlerts > 0 && (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-muted text-xs text-warning">
+              <button
+                type="button"
+                onClick={() => navigate("/messages")}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-warning-light text-xs text-warning hover:bg-warning hover:text-primary-foreground transition-colors"
+                aria-label={t("welcome.stats.pendingAlertsShort", { defaultValue: "Alerts" })}
+              >
+                <Bell className="h-3 w-3" aria-hidden="true" />
                 {stats.pendingAlerts} {t("welcome.stats.pendingAlertsShort", { defaultValue: "Alerts" })}
-              </span>
+              </button>
             )}
           </div>
         )}

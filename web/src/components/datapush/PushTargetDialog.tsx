@@ -897,7 +897,7 @@ export function PushTargetDialog() {
                                       </button>
                                       <button
                                         onClick={() => toggleGroupExpand(sourceKey)}
-                                        className="px-3 py-2 hover:bg-muted-30 transition-colors shrink-0"
+                                        className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shrink-0"
                                         aria-label={subExpanded ? 'Collapse' : 'Expand'}
                                       >
                                         {subExpanded
@@ -969,10 +969,10 @@ export function PushTargetDialog() {
                           <span className="max-w-[80px] truncate">{src.field_display_name}</span>
                           <button
                             onClick={() => toggleSource(src.id)}
-                            className="ml-0.5 text-muted-foreground hover:text-foreground"
+                            className="ml-0.5 inline-flex items-center justify-center h-5 w-5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                             aria-label={t('common:dataPush.removeSource')}
                           >
-                            <X className="h-3 w-3" />
+                            <X className="h-3 w-3" aria-hidden="true" />
                           </button>
                         </span>
                       )
