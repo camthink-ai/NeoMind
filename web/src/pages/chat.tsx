@@ -1566,7 +1566,7 @@ export function ChatPage() {
                   if (messages.length === 0 || isWelcomeMode) return null
                   return (
                     <span className={cn(
-                      textMini, "shrink-0 transition-colors tabular-nums",
+                      textNano, "shrink-0 transition-colors tabular-nums",
                       ratio > 0.9 ? "text-error" : ratio > 0.7 ? "text-warning" : "text-muted-foreground"
                     )}>
                       Context {(displayTokens / 1000).toFixed(1)}K / {(maxContext / 1000).toFixed(0)}K

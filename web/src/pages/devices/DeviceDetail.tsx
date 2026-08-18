@@ -423,8 +423,8 @@ export function DeviceDetail({
               <div className={cn(
                 "w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0",
                 device.status === 'online'
-                  ? "bg-gradient-to-br from-success-light to-accent-emerald-light"
-                  : "bg-gradient-to-br from-card to-muted"
+                  ? "bg-success-light text-success"
+                  : "bg-muted text-muted-foreground"
               )}>
                 <Zap className={cn(
                   "h-5 w-5 sm:h-6 sm:w-6",
@@ -449,7 +449,7 @@ export function DeviceDetail({
           <div className="max-w-6xl mx-auto space-y-5">
 
             {/* Device Info Card */}
-            <div className={cn("bg-gradient-to-br from-card to-muted rounded-lg shadow-sm", isMobile ? "p-4" : "p-6")}>
+            <div className={cn("bg-card border border-border rounded-lg shadow-sm", isMobile ? "p-4" : "p-6")}>
               <div className="flex items-center gap-2 mb-3 sm:mb-4">
                 <Info className="h-5 w-5 text-muted-foreground" />
                 <h2 className="font-semibold">{t('devices:detailPage.deviceInfo')}</h2>
@@ -552,7 +552,7 @@ export function DeviceDetail({
 
             {/* Raw Data Section - for Simple Mode devices */}
             {deviceType?.mode === 'simple' && (
-              <div className={cn("bg-gradient-to-br from-card to-muted rounded-lg shadow-sm", isMobile ? "p-4" : "p-6")}>
+              <div className={cn("bg-card border border-border rounded-lg shadow-sm", isMobile ? "p-4" : "p-6")}>
                 <div className="flex items-center gap-2 mb-3 sm:mb-4">
                   <Database className="h-5 w-5 text-muted-foreground" />
                   <h2 className="font-semibold">{t('devices:detailPage.rawDataTitle')}</h2>
@@ -612,8 +612,8 @@ export function DeviceDetail({
                           "group rounded-lg text-left transition-all duration-200 hover:shadow-md",
                           isMobile ? "p-3 active:scale-[0.99]" : "p-6 hover:scale-[1.02]",
                           isVirtual
-                            ? "bg-gradient-to-br from-accent-purple-light to-accent-purple-light border-accent-purple-light hover:border-accent-purple"
-                            : "bg-gradient-to-br from-card to-muted border-border hover:border-border"
+                            ? "bg-muted border-border hover:border-border"
+                            : "bg-card border-border hover:border-border"
                         )}
                       >
                         <div className="flex items-start justify-between">
