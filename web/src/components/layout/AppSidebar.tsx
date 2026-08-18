@@ -88,7 +88,9 @@ export function AppSidebar() {
         variant="ghost"
         aria-label={label}
         className={cn(
-          "h-10 gap-3 px-3 justify-start font-normal no-press-scale",
+          // w-full so every item — and the active pill — spans the sidebar
+          // uniformly instead of sizing to its label
+          "h-10 w-full gap-3 px-3 justify-start font-normal no-press-scale",
           collapsed && "w-10 min-w-0 px-0 justify-center",
           isActive
             ? "bg-brand-bg text-brand hover:bg-brand-bg hover:text-brand"
@@ -174,7 +176,7 @@ export function AppSidebar() {
         </div>
 
         {/* Nav groups */}
-        <nav className={cn("flex flex-col gap-0.5 px-2 pb-2", collapsed && "px-2.5")}>
+        <nav className={cn("flex flex-col gap-1 px-2 pb-2", collapsed && "px-2.5")}>
           {primaryItems.map(renderItem)}
 
           <div className={cn("mt-3 mb-1", collapsed && "mx-auto my-3 h-px w-6 bg-border")} />
