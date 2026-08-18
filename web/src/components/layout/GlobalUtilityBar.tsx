@@ -1,19 +1,16 @@
 /**
- * GlobalUtilityBar — a thin (40px) GLOBAL top row in the content column,
- * right-aligned: instance selector, theme toggle, language switch, alerts,
- * onboarding.
+ * GlobalUtilityBar — the content area's top-right corner cluster:
+ * instance selector, theme toggle, language switch, alerts, onboarding.
  *
- * In-flow (not floating): pages render BELOW it, so no page toolbar can
- * ever overlap it. The row's left area is empty drag space (macOS Tauri).
- * Hidden on mobile (per-page MobilePageHeader covers those needs).
+ * Floats OVER the content (absolute, right-aligned, above the page scroll
+ * bar) so it costs zero layout height — pages keep the full window. The
+ * AppSidebar rail keeps settings and the user avatar; everything else that
+ * used to live in the rail footer now lives here.
  */
 
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Languages, Rocket } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { isTauriEnv } from "@/lib/api"
-import { getCurrentWindow } from "@tauri-apps/api/window"
 import { Button } from "@/components/ui/button"
 import { InstanceSelector } from "./InstanceSelector"
 import { ThemeToggle } from "./ThemeToggle"
@@ -34,15 +31,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-// Tauri window drag — same contract as the sidebar header: startDragging on
-// mousedown over non-interactive areas.
-const handleDragMouseDown = (e: React.MouseEvent) => {
-  if (!isTauriEnv()) return
-  const target = e.target as HTMLElement
-  if (target.closest("button, a, input, select, textarea, [role='button'], [role='tab']")) return
-  getCurrentWindow().startDragging()
-}
-
 export function GlobalUtilityBar() {
   const { t, i18n } = useTranslation("common")
   const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
@@ -59,18 +47,21 @@ export function GlobalUtilityBar() {
   return (
     <TooltipProvider delayDuration={500}>
       <div
-        className="relative z-20 flex h-10 shrink-0 items-center bg-[var(--chrome)] px-4 sm:px-6"
-        onMouseDown={handleDragMouseDown}
+        className="pointer-events-none absolute right-4 sm:right-6 z-20 flex items-center gap-1.5"
+        style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}
       >
-        {/* Empty drag space */}
-        <div className="flex-1" />
-
-        <div className="flex shrink-0 items-center gap-1.5">
+        {/* pointer-events-none on the wrapper so page content can still be
+            interacted with around the cluster; each child re-enables */}
+        <div className="pointer-events-auto">
           <InstanceSelector
             compact
             onManageInstances={() => setInstanceManagerOpen(true)}
           />
+        </div>
+        <div className="pointer-events-auto">
           <ThemeToggle />
+        </div>
+        <div className="pointer-events-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -93,14 +84,18 @@ export function GlobalUtilityBar() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+        </div>
+        <div className="pointer-events-auto">
           <AlertsMenu compact align="end" side="bottom" tooltipSide="bottom" />
+        </div>
+        <div className="pointer-events-auto">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon-sm"
                 aria-label={t("onboarding.title")}
-                className={cn("relative shrink-0 text-muted-foreground hover:text-foreground no-press-scale")}
+                className="relative shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
                 onClick={() => setOnboardingOpen(true)}
               >
                 <Rocket className="h-4 w-4" />
