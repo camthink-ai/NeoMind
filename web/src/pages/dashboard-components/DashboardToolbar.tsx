@@ -17,7 +17,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DashboardTabBar } from '@/components/dashboard/DashboardTabBar'
-import { GlobalControls } from '@/components/layout/GlobalControls'
 import { ComponentLibrarySidebar } from './ComponentLibrarySidebar'
 import type { Dashboard } from '@/types/dashboard'
 import type { ComponentCategory } from './componentLibraryUtils'
@@ -243,8 +242,6 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
           </Tooltip>
         </div>
 
-        {/* Global entry points — same aligned row on every page's toolbar */}
-        <GlobalControls />
       </TooltipProvider>
     </header>
   )

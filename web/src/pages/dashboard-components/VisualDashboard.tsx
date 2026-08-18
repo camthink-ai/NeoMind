@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils'
 import { chartColorsHex } from '@/design-system/tokens/color'
 import { useIsMobile } from '@/hooks/useMobile'
 import { MobilePageHeader } from '@/components/layout/MobilePageHeader'
+import { PageHeader } from '@/components/layout/PageHeader'
 import {
   LayoutDashboard,
   Plus,
@@ -1026,6 +1027,18 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
             DashboardToolbar below to avoid duplication. */}
         {isMobile && (
           <MobilePageHeader title={t('common:nav.visual-dashboard')} />
+        )}
+        {/* Desktop title row — identical to PageLayout's so the floating
+            global controls (top-right) align with every other page. */}
+        {!isMobile && (
+          <div className="shrink-0 bg-background">
+            <div className="w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3">
+              <PageHeader
+                title={t('common:nav.visual-dashboard')}
+                description={t('visualDashboard.pageDescription', { defaultValue: 'Visualize and monitor your data' })}
+              />
+            </div>
+          </div>
         )}
         <DashboardToolbar
           sortedDashboards={sortedDashboards}

@@ -34,7 +34,6 @@ import {
 import { cn } from '@/lib/utils'
 import { textMini } from "@/design-system/tokens/typography"
 import { useMobileHeaderActionsRegistrar } from '@/components/layout/MobileHeaderActionsContext'
-import { GlobalControls } from '@/components/layout/GlobalControls'
 
 export interface TabAction {
   label: string
@@ -184,9 +183,6 @@ export function PageTabsBar({
             </div>
           )}
 
-          {/* Global entry points — far right of the page toolbar */}
-          {actions.length === 0 && secondaryActions.length === 0 && !actionsExtra && <div className="ml-auto" />}
-          <GlobalControls />
     </div>
   )
 }

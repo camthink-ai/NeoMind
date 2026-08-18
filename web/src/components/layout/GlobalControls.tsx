@@ -63,7 +63,7 @@ function Controls({ alignDropdowns = "end" }: { alignDropdowns?: "start" | "end"
               <Languages className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align={alignDropdowns} className="w-32">
+          <DropdownMenuContent align="end" className="w-32">
             <DropdownMenuItem onClick={() => i18n.changeLanguage('zh')} className="gap-2 cursor-pointer">
               <span className="text-sm">中文</span>
               {i18n.language === 'zh' && <span className="ml-auto text-xs text-foreground">✓</span>}
