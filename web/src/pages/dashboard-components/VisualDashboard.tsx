@@ -1033,10 +1033,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
         {!isMobile && (
           <div className="shrink-0 bg-background">
             <div className="w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3">
-              <PageHeader
-                title={t('common:nav.visual-dashboard')}
-                description={t('visualDashboard.pageDescription', { defaultValue: 'Visualize and monitor your data' })}
-              />
+              <PageHeader title={t('common:nav.visual-dashboard')} />
             </div>
           </div>
         )}

@@ -140,15 +140,13 @@ export function PageLayout({
           hideMenu={mobileHeader?.hideMenu}
         />
       )}
-      {/* Desktop: PageHeader with title + description + actions.
-          bg-background so the title strip visually connects with the
-          scroll container below (which also has bg-background). */}
+      {/* Desktop: PageHeader with title + actions (descriptions removed —
+          the title row is a single compact line now). */}
       {title && !isMobile && (
         <div className="shrink-0 bg-background">
           <div className={cn('w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3', maxWidthClass[maxWidth], className)}>
             <PageHeader
               title={title}
-              description={subtitle}
               actions={actions}
               variant={borderedHeader ? 'bordered' : 'default'}
             />
