@@ -1,5 +1,6 @@
 import { ReactNode, Fragment } from 'react'
 import { cn } from '@/lib/utils'
+import { PageHeader } from '@/components/layout/PageHeader'
 import { MobilePageHeader } from '@/components/layout/MobilePageHeader'
 import {
   MobileHeaderActionsContext,
@@ -27,12 +28,11 @@ export interface PageLayoutMobileHeaderProps {
 
 export interface PageLayoutProps {
   children: ReactNode
-  /** Page title — shown in the mobile MobilePageHeader. On desktop the title
-   *  is route-derived and rendered by the TopBar. */
+  /** Optional page title, rendered via PageHeader */
   title?: string
-  /** @deprecated no longer rendered — desktop titles live in the TopBar. */
+  /** Optional secondary description text below the title */
   subtitle?: string
-  /** Optional actions area (mobile: lifted into the MobilePageHeader) */
+  /** Optional actions area rendered on the right of the header (buttons, filters, etc.) */
   actions?: ReactNode
   /** Optional footer content (e.g., pagination bar fixed at bottom) */
   footer?: ReactNode
@@ -40,7 +40,7 @@ export interface PageLayoutProps {
   headerContent?: ReactNode
   maxWidth?: 'md' | 'lg' | 'xl' | '2xl' | 'full'
   className?: string
-  /** @deprecated no-op — the desktop page header strip is gone. */
+  /** Whether to render a subtle bottom border under the header */
   borderedHeader?: boolean
   /** Whether to hide footer on mobile (for infinite scroll) */
   hideFooterOnMobile?: boolean
@@ -82,11 +82,13 @@ const maxWidthClass = {
 export function PageLayout({
   children,
   title,
+  subtitle,
   actions,
   footer,
   headerContent,
   maxWidth = 'full',
   className,
+  borderedHeader = false,
   hideFooterOnMobile = false,
   fixedActionsOnMobile = false,
   noPadding = false,
@@ -138,11 +140,24 @@ export function PageLayout({
           hideMenu={mobileHeader?.hideMenu}
         />
       )}
-      {/* Desktop: no per-page title strip — the page title lives in the
-          TopBar (route-derived). Mobile keeps its per-page header below. */}
+      {/* Desktop: PageHeader with title + description + actions.
+          bg-background so the title strip visually connects with the
+          scroll container below (which also has bg-background). */}
+      {title && !isMobile && (
+        <div className="shrink-0 bg-background">
+          <div className={cn('w-full px-4 pt-4 pb-2 sm:px-6 sm:pt-5 sm:pb-3 md:px-8 md:pt-6 md:pb-3', maxWidthClass[maxWidth], className)}>
+            <PageHeader
+              title={title}
+              description={subtitle}
+              actions={actions}
+              variant={borderedHeader ? 'bordered' : 'default'}
+            />
+          </div>
+        </div>
+      )}
       {/* Fixed header content (e.g., tabs) - outside scroll container.
-          bg-background matches the scroll container below for visual
-          continuity; it now sits directly under the TopBar. */}
+          bg-background matches the title strip above and the scroll
+          container below for visual continuity. */}
       {headerContent && (
         <div className="shrink-0 bg-background">
           {headerContent}

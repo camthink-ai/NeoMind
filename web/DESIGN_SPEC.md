@@ -272,20 +272,14 @@ import { cn } from '@/lib/utils'
 
 ## 3. Page Layout
 
-### Page title lives in the TopBar
-
-There is **no per-page title/description strip** on desktop. The TopBar
-derives the page title from the active route (`navItems` + `isNavItemActive`)
-and renders it on the left; per-page descriptions are gone entirely. `main`
-starts directly with the page's tabs (`headerContent`) and content.
-
 ### Mandatory Pattern: `PageLayout`
 
 Every page must use `PageLayout` from `@/components/layout/PageLayout`.
 
 ```tsx
 <PageLayout
-  title="Page Title"   {/* mobile only — feeds MobilePageHeader */}
+  title="Page Title"
+  actions={<Button>Add</Button>}
   footer={<Pagination ... />}
 >
   {/* Content grows naturally; PageLayout handles scrolling */}
@@ -293,9 +287,8 @@ Every page must use `PageLayout` from `@/components/layout/PageLayout`.
 ```
 
 **Rules:**
-- Desktop titles come from the TopBar (route-derived) — never render your own page-heading strip; `subtitle` is deprecated and not rendered
 - Content area uses `overflow-auto` via PageLayout's scroll container — do NOT add your own scroll
-- Fixed headers (tabs) go in `headerContent` prop — they sit directly under the TopBar
+- Fixed headers (tabs) go in `headerContent` prop
 - Fixed footers (pagination) go in `footer` prop
 - Page-level loading MUST use skeleton screens, never spinners
 
