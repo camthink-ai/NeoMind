@@ -432,7 +432,7 @@ export function SessionSidebar({
                             </div>
 
                             {/* Action buttons */}
-                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 translate-x-1 transition-all duration-fast group-hover:translate-x-0 group-hover:opacity-100">
                               <button
                                 onClick={(e) => handleEditClick(e, session)}
                                 aria-label={t('common:edit')}
@@ -484,7 +484,7 @@ export function SessionSidebar({
           // (light: white vs #F8F9FA rail; dark: 0.20 vs 0.115 rail), so
           // the page sidebar reads as a separate surface. Right border
           // separates it from the white content area. Fixed width.
-          "h-full w-64 bg-[var(--chrome)] border-r border-border flex flex-col overflow-hidden"
+          "h-full w-64 bg-[var(--chrome)] border-r border-border rounded-l-lg flex flex-col overflow-hidden"
         )}
       >
           {SidebarContent({})}

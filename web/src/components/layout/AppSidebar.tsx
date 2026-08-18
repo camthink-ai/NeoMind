@@ -219,7 +219,7 @@ export function AppSidebar() {
   return (
     <TooltipProvider delayDuration={500}>
       <aside
-        className="flex shrink-0 flex-col items-center bg-[var(--sidebar-bg)]"
+        className="mr-1.5 flex shrink-0 flex-col items-center bg-[var(--sidebar-bg)]"
         style={{
           width: SIDEBAR_WIDTH_PX,
           // Top strip: reserves the macOS traffic-light inset + safe area

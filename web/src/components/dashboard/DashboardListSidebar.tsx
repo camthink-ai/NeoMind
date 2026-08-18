@@ -323,7 +323,7 @@ function DashboardSidebarContent({
                       </div>
 
                       {/* Action menu */}
-                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 translate-x-1 transition-all duration-fast group-hover:translate-x-0 group-hover:opacity-100">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button
@@ -413,7 +413,7 @@ export function DashboardListSidebar({
           // Chrome panel — one step brighter than the rail in BOTH themes,
           // matching the session list's surface. Right border separates it
           // from the white content area.
-          "h-full w-64 bg-[var(--chrome)] border-r border-border flex flex-col",
+          "h-full w-64 bg-[var(--chrome)] border-r border-border rounded-l-lg flex flex-col",
           className
         )}
       >
