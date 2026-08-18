@@ -27,4 +27,23 @@ describe('cn utility function', () => {
   it('should handle undefined and null values', () => {
     expect(cn('foo', undefined, null, 'bar')).toBe('foo bar')
   })
+
+  // REGRESSION GUARD: tailwind-merge used to treat the custom fontSize
+  // utilities (text-micro/nano/mini/code/body/heading) as textColor classes
+  // and silently dropped the SIZE when a color class was present — every
+  // paired label app-wide rendered at the inherited default size. If this
+  // test fails, the extendTailwindMerge font-size registration in
+  // lib/utils.ts broke.
+  describe('custom font-size tokens coexist with color classes', () => {
+    const sizes = ['text-micro', 'text-nano', 'text-mini', 'text-code', 'text-body', 'text-heading']
+    for (const size of sizes) {
+      it(`keeps ${size} next to a text color`, () => {
+        expect(cn(size, 'text-muted-foreground')).toContain(size)
+        expect(cn(size, 'text-muted-foreground')).toContain('text-muted-foreground')
+      })
+    }
+    it('latest size wins on conflict (standard tailwind-merge semantics)', () => {
+      expect(cn('text-mini', 'text-nano')).toBe('text-nano')
+    })
+  })
 })

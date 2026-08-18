@@ -120,14 +120,20 @@ export interface FullScreenDialogHeaderProps {
 
 export function FullScreenDialogHeader({
   title,
+  subtitle,
   onClose,
   actions,
 }: FullScreenDialogHeaderProps) {
   return (
     <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 h-14 ">
-      <h1 className="text-base md:text-lg font-semibold truncate text-foreground min-w-0 flex-1">
-        {title}
-      </h1>
+      <div className="min-w-0 flex-1">
+        <h1 className="text-base md:text-lg font-semibold truncate text-foreground">
+          {title}
+        </h1>
+        {subtitle && (
+          <p className="text-nano text-muted-foreground truncate">{subtitle}</p>
+        )}
+      </div>
       <div className="flex items-center gap-2 shrink-0">
         {actions}
         <button
