@@ -143,21 +143,6 @@ export function AppSidebar() {
   const primaryItems = navItems.filter((i) => PRIMARY_NAV_IDS.includes(i.id))
   const systemItems = navItems.filter((i) => SYSTEM_NAV_IDS.includes(i.id))
 
-  const settingsEntry = (
-    <Button
-      variant="ghost"
-      aria-label={t("nav.settings")}
-      className={cn(
-        "h-10 w-full gap-3 px-3 justify-start font-normal text-muted-foreground hover:text-foreground hover:bg-muted-50 no-press-scale",
-        collapsed && "w-10 min-w-0 px-0 justify-center"
-      )}
-      onClick={() => openSettings()}
-    >
-      <Settings className="h-5 w-5 shrink-0" />
-      {!collapsed && <span className="truncate">{t("nav.settings")}</span>}
-    </Button>
-  )
-
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
 
   // User entry — bottom-left. Avatar + name (expanded) / avatar only
@@ -315,14 +300,14 @@ export function AppSidebar() {
 
         <div className="flex-1" />
 
-        {/* Footer — settings entry + user avatar (bottom-left) */}
+        {/* Footer — user avatar (bottom-left). Settings lives inside the
+            avatar menu; no standalone entry. */}
         <div
           className={cn(
             "flex flex-col gap-1 border-t border-border p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
             collapsed && "px-2.5"
           )}
         >
-          {settingsEntry}
           {userEntry}
         </div>
       </aside>

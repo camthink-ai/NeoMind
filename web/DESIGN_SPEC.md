@@ -1614,7 +1614,7 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 - Header: brand logo + collapse toggle; reserves the macOS traffic-light strip (`--titlebar-inset`) and doubles as a drag region
 - PRIMARY group: Chat `/chat`, Agents `/agents`, Devices `/devices`, Visual Dashboard `/visual-dashboard`
 - SYSTEM group (labelled `navShort.system`): Automation, Data Explorer, Messages, Extensions
-- Footer (bottom-left): Settings entry (calls `openSettings()` — dialog, never a route) + **user avatar** whose upward dropdown holds theme / language / settings / about / logout
+- Footer (bottom-left): **user avatar** whose upward dropdown holds theme / language / settings / about / logout (settings has no standalone entry — the dialog opens from the avatar menu)
 - Active state: `bg-brand-bg text-brand` pill + `brand-icon-stroke` icon gradient (dark)
 
 ### Collapse behavior
