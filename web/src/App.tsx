@@ -234,6 +234,17 @@ function PageLoading() {
   )
 }
 
+// Tauri window drag — same contract as the rail's handler: startDragging on
+// mousedown over non-interactive areas (data-tauri-drag-region is unreliable
+// in Tauri 2 overlay mode).
+import { getCurrentWindow } from "@tauri-apps/api/window"
+const handleWindowDragMouseDown = (e: React.MouseEvent) => {
+  if (!isTauriEnv()) return
+  const target = e.target as HTMLElement
+  if (target.closest("button, a, input, select, textarea, [role='button'], [role='tab']")) return
+  getCurrentWindow().startDragging()
+}
+
 function App() {
   const isMobile = useIsMobile()
   const { t } = useTranslation("common")
@@ -577,6 +588,16 @@ function App() {
                       className="relative flex flex-1 min-h-0 overflow-hidden focus:outline-none"
                     >
                     {!isMobile && <GlobalControlsFloating />}
+                    {/* Window drag strip — the whole top of the content area
+                        moves the Tauri window, not just the rail. Sits under
+                        the floating controls (z-20) and above page content. */}
+                    {!isMobile && (
+                      <div
+                        className="absolute right-0 top-0 z-10 h-10"
+                        style={{ left: 'var(--page-sidebar-width, 0px)' }}
+                        onMouseDown={handleWindowDragMouseDown}
+                      />
+                    )}
                     <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">
