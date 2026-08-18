@@ -122,7 +122,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
   const { t } = useTranslation('dashboardComponents')
 
   return (
-    <header className="shrink-0 flex items-center justify-between px-4 h-11 border-b border-border bg-[var(--chrome)] z-10">
+    <header className="shrink-0 flex items-center justify-between px-4 h-11 bg-[var(--chrome)] z-10">
       {/* Mobile: always show the dropdown switcher regardless of layoutMode.
           Sidebar-mode's "open the list drawer" pattern has no trigger on
           touch devices, so we route through DashboardTabBar's mobile UI. */}
