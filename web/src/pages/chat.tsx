@@ -6,55 +6,24 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Settings, Sparkles, MessageSquare, ChevronDown, X, Image as ImageIcon, Loader2, RotateCcw, Plus, Check, ArrowUp } from "lucide-react"
+import { Settings, Sparkles, MessageSquare, Loader2, RotateCcw, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
-import { MarkdownMessage } from "@/components/chat/MarkdownMessage"
-import { CopyMessageButton } from "@/components/chat/CopyMessageButton"
-import { ThinkingBlock } from "@/components/chat/ThinkingBlock"
+import { ChatMessages } from "@/components/chat/ChatMessages"
+import { ChatComposer } from "@/components/chat/ChatComposer"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
-import { ToolProcessBlock, isThinkingDuplicate } from "@/components/chat/ToolCallVisualization"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import type { Message, ServerMessage, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
-import { textNano, textMicro } from "@/design-system/tokens/typography"
 import { getPortalRoot } from "@/lib/portal"
-import { formatTimestamp } from "@/lib/utils/format"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useToast } from "@/hooks/use-toast"
-import { mergeMessagesForDisplay, cleanToolCallJson } from "@/lib/messageUtils"
 import { useOnboarding } from "@/hooks/useOnboarding"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
-
-/** Image gallery component for user messages */
-function MessageImages({ images }: { images: ChatImage[] }) {
-  if (!images || images.length === 0) return null
-
-  return (
-    <div className={images.length === 1 ? "mb-2" : "mb-2 grid grid-cols-2 gap-2"}>
-      {images.map((img, idx) => (
-        <img
-          key={idx}
-          src={img.data}
-          alt={`Image ${idx + 1}`}
-          className="rounded-lg max-w-full max-h-64 object-cover"
-          loading="lazy"
-        />
-      ))}
-    </div>
-  )
-}
 
 // Hook to detect desktop breakpoint — md: 768px, matching the app-wide
 // breakpoint (useIsMobile < 768). The old 1024 left the 768–1024 band in a
@@ -82,87 +51,6 @@ function getActiveBackendSupportsMultimodal(llmBackends: any[], activeBackendId:
 }
 
 // Convert file to base64 data URL
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
-
-// Compress image to target size (default 2MB)
-async function compressImage(file: File, maxSizeMB: number = 2): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        let width = img.width
-        let height = img.height
-
-        // Calculate new dimensions to reduce file size
-        const maxDimension = 2048
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = (height / width) * maxDimension
-            width = maxDimension
-          } else {
-            width = (width / height) * maxDimension
-            height = maxDimension
-          }
-        }
-
-        canvas.width = width
-        canvas.height = height
-
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          reject(new Error('Failed to get canvas context'))
-          return
-        }
-
-        ctx.drawImage(img, 0, 0, width, height)
-
-        // Try different quality levels to meet size target
-        let quality = 0.9
-        const tryCompress = () => {
-          canvas.toBlob(
-            (blob) => {
-              if (!blob) {
-                reject(new Error('Failed to compress image'))
-                return
-              }
-
-              const sizeMB = blob.size / (1024 * 1024)
-
-              // If size is acceptable or quality is too low, use this result
-              if (sizeMB <= maxSizeMB || quality <= 0.5) {
-                const reader = new FileReader()
-                reader.onload = () => resolve(reader.result as string)
-                reader.onerror = reject
-                reader.readAsDataURL(blob)
-              } else {
-                // Try lower quality
-                quality -= 0.1
-                tryCompress()
-              }
-            },
-            'image/jpeg',
-            quality
-          )
-        }
-
-        tryCompress()
-      }
-      img.onerror = () => reject(new Error('Failed to load image'))
-      img.src = e.target?.result as string
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
-}
 
 export function ChatPage() {
   const { t } = useTranslation(['common', 'chat'])
@@ -225,8 +113,6 @@ export function ChatPage() {
 
   // Image upload state
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
-  const [isUploadingImage, setIsUploadingImage] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Responsive
   const isDesktop = useIsDesktop()
@@ -698,52 +584,6 @@ export function ChatPage() {
   }
 
   // Toggle skill selection
-  // Handle image file selection
-  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files
-    if (!files || files.length === 0) return
-
-    setIsUploadingImage(true)
-    try {
-      const newImages: ChatImage[] = []
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]
-        if (!file.type.startsWith('image/')) continue
-
-        // Limit original file size to 10MB
-        if (file.size > 10 * 1024 * 1024) {
-          toast({ title: `Image ${file.name} is too large. Maximum size is 10MB.`, variant: "destructive" })
-          continue
-        }
-
-        // Compress image to 2MB for better performance
-        const dataUrl = await compressImage(file, 2)
-        newImages.push({
-          data: dataUrl,
-          mimeType: 'image/jpeg', // Compressed images are always JPEG
-        })
-      }
-
-      if (newImages.length > 0) {
-        setAttachedImages(prev => [...prev, ...newImages])
-      }
-    } catch (error) {
-      handleError(error, { operation: 'Process images', showToast: false })
-      toast({ title: t('common:imageProcessFailed'), variant: "destructive" })
-    } finally {
-      setIsUploadingImage(false)
-      // Reset file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    }
-  }
-
-  // Remove attached image
-  const removeAttachedImage = (index: number) => {
-    setAttachedImages(prev => prev.filter((_, i) => i !== index))
-  }
-
   // Check if multimodal is supported
   const supportsMultimodal = getActiveBackendSupportsMultimodal(llmBackends, activeBackendId)
 
@@ -844,13 +684,26 @@ export function ChatPage() {
     [messages]
   )
 
-  const displayMessages = useMemo(() =>
-    mergeMessagesForDisplay(filteredMessages),
-    [filteredMessages]
-  )
-
   // Show chat area if there are messages or currently streaming
   const hasMessages = filteredMessages.length > 0 || isStreaming
+
+  // Context usage — real prompt tokens after a turn, chars/3 estimate otherwise
+  const contextUsage = useMemo(() => {
+    if (messages.length === 0 || isWelcomeMode) return null
+    const activeBackend = llmBackends.find(b => b.id === activeBackendId)
+    const maxContext = activeBackend?.capabilities?.max_context ?? 8192
+    const promptTokens = lastTokenUsage?.promptTokens
+    let used: number
+    if (promptTokens != null && !isStreaming) {
+      used = promptTokens
+    } else {
+      const msgChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0)
+      const streamChars = (streamingContent?.length ?? 0) + (streamingThinking?.length ?? 0)
+        + streamingToolCalls.reduce((s, tc) => s + (tc.arguments?.length ?? 0) + (tc.result?.length ?? 0), 0)
+      used = Math.ceil((msgChars + streamChars) / 3)
+    }
+    return { used, max: maxContext }
+  }, [messages, isWelcomeMode, llmBackends, activeBackendId, lastTokenUsage, isStreaming, streamingContent, streamingThinking, streamingToolCalls])
 
   // Show LLM setup prompt if not configured (only after loading completes)
   if (!llmBackendLoading && (!llmBackends || llmBackends.length === 0)) {
@@ -1119,214 +972,20 @@ export function ChatPage() {
               handleBackdropClick()
             }}
           >
-            <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
-              {(() => {
-                // Build display list including streaming message (same loop = same React key = no flicker)
-                const allMessages = [...displayMessages]
-                if (isStreaming) {
-                  // Build per-round thinking: completed rounds + current round
-                  const mergedRoundThinking = { ...streamingRoundThinking }
-                  const completedThinking = Object.values(streamingRoundThinking).join("")
-                  const currentRoundThinking = streamingThinking.startsWith(completedThinking)
-                    ? streamingThinking.slice(completedThinking.length)
-                    : streamingThinking
-                  if (currentRoundThinking) {
-                    mergedRoundThinking[currentRoundRef.current] = currentRoundThinking
-                  }
-                  // Streaming message: same shape as persisted messages
-                  // content = final answer (streams at bottom), tool_calls = process (above)
-                  // Clean round_contents to remove JSON/markdown artifacts from small models
-                  const cleanedStreamingRoundContents = Object.keys(roundContents).length > 0
-                    ? Object.fromEntries(
-                        Object.entries(roundContents).map(([k, v]) => [k, cleanToolCallJson(v)])
-                      )
-                    : undefined;
-                  allMessages.push({
-                    id: streamingMessageIdRef.current || '__streaming__',
-                    role: 'assistant' as const,
-                    content: streamingContent,
-                    thinking: streamingThinking || undefined,
-                    tool_calls: streamingToolCalls.length > 0 ? streamingToolCalls : undefined,
-                    timestamp: Date.now(),
-                    round_thinking: Object.keys(mergedRoundThinking).length > 0 ? mergedRoundThinking : undefined,
-                    round_contents: cleanedStreamingRoundContents,
-                    _isStreaming: true,
-                  } as Message & { _isStreaming?: boolean })
-                }
-                return allMessages.map((message, idx) => {
-                  const isCurrentlyStreaming = !!(message as any)._isStreaming
-                  // Copy the message as the user sees it: user messages verbatim;
-                  // assistant messages with tool calls strip embedded JSON.
-                  const copyContent = message.role === "user"
-                    ? (message.content || "")
-                    : (message.tool_calls && message.tool_calls.length > 0
-                        ? cleanToolCallJson(message.content || "")
-                        : (message.content || ""))
-                  return (
-                <div
-                  key={message.id || `msg-${idx}`}
-                  className={`group flex gap-2 sm:gap-3 animate-fade-in-up ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  {message.role === "assistant" && (
-                    <div className="flex-shrink-0 w-6 h-6 sm:w-8 sm:h-8 rounded-lg bg-foreground flex items-center justify-center">
-                      <Sparkles className={cn(
-                        "h-4 w-4 sm:h-4 sm:w-4 text-background",
-                        isCurrentlyStreaming && "animate-pulse"
-                      )} />
-                    </div>
-                  )}
-
-                  <div className={`max-w-[85%] sm:max-w-[80%] ${message.role === "user" ? "order-1" : ""}`}>
-                    <div
-                      className={cn(
-                        message.role === "user"
-                          ? "rounded-lg px-3 py-2 sm:px-4 sm:py-3 bg-[var(--msg-user-bg)] text-[var(--msg-user-text)]"
-                          : ""
-                      )}
-                    >
-                      <div className={message.role === "user" ? "message-bubble-user" : "message-bubble-assistant"}>
-                      {/* Images for user messages */}
-                      {message.role === "user" && message.images && message.images.length > 0 && (
-                        <MessageImages images={message.images} />
-                      )}
-                      {/* User messages: just content */}
-                      {message.role === "user" && message.content && (
-                        <MarkdownMessage content={message.content} variant="user" />
-                      )}
-                      {/* Assistant messages: tool process + final content */}
-                      {message.role === "assistant" && (() => {
-                        const hasTools = message.tool_calls && message.tool_calls.length > 0
-                        // Clean embedded tool call JSON from content for display
-                        const displayContent = hasTools ? cleanToolCallJson(message.content || '') : (message.content || '')
-                        // Clean round contents to remove any JSON/markdown artifacts from small models
-                        const cleanedRoundContents = message.round_contents
-                          ? Object.fromEntries(
-                              Object.entries(message.round_contents).map(([k, v]) => [k, cleanToolCallJson(v)])
-                            )
-                          : undefined
-
-                        // Three-layer design:
-                        // 1. Thinking (top) - with per-round differentiation
-                        // 2. Task Process (middle) - tool calls + round content
-                        // 3. Final Answer (bottom) - markdown content
-
-                        // Determine thinking to show
-                        const hasRoundThinking = message.round_thinking && Object.keys(message.round_thinking).length > 0
-                        const hasThinking = !!message.thinking
-                        // Skip thinking if it duplicates final content (Phase 2 LLM echo)
-                        const thinkingDupesContent = hasThinking && message.content
-                          && isThinkingDuplicate(message.thinking, message.content)
-                        // For round_thinking, dedup last round against content
-                        let filteredRoundThinking = message.round_thinking
-                        if (hasRoundThinking && message.content) {
-                          const rounds = Object.entries(message.round_thinking!)
-                            .map(([k, v]) => [Number(k), v] as [number, string])
-                            .sort((a, b) => a[0] - b[0])
-                          if (rounds.length > 0) {
-                            const lastRound = rounds[rounds.length - 1]
-                            if (isThinkingDuplicate(lastRound[1], message.content)) {
-                              // Remove last round if it duplicates content
-                              filteredRoundThinking = { ...message.round_thinking! }
-                              delete filteredRoundThinking[lastRound[0]]
-                              if (Object.keys(filteredRoundThinking).length === 0) {
-                                filteredRoundThinking = undefined
-                              }
-                            }
-                          }
-                        }
-
-                        const showThinking = (hasRoundThinking && !!filteredRoundThinking) || (hasThinking && !thinkingDupesContent && !hasRoundThinking)
-
-                        if (hasTools) {
-                          return (
-                            <>
-                              {showThinking && (
-                                <ThinkingBlock
-                                  thinking={!hasRoundThinking ? message.thinking : undefined}
-                                  roundThinking={filteredRoundThinking}
-                                  isStreaming={isCurrentlyStreaming}
-                                  defaultExpanded={false}
-                                />
-                              )}
-                              <ToolProcessBlock
-                                toolCalls={message.tool_calls!}
-                                roundContents={cleanedRoundContents}
-                                isStreaming={isCurrentlyStreaming}
-                              />
-                              {displayContent ? (
-                                <MarkdownMessage content={displayContent} variant="assistant" className="px-3" />
-                              ) : isCurrentlyStreaming ? (
-                                <div className="flex items-center gap-1 px-3 py-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '300ms' }} />
-                                </div>
-                              ) : null}
-                            </>
-                          )
-                        }
-
-                        // Path B: simple response → Thinking + Content
-                        return (
-                          <>
-                            {showThinking && (
-                              <ThinkingBlock
-                                thinking={message.thinking}
-                                roundThinking={filteredRoundThinking}
-                                isStreaming={isCurrentlyStreaming}
-                              />
-                            )}
-                            {displayContent ? (
-                              <MarkdownMessage content={displayContent} variant="assistant" className="px-3" />
-                            ) : isCurrentlyStreaming ? (
-                              <div className="flex items-center gap-1 px-3 py-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '300ms' }} />
-                              </div>
-                            ) : null}
-                          </>
-                        )
-                      })()}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1 mt-1.5 px-3">
-                      <p className="text-xs text-muted-foreground">
-                        {formatTimestamp(message.timestamp, false)}
-                      </p>
-                      {!isCurrentlyStreaming && (
-                        <CopyMessageButton content={copyContent} />
-                      )}
-                      {/* Always-visible scroll-to-bottom, next to the copy
-                          button on assistant replies */}
-                      {message.role === "assistant" && !isCurrentlyStreaming && (
-                        <button
-                          type="button"
-                          onClick={scrollToBottom}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-sm transition-colors hover:bg-muted"
-                          aria-label={t("chat:scrollToBottom", "回到底部")}
-                          title={t("chat:scrollToBottom", "回到底部")}
-                        >
-                          <ChevronDown className="h-3 w-3" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {message.role === "user" && user && (
-                    <Avatar className="h-6 w-6 sm:h-8 sm:w-8 order-2">
-                      <AvatarFallback className={cn("bg-muted text-muted-foreground", textNano, "sm:text-xs")}>
-                        {getUserInitials(user.username)}
-                      </AvatarFallback>
-                    </Avatar>
-                  )}
-                </div>
-                )})
-              })()}
-
-              <div ref={messagesEndRef} />
-            </div>
+            <ChatMessages
+              messages={filteredMessages}
+              user={user}
+              isStreaming={isStreaming}
+              streamingContent={streamingContent}
+              streamingThinking={streamingThinking}
+              streamingRoundThinking={streamingRoundThinking}
+              streamingToolCalls={streamingToolCalls}
+              roundContents={roundContents}
+              currentRound={currentRoundRef.current}
+              streamingMessageId={streamingMessageIdRef.current}
+              onScrollToBottom={scrollToBottom}
+              endRef={messagesEndRef}
+            />
           </div>
         ) : (
           /* Empty chat - shown on /chat/:sessionId with no messages yet */
@@ -1392,218 +1051,24 @@ export function ChatPage() {
               </div>
             )}
 
-            {/* Image previews */}
-            {attachedImages.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mb-1">
-                {attachedImages.map((image, index) => (
-                  <div key={index} className="relative group">
-                    <img
-                      src={image.data}
-                      alt={`Attached ${index + 1}`}
-                      className="h-8 w-8 sm:h-9 sm:w-9 object-cover rounded-md border border-border"
-                    />
-                    <button
-                      type="button"
-                      className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity p-0"
-                      onClick={() => removeAttachedImage(index)}
-                    >
-                      <X className="h-2 w-2" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Single unified input box — everything inside one container */}
-            <div className="rounded-lg border border-input bg-card shadow-sm transition-colors">
-              {/* Textarea — fills the top, borderless */}
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={t('chat:input.placeholder')}
-                rows={1}
-                className={cn(
-                  "w-full block px-4 pt-3 pb-1 resize-none text-sm leading-5 bg-transparent",
-                  "placeholder:text-muted-foreground",
-                  "focus:outline-none",
-                  "max-h-[100px] lg:max-h-40 scroll-mb-32"
-                )}
-                style={{ minHeight: "44px" }}
-                onInput={(e) => {
-                  const target = e.target as HTMLTextAreaElement
-                  target.style.height = "auto"
-                  const maxHeight = isDesktop ? 160 : 100
-                  target.style.height = Math.max(44, Math.min(target.scrollHeight, maxHeight)) + "px"
-                }}
-              />
-
-              {/* Bottom toolbar — left: image + model + context, right: send */}
-              <div className="flex items-center gap-1 px-2 pb-2">
-                {/* Image upload */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={handleImageSelect}
-                  disabled={isStreaming || !supportsMultimodal}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isStreaming || !supportsMultimodal}
-                  className={cn(
-                    "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
-                    !supportsMultimodal && "opacity-50"
-                  )}
-                  title={supportsMultimodal ? t('chat:model.addImage') : t('chat:model.notSupportImage')}
-                >
-                  {isUploadingImage ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : attachedImages.length > 0 ? (
-                    <div className="relative">
-                      <ImageIcon className="h-4 w-4" />
-                      <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-nano rounded-full h-4 w-4 flex items-center justify-center font-semibold tabular-nums">
-                        {attachedImages.length}
-                      </span>
-                    </div>
-                  ) : (
-                    <ImageIcon className="h-4 w-4" />
-                  )}
-                </Button>
-
-                {/* Model selector */}
-                {llmBackends.length > 0 && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 px-2 rounded-lg text-muted-foreground hover:text-foreground text-xs gap-1 max-w-[120px] sm:max-w-[140px]"
-                      >
-                        <span className="truncate">
-                          {llmBackends.find(b => b.id === activeBackendId)?.name ||
-                           llmBackends.find(b => b.id === activeBackendId)?.model ||
-                           t('chat:input.selectModel')}
-                        </span>
-                        <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-72 max-h-[50vh] overflow-y-auto scrollbar-none p-0">
-                      <div className="sticky top-0 z-10 bg-popover px-3 py-2 border-b border-border">
-                        <span className="font-semibold text-sm">{t('chat:input.selectLLMModel')}</span>
-                      </div>
-                      <div className="p-1">
-                      {llmBackends.map((backend) => {
-                        const isActive = backend.id === activeBackendId
-                        return (
-                        <DropdownMenuItem
-                          key={backend.id}
-                          onClick={() => activateBackend(backend.id)}
-                          className="gap-2.5 py-2"
-                        >
-                          {/* Left slot: active → Check, else health dot (symmetrical) */}
-                          <div className="w-4 flex items-center justify-center shrink-0">
-                            {isActive ? (
-                              <Check className="h-4 w-4 text-primary" />
-                            ) : (
-                              <span className={cn(
-                                "w-1.5 h-1.5 rounded-full",
-                                backend.healthy ? "bg-success" : "bg-muted-foreground"
-                              )} />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <p className={cn("text-sm truncate", isActive && "font-medium")}>
-                                {backend.name || backend.model}
-                              </p>
-                              <div className="flex items-center gap-1 shrink-0">
-                                {backend.capabilities?.supports_multimodal && (
-                                  <span title={t('chat:model.supportsVision')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-info-light text-info", textMicro)}>{t('chat:capability.vision', { defaultValue: 'Vision' })}</span>
-                                )}
-                                {backend.capabilities?.supports_tools && (
-                                  <span title={t('chat:model.supportsTools')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-accent-orange-light text-accent-orange", textMicro)}>{t('chat:capability.tools', { defaultValue: 'Tools' })}</span>
-                                )}
-                                {backend.capabilities?.supports_thinking && (
-                                  <span title={t('chat:model.supportsThinking')} className={cn("inline-flex items-center px-1 h-4 rounded font-medium bg-accent-purple-light text-accent-purple", textMicro)}>{t('chat:capability.thinking', { defaultValue: 'Thinking' })}</span>
-                                )}
-                              </div>
-                            </div>
-                            <p className={cn(textNano, "text-muted-foreground truncate mt-0.5")}>
-                              {backend.backend_type} · {backend.model}
-                            </p>
-                          </div>
-                        </DropdownMenuItem>
-                        )
-                      })}
-                      </div>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-
-                {/* Context usage indicator */}
-                {(() => {
-                  const activeBackend = llmBackends.find(b => b.id === activeBackendId)
-                  const maxContext = activeBackend?.capabilities?.max_context ?? 8192
-                  const promptTokens = lastTokenUsage?.promptTokens
-                  let displayTokens: number
-                  let ratio: number
-                  if (promptTokens != null && !isStreaming) {
-                    displayTokens = promptTokens
-                    ratio = promptTokens / maxContext
-                  } else {
-                    const msgChars = messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0)
-                    const streamChars = (streamingContent?.length ?? 0) + (streamingThinking?.length ?? 0)
-                      + streamingToolCalls.reduce((s, tc) => s + (tc.arguments?.length ?? 0) + (tc.result?.length ?? 0), 0)
-                    displayTokens = Math.ceil((msgChars + streamChars) / 3)
-                    ratio = displayTokens / maxContext
-                  }
-                  if (messages.length === 0 || isWelcomeMode) return null
-                  return (
-                    <span className={cn(
-                      "text-xs shrink-0 transition-colors tabular-nums",
-                      ratio > 0.9 ? "text-error" : ratio > 0.7 ? "text-warning" : "text-muted-foreground"
-                    )}>
-                      Context {(displayTokens / 1000).toFixed(1)}K / {(maxContext / 1000).toFixed(0)}K
-                    </span>
-                  )
-                })()}
-
-                <div className="flex-1" />
-
-                {/* Send or Cancel button */}
-                {isStreaming ? (
-                  <Button
-                    type="button"
-                    onClick={handleCancelRequest}
-                    variant="outline"
-                    className="h-8 w-8 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
-                    title="Cancel request"
-                  >
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    onClick={handleSend}
-                    disabled={!input.trim() && attachedImages.length === 0}
-                    className={cn(
-                      "h-8 w-8 rounded-full flex-shrink-0 p-0 transition-all",
-                      (!input.trim() && attachedImages.length === 0)
-                        ? "bg-muted text-muted-foreground"
-                        : "bg-primary hover:bg-primary-hover text-primary-foreground"
-                    )}
-                  >
-                    <ArrowUp className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-            </div>
+            <ChatComposer
+              value={input}
+              onChange={setInput}
+              onSend={() => handleSend()}
+              onKeyDown={handleKeyDown}
+              textareaRef={inputRef}
+              placeholder={t('chat:input.placeholder')}
+              isStreaming={isStreaming}
+              onCancel={handleCancelRequest}
+              attachments={attachedImages}
+              onAttachmentsChange={setAttachedImages}
+              supportsMultimodal={supportsMultimodal}
+              backends={llmBackends}
+              activeBackendId={activeBackendId}
+              onActivateBackend={activateBackend}
+              contextUsage={contextUsage}
+              maxHeight={isDesktop ? 160 : 100}
+            />
           </div>
         </div>
       </div>

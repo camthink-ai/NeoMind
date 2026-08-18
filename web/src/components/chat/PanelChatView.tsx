@@ -3,7 +3,9 @@
  *
  * Has its own session and messages, completely independent from the main chat page.
  * Handles WebSocket streaming, message rendering, and input.
- * No model selector, skill selector, or session history.
+ * Renders through the shared ChatMessages + ChatComposer — same design as the
+ * chat page (model selector and image upload included; no skill selector or
+ * session history).
  */
 
 import { useState, useRef, useEffect, useCallback, useReducer, useMemo } from "react"
@@ -12,7 +14,7 @@ import { useStore } from "@/store"
 import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
 import { api } from "@/lib/api"
-import type { ServerMessage, ExecutionPlan, Message } from "@/types"
+import type { ServerMessage, Message } from "@/types"
 import type { StreamProgress as StreamProgressType } from "@/types"
 import { filterPartialMessages, mergeMessagesForDisplay as mergeAssistantMessages } from "@/lib/messageUtils"
 import {
@@ -20,11 +22,14 @@ import {
   selectChatActions,
 } from "@/store/selectors"
 import { usePageContext } from "@/hooks/usePageContext"
+import { useToast } from "@/hooks/use-toast"
 import { pickPageAssistant } from "./pageAssistant"
 import { useLocation } from "react-router-dom"
-import { MergedMessageList } from "./MergedMessageList"
-import { Send, X, Minimize2, Bot, Plus, Settings } from "lucide-react"
+import { ChatMessages } from "./ChatMessages"
+import { ChatComposer } from "./ChatComposer"
+import { X, Minimize2, Bot, Plus, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import type { ChatImage } from "@/types"
 
 // Shared with GlobalChatFab for panel session persistence
 export const PANEL_SESSION_KEY = "neomind:panelSessionId"
@@ -41,11 +46,11 @@ interface StreamState {
   isStreaming: boolean
   streamingContent: string
   streamingThinking: string
+  // Per-round thinking for grouped rendering (completed rounds, keyed by round)
+  streamingRoundThinking: Record<number, string>
   streamingToolCalls: any[]
   streamProgress: StreamProgressType
   currentPlanStep: string
-  executionPlan: ExecutionPlan | null
-  planStepStates: Record<number, 'pending' | 'running' | 'completed' | 'failed'>
   roundContents: Record<number, string>
   currentRound: number
 }
@@ -59,9 +64,6 @@ type StreamAction =
   | { type: 'PROGRESS'; progress: Partial<StreamProgressType> }
   | { type: 'PLAN'; step: string }
   | { type: 'WARNING'; message: string }
-  | { type: 'EXECUTION_PLAN'; plan: ExecutionPlan }
-  | { type: 'PLAN_STEP_STARTED'; stepId: number; description: string }
-  | { type: 'PLAN_STEP_COMPLETED'; stepId: number; success: boolean; summary: string }
   | { type: 'ROUND_END' }
   | { type: 'END_STREAM' }
   | { type: 'ERROR' }
@@ -71,6 +73,7 @@ const initialStreamState: StreamState = {
   isStreaming: false,
   streamingContent: "",
   streamingThinking: "",
+  streamingRoundThinking: {},
   streamingToolCalls: [],
   streamProgress: {
     elapsed: 0,
@@ -79,8 +82,6 @@ const initialStreamState: StreamState = {
     remainingTime: 300,
   },
   currentPlanStep: "",
-  executionPlan: null,
-  planStepStates: {},
   roundContents: {},
   currentRound: 1,
 }
@@ -94,6 +95,10 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
         ...state,
         isStreaming: true,
         streamingThinking: state.streamingThinking + action.content,
+        streamingRoundThinking: {
+          ...state.streamingRoundThinking,
+          [state.currentRound]: (state.streamingRoundThinking[state.currentRound] || "") + action.content,
+        },
         streamProgress: { ...state.streamProgress, stage: 'thinking' },
       }
     case 'CONTENT':
@@ -152,12 +157,6 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
         streamingThinking: "",
         currentRound: state.currentRound + 1,
       }
-    case 'EXECUTION_PLAN':
-      return { ...state, executionPlan: action.plan, planStepStates: {} }
-    case 'PLAN_STEP_STARTED':
-      return { ...state, planStepStates: { ...state.planStepStates, [action.stepId]: 'running' } }
-    case 'PLAN_STEP_COMPLETED':
-      return { ...state, planStepStates: { ...state.planStepStates, [action.stepId]: action.success ? 'completed' : 'failed' } }
     case 'END_STREAM':
       return { ...initialStreamState, isStreaming: false }
     case 'ERROR':
@@ -171,14 +170,19 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
 
 export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavigateToSettings }: PanelChatViewProps) {
   const { t } = useTranslation("chat")
+  const { toast } = useToast()
 
   // Only read LLM backend state from global store (read-only, never affects chat page)
   const { llmBackends, llmBackendLoading } = useStore(selectLlmBackendState)
   const { loadBackends } = useStore(selectChatActions)
+  const activeBackendId = useStore((s) => s.activeBackendId)
+  const activateBackend = useStore((s) => s.activateBackend)
+  const user = useStore((s) => s.user)
 
   // Independent panel state — does NOT touch global messages/sessionId
   const [panelMessages, setPanelMessages] = useState<Message[]>([])
   const [isHistoryLoading, setIsHistoryLoading] = useState(true)
+  const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
   const panelSessionIdRef = useRef<string | null>(null)
 
   // Streaming state
@@ -321,15 +325,6 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         case "Plan":
           dispatch({ type: 'PLAN', step: data.step })
           break
-        case "ExecutionPlanCreated":
-          dispatch({ type: 'EXECUTION_PLAN', plan: data.plan })
-          break
-        case "PlanStepStarted":
-          dispatch({ type: 'PLAN_STEP_STARTED', stepId: data.stepId, description: data.description })
-          break
-        case "PlanStepCompleted":
-          dispatch({ type: 'PLAN_STEP_COMPLETED', stepId: data.stepId, success: data.success ?? true, summary: data.summary ?? '' })
-          break
         case "Warning":
           dispatch({ type: 'WARNING', message: data.message })
           break
@@ -375,10 +370,20 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     return () => { void unsubscribe() }
   }, [addPanelMessage, t])
 
+  // Multimodal gate — mirrors the chat page's composer input
+  const activeBackend = llmBackends.find(b => b.id === activeBackendId)
+  const supportsMultimodal = activeBackend?.capabilities?.supports_multimodal ?? false
+
   // Send message — ensure session is ready before sending
   const handleSend = useCallback(async () => {
     const text = input.trim()
-    if (!text || streamState.isStreaming) return
+    if ((!text && attachedImages.length === 0) || streamState.isStreaming) return
+
+    // Images need a vision-capable backend
+    if (attachedImages.length > 0 && !supportsMultimodal) {
+      toast({ title: t("model.visionError"), variant: "destructive" })
+      return
+    }
 
     // Ensure we have a session before sending
     if (!panelSessionIdRef.current) {
@@ -388,10 +393,13 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     addPanelMessage({
       id: generateId(),
       role: "user",
-      content: text,
+      content: text || "[Image]",
       timestamp: Math.floor(Date.now() / 1000),
+      images: attachedImages.length > 0 ? [...attachedImages] : undefined,
     })
 
+    const sentImages = attachedImages.length > 0 ? [...attachedImages] : undefined
+    setAttachedImages([])
     setInput("")
     if (inputRef.current) inputRef.current.style.height = "auto"
     dispatch({ type: 'START_STREAM' })
@@ -403,11 +411,36 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       ? [pageContext, assistant?.focusHint].filter(Boolean).join("\n") || undefined
       : undefined
     if (!hasInjectedContextRef.current) hasInjectedContextRef.current = true
-    ws.sendMessage(text, undefined, undefined, contextToSend)
+    ws.sendMessage(text, sentImages, undefined, contextToSend)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [input, streamState.isStreaming, addPanelMessage, createPanelSession, pageContext])
+  }, [input, attachedImages, streamState.isStreaming, addPanelMessage, createPanelSession, pageContext, supportsMultimodal, toast, t, assistant])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
+
+  // Context estimate — mirrors the chat page's composer input
+  const contextUsage = useMemo(() => {
+    if (filteredMessages.length === 0) return null
+    const maxContext = activeBackend?.capabilities?.max_context ?? 8192
+    const msgChars = panelMessages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0)
+    const streamChars = (streamState.streamingContent?.length ?? 0) + (streamState.streamingThinking?.length ?? 0)
+      + streamState.streamingToolCalls.reduce((s, tc) => s + (tc.arguments?.length ?? 0) + (tc.result?.length ?? 0), 0)
+    return { used: Math.ceil((msgChars + streamChars) / 3), max: maxContext }
+  }, [filteredMessages.length, panelMessages, activeBackend, streamState.streamingContent, streamState.streamingThinking, streamState.streamingToolCalls])
+
+  // Cancel the in-flight request (same channel the chat page uses)
+  const handleCancelRequest = useCallback(() => {
+    if (!streamState.isStreaming) return
+    ws.sendMessage("__CANCEL__", undefined)
+    dispatch({ type: 'ERROR' })
+    setCurrentStreamMessageId(null)
+    currentStreamMessageIdRef.current = null
+    addPanelMessage({
+      id: generateId(),
+      role: "assistant",
+      content: "⚠️ Request cancelled by user",
+      timestamp: Math.floor(Date.now() / 1000),
+    })
+  }, [streamState.isStreaming, addPanelMessage])
 
   return (
     <div className="flex flex-col h-full bg-background">
@@ -541,16 +574,22 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               )}
             </div>
           ) : (
-            <MergedMessageList
+            <ChatMessages
               messages={filteredMessages}
-              scrollElementRef={scrollContainerRef}
+              user={user}
               isStreaming={streamState.isStreaming && !(currentStreamMessageId && filteredMessages.some(m => m.id === currentStreamMessageId))}
               streamingContent={streamState.streamingContent}
               streamingThinking={streamState.streamingThinking}
+              streamingRoundThinking={streamState.streamingRoundThinking}
               streamingToolCalls={streamState.streamingToolCalls}
-              executionPlan={streamState.executionPlan}
-              planStepStates={streamState.planStepStates}
               roundContents={streamState.roundContents}
+              currentRound={streamState.currentRound}
+              streamingMessageId={currentStreamMessageId}
+              onScrollToBottom={() => {
+                const el = scrollContainerRef.current
+                if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+              }}
+              endRef={messagesEndRef}
             />
           )}
 
@@ -558,38 +597,32 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           <div ref={messagesEndRef} />
       </div>
 
-      {/* Input area */}
-      <div className="bg-[var(--background)] backdrop-blur-xl px-4 pt-3 pb-6 flex-shrink-0">
-        <div className="flex items-center gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSend()
-                }
-                if (e.key === "Escape") onClose()
-              }}
-              placeholder={streamState.isStreaming ? t("status.wait", "请等待...") : t("input.placeholder")}
-              rows={1}
-              disabled={streamState.isStreaming}
-              className="flex-1 px-4 py-2.5 rounded-lg resize-none text-sm border border-input bg-card text-foreground placeholder:text-muted-foreground focus-visible:outline-none transition-all duration-200 min-h-[44px] max-h-32 disabled:opacity-60"
-              onInput={(e) => {
-                const el = e.target as HTMLTextAreaElement
-                el.style.height = "auto"
-                el.style.height = Math.min(el.scrollHeight, 128) + "px"
-              }}
-            />
-          <button
-            onClick={handleSend}
-            disabled={!input.trim() || streamState.isStreaming}
-            className="h-[44px] w-[44px] rounded-lg flex-shrink-0 bg-primary hover:bg-primary-hover text-primary-foreground flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Send className="h-5 w-5" />
-          </button>
-        </div>
+      {/* Input area — the shared ChatComposer, same design as the chat page */}
+      <div className="px-3 pt-3 pb-4 flex-shrink-0">
+        <ChatComposer
+          value={input}
+          onChange={setInput}
+          onSend={handleSend}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
+              handleSend()
+            }
+            if (e.key === "Escape") onClose()
+          }}
+          textareaRef={inputRef}
+          placeholder={t("input.placeholder")}
+          isStreaming={streamState.isStreaming}
+          onCancel={handleCancelRequest}
+          attachments={attachedImages}
+          onAttachmentsChange={setAttachedImages}
+          supportsMultimodal={supportsMultimodal}
+          backends={llmBackends}
+          activeBackendId={activeBackendId}
+          onActivateBackend={activateBackend}
+          contextUsage={contextUsage}
+          maxHeight={128}
+        />
       </div>
     </div>
   )
