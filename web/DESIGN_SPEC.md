@@ -287,9 +287,10 @@ Every page must use `PageLayout` from `@/components/layout/PageLayout`.
 ```
 
 **Rules:**
+- Desktop title row: single compact line via PageHeader — **no description/subtitle rendered** (deprecated prop kept for compat); the row is `mx-auto` + maxWidth so the title left-aligns with the content below
 - Content area uses `overflow-auto` via PageLayout's scroll container — do NOT add your own scroll
-- Fixed headers (tabs) go in `headerContent` prop
-- Fixed footers (pagination) go in `footer` prop
+- Fixed headers (tabs/toolbars) go in `headerContent` prop — toolbar rows use `px-4 sm:px-6 md:px-8` matching the title row; NO border-b under the row (content separation is the capsule/toolbar's own affordances)
+- Fixed footers (pagination) go in `footer` prop; the footer offsets past both sidebars via `--app-sidebar-width`
 - Page-level loading MUST use skeleton screens, never spinners
 
 ### Tabs Pattern: `PageTabsBar` + `PageTabsContent`
@@ -1601,24 +1602,35 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 
 ---
 
-## 28. Navigation (AppSidebar icon rail)
+## 28. Navigation & Shell (AppSidebar rail + floating controls)
 
 ### Architecture (desktop)
 
-- **AppSidebar** (`components/layout/AppSidebar.tsx`): the desktop's ENTIRE chrome — a fixed 60px icon rail, full height. There is NO top bar: the shell (`App.tsx`) lays out `[AppSidebar][page-sidebar slot][main]`, and the whole window height belongs to content.
-- **navItems.ts** (`components/layout/navItems.ts`): the shared nav definition (paths, icons, i18n keys, active-route logic). The rail and MobileNav must not fork these.
+- **AppSidebar** (`components/layout/AppSidebar.tsx`): a fixed **72px** icon rail, full height — the app's primary navigation. The shell (`App.tsx`) lays out `[AppSidebar][page-sidebar slot][content column]`; there is NO top bar.
+- **navItems.ts** (`components/layout/navItems.ts`): shared nav definition (paths, icons, i18n keys, active-route logic). The rail and MobileNav must not fork these.
+- **GlobalControls** (`components/layout/GlobalControls.tsx`): the top-right cluster — theme / language / alerts — floating over the content area's title row (chat: over the message area with a faint surface). Instance selector and onboarding live in the rail footer.
 
 ### Rail structure (top → bottom)
 
-- Header: brand mark; reserves the macOS traffic-light strip (`--titlebar-inset`, set here) and is the window drag region
-- Nav: flat icon list (8 items, no grouping) — hover tooltips on `side="right"` carry the names; active icon = `bg-muted` square
-- Footer utilities: instance selector (compact square), theme toggle, settings, alerts (`AlertsMenu`, badge + upward dropdown), onboarding rocket — then the **user avatar LAST at the very bottom** (upward dropdown: theme / language / settings / about / logout)
+- Brand mark (traffic-light strip `--titlebar-inset`=32px reserved above it, macOS Tauri)
+- Nav: flat icon list (8 items) — tooltips on `side="right"`; active = `bg-muted` square; all icons h-5
+- Footer: instance selector (compact square) · onboarding rocket (badge) · settings · **user avatar LAST** (upward dropdown: theme / language / settings / about / logout); `gap-2` spacing
 
-### Fixed width
+### Window dragging (Tauri)
 
-60px, always — no expand/collapse duality. `--app-sidebar-width` (60px desktop, 0 mobile) is exported on `<html>`; fixed full-bleed surfaces (ChatPage's keyboard-aware container, PageLayout's fixed footer) offset with `left: var(--app-sidebar-width, 0px)`. **Any new fixed element must do the same.** `--topnav-height` is 0 everywhere (no top bar).
+Three drag surfaces, all via `lib/windowDrag.ts` (mousedown → `startDragging`, skips interactive elements): the rail itself, each page-drawer's top strip (absolute, covers clearance + header; header content sits at z-[1]), and the content area's top strip (h-14, z-10 — below GlobalControls z-20, below page headers at z-[15]+).
 
-Style: mono accent language — the UI carries NO brand color (orange survives only in the logo mark, semantic/data colors, and the login/setup brand washes). The rail is `--sidebar-bg` (light: ~#F8F9FA on a white canvas; dark: below-canvas dark), separated from content by **color contrast, no border**; page sidebars (sessions/dashboard list) share the rail tone, no border-r, no header/footer divider lines, no count footers.
+### Fixed surfaces & widths
+
+- `--app-sidebar-width` (72px desktop / 0 mobile) and `--page-sidebar-width` (drawer column, live-tracked via ResizeObserver) are exported on `<html>`; ChatPage's keyboard container offsets `left: calc(app + page sidebar)`. **Any new fixed element must offset the same way.**
+- `--topnav-height` is 0 everywhere (no top bar).
+- Page drawers (session list, dashboard list): fixed 256px, never collapse, `bg-background` + `border-r`, titles aligned with the page title row (safe-area + 1rem top padding; no traffic-light inset — the lights only cover the rail).
+
+### Page chrome pattern (all desktop pages)
+
+Title row (`PageHeader`, single compact line, no descriptions, mx-auto maxWidth aligned with content) → optional toolbar row (PageTabsBar / DashboardToolbar: tabs left, actions right, `px-4 sm:px-6 md:px-8`, no border-b) → content. Chat has no title row; its floating controls carry a faint `bg-background/60` pill.
+
+Style: mono accent — no brand color in UI chrome (orange lives in the logo, semantic/data colors, login/setup washes). Rail = `--sidebar-bg` (light ~#F8F9FA, dark 0.10), drawers = content tone, separated by color contrast + the drawer's border-r.
 
 ---
 
@@ -1929,7 +1941,9 @@ The `Field` component from `@/components/ui/field` auto-links labels, errors, an
 | Theme Provider | `web/src/components/ui/theme.tsx` |
 | Theme Toggle | `web/src/components/layout/ThemeToggle.tsx` |
 | App Sidebar | `web/src/components/layout/AppSidebar.tsx` |
-| Top Bar | `web/src/components/layout/TopBar.tsx` |
+| Global Controls | `web/src/components/layout/GlobalControls.tsx` |
+| Alerts Menu | `web/src/components/layout/AlertsMenu.tsx` |
+| Window Drag | `web/src/lib/windowDrag.ts` |
 | Nav Items (shared) | `web/src/components/layout/navItems.ts` |
 | Toast Hook | `web/src/components/ui/use-toast.ts` |
 | Toast Component | `web/src/components/ui/toast.tsx` |
