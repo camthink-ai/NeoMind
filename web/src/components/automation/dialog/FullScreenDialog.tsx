@@ -62,21 +62,24 @@ export function FullScreenDialog({
     <div
       className={cn(
         "fixed inset-0 flex flex-col",
-        // Glassmorphism background - lower opacity to show content behind
-        "bg-overlay-light",
+        // Heavier backdrop than sheets: these are heavy editors, and the
+        // framed surface below needs contrast to read as a window
+        "bg-overlay-medium",
         "backdrop-blur-sm",
         !open && "hidden"
       )}
       style={{ zIndex }}
       onClick={() => !disableBackdropClose && onOpenChange(false)}
     >
-      {/* Inner container - prevents click propagation */}
+      {/* Inner container. Desktop: a framed floating sheet (inset + rounded
+          + border + shadow) over the page — the modern editor look; keeps
+          page context visible around it. Mobile: full-bleed chrome. */}
       <div
         className={cn(
-          "flex flex-col flex-1 overflow-hidden",
-          // Full-bleed: opaque bg-background on desktop (page-like, max space
-          // for heavy editors); --chrome on mobile via inline style.
-          isMobile ? "" : "bg-popover",
+          "flex flex-col overflow-hidden",
+          isMobile
+            ? "flex-1"
+            : "m-4 sm:m-6 flex-1 rounded-xl border border-border bg-background shadow-xl",
           className
         )}
         onClick={(e) => e.stopPropagation()}
