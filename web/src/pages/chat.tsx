@@ -1323,9 +1323,9 @@ export function ChatPage() {
                 onClick={scrollToBottom}
                 className="absolute bottom-4 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-md transition-all hover:bg-muted active:scale-95"
                 aria-label={t("chat:scrollToBottom", "回到底部")}
-                // Align with the message column's right edge (max-w-3xl,
-                // centered) instead of floating at the window edge
-                style={{ right: "max(1rem, calc((100% - 48rem) / 2 - 0.75rem))" }}
+                // Sit beside the message bubbles (85% of the centered
+                // max-w-3xl column) where the copy button lives
+                style={{ right: "max(1rem, calc((100% - 48rem) / 2 + 6.45rem))" }}
               >
                 <ChevronDown className="h-4 w-4" />
               </button>
