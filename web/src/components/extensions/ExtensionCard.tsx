@@ -18,7 +18,7 @@ import {
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
-import { textNano, textMini } from "@/design-system/tokens/typography"
+import { textNano, textMini, textMicro } from "@/design-system/tokens/typography"
 import type { Extension } from "@/types"
 
 interface ExtensionCardProps {
@@ -135,13 +135,13 @@ export function ExtensionCard({
             Single line, stable height whether tools are on or off. */}
         <div className="mt-auto flex items-center gap-2 pt-2">
           {extension.commands?.length > 0 && (
-            <span className={cn(textMini, "text-muted-foreground flex items-center gap-1 shrink-0")}>
+            <span className={cn(textNano, "text-muted-foreground flex items-center gap-1 shrink-0")}>
               <Terminal className="h-3 w-3" />
               {extension.commands.length} {t('commandsLabel', { defaultValue: 'commands' })}
             </span>
           )}
           {extension.metrics?.length > 0 && (
-            <span className={cn(textMini, "text-muted-foreground flex items-center gap-1 shrink-0")}>
+            <span className={cn(textNano, "text-muted-foreground flex items-center gap-1 shrink-0")}>
               <Database className="h-3 w-3" />
               {extension.metrics.length} {t('metricsLabel', { defaultValue: 'metrics' })}
             </span>
@@ -160,7 +160,7 @@ export function ExtensionCard({
             </span>
           )}
           {extension.author && (
-            <span className={cn(textNano, "text-muted-foreground truncate ml-auto")} title={extension.author}>
+            <span className={cn(textMicro, "text-muted-foreground truncate ml-auto")} title={extension.author}>
               {t('card.byAuthor', { author: extension.author })}
             </span>
           )}
