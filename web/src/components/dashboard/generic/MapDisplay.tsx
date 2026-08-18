@@ -1223,7 +1223,7 @@ export function MapDisplay({
       {fullscreenOverlay}
       {fullscreenImage && createPortal(
         <div
-          className="fixed inset-0 z-[200] bg-overlay-heavy backdrop-blur-sm flex items-center justify-center"
+          className="fixed inset-0 z-[110] bg-overlay-heavy backdrop-blur-sm flex items-center justify-center"
           onClick={() => setFullscreenImage(null)}
         >
           <div className="absolute top-4 left-4 right-4 flex items-center justify-between">

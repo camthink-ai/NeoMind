@@ -1336,19 +1336,6 @@ html {
   }
 }
 
-/* Mobile edit bar - ensure proper z-index and touch handling */
-.mobile-edit-bar {
-  position: fixed;
-  z-index: 9999;
-  touch-action: manipulation;
-}
-
-/* Mobile edit bar buttons */
-.mobile-edit-bar button {
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
 /* Selected component indicator on mobile */
 @media (hover: none) and (pointer: coarse) {
   .react-grid-layout.edit-mode .react-grid-item.selected {

@@ -57,7 +57,7 @@ export function NavigationProgress() {
 
   return (
     <div
-      className="fixed top-0 left-0 h-0.5 z-[300] bg-primary pointer-events-none"
+      className="fixed top-[env(safe-area-inset-top,0px)] left-0 h-0.5 z-[300] bg-primary pointer-events-none"
       style={{
         width: `${progress}%`,
         transition: 'width 0.2s ease-out',

@@ -599,7 +599,7 @@ export function SessionSidebar({
       {/* Backdrop */}
       {open && (
         <div
-          className="fixed inset-0 bg-overlay-light backdrop-blur-sm z-[60] transition-opacity lg:hidden"
+          className="fixed inset-0 bg-overlay-light backdrop-blur-sm z-50 transition-opacity lg:hidden"
           onClick={onClose}
         />
       )}
@@ -607,7 +607,7 @@ export function SessionSidebar({
       {/* Sidebar */}
       <div
         className={cn(
-          "fixed top-0 left-0 h-full w-72 z-[70] lg:hidden safe-top",
+          "fixed top-0 left-0 h-full w-72 z-50 lg:hidden safe-top",
           // bg-popover matches the desktop persistent sidebar and every
           // other drawer / popup in the app. Previously bg-background,
           // which is /97% alpha in dark mode and let the page + backdrop

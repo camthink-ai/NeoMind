@@ -57,7 +57,7 @@ const FullscreenImage = memo(function FullscreenImage({ src, alt, onClose }: {
 }) {
   if (!src) return null
   return (
-    <div className="fixed inset-0 z-50 bg-bg-95 backdrop-blur-sm flex items-center justify-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[110] bg-bg-95 backdrop-blur-sm flex items-center justify-center" onClick={onClose}>
       <Button variant="ghost" size="icon" className="absolute top-4 right-4" onClick={onClose}>
         <Minimize2 className="h-5 w-5" />
       </Button>

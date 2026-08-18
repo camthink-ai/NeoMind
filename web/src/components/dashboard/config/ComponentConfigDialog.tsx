@@ -251,7 +251,7 @@ export function ComponentConfigDialog({
     return createPortal(
       <>
         {open && (
-          <div className="fixed inset-0 z-50 bg-background animate-in fade-in duration-200">
+          <div className="fixed inset-0 z-[100] bg-background animate-in fade-in duration-200">
             <div className="flex h-full w-full flex-col">
               {/* Header */}
               <div

@@ -193,7 +193,7 @@ export const MobileEditBar = memo(function MobileEditBar({
         className={cn(
           'fixed left-4 right-4 bottom-4 z-50',
           'bg-bg-95 backdrop-blur-md',
-          'rounded-2xl shadow-2xl shadow-black/20',
+          'rounded-2xl shadow-xl',
           'border border-border',
           'transition-all duration-300 ease-out',
           // Safe area padding
@@ -292,7 +292,7 @@ export const CompactMobileEditBar = memo(function CompactMobileEditBar({
           'fixed left-1/2 -translate-x-1/2 bottom-4 z-50',
           'flex items-center gap-2',
           'bg-bg-95 backdrop-blur-md',
-          'rounded-2xl shadow-2xl shadow-black/20',
+          'rounded-2xl shadow-xl',
           'border border-border',
           'p-2',
           'transition-all duration-300 ease-out',

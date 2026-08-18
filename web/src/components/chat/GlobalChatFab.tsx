@@ -91,7 +91,7 @@ export function GlobalChatFab() {
       {/* Floating chat window — bottom-right corner */}
       <div
         className={cn(
-          "fixed z-[100]",
+          "fixed z-[90]",
           // Origin from bottom-right (FAB position)
           "origin-bottom-right",
           // Smooth transitions
@@ -102,7 +102,7 @@ export function GlobalChatFab() {
             : "bottom-20 right-6 w-14 h-14 rounded-full opacity-0 scale-0 pointer-events-none",
           "backdrop-blur-2xl",
           "border border-glass-border",
-          "shadow-2xl",
+          "shadow-xl",
           "flex flex-col overflow-hidden"
         )}
         style={{ backgroundColor: "var(--surface-glass)", backdropFilter: "blur(40px) saturate(1.8)" }}

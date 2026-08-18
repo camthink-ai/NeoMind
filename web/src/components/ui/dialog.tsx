@@ -60,6 +60,14 @@ const DialogContent = React.forwardRef<
     return false
   })
 
+  // Extract z-index from className for nested dialog support — must happen for
+  // BOTH branches: a dialog nested above a z-[100] fullscreen layer passes
+  // className="z-[110]", and the overlay has to lift with the content or it
+  // renders under the fullscreen layer (content visible, scrim gone,
+  // outside-click dismissal broken).
+  const zIndexMatch = className?.match(/z-\[?(\d+)\]?/)
+  const overlayClassName = zIndexMatch ? `z-[${zIndexMatch[1]}]` : undefined
+
   // Mobile: full screen
   if (isMobile && fullScreenOnMobile) {
     return (
@@ -68,7 +76,8 @@ const DialogContent = React.forwardRef<
           className={cn(
             "fixed inset-0 z-50 bg-overlay-heavy",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
-            "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
+            "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+            overlayClassName
           )}
         />
         <DialogPrimitive.Content
@@ -103,10 +112,6 @@ const DialogContent = React.forwardRef<
   }
 
   // Desktop: centered dialog
-  // Extract z-index from className for nested dialog support
-  const zIndexMatch = className?.match(/z-\[?(\d+)\]?/)
-  const overlayClassName = zIndexMatch ? `z-[${zIndexMatch[1]}]` : undefined
-
   return (
     <DialogPortal>
       <DialogOverlay className={overlayClassName} />
@@ -192,7 +197,7 @@ const DialogFooter = ({
       className={cn(
         "flex flex-row justify-end gap-2 sm:gap-3",
         "mt-4 sm:mt-0",
-        isMobile && "px-4 py-3 border-t shrink-0 bg-popover sticky bottom-0",
+        isMobile && "px-4 py-3 border-t shrink-0 bg-popover sticky bottom-0 z-10",
         className
       )}
       {...props}

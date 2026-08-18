@@ -34,7 +34,7 @@ export function BackendUnavailableOverlay({
   const { t } = useTranslation('common')
 
   return (
-    <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-background p-6">
+    <div className="fixed inset-0 z-[300] flex flex-col items-center justify-center bg-background p-6">
       <div className="flex flex-col items-center gap-4 max-w-md text-center">
         <BrandLogoHorizontal className="h-10 mb-2" />
 

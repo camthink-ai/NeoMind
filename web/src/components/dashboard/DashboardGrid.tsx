@@ -270,7 +270,7 @@ export function DashboardGrid({
         }
         .react-grid-layout.edit-mode > .react-grid-item.react-draggable-dragging {
           z-index: 100;
-          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.15);
+          box-shadow: var(--shadow-xl);
           transition: none; opacity: 0.9;
         }
         .react-grid-layout.edit-mode > .react-grid-item.resizing {

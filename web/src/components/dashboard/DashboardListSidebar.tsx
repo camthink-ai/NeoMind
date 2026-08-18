@@ -7,6 +7,8 @@
  */
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
+import { getPortalRoot } from '@/lib/portal'
 import {
   LayoutDashboard,
   Plus,
@@ -332,7 +334,7 @@ function DashboardSidebarContent({
                               <MoreVertical className="h-3 w-3" />
                             </button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="z-[200]">
+                          <DropdownMenuContent align="end">
                             {canReorder && (
                               <>
                                 <DropdownMenuItem
@@ -436,14 +438,16 @@ export function DashboardListSidebar({
     )
   }
 
-  // Mobile mode: drawer with backdrop
-  return (
+  // Mobile mode: drawer — portaled to the dialog root so the fixed overlay
+  // escapes any in-page stacking context and stacks at the base dialog tier
+  // (z-50) like every other drawer (MobileNav Sheet, SessionSidebar). Full
+  // height, covering the chrome, no --topnav-height geometric coupling.
+  return createPortal(
     <>
       {/* Backdrop */}
       {open && (
         <div
-          className="fixed inset-0 bg-overlay-light backdrop-blur-sm z-[55] transition-opacity lg:hidden"
-          style={{ top: 'var(--topnav-height, 56px)' }}
+          className="fixed inset-0 bg-overlay-light backdrop-blur-sm z-50 transition-opacity lg:hidden"
           onClick={() => onOpenChange?.(false)}
         />
       )}
@@ -451,7 +455,7 @@ export function DashboardListSidebar({
       {/* Sidebar Drawer */}
       <div
         className={cn(
-          'fixed left-0 bottom-0 w-72 z-[60] lg:hidden safe-top',
+          'fixed top-0 left-0 h-full w-72 z-50 lg:hidden safe-top',
           // bg-popover matches desktop persistent sidebar and all other
           // drawers. Previously bg-background (dark-mode /97% alpha) which
           // produced a visible dark tint vs the topnav chrome above.
@@ -460,7 +464,6 @@ export function DashboardListSidebar({
           open ? 'translate-x-0' : '-translate-x-full',
           className
         )}
-        style={{ top: 'var(--topnav-height, 56px)' }}
       >
         <DashboardSidebarContent
           dashboards={dashboards}
@@ -475,6 +478,7 @@ export function DashboardListSidebar({
           isDesktop={false}
         />
       </div>
-    </>
+    </>,
+    getPortalRoot()
   )
 }

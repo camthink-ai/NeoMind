@@ -276,7 +276,7 @@ export function DashboardTabBar({
               <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="min-w-[14rem] max-w-[20rem] z-[200]">
+          <DropdownMenuContent align="start" className="min-w-[14rem] max-w-[20rem]">
             {dashboards.map((d) => {
               const active = d.id === currentDashboardId
               return (
@@ -484,7 +484,7 @@ export function DashboardTabBar({
                           <MoreVertical className="h-3.5 w-3.5" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="z-[200]">
+                      <DropdownMenuContent align="end">
                         {canReorder && (
                           <>
                             <DropdownMenuItem

@@ -567,7 +567,7 @@ function App() {
                   <main
                     id="main-content"
                     tabIndex={-1}
-                    className="relative z-10 flex flex-1 min-h-0 overflow-hidden focus:outline-none"
+                    className="relative flex flex-1 min-h-0 overflow-hidden focus:outline-none"
                     style={{paddingTop: 'var(--topnav-height, calc(4rem + env(safe-area-inset-top, 0px)))'}}>
                     <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <ErrorBoundary>
@@ -611,8 +611,6 @@ function App() {
                     </ErrorBoundary>
                     </div>
                   </main>
-                  <Toaster />
-                  <Confirmer />
                   <SettingsDialog />
                   <SwipeNavigation />
                   {!isMobile && <GlobalChatFab />}

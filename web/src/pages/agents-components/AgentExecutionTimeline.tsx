@@ -990,7 +990,7 @@ function InputDataImage({ source, image }: { source: string; image: string }) {
       </div>
       {fullscreen && (
         <div
-          className="fixed inset-0 z-[200] bg-overlay-heavy flex items-center justify-center"
+          className="fixed inset-0 z-[110] bg-overlay-heavy flex items-center justify-center"
           onClick={() => setFullscreen(false)}
         >
           <img src={image} alt={source} className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg" />

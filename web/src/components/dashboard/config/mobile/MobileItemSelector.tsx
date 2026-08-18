@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom'
+import { getPortalRoot } from '@/lib/portal'
 import { ChevronLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -63,7 +64,7 @@ export function MobileItemSelector({
     : (selectedExtension?.name || t('extensions:selectExtension') || 'Select Extension')
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] bg-background animate-in slide-in-from-right-0 duration-200">
+    <div className="fixed inset-0 z-[100] bg-background animate-in slide-in-from-right-0 duration-200">
       <div className="flex h-full w-full flex-col">
         {/* Header */}
         <div
@@ -155,6 +156,6 @@ export function MobileItemSelector({
         </div>
       </div>
     </div>,
-    document.body
+    getPortalRoot()
   )
 }

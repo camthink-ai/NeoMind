@@ -2372,7 +2372,7 @@ function ResourceSelectionDialog({
     return createPortal(
       <div
         className={cn(
-          "fixed inset-0 z-[110] bg-background flex flex-col",
+          "fixed inset-0 z-[100] bg-background flex flex-col",
           !open && "hidden"
         )}
         style={{

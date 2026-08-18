@@ -1160,7 +1160,7 @@ export function ExtensionDetailsDialog({
         open={!!pendingDisable}
         onOpenChange={(open) => { if (!open) setPendingDisable(null) }}
       >
-        <AlertDialogContent className="z-[200]">
+        <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
               {t("extensions:tools.confirmDisableTitle", {

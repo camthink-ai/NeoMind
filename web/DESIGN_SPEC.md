@@ -585,17 +585,29 @@ import { getStatusColorClass, getStatusBgClass } from '@/design-system/utils/for
 
 ## 8. Dialog & Z-Index Layering Standard
 
-### Z-Index Stack
+### Z-Index Stack (complete ladder)
 
 | Level | Value | Usage |
 |-------|-------|-------|
 | Base | `z-0` | Normal content |
-| Sticky | `z-10` | Sticky headers |
+| Sticky | `z-10` | In-page sticky headers, toolbars, table headers |
+| Desktop chrome | `z-20` | Fixed top navigation bar (TopNav) |
+| Mobile chrome | `z-30` | Mobile sticky page header (MobilePageHeader) |
 | Dropdowns | `z-40` | Mobile nav, sidebars |
-| Overlay | `z-50` | Dialog overlays (UnifiedFormDialog, Sheet) |
-| Full Screen | `z-[100]` | Full-screen dialogs (FullScreenDialog) |
-| Full Screen Header | `z-[110]` | Full-screen dialog headers, nested dialogs |
+| Overlay | `z-50` | Dialog overlays (UnifiedFormDialog, Sheet, drawers, FAB) |
+| Floating window | `z-[90]` | Non-modal floating panels (GlobalChatFab panel) — below fullscreen layers, above dialogs |
+| Full Screen | `z-[100]` | Full-screen layers (FullScreenDialog, SettingsDialog, dashboard fullscreen, mobile full-screen portals) |
+| Full Screen Header | `z-[110]` | Full-screen dialog headers, nested dialogs, widget fullscreen viewers (image/video/map) |
 | Popovers / Alerts | `z-[200]` | Select, DropdownMenu, Popover, Tooltip, AlertDialog |
+| Toast | `z-[210]` | Toast viewport — must stay visible above AlertDialog scrims |
+| System | `z-[300]` | Route progress bar, instance switch overlay, backend-unavailable takeover |
+| Accessibility | `z-[400]` | Skip-to-content link (focused state only) |
+
+Rules of the ladder:
+
+- **Every fixed/overlay element must map onto a tier in this table.** Introducing a new value (e.g. `z-[55]`, `z-[70]`) is a spec violation — extend the table instead.
+- **Chrome tiers (z-20/z-30) lose to everything modal.** Drawers and dialogs cover the chrome; never geometrically dodge it with `top: var(--topnav-height)` hacks.
+- **Portal policy:** all fixed overlays must portal to `#dialog-root` via `getPortalRoot()` — never to `document.body`, and never rendered inline inside the page tree. Inline fixed elements can be trapped by ancestor stacking contexts (`z-index`/`opacity`/`transform`), which silently caps them below the chrome.
 
 ### Dialog Type → Z-Index Mapping
 
@@ -606,10 +618,13 @@ import { getStatusColorClass, getStatusBgClass } from '@/design-system/utils/for
 | `FullScreenDialog` header | `z-[110]` (via `zIndex` prop) | — | — |
 | Nested `UnifiedFormDialog` inside `FullScreenDialog` | `z-[110]` via `className` | `bg-black/80 backdrop-blur-sm` | `#dialog-root` |
 | Nested `Dialog` inside `FullScreenDialog` (image viewer) | `z-[110]` via `className` | `bg-black/80` | `#dialog-root` |
+| Widget fullscreen viewers (image/video/map/layer) | `z-[110]` | per viewer | `#dialog-root` |
+| Mobile full-screen portals (config editor, item selector) | `z-[100]` | `bg-background` | `#dialog-root` |
 | `AlertDialog` / `useConfirm` (`Confirmer`) | `z-[200]` (always top) | `bg-black/60` | `#dialog-root` |
 | `Sheet` (side panel) | `z-50` | `bg-bg-80 backdrop-blur-sm` | `#dialog-root` |
+| Drawer (SessionSidebar / DashboardListSidebar mobile) | `z-50` (mask + panel) | `bg-overlay-light backdrop-blur-sm` | `#dialog-root` |
 | Popover / Select / DropdownMenu / Tooltip | `z-[200]` | none | `#dialog-root` |
-| Toast notifications | `z-[200]` | none | viewport fixed |
+| Toast notifications | `z-[210]` | none | viewport fixed |
 
 ### Nesting Rules
 
@@ -629,7 +644,7 @@ import { getStatusColorClass, getStatusBgClass } from '@/design-system/utils/for
 
 **Rule 2: UnifiedFormDialog inside FullScreenDialog MUST use `className="z-[110]"`.**
 
-The `UnifiedFormDialog` auto-detects z-index from className: it extracts the value via regex (`z-\[?(\d+)\]?`) and applies it to both overlay and content.
+The `UnifiedFormDialog` auto-detects z-index from className: it extracts the value via regex (`z-\[?(\d+)\]?`) and applies it to both overlay and content. The base `DialogContent` (`ui/dialog.tsx`) does the same extraction **in both its desktop and mobile full-screen branches** — never hardcode a z value on a dialog overlay; pass it through `className` so the overlay lifts with the content.
 
 ```tsx
 // Auto-detection in UnifiedFormDialog (built-in):
@@ -951,8 +966,13 @@ When adding i18n keys, follow this checklist:
 | Glass border hover | `border-glass-border-hover` | Hover state |
 | Card | `bg-card` | Content cards |
 | Muted | `bg-muted` | Subtle backgrounds |
+| Chrome | `bg-[var(--chrome)]` | App chrome: top navigation bar |
 
-Fixed headers and footers should use `bg-surface-glass backdrop-blur` for the frosted glass effect.
+**Chrome is opaque by design.** Navigation chrome (TopNav) uses the opaque `--chrome`
+token, not glass: translucent bars caused transparent→solid paint flashes on WebKit and
+let content bleed through during overscroll. Glass surfaces are for *floating* elements
+(panels, masks, FABs) — `PageLayout`'s fixed footer (`bg-surface-glass`) is the one
+deliberate exception.
 
 ---
 

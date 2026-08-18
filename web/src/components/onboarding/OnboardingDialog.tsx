@@ -257,7 +257,7 @@ function LlmCliHelper() {
           <SelectTrigger className="h-8 w-auto min-w-[140px] text-xs">
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="z-[200]">
+          <SelectContent>
             {LLM_PROVIDERS.map((p) => (
               <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>
             ))}

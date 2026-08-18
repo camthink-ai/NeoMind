@@ -671,7 +671,7 @@ function TabActionsOverflow({
           </Button>
         )}
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="min-w-[12rem] z-[200]">
+      <DropdownMenuContent align="end" className="min-w-[12rem]">
         {actions.map((action) => {
           const icon = resolveActionIcon(action)
           const isDestructive = action.variant === 'destructive'
