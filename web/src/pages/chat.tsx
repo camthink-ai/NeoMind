@@ -965,7 +965,7 @@ export function ChatPage() {
           <div
             ref={scrollContainerRef}
             onScroll={handleScroll}
-            className={cn("touch-scroll relative flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4 pb-4", isDesktop && "pt-12")}
+            className={cn("touch-scroll relative flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 pt-6 pb-2 sm:pb-4 pb-4 md:pt-20")}
             onClick={(e) => {
               // If clicking outside interactive elements, dismiss keyboard
               if ((e.target as HTMLElement).closest('button, a, input, textarea, [role="button"]')) return
