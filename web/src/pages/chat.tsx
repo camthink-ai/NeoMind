@@ -1307,10 +1307,11 @@ export function ChatPage() {
                         <button
                           type="button"
                           onClick={scrollToBottom}
-                          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                           aria-label={t("chat:scrollToBottom", "回到底部")}
+                          title={t("chat:scrollToBottom", "回到底部")}
                         >
-                          <ChevronDown className="h-3 w-3" />
+                          <ChevronDown className="h-3.5 w-3.5" />
                         </button>
                       )}
                     </div>

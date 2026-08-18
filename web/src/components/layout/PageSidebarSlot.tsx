@@ -19,11 +19,18 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 
-/** Resolve the shell's page-sidebar slot element (null before mount / on mobile). */
+/** Resolve the shell's page-sidebar slot element. Watches the DOM: the slot
+    unmounts/remounts when the window crosses the mobile breakpoint, and a
+    one-shot query would leave a stale reference (the sidebar never comes
+    back after widening). */
 export function usePageSidebarSlot(): HTMLElement | null {
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   useEffect(() => {
-    setSlot(document.getElementById("page-sidebar-slot"))
+    const update = () => setSlot(document.getElementById("page-sidebar-slot"))
+    update()
+    const observer = new MutationObserver(update)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => observer.disconnect()
   }, [])
   return slot
 }

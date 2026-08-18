@@ -40,7 +40,7 @@ export function CopyMessageButton({ content, className }: CopyMessageButtonProps
       onClick={handleCopy}
       className={cn(
         "inline-flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors",
-        "opacity-100 md:opacity-0 md:group-hover:opacity-100",
+        "opacity-100",
         "hover:bg-muted hover:text-foreground",
         className
       )}
