@@ -609,7 +609,7 @@ export function DeviceDetail({
                         key={metricDef.name}
                         onClick={() => handleMetricCardClick(metricDef.name)}
                         className={cn(
-                          "group rounded-lg text-left transition-all duration-200 hover:shadow-md",
+                          "group rounded-lg text-left shadow-sm transition-all duration-200 hover:shadow-md",
                           isMobile ? "p-3 active:scale-[0.99]" : "p-6 hover:scale-[1.02]",
                           isVirtual
                             ? "bg-muted border-border hover:border-border"
