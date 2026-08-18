@@ -135,14 +135,14 @@ export function ExtensionCard({
             Single line, stable height whether tools are on or off. */}
         <div className="mt-auto flex items-center gap-2 pt-2">
           {extension.commands?.length > 0 && (
-            <span className={cn(textNano, "text-muted-foreground flex items-center gap-1 shrink-0")}>
-              <Terminal className="h-3 w-3" />
+            <span className={cn(textMicro, "text-muted-foreground flex items-center gap-1 shrink-0")}>
+              <Terminal className="h-2.5 w-2.5" />
               {extension.commands.length} {t('commandsLabel', { defaultValue: 'commands' })}
             </span>
           )}
           {extension.metrics?.length > 0 && (
-            <span className={cn(textNano, "text-muted-foreground flex items-center gap-1 shrink-0")}>
-              <Database className="h-3 w-3" />
+            <span className={cn(textMicro, "text-muted-foreground flex items-center gap-1 shrink-0")}>
+              <Database className="h-2.5 w-2.5" />
               {extension.metrics.length} {t('metricsLabel', { defaultValue: 'metrics' })}
             </span>
           )}
@@ -155,7 +155,7 @@ export function ExtensionCard({
               )}
               title={t('card.aiToolsOff', { defaultValue: 'Hidden from agent' })}
             >
-              <EyeOff className="h-3 w-3" />
+              <EyeOff className="h-2.5 w-2.5" />
               {t('card.aiToolsOffShort', { defaultValue: 'AI off' })}
             </span>
           )}
