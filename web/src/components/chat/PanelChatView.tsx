@@ -192,6 +192,15 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const activateBackend = useStore((s) => s.activateBackend)
   const user = useStore((s) => s.user)
 
+  // Sync the active backend to the WS singleton — the same effect the chat
+  // page runs. Without it, switching models from the panel updates the store
+  // and server, but outgoing frames keep the stale ws backendId and the next
+  // message still runs on the old model (the server only reconfigures the
+  // session agent when an explicit backendId rides the request).
+  useEffect(() => {
+    ws.setActiveBackend(activeBackendId)
+  }, [activeBackendId])
+
   // Independent panel state — does NOT touch global messages/sessionId
   const [panelMessages, setPanelMessages] = useState<Message[]>([])
   const [isHistoryLoading, setIsHistoryLoading] = useState(true)
