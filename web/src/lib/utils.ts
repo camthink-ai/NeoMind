@@ -1,5 +1,17 @@
 import { type ClassValue, clsx } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { extendTailwindMerge } from "tailwind-merge"
+
+// tailwind-merge doesn't know the custom fontSize utilities registered in
+// tailwind.config.js (text-micro/nano/mini/code/body/heading). Without this
+// it treats them as textColor classes, so cn(textMicro, 'text-muted-foreground')
+// silently dropped the SIZE — labels rendered at the inherited default.
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      'font-size': [{ text: ['micro', 'nano', 'mini', 'code', 'body', 'heading'] }],
+    },
+  },
+})
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
