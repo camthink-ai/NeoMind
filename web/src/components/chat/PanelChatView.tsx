@@ -20,6 +20,8 @@ import {
   selectChatActions,
 } from "@/store/selectors"
 import { usePageContext } from "@/hooks/usePageContext"
+import { pickPageAssistant } from "./pageAssistant"
+import { useLocation } from "react-router-dom"
 import { MergedMessageList } from "./MergedMessageList"
 import { Send, X, Minimize2, Bot, Plus, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -186,8 +188,16 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const [input, setInput] = useState("")
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  // Page context — reactive, only read when sending first message
+  // Page context — reactive, only read when sending first message.
+  // The page-scoped assistant adds a focus directive so the model
+  // specializes to the current page's domain (devices/agents/…).
   const pageContext = usePageContext()
+  const location = useLocation()
+  const { i18n } = useTranslation()
+  const assistant = useMemo(
+    () => pickPageAssistant(location.pathname, i18n.language),
+    [location.pathname, i18n.language]
+  )
   const hasInjectedContextRef = useRef(false)
 
   // Refs
@@ -388,8 +398,10 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     const streamMsgId = generateId()
     setCurrentStreamMessageId(streamMsgId)
     currentStreamMessageIdRef.current = streamMsgId
-    // Inject page context on first message only
-    const contextToSend = !hasInjectedContextRef.current && pageContext ? pageContext : undefined
+    // Inject page context + assistant focus directive on first message only
+    const contextToSend = !hasInjectedContextRef.current
+      ? [pageContext, assistant?.focusHint].filter(Boolean).join("\n") || undefined
+      : undefined
     if (!hasInjectedContextRef.current) hasInjectedContextRef.current = true
     ws.sendMessage(text, undefined, undefined, contextToSend)
     requestAnimationFrame(() => inputRef.current?.focus())
@@ -503,11 +515,30 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               </div>
             </div>
           ) : filteredMessages.length === 0 && !streamState.isStreaming ? (
-            <div className="flex flex-col items-center justify-center h-full gap-3">
+            <div className="flex flex-col items-center justify-center h-full gap-3 px-2">
               <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
                 <Bot className="h-6 w-6 text-foreground" />
               </div>
-              <p className="text-sm text-muted-foreground text-center">{t("input.startNewConversation")}</p>
+              <p className="text-sm text-muted-foreground text-center">
+                {assistant?.greeting || t("input.startNewConversation")}
+              </p>
+              {assistant && assistant.quickActions.length > 0 && (
+                <div className="flex flex-col items-stretch gap-1.5 w-full max-w-[260px]">
+                  {assistant.quickActions.map((qa) => (
+                    <button
+                      key={qa.label}
+                      type="button"
+                      onClick={() => {
+                        setInput(qa.prompt)
+                        requestAnimationFrame(() => inputRef.current?.focus())
+                      }}
+                      className="text-left text-xs rounded-lg border border-border bg-card px-3 py-2 text-muted-foreground transition-colors hover:text-foreground hover:bg-muted-50"
+                    >
+                      {qa.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <MergedMessageList

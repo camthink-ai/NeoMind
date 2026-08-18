@@ -585,7 +585,8 @@ function App() {
                     <main
                       id="main-content"
                       tabIndex={-1}
-                      className="relative flex flex-1 min-h-0 overflow-hidden focus:outline-none"
+                      className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden transition-[margin-right] duration-normal ease-out focus:outline-none"
+                      style={{ marginRight: "var(--dock-chat-width, 0px)" }}
                     >
                     {!isMobile && <GlobalControlsFloating />}
                     {/* Window drag strip — the whole top of the content area
@@ -642,6 +643,8 @@ function App() {
                   </main>
                   <SettingsDialog />
                   <SwipeNavigation />
+                  {/* Wide screens: the chat FAB docks as an in-flow right
+                      column beside main (squeezing the page content) */}
                   {!isMobile && <GlobalChatFab />}
                   </div>
                 </div>
