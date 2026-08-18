@@ -56,15 +56,17 @@ function MessageImages({ images }: { images: ChatImage[] }) {
   )
 }
 
-// Hook to detect desktop breakpoint (lg: 1024px)
+// Hook to detect desktop breakpoint — md: 768px, matching the app-wide
+// breakpoint (useIsMobile < 768). The old 1024 left the 768–1024 band in a
+// hybrid state.
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(() => {
     if (typeof window === 'undefined') return false
-    return window.innerWidth >= 1024
+    return window.innerWidth >= 768
   })
 
   useEffect(() => {
-    const checkIsDesktop = () => setIsDesktop(window.innerWidth >= 1024)
+    const checkIsDesktop = () => setIsDesktop(window.innerWidth >= 768)
     window.addEventListener("resize", checkIsDesktop)
     return () => window.removeEventListener("resize", checkIsDesktop)
   }, [])
