@@ -410,9 +410,9 @@ export function DashboardListSidebar({
     return (
       <div
         className={cn(
-          // White panel — distinct from the app rail's gray tone, matching
-          // the session list's surface
-          "h-full w-64 bg-background flex flex-col",
+          // Chrome panel — one step brighter than the rail in BOTH themes,
+          // matching the session list's surface
+          "h-full w-64 bg-[var(--chrome)] flex flex-col",
           className
         )}
       >
