@@ -31,7 +31,6 @@ import { useTheme } from "@/components/ui/theme"
 import { BrandLogo } from "@/components/shared/BrandName"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
-import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 import {
   Tooltip,
   TooltipContent,
@@ -52,8 +51,6 @@ import {
   DropdownMenuRadioItem,
 } from "@/components/ui/dropdown-menu"
 import { AlertsMenu } from "./AlertsMenu"
-import { InstanceSelector } from "./InstanceSelector"
-import { ThemeToggle } from "./ThemeToggle"
 import {
   navItems,
   isNavItemActive,
@@ -79,7 +76,6 @@ export function AppSidebar() {
   const user = useStore((s) => s.user)
   const logout = useStore((s) => s.logout)
   const { theme, setTheme } = useTheme()
-  const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
 
   // macOS Tauri overlay titlebar: expose the traffic-light inset so this
@@ -248,17 +244,9 @@ export function AppSidebar() {
 
         <div className="flex-1" />
 
-        {/* Footer — utilities stacked, avatar at the very bottom */}
+        {/* Footer — alerts / onboarding / settings / user. Instance, theme &
+            language live in the GlobalUtilityBar (content top-right). */}
         <div className="flex flex-col items-center gap-1 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <InstanceSelector compact onManageInstances={() => setInstanceManagerOpen(true)} />
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs px-2 py-1">
-              {t("instances.title", { defaultValue: "Instances" })}
-            </TooltipContent>
-          </Tooltip>
-          <ThemeToggle />
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -299,11 +287,7 @@ export function AppSidebar() {
         </div>
       </aside>
 
-      {/* Dialogs owned by the footer entries */}
-      <InstanceManagerDialog
-        open={instanceManagerOpen}
-        onOpenChange={setInstanceManagerOpen}
-      />
+      {/* Onboarding dialog — instance manager moved to the GlobalUtilityBar */}
       <OnboardingDialog
         open={onboardingOpen}
         onOpenChange={setOnboardingOpen}

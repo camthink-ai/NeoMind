@@ -21,8 +21,6 @@ import {
   MessageSquare,
   Trash2,
   Clock,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Check,
 } from "lucide-react"
@@ -47,10 +45,6 @@ interface SessionSidebarProps {
   open: boolean
   /** Mobile drawer mode: close handler */
   onClose: () => void
-  /** Desktop mode: collapsed state */
-  collapsed?: boolean
-  /** Desktop mode: toggle collapse */
-  onToggleCollapse?: () => void
   /** Is desktop mode (fixed sidebar) */
   isDesktop?: boolean
 }
@@ -58,8 +52,6 @@ interface SessionSidebarProps {
 export function SessionSidebar({
   open,
   onClose,
-  collapsed = false,
-  onToggleCollapse,
   isDesktop = false
 }: SessionSidebarProps) {
   const { t } = useTranslation('common')
@@ -309,21 +301,8 @@ export function SessionSidebar({
       {/* Header */}
       {showHeader && (
         <div className="flex items-center justify-between p-3">
-          {!collapsed && <h2 className="text-sm font-semibold">{t('session.sessions')}</h2>}
-          {isDesktop ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onToggleCollapse}
-              className={cn("h-6 w-6 rounded-lg", collapsed && "mx-auto")}
-            >
-              {collapsed ? (
-                <PanelLeftOpen className="h-4 w-4" />
-              ) : (
-                <PanelLeftClose className="h-4 w-4" />
-              )}
-            </Button>
-          ) : (
+          <h2 className="text-sm font-semibold">{t('session.sessions')}</h2>
+          {!isDesktop && (
             <Button
               variant="ghost"
               size="icon"
@@ -336,63 +315,14 @@ export function SessionSidebar({
         </div>
       )}
 
-      {/* Collapsed mode - only show icons */}
-      {collapsed ? (
-        <div className="flex-1 min-h-0 flex flex-col items-center py-2 gap-1 overflow-hidden">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={handleNewSession}
-            disabled={isCreating}
-            className="h-9 w-9 rounded-lg"
-            title={t('session.newChat')}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
-          <ScrollArea className="flex-1 w-full min-h-0">
-            <div className="flex flex-col items-center gap-1 py-1">
-              {sortedSessions.map((session) => {
-                const isActive = session.sessionId === currentSessionId
-                return (
-                  <Button
-                    key={session.sessionId}
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleSwitchSession(session.sessionId)}
-                        className={cn(
-                          "h-9 w-9 rounded-lg",
-                          isActive && "bg-background shadow-sm"
-                        )}
-                    title={getSessionTitle(session)}
-                  >
-                    <MessageSquare className={cn(
-                      "h-4 w-4",
-                      isActive ? "text-foreground" : "text-muted-foreground"
-                    )} />
-                  </Button>
-                )
-              })}
-              {/* Load more trigger */}
-              <div ref={loadMoreTriggerRef} className="h-1" />
-              {/* Loading indicator */}
-              {sessionsLoading && (
-                <div className="flex items-center justify-center py-2">
-                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                </div>
-              )}
-            </div>
-          </ScrollArea>
-        </div>
-      ) : (
-        <>
-          {/* Search */}
-          <div className="px-3 py-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                ref={searchInputRef}
-                type="text"
-                placeholder={t('session.search')}
+      {/* Search */}
+      <div className="px-3 py-2">
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            type="text"
+            placeholder={t('session.search')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-8 h-8 text-sm rounded-lg bg-muted-50 border-0"
@@ -541,8 +471,6 @@ export function SessionSidebar({
               )}
             </div>
           </ScrollArea>
-        </>
-      )}
     </>
   )
 
@@ -550,14 +478,14 @@ export function SessionSidebar({
   if (isDesktop) {
     return (
       <>
-        <div
-          className={cn(
-            // Gray rail tone (same as the AppSidebar) — separates from the
-            // white content canvas by color contrast, no border
-            "h-full bg-[var(--sidebar-bg)] flex flex-col transition-[width] duration-200 overflow-hidden",
-            collapsed ? "w-12" : "w-64"
-          )}
-        >
+      <div
+        className={cn(
+          // Gray rail tone (same as the AppSidebar) — separates from the
+          // white content canvas by color contrast, no border. Fixed width:
+          // the session list never collapses.
+          "h-full w-64 bg-[var(--sidebar-bg)] flex flex-col overflow-hidden"
+        )}
+      >
           {SidebarContent({})}
         </div>
 

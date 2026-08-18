@@ -206,7 +206,6 @@ export function ChatPage() {
   const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number } | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const pageSidebarSlot = usePageSidebarSlot()
   // Track the ID of the last assistant message for tool call result updates
   const [lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null)
@@ -960,17 +959,15 @@ export function ChatPage() {
       )}
 
       {/* Desktop Sidebar - always show when there are sessions or in chat mode.
-          Hoisted to the shell's full-height slot (left of the TopBar) so it
+          Hoisted to the shell's full-height slot (left of the content) so it
           sits level with the AppSidebar; falls back to in-flow if the slot
-          is unavailable. */}
+          is unavailable. Fixed width — never collapses. */}
       {isDesktop && (sessions.length > 0 || !isWelcomeMode) && (
         pageSidebarSlot ? createPortal(
           <PageSidebarColumn>
             <SessionSidebar
               open={true}
               onClose={() => {}}
-              collapsed={sidebarCollapsed}
-              onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
               isDesktop={true}
             />
           </PageSidebarColumn>,
@@ -980,8 +977,6 @@ export function ChatPage() {
           <SessionSidebar
             open={true}
             onClose={() => {}}
-            collapsed={sidebarCollapsed}
-            onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
             isDesktop={true}
           />
         </div>
