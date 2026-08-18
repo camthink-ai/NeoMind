@@ -593,7 +593,7 @@ function App() {
                         the floating controls (z-20) and above page content. */}
                     {!isMobile && (
                       <div
-                        className="absolute right-0 top-0 z-10 h-10"
+                        className="absolute right-0 top-0 z-10 h-14"
                         style={{ left: 'var(--page-sidebar-width, 0px)' }}
                         onMouseDown={handleWindowDragMouseDown}
                       />

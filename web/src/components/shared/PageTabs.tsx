@@ -136,7 +136,7 @@ export function PageTabsBar({
     <div className="flex shrink-0 items-center gap-3 bg-background px-4 py-2 sm:px-6 md:px-8">
       <div
         className={cn(
-          'flex min-w-0 max-w-full items-center overflow-x-auto scrollbar-none rounded-lg bg-muted/40 p-1 gap-1',
+          'flex min-w-0 max-w-full items-center overflow-x-auto scrollbar-none rounded-lg border border-border bg-card p-1 gap-1',
           tabsClassName
         )}
       >
@@ -148,9 +148,9 @@ export function PageTabsBar({
                   disabled={tab.disabled}
                   onClick={() => onTabChange(tab.value)}
                   className={cn(
-                    'inline-flex shrink-0 items-center justify-start gap-2 rounded-md px-3 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
+                    'inline-flex shrink-0 items-center justify-start gap-2 rounded-sm px-3 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
                     isActive
-                      ? 'bg-background text-foreground shadow-sm'
+                      ? 'bg-foreground text-background shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
@@ -282,9 +282,9 @@ export function PageTabs({
                       disabled={tab.disabled}
                       onClick={() => onTabChange(tab.value)}
                       className={cn(
-                        'inline-flex items-center justify-start gap-2 rounded-md px-3 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
+                        'inline-flex items-center justify-start gap-2 rounded-sm px-3 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
                         isActive
-                          ? 'bg-background text-foreground shadow-sm'
+                          ? 'bg-foreground text-background shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
                       )}
                     >
