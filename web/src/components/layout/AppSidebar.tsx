@@ -285,32 +285,33 @@ export function AppSidebar() {
 
         <div className="flex-1" />
 
-        {/* Footer — avatar (bottom-left) + released quick toggles: theme &
-            settings as direct buttons instead of buried in the avatar menu */}
+        {/* Footer — quick toggles on top, avatar LAST at the very bottom */}
         <div
           className={cn(
-            "flex items-center gap-1 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
-            collapsed && "flex-col px-2.5"
+            "flex flex-col gap-1 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
+            collapsed && "px-2.5"
           )}
         >
-          <div className={cn("min-w-0", !collapsed && "flex-1")}>{userEntry}</div>
-          <ThemeToggle />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("nav.settings")}
-                className="shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
-                onClick={() => openSettings()}
-              >
-                <Settings className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side={collapsed ? "right" : "top"} className="text-xs px-2 py-1">
-              {t("nav.settings")}
-            </TooltipContent>
-          </Tooltip>
+          <div className={cn("flex items-center gap-1", collapsed && "flex-col")}>
+            <ThemeToggle />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={t("nav.settings")}
+                  className="shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
+                  onClick={() => openSettings()}
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side={collapsed ? "right" : "top"} className="text-xs px-2 py-1">
+                {t("nav.settings")}
+              </TooltipContent>
+            </Tooltip>
+          </div>
+          {userEntry}
         </div>
       </aside>
     </TooltipProvider>

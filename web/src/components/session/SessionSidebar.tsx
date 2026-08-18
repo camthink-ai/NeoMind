@@ -541,13 +541,6 @@ export function SessionSidebar({
               )}
             </div>
           </ScrollArea>
-
-          {/* Footer */}
-          <div className="p-2">
-            <p className={cn(textNano, "text-muted-foreground text-center")}>
-              {t('session.totalSessions', { count: sessions.length })}
-            </p>
-          </div>
         </>
       )}
     </>
