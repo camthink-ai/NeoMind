@@ -36,8 +36,20 @@ def main():
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--baseline", default=None)
     ap.add_argument("--lang", default="en")
-    ap.add_argument("--case-timeout", type=int, default=600)
+    # Default scales with workers: N concurrent slots on one GPU share
+    # aggregate decode throughput, so each case generates ~N x slower and a
+    # serial-calibrated 600s cap manufactures timeout failures (first sharded
+    # run: 7 timeouts in 18 cases incl. cases that pass at full speed —
+    # measured per-slot decode 7-22 tok/s vs 79 single-slot). Scaling the cap
+    # keeps verdicts comparable; note the residual bias is FOR passing (when
+    # fewer slots are busy a case runs faster than 1/N, making the cap more
+    # generous than the serial equivalent).
+    ap.add_argument("--case-timeout", type=int, default=None,
+                    help="per-case cap; default = 600 * workers")
     args = ap.parse_args()
+    if args.case_timeout is None:
+        args.case_timeout = 600 * args.workers
+    print(f"[shard] per-case timeout: {args.case_timeout}s ({args.workers}x scaled)")
 
     counts = workflow_counts(args.lang)
     total = sum(counts.values())
