@@ -573,9 +573,12 @@ export function AboutTab() {
         </div>
       </section>
 
-      {/* Footer — pb-8 keeps it off the window edge everywhere; safe-bottom
-          additionally clears the home indicator / safe area when present */}
-      <div className="pb-8 text-center text-xs text-muted-foreground safe-bottom">
+      {/* Footer — inline calc beats both pb-8 (layer utilities) and
+          .safe-bottom (non-layer 0px): 2rem + any safe-area inset */}
+      <div
+        className="text-center text-xs text-muted-foreground"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}
+      >
         © 2025–2026 CamThink · NeoMind
       </div>
     </div>

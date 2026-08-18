@@ -250,7 +250,7 @@ export function AppSidebar() {
 
         {/* Footer — instance / onboarding / settings / user avatar.
             Theme, language and alerts live top-right (GlobalControls). */}
-        <div className="flex flex-col items-center gap-1 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]">
+        <div className="flex flex-col items-center gap-2 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
           <Tooltip>
             <TooltipTrigger asChild>
               <InstanceSelector compact onManageInstances={() => setInstanceManagerOpen(true)} />
