@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useRef, useCallback, forwardRef } from "react"
 import { useTranslation } from "react-i18next"
+import { useLocation } from "react-router-dom"
 import { Rocket } from "lucide-react"
 import { useStore } from "@/store"
 import { isTauriEnv } from "@/lib/api"
@@ -22,6 +23,7 @@ import {
 } from "@/components/ui/tooltip"
 import { InstanceSelector } from "./InstanceSelector"
 import { AlertsMenu } from "./AlertsMenu"
+import { navItems, isNavItemActive } from "./navItems"
 
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
@@ -69,8 +71,19 @@ export const TopBar = forwardRef<HTMLDivElement>((props, ref) => {
   }, [])
 
   const { t } = useTranslation('common')
+  const location = useLocation()
   const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
+
+  // Page title — derived from the active route (the per-page header strip is
+  // gone; the TopBar is the page's identity row now). select-none + no
+  // interactive role, so the area still works as the Tauri drag region.
+  const activeNav = navItems.find((i) => isNavItemActive(i, location.pathname))
+  const pageTitle = activeNav
+    ? t(activeNav.labelKey)
+    : location.pathname.startsWith('/system')
+      ? t('navShort.system')
+      : null
 
   // Onboarding status for the Rocket button badge
   const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
@@ -89,6 +102,13 @@ export const TopBar = forwardRef<HTMLDivElement>((props, ref) => {
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
         onMouseDown={handleDragMouseDown}
       >
+        {/* Page title (route-derived) — doubles as part of the drag region */}
+        {pageTitle && (
+          <h1 className="shrink-0 truncate text-sm font-semibold text-foreground px-1 select-none">
+            {pageTitle}
+          </h1>
+        )}
+
         {/* Drag region — the empty left area moves the window (macOS Tauri) */}
         <div className="flex-1 max-w-full" />
 
