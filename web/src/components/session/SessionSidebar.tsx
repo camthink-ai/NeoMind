@@ -482,8 +482,9 @@ export function SessionSidebar({
         className={cn(
           // Chrome panel — one step brighter than the rail in BOTH themes
           // (light: white vs #F8F9FA rail; dark: 0.20 vs 0.115 rail), so
-          // the page sidebar reads as a separate surface. Fixed width.
-          "h-full w-64 bg-[var(--chrome)] flex flex-col overflow-hidden"
+          // the page sidebar reads as a separate surface. Right border
+          // separates it from the white content area. Fixed width.
+          "h-full w-64 bg-[var(--chrome)] border-r border-border flex flex-col overflow-hidden"
         )}
       >
           {SidebarContent({})}
