@@ -148,7 +148,7 @@ export function PageTabsBar({
                   disabled={tab.disabled}
                   onClick={() => onTabChange(tab.value)}
                   className={cn(
-                    'inline-flex shrink-0 items-center justify-center gap-2 rounded-sm px-4 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
+                    'inline-flex shrink-0 items-center justify-start gap-2 rounded-sm px-3 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
                     isActive
                       ? 'bg-foreground text-background shadow-sm'
                       : 'text-muted-foreground hover:text-foreground'
@@ -282,7 +282,7 @@ export function PageTabs({
                       disabled={tab.disabled}
                       onClick={() => onTabChange(tab.value)}
                       className={cn(
-                        'inline-flex items-center justify-center gap-2 rounded-sm px-4 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
+                        'inline-flex items-center justify-start gap-2 rounded-sm px-3 py-1.5 h-9 text-sm font-medium whitespace-nowrap transition-all',
                         isActive
                           ? 'bg-foreground text-background shadow-sm'
                           : 'text-muted-foreground hover:text-foreground'
