@@ -381,7 +381,7 @@ export function ChatPage() {
     // Reveal the "scroll to bottom" button once the user scrolls a meaningful
     // amount up. setState with an unchanged boolean bails out (no re-render),
     // so this stays cheap even though scroll fires very frequently.
-    setShowScrollToBottom(distanceFromBottom >= 240)
+    setShowScrollToBottom(distanceFromBottom >= 120)
   }, [])
 
   // Auto-scroll to bottom by directly setting scrollTop on the scroll container
@@ -1301,6 +1301,18 @@ export function ChatPage() {
                       {!isCurrentlyStreaming && (
                         <CopyMessageButton content={copyContent} />
                       )}
+                      {/* Always-visible scroll-to-bottom, next to the copy
+                          button on assistant replies */}
+                      {message.role === "assistant" && !isCurrentlyStreaming && (
+                        <button
+                          type="button"
+                          onClick={scrollToBottom}
+                          className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                          aria-label={t("chat:scrollToBottom", "回到底部")}
+                        >
+                          <ChevronDown className="h-3 w-3" />
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1317,19 +1329,6 @@ export function ChatPage() {
 
               <div ref={messagesEndRef} />
             </div>
-            {showScrollToBottom && (
-              <button
-                type="button"
-                onClick={scrollToBottom}
-                className="absolute bottom-4 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-md transition-all hover:bg-muted active:scale-95"
-                aria-label={t("chat:scrollToBottom", "回到底部")}
-                // Sit beside the message bubbles (85% of the centered
-                // max-w-3xl column) where the copy button lives
-                style={{ right: "max(1rem, calc((100% - 48rem) / 2 + 6.45rem))" }}
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
-            )}
           </div>
         ) : (
           /* Empty chat - shown on /chat/:sessionId with no messages yet */
