@@ -81,6 +81,10 @@ body,
     padding-top: env(safe-area-inset-top, 12px);
   }
 }
+/* TRAP: .safe-bottom is a non-layer rule — it OVERRIDES any pb-*/py-*
+   utility on the same element (that's how the About copyright and the
+   chat composer lost their bottom padding). Never combine them: use
+   pb-[calc(<size>+env(safe-area-inset-bottom,0px))] instead. */
 .safe-bottom {
   padding-bottom: 0px;
 }

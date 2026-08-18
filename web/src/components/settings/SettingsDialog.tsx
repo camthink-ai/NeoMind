@@ -144,7 +144,7 @@ export function SettingsDialog() {
       {/* Mobile: in-flow bottom tab bar for section switching (in-flow so the
           content fills above it — no gap, no overlap). */}
       {isMobile && (
-        <div className="shrink-0 flex items-stretch justify-around gap-1 border-t border-border bg-bg-95 backdrop-blur-sm px-2 py-1 safe-bottom">
+        <div className="shrink-0 flex items-stretch justify-around gap-1 border-t border-border bg-bg-95 backdrop-blur-sm px-2 pt-1 pb-[calc(0.25rem+env(safe-area-inset-bottom,0px))]">
           {sections.map((s) => {
             const isActive = activeSection === s.value
             return (

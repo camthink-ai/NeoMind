@@ -1364,7 +1364,7 @@ export function ChatPage() {
             hacks needed. No background: transparent to match the
             conversation area above and the desktop input. */}
         <div
-          className="shrink-0 px-2.5 sm:px-4 pt-3 pb-5 sm:pt-3 sm:pb-6 safe-bottom border-0"
+          className="shrink-0 px-2.5 sm:px-4 pt-3 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] sm:pt-3 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] border-0"
           style={isDesktop ? undefined : { paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 12px))' }}
         >
           <div className="max-w-3xl mx-auto">
