@@ -55,11 +55,9 @@ import {
 import {
   navItems,
   isNavItemActive,
-  PRIMARY_NAV_IDS,
-  SYSTEM_NAV_IDS,
   type NavItem,
 } from "./navItems"
-import { textMini } from "@/design-system/tokens/typography"
+import { ThemeToggle } from "./ThemeToggle"
 
 const HEADER_ROW_H = "h-12"
 
@@ -138,9 +136,6 @@ export function AppSidebar() {
       </Tooltip>
     )
   }
-
-  const primaryItems = navItems.filter((i) => PRIMARY_NAV_IDS.includes(i.id))
-  const systemItems = navItems.filter((i) => SYSTEM_NAV_IDS.includes(i.id))
 
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
 
@@ -283,30 +278,39 @@ export function AppSidebar() {
           </Tooltip>
         </div>
 
-        {/* Nav groups */}
+        {/* Nav — flat list, no grouping (8 items scan fine as one list) */}
         <nav className={cn("flex flex-col gap-1 px-2 pt-3 pb-2", collapsed && "px-2.5")}>
-          {primaryItems.map(renderItem)}
-
-          <div className={cn("mt-3 mb-1", collapsed && "mx-auto my-3 h-px w-6 bg-border")} />
-          {!collapsed && (
-            <div className={cn("px-3 pb-1 font-medium uppercase tracking-wide text-muted-foreground/70", textMini)}>
-              {t("navShort.system")}
-            </div>
-          )}
-          {systemItems.map(renderItem)}
+          {navItems.map(renderItem)}
         </nav>
 
         <div className="flex-1" />
 
-        {/* Footer — user avatar (bottom-left). No divider: spacing separates
-            (fewer-lines direction). */}
+        {/* Footer — avatar (bottom-left) + released quick toggles: theme &
+            settings as direct buttons instead of buried in the avatar menu */}
         <div
           className={cn(
-            "flex flex-col gap-1 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
-            collapsed && "px-2.5"
+            "flex items-center gap-1 p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]",
+            collapsed && "flex-col px-2.5"
           )}
         >
-          {userEntry}
+          <div className={cn("min-w-0", !collapsed && "flex-1")}>{userEntry}</div>
+          <ThemeToggle />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={t("nav.settings")}
+                className="shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
+                onClick={() => openSettings()}
+              >
+                <Settings className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side={collapsed ? "right" : "top"} className="text-xs px-2 py-1">
+              {t("nav.settings")}
+            </TooltipContent>
+          </Tooltip>
         </div>
       </aside>
     </TooltipProvider>

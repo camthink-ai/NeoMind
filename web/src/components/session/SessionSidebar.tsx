@@ -308,7 +308,7 @@ export function SessionSidebar({
     <>
       {/* Header */}
       {showHeader && (
-        <div className="flex items-center justify-between p-3 border-b border-border">
+        <div className="flex items-center justify-between p-3">
           {!collapsed && <h2 className="text-sm font-semibold">{t('session.sessions')}</h2>}
           {isDesktop ? (
             <Button
@@ -349,7 +349,6 @@ export function SessionSidebar({
           >
             <Plus className="h-4 w-4" />
           </Button>
-          <div className="w-6 h-px bg-glass-border my-1" />
           <ScrollArea className="flex-1 w-full min-h-0">
             <div className="flex flex-col items-center gap-1 py-1">
               {sortedSessions.map((session) => {
@@ -360,10 +359,10 @@ export function SessionSidebar({
                     variant="ghost"
                     size="icon"
                     onClick={() => handleSwitchSession(session.sessionId)}
-                    className={cn(
-                      "h-9 w-9 rounded-lg",
-                      isActive && "bg-muted"
-                    )}
+                        className={cn(
+                          "h-9 w-9 rounded-lg",
+                          isActive && "bg-background shadow-sm"
+                        )}
                     title={getSessionTitle(session)}
                   >
                     <MessageSquare className={cn(
@@ -437,10 +436,12 @@ export function SessionSidebar({
                         onClick={() => !isEditing && handleSwitchSession(session.sessionId)}
                         className={cn(
                           "group relative flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-all",
+                          // Selected session = white raised card on the gray
+                          // rail (bg-muted would vanish against the rail)
                           isActive
-                            ? "bg-muted"
+                            ? "bg-background shadow-sm"
                             : "hover:bg-muted-50",
-                          isEditing && "bg-muted"
+                          isEditing && "bg-background shadow-sm"
                         )}
                       >
                         {isEditing ? (
@@ -542,7 +543,7 @@ export function SessionSidebar({
           </ScrollArea>
 
           {/* Footer */}
-          <div className="p-2 border-t border-border">
+          <div className="p-2">
             <p className={cn(textNano, "text-muted-foreground text-center")}>
               {t('session.totalSessions', { count: sessions.length })}
             </p>

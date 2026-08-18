@@ -37,7 +37,9 @@ export function InstanceSelector({ onManageInstances }: InstanceSelectorProps) {
       disabled={isSwitching}
       onClick={onManageInstances}
       className={cn(
-        "flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors",
+        // Compact pill for the 48px TopBar — py-1 keeps ~32px so the bar
+        // breathes around it instead of the pill crowding the top edge
+        "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors",
         "cursor-pointer hover:opacity-80 disabled:opacity-50",
         isOnline
           ? "bg-success-light text-success border border-success-light"

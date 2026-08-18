@@ -25,13 +25,15 @@ export function ThemeToggle() {
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          size="icon"
-          className="w-10 h-10 rounded-lg bg-[var(--chrome)]"
+          size="icon-sm"
+          aria-label={t('theme.title', { defaultValue: 'Theme' })}
+          className="shrink-0 text-muted-foreground hover:text-foreground no-press-scale"
         >
           {getIcon()}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-36">
+      {/* Opens upward — the toggle lives in the sidebar footer */}
+      <DropdownMenuContent side="top" align="end" className="w-36">
         <DropdownMenuItem onClick={() => setTheme("light")} className="gap-2 cursor-pointer">
           <Sun className="h-4 w-4" />
           <span>{t('theme.light')}</span>
