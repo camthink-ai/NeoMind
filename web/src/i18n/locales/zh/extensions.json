@@ -1,6 +1,6 @@
 {
   "title": "扩展与连接",
-  "description": "管理系统扩展和连接",
+  "description": "发现、安装与管理平台扩展",
   "llmBackends": "LLM 后端",
   "deviceConnections": "设备连接",
   "alertChannels": "消息通道",
@@ -236,8 +236,8 @@
     "aiToolsOff": "对 Agent 隐藏",
     "aiToolsOffShort": "AI 已关",
     "moreActions": "更多操作",
-    "reload": "重载",
-    "uninstall": "卸载",
+    "reload": "重新加载",
+    "uninstall": "完全卸载",
     "version": "版本",
     "types": {
       "llm_provider": "LLM 提供者",
@@ -257,10 +257,8 @@
       "Stopped": "已停止",
       "Error": "错误"
     },
-    "uninstall": "完全卸载",
     "unregister": "注销",
     "details": "详情",
-    "reload": "重新加载",
     "active": "活跃"
   },
   "marketplace": "扩展市场",

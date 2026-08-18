@@ -12,7 +12,7 @@
   },
   "messages": {
     "title": "消息",
-    "description": "管理通知告警和数据推送",
+    "description": "查看通知消息，管理通知通道与 IM 会话",
     "tabs": {
       "messages": "消息",
       "channels": "通知通道"
@@ -373,7 +373,9 @@
   "description": "描述",
   "type": "类型",
   "status": "状态",
-  "actions": "操作",
+  "actions": {
+    "more": "更多"
+  },
   "details": "详情",
   "enable": "启用",
   "disable": "禁用",
@@ -713,7 +715,6 @@
     "status": "状态",
     "updated": "已更新",
     "running": "运行中",
-    "stopped": "已停止",
     "toggle": "启停",
     "nameRequired": "名称为必填项",
     "urlRequired": "URL 为必填项"
@@ -819,9 +820,21 @@
       "partialTitle": "随时可以完成设置",
       "partialSubtitle": "你可以稍后再完成设置。配好 AI 模型后，试试下面的提示。",
       "prompts": {
-        "monitoring": { "title": "搭建仪表盘", "desc": "20+ 组件的实时可视化", "prompt": "帮我创建一个温度监控看板" },
-        "automation": { "title": "设置自动化", "desc": "规则、告警与定时 AI Agent", "prompt": "温度超过 35 度就通知我" },
-        "extensions": { "title": "安装扩展", "desc": "AI 视觉、天气预报等", "prompt": "帮我安装天气预报扩展" }
+        "monitoring": {
+          "title": "搭建仪表盘",
+          "desc": "20+ 组件的实时可视化",
+          "prompt": "帮我创建一个温度监控看板"
+        },
+        "automation": {
+          "title": "设置自动化",
+          "desc": "规则、告警与定时 AI Agent",
+          "prompt": "温度超过 35 度就通知我"
+        },
+        "extensions": {
+          "title": "安装扩展",
+          "desc": "AI 视觉、天气预报等",
+          "prompt": "帮我安装天气预报扩展"
+        }
       },
       "chatButton": "开始对话",
       "statusLabels": {
@@ -842,9 +855,6 @@
     "help": "帮助",
     "role": "角色",
     "language": "语言"
-  },
-  "actions": {
-    "more": "更多"
   },
   "systemHealth": {
     "title": "系统状态",

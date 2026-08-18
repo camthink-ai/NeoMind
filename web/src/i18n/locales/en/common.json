@@ -12,7 +12,7 @@
   },
   "messages": {
     "title": "Messages",
-    "description": "Manage notifications, alerts and data push",
+    "description": "Notifications, channels, and IM sessions",
     "tabs": {
       "messages": "Messages",
       "channels": "Channels"
@@ -377,7 +377,9 @@
   "description": "Description",
   "type": "Type",
   "status": "Status",
-  "actions": "Actions",
+  "actions": {
+    "more": "More"
+  },
   "details": "Details",
   "enable": "Enable",
   "disable": "Disable",
@@ -717,7 +719,6 @@
     "status": "Status",
     "updated": "Updated",
     "running": "Running",
-    "stopped": "Stopped",
     "toggle": "Start / Stop",
     "nameRequired": "Name Required",
     "urlRequired": "Url Required"
@@ -819,9 +820,21 @@
       "partialTitle": "Finish setup anytime",
       "partialSubtitle": "You can complete setup later. Try these prompts once your AI model is ready.",
       "prompts": {
-        "monitoring": { "title": "Build a Dashboard", "desc": "Real-time visualization with 20+ widgets", "prompt": "Create a temperature monitoring dashboard" },
-        "automation": { "title": "Set up Automation", "desc": "Rules, alerts, and scheduled AI agents", "prompt": "Notify me when temperature exceeds 35 degrees" },
-        "extensions": { "title": "Install Extensions", "desc": "AI vision, weather forecasts, and more", "prompt": "Install the weather forecast extension" }
+        "monitoring": {
+          "title": "Build a Dashboard",
+          "desc": "Real-time visualization with 20+ widgets",
+          "prompt": "Create a temperature monitoring dashboard"
+        },
+        "automation": {
+          "title": "Set up Automation",
+          "desc": "Rules, alerts, and scheduled AI agents",
+          "prompt": "Notify me when temperature exceeds 35 degrees"
+        },
+        "extensions": {
+          "title": "Install Extensions",
+          "desc": "AI vision, weather forecasts, and more",
+          "prompt": "Install the weather forecast extension"
+        }
       },
       "chatButton": "Start Chatting",
       "statusLabels": {
@@ -842,9 +855,6 @@
     "help": "Help",
     "role": "Role",
     "language": "Language"
-  },
-  "actions": {
-    "more": "More"
   },
   "systemHealth": {
     "title": "System Status",

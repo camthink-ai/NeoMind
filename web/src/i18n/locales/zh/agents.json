@@ -1,6 +1,6 @@
 {
   "title": "AI 智能体",
-  "description": "用户定义的自动化智能体，具有持久化记忆能力",
+  "description": "创建与管理 AI 智能体，配置记忆、技能与工具",
   "createButton": "创建",
   "detailTitle": "智能体详情",
   "preview": {

@@ -1,6 +1,6 @@
 {
   "title": "自动化",
-  "pageDescription": "管理规则和数据处理",
+  "pageDescription": "配置自动化规则与数据转换",
   "baseInfo": {
     "name": "名称",
     "namePlaceholder": "输入名称...",

@@ -1,6 +1,6 @@
 {
   "title": "AI Agents",
-  "description": "User-defined AI automation agents with persistent memory",
+  "description": "Create and manage AI agents — memory, skills, and tools",
   "createButton": "Create",
   "detailTitle": "Agent Details",
   "preview": {

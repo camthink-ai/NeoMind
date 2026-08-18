@@ -1,6 +1,6 @@
 {
   "title": "Data Explorer",
-  "subtitle": "Browse all data sources across devices, extensions, and transforms",
+  "subtitle": "Browse data sources and push them to external systems",
   "tabs": {
     "all": "Data Sources",
     "device": "Devices",

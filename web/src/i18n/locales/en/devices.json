@@ -1,6 +1,6 @@
 {
   "title": "Device Management",
-  "subtitle": "Manage connected IoT devices and device types",
+  "subtitle": "Manage connected devices, device types, and pending devices",
   "deviceList": "Device List",
   "deviceTypes": "Device Types",
   "deviceAdapters": "Device Adapters",

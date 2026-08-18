@@ -1,6 +1,6 @@
 {
   "title": "Automation",
-  "pageDescription": "Manage rules and data transformations",
+  "pageDescription": "Configure automation rules and data transforms",
   "baseInfo": {
     "name": "Name",
     "namePlaceholder": "Enter name...",
