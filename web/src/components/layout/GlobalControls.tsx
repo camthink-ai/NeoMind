@@ -59,12 +59,12 @@ export function GlobalControls() {
 }
 
 /** Floating cluster — for pages without a toolbar (chat): top-right overlay.
-    Carries a subtle surface (background + blur + border) so content
-    scrolling underneath stays readable behind it. */
+    Low-key by default: no border/shadow (it only ever overlaps content in
+    narrow windows), just a faint surface so scrolled content stays readable. */
 export function GlobalControlsFloating() {
   return (
     <div className="pointer-events-none absolute right-4 sm:right-6 z-20" style={{ top: "calc(env(safe-area-inset-top, 0px) + 0.5rem)" }}>
-      <div className="pointer-events-auto rounded-full border border-border bg-background/90 px-1 py-0.5 shadow-sm backdrop-blur-sm">
+      <div className="pointer-events-auto rounded-full bg-background/60 px-1 py-0.5 backdrop-blur-sm">
         <Controls />
       </div>
     </div>
