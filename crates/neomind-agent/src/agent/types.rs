@@ -961,6 +961,37 @@ impl LargeDataCache {
         self.evict_if_needed();
     }
 
+    /// Store a user-uploaded chat image UNCONDITIONALLY — no size threshold.
+    ///
+    /// `store()` passes anything under `CACHE_THRESHOLD_BYTES` (32KB) through
+    /// without caching, so a compressed user image (frontend uploads are
+    /// routinely ≤24KB binary ≈ 32KB base64) never entered the cache:
+    /// `$cached:user_image` then failed to resolve AND `get_latest_image()`
+    /// returned None, so image-shaped tool args received the LLM's literal
+    /// placeholder string and the tool errored ("Invalid base64 data").
+    /// Found via 2026-08-18 vision-pipeline debugging: the model SAW the
+    /// image in the prompt, but every image tool call failed — mirroring the
+    /// agent-path lesson already encoded in `seed_bound_image` ("must work
+    /// even for a small bound image").
+    pub fn store_user_image(&mut self, key: &str, data_url: &str) {
+        if !data_url.starts_with("data:image/") {
+            tracing::warn!(
+                len = data_url.len(),
+                key = %key,
+                "store_user_image: ignoring non-image data URL"
+            );
+            return;
+        }
+        let cached = CachedLargeResult {
+            content_type: Self::detect_content_type(data_url),
+            data: data_url.to_string(),
+            size_bytes: data_url.len(),
+            cached_at: chrono::Utc::now().timestamp(),
+        };
+        self.entries.insert(key.to_string(), cached);
+        self.evict_if_needed();
+    }
+
     /// Detect content type from content heuristics.
     fn detect_content_type(content: &str) -> String {
         // Check for data URL images (data:image/png;base64,...)
@@ -1809,6 +1840,30 @@ mod tests {
 
     /// Single image value gets replaced with a one-line summary that
     /// mentions kind, mime, size, $cached ref, and the vision tool.
+    #[test]
+    fn test_store_user_image_bypasses_threshold() {
+        // Regression (2026-08-18): a compressed user image below the 32KB
+        // CACHE_THRESHOLD used to be silently dropped by store(), leaving
+        // $cached:user_image unresolvable and image tool calls failing with
+        // "Invalid base64 data" while the model HAD seen the image.
+        let small_png = concat!(
+            "data:image/png;base64,",
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ",
+            "AAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        );
+        let mut cache = LargeDataCache::new();
+        cache.store_user_image("user_image", small_png);
+        // Resolvable as a $cached: reference (what the LLM emits)…
+        let resolved = cache
+            .resolve_reference("$cached:user_image")
+            .expect("small user image must resolve");
+        assert!(resolved.starts_with("data:image/png;base64,"));
+        // …and surfaced to the auto-inject path.
+        let (latest, source) = cache.get_latest_image().expect("latest image must exist");
+        assert_eq!(source, "user_image");
+        assert_eq!(latest, resolved);
+    }
+
     #[test]
     fn test_slim_single_image_value_replaced() {
         let mut cache = LargeDataCache::new();

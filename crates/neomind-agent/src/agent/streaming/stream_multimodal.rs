@@ -102,15 +102,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     // Extract base64 data for caching before images are consumed.
     // Use the shared parse_image_data helper instead of fragile split(',')
     // so non-standard data URL formats are handled consistently.
-    let image_base64_list: Vec<String> = images
-        .iter()
-        .filter_map(|data_url| {
-            crate::image_utils::parse_image_data(data_url).map(|p| p.base64.to_string())
-        })
-        .collect();
-
     // Store user message in history with images
     // Convert the image strings to AgentMessageImage
+    let image_data_urls: Vec<String> = images.clone();
     let user_images: Vec<AgentMessageImage> = images
         .into_iter()
         .map(|data_url| {
@@ -127,15 +121,18 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     internal_state.write().await.push_message(user_msg);
 
     // Cache user-uploaded images so tools can reference them via $cached:user_image
-    if !image_base64_list.is_empty() {
+    // (or the auto-inject on image-shaped args). MUST use store_user_image —
+    // the regular store() passes anything under 32KB through uncached, which
+    // silently killed tool access to compressed user images (2026-08-18).
+    if !image_data_urls.is_empty() {
         let mut state = internal_state.write().await;
-        for (i, base64_data) in image_base64_list.iter().enumerate() {
+        for (i, url) in image_data_urls.iter().enumerate() {
             let cache_key = if i == 0 {
                 "user_image".to_string()
             } else {
                 format!("user_image_{}", i)
             };
-            state.large_data_cache.store(&cache_key, base64_data);
+            state.large_data_cache.store_user_image(&cache_key, url);
         }
     }
 
