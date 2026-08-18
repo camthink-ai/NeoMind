@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Desktop navigation: top menu → sidebar
+The desktop top nav (icon rail) is replaced by a persistent **AppSidebar** plus a slim **TopBar** (48px, global actions only). The sidebar groups PRIMARY (Chat/Agents/Devices/Visual Dashboard) and SYSTEM (Automation/Data/Messages/Extensions) entries — same split as the mobile drawer — collapses to a 60px icon rail (state persisted), and carries the brand header, macOS traffic-light inset and window-drag region. Nav definitions are single-sourced in `navItems.ts`. The mobile navigation system is untouched. Fixed full-bleed surfaces (chat's keyboard-aware container, PageLayout's footer) offset past the sidebar via the new `--app-sidebar-width` CSS var. DESIGN_SPEC §28 rewritten.
+
+### Element layering audit — 16 findings fixed
+A full z-index/stacking audit surfaced and fixed: mobile nested dialogs losing their scrim above z-[100] fullscreen layers (overlay z now extracted from `className` in both `dialog.tsx` branches); Toaster/Confirmer double-mounted on protected routes (every toast painted twice); `<main>`'s `z-10` forming a page-wide stacking context that capped in-page fixed overlays below the chrome; three incompatible drawer conventions unified to Sheet-tier z-50 + `#dialog-root` portal (SessionSidebar, DashboardListSidebar — which also loses its `--topnav-height` geometric dodge); widget fullscreen viewers aligned to z-[110] (ImageDisplay was z-50, three image overlays z-200); MobileItemSelector portaled out of `document.body`; toast lifted to z-[210] so confirm-dialog toasts stay visible; GlobalChatFab panel re-tiered z-[90] (was tying with fullscreen layers); BackendUnavailableOverlay to the new z-[300] system tier; dead `.mobile-edit-bar` CSS and TopNav's unreachable mobile tab bar deleted; `shadow-2xl`/inline-rgba shadows converged onto the token ladder. DESIGN_SPEC §8 is now a complete 13-tier ladder with a portal policy.
+
+### Style consistency & token refresh
+- The below-`text-xs` type scale is now first-class Tailwind fontSize utilities (`text-micro/nano/mini/code/body/heading`, each with a tuned line-height); every `text-[Npx]` literal across ~40 files replaced — sizes tune in one place.
+- Chart colors single-sourced: `design-system/tokens/color.ts` mirrors `--chart-1..6` exactly (was a silently diverging palette) with accurate sRGB hexes.
+- `--brand` expanded to a full scale (`-hover/-active/-bg/-foreground`, light darkens / dark brightens on engage).
+- Light theme canvas deepened for clearer card elevation; dark theme gets an explicit surface ladder (`background < card < popover < chrome`), crisper borders and layered shadows.
+- Fixed the never-working `dark:brand-icon-stroke` (Tailwind can't variant a custom class — rule is now `.dark`-scoped, active nav icons get the gradient stroke as intended); `error-foreground` naming unified into `destructive-foreground`; dead `dashboard-components.css` deleted; chrome ghost-button repaints consolidated to one `.chrome-ghost` class.
+
 ## [0.9.17] - 2026-08-16
 
 ### REST ingestion joins the event spine

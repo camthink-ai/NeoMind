@@ -209,16 +209,16 @@ For inline styles (CodeMirror, Recharts), use `fontMonoStack` from `@/design-sys
 
 ### Font Size Tokens
 
-All custom font sizes are defined as semantic tokens in `@/design-system/tokens/typography`. **NEVER hardcode `text-[Xpx]` in components** — import the appropriate token instead.
+The below-`text-xs` scale is registered as **first-class Tailwind fontSize utilities** in `tailwind.config.js` — use the `text-*` class directly in static `className` strings (no import needed); JS contexts use the matching constants from `@/design-system/tokens/typography`. **NEVER hardcode `text-[Npx]`** — tune sizes in the tailwind config (single source), never per-component. Each utility pairs a tuned line-height (~1.3–1.45); explicit `leading-*` still overrides.
 
-| Token | Size | Use Case |
-|-------|------|----------|
-| `textMicro` | 9px | Extreme micro labels — data type badges in execution details |
-| `textNano` | 10px | Timestamps, tiny metadata, compact badges |
-| `textMini` | 11px | Badge text, secondary labels, tab labels |
-| `textCode` | 12px | Inline code in markdown, code snippets |
-| `textBody` | 13px | Chat messages, tool call text, markdown body |
-| `textHeading` | 15px | Markdown headings within content |
+| Utility | Constant | Size / Line | Use Case |
+|---------|----------|-------------|----------|
+| `text-micro` | `textMicro` | 9px / 12px | Extreme micro labels — data type badges in execution details |
+| `text-nano` | `textNano` | 10px / 14px | Timestamps, tiny metadata, compact badges |
+| `text-mini` | `textMini` | 11px / 16px | Badge text, secondary labels, tab labels |
+| `text-code` | `textCode` | 12px / 17px | Inline code in markdown, code snippets |
+| `text-body` | `textBody` | 13px / 19px | Chat messages, tool call text, markdown body |
+| `text-heading` | `textHeading` | 15px / 22px | Markdown headings within content |
 
 Standard Tailwind sizes fill the remaining tiers:
 
@@ -1601,42 +1601,33 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 
 ---
 
-## 28. Navigation (TopNav)
+## 28. Navigation (AppSidebar + TopBar)
 
-### Desktop Navigation
+### Architecture (desktop)
 
-- **Layout**: Fixed top bar (`z-20`, `bg-surface-glass backdrop-blur-xl`)
-- **Nav items**: Icon buttons with `Tooltip` (delay 500ms), ghost variant, `w-11 h-11 rounded-lg`
-- **Active state**: `bg-muted text-primary`
-- **Right side**: Instance selector → Language toggle (中/EN) → Theme toggle → Alert bell (with unread badge) → User avatar dropdown
-- **Alert dropdown**: Shows latest 10 alerts with severity badges, unread indicator, acknowledge button
+- **AppSidebar** (`components/layout/AppSidebar.tsx`): persistent in-flow left column — the app's primary navigation. NOT a fixed overlay: the shell (`App.tsx`) lays out `[AppSidebar][column: TopBar + main]` as flex-row.
+- **TopBar** (`components/layout/TopBar.tsx`): slim 48px (`h-12`) in-flow chrome bar — global actions only (instance selector, onboarding, alerts, settings, user menu), no navigation items, no logo. Doubles as the macOS Tauri window drag region.
+- **navItems.ts** (`components/layout/navItems.ts`): the shared nav definition (paths, icons, i18n keys, groups, active-route logic). The sidebar and MobileNav must not fork these.
 
-### Mobile Navigation
+### Sidebar structure
 
-- **Layout**: Same fixed top bar + scrollable text tab bar below
-- **Tab bar**: Horizontally scrollable text labels (uses `mobileLabelKey` — shorter than desktop labels)
-- **Active indicator**: Animated underline (`h-[3px] bg-primary`, `transition-all duration-250 ease-out`)
-- **Swipe gesture**: Left/right swipe on tab bar navigates to adjacent tabs (threshold: 50px)
-- **Auto-scroll**: Active tab scrolled into view with `scrollIntoView({ behavior: 'smooth', inline: 'center' })`
+- Header: brand logo + collapse toggle; reserves the macOS traffic-light strip (`--titlebar-inset`) and doubles as a drag region
+- PRIMARY group: Chat `/chat`, Agents `/agents`, Devices `/devices`, Visual Dashboard `/visual-dashboard`
+- SYSTEM group (labelled `navShort.system`): Automation, Data Explorer, Messages, Extensions
+- Footer: Settings entry (calls `openSettings()` — dialog, never a route)
+- Active state: `bg-brand-bg text-brand` pill + `brand-icon-stroke` icon gradient (dark)
 
-### Nav Items
+### Collapse behavior
 
-| ID | Path | Icon | Desktop Label | Mobile Label |
-|----|------|------|---------------|--------------|
-| dashboard | `/chat` | MessageSquare | nav.dashboard | navShort.dashboard |
-| agents | `/agents` | Bot | nav.agents | navShort.agents |
-| visual-dashboard | `/visual-dashboard` | LayoutDashboard | nav.visual-dashboard | navShort.visual-dashboard |
-| devices | `/devices` | Cpu | nav.devices | navShort.devices |
-| automation | `/automation` | Workflow | nav.automation | navShort.automation |
-| data | `/data` | Database | nav.data | navShort.data |
-| messages | `/messages` | Bell | nav.messages | navShort.messages |
-| extensions | `/extensions` | Puzzle | nav.extensions | navShort.extensions |
+Two states: expanded `240px` (icon + label) ↔ collapsed `60px` icon rail (tooltips on `side="right"` keep names accessible; buttons retain `aria-label`). State lives in `uiSlice.appSidebarCollapsed`, persisted via the store (`neomind-store`). The current width is exported as `--app-sidebar-width` on `<html>` — fixed full-bleed surfaces (ChatPage's keyboard-aware container, PageLayout's fixed footer) offset with `left: var(--app-sidebar-width, 0px)`. **Any new fixed element must do the same.**
 
-Settings has no nav route — the gear icon / avatar menu calls `openSettings()` (dialog). On mobile the drawer's settings entry is intercepted the same way (`MobileNav.tsx` `entry.id === "settings"` → `openSettings()`), never navigating to `/settings`.
+### Mobile Navigation (unchanged)
+
+Mobile keeps its own system — the sidebar unmounts below `md`: per-page `MobilePageHeader` (hamburger) → `MobileNav` Sheet drawer (`PRIMARY` + `SYSTEM_ENTRIES` from navItems groups), plus per-page bottom tab bars and swipe gestures. `--topnav-height` is `0px` on mobile; on desktop it still carries the TopBar's measured height (set via `setTopNavHeight`).
 
 ### Height Management
 
-TopNav height is tracked via `setTopNavHeight()` and exposed as `--topnav-height` CSS variable for use by `PageLayout` and other components.
+TopBar height is tracked via `setTopNavHeight()` and exposed as `--topnav-height` for legacy consumers (e.g. ChatPage's fixed container padding). Since the TopBar is in-flow, `main` needs no compensating padding.
 
 ---
 
@@ -1946,7 +1937,9 @@ The `Field` component from `@/components/ui/field` auto-links labels, errors, an
 | Icon System | `web/src/design-system/icons/index.tsx` |
 | Theme Provider | `web/src/components/ui/theme.tsx` |
 | Theme Toggle | `web/src/components/layout/ThemeToggle.tsx` |
-| TopNav | `web/src/components/layout/TopNav.tsx` |
+| App Sidebar | `web/src/components/layout/AppSidebar.tsx` |
+| Top Bar | `web/src/components/layout/TopBar.tsx` |
+| Nav Items (shared) | `web/src/components/layout/navItems.ts` |
 | Toast Hook | `web/src/components/ui/use-toast.ts` |
 | Toast Component | `web/src/components/ui/toast.tsx` |
 | Global Notify | `web/src/lib/notify.ts` |
