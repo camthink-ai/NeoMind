@@ -1,7 +1,7 @@
 /**
  * UI Slice
  *
- * Handles UI state like sidebar and WebSocket connection.
+ * Handles UI state like the app sidebar collapse and WebSocket connection.
  */
 
 import type { StateCreator } from 'zustand'
@@ -9,8 +9,8 @@ import type { UIState } from '../types'
 
 export interface UISlice extends UIState {
   // Actions
-  toggleSidebar: () => void
-  setSidebarOpen: (open: boolean) => void
+  toggleAppSidebar: () => void
+  setAppSidebarCollapsed: (collapsed: boolean) => void
   setWsConnected: (connected: boolean) => void
 }
 
@@ -21,16 +21,16 @@ export const createUISlice: StateCreator<
   UISlice
 > = (set) => ({
   // Initial state
-  sidebarOpen: true,
+  appSidebarCollapsed: false,
   wsConnected: false,
 
   // Actions
-  toggleSidebar: () => {
-    set((state) => ({ sidebarOpen: !state.sidebarOpen }))
+  toggleAppSidebar: () => {
+    set((state) => ({ appSidebarCollapsed: !state.appSidebarCollapsed }))
   },
 
-  setSidebarOpen: (open: boolean) => {
-    set({ sidebarOpen: open })
+  setAppSidebarCollapsed: (collapsed: boolean) => {
+    set({ appSidebarCollapsed: collapsed })
   },
 
   setWsConnected: (connected: boolean) => {

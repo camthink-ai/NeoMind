@@ -120,7 +120,7 @@ export type PageName =
   | 'agents'
 
 export interface UIState {
-  sidebarOpen: boolean
+  appSidebarCollapsed: boolean
   wsConnected: boolean
 }
 

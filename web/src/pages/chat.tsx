@@ -877,6 +877,9 @@ export function ChatPage() {
   return (
     <>
     <div className="fixed left-0 right-0 flex flex-row overflow-hidden safe-top" style={{
+      // Offset past the desktop AppSidebar (0 on mobile, where the sidebar
+      // is unmounted and the var resets to 0px).
+      left: 'var(--app-sidebar-width, 0px)',
       // Anchor to the top of the VISIBLE area, not the layout viewport. iOS
       // PWA standalone doesn't honor `interactive-widget=resizes-content`, so
       // when the soft keyboard opens iOS scrolls the visualViewport

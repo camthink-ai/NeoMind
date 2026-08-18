@@ -1,7 +1,9 @@
 /**
- * TopNav - Top navigation bar
- * Desktop: icon buttons with tooltips
- * Mobile: scrollable text tab bar with underline indicator + swipe gestures
+ * TopBar — slim desktop chrome bar.
+ * Navigation lives in the AppSidebar; this bar carries the window drag region
+ * (macOS overlay titlebar) and the global actions: instance selector,
+ * onboarding, alerts, settings, user menu. In-flow (not fixed) inside the
+ * app shell's content column; height exported as --topnav-height.
  */
 
 import { useStore } from "@/store"
@@ -10,22 +12,14 @@ import { isTauriEnv } from "@/lib/api"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { textNano, textMini } from "@/design-system/tokens/typography"
 import { useTranslation } from "react-i18next"
-import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
-  MessageSquare,
-  Cpu,
-  Workflow,
-  Puzzle,
   Settings,
   LogOut,
   Bell,
-  LayoutDashboard,
   BellRing,
-  Bot,
   Check,
   CheckCheck,
   AlertTriangle,
-  Database,
   Rocket,
   Info,
   Sun,
@@ -33,7 +27,6 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { BrandLogoWithName } from "@/components/shared/BrandName"
 import { Badge } from "@/components/ui/badge"
 import {
   Tooltip,
@@ -60,32 +53,10 @@ import { InstanceSelector } from "./InstanceSelector"
 import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDialog"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { useOnboarding } from "@/hooks/useOnboarding"
-import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, startTransition } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef } from "react"
 import { setTopNavHeight } from "@/hooks/useVisualViewport"
 
-type PageType = "dashboard" | "visual-dashboard" | "data" | "devices" | "automation" | "agents" | "messages" | "extensions" | "settings"
-
-interface NavItem {
-  id: PageType
-  path: string
-  icon: React.ComponentType<{ className?: string }>
-  labelKey: string
-  /** Shorter label for mobile tab bar (falls back to labelKey if not set) */
-  mobileLabelKey?: string
-}
-
-const navItems: NavItem[] = [
-  { id: "dashboard", path: "/chat", labelKey: "nav.dashboard", mobileLabelKey: "navShort.dashboard", icon: MessageSquare },
-  { id: "agents", path: "/agents", labelKey: "nav.agents", mobileLabelKey: "navShort.agents", icon: Bot },
-  { id: "visual-dashboard", path: "/visual-dashboard", labelKey: "nav.visual-dashboard", mobileLabelKey: "navShort.visual-dashboard", icon: LayoutDashboard },
-  { id: "devices", path: "/devices", labelKey: "nav.devices", mobileLabelKey: "navShort.devices", icon: Cpu },
-  { id: "automation", path: "/automation", labelKey: "nav.automation", mobileLabelKey: "navShort.automation", icon: Workflow },
-  { id: "data", path: "/data", labelKey: "nav.data", mobileLabelKey: "navShort.data", icon: Database },
-  { id: "messages", path: "/messages", labelKey: "nav.messages", mobileLabelKey: "navShort.messages", icon: Bell },
-  { id: "extensions", path: "/extensions", labelKey: "nav.extensions", mobileLabelKey: "navShort.extensions", icon: Puzzle },
-]
-
-export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
+export const TopBar = forwardRef<HTMLDivElement>((props, ref) => {
   const innerRef = useRef<HTMLDivElement>(null)
 
   // macOS Tauri overlay title bar: reserve a top strip for the traffic lights
@@ -110,7 +81,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   useEffect(() => {
     document.documentElement.style.setProperty("--titlebar-inset", isMacTauri ? "24px" : "0px")
   }, [isMacTauri])
-  const navigate = useNavigate()
 
   // Set the nav height in CSS variable after mount and on resize
   useEffect(() => {
@@ -127,7 +97,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   }, [])
 
   const { t, i18n } = useTranslation('common')
-  const location = useLocation()
   const user = useStore((state) => state.user)
   const logout = useStore((state) => state.logout)
   const openSettings = useStore((state) => state.openSettings)
@@ -158,11 +127,6 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
     () => alerts.filter(a => !a.acknowledged && a.status !== 'resolved' && a.status !== 'acknowledged').length,
     [alerts]
   )
-
-  // Get current path without trailing slash for comparison
-  const currentPath = location.pathname.endsWith('/') && location.pathname !== '/'
-    ? location.pathname.slice(0, -1)
-    : location.pathname
 
   const getUserInitials = (username: string) => {
     return username.slice(0, 2).toUpperCase()
@@ -207,68 +171,21 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
     }
   }
 
-  // Check if a nav item is currently active
-  const isItemActive = useCallback((item: NavItem) => {
-    return currentPath === item.path ||
-      (item.path === '/chat' && currentPath === '/') ||
-      currentPath.startsWith(`${item.path}/`)
-  }, [currentPath])
-
   return (
     <TooltipProvider delayDuration={500}>
-      <nav
+      <header
         ref={innerRef}
-        className="fixed top-0 left-0 right-0 z-20 bg-[var(--chrome)] border-b border-border flex flex-col"
+        className="relative z-20 flex shrink-0 items-center bg-[var(--chrome)] border-b border-border px-4 sm:px-6 h-12"
         style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))" }}
         onMouseDown={handleDragMouseDown}
       >
-        {/* Main bar */}
-        <div
-          className="flex items-center px-4 sm:px-6 h-14"
-        >
-          {/* Logo */}
-          <Link to="/chat" className="flex shrink-0 items-center justify-center mr-4 md:mr-6">
-            <BrandLogoWithName />
-          </Link>
+        {/* Drag region — the empty left area moves the window (macOS Tauri) */}
+        <div className="flex-1 max-w-full" />
 
-          {/* Desktop Navigation Icons */}
-          <div className="hidden md:flex items-center gap-1.5">
-            {navItems.map((item) => {
-              const Icon = item.icon
-              const isActive = isItemActive(item)
-
-              return (
-                <Tooltip key={item.id}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className={cn(
-                        "w-10 h-10 rounded-lg transition-all no-press-scale",
-                        isActive
-                          ? "text-brand hover:text-brand hover:bg-transparent"
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
-                      )}
-                      onClick={() => startTransition(() => navigate(item.path))}
-                    >
-                      <Icon className={cn("h-5 w-5", isActive && "brand-icon-stroke")} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs px-2 py-1">
-                    {t(item.labelKey)}
-                  </TooltipContent>
-                </Tooltip>
-              )
-            })}
-          </div>
-
-          {/* Spacer */}
-          <div className="flex-1 max-md:max-w-4" />
-
-          {/* Right side: Instance + Health + Guide + Alerts + Preferences + User */}
-          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2.5">
-            {/* Instance selector (identity anchor) */}
-            <InstanceSelector onManageInstances={() => setInstanceManagerOpen(true)} />
+        {/* Right side: Instance + Health + Guide + Alerts + Preferences + User */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2.5">
+          {/* Instance selector (identity anchor) */}
+          <InstanceSelector onManageInstances={() => setInstanceManagerOpen(true)} />
 
 
             {/* Onboarding guide */}
@@ -277,7 +194,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="w-10 h-10 rounded-lg relative bg-[var(--chrome)]"
+                  className="w-10 h-10 rounded-lg relative chrome-ghost"
                   onClick={() => setOnboardingOpen(true)}
                   aria-label={t('onboarding.title')}
                 >
@@ -302,7 +219,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="w-10 h-10 rounded-lg relative bg-[var(--chrome)]"
+                      className="w-10 h-10 rounded-lg relative chrome-ghost"
                     >
                       <BellRing className="h-4 w-4" />
                       {unreadCount > 0 && (
@@ -418,7 +335,7 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="w-10 h-10 rounded-lg bg-[var(--chrome)]"
+                  className="w-10 h-10 rounded-lg chrome-ghost"
                   onClick={() => openSettings()}
                   aria-label={t('nav.settings')}
                 >
@@ -498,9 +415,8 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-          </div>
         </div>
-      </nav>
+      </header>
 
       {/* Instance Manager Dialog */}
       <InstanceManagerDialog
@@ -519,4 +435,4 @@ export const TopNav = forwardRef<HTMLDivElement>((props, ref) => {
   )
 })
 
-TopNav.displayName = 'TopNav'
+TopBar.displayName = 'TopBar'

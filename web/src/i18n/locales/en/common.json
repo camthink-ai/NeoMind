@@ -309,7 +309,10 @@
     "decisions": "Decisions",
     "messages": "Messages",
     "extensions": "Extensions",
-    "settings": "Settings"
+    "settings": "Settings",
+    "primary": "Main navigation",
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar"
   },
   "navShort": {
     "dashboard": "Chat",

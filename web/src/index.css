@@ -1323,6 +1323,14 @@ html {
  * Dashboard Mobile Touch Optimizations
  * ============================================================================ */
 
+/* Chrome-bar ghost buttons: opaque resting background matching the chrome
+   surface avoids the WebKit transparent→solid paint flash on hover that
+   commit 63385cd5 papered over per-button with bg-[var(--chrome)]. Hover
+   backgrounds still win (:hover specificity). */
+.chrome-ghost {
+  background-color: var(--chrome);
+}
+
 /* Touch-friendly dashboard grid items */
 @media (hover: none) and (pointer: coarse) {
   /* Make grid items respond to touch properly */

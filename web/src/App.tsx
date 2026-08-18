@@ -5,7 +5,8 @@ import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
 import { BrandGradientDef } from "@/components/shared/BrandGradientDef"
 import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
-import { TopNav } from "@/components/layout/TopNav"
+import { TopBar } from "@/components/layout/TopBar"
+import { AppSidebar } from "@/components/layout/AppSidebar"
 import { MobileNav } from "@/components/layout/MobileNav"
 import { SwipeNavigation } from "@/components/layout/SwipeNavigation"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
@@ -553,22 +554,24 @@ function App() {
             path="/*"
             element={
               <ProtectedRoute>
-                <div className="flex flex-col" style={{height: 'var(--app-height, 100vh)'}}>
-                  {!isMobile && <TopNav />}
-                  <MobileNav />
-                  {/* Skip link — keyboard users tab past the nav straight to content.
-                      Visually hidden until focused. */}
-                  <a
-                    href="#main-content"
-                    className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[400] focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-lg focus:border focus:border-border"
-                  >
-                    {t("skipToContent")}
-                  </a>
-                  <main
-                    id="main-content"
-                    tabIndex={-1}
-                    className="relative flex flex-1 min-h-0 overflow-hidden focus:outline-none"
-                    style={{paddingTop: 'var(--topnav-height, calc(4rem + env(safe-area-inset-top, 0px)))'}}>
+                <div className="flex" style={{height: 'var(--app-height, 100vh)'}}>
+                  {!isMobile && <AppSidebar />}
+                  <div className="flex flex-col flex-1 min-w-0">
+                    {!isMobile && <TopBar />}
+                    <MobileNav />
+                    {/* Skip link — keyboard users tab past the nav straight to content.
+                        Visually hidden until focused. */}
+                    <a
+                      href="#main-content"
+                      className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[400] focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-lg focus:border focus:border-border"
+                    >
+                      {t("skipToContent")}
+                    </a>
+                    <main
+                      id="main-content"
+                      tabIndex={-1}
+                      className="relative flex flex-1 min-h-0 overflow-hidden focus:outline-none"
+                    >
                     <div className="w-full h-full overflow-hidden" id="main-scroll-container">
                     <ErrorBoundary>
                     <div key={location.pathname.split('/')[1] || 'root'} className="animate-page-enter w-full h-full overflow-hidden">
@@ -614,6 +617,7 @@ function App() {
                   <SettingsDialog />
                   <SwipeNavigation />
                   {!isMobile && <GlobalChatFab />}
+                  </div>
                 </div>
               </ProtectedRoute>
             }
