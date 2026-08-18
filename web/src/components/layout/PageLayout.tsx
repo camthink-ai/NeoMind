@@ -183,7 +183,7 @@ export function PageLayout({
             transparent strip above the first (often sticky) child. */}
         <div
           className={cn(
-            'flex-1 flex flex-col overflow-auto bg-background overscroll-none',
+            '@container flex-1 flex flex-col overflow-auto bg-background overscroll-none',
             !noPadding && 'px-4 sm:px-6 md:px-8',
             !noPadding && isMobile && 'pt-2',
           )}

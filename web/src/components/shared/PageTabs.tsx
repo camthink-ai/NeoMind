@@ -459,11 +459,11 @@ export function PageTabsGrid({
 }: PageTabsGridProps) {
   // Map gridCols to Tailwind classes - md: for desktop layout
   const gridColsClass: Record<2 | 3 | 4 | 5 | 6, string> = {
-    2: 'md:grid-cols-2',
-    3: 'md:grid-cols-3',
-    4: 'md:grid-cols-4',
-    5: 'md:grid-cols-5',
-    6: 'md:grid-cols-6',
+    2: '@md:grid-cols-2',
+    3: '@md:grid-cols-3',
+    4: '@md:grid-cols-4',
+    5: '@md:grid-cols-5',
+    6: '@md:grid-cols-6',
   }
 
   // Adjust max-width based on number of columns (desktop only)

@@ -1,4 +1,6 @@
 /** @type {import('tailwindcss').Config} */
+import containerQueries from '@tailwindcss/container-queries'
+
 export default {
   darkMode: ["class"],
   content: [
@@ -261,9 +263,19 @@ export default {
         "spring-snappy": "var(--ease-spring-snappy)",
         "spring-soft": "var(--ease-spring-soft)",
       },
+      // Container-query scale: the plugin's own defaults are tiny widget sizes
+      // (md=28rem, lg=32rem, xl=36rem). Align the named sizes with the viewport
+      // breakpoints (Tailwind v4 semantics) so @md:/@lg:/@xl: read naturally
+      // against the page container.
+      containers: {
+        md: "768px",
+        lg: "1024px",
+        xl: "1280px",
+      },
     },
   },
   plugins: [
+    containerQueries,
     require("@tailwindcss/typography")({
       theme: {
         extend: {

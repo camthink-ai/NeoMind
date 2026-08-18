@@ -81,6 +81,7 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",
     "@playwright/test": "^1.57.0",
+    "@tailwindcss/container-queries": "^0.1.1",
     "@tauri-apps/cli": "^2.10.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
