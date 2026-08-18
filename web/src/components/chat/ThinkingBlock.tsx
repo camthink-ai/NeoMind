@@ -81,11 +81,11 @@ export function ThinkingBlock({
   }
 
   return (
-    <div className="mb-3">
+    <div className="mb-3 overflow-hidden rounded-lg border border-border bg-muted/30">
       {/* Header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted-30 transition-colors"
+        className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-muted-50 transition-colors"
       >
         <Brain className={cn(
           "h-4 w-4",

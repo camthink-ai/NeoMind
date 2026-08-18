@@ -133,11 +133,11 @@ export function ToolProcessBlock({
   const manyCalls = toolCalls.length > 4
 
   return (
-    <div className="mb-4">
+    <div className="mb-4 overflow-hidden rounded-lg border border-border bg-muted/30">
       {/* Summary header */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted-30 transition-colors"
+        className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted-50 transition-colors"
       >
         <div className={cn(
           "h-4 w-4 rounded flex items-center justify-center shrink-0",
@@ -174,11 +174,8 @@ export function ToolProcessBlock({
             const isLastStep = idx === steps.length - 1
             const stepStreaming = isStreaming && isLastStep
             const roundContent = roundContents[step]
-            // Alternate subtle background per round
-            const roundBg = idx % 2 === 1 ? "bg-muted-30" : ""
-
             return (
-              <div key={step} className={cn("rounded-lg mb-1", roundBg)}>
+              <div key={step} className="mb-1">
                 {/* Round content (intermediate results) */}
                 {roundContent && (
                   <RoundContent content={roundContent} />
