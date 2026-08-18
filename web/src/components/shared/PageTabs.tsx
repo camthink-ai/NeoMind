@@ -133,7 +133,7 @@ export function PageTabsBar({
     // py-2 + border-b: the row keeps its bottom divider (tab capsule's edge
     // line) AND breathing room above the content area. px matches the title
     // row (md:px-8) so tabs left-align with the title above them.
-    <div className="flex shrink-0 items-center gap-3 border-b border-border bg-[var(--chrome)] px-4 py-2 sm:px-6 md:px-8">
+    <div className="flex shrink-0 items-center gap-3 border-b border-border bg-background px-4 py-2 sm:px-6 md:px-8">
       <div
         className={cn(
           'flex min-w-0 max-w-full items-center overflow-x-auto scrollbar-none rounded-lg border border-border bg-card p-1 gap-1',
