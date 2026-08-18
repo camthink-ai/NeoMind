@@ -66,6 +66,41 @@ struct CommandOutput {
 static INJECTED_DOMAINS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
     std::sync::OnceLock::new();
 
+/// [context-injection] Set once the cross-domain index card has been
+/// injected into a shell tool result (channel D — first shell call of the
+/// process). See `DOMAIN_INDEX` for why the index is injected rather than
+/// living in the static tool description.
+static INDEX_INJECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Cross-domain subcommand index (channel D). Delivered ONCE, appended to
+/// the FIRST shell tool result, so the model sees the full CLI surface
+/// right after it has already chosen `shell` — recall without any static
+/// description-length cost.
+///
+/// History: first shipped inside the static description (2026-08-17); the
+/// 2026-08-18 full eval showed the 2600-char description re-triggered the
+/// ≤3B tool-selection suppression (wrong-tool grabs like file_write), so it
+/// moved here. The 27 "detoured via a wrong-but-succeeding command" failures
+/// it fixes need the map BEFORE detouring, which channel D satisfies for
+/// every case that touches shell at least once.
+const DOMAIN_INDEX: &str = r#"
+
+[neomind CLI domain index — the exact subcommands that exist (one line per domain; `neomind <domain> --help` for flags)]
+- device: list get create update delete history control <ID> <CMD> types write-metric webhook-url drafts
+- agent: list get create update delete invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`)
+- rule: list get create update delete enable disable test history
+- dashboard: list get create update delete add-components remove-components share
+- connector: list get create update delete enable disable test subscribe (external I/O bridges: MQTT broker / webhook / HTTP — NOT devices)
+- extension: list get install uninstall status logs config reload create build market-list market-install validate
+- transform: list get create update delete enable disable metrics test-code data-sources
+- widget: list get create install uninstall bundle market-list market-install
+- message: list get send read channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (platform alerts — NOT for talking to agents)
+- push: list get create update delete enable disable test logs stats
+- llm: list get models create update delete activate test
+- settings: timezone set-timezone timezones retention set-retention cleanup
+- system: info — api-key: create list delete
+Anything not listed above does not exist as a subcommand — do not invent near-misses; use the exact name or `neomind <domain> --help`."#;
+
 pub struct ShellTool {
     config: ShellConfig,
 }
@@ -338,9 +373,15 @@ impl ShellTool {
                         e
                     )
                 });
-                // [context-injection] (B) failure → --help to correct on
-                // retry; (C) FIRST successful call in a domain → --help as
-                // reference for the upcoming steps of multi-step flows.
+                // [context-injection] (D) FIRST shell call of the process →
+                // cross-domain index card (see DOMAIN_INDEX for why this
+                // lives here and not in the static description). (B)
+                // failure → --help to correct on retry; (C) FIRST
+                // successful call in a domain → --help as reference for the
+                // upcoming steps of multi-step flows.
+                if !INDEX_INJECTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    stdout.push_str(DOMAIN_INDEX);
+                }
                 if let Some(domain) = argv.get(1) {
                     let help: Option<String> = if !resp.success {
                         Self::domain_help(domain.as_str(), "retry with the exact one").await
@@ -1041,35 +1082,27 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        // Canonical description: Critical Syntax Rules (hard constraints) +
-        // a per-domain subcommand INDEX CARD. The index gives recall for
-        // low-frequency subcommands (the 2026-08-17 eval showed 27/46
-        // failures were "detoured via a wrong-but-succeeding command" —
-        // the failure-path help injection never fired because the detour
-        // succeeded). Index stays ~40 lines so it does not re-trigger the
-        // ≤3B description-avoidance the 6510-char wall caused. Defensive
-        // knowledge (easy-to-miss list, GUI guard) stays out — discoverable
-        // via `neomind <domain> <action> --help` or the skill tool.
-        static SLIM: &str = r#"Execute shell commands on the host. PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI. Commands return JSON — do NOT pass --json.
+        // Slim description (canonical): Critical Syntax Rules (hard
+        // constraints) + CLI concept. The per-domain subcommand INDEX lives
+        // in DOMAIN_INDEX below and is INJECTED into the first shell tool
+        // result instead of living here — the 2026-08-18 full eval proved a
+        // 2600-char static description re-triggers the ≤3B tool-selection
+        // suppression (models grabbed file_write/web_fetch instead of shell:
+        // the description-avoidance signature from the 6510-char era), which
+        // cost more cases than the index's recall gained. Defensive knowledge
+        // (easy-to-miss list, GUI guard) stays out — discoverable via
+        // `neomind <domain> <action> --help` or the skill tool.
+        static SLIM: &str = r#"Execute shell commands on the host. This is your PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI (14 domains: device, dashboard, rule, agent, extension, widget, transform, llm, message, connector, push, settings, system, api-key). All commands return JSON by default — do NOT pass --json.
 
-Quick reference — domain index of exact subcommands (ID is positional, never `--id`; `neomind <domain> --help` for flags, `skill` guide for full syntax):
-- device: list get create update delete history control <ID> <CMD> types write-metric webhook-url drafts
-- agent: list get create update delete invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talk to agents)
-- rule: list get create update delete enable disable test history
-- dashboard: list get create update delete add-components remove-components share
-- connector: list get create update delete enable disable test subscribe (external I/O: MQTT/webhook/HTTP — NOT devices)
-- extension: list get install uninstall status logs config reload create build market-list market-install validate
-- transform: list get create update delete enable disable metrics test-code data-sources
-- widget: list get create install uninstall bundle market-list market-install
-- message: list get send read channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (platform alerts — NOT agent chat; use agent send-message)
-- push: list get create update delete enable disable test logs stats
-- llm: list get models create update delete activate test
-- settings: timezone set-timezone timezones retention set-retention cleanup
-- system: info — api-key: create list delete
+Quick reference (run `neomind <domain> --help` or load the `skill` guide for full syntax):
+- Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
+- Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
+- Control / enable / activate are explicit writes: `device control <ID> <CMD>`, `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
+- History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
+- Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 
 Critical rules:
-- NEVER guess metric or subcommand names — the index above is exhaustive; anything not listed does not exist. Discover entities via `get`/`list` first, then use exact names/IDs.
-- Write commands take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
+- NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
 - Read before write: `get <ID>` before create/update/control/delete.
 - COMPLETE THE FULL FLOW: a multi-step request ("create X then enable it", "deploy then verify") requires EVERY step — do not stop after the first action.
   Worked example — "create an MQTT connector named c1 to 192.168.1.100, enable and test it" is ONE request = THREE commands:
