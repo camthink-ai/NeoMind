@@ -118,8 +118,11 @@ export function ResponsiveTable<T extends object>({
     const skeletonRows = 8
     return (
       <>
-        {/* Desktop skeleton */}
-        <div className="hidden md:block rounded-lg border bg-card overflow-hidden">
+        {/* Desktop skeleton — w-fit min-w-full lets the wrapper grow to the
+            table's natural width so the PAGE scroll container provides
+            horizontal scrolling on narrow windows (overflow-hidden alone
+            clipped it) */}
+        <div className="hidden md:block w-fit min-w-full rounded-lg border bg-card overflow-hidden">
           <table className={cn("w-full caption-bottom text-sm", className)}>
             <thead className="[&_tr]:border-b">
               <tr className="rounded-t-lg">
@@ -184,8 +187,11 @@ export function ResponsiveTable<T extends object>({
 
   return (
     <>
-      {/* Desktop Table - uses page scroll with sticky header */}
-      <div className="hidden md:block rounded-lg border bg-card overflow-hidden">
+      {/* Desktop Table - uses page scroll with sticky header. w-fit
+          min-w-full: wrapper grows to the table's natural width when columns
+          can't fit, so the page scroll container scrolls horizontally
+          instead of overflow-hidden clipping the table */}
+      <div className="hidden md:block w-fit min-w-full rounded-lg border bg-card overflow-hidden">
         <table className={cn("w-full caption-bottom text-sm", className)}>
           <thead className={cn(
             "[&_tr]:border-b",
