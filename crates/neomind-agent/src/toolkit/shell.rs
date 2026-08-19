@@ -1247,7 +1247,6 @@ mod tests {
     /// drops these lines silently reintroduces command-variant failures — the
     /// model then improvises subcommands (extension info↔get, data-sources↔metrics)
     /// because those domains aren't in the always-present reference.
-    #[test]
     /// The skeleton description replaced the old dense per-domain Command
     /// Choice block (6510 chars) — that block suppressed tool SELECTION on
     /// ≤3B models (they avoided the huge description and grabbed `skill`
