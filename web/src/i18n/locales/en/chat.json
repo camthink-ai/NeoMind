@@ -1,6 +1,7 @@
 {
   "openPanel": "Open AI Chat",
   "closePanel": "Close",
+  "resizePanel": "Drag to resize chat panel",
   "panelTitle": "AI Chat",
   "streamInProgress": "Stream in progress, closing after completion...",
   "title": "Smart IoT Assistant",

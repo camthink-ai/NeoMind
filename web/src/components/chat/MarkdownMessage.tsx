@@ -125,6 +125,13 @@ const MARKDOWN_COMPONENTS: Components = {
       {children}
     </a>
   ),
+  // Tables scroll horizontally WITHIN the message instead of pushing the
+  // whole chat panel into horizontal scroll (float chat is only 380-400px).
+  table: ({ node, children, ...props }) => (
+    <div className="overflow-x-auto">
+      <table className="w-full" {...(props as any)}>{children}</table>
+    </div>
+  ),
 }
 
 /**
