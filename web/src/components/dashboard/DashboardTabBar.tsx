@@ -24,7 +24,6 @@ import { useTranslation } from 'react-i18next'
 import { useIsMobile } from '@/hooks/useMobile'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
   TooltipContent,
@@ -393,9 +392,12 @@ export function DashboardTabBar({
       <div className="h-5 w-px bg-border shrink-0" />
 
       {/* MIDDLE: scrollable tabs (more menu renders inline after the active tab).
-          pr-7 keeps the rightmost tab's hover-reveal ⋮ (28px) inside the padded
-          region instead of clipping at the viewport edge. */}
-      <ScrollArea className="flex-1 min-w-0 h-11">
+          Native overflow-x (scrollbar-none = no visible bar, matches PageTabs).
+          Radix ScrollArea WITHOUT a ScrollBar child disables scrolling entirely
+          (Radix gates the viewport's overflow on ScrollBar presence) — so we
+          use native scrolling instead. pr-7 keeps the rightmost tab's hover-
+          reveal ⋮ (28px) inside the padded region instead of clipping. */}
+      <div className="flex-1 min-w-0 h-11 overflow-x-auto scrollbar-none">
         <div
           ref={tabsViewportRef}
           className="flex items-center gap-0.5 py-1.5 pr-7"
@@ -587,7 +589,7 @@ export function DashboardTabBar({
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
