@@ -6,3 +6,4 @@
 //! `pub mod` line here when its module file is created.
 
 pub mod manifest;
+pub mod variant;
