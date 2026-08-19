@@ -91,6 +91,27 @@ export interface LlmBackendListResponse {
   active_id: string | null
 }
 
+/**
+ * Status of the built-in bundled LLM (LFM2.5-2.6B).
+ * GET /api/builtin-llm/status
+ */
+export interface BuiltinLlmStatus {
+  /** Whether the model GGUF is present on disk. */
+  installed: boolean
+  model_id: string | null
+  /**
+   * Derived server state:
+   * - `not_configured` — model not downloaded
+   * - `downloading`    — background download in progress
+   * - `running`        — bundled llama-server healthy on its port
+   * - `stopped`        — model present but server not running
+   * - `error`          — manifest unreadable
+   */
+  server_state: 'not_configured' | 'downloading' | 'running' | 'stopped' | 'error'
+  downloaded_bytes: number | null
+  total_bytes: number | null
+}
+
 export interface BackendTypeDefinition {
   id: string
   name: string

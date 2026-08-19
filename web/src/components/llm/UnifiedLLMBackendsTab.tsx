@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
 import { confirm } from '@/hooks/use-confirm'
+import { toast } from '@/hooks/use-toast'
 import {
   Server,
   CheckCircle2,
@@ -12,13 +13,18 @@ import {
   Eye,
   Wrench,
   Brain,
+  Download,
+  Power,
+  RotateCcw,
+  Cpu,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Progress } from '@/components/ui/progress'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
-import { fetchAPI } from '@/lib/api'
+import { api, fetchAPI } from '@/lib/api'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
 import type {
   LlmBackendInstance,
@@ -28,6 +34,7 @@ import type {
   UpdateLlmBackendRequest,
   PluginConfigSchema,
   BackendCapabilities,
+  BuiltinLlmStatus,
 } from '@/types'
 
 type View = 'list' | 'detail'
@@ -97,6 +104,74 @@ function getLlmProviderInfo(providerType: string, t: (key: string) => string) {
     name: t(i18nKey),
     icon: config.icon,
     iconBg: config.iconBg,
+  }
+}
+
+// Built-in bundled LLM (LFM2.5-2.6B) card actions.
+type BuiltinAction = 'download' | 'restart' | 'activate' | 'delete'
+
+interface BuiltinStatusInfo {
+  text: string
+  pillClass: string
+  percent: number | null
+}
+
+/**
+ * Map the backend `GET /api/builtin-llm/status` response to display text +
+ * design-token pill color. `downloading` renders a percentage when the server
+ * reported a total, otherwise an indeterminate "下载中" label.
+ */
+function getBuiltinStatusInfo(
+  status: BuiltinLlmStatus,
+  t: (key: string, options?: Record<string, unknown>) => string
+): BuiltinStatusInfo {
+  const { server_state, downloaded_bytes, total_bytes } = status
+
+  switch (server_state) {
+    case 'not_configured':
+      return {
+        text: t('plugins:llm.builtinNotDownloaded'),
+        pillClass: 'bg-muted text-muted-foreground',
+        percent: null,
+      }
+    case 'downloading': {
+      const percent =
+        total_bytes && total_bytes > 0 && downloaded_bytes != null
+          ? Math.min(100, Math.round((downloaded_bytes / total_bytes) * 100))
+          : null
+      return {
+        text:
+          percent != null
+            ? t('plugins:llm.builtinDownloading', { percent })
+            : t('plugins:llm.builtinDownloadingNoProgress'),
+        pillClass: 'bg-info-light text-info',
+        percent,
+      }
+    }
+    case 'running':
+      return {
+        text: t('plugins:llm.builtinRunning'),
+        pillClass: 'bg-success-light text-success',
+        percent: null,
+      }
+    case 'stopped':
+      return {
+        text: t('plugins:llm.builtinStopped'),
+        pillClass: 'bg-warning-light text-warning',
+        percent: null,
+      }
+    case 'error':
+      return {
+        text: t('plugins:llm.builtinError'),
+        pillClass: 'bg-error-light text-error',
+        percent: null,
+      }
+    default:
+      return {
+        text: server_state,
+        pillClass: 'bg-muted text-muted-foreground',
+        percent: null,
+      }
   }
 }
 
@@ -209,6 +284,11 @@ export function UnifiedLLMBackendsTab({
   const [editingInstance, setEditingInstance] = useState<PluginInstance | null>(null)
   const [testResults, setTestResults] = useState<Record<string, { success: boolean; message: string }>>({})
 
+  // Built-in LLM card state (polled from /api/builtin-llm/status)
+  const [builtinStatus, setBuiltinStatus] = useState<BuiltinLlmStatus | null>(null)
+  const [builtinBusyAction, setBuiltinBusyAction] = useState<BuiltinAction | null>(null)
+  const builtinBusyActionRef = useRef<BuiltinAction | null>(null)
+
   useEffect(() => {
     loadData()
   }, [])
@@ -237,7 +317,91 @@ export function UnifiedLLMBackendsTab({
   }
 
   const getInstancesForType = (typeId: string) => {
-    return instances.filter(i => i.backend_type === typeId)
+    // The built-in instance is managed by its own card (top of the list view);
+    // exclude it from the provider card's count/detail so it isn't editable
+    // through the normal llamacpp instance flow.
+    return instances.filter(i => i.backend_type === typeId && !i.is_builtin)
+  }
+
+  // Poll the built-in LLM status while the list view is visible (the builtin
+  // card lives there). Stops on unmount / detail view. A failed fetch means
+  // the server has no /api/builtin-llm/* endpoints → hide the card.
+  useEffect(() => {
+    if (view !== 'list') return
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const data = await api.getBuiltinLlmStatus()
+        if (!cancelled) setBuiltinStatus(data)
+      } catch {
+        if (!cancelled) setBuiltinStatus(null)
+      }
+    }
+    poll()
+    const timer = window.setInterval(poll, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [view])
+
+  const refreshBuiltinStatus = async () => {
+    try {
+      setBuiltinStatus(await api.getBuiltinLlmStatus())
+    } catch {
+      setBuiltinStatus(null)
+    }
+  }
+
+  const handleBuiltinAction = async (action: BuiltinAction) => {
+    if (builtinBusyActionRef.current) return
+    if (action === 'delete') {
+      const confirmed = await confirm({
+        title: t('plugins:llm.builtinDelete', { defaultValue: 'Delete Model' }),
+        description: t('plugins:llm.builtinConfirmDelete'),
+        confirmText: t('common:delete', { defaultValue: 'Delete' }),
+        cancelText: t('common:cancel', { defaultValue: 'Cancel' }),
+        variant: 'destructive',
+      })
+      if (!confirmed) return
+    }
+
+    builtinBusyActionRef.current = action
+    setBuiltinBusyAction(action)
+    try {
+      let successMsg: string | null = null
+      switch (action) {
+        case 'download': {
+          const res = await api.downloadBuiltinLlm()
+          successMsg = res.started
+            ? t('plugins:llm.builtinDownloadStarted')
+            : t('plugins:llm.builtinDownloadInProgress')
+          break
+        }
+        case 'restart':
+          await api.restartBuiltinLlm()
+          successMsg = t('plugins:llm.builtinRestarted')
+          break
+        case 'activate':
+          await api.activateBuiltinLlm()
+          successMsg = t('plugins:llm.builtinActivated')
+          break
+        case 'delete':
+          await api.deleteBuiltinLlmModel()
+          successMsg = t('plugins:llm.builtinDeleted')
+          break
+      }
+      if (successMsg) toast({ title: successMsg })
+      // Refresh the backend list (instance appears/disappears, active flips)
+      // and the builtin status after each action.
+      await loadData()
+      await refreshBuiltinStatus()
+    } catch (error) {
+      handleError(error, { operation: 'Builtin LLM action' })
+    } finally {
+      builtinBusyActionRef.current = null
+      setBuiltinBusyAction(null)
+    }
   }
 
   // Handle create instance
@@ -325,20 +489,117 @@ export function UnifiedLLMBackendsTab({
 
   // ========== LIST VIEW ==========
   if (view === 'list') {
+    // Built-in bundled LLM card (top of the list, above the provider grid).
+    const builtinInstance = instances.find(i => i.is_builtin)
+    const builtinIsActive = !!builtinInstance && builtinInstance.id === activeBackendId
+    const builtinInfo = builtinStatus ? getBuiltinStatusInfo(builtinStatus, t) : null
+    const builtinCard = builtinStatus && builtinInfo ? (
+      <Card
+        className={cn(
+          'mb-4 transition-all duration-200',
+          builtinIsActive && 'border-success'
+        )}
+      >
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1 min-w-0">
+                <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-warning-light text-warning">
+                  <Cpu className="h-4 w-4" />
+                </div>
+                <CardTitle className="text-base truncate min-w-0">{t('plugins:llm.builtinTitle')}</CardTitle>
+                <Badge variant="outline" className="text-xs shrink-0">{t('plugins:llm.builtinBadge')}</Badge>
+                {builtinIsActive && <Badge variant="default" className="text-xs shrink-0">{t('plugins:llm.active')}</Badge>}
+              </div>
+              <CardDescription className="text-xs line-clamp-1">
+                {t('plugins:llm.builtinDesc')}
+              </CardDescription>
+            </div>
+            <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium shrink-0', builtinInfo.pillClass)}>
+              {builtinInfo.text}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="pb-3 space-y-3">
+          {builtinStatus.server_state === 'downloading' && (
+            <div className="space-y-1">
+              <Progress value={builtinInfo.percent ?? 0} />
+              <p className="text-xs text-muted-foreground">{builtinInfo.text}</p>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {builtinStatus.server_state === 'downloading' ? (
+              // Progress shown above; no actions while a download is in flight.
+              null
+            ) : !builtinStatus.installed ? (
+              <Button onClick={() => handleBuiltinAction('download')} disabled={!!builtinBusyAction}>
+                {builtinBusyAction === 'download'
+                  ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  : <Download className="mr-2 h-4 w-4" />}
+                {t('plugins:llm.builtinDownload')}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  onClick={() => handleBuiltinAction('activate')}
+                  // Activate only makes sense while the bundled server is
+                  // healthy — activating a stopped server would point chat at a
+                  // dead endpoint. Use 重启引擎 to bring it up first.
+                  disabled={!!builtinBusyAction || builtinIsActive || builtinStatus.server_state !== 'running'}
+                  variant={builtinIsActive ? 'secondary' : 'default'}
+                >
+                  {builtinBusyAction === 'activate'
+                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    : <Power className="mr-2 h-4 w-4" />}
+                  {builtinIsActive ? t('plugins:llm.builtinActive') : t('plugins:llm.builtinActivate')}
+                </Button>
+                {builtinStatus.server_state === 'stopped' && (
+                  <Button
+                    onClick={() => handleBuiltinAction('restart')}
+                    disabled={!!builtinBusyAction}
+                    variant="secondary"
+                  >
+                    {builtinBusyAction === 'restart'
+                      ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      : <RotateCcw className="mr-2 h-4 w-4" />}
+                    {t('plugins:llm.builtinRestart')}
+                  </Button>
+                )}
+                <Button
+                  onClick={() => handleBuiltinAction('delete')}
+                  disabled={!!builtinBusyAction}
+                  variant="destructive"
+                >
+                  {builtinBusyAction === 'delete'
+                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    : <Trash2 className="mr-2 h-4 w-4" />}
+                  {t('plugins:llm.builtinDelete')}
+                </Button>
+              </>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    ) : null
+
     // Empty state when no backend types are available
     if (backendTypes.length === 0) {
       return (
-        <EmptyState
-          icon="plugin"
-          title={t('plugins:llm.noBackends')}
-          description={t('plugins:llm.noBackendsDesc')}
-          action={{ label: t('common:retry'), onClick: loadData, icon: <Loader2 className="h-4 w-4" /> }}
-        />
+        <>
+          {builtinCard}
+          <EmptyState
+            icon="plugin"
+            title={t('plugins:llm.noBackends')}
+            description={t('plugins:llm.noBackendsDesc')}
+            action={{ label: t('common:retry'), onClick: loadData, icon: <Loader2 className="h-4 w-4" /> }}
+          />
+        </>
       )
     }
 
     return (
       <>
+        {builtinCard}
         {/* Provider Cards Grid */}
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {backendTypes.map((type) => {

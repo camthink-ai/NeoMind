@@ -55,6 +55,7 @@ import type {
   CreateLlmBackendRequest,
   UpdateLlmBackendRequest,
   LlmBackendListResponse,
+  BuiltinLlmStatus,
   BackendTypeDefinition,
   BackendTestResult,
   AdapterType,
@@ -1004,6 +1005,47 @@ export const api = {
       // Caller handles error toast via useErrorHandler — skip fetchAPI's
       // automatic notifyFromError to avoid double-toasting on PATCH failure.
       skipErrorToast: true,
+    }),
+
+  // ========== Builtin LLM API (bundled LFM2.5-2.6B) ==========
+  /**
+   * Status of the built-in bundled model + server.
+   * GET /api/builtin-llm/status
+   */
+  getBuiltinLlmStatus: () =>
+    fetchAPI<BuiltinLlmStatus>('/builtin-llm/status'),
+  /**
+   * Start / resume the model download (single-flight on the server).
+   * POST /api/builtin-llm/download
+   */
+  downloadBuiltinLlm: () =>
+    fetchAPI<{ started: boolean; already_running: boolean }>('/builtin-llm/download', {
+      method: 'POST',
+    }),
+  /**
+   * Delete the downloaded model files (stops the server first).
+   * DELETE /api/builtin-llm/model
+   */
+  deleteBuiltinLlmModel: () =>
+    fetchAPI<{ deleted: boolean }>('/builtin-llm/model', {
+      method: 'DELETE',
+    }),
+  /**
+   * Ensure the bundled llama-server is running (starts it if stopped).
+   * POST /api/builtin-llm/restart
+   */
+  restartBuiltinLlm: () =>
+    fetchAPI<{ restarted: boolean; already_running: boolean; endpoint?: string }>(
+      '/builtin-llm/restart',
+      { method: 'POST' }
+    ),
+  /**
+   * Activate the built-in backend as the active LLM backend.
+   * POST /api/builtin-llm/activate
+   */
+  activateBuiltinLlm: () =>
+    fetchAPI<{ id: string; message: string }>('/builtin-llm/activate', {
+      method: 'POST',
     }),
 
   // ========== IM Bridges API ==========
