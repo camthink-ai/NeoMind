@@ -15,11 +15,50 @@ import {
   Database,
   RefreshCw,
   EyeOff,
+  Eye,
+  Plug,
+  CloudSun,
+  Cpu,
+  Factory,
+  Wifi,
+  Camera,
+  Home,
+  Brain,
+  MonitorPlay,
+  ScanText,
+  UserCheck,
+  type LucideIcon,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { textNano, textMini, textMicro } from "@/design-system/tokens/typography"
 import type { Extension } from "@/types"
+
+/// Pick a scannable category icon from the extension id/name keywords.
+/// Backend sends no category/icon field, so heuristics keep the grid
+/// distinguishable. Last-match wins; falls back to Code2.
+function categoryIcon(id: string, name: string): LucideIcon {
+  const haystack = `${id} ${name}`.toLowerCase()
+  const pairs: [RegExp, LucideIcon][] = [
+    [/vision|yolo|object.?detect|image|analy|ocr|face/, Eye],
+    [/bridge|modbus|opc.?ua|bacnet|mqtt|lorawan|ha\b|home.?assist/, Plug],
+    [/weather|forecast/, CloudSun],
+    [/stream|player|rtsp|video|media/, MonitorPlay],
+    [/onvif|camera|ip.?cam/, Camera],
+    [/transcri|speech|voice|asr|tts/, Brain],
+    [/scan|text|ocr/, ScanText],
+    [/ident|recogn/, UserCheck],
+    [/wasm|demo|core|runtime/, Cpu],
+    [/industrial|scada|plc/, Factory],
+    [/wifi|sensor|iot/, Wifi],
+    [/push|export|telemetry|notif/, Database],
+    [/tool|command|cli|skill/, Terminal],
+  ]
+  for (const [re, icon] of pairs) {
+    if (re.test(haystack)) return icon
+  }
+  return Code2
+}
 
 interface ExtensionCardProps {
   extension: Extension
@@ -35,6 +74,11 @@ export function ExtensionCard({
   onReload,
 }: ExtensionCardProps) {
   const { t } = useTranslation(["extensions", "common"])
+
+  // Extension type has no category/icon field, so derive a scannable icon
+  // from the id/name keywords (keeps a 20-extension grid distinguishable at
+  // a glance instead of every card showing the same Code2 glyph).
+  const CategoryIcon = categoryIcon(extension.id, extension.name)
 
   // toolsEnabled = master toggle for exposing commands to the agent.
   // The card only shows state; toggling lives in the details dialog to keep
@@ -77,7 +121,7 @@ export function ExtensionCard({
               isFailed ? "bg-muted text-muted-foreground" :
               "bg-success-light text-success",
             )}>
-              <Code2 className="h-5 w-5" />
+            <CategoryIcon className="h-5 w-5" />
               {/* Status indicator dot */}
               <div className={cn(
                 "absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-background",
@@ -128,6 +172,13 @@ export function ExtensionCard({
         {extension.description && (
           <p className="text-xs text-muted-foreground line-clamp-2 mb-3 leading-relaxed">
             {extension.description}
+          </p>
+        )}
+
+        {/* Error summary — the card shows WHY it's red without opening details */}
+        {hasError && extension.last_error && (
+          <p className="text-xs text-error line-clamp-2 mb-3 leading-relaxed break-words">
+            {extension.last_error}
           </p>
         )}
 
