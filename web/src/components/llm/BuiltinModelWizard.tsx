@@ -11,11 +11,13 @@
  *   error       → error message + retry
  *
  * # Progress source
- * Task 15 replaces this with a WS `ModelDownloadProgress` subscription. Until
- * then progress is polled from `GET /api/builtin-llm/status`, which reports
- * `downloaded_bytes`/`total_bytes` while `server_state === 'downloading'`.
- * The view reads ONLY the small `progress` state below — Task 15 can swap the
- * source without touching the render.
+ * Live `ModelDownloadProgress` events over the WS/SSE event stream feed the
+ * small `progress` state below (Task 15). That event type is in NO
+ * `is_*_event()` category, so it is received on the unfiltered 'all' stream
+ * rather than the 'llm' category. `GET /api/builtin-llm/status` polling remains
+ * as a fallback/resume source (e.g. the socket was disconnected when the
+ * download started). The view reads ONLY the small `progress` state below, so
+ * the render is independent of which source supplied it.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -42,6 +44,8 @@ import {
   Zap,
 } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useEvents } from '@/hooks/useEvents'
+import type { ModelDownloadProgressEvent } from '@/lib/events'
 import type { BuiltinLlmStatus } from '@/types'
 
 const STATUS_POLL_MS = 2000
@@ -113,6 +117,9 @@ export function BuiltinModelWizard({
   // Guards against double-activation within one open session.
   const activatedRef = useRef(false)
   const sawDownloadingRef = useRef(false)
+  // Timestamp of the last live WS progress event — the poll fills progress gaps
+  // only when this is stale (Task 15).
+  const wsProgressAtRef = useRef(0)
 
   const failWith = (action: RetryAction, error: unknown) => {
     setRetryAction(action)
@@ -142,13 +149,53 @@ export function BuiltinModelWizard({
     if (open) {
       activatedRef.current = false
       sawDownloadingRef.current = false
+      wsProgressAtRef.current = 0
       setErrorMsg(null)
       setPhase(status?.installed ? 'ready' : 'loading')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  // Poll status while open. Task 15 replaces this with a WS subscription.
+  // Live download progress over WS/SSE (Task 15). ModelDownloadProgress is in
+  // NO is_*_event() category, so the 'llm' category filter would never deliver
+  // it — subscribe on the unfiltered 'all' stream and client-filter to this
+  // type (the 'all' connection is shared, so this adds no extra socket). The
+  // status poll below remains a fallback/resume source.
+  useEvents({
+    category: 'all',
+    eventTypes: ['ModelDownloadProgress'],
+    enabled: open,
+    onEvent: (event) => {
+      if (event.type !== 'ModelDownloadProgress') return
+      const d = (event as ModelDownloadProgressEvent).data
+      // total/error are Option on the backend: total serializes as null when
+      // unknown and error is null/absent on success — tolerate both.
+      if (d.status === 'downloading') {
+        sawDownloadingRef.current = true
+        wsProgressAtRef.current = Date.now()
+        setProgress({
+          percent: calcPercent(d.downloaded, d.total),
+          downloadedBytes: d.downloaded ?? 0,
+          totalBytes: d.total ?? null,
+        })
+        setPhase('downloading')
+      } else if (d.status === 'complete') {
+        // Show 100% immediately; the poll observes installed + running and
+        // drives the ready / auto-activate transition.
+        setProgress({
+          percent: 100,
+          downloadedBytes: d.downloaded ?? 0,
+          totalBytes: d.total ?? null,
+        })
+      }
+      // status === 'error': the poll's server_state owns the error transition;
+      // progress simply stops updating here.
+    },
+  })
+
+  // Poll status while open — fallback/resume source for progress (e.g. the
+  // socket was disconnected when the download started) and the authority for
+  // phase transitions (installed/running/error).
   useEffect(() => {
     if (!open) return
     let cancelled = false
@@ -176,11 +223,16 @@ export function BuiltinModelWizard({
 
     if (s.server_state === 'downloading') {
       sawDownloadingRef.current = true
-      setProgress({
-        percent: calcPercent(s.downloaded_bytes, s.total_bytes),
-        downloadedBytes: s.downloaded_bytes ?? 0,
-        totalBytes: s.total_bytes,
-      })
+      // WS delivers live progress; only fall back to the poll when WS has been
+      // silent (e.g. it wasn't connected when the download started) so a fresh
+      // WS value is not clobbered by a slightly older poll snapshot.
+      if (Date.now() - wsProgressAtRef.current > STATUS_POLL_MS) {
+        setProgress({
+          percent: calcPercent(s.downloaded_bytes, s.total_bytes),
+          downloadedBytes: s.downloaded_bytes ?? 0,
+          totalBytes: s.total_bytes,
+        })
+      }
       setPhase('downloading')
       return
     }
@@ -209,9 +261,9 @@ export function BuiltinModelWizard({
     setErrorMsg(null)
     try {
       await api.downloadBuiltinLlm()
-      // Optimistically switch to the downloading phase; the poll confirms the
-      // server state and supplies real progress numbers (even if the server
-      // reports an already-running download, progress will follow).
+      // Optimistically switch to the downloading phase; live WS events supply
+      // real progress numbers (and the poll confirms/resumes if the socket is
+      // not delivering).
       sawDownloadingRef.current = true
       setPhase('downloading')
     } catch (error) {

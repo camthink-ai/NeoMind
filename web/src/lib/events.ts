@@ -33,6 +33,7 @@ export type EventType =
   | 'ExtensionLifecycle'
   | 'FrontendComponentLifecycle'
   | 'DashboardUpdated'
+  | 'ModelDownloadProgress'
   | 'Custom'
 
 export interface CustomEvent extends NeoMindEvent {
@@ -90,6 +91,21 @@ export interface FrontendComponentLifecycleEvent extends NeoMindEvent {
   data: {
     component_id: string
     state: 'installed' | 'uninstalled'
+  }
+}
+
+// Builtin LLM model download progress events (WS/SSE → progress bar).
+// `total`/`error` are `Option` on the backend: `total` serializes as `null`
+// when unknown, and `error` is `null`/absent when there is no failure — the
+// handler must tolerate both null and missing fields.
+export interface ModelDownloadProgressEvent extends NeoMindEvent {
+  type: 'ModelDownloadProgress'
+  data: {
+    model_id: string
+    downloaded: number
+    total: number | null
+    status: 'downloading' | 'complete' | 'error'
+    error?: string | null
   }
 }
 
