@@ -54,7 +54,8 @@ impl LlamaServerProcess {
             .arg(cfg.port.to_string())
             .arg("--host")
             .arg("127.0.0.1")
-            .arg("--nobrowser")
+            // `--no-webui`(非旧名 `--nobrowser`,当前 llama.cpp 已改名,旧参数报 invalid argument)
+            .arg("--no-webui")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         if let Some(n) = cfg.ngl {
