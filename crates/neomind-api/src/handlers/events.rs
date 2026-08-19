@@ -293,6 +293,24 @@ fn extract_event_data(event: &NeoMindEvent) -> Value {
                 "timestamp": timestamp,
             })
         }
+        // ModelDownloadProgress: builtin LLM model download progress. Payload matches
+        // the event struct fields (model_id, downloaded, total, status, error) without
+        // the nested `type` field, consistent with other explicitly-shaped variants.
+        NeoMindEvent::ModelDownloadProgress {
+            model_id,
+            downloaded,
+            total,
+            status,
+            error,
+        } => {
+            serde_json::json!({
+                "model_id": model_id,
+                "downloaded": downloaded,
+                "total": total,
+                "status": status,
+                "error": error,
+            })
+        }
         // Custom events: flatten the custom event_type alongside the payload data
         // so the frontend can filter by custom_type and inspect the inner event_type
         NeoMindEvent::Custom { event_type, data } => {
@@ -768,4 +786,28 @@ pub async fn event_websocket_handler(
 
         let _ = socket.close().await;
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_event_data_model_download_progress() {
+        let event = NeoMindEvent::ModelDownloadProgress {
+            model_id: "qwen3.5:4b".to_string(),
+            downloaded: 1024,
+            total: Some(2048),
+            status: "downloading".to_string(),
+            error: None,
+        };
+        let data = extract_event_data(&event);
+        assert_eq!(data["model_id"], "qwen3.5:4b");
+        assert_eq!(data["downloaded"], 1024);
+        assert_eq!(data["total"], 2048);
+        assert_eq!(data["status"], "downloading");
+        assert!(data["error"].is_null());
+        // No nested `type` field: frontend reads data fields only.
+        assert!(data.get("type").is_none());
+    }
 }
