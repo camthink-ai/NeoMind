@@ -244,14 +244,14 @@ export function AgentDetailPanel({
           <TabsList className={cn(
             isMobile
               ? "grid grid-cols-4 gap-1 h-auto w-full"
-              : "h-9"
+              : "h-9 p-0.5 rounded-lg border border-border bg-card"
           )}>
             <TabsTrigger
               value="overview"
               className={cn(
                 isMobile
                   ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-                  : "h-7 text-sm"
+                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
               <Eye className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
@@ -262,7 +262,7 @@ export function AgentDetailPanel({
               className={cn(
                 isMobile
                   ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-                  : "h-7 text-sm"
+                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
               <Clock className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
@@ -273,7 +273,7 @@ export function AgentDetailPanel({
               className={cn(
                 isMobile
                   ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-                  : "h-7 text-sm"
+                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
               <Brain className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
@@ -284,7 +284,7 @@ export function AgentDetailPanel({
               className={cn(
                 isMobile
                   ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-                  : "h-7 text-sm"
+                  : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
               <MessageSquare className={cn(isMobile ? "h-4 w-4" : "h-4 w-4 mr-1")} />
@@ -394,7 +394,7 @@ export function AgentDetailPanel({
                           return acc
                         }, {} as Record<string, number>)
                       ).map(([type, count]) => (
-                        <div key={type} className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-info-light text-info border border-info text-sm">
+                        <div key={type} className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted text-foreground text-sm">
                           <span className="capitalize text-muted-foreground">{type}:</span>
                           <span className="font-semibold">{count}</span>
                         </div>
@@ -403,7 +403,7 @@ export function AgentDetailPanel({
                     {/* Resource list */}
                     <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
                       {(agent.resources || []).slice(0, 8).map((resource, idx) => (
-                        <div key={idx} className="flex items-center justify-between px-2.5 py-1.5 rounded border">
+                        <div key={idx} className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-muted">
                           <span className="text-sm truncate flex-1 mr-2" title={resource.resource_id}>
                             {resource.name || resource.resource_id}
                           </span>
@@ -481,9 +481,9 @@ interface DetailSectionProps {
 
 function DetailSection({ title, icon: Icon, children }: DetailSectionProps) {
   return (
-    <div className="rounded-lg p-3">
+    <div>
       {title && Icon && (
-        <h3 className="text-sm font-medium flex items-center gap-2 mb-3 text-muted-foreground">
+        <h3 className="text-sm font-medium flex items-center gap-2 mb-3 text-foreground">
           <Icon className="h-4 w-4" />
           {title}
         </h3>
@@ -503,7 +503,7 @@ interface StatItemProps {
 
 function StatItem({ icon, label, value, color }: StatItemProps) {
   return (
-    <div className="flex items-center gap-2 px-2.5 py-2 rounded border">
+    <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-card shadow-sm">
       <div className={cn("shrink-0", color)}>{icon}</div>
       <div className="flex-1 min-w-0">
         <div className="text-xs text-muted-foreground truncate">{label}</div>
@@ -538,7 +538,7 @@ function KnowledgeFileCard({ file, formatTime }: { file: KnowledgeFileRef; forma
   const hasContent = file.content && file.content.trim().length > 0
 
   return (
-    <div className="rounded-lg bg-accent-purple-light border border-accent-purple-light hover:border-accent-purple transition-colors overflow-hidden">
+    <div className="rounded-lg bg-card border border-border hover:border-foreground/30 transition-colors overflow-hidden">
       <button
         type="button"
         className="w-full p-3 text-left flex items-center justify-between gap-2"
@@ -547,7 +547,7 @@ function KnowledgeFileCard({ file, formatTime }: { file: KnowledgeFileRef; forma
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-0.5">
-            <FileText className="h-3.5 w-3.5 text-accent-purple shrink-0" />
+            <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span className="text-sm font-medium font-mono truncate">{file.name}</span>
           </div>
           <p className="text-xs text-muted-foreground line-clamp-1">{file.description}</p>
@@ -558,7 +558,7 @@ function KnowledgeFileCard({ file, formatTime }: { file: KnowledgeFileRef; forma
         </div>
       </button>
       {expanded && (
-        <div className="px-3 pb-3 pt-0 border-t border-accent-purple-light">
+        <div className="px-3 pb-3 pt-0 border-t border-border">
           {hasContent ? (
             <div className="mt-2 prose prose-sm dark:prose-invert max-w-none prose-p:leading-relaxed prose-p:my-1 prose-headings:font-semibold prose-headings:my-2 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:text-xs prose-code:font-mono prose-pre:bg-muted prose-pre:p-2 prose-pre:rounded-md prose-ul:my-1 prose-ul:pl-4 prose-ol:my-1 prose-ol:pl-4 prose-li:my-0 prose-li:text-xs">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -637,21 +637,21 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
         {/* Stats */}
         <div className={cn("gap-2", isMobile ? "grid grid-cols-1" : "grid grid-cols-3")}>
           {journalRecords.length > 0 && (
-            <div className="flex flex-col items-center p-3 rounded-lg bg-info-light border border-info">
-              <History className="h-4 w-4 text-info mb-1" />
-              <span className="text-lg font-semibold text-info">{journalRecords.length}</span>
+            <div className="flex flex-col items-center p-3 rounded-lg bg-card shadow-sm">
+              <History className="h-4 w-4 text-muted-foreground mb-1" />
+              <span className="text-lg font-semibold text-foreground">{journalRecords.length}</span>
               <span className={cn(textNano, "text-muted-foreground uppercase tracking-wide")}>{t('agents:memory.executions')}</span>
             </div>
           )}
           {knowledgeFiles.length > 0 && (
-            <div className="flex flex-col items-center p-3 rounded-lg bg-accent-purple-light border border-accent-purple-light">
-              <FileText className="h-4 w-4 text-accent-purple mb-1" />
-              <span className="text-lg font-semibold text-accent-purple">{knowledgeFiles.length}</span>
+            <div className="flex flex-col items-center p-3 rounded-lg bg-card shadow-sm">
+              <FileText className="h-4 w-4 text-muted-foreground mb-1" />
+              <span className="text-lg font-semibold text-foreground">{knowledgeFiles.length}</span>
               <span className={cn(textNano, "text-muted-foreground uppercase tracking-wide")}>{t('agents:memory.knowledgeFiles')}</span>
             </div>
           )}
           {memory.updated_at && (
-            <div className="flex flex-col items-center p-3 rounded-lg border border-border">
+            <div className="flex flex-col items-center p-3 rounded-lg bg-card shadow-sm">
               <Clock className="h-4 w-4 text-muted-foreground mb-1" />
               <span className="text-sm font-medium text-foreground">
                 {formatTime(memory.updated_at)}
@@ -683,11 +683,11 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
           >
             <div className="space-y-2">
               {journalRecords.map((record: JournalExecutionRecord, idx: number) => (
-                <div key={idx} className="group rounded-lg border border-border hover:border-info transition-colors">
+                <div key={idx} className="group rounded-lg border border-border hover:border-foreground/25 transition-colors">
                   <div className="pl-4 pr-3 py-3">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-muted-foreground bg-muted-50 px-1.5 py-0.5 rounded">
+                        <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                           {record.execution_id?.slice(0, 6)}...
                         </span>
                         <span className="text-xs text-muted-foreground">

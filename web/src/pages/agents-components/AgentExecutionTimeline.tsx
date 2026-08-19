@@ -330,7 +330,7 @@ export function AgentExecutionTimeline({
                                   if (imgs.length === 0 && mTags.length === 0) return null
                                   return (
                                     <TimelineSection
-                                      icon={<Database className="h-4 w-4 text-info" />}
+                                      icon={<Database className="h-4 w-4 text-muted-foreground" />}
                                       title={t('agents:memory.inputData', 'Input Data')}
                                     >
                                       {imgs.length > 0 && (
@@ -356,7 +356,7 @@ export function AgentExecutionTimeline({
                                 {/* ① Situation Analysis */}
                                 {detail.decision_process?.situation_analysis && (
                                   <TimelineSection
-                                    icon={<Brain className="h-4 w-4 text-accent-purple" />}
+                                    icon={<Brain className="h-4 w-4 text-muted-foreground" />}
                                     title={t('agents:memory.situationAnalysis')}
                                   >
                                     <CollapsibleText content={detail.decision_process.situation_analysis} maxLines={3} />
@@ -429,7 +429,7 @@ export function AgentExecutionTimeline({
                                           </Card>
                                         )}
                                         {hasConfidence && (
-                                          <div className="flex items-center justify-between text-sm p-2 bg-muted-50 rounded-lg">
+                                          <div className="flex items-center justify-between text-sm p-2 bg-muted rounded-lg">
                                             <span className="text-muted-foreground">{t('agents:memory.confidence')}</span>
                                             <Badge variant={dp!.confidence! > 0.7 ? "default" : "secondary"}>
                                               {(dp!.confidence! * 100).toFixed(0)}%
@@ -455,7 +455,7 @@ export function AgentExecutionTimeline({
                                   if (!summary || isGeneric || isDuplicate) return null
                                   return (
                                     <TimelineSection
-                                      icon={<Sparkles className="h-4 w-4 text-accent-indigo" />}
+                                      icon={<Sparkles className="h-4 w-4 text-muted-foreground" />}
                                       title={t('agents:memory.llmResponse', 'LLM Response')}
                                     >
                                       <CollapsibleText content={summary} maxLines={6} />
@@ -520,7 +520,7 @@ export function AgentExecutionTimeline({
                                 {/* ④ Notifications */}
                                 {detail.result?.notifications_sent && detail.result.notifications_sent.length > 0 && (
                                   <TimelineSection
-                                    icon={<Bell className="h-4 w-4 text-info" />}
+                                    icon={<Bell className="h-4 w-4 text-muted-foreground" />}
                                     title={t('agents:memory.notificationsSent')}
                                   >
                                     <div className="space-y-2">
@@ -667,7 +667,7 @@ function CollapsibleText({ content, maxLines = 6 }: { content: string; maxLines?
     <div>
       <div
         className={cn(
-          "text-sm bg-muted-50 p-3 rounded-lg border whitespace-pre-wrap break-words leading-relaxed",
+          "text-sm bg-muted p-3 rounded-lg border whitespace-pre-wrap break-words leading-relaxed",
           !expanded && isLong && "max-h-40 overflow-hidden relative",
         )}
       >

@@ -108,7 +108,7 @@ export function AgentThinkingPanel({ agentId, isExecuting }: AgentThinkingPanelP
       <button
         type="button"
         onClick={() => setCollapsed(!collapsed)}
-        className="w-full flex items-center justify-between px-4 py-2 hover:bg-muted-50 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2 hover:bg-muted transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           {currentExecution.status === 'running' ? (
@@ -224,12 +224,12 @@ export function AgentThinkingPanel({ agentId, isExecuting }: AgentThinkingPanelP
                       </h4>
                       <div className="space-y-2">
                         {conclusion && (
-                          <Card className="p-2.5 bg-muted-50">
+                          <Card className="p-2.5 bg-muted">
                             <p className="text-sm">{conclusion}</p>
                           </Card>
                         )}
                         {confidence !== undefined && (
-                          <div className="flex items-center justify-between text-sm p-2 bg-muted-50 rounded-lg">
+                          <div className="flex items-center justify-between text-sm p-2 bg-muted rounded-lg">
                             <span className="text-xs text-muted-foreground">{t('agents:memory.confidence')}</span>
                             <Badge variant={confidence > 0.7 ? "default" : "secondary"} className="h-5">
                               {(confidence * 100).toFixed(0)}%
@@ -275,7 +275,7 @@ function ThinkingStep({ step }: ThinkingStepProps) {
       case 'execute':
         return 'text-success bg-success-light border-success-light'
       default:
-        return 'text-muted-foreground bg-muted-50'
+        return 'text-muted-foreground bg-muted'
     }
   }
 
