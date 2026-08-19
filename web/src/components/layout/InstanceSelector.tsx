@@ -41,8 +41,8 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
       className={cn(
         "rounded-lg text-xs font-medium transition-colors cursor-pointer hover:opacity-80 disabled:opacity-50",
         compact
-          ? "flex items-center justify-center h-9 w-9"
-          : "flex items-center gap-1.5 px-2.5 py-1",
+          ? "flex items-center justify-center h-10 w-10"
+          : "flex items-center gap-1.5 px-2.5 h-10",
         isOnline
           ? cn("bg-success-light text-success", !compact && "border border-success-light")
           : "text-error bg-muted"

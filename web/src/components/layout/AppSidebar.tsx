@@ -63,8 +63,6 @@ import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDia
 const SIDEBAR_WIDTH_PX = 72
 // Expanded (logo click): 176px fits icon + label + padding.
 const SIDEBAR_EXPANDED_PX = 176
-// Persisted so the expanded preference survives reloads.
-const SIDEBAR_EXPANDED_KEY = "neomind_sidebar_expanded"
 
 // Tauri window drag — startDragging on mousedown over non-interactive areas
 // (data-tauri-drag-region is unreliable in Tauri 2 overlay mode).
@@ -86,12 +84,9 @@ export function AppSidebar() {
   const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   // Logo click expands/collapses the rail (labels appear when expanded).
-  const [expanded, setExpanded] = useState<boolean>(() => {
-    try { return localStorage.getItem(SIDEBAR_EXPANDED_KEY) === "1" } catch { return false }
-  })
-  useEffect(() => {
-    try { localStorage.setItem(SIDEBAR_EXPANDED_KEY, expanded ? "1" : "0") } catch {}
-  }, [expanded])
+  // Always starts COLLAPSED — expansion is an explicit per-session choice,
+  // never restored from a previous session.
+  const [expanded, setExpanded] = useState(false)
   const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
   useEffect(() => {
     fetchOnboardingStatus()
@@ -203,9 +198,8 @@ export function AppSidebar() {
         <TooltipTrigger asChild>
           <Button
             variant="ghost"
-            size="icon-sm"
             aria-label={label}
-            className="relative text-muted-foreground hover:text-foreground no-press-scale"
+            className="relative h-10 w-10 px-0 justify-center text-muted-foreground hover:text-foreground no-press-scale"
             onClick={onClick}
           >
             {icon}
@@ -301,7 +295,7 @@ export function AppSidebar() {
   return (
     <TooltipProvider delayDuration={500}>
       <aside
-        className="flex shrink-0 flex-col items-center bg-[var(--sidebar-bg)] border-r border-border transition-[width] duration-200 ease-out"
+        className="flex shrink-0 flex-col items-center overflow-hidden bg-[var(--sidebar-bg)] border-r border-border transition-[width] duration-200 ease-out"
         style={{
           width: expanded ? SIDEBAR_EXPANDED_PX : SIDEBAR_WIDTH_PX,
           // Top strip: reserves the macOS traffic-light inset + safe area
@@ -337,14 +331,15 @@ export function AppSidebar() {
         <div className="flex-1" />
 
         {/* Footer — instance / onboarding / settings / user avatar.
-            Theme, language and alerts live top-right (GlobalControls). */}
+            Theme, language and alerts live top-right (GlobalControls).
+            Uniform row height + gap in BOTH states so the rows stay at the
+            same Y when the rail expands — only labels appear/disappear. */}
         <div className={cn(
-          "flex flex-col pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]",
-          expanded ? "w-full gap-0.5" : "items-center gap-2"
+          "flex w-full flex-col items-center gap-1 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]"
         )}>
           {/* Instance selector — name pill when expanded, icon when collapsed */}
           {expanded ? (
-            <div className="w-full px-2 mb-1">
+            <div className="w-full px-2">
               <InstanceSelector onManageInstances={() => setInstanceManagerOpen(true)} />
             </div>
           ) : (
@@ -367,7 +362,7 @@ export function AppSidebar() {
           {footerRow(
             t("nav.settings"),
             <Settings className="h-5 w-5" />,
-            openSettings,
+            () => openSettings(),
             false,
             "settings"
           )}
