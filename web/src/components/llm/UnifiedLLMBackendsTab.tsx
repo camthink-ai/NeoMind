@@ -674,6 +674,42 @@ export function UnifiedLLMBackendsTab({
     return (
       <>
         {builtinCard}
+
+        {/* First-run guidance (non-empty type grid): no backend configured AND
+            the built-in model not yet installed → prominent CTA into the
+            first-run wizard (spec §7). Deliberately a banner, not an auto-open,
+            to avoid surprising the user. Gated on builtinStatus being present
+            so servers without the /api/builtin-llm endpoints never show it. */}
+        {instances.length === 0 && builtinStatus && !builtinStatus.installed && (
+          <Card className="mb-4 border-primary">
+            <CardContent className="p-5">
+              <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+                <div className="flex items-center justify-center h-12 w-12 rounded-xl shrink-0 bg-primary-light text-primary">
+                  <Cpu className="h-6 w-6" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-semibold text-foreground">
+                    {t('plugins:llm.firstRunBannerTitle')}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+                    {t('plugins:llm.firstRunBannerDesc')}
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <Button onClick={() => setWizardOpen(true)}>
+                    <Download className="mr-2 h-4 w-4" />
+                    {t('plugins:llm.emptyStateDownloadBuiltin')}
+                  </Button>
+                  <Button variant="secondary" onClick={handleAddOwnBackend}>
+                    <Server className="mr-2 h-4 w-4" />
+                    {t('plugins:llm.emptyStateAddOwnBackend')}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Provider Cards Grid */}
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
           {backendTypes.map((type) => {

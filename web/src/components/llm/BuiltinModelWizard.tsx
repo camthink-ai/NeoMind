@@ -117,6 +117,10 @@ export function BuiltinModelWizard({
   // Guards against double-activation within one open session.
   const activatedRef = useRef(false)
   const sawDownloadingRef = useRef(false)
+  // Set when a download failure is surfaced (WS error event or server_state
+  // 'error'). Prevents the status poll from silently resetting the wizard to
+  // idle after a failed download leaves the manifest unwritten (not_configured).
+  const downloadFailedRef = useRef(false)
   // Timestamp of the last live WS progress event — the poll fills progress gaps
   // only when this is stale (Task 15).
   const wsProgressAtRef = useRef(0)
@@ -149,6 +153,7 @@ export function BuiltinModelWizard({
     if (open) {
       activatedRef.current = false
       sawDownloadingRef.current = false
+      downloadFailedRef.current = false
       wsProgressAtRef.current = 0
       setErrorMsg(null)
       setPhase(status?.installed ? 'ready' : 'loading')
@@ -187,9 +192,15 @@ export function BuiltinModelWizard({
           downloadedBytes: d.downloaded ?? 0,
           totalBytes: d.total ?? null,
         })
+      } else if (d.status === 'error') {
+        // Mid-download failure: surface it NOW. The poll reports not_configured
+        // (manifest unwritten), so without this branch the wizard would sit in
+        // downloading with frozen progress then silently reset to idle.
+        downloadFailedRef.current = true
+        setRetryAction('download')
+        setErrorMsg(d.error ?? t('plugins:llm.builtinDownloadFailed'))
+        setPhase('error')
       }
-      // status === 'error': the poll's server_state owns the error transition;
-      // progress simply stops updating here.
     },
   })
 
@@ -237,6 +248,17 @@ export function BuiltinModelWizard({
       return
     }
 
+    if (s.server_state === 'error') {
+      // Manifest read failed / server reports an error state. The poll has no
+      // error message field, so surface a generic message (a specific one from
+      // the live WS error event, if any, is preserved via downloadFailedRef).
+      downloadFailedRef.current = true
+      setRetryAction('download')
+      setErrorMsg((e) => e ?? t('plugins:llm.builtinDownloadFailed'))
+      setPhase('error')
+      return
+    }
+
     if (s.installed) {
       setProgress({
         percent: 100,
@@ -254,11 +276,17 @@ export function BuiltinModelWizard({
       return
     }
 
-    setPhase('idle')
+    // not_configured / stopped: a failed download leaves the manifest unwritten,
+    // so the poll reports not_configured — never clobber an error the WS already
+    // surfaced back into idle.
+    if (!downloadFailedRef.current) {
+      setPhase('idle')
+    }
   }, [status, open, hasActiveBackend, handleActivate])
 
   const handleStartDownload = async () => {
     setErrorMsg(null)
+    downloadFailedRef.current = false
     try {
       await api.downloadBuiltinLlm()
       // Optimistically switch to the downloading phase; live WS events supply
