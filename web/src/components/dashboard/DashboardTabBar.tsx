@@ -24,7 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { useIsMobile } from '@/hooks/useMobile'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
   TooltipContent,
@@ -392,11 +392,13 @@ export function DashboardTabBar({
       {/* Vertical separator */}
       <div className="h-5 w-px bg-border shrink-0" />
 
-      {/* MIDDLE: scrollable tabs (more menu renders inline after the active tab) */}
+      {/* MIDDLE: scrollable tabs (more menu renders inline after the active tab).
+          pr-7 keeps the rightmost tab's hover-reveal ⋮ (28px) inside the padded
+          region instead of clipping at the viewport edge. */}
       <ScrollArea className="flex-1 min-w-0 h-11">
         <div
           ref={tabsViewportRef}
-          className="flex items-center gap-0.5 py-1.5"
+          className="flex items-center gap-0.5 py-1.5 pr-7"
         >
           {dashboards.flatMap((dashboard) => {
             const isActive = dashboard.id === currentDashboardId
@@ -585,7 +587,6 @@ export function DashboardTabBar({
             </div>
           )}
         </div>
-        <ScrollBar orientation="horizontal" />
       </ScrollArea>
     </div>
   )
