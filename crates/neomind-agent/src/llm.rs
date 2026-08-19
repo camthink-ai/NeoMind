@@ -309,6 +309,46 @@ impl LlmInterface {
         (None, None)
     }
 
+    /// Whether the active backend instance is an integral-thinking model whose
+    /// thinking cannot be turned off (e.g. LFM2.5).
+    ///
+    /// Only meaningful when the interface is driven by an instance manager —
+    /// same source (`self.instance_manager`) that `resolve_thinking_control`
+    /// and `get_runtime` read, so both stay consistent.
+    async fn active_thinking_is_integral(&self) -> bool {
+        if !self.uses_instance_manager() {
+            return false;
+        }
+        self.instance_manager
+            .as_ref()
+            .and_then(|m| m.get_active_instance())
+            .map(|inst| inst.thinking_is_integral)
+            .unwrap_or(false)
+    }
+
+    /// Resolve the effective thinking control for a call, combining the
+    /// local/instance resolution with the per-call `thinking_override`.
+    ///
+    /// For integral-thinking models (e.g. LFM2.5) the per-call override is
+    /// IGNORED so non-chat calls (summarization, post-tool rounds) don't force
+    /// thinking off — the model cannot disable it, so forcing `false` would
+    /// waste the call. All other models keep the existing behavior: the
+    /// override wins when present, pinning both `thinking_enabled` and the
+    /// derived `thinking_effort`.
+    async fn effective_thinking_control(
+        &self,
+        thinking_override: Option<bool>,
+    ) -> (Option<bool>, Option<neomind_core::ThinkingEffort>) {
+        let resolved = self.resolve_thinking_control().await;
+        if self.active_thinking_is_integral().await {
+            resolved
+        } else if let Some(ov) = thinking_override {
+            (Some(ov), Some(neomind_core::ThinkingEffort::from_bool(ov)))
+        } else {
+            resolved
+        }
+    }
+
     /// Create a new LLM interface.
     pub fn new(config: ChatConfig) -> Self {
         let concurrent_limit = config.concurrent_limit;
@@ -1176,9 +1216,8 @@ impl LlmInterface {
         };
 
         // Get thinking control - priority: local setting > instance setting.
-        let (thinking_enabled, thinking_effort) = self.resolve_thinking_control().await;
-        // Per-call override wins (see chat_with_thinking).
-        let thinking_enabled = thinking_override.or(thinking_enabled);
+        let (thinking_enabled, thinking_effort) =
+            self.effective_thinking_control(thinking_override).await;
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,
@@ -1858,13 +1897,10 @@ impl LlmInterface {
 
         // Get thinking control - priority: thinking_override > local setting > instance setting.
         // (Explicit per-call override takes highest priority; otherwise resolve
-        // local/instance — effort preferred over the legacy bool.)
-        let (thinking_enabled, thinking_effort) = if thinking_override.is_some() {
-            let eff = thinking_override.map(neomind_core::ThinkingEffort::from_bool);
-            (thinking_override, eff)
-        } else {
-            self.resolve_thinking_control().await
-        };
+        // local/instance — effort preferred over the legacy bool. Integral-thinking
+        // models, e.g. LFM2.5, ignore the override — their thinking can't be off.)
+        let (thinking_enabled, thinking_effort) =
+            self.effective_thinking_control(thinking_override).await;
 
         tracing::debug!(
             thinking_enabled = ?thinking_enabled,
@@ -2514,5 +2550,78 @@ mod tests {
 
         let err = NeoMindError::Llm("test error".to_string());
         assert!(err.to_string().contains("test error"));
+    }
+
+    /// Open a throwaway store at a unique temp path (mirrors the `test_store`
+    /// pattern in `instance_manager.rs`). The store layer keeps a process-global
+    /// singleton keyed by path, so distinct paths yield isolated databases.
+    fn test_store(tag: &str) -> Arc<neomind_storage::LlmBackendStore> {
+        let path =
+            std::env::temp_dir().join(format!("neomind-test-{}-{}.redb", tag, std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        neomind_storage::LlmBackendStore::open(&path).expect("open test store")
+    }
+
+    #[tokio::test]
+    async fn thinking_override_ignored_when_integral() {
+        // Active instance is an integral-thinking model (e.g. LFM2.5) whose
+        // thinking cannot be disabled. The per-call thinking_override — used by
+        // non-chat calls (summarization, post-tool rounds) to force thinking off —
+        // must be IGNORED so thinking stays enabled.
+        let manager = Arc::new(LlmBackendInstanceManager::new(test_store("integral")));
+        let mut inst = neomind_storage::LlmBackendInstance::new(
+            "lfm25".to_string(),
+            "LFM2.5".to_string(),
+            neomind_storage::LlmBackendType::LlamaCpp,
+        );
+        inst.thinking_is_integral = true;
+        manager
+            .upsert_instance(inst)
+            .await
+            .expect("upsert integral instance");
+        manager.set_active("lfm25").await.expect("set active");
+
+        let interface = LlmInterface::with_instance_manager(ChatConfig::default(), manager);
+        assert!(
+            interface.active_thinking_is_integral().await,
+            "integral instance must be detected"
+        );
+
+        let (enabled, _effort) = interface.effective_thinking_control(Some(false)).await;
+        assert_eq!(
+            enabled,
+            Some(true),
+            "integral model must keep thinking on despite override"
+        );
+    }
+
+    #[tokio::test]
+    async fn thinking_override_honored_when_not_integral() {
+        // Non-integral models keep existing behavior: the per-call override wins
+        // (gotcha #7 — qwen/deepseek memory-extraction calls disable thinking).
+        let manager = Arc::new(LlmBackendInstanceManager::new(test_store("non-integral")));
+        let inst = neomind_storage::LlmBackendInstance::new(
+            "qwen35".to_string(),
+            "qwen3.5".to_string(),
+            neomind_storage::LlmBackendType::Ollama,
+        );
+        manager
+            .upsert_instance(inst)
+            .await
+            .expect("upsert non-integral instance");
+        manager.set_active("qwen35").await.expect("set active");
+
+        let interface = LlmInterface::with_instance_manager(ChatConfig::default(), manager);
+        assert!(
+            !interface.active_thinking_is_integral().await,
+            "non-integral instance must not be flagged integral"
+        );
+
+        let (enabled, _effort) = interface.effective_thinking_control(Some(false)).await;
+        assert_eq!(
+            enabled,
+            Some(false),
+            "non-integral model must honor the override"
+        );
     }
 }
