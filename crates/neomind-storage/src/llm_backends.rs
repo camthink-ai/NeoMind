@@ -48,6 +48,14 @@ pub struct LlmBackendInstance {
     /// Whether this is the currently active backend
     pub is_active: bool,
 
+    /// 是否为内置(bundled llama-server)提供的实例——非用户配置。
+    #[serde(default)]
+    pub is_builtin: bool,
+
+    /// 模型的思考是否不可关(如 LFM2.5):非 chat 调用也不强制 thinking_enabled=false。
+    #[serde(default)]
+    pub thinking_is_integral: bool,
+
     /// Generation parameters
     #[serde(default = "default_temperature")]
     pub temperature: f32,
@@ -350,6 +358,8 @@ impl LlmBackendInstance {
             model,
             api_key: None,
             is_active: false,
+            is_builtin: false,
+            thinking_is_integral: false,
             temperature: default_temperature(),
             top_p: default_top_p(),
             max_tokens: default_max_tokens(),
@@ -795,6 +805,22 @@ mod tests {
         assert_eq!(instance.model, "ministral-3:3b");
         assert!(instance.endpoint.is_some());
         assert!(instance.capabilities.supports_streaming);
+    }
+
+    #[test]
+    fn new_fields_default_false() {
+        let inst = LlmBackendInstance::new("id".into(), "name".into(), LlmBackendType::LlamaCpp);
+        assert!(!inst.is_builtin);
+        assert!(!inst.thinking_is_integral);
+    }
+
+    #[test]
+    fn legacy_json_deserializes_without_new_fields() {
+        // 模拟旧存储数据(无 is_builtin / thinking_is_integral 键)
+        let json = r#"{"id":"old","name":"old","backend_type":"llamacpp","model":"","is_active":false,"updated_at":0}"#;
+        let inst: LlmBackendInstance = serde_json::from_str(json).unwrap();
+        assert!(!inst.is_builtin);
+        assert!(!inst.thinking_is_integral);
     }
 
     #[test]

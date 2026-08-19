@@ -1090,6 +1090,28 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/llm-backends/:id/capabilities",
             axum::routing::patch(llm_backends::update_capabilities_override_handler),
         )
+        // Builtin LLM API (bundled LFM2.5-2.6B — status/download/delete/restart/activate).
+        // Protected like the llm-backends write ops (hybrid auth: JWT or API key).
+        .route(
+            "/api/builtin-llm/status",
+            get(crate::builtin_llm::handlers::status_handler),
+        )
+        .route(
+            "/api/builtin-llm/download",
+            post(crate::builtin_llm::handlers::download_handler),
+        )
+        .route(
+            "/api/builtin-llm/model",
+            delete(crate::builtin_llm::handlers::delete_model_handler),
+        )
+        .route(
+            "/api/builtin-llm/restart",
+            post(crate::builtin_llm::handlers::restart_handler),
+        )
+        .route(
+            "/api/builtin-llm/activate",
+            post(crate::builtin_llm::handlers::activate_handler),
+        )
         // Instances API (remote backend management)
         .route("/api/instances", get(instances::list_instances_handler))
         .route("/api/instances", post(instances::create_instance_handler))

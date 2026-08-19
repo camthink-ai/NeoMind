@@ -35,6 +35,10 @@ export interface LlmBackendInstance {
   model: string
   api_key_configured: boolean
   is_active: boolean
+  /** Whether this instance is a built-in (bundled llama-server) — not user-configured. */
+  is_builtin?: boolean
+  /** Whether the model's thinking cannot be turned off (e.g. LFM2.5); non-chat calls don't force thinking_enabled=false. */
+  thinking_is_integral?: boolean
   temperature: number
   top_p: number
   top_k: number
@@ -85,6 +89,27 @@ export interface LlmBackendListResponse {
   backends: LlmBackendInstance[]
   count: number
   active_id: string | null
+}
+
+/**
+ * Status of the built-in bundled LLM (LFM2.5-2.6B).
+ * GET /api/builtin-llm/status
+ */
+export interface BuiltinLlmStatus {
+  /** Whether the model GGUF is present on disk. */
+  installed: boolean
+  model_id: string | null
+  /**
+   * Derived server state:
+   * - `not_configured` — model not downloaded
+   * - `downloading`    — background download in progress
+   * - `running`        — bundled llama-server healthy on its port
+   * - `stopped`        — model present but server not running
+   * - `error`          — manifest unreadable
+   */
+  server_state: 'not_configured' | 'downloading' | 'running' | 'stopped' | 'error'
+  downloaded_bytes: number | null
+  total_bytes: number | null
 }
 
 export interface BackendTypeDefinition {

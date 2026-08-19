@@ -9,6 +9,7 @@ neomind-api = { path = ".", features = ["testing"] }
 # Cross-crate auth-format check: neomind-cli-ops' offline reset must read/write
 # the same users.redb bincode format (it duplicates our User struct).
 neomind-cli-ops = { path = "../neomind-cli-ops" }
+tower = { version = "0.5", features = ["util"] }
 
 [features]
 default = ["embedded-broker", "webhook", "email", "telegram", "wecom", "dingtalk", "slack", "feishu"]

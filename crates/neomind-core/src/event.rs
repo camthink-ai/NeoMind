@@ -90,6 +90,17 @@ pub enum NeoMindEvent {
         timestamp: i64,
     },
 
+    // ========== Builtin LLM Events ==========
+    /// Builtin LLM model download progress (WS/SSE 推送给前端进度条)。
+    ModelDownloadProgress {
+        model_id: String,
+        downloaded: u64,
+        total: Option<u64>,
+        status: String, // "downloading" | "complete" | "error"
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
     // ========== Rule Events ==========
     /// Rule condition was evaluated
     RuleEvaluated {
@@ -499,6 +510,7 @@ impl NeoMindEvent {
             Self::DeviceMetric { .. } => "DeviceMetric",
             Self::DeviceCommandResult { .. } => "DeviceCommandResult",
             Self::DeviceDiscovered { .. } => "DeviceDiscovered",
+            Self::ModelDownloadProgress { .. } => "ModelDownloadProgress",
             Self::RuleEvaluated { .. } => "RuleEvaluated",
             Self::RuleTriggered { .. } => "RuleTriggered",
             Self::RuleExecuted { .. } => "RuleExecuted",
@@ -589,6 +601,10 @@ impl NeoMindEvent {
             | Self::AgentStreamEnd { timestamp, .. } => *timestamp,
             Self::Custom { .. } => {
                 // Custom events don't have a timestamp, use current time
+                chrono::Utc::now().timestamp()
+            }
+            Self::ModelDownloadProgress { .. } => {
+                // Model download progress has no timestamp field, use current time
                 chrono::Utc::now().timestamp()
             }
         }
@@ -711,6 +727,11 @@ impl NeoMindEvent {
                 | Self::ExtensionCommandCompleted { .. }
                 | Self::ExtensionCommandFailed { .. }
         )
+    }
+
+    /// Check if this is a builtin LLM model download progress event.
+    pub fn is_model_download_progress(&self) -> bool {
+        matches!(self, Self::ModelDownloadProgress { .. })
     }
 }
 
@@ -1103,5 +1124,21 @@ mod tests {
             }
             _ => panic!("Expected ExtensionOutput event"),
         }
+    }
+
+    #[test]
+    fn model_download_progress_event_name_and_tags() {
+        let e = NeoMindEvent::ModelDownloadProgress {
+            model_id: "lfm25-2.6b".to_string(),
+            downloaded: 10,
+            total: Some(100),
+            status: "downloading".to_string(),
+            error: None,
+        };
+        assert_eq!(e.type_name(), "ModelDownloadProgress");
+        assert!(e.is_model_download_progress());
+        // serde 序列化走通
+        let json = serde_json::to_string(&e).unwrap();
+        assert!(json.contains("lfm25-2.6b"));
     }
 }

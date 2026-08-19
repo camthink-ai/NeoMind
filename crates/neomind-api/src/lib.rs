@@ -5,6 +5,7 @@
 pub mod auth;
 pub mod auth_users;
 pub mod automation;
+pub mod builtin_llm;
 pub mod cache;
 pub mod capability_providers;
 pub mod config;
