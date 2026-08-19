@@ -27,7 +27,7 @@ import { useStore } from "@/store"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { BrandLogo } from "@/components/shared/BrandName"
+import { BrandLogo, BrandLogoHorizontal } from "@/components/shared/BrandName"
 import { useTheme } from "@/components/ui/theme"
 import {
   Tooltip,
@@ -319,9 +319,13 @@ export function AppSidebar() {
             onClick={() => setExpanded((e) => !e)}
             aria-label={t("nav.toggleSidebar", { defaultValue: "Toggle navigation" })}
             aria-expanded={expanded}
-            className="flex items-center justify-center rounded-lg hover:bg-muted-50 transition-colors no-press-scale"
+            className="flex items-center justify-center rounded-lg px-2 hover:bg-muted-50 transition-colors no-press-scale"
           >
-            <BrandLogo className={cn("rounded-lg", expanded ? "h-9 w-9" : "h-7 w-7")} />
+            {expanded ? (
+              <BrandLogoHorizontal className="h-8" />
+            ) : (
+              <BrandLogo className="h-7 w-7 rounded-lg" />
+            )}
           </button>
         </div>
 
