@@ -35,6 +35,10 @@ export interface LlmBackendInstance {
   model: string
   api_key_configured: boolean
   is_active: boolean
+  /** Whether this instance is a built-in (bundled llama-server) — not user-configured. */
+  is_builtin?: boolean
+  /** Whether the model's thinking cannot be turned off (e.g. LFM2.5); non-chat calls don't force thinking_enabled=false. */
+  thinking_is_integral?: boolean
   temperature: number
   top_p: number
   top_k: number
