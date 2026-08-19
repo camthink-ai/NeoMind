@@ -56,7 +56,7 @@ impl LlamaServerProcess {
             .arg("127.0.0.1")
             .arg("--nobrowser")
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::null());
         if let Some(n) = cfg.ngl {
             cmd.arg("-ngl").arg(n.to_string());
         }
