@@ -27,7 +27,7 @@ import { useStore } from "@/store"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { BrandLogo } from "@/components/shared/BrandName"
+import { BrandLogo, BrandLogoHorizontal } from "@/components/shared/BrandName"
 import { useTheme } from "@/components/ui/theme"
 import {
   Tooltip,
@@ -182,20 +182,61 @@ export function AppSidebar() {
 
   const getUserInitials = (username: string) => username.slice(0, 2).toUpperCase()
 
-  // User entry — avatar at the very bottom; dropdown opens upward
+  // Footer row — full-width icon+label button when expanded, tooltip icon
+  // when collapsed.
+  const footerRow = (label: string, icon: React.ReactNode, onClick?: () => void, badge?: boolean, rowKey?: string) =>
+    expanded ? (
+      <div key={rowKey} className="w-full px-2 flex items-center">
+        <Button
+          variant="ghost"
+          aria-label={label}
+          className="w-full h-10 px-3 justify-start font-normal no-press-scale text-muted-foreground hover:text-foreground hover:bg-muted-50"
+          onClick={onClick}
+        >
+          {icon}
+          <span className="ml-3 truncate text-sm">{label}</span>
+          {badge && <span className="ml-2 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />}
+        </Button>
+      </div>
+    ) : (
+      <Tooltip key={rowKey}>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            className="relative text-muted-foreground hover:text-foreground no-press-scale"
+            onClick={onClick}
+          >
+            {icon}
+            {badge && <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right" className="text-xs px-2 py-1">{label}</TooltipContent>
+      </Tooltip>
+    )
+
+  // User entry — avatar at the very bottom; dropdown opens upward.
+  // Expanded: full-width row with username; collapsed: icon-only.
   const userEntry = user && (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
           aria-label={user.username}
-          className="h-10 w-10 px-0 justify-center font-normal no-press-scale"
+          className={cn(
+            "h-10 font-normal no-press-scale",
+            expanded ? "w-full px-3 justify-start gap-3" : "w-10 px-0 justify-center"
+          )}
         >
-          <Avatar className="h-7 w-7 cursor-pointer rounded-full ring-2 ring-background">
+          <Avatar className="h-7 w-7 shrink-0 cursor-pointer rounded-full ring-2 ring-background">
             <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
               {getUserInitials(user.username)}
             </AvatarFallback>
           </Avatar>
+          {expanded && (
+            <span className="truncate text-sm text-muted-foreground">{user.username}</span>
+          )}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="start" className="w-56">
@@ -278,13 +319,12 @@ export function AppSidebar() {
             onClick={() => setExpanded((e) => !e)}
             aria-label={t("nav.toggleSidebar", { defaultValue: "Toggle navigation" })}
             aria-expanded={expanded}
-            className="flex items-center gap-3 px-1 rounded-md hover:bg-muted-50 transition-colors no-press-scale"
+            className="flex items-center rounded-md px-1 hover:bg-muted-50 transition-colors no-press-scale"
           >
-            <BrandLogo className="h-7 w-7 rounded-lg" />
-            {expanded && (
-              <span className="text-sm font-semibold text-foreground whitespace-nowrap">
-                NeoMind
-              </span>
+            {expanded ? (
+              <BrandLogoHorizontal className="h-6" />
+            ) : (
+              <BrandLogo className="h-7 w-7 rounded-lg" />
             )}
           </button>
         </div>
@@ -298,50 +338,39 @@ export function AppSidebar() {
 
         {/* Footer — instance / onboarding / settings / user avatar.
             Theme, language and alerts live top-right (GlobalControls). */}
-        <div className="flex flex-col items-center gap-2 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <InstanceSelector compact onManageInstances={() => setInstanceManagerOpen(true)} />
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs px-2 py-1">
-              {t("instances.title", { defaultValue: "Instances" })}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("onboarding.title")}
-                className="relative text-muted-foreground hover:text-foreground no-press-scale"
-                onClick={() => setOnboardingOpen(true)}
-              >
-                <Rocket className="h-5 w-5" />
-                {onboardingIncomplete && (
-                  <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-primary" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs px-2 py-1">
-              {t("onboarding.title")}
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={t("nav.settings")}
-                className="text-muted-foreground hover:text-foreground no-press-scale"
-                onClick={() => openSettings()}
-              >
-                <Settings className="h-5 w-5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs px-2 py-1">
-              {t("nav.settings")}
-            </TooltipContent>
-          </Tooltip>
+        <div className={cn(
+          "flex flex-col pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))]",
+          expanded ? "w-full gap-0.5" : "items-center gap-2"
+        )}>
+          {/* Instance selector — name pill when expanded, icon when collapsed */}
+          {expanded ? (
+            <div className="w-full px-2 mb-1">
+              <InstanceSelector onManageInstances={() => setInstanceManagerOpen(true)} />
+            </div>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <InstanceSelector compact onManageInstances={() => setInstanceManagerOpen(true)} />
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs px-2 py-1">
+                {t("instances.title", { defaultValue: "Instances" })}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          {footerRow(
+            t("onboarding.title"),
+            <Rocket className="h-5 w-5" />,
+            () => setOnboardingOpen(true),
+            onboardingIncomplete,
+            "onboarding"
+          )}
+          {footerRow(
+            t("nav.settings"),
+            <Settings className="h-5 w-5" />,
+            openSettings,
+            false,
+            "settings"
+          )}
           {userEntry}
         </div>
       </aside>
