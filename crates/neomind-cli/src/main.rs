@@ -183,6 +183,9 @@ async fn main() -> Result<()> {
         Command::Whoami => {
             print_result(neomind_cli_ops::dispatch::handlers::run_whoami_cmd().await)
         }
+        Command::User { user_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_user_cmd(user_cmd).await)
+        }
     }
 }
 

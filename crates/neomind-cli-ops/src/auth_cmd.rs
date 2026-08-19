@@ -24,7 +24,7 @@ fn mask_key(key: &str) -> String {
 /// 3. `./data` (if it exists — backward compat with the main scenario)
 /// 4. Platform default `dirs::data_local_dir()/neomind` (if it exists)
 /// 5. Error
-fn resolve_login_data_dir(explicit: Option<String>) -> Result<String> {
+pub fn resolve_login_data_dir(explicit: Option<String>) -> Result<String> {
     if let Some(d) = explicit {
         return Ok(d);
     }

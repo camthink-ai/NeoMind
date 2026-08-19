@@ -13,6 +13,8 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
+# Offline user password reset (bcrypt hash rewrite against users.redb)
+bcrypt = { workspace = true }
 
 # Auto-auth: read API key from local redb database
 redb = { workspace = true }

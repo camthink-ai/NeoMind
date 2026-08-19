@@ -222,6 +222,29 @@ pub enum Command {
     ///
     /// Example: `neomind whoami`
     Whoami,
+    /// User account management (local-only, offline).
+    User {
+        #[command(subcommand)]
+        user_cmd: UserCommand,
+    },
+}
+
+/// User account subcommands.
+#[derive(Subcommand, Debug)]
+pub enum UserCommand {
+    /// Reset a user's password (offline).
+    ///
+    /// Rewrites the stored bcrypt hash without verifying the old password.
+    /// Requires shell/filesystem access to the server data directory.
+    ///
+    /// Example: `neomind user reset-password admin --data-dir /var/lib/neomind`
+    ResetPassword {
+        /// Username whose password to reset.
+        username: String,
+        /// Server data directory (auto-detected if omitted).
+        #[arg(long)]
+        data_dir: Option<String>,
+    },
 }
 
 /// API key subcommands.

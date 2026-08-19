@@ -4,6 +4,7 @@ pub mod auto_auth;
 pub mod dispatch;
 pub mod output;
 pub mod types;
+pub mod user_cmd;
 
 // Command modules
 pub mod agent_cmd;

@@ -71,6 +71,7 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
         // --- Local-only commands (need redb/auth from neomind-api, or print
         //     directly to stdout and rely on subprocess capture) ---
         Command::ApiKey { .. } => Err(DispatchError::NotInProcess),
+        Command::User { .. } => Err(DispatchError::NotInProcess),
         Command::Extension { extension_cmd } => {
             if handlers::is_local_extension_command(&extension_cmd) {
                 Err(DispatchError::NotInProcess)

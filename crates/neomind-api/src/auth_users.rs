@@ -1171,4 +1171,41 @@ mod tests {
         ));
         cleanup_test_db(&db_path);
     }
+
+    #[tokio::test]
+    async fn test_cli_reset_password_roundtrip_across_crates() {
+        // Proves `neomind user reset-password` (neomind-cli-ops, offline) can
+        // read a user row written by this crate and write one this crate can
+        // read back — i.e. the duplicated User struct + bincode format in
+        // neomind-cli-ops/src/user_cmd.rs stays in lockstep with ours.
+        let data_dir =
+            std::env::temp_dir().join(format!("neomind_cross_reset_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&data_dir);
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let db_path = data_dir.join("users.redb");
+        let db_str = db_path.display().to_string();
+        let dir_str = data_dir.to_str().unwrap();
+
+        let auth =
+            AuthUserState::with_config(db_str.clone(), "test_secret_key_12345678".to_string());
+        auth.register("admin", "oldpass123", UserRole::Admin)
+            .await
+            .unwrap();
+
+        // Offline reset via the CLI ops module (no running server).
+        neomind_cli_ops::user_cmd::reset_user_password(dir_str, "admin", "newpass456").unwrap();
+
+        // A fresh server state reloads the row the CLI rewrote.
+        let auth2 = AuthUserState::with_config(db_str, "test_secret_key_12345678".to_string());
+        assert!(
+            auth2.login("admin", "newpass456").await.is_ok(),
+            "new password must log in after cli reset"
+        );
+        assert!(
+            auth2.login("admin", "oldpass123").await.is_err(),
+            "old password must be rejected after cli reset"
+        );
+
+        let _ = std::fs::remove_dir_all(&data_dir);
+    }
 }

@@ -1115,3 +1115,17 @@ pub async fn run_whoami_cmd() -> Result<(CliResponse, OutputFormat)> {
     let resp = crate::auth_cmd::run_whoami().await?;
     Ok((resp, fmt))
 }
+
+pub async fn run_user_cmd(user_cmd: UserCommand) -> Result<(CliResponse, OutputFormat)> {
+    let fmt = if std::env::var("NEOMIND_JSON").is_ok() {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Human
+    };
+    let resp = match user_cmd {
+        UserCommand::ResetPassword { username, data_dir } => {
+            crate::user_cmd::run_reset_password(data_dir, &username).await?
+        }
+    };
+    Ok((resp, fmt))
+}
