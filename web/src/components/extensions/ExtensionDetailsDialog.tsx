@@ -41,7 +41,6 @@ import {
   Play,
   Database,
   FileText,
-  Trash2,
 } from "lucide-react"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { useStore } from "@/store"
@@ -75,7 +74,6 @@ export function ExtensionDetailsDialog({
   const reloadExtensionStore = useStore((state) => state.reloadExtension)
   const executeExtensionCommand = useStore((state) => state.executeExtensionCommand)
   const getExtensionLogs = useStore((state) => state.getExtensionLogs)
-  const clearExtensionLogs = useStore((state) => state.clearExtensionLogs)
   const isMobile = useIsMobile()
 
   const [health, setHealth] = useState<{ healthy: boolean } | null>(null)
@@ -242,18 +240,6 @@ export function ExtensionDetailsDialog({
       // Silent refresh — ignore errors
     }
   }, [extension, getExtensionLogs])
-
-  // Clear logs
-  const handleClearLogs = async () => {
-    if (!extension) return
-    try {
-      await clearExtensionLogs(extension.id)
-      setLogs([])
-      toast({ title: t("extensions:logs.cleared", { defaultValue: "Logs cleared" }) })
-    } catch (error) {
-      handleError(error, { operation: "Clear extension logs" })
-    }
-  }
 
   // Handle section change — lazy load config
   const handleSectionChange = (section: SectionId) => {
@@ -1055,17 +1041,6 @@ export function ExtensionDetailsDialog({
           </div>
         ) : (
           <div className="relative flex-1 min-h-0 flex flex-col rounded-lg overflow-hidden bg-muted-30 font-mono text-xs">
-            {/* Clear — overlay icon so we don't need a dedicated toolbar row */}
-            <Button
-              variant="ghost"
-              size="xs"
-              className="absolute right-1.5 top-1.5 z-10 h-7 w-7 p-0 text-muted-foreground hover:bg-error-light hover:text-error"
-              onClick={handleClearLogs}
-              aria-label={t("extensions:logs.clear", { defaultValue: "Clear" })}
-              title={t("extensions:logs.clear", { defaultValue: "Clear" })}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
             <div
               ref={logListRef}
               onScroll={(e) => {
