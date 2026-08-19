@@ -82,6 +82,16 @@ impl LlamaServerProcess {
         }
     }
 
+    /// Whether the spawned child process is still alive.
+    ///
+    /// `wait_healthy` only probes the port — if another server already holds it,
+    /// our child dies on bind while the probe succeeds against the foreign
+    /// server. Callers must verify `is_alive()` after `wait_healthy` before
+    /// trusting the child / registering an instance for it.
+    pub fn is_alive(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
     pub async fn stop(mut self) -> anyhow::Result<()> {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;

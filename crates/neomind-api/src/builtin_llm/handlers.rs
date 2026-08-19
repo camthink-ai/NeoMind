@@ -413,6 +413,16 @@ async fn spawn_builtin_server(
         let _ = proc.stop().await;
         anyhow::bail!("server unhealthy: {}", e);
     }
+    // Same port-misattribution guard as state.rs::bootstrap: wait_healthy can
+    // succeed against a foreign server on our port while our child died on
+    // bind. Verify the spawned child is alive before registering it.
+    if !proc.is_alive() {
+        let _ = proc.stop().await;
+        anyhow::bail!(
+            "port {} in use — llama-server exited after bind (another server on that port?)",
+            cfg.port
+        );
+    }
     let endpoint = format!("http://127.0.0.1:{}", cfg.port);
 
     let mut instance = match manager.get_instance(BUILTIN_INSTANCE_ID) {
