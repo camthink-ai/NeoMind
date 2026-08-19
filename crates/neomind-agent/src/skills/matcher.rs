@@ -429,4 +429,55 @@ Control."#;
             assert!(x.score < 0.2, "unrelated query low score, got {}", x.score);
         }
     }
+
+    #[test]
+    fn bm25_ab_ranking_comparison() {
+        // Direct A/B: legacy scorer vs legacy+BM25 on real builtin corpus.
+        let registry = crate::skills::registry::SkillRegistry::load_all(None);
+        let budget = TokenBudgetConfig::for_context(16000);
+        let cases = [
+            ("把泵停掉", "device-onboarding"),
+            ("帮我创建一条温度超30度就告警的规则", "rule-management"),
+            ("把车间数据推到 webhook", "data-push-management"),
+            ("安装一个天气扩展", "extension-management"),
+            ("查一下服务器CPU占用", "system-info"),
+            ("配置一个LLM后端连本地模型", "llm-management"),
+            ("创建一个新仪表板", "dashboard-management"),
+            ("开发一个自定义扩展", "extension-development"),
+            ("帮我管理通知渠道", "message-management"),
+            ("修改系统时区", "settings-management"),
+        ];
+        println!("=== BM25 A/B (query -> expected) ===");
+        for (q, expect) in cases {
+            let mut legacy: Vec<(String, f32)> = registry
+                .list()
+                .iter()
+                .map(|s| (s.metadata.id.clone(), score_skill(s, q)))
+                .filter(|(_, sc)| *sc > 0.0)
+                .collect();
+            legacy.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            let full = match_skills(&registry, q, budget);
+            let full_ids: Vec<String> = full.iter().map(|m| m.skill_id.clone()).collect();
+            let leg_ids: Vec<String> = legacy
+                .iter()
+                .map(|(i, _): &(String, f32)| i.clone())
+                .collect();
+            let leg_top = leg_ids.first().cloned().unwrap_or_default();
+            let full_top = full_ids.first().cloned().unwrap_or_default();
+            let leg_hit = leg_top == expect;
+            let full_hit = full_top == expect;
+            let flag = if leg_hit && full_hit {
+                "="
+            } else if full_hit && !leg_hit {
+                "▲BM25救"
+            } else if !full_hit && leg_hit {
+                "▼BM25害"
+            } else {
+                "✗双双错"
+            };
+            println!(
+                "{q:34} expect={expect:24} legacy_top={leg_top:24} full_top={full_top:24} {flag}"
+            );
+        }
+    }
 }
