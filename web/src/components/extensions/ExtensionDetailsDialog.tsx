@@ -39,7 +39,6 @@ import {
   Activity,
   ChevronDown,
   Play,
-  TrendingUp,
   Database,
   FileText,
   Trash2,
@@ -53,6 +52,7 @@ import type { Extension, ExtensionConfigResponse, ExtensionLogEntry } from "@/ty
 import { useIsMobile } from "@/hooks/useMobile"
 import { cn } from "@/lib/utils"
 import { FormSection, FormSectionGroup } from "@/components/ui/form-section"
+import { Sparkline } from '@/components/dashboard/generic/Sparkline'
 
 interface ExtensionDetailsDialogProps {
   extension: Extension | null
@@ -853,58 +853,55 @@ export function ExtensionDetailsDialog({
           const error = metricHistoryError[metric.name]
           const timeRange = metricTimeRange[metric.name] || '24h'
 
+          // Numeric series for sparkline + summary stats (non-numeric points
+          // stay visible in the raw table).
+          const numeric = data
+            .map((p) => p.value)
+            .filter((v): v is number => typeof v === 'number')
+          const latest = numeric.length ? numeric[numeric.length - 1] : undefined
+          const min = numeric.length ? Math.min(...numeric) : undefined
+          const max = numeric.length ? Math.max(...numeric) : undefined
+          const avg = numeric.length
+            ? numeric.reduce((a, b) => a + b, 0) / numeric.length
+            : undefined
+          const fmt = (v?: number) =>
+            v === undefined ? '—' : Number.isInteger(v) ? String(v) : v.toFixed(2)
+
           return (
             <div key={metric.name} className="border rounded-lg overflow-hidden">
-              {/* Metric Header */}
-              <div className="p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-muted-30">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-sm break-words">{metric.display_name}</span>
-                  <Badge variant="outline" className="text-xs break-all">
-                    {metric.name}
-                  </Badge>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                    <span>{metric.data_type}</span>
-                    {metric.unit && <span>({metric.unit})</span>}
-                    {metric.min !== undefined && metric.max !== undefined && (
-                      <span>[{metric.min} - {metric.max}]</span>
-                    )}
-                    {metric.required && (
-                      <Badge variant="secondary" className="text-xs">
-                        {t("common:required", { defaultValue: "required" })}
-                      </Badge>
-                    )}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => {
-                      if (isExpanded) {
-                        setExpandedMetric(null)
-                      } else {
-                        setExpandedMetric(metric.name)
-                        if (!metricHistoryData[metric.name]) {
-                          fetchMetricHistory(metric.name)
-                        }
-                      }
-                    }}
-                  >
-                    <TrendingUp className="h-3.5 w-3.5 mr-1" />
-                    {t("extensions:metrics.viewHistory", { defaultValue: "History" })}
-                    <ChevronDown className={cn(
-                      "h-3.5 w-3.5 ml-1 transition-transform",
-                      isExpanded && "rotate-180"
-                    )} />
-                  </Button>
-                </div>
-              </div>
+              {/* Header — single clean row: name + id, unit + chevron. No
+                  wrap-jumble of every metadata badge. */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (isExpanded) {
+                    setExpandedMetric(null)
+                  } else {
+                    setExpandedMetric(metric.name)
+                    if (!metricHistoryData[metric.name]) {
+                      fetchMetricHistory(metric.name)
+                    }
+                  }
+                }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-muted-30 transition-colors"
+                aria-expanded={isExpanded}
+              >
+                <span className="min-w-0">
+                  <span className="block font-medium text-sm truncate">{metric.display_name}</span>
+                  <span className="block text-nano text-muted-foreground font-mono truncate">{metric.name}</span>
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  {metric.unit && (
+                    <span className="text-xs text-muted-foreground px-1.5 py-0.5 rounded bg-muted-30">{metric.unit}</span>
+                  )}
+                  <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+                </span>
+              </button>
 
-              {/* Expanded History Panel */}
+              {/* Expanded history panel */}
               {isExpanded && (
                 <div className="border-t p-3 space-y-3">
-                  {/* Time Range Selector */}
+                  {/* Range selector + data type */}
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">
                       {t("extensions:metrics.timeRange", { defaultValue: "Range" })}:
@@ -918,7 +915,6 @@ export function ExtensionDetailsDialog({
                           className="h-6 text-xs px-2"
                           onClick={() => {
                             setMetricTimeRange(prev => ({ ...prev, [metric.name]: range }))
-                            // Re-fetch with new range
                             setMetricHistoryData(prev => ({ ...prev, [metric.name]: [] }))
                             const now = Math.floor(Date.now() / 1000)
                             let start: number
@@ -942,6 +938,7 @@ export function ExtensionDetailsDialog({
                         </Button>
                       ))}
                     </div>
+                    <span className="ml-auto text-xs text-muted-foreground font-mono">{metric.data_type}</span>
                   </div>
 
                   {isLoading ? (
@@ -956,28 +953,60 @@ export function ExtensionDetailsDialog({
                       <p>{t("extensions:metrics.noHistory", { defaultValue: "No historical data available" })}</p>
                     </div>
                   ) : (
-                    <div className="max-h-48 overflow-y-auto border rounded-md">
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted sticky top-0">
-                          <tr>
-                            <th className="p-1.5 text-left">{t("extensions:metrics.time", { defaultValue: "Time" })}</th>
-                            <th className="p-1.5 text-right">{t("extensions:metrics.value", { defaultValue: "Value" })}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {data.slice(0, 50).map((point, i) => (
-                            <tr key={i} className="border-t">
-                              <td className="p-1.5 text-muted-foreground">
-                                {new Date(point.timestamp * 1000).toLocaleString()}
-                              </td>
-                              <td className="p-1.5 text-right font-mono">
-                                {typeof point.value === 'number' ? point.value.toFixed(2) : String(point.value)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <>
+                      {numeric.length >= 2 ? (
+                        <>
+                          <Sparkline data={numeric} height={48} fill colorMode="primary" />
+                          {/* Summary stats */}
+                          <div className="grid grid-cols-4 gap-2">
+                            {[
+                              [t("extensions:metrics.latest", { defaultValue: "Latest" }), fmt(latest)],
+                              [t("extensions:metrics.min", { defaultValue: "Min" }), fmt(min)],
+                              [t("extensions:metrics.max", { defaultValue: "Max" }), fmt(max)],
+                              [t("extensions:metrics.avg", { defaultValue: "Avg" }), fmt(avg)],
+                            ].map(([label, value]) => (
+                              <div key={label} className="rounded-md bg-muted-30 px-2 py-1.5">
+                                <div className="text-nano text-muted-foreground">{label}</div>
+                                <div className="text-sm font-mono font-medium">{value}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          {t("extensions:metrics.nonNumeric", { defaultValue: "Non-numeric values — see raw data below" })}
+                        </p>
+                      )}
+                      {/* Raw data — collapsed by default */}
+                      <details className="group">
+                        <summary className="cursor-pointer list-none text-xs text-muted-foreground hover:text-foreground">
+                          {t("extensions:metrics.rawData", { defaultValue: "Raw data" })}
+                          <ChevronDown className="ml-1 inline h-3 w-3 align-middle transition-transform group-open:rotate-180" />
+                        </summary>
+                        <div className="mt-2 max-h-40 overflow-y-auto border rounded-md">
+                          <table className="w-full text-xs">
+                            <thead className="bg-muted sticky top-0">
+                              <tr>
+                                <th className="p-1.5 text-left">{t("extensions:metrics.time", { defaultValue: "Time" })}</th>
+                                <th className="p-1.5 text-right">{t("extensions:metrics.value", { defaultValue: "Value" })}</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {data.slice(0, 50).map((point, i) => (
+                                <tr key={i} className="border-t">
+                                  <td className="p-1.5 text-muted-foreground">
+                                    {new Date(point.timestamp * 1000).toLocaleString()}
+                                  </td>
+                                  <td className="p-1.5 text-right font-mono">
+                                    {typeof point.value === 'number' ? point.value.toFixed(2) : String(point.value)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </details>
+                    </>
                   )}
                 </div>
               )}
@@ -987,6 +1016,7 @@ export function ExtensionDetailsDialog({
       </div>
     )
   }
+
 
   if (!extension) {
     return null
