@@ -26,6 +26,7 @@ import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
+import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 import type {
   LlmBackendInstance,
   BackendTypeDefinition,
@@ -289,12 +290,17 @@ export function UnifiedLLMBackendsTab({
   const [builtinBusyAction, setBuiltinBusyAction] = useState<BuiltinAction | null>(null)
   const builtinBusyActionRef = useRef<BuiltinAction | null>(null)
 
+  // First-run wizard (empty-state strong guidance)
+  const [wizardOpen, setWizardOpen] = useState(false)
+
   useEffect(() => {
     loadData()
   }, [])
 
-  const loadData = async () => {
-    setLoading(true)
+  const loadData = async (quiet = false) => {
+    // quiet = background refresh (e.g. after wizard activation) — skip the
+    // page-level skeleton so the wizard stays mounted and can show 已就绪.
+    if (!quiet) setLoading(true)
     try {
       const typesResponse = await fetchAPI<{ types: BackendTypeDefinition[] }>('/llm-backends/types')
       setBackendTypes(typesResponse.types || [])
@@ -312,7 +318,7 @@ export function UnifiedLLMBackendsTab({
       setInstances([])
       setActiveBackendId(null)
     } finally {
-      setLoading(false)
+      if (!quiet) setLoading(false)
     }
   }
 
@@ -402,6 +408,43 @@ export function UnifiedLLMBackendsTab({
       builtinBusyActionRef.current = null
       setBuiltinBusyAction(null)
     }
+  }
+
+  // "添加自己的 API 后端" — the empty-state secondary CTA. `backendTypes` is
+  // empty (a rare fallback), so there is no server-provided type to pick from.
+  // Construct a generic OpenAI-compatible type inline and open the unified
+  // config dialog directly (the backend accepts openai + a custom endpoint).
+  const handleAddOwnBackend = () => {
+    const manualType: BackendTypeDefinition = {
+      id: 'openai',
+      name: 'OpenAI',
+      description: t('plugins:llm.emptyStateAddOwnBackend'),
+      default_model: 'gpt-4o-mini',
+      default_endpoint: 'https://api.openai.com/v1',
+      requires_api_key: true,
+      supports_streaming: true,
+      supports_thinking: false,
+      supports_multimodal: true,
+      config_schema: {
+        type: 'object',
+        properties: {
+          endpoint: {
+            type: 'string',
+            title: 'API Endpoint',
+            format: 'uri',
+            default: 'https://api.openai.com/v1',
+          },
+          model: { type: 'string', title: 'Model Name', default: 'gpt-4o-mini' },
+          api_key: { type: 'string', title: 'API Key', x_secret: true },
+        },
+        required: ['name', 'api_key'],
+        ui_hints: undefined,
+      },
+    }
+    setSelectedType(toUnifiedPluginType(manualType, t))
+    setView('detail')
+    setEditingInstance(null)
+    setConfigDialogOpen(true)
   }
 
   // Handle create instance
@@ -582,7 +625,28 @@ export function UnifiedLLMBackendsTab({
       </Card>
     ) : null
 
-    // Empty state when no backend types are available
+    // First-run wizard. Mounted in the list view so it survives the
+    // empty-state ↔ provider-grid branch switch (a quiet reload after
+    // activation may finally populate backendTypes). open={false} hides it.
+    const wizardElement = (
+      <BuiltinModelWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        hasActiveBackend={!!activeBackendId && !builtinIsActive}
+        isBuiltinActive={builtinIsActive}
+        onActivated={() => {
+          // Activation may have created/updated the builtin instance and
+          // flipped the active id — refresh the slice-backed lists quietly
+          // (no loading skeleton) so the wizard stays mounted for 已就绪.
+          loadData(true)
+          refreshBuiltinStatus()
+        }}
+      />
+    )
+
+    // Empty state when no backend types are available — strong guidance:
+    // primary CTA opens the first-run wizard for the built-in model, secondary
+    // CTA lets the user wire up their own OpenAI-compatible API backend.
     if (backendTypes.length === 0) {
       return (
         <>
@@ -591,8 +655,18 @@ export function UnifiedLLMBackendsTab({
             icon="plugin"
             title={t('plugins:llm.noBackends')}
             description={t('plugins:llm.noBackendsDesc')}
-            action={{ label: t('common:retry'), onClick: loadData, icon: <Loader2 className="h-4 w-4" /> }}
           />
+          <div className="mt-2 flex flex-col items-center gap-3">
+            <Button size="lg" onClick={() => setWizardOpen(true)}>
+              <Download className="mr-2 h-4 w-4" />
+              {t('plugins:llm.emptyStateDownloadBuiltin')}
+            </Button>
+            <Button variant="secondary" onClick={handleAddOwnBackend}>
+              <Server className="mr-2 h-4 w-4" />
+              {t('plugins:llm.emptyStateAddOwnBackend')}
+            </Button>
+          </div>
+          {wizardElement}
         </>
       )
     }
@@ -646,6 +720,7 @@ export function UnifiedLLMBackendsTab({
             )
           })}
         </div>
+        {wizardElement}
       </>
     )
   }
