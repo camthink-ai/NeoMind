@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.18] - 2026-08-19
+
+### Small-model agent reliability — the version's theme
+The failure post-mortem from the full bilingual eval (the 154-case LFM2.5 run) pinned two dominant causes — 27 "detour succeeds but never learns the subcommand" cases and 19 low-temperature loop cases. All of the reliability trio ships:
+- **Shell tool index cards**: each of the 14 CLI domains now carries a one-line-per-subcommand index plus a one-line "what it is / isn't" note (~40 lines total). Subcommand help previously injected only on the failure path, so agents that succeeded by detour never learned the direct subcommand. The index rides the description — recall without scaring small models off the tool.
+- **Loop-steering hint, never an abort**: when consecutive rounds issue similar commands without reaching the goal, a hint is injected (try a different subcommand / `--help` / reread the task). Chat stays user-driven — no forced abort (per the standing 2026-07-29 decision).
+- **Bounded `max_tokens`**: chat requests had no ceiling; a production Qwen3.5-4B runaway emitted 22,177 tokens over 7.4 minutes, and llama-server doesn't cancel work on client disconnect. Requests are now capped at 8192.
+- **Runtime context probing**: Ollama (`/api/show`) and llamacpp (`/props`) are probed when a local backend is created instead of trusting the registry default (128,000). A registered default that overstates the real context made every turn overflow and burn retry-prefills (13/13 turns); with probing, overflow went 13 → 0, the budget dropped to the real value, and the turn-1 fact survived via the memory system. Detected values win over registry values (there is no user-override channel); on probe failure the fallback is a conservative 8192 rather than the over-claiming default.
+
+### Skill matching: BM25 ranking
+Skill retrieval moved from description-based matching to a dependency-free hand-written **BM25** (~150 lines; tantivy dropped — a corpus of tens of documents doesn't warrant a dependency tree) with CJK-bigram tokenization. In-matcher gating (raw score > 1.0 × 0.3) keeps auto-injection from over-triggering; rare-term hits (LoRaWAN-class vocabulary) get a +0.6 boost toward their owning skill. The ranking is locked in by an A/B guard on the real corpus (9/10 top-1 vs 7/10 legacy), and the system-info skill gained the resource-usage vocabulary that closed the last A/B miss.
+
+### Eval infrastructure & production stability
+- **Parallel sharded full-eval**: 4 workers, each with its own private MQTT broker — the full suite runs in roughly a quarter of the wall-clock; shard runners default case-timeout to 600×workers.
+- **Timeout trace salvage**: before SIGALRM kills a hung case, its turn records are dumped to disk — previously all 19 loop-timeout cases lost their trajectories and had to be reverse-engineered from llama logs.
+- **Config snapshot per run**: each eval run stores the `AGENT_LLM_*` environment at start, so parameter choices (temp 0.6 etc.) are provable from the archive instead of circumstantial.
+- **Negative-control baseline archived**: the official-parameters run is frozen into `eval/baselines/`, giving the regression gate a hard reference to block silent sampling drift.
+
+### Edge models & the agent UI
+- **`docs/edge-models.md`**: official-parameter sampling comparison table + the "thinking cannot be disabled" findings from the 154-case LFM2.5 run.
+- **Tool-loop round indicator**: the chat input area now shows "round N of tool calling", derived from the last tool call's round — zero new state.
+- **Image-cache fix for small uploads**: user-uploaded images below 32KB never entered the tool cache, so `$cached:user_image` resolution failed and vision tools received a literal marker instead of the image. Fixed and verified end-to-end with a logging proxy; residual VL-3B failures are tool-selection/argument quality (the capability floor), not the pipeline.
+
+### Chat panel: docked column + page-scoped assistant
+The floating chat matured into a real second surface:
+- **Wide-screen docked panel**: ≥1280px viewports get a full-height docked right column; main content squeezes via the `--dock-chat-width` var. Narrower viewports keep the floating window.
+- **Page-scoped assistant**: the panel session is created with the current page's real backend context — system-prompt suffix, tool allowlist, and matching skill pinning; switching pages switches to that page's persisted session.
+- **Model switch reaches the wire**: the active LLM backend is synced to the WebSocket singleton, so switching models inside the panel actually takes effect.
+- **Resizable width**: drag the panel's left edge to widen/narrow it (320–720px, persisted across reloads). Wide markdown tables now scroll within the message instead of pushing the whole panel into horizontal scroll.
+- **Lazy markdown stack**: the ~325KB vendor-markdown/highlight stack is split out of the initial bundle and only loads when the panel opens; container queries let card grids reflow when the dock squeezes them.
+- **Chat message presentation**: thinking/tool blocks become unified process cards that blend into the bubble; scroll-to-bottom is a circular icon button in the message action row.
+
+### Pages stay fresh — DataChanged events
+AI and external mutations now publish `DataChanged`, and pages refresh automatically — no manual reload after the assistant creates a rule, changes a device, or runs an action.
+
+### Device assistant: simulated-device SOP
+The device assistant gained a simulated-device standard operating procedure that covers any scenario, not just temperature/humidity sensors.
+
+### Settings dialog opens on the right page
+The sidebar's Settings row passed `openSettings` directly as its click handler, so the click event itself became the `section` argument — the dialog opened with an invalid active section and an empty content pane. The row now calls `openSettings()` with no argument, landing on the current (Preferences) section.
+
+### UI polish & small fixes
+- **Sidebar footer stability on expand/collapse**: the rail's bottom rows (instance / onboarding / settings / avatar) kept mixed heights (36/32/44px) and gaps across states, so expanding made the Settings button jump from 32×32 to 159×44. All footer rows are now uniform 44px with a uniform gap — expanding only reveals labels, positions don't move. (The global `button { min-height: 44px }` rule with a h-6..h-9 exception was the mechanism.)
+- **Alert pill → real action**: the "N alerts" pill is now a real button that jumps to /messages; PushTargetDialog's icon buttons gained proper hit targets.
+- **Update dialog height cap**: the OTA release-notes area is capped at 40vh (was 60vh), so long update notes keep the dialog compact instead of pushing it near full-screen.
+- Extension metrics get sparklines + summary stats; extension cards get category icons + error summary; the dashboard tab bar's horizontal scroll is restored with an invisible bar; PageLayout's footer shrinks to content width.
+
 ### Style refresh toward the reference design language
 - **White canvas + gray sidebar rail** (reference palette): content sits directly on white and separates via subtle borders; the sidebar (`--sidebar-bg`, ~#F8F9FA light / below-canvas dark) is the gray chrome layer, borderless — color contrast does the separating.
 - **Fewer lines**: page sidebars (chat sessions, dashboard list) join the same gray rail tone and drop their border-r; the app sidebar footer drops its border-t. Chrome layers now have zero decorative lines.
@@ -16,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Radius ladder tightened**: base `--radius` 12px → 8px (lg 8 / md 6 / sm 4 / xl 12 / 2xl 16) — a denser, more professional feel across cards, buttons and inputs.
 
 ### Desktop navigation: top menu → sidebar
-The desktop top nav (icon rail) is replaced by a persistent **AppSidebar** plus a slim **TopBar** (48px, global actions only). The sidebar groups PRIMARY (Chat/Agents/Devices/Visual Dashboard) and SYSTEM (Automation/Data/Messages/Extensions) entries — same split as the mobile drawer — collapses to a 60px icon rail (state persisted), and carries the brand header, macOS traffic-light inset and window-drag region. Nav definitions are single-sourced in `navItems.ts`. The mobile navigation system is untouched. Fixed full-bleed surfaces (chat's keyboard-aware container, PageLayout's footer) offset past the sidebar via the new `--app-sidebar-width` CSS var. DESIGN_SPEC §28 rewritten.
+The desktop top nav is replaced by a persistent **AppSidebar** that is the entire desktop chrome — navigation + utilities, full-height. It collapses to a 72px icon rail (tooltips carry the names) and expands to 176px with labels on logo click; it always starts collapsed on launch. PRIMARY (Chat/Agents/Devices/Visual Dashboard) and SYSTEM (Automation/Data/Messages/Extensions) groups use the same split as the mobile drawer. Utilities split: instance/onboarding/settings/avatar live in the rail footer; theme/language/alerts float top-right (`GlobalControlsFloating`). Nav definitions are single-sourced in `navItems.ts`. The mobile navigation is untouched. Fixed full-bleed surfaces (chat's keyboard-aware container, PageLayout's footer) offset past the sidebar via the `--app-sidebar-width` CSS var. DESIGN_SPEC §28 rewritten.
 
 ### Element layering audit — 16 findings fixed
 A full z-index/stacking audit surfaced and fixed: mobile nested dialogs losing their scrim above z-[100] fullscreen layers (overlay z now extracted from `className` in both `dialog.tsx` branches); Toaster/Confirmer double-mounted on protected routes (every toast painted twice); `<main>`'s `z-10` forming a page-wide stacking context that capped in-page fixed overlays below the chrome; three incompatible drawer conventions unified to Sheet-tier z-50 + `#dialog-root` portal (SessionSidebar, DashboardListSidebar — which also loses its `--topnav-height` geometric dodge); widget fullscreen viewers aligned to z-[110] (ImageDisplay was z-50, three image overlays z-200); MobileItemSelector portaled out of `document.body`; toast lifted to z-[210] so confirm-dialog toasts stay visible; GlobalChatFab panel re-tiered z-[90] (was tying with fullscreen layers); BackendUnavailableOverlay to the new z-[300] system tier; dead `.mobile-edit-bar` CSS and TopNav's unreachable mobile tab bar deleted; `shadow-2xl`/inline-rgba shadows converged onto the token ladder. DESIGN_SPEC §8 is now a complete 13-tier ladder with a portal policy.
@@ -27,6 +74,9 @@ A full z-index/stacking audit surfaced and fixed: mobile nested dialogs losing t
 - `--brand` expanded to a full scale (`-hover/-active/-bg/-foreground`, light darkens / dark brightens on engage).
 - Light theme canvas deepened for clearer card elevation; dark theme gets an explicit surface ladder (`background < card < popover < chrome`), crisper borders and layered shadows.
 - Fixed the never-working `dark:brand-icon-stroke` (Tailwind can't variant a custom class — rule is now `.dark`-scoped, active nav icons get the gradient stroke as intended); `error-foreground` naming unified into `destructive-foreground`; dead `dashboard-components.css` deleted; chrome ghost-button repaints consolidated to one `.chrome-ghost` class.
+
+### Frontend tests
+UI smoke tests + a tailwind-merge regression guard (`tw-merge`) protecting the custom font-size tokens from being silently dropped.
 
 ## [0.9.17] - 2026-08-16
 
