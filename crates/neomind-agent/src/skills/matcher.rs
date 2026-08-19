@@ -478,6 +478,10 @@ Control."#;
             println!(
                 "{q:34} expect={expect:24} legacy_top={leg_top:24} full_top={full_top:24} {flag}"
             );
+            assert_eq!(
+                full_top, expect,
+                "BM25 full path must route {q:?} to {expect}, got {full_top} (legacy gave {leg_top})"
+            );
         }
     }
 }

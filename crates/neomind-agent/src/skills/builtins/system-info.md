@@ -1,13 +1,13 @@
 ---
 id: system-info
 name: System Information & Infrastructure
-description: Use when the user asks about system/infrastructure details — broker address/port, connection info, network, server IP, how to connect devices, ESP32/ESP8266, webhook URL, TLS/auth. Covers system info even without saying 'system' (e.g. '我的设备连哪里', 'broker 地址是多少'). Includes 系统信息/broker 地址/连接信息/网络.
+description: Use when the user asks about system/infrastructure details — broker address/port, connection info, network, server IP, how to connect devices, ESP32/ESP8266, webhook URL, TLS/auth. Covers system info even without saying 'system' (e.g. '我的设备连哪里', 'broker 地址是多少'). Includes 系统信息/broker 地址/连接信息/网络/服务器/CPU/内存/磁盘/占用/性能/运行状态.
 category: system
 origin: builtin
 priority: 88
 token_budget: 4000
 triggers:
-  keywords: [system, 系统, system info, 系统信息, infrastructure, 基础设施, broker address, broker 地址, broker 端口, broker port, MQTT broker, mqtt 接入, 接入设备, 连接设备, connect device, how to connect, 如何连接, 如何接入, esp32, esp8266, webhook url, webhook 地址, network, 网络, 网络信息, 当前网络, server ip, 服务器 IP, 连接信息, connection info, tls, 认证, 端口, port, neomind system, 系统状态, 平台信息]
+  keywords: [system, 系统, system info, 系统信息, infrastructure, 基础设施, broker address, broker 地址, broker 端口, broker port, MQTT broker, mqtt 接入, 接入设备, 连接设备, connect device, how to connect, 如何连接, 如何接入, esp32, esp8266, webhook url, webhook 地址, network, 网络, 网络信息, 当前网络, server ip, 服务器 IP, 服务器, cpu, CPU, 内存, 磁盘, 占用, 资源, 性能, 运行状态, 连接信息, connection info, tls, 认证, 端口, port, neomind system, 系统状态, 平台信息]
   tool_target:
     - tool: shell
       actions: [info]
