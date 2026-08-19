@@ -238,8 +238,11 @@ export function AgentExecutionTimeline({
             </div>
           ) : (
             <div className="relative">
-              {/* Timeline Line - aligned to center of dots (left-[16px] = 8px position + 8px half of 16px dot) */}
-              <div className="absolute left-[16px] top-2 bottom-2 w-0.5 bg-border" />
+              {/* Timeline Line - center-aligned to dots: the line is 2px wide
+                  (w-0.5), so left-[15px] puts its CENTER at 16px — matching the
+                  16px dot's center (left-2 = 8px + 8px half). left-[16px] would
+                  center the line at 17px (1px off, visible at this scale). */}
+              <div className="absolute left-[15px] top-2 bottom-2 w-0.5 bg-border" />
 
               {/* Timeline Items */}
               <div className="space-y-4">
