@@ -23,7 +23,7 @@ pub use backends::openai::{CloudConfig, CloudProvider, CloudRuntime};
 
 // Instance manager
 pub use instance_manager::{
-    get_instance_manager, BackendTypeDefinition, LlmBackendInstanceManager,
+    get_instance_manager, set_instance_manager, BackendTypeDefinition, LlmBackendInstanceManager,
 };
 
 // Backend creation utilities

@@ -1360,6 +1360,23 @@ pub fn get_instance_manager() -> Result<Arc<LlmBackendInstanceManager>, LlmError
     Ok(manager)
 }
 
+/// Install a specific process-global instance manager, replacing any existing
+/// one.
+///
+/// `get_instance_manager()` lazily opens the real `data/llm_backends.redb`;
+/// tests that need a hermetic manager (and production code that must guarantee
+/// which store backs the singleton) can install one here. The global is read by
+/// e.g. `LlmInterface::active_thinking_is_integral`, which must resolve the
+/// ACTIVE instance in production where per-interface managers are absent.
+pub fn set_instance_manager(manager: Arc<LlmBackendInstanceManager>) {
+    let rwlock = INSTANCE_MANAGER.get_or_init(|| RwLock::new(None));
+    let mut guard = rwlock
+        .write()
+        .map_err(|_| ())
+        .expect("instance manager write lock");
+    *guard = Some(manager);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

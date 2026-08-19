@@ -312,18 +312,21 @@ impl LlmInterface {
     /// Whether the active backend instance is an integral-thinking model whose
     /// thinking cannot be turned off (e.g. LFM2.5).
     ///
-    /// Only meaningful when the interface is driven by an instance manager —
-    /// same source (`self.instance_manager`) that `resolve_thinking_control`
-    /// and `get_runtime` read, so both stay consistent.
+    /// Reads the GLOBAL active instance, not `self.instance_manager`: production
+    /// `LlmInterface`s are built via `LlmInterface::new()` and never carry
+    /// `self.instance_manager`, so the old per-interface read made this guard
+    /// inert (the builtin LFM would get `thinking_enabled=false` forced on
+    /// non-chat calls). Gated on `is_builtin` so a session directly configured
+    /// to a non-builtin backend while the builtin happens to be globally active
+    /// does not inherit the exception.
     async fn active_thinking_is_integral(&self) -> bool {
-        if !self.uses_instance_manager() {
-            return false;
-        }
-        self.instance_manager
-            .as_ref()
+        match crate::get_instance_manager()
+            .ok()
             .and_then(|m| m.get_active_instance())
-            .map(|inst| inst.thinking_is_integral)
-            .unwrap_or(false)
+        {
+            Some(inst) => inst.is_builtin && inst.thinking_is_integral,
+            None => false,
+        }
     }
 
     /// Resolve the effective thinking control for a call, combining the
@@ -2562,29 +2565,42 @@ mod tests {
         neomind_storage::LlmBackendStore::open(&path).expect("open test store")
     }
 
+    /// Both integral-thinking tests below install a manager into the
+    /// process-global `INSTANCE_MANAGER` singleton (`active_thinking_is_integral`
+    /// reads the GLOBAL active instance). cargo test runs them on separate
+    /// threads, so serialize them or they'd clobber each other's global.
+    fn test_global_manager_serial() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
     #[tokio::test]
     async fn thinking_override_ignored_when_integral() {
-        // Active instance is an integral-thinking model (e.g. LFM2.5) whose
-        // thinking cannot be disabled. The per-call thinking_override — used by
-        // non-chat calls (summarization, post-tool rounds) to force thinking off —
-        // must be IGNORED so thinking stays enabled.
+        let _serial = test_global_manager_serial().lock().unwrap();
+        // Active (GLOBAL) instance is an integral-thinking BUILTIN model
+        // (e.g. LFM2.5) whose thinking cannot be disabled. The per-call
+        // thinking_override — used by non-chat calls (summarization, post-tool
+        // rounds) to force thinking off — must be IGNORED so thinking stays
+        // enabled.
         let manager = Arc::new(LlmBackendInstanceManager::new(test_store("integral")));
         let mut inst = neomind_storage::LlmBackendInstance::new(
             "lfm25".to_string(),
             "LFM2.5".to_string(),
             neomind_storage::LlmBackendType::LlamaCpp,
         );
+        inst.is_builtin = true;
         inst.thinking_is_integral = true;
         manager
             .upsert_instance(inst)
             .await
             .expect("upsert integral instance");
         manager.set_active("lfm25").await.expect("set active");
+        crate::llm_backends::set_instance_manager(manager.clone());
 
         let interface = LlmInterface::with_instance_manager(ChatConfig::default(), manager);
         assert!(
             interface.active_thinking_is_integral().await,
-            "integral instance must be detected"
+            "integral builtin instance must be detected"
         );
 
         let (enabled, _effort) = interface.effective_thinking_control(Some(false)).await;
@@ -2597,6 +2613,7 @@ mod tests {
 
     #[tokio::test]
     async fn thinking_override_honored_when_not_integral() {
+        let _serial = test_global_manager_serial().lock().unwrap();
         // Non-integral models keep existing behavior: the per-call override wins
         // (gotcha #7 — qwen/deepseek memory-extraction calls disable thinking).
         let manager = Arc::new(LlmBackendInstanceManager::new(test_store("non-integral")));
@@ -2610,6 +2627,7 @@ mod tests {
             .await
             .expect("upsert non-integral instance");
         manager.set_active("qwen35").await.expect("set active");
+        crate::llm_backends::set_instance_manager(manager.clone());
 
         let interface = LlmInterface::with_instance_manager(ChatConfig::default(), manager);
         assert!(
