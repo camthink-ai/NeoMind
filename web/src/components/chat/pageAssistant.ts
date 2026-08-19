@@ -86,18 +86,38 @@ const FILE_TOOLS = ['file_write', 'file_edit']
 const PAGE_ASSISTANTS: Record<string, PageAssistantConfig> = {
   devices: {
     systemPromptSuffix: {
-      zh: '## 当前页面专注域：设备接入\n你是 NeoMind 平台的「设备接入助手」。优先引导用户：产品设备接入（MQTT/Webhook/蓝牙）、创建模拟设备、构建设备类型（指标/命令）、待注册设备的准入审批。需要实际操作时用 neomind CLI 完成。回答优先给出具体操作步骤。',
-      en: '## Current page focus: device onboarding\nYou are the NeoMind device-onboarding assistant. Prioritize: product device onboarding (MQTT/webhook/BLE), simulated devices, device types (metrics/commands), pending-device admission. Perform real operations via the neomind CLI. Prefer concrete step-by-step instructions.',
+      zh: `## 当前页面专注域：设备接入
+你是 NeoMind 平台的「设备接入助手」。优先引导用户：产品设备接入（MQTT/Webhook/蓝牙）、创建模拟设备、构建设备类型（指标/命令）、待注册设备的准入审批。需要实际操作时用 neomind CLI 完成。回答优先给出具体操作步骤。
+
+## 模拟设备 SOP（客户没有实体设备时的标准路径）
+客户说"没有设备 / 想先体验 / 需要测试数据"时，按此 SOP 代办（每步可解释）：
+1. 选类型：\`neomind device types list\`，选贴近场景的（如 temp_humidity 温湿度）；都不合适就用 \`neomind device-type\` 相关命令先建类型。
+2. 创建模拟设备（webhook 适配器，无需真实硬件连接）：
+   \`neomind device create --name "模拟温湿度传感器" --device-type temp_humidity --adapter-type webhook --id sim-sensor-01\`
+3. 模拟上报：\`neomind device write-metric sim-sensor-01 --metric temperature --value 25.5\`（再写 2-3 个渐变值形成趋势；指标名以类型定义为准）。
+4. 验证：\`neomind device get sim-sensor-01\` 看到 current_values 更新；设备页面会自动刷新（DataChanged），指给用户看；下一步可在可视化看板绑定该设备。
+说明：MQTT 路线等效（设备 topic 向内嵌 broker 1883 发布同样 JSON）；持续模拟可建议客户接入真实设备或写定时规则。`,
+      en: `## Current page focus: device onboarding
+You are the NeoMind device-onboarding assistant. Prioritize: product device onboarding (MQTT/webhook/BLE), simulated devices, device types (metrics/commands), pending-device admission. Perform real operations via the neomind CLI. Prefer concrete step-by-step instructions.
+
+## Simulated-device SOP (standard path when the customer has no hardware)
+When the customer says "no devices / want to try it / need test data", execute this SOP on their behalf (explain each step):
+1. Pick a type: \`neomind device types list\` — choose one close to the scenario (e.g. temp_humidity); or create a type first via the \`neomind device-type\` commands.
+2. Create the simulated device (webhook adapter — no real hardware needed):
+   \`neomind device create --name "Simulated TH Sensor" --device-type temp_humidity --adapter-type webhook --id sim-sensor-01\`
+3. Simulate data: \`neomind device write-metric sim-sensor-01 --metric temperature --value 25.5\` (write 2-3 varying values to form a trend; metric names follow the type definition).
+4. Verify: \`neomind device get sim-sensor-01\` shows updated current_values; the devices page refreshes automatically (DataChanged) — point it out; next step is binding the device on a dashboard.
+Notes: the MQTT route works equally (publish the same JSON to the device topic on the embedded broker, port 1883); for continuous simulation suggest a real device or a scheduled rule.`,
     },
     tools: [...CORE_TOOLS],
-    skillKeywords: ['device', 'mqtt', 'onboarding', 'simulated', '设备', '接入'],
+    skillKeywords: ['device', 'mqtt', 'onboarding', 'simulated', '设备', '接入', '模拟'],
     greeting: {
-      zh: '我在这里帮你完成设备接入 —— 扫码/MQTT 接入、模拟设备、设备类型、待注册准入',
-      en: 'Here to help with device onboarding — MQTT/scan setup, simulated devices, types, and admissions',
+      zh: '我在这里帮你完成设备接入 —— 没有实体设备？我可以直接帮你创建模拟设备跑通全流程，也支持 MQTT/扫码接入、设备类型、待注册准入',
+      en: 'Here to help with device onboarding — no hardware? I can create a simulated device and walk the full flow, plus MQTT/scan setup, types, and admissions',
     },
     quickActions: [
+      { label: { zh: '创建模拟设备（无硬件体验）', en: 'Create a simulated device' }, prompt: { zh: '我没有实体设备。请按模拟设备 SOP 直接帮我创建一个模拟传感器并上报几轮数据，完成后告诉我如何验证和在看板上使用它。', en: 'I have no physical devices. Follow the simulated-device SOP: create a simulated sensor for me, report a few rounds of data, then tell me how to verify it and use it on a dashboard.' } },
       { label: { zh: '如何接入一台设备？', en: 'How to onboard a device?' }, prompt: { zh: '详细说明接入一台新设备的完整步骤（MQTT / Webhook / 蓝牙）', en: 'Walk me through onboarding a new device (MQTT / webhook / BLE)' } },
-      { label: { zh: '创建模拟设备', en: 'Create a simulated device' }, prompt: { zh: '帮我创建一个模拟温度湿度传感器设备用于测试', en: 'Help me create a simulated temperature/humidity sensor for testing' } },
       { label: { zh: '构建设备类型', en: 'Build a device type' }, prompt: { zh: '解释设备类型是什么，并指导我从零构建一个自定义设备类型（指标与命令）', en: 'Explain device types and guide me through building one (metrics & commands)' } },
       { label: { zh: '待注册设备准入', en: 'Admit a pending device' }, prompt: { zh: '待注册设备列表是做什么的？如何审批准入一个新发现的设备？', en: 'What is the pending list and how do I admit a discovered device?' } },
     ],
