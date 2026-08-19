@@ -125,7 +125,7 @@ export function FullScreenDialogHeader({
   actions,
 }: FullScreenDialogHeaderProps) {
   return (
-    <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 h-14 ">
+    <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 h-14 border-b border-border">
       <div className="min-w-0 flex-1">
         <h1 className="text-base md:text-lg font-semibold truncate text-foreground">
           {title}
@@ -226,8 +226,7 @@ export function FullScreenDialogSidebar({
 
   return (
     <aside className={cn(
-      "shrink-0 w-[180px] md:w-[220px]",
-      "",
+      "shrink-0 w-[180px] md:w-[220px] border-r border-border",
       // Desktop-only tint (see FullScreenDialogFooter for rationale).
       "md:bg-black/[0.02] md:dark:bg-white/[0.02]",
       className

@@ -463,7 +463,7 @@ export function ComponentConfigDialog({
       <FullScreenDialogContent className="!p-0">
         <div className="h-full w-full flex">
           {/* Left: Preview */}
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0 border-r border-border">
             <div className="flex-1 flex items-center justify-center p-4 min-h-0">
               <div
                 className="rounded-lg overflow-hidden border bg-background shadow-sm max-w-lg max-h-full"
