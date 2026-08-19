@@ -471,9 +471,11 @@ export function DashboardTabBar({
                       "max-w-0 opacity-0",
                       "transition-[max-width,opacity] duration-200",
                       "[transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]",
-                      "group-hover:max-w-[28px] group-hover:opacity-100",
-                      "group-focus-within:max-w-[28px] group-focus-within:opacity-100",
-                      moreMenuOpen && "max-w-[28px] opacity-100"
+                      // 28px button + 4px right breathing room so the hover
+                      // background clears the tab's rounded right edge.
+                      "group-hover:max-w-[32px] group-hover:opacity-100",
+                      "group-focus-within:max-w-[32px] group-focus-within:opacity-100",
+                      moreMenuOpen && "max-w-[32px] opacity-100"
                     )}
                   >
                     <DropdownMenu open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
@@ -481,7 +483,7 @@ export function DashboardTabBar({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 rounded-md"
+                          className="h-7 w-7 rounded-md mr-1"
                           aria-label={t('common.actions')}
                           onClick={(e) => e.stopPropagation()}
                         >
