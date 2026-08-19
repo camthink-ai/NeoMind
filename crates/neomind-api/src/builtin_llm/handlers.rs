@@ -100,10 +100,11 @@ fn hf_file_name(quant: Quant) -> &'static str {
     match quant {
         Quant::Q4_K_M => "LFM2.5-2.6B-Q4_K_M.gguf",
         Quant::Q8_0 => "LFM2.5-2.6B-Q8_0.gguf",
+        Quant::QAD_Q4_0 => "LFM2.5-2.6B-QAD-Q4_0.gguf",
     }
 }
 
-/// Official LFS SHA256 for each quant (pinned 2026-08-19). LFS blobs are
+/// Official LFS SHA256 for each quant (pinned 2026-08-20). LFS blobs are
 /// content-addressed, so these stay valid unless the repo owner re-uploads the
 /// file under the same name. If a download ever fails with a sha mismatch,
 /// re-capture from the HF API and update both arms.
@@ -111,6 +112,7 @@ fn hf_sha256(quant: Quant) -> &'static str {
     match quant {
         Quant::Q4_K_M => "79fdf00351b46cf26f020aead28d01889886be87c55fa0eb907e6f9b00bfee14",
         Quant::Q8_0 => "36587fdf27bdfc69caf2637273679a0870ec155162161bde6fd16e8c70bdb757",
+        Quant::QAD_Q4_0 => "a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03",
     }
 }
 
@@ -124,6 +126,7 @@ fn resolve_quant(cfg: &BuiltinConfig) -> Result<Quant, ErrorResponse> {
     match cfg.quant_override.as_deref() {
         Some(q) if q.eq_ignore_ascii_case("q4_k_m") => Ok(Quant::Q4_K_M),
         Some(q) if q.eq_ignore_ascii_case("q8_0") => Ok(Quant::Q8_0),
+        Some(q) if q.eq_ignore_ascii_case("qad_q4_0") => Ok(Quant::QAD_Q4_0),
         Some(other) => Err(ErrorResponse::bad_request(format!(
             "unsupported builtin quant: {}",
             other

@@ -17,7 +17,7 @@ impl Default for BuiltinConfig {
         Self {
             enabled: true,
             port: 8081,
-            ctx: 8192,
+            ctx: 131_072, // LFM2.5-2.6B 原生 128K,hybrid 架构 KV 很小(128K f16 ~3.7GB),2026-08-19 eval 定
             ngl: None,
             model_path: None,
             quant_override: None,
@@ -77,7 +77,7 @@ mod tests {
         let c = BuiltinConfig::from_env();
         assert!(c.enabled);
         assert_eq!(c.port, 8081);
-        assert_eq!(c.ctx, 8192);
+        assert_eq!(c.ctx, 131_072);
         assert!(c.ngl.is_none());
         assert!(c.model_path.is_none());
         assert!(c.quant_override.is_none());
