@@ -3239,9 +3239,15 @@ mod tests {
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"shell"), "allowlisted tool must be kept");
         for ux in ["ask_user", "confirm_action", "clarify_intent"] {
-            assert!(names.contains(&ux), "interaction tool {ux} must survive allowlisting");
+            assert!(
+                names.contains(&ux),
+                "interaction tool {ux} must survive allowlisting"
+            );
         }
-        assert!(!names.contains(&"list_rules"), "out-of-profile tool must be filtered");
+        assert!(
+            !names.contains(&"list_rules"),
+            "out-of-profile tool must be filtered"
+        );
 
         // Text quick-reference prompt stays in sync with the schema
         let prompt = agent.generate_dynamic_system_prompt().await;

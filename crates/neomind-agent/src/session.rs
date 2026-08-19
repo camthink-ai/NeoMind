@@ -1899,7 +1899,10 @@ mod tests {
         };
         let session_id = manager.create_session_with_options(opts).await.unwrap();
         let agent = manager.get_session(&session_id).await.unwrap();
-        assert_eq!(agent.llm_interface().get_system_prompt().await, "full override");
+        assert_eq!(
+            agent.llm_interface().get_system_prompt().await,
+            "full override"
+        );
     }
 
     #[tokio::test]
