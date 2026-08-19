@@ -243,14 +243,14 @@ export function AgentDetailPanel({
         <div className={cn("pt-3", isMobile ? "px-2" : "px-4")}>
           <TabsList className={cn(
             isMobile
-              ? "grid grid-cols-4 gap-1 h-auto w-full"
+              ? "grid grid-cols-4 gap-1 h-auto w-full p-0.5 rounded-lg border border-border bg-card"
               : "h-9 p-0.5 rounded-lg border border-border bg-card"
           )}>
             <TabsTrigger
               value="overview"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
                   : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
@@ -261,7 +261,7 @@ export function AgentDetailPanel({
               value="history"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
                   : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
@@ -272,7 +272,7 @@ export function AgentDetailPanel({
               value="memory"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
                   : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
@@ -283,7 +283,7 @@ export function AgentDetailPanel({
               value="messages"
               className={cn(
                 isMobile
-                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-lg text-mini leading-none data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+                  ? "flex flex-col items-center justify-center gap-1 py-1.5 px-1 min-w-0 rounded-md text-mini leading-none data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none"
                   : "h-7 px-3 rounded-md text-sm data-[state=active]:bg-foreground data-[state=active]:text-background data-[state=active]:shadow-none data-[state=active]:hover:bg-foreground hover:bg-muted"
               )}
             >
