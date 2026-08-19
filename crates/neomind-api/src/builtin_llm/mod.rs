@@ -5,5 +5,6 @@
 
 pub mod config;
 pub mod download;
+pub mod handlers;
 pub mod server;
 pub mod state;
