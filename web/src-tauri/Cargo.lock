@@ -4257,6 +4257,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "base64 0.22.1",
+ "bcrypt",
  "bincode",
  "chrono",
  "clap",
