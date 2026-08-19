@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
-
 ## [0.9.18] - 2026-08-19
 
 ### Small-model agent reliability — the version's theme
@@ -77,6 +75,15 @@ A full z-index/stacking audit surfaced and fixed: mobile nested dialogs losing t
 
 ### Frontend tests
 UI smoke tests + a tailwind-merge regression guard (`tw-merge`) protecting the custom font-size tokens from being silently dropped.
+
+### CLI & accounts
+- **Offline admin password recovery**: an operator who is locked out of a forgotten admin password can reset it directly on the server — no running instance needed, no password-recovery loop over the network. Recovery authority deliberately stays at the machine (shell + data-directory access required), not in the HTTP API.
+
+### Docs
+- README: refreshed screenshots to match the current UI (English).
+
+### Desktop
+- Lockfile synced for the new CLI dependency.
 
 ## [0.9.17] - 2026-08-16
 
