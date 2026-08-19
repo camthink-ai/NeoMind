@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import { useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
 import { Rocket, Settings, Sun, Languages, Info, LogOut } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -61,6 +61,10 @@ import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDia
 // 72px — still clears the macOS traffic lights (~14–66px from the window
 // edge) while keeping the rail visually tight.
 const SIDEBAR_WIDTH_PX = 72
+// Expanded (logo click): 176px fits icon + label + padding.
+const SIDEBAR_EXPANDED_PX = 176
+// Persisted so the expanded preference survives reloads.
+const SIDEBAR_EXPANDED_KEY = "neomind_sidebar_expanded"
 
 // Tauri window drag — startDragging on mousedown over non-interactive areas
 // (data-tauri-drag-region is unreliable in Tauri 2 overlay mode).
@@ -81,6 +85,13 @@ export function AppSidebar() {
   const { theme, setTheme } = useTheme()
   const [instanceManagerOpen, setInstanceManagerOpen] = useState(false)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
+  // Logo click expands/collapses the rail (labels appear when expanded).
+  const [expanded, setExpanded] = useState<boolean>(() => {
+    try { return localStorage.getItem(SIDEBAR_EXPANDED_KEY) === "1" } catch { return false }
+  })
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_EXPANDED_KEY, expanded ? "1" : "0") } catch {}
+  }, [expanded])
   const { status: onboardingStatus, dismiss: dismissOnboarding, fetchStatus: fetchOnboardingStatus } = useOnboarding()
   useEffect(() => {
     fetchOnboardingStatus()
@@ -107,17 +118,42 @@ export function AppSidebar() {
 
   // Fixed-width rail exported for fixed full-bleed surfaces (ChatPage's
   // keyboard-aware container, PageLayout's footer). 0 on unmount (mobile).
+  // Width follows the expanded state so all offset surfaces shift together.
   useLayoutEffect(() => {
-    document.documentElement.style.setProperty("--app-sidebar-width", `${SIDEBAR_WIDTH_PX}px`)
+    const w = expanded ? SIDEBAR_EXPANDED_PX : SIDEBAR_WIDTH_PX
+    document.documentElement.style.setProperty("--app-sidebar-width", `${w}px`)
     return () => {
       document.documentElement.style.setProperty("--app-sidebar-width", "0px")
     }
-  }, [])
+  }, [expanded])
 
   const renderItem = (item: NavItem) => {
     const Icon = item.icon
     const isActive = isNavItemActive(item, location.pathname)
     const label = t(item.labelKey)
+
+    if (expanded) {
+      // Expanded: icon + label, full-width row, no tooltip needed.
+      return (
+        <div key={item.id} className="w-full px-2 flex items-center">
+          <Button
+            variant="ghost"
+            aria-label={label}
+            aria-current={isActive ? "page" : undefined}
+            className={cn(
+              "w-full h-10 px-3 justify-start font-normal no-press-scale",
+              isActive
+                ? "bg-muted text-foreground hover:bg-muted"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted-50"
+            )}
+            onClick={() => handleNavigate(item.path)}
+          >
+            <Icon className="h-5 w-5 shrink-0" />
+            <span className="ml-3 truncate text-sm">{label}</span>
+          </Button>
+        </div>
+      )
+    }
 
     return (
       <Tooltip key={item.id}>
@@ -224,9 +260,9 @@ export function AppSidebar() {
   return (
     <TooltipProvider delayDuration={500}>
       <aside
-        className="flex shrink-0 flex-col items-center bg-[var(--sidebar-bg)]"
+        className="flex shrink-0 flex-col items-center bg-[var(--sidebar-bg)] border-r border-border transition-[width] duration-200 ease-out"
         style={{
-          width: SIDEBAR_WIDTH_PX,
+          width: expanded ? SIDEBAR_EXPANDED_PX : SIDEBAR_WIDTH_PX,
           // Top strip: reserves the macOS traffic-light inset + safe area
           // (no brand mark anymore — the nav starts right below it) and
           // serves as the window drag region
@@ -234,11 +270,23 @@ export function AppSidebar() {
         }}
         onMouseDown={handleDragMouseDown}
       >
-        {/* Brand mark — top of the rail, below the traffic-light strip */}
+        {/* Brand mark — top of the rail. Clicking it expands/collapses the
+            rail (labels on/off) instead of navigating (nav has /chat). */}
         <div className="flex w-full items-center justify-center pt-5 pb-2">
-          <Link to="/chat" aria-label="NeoMind" className="flex items-center justify-center">
+          <button
+            type="button"
+            onClick={() => setExpanded((e) => !e)}
+            aria-label={t("nav.toggleSidebar", { defaultValue: "Toggle navigation" })}
+            aria-expanded={expanded}
+            className="flex items-center gap-3 px-1 rounded-md hover:bg-muted-50 transition-colors no-press-scale"
+          >
             <BrandLogo className="h-7 w-7 rounded-lg" />
-          </Link>
+            {expanded && (
+              <span className="text-sm font-semibold text-foreground whitespace-nowrap">
+                NeoMind
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Nav — icon rail, tooltips carry the names */}
