@@ -135,6 +135,8 @@ pub struct BackendInstanceDto {
     pub model: String,
     pub api_key_configured: bool,
     pub is_active: bool,
+    pub is_builtin: bool,
+    pub thinking_is_integral: bool,
     pub temperature: f32,
     pub top_p: f32,
     pub top_k: usize,
@@ -158,6 +160,8 @@ impl From<LlmBackendInstance> for BackendInstanceDto {
             api_key_configured: instance.api_key.is_some()
                 && !instance.api_key.as_ref().is_some_and(|k| k.is_empty()),
             is_active: instance.is_active,
+            is_builtin: instance.is_builtin,
+            thinking_is_integral: instance.thinking_is_integral,
             temperature: instance.temperature,
             top_p: instance.top_p,
             top_k: instance.top_k,
