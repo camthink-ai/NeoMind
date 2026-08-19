@@ -507,6 +507,41 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
                 }
             }
 
+            // Builtin LLM(内置 LFM2.5-2.6B):定位已下载模型 → spawn → 注册实例。
+            // 独立 task 运行:不阻塞后续启动(wait_healthy 最多等 60s)。
+            {
+                let bg_state_for_builtin = bg_state.clone();
+                tokio::spawn(async move {
+                    let cfg = crate::builtin_llm::config::BuiltinConfig::from_env();
+                    let data_dir = bg_state_for_builtin.data_dir.clone();
+                    // 镜像 auto_register 守卫:get_instance_manager 启动初期可能暂不可用,
+                    // 重试到可用(与上面 llama.cpp 块相同的 12×5s 节奏)。
+                    let mut retry_interval = tokio::time::interval(Duration::from_secs(5));
+                    for _ in 0..12 {
+                        retry_interval.tick().await;
+                        if let Ok(manager) = neomind_agent::get_instance_manager() {
+                            match crate::builtin_llm::state::bootstrap(&data_dir, &cfg, &manager)
+                                .await
+                            {
+                                crate::builtin_llm::state::BootstrapOutcome::ServerReady {
+                                    endpoint,
+                                } => {
+                                    tracing::info!(endpoint = %endpoint, "Builtin LLM ready");
+                                }
+                                crate::builtin_llm::state::BootstrapOutcome::ModelMissing => {
+                                    tracing::info!("Builtin LLM model not downloaded yet; UI will guide download");
+                                }
+                                crate::builtin_llm::state::BootstrapOutcome::Failed(e) => {
+                                    tracing::warn!(error = %e, "Builtin LLM bootstrap failed");
+                                }
+                                _ => {}
+                            }
+                            break;
+                        }
+                    }
+                });
+            }
+
             // Start memory scheduler (temp file cleanup)
             {
                 let agents_state = bg_state.agents.clone();
