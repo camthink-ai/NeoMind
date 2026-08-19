@@ -396,6 +396,8 @@ pub async fn create_backend_handler(
         model: req.model,
         api_key: req.api_key,
         is_active: false,
+        is_builtin: false,
+        thinking_is_integral: false,
         temperature: req.temperature,
         top_p: req.top_p,
         max_tokens: default_max_tokens(),
