@@ -203,7 +203,7 @@ export function PageLayout({
       {showFooter ? (
         <div
           className="fixed bottom-[var(--keyboard-offset,0px)] bg-surface-glass backdrop-blur-xl border-t border-glass-border safe-bottom z-10 transition-[margin-right] duration-normal ease-out"
-          style={{ left: 'var(--app-sidebar-width, 0px)', marginRight: 'var(--dock-chat-width, 0px)' }}
+          style={{ left: 'var(--app-sidebar-width, 0px)', right: 0, marginRight: 'var(--dock-chat-width, 0px)' }}
         >
           <div className={cn('w-full px-4 py-4 sm:px-6 sm:py-5 md:px-8', maxWidthClass[maxWidth], className)}>
             {footer}
