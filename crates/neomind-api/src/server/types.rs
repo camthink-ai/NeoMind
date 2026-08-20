@@ -2812,6 +2812,28 @@ impl ServerState {
                         }
                     }
                 }
+                LlmBackend::LlamaCpp {
+                    endpoint,
+                    model,
+                    capabilities: _,
+                } => {
+                    use neomind_agent::llm_backends::backends::llamacpp::{LlamaCppConfig, LlamaCppRuntime};
+                    let timeout = std::env::var("LLAMACPP_TIMEOUT_SECS")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(180);
+                    match LlamaCppRuntime::new(
+                        LlamaCppConfig::new(&model)
+                            .with_endpoint(&endpoint)
+                            .with_timeout_secs(timeout),
+                    ) {
+                        Ok(runtime) => Some(Arc::new(runtime) as Arc<dyn LlmRuntime + Send + Sync>),
+                        Err(e) => {
+                            tracing::warn!(category = "ai", error = %e, "Failed to create llama.cpp runtime for agents");
+                            None
+                        }
+                    }
+                }
                 LlmBackend::OpenAi {
                     api_key,
                     endpoint,
