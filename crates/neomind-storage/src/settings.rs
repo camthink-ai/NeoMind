@@ -548,6 +548,12 @@ pub struct ExternalBroker {
     #[serde(default = "default_external_broker_subscribe_topics")]
     #[serde(skip_serializing_if = "is_default_subscribe_topics")]
     pub subscribe_topics: Vec<String>,
+
+    /// Payload field used as the device identity when the topic cannot
+    /// uniquely identify a device (gateway forwarding many devices on one
+    /// topic). Empty/None → auto-detect common fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_id_field: Option<String>,
 }
 
 fn default_external_broker_port() -> u16 {
@@ -593,6 +599,7 @@ impl ExternalBroker {
             last_error: None,
             updated_at: chrono::Utc::now().timestamp(),
             subscribe_topics: default_external_broker_subscribe_topics(),
+            device_id_field: None,
         }
     }
 

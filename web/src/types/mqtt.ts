@@ -17,6 +17,8 @@ export interface ExternalBroker {
   last_error?: string
   updated_at: number
   subscribe_topics?: string[]
+  /** Payload field used as device identity when the topic can't uniquely identify the device */
+  device_id_field?: string
 }
 
 // Data Source Types

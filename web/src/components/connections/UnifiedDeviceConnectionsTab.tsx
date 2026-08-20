@@ -118,10 +118,14 @@ const getAdapterSchema = (adapterType: string): PluginConfigSchema => {
             description: 'Extra custom topics to subscribe (one per line). System topics (device/+/+/uplink, device/+/+/downlink) are always auto-subscribed. Wildcards: + matches single level, # matches all levels (must be last).',
             default: ['device/#'],
           },
+          device_id_field: {
+            type: 'string',
+            description: 'Payload field used as the device identity when auto-discovery cannot uniquely identify a device from the topic (e.g. a gateway forwarding many devices on one topic). Leave empty to auto-detect common fields (device_id, sn, mac, ...).',
+          },
         },
         required: ['broker'],
         ui_hints: {
-          field_order: ['broker', 'port', 'username', 'password', 'client_id', 'tls', 'ca_cert', 'client_cert', 'client_key', 'subscribe_topics'],
+          field_order: ['broker', 'port', 'username', 'password', 'client_id', 'tls', 'ca_cert', 'client_cert', 'client_key', 'subscribe_topics', 'device_id_field'],
           display_names: {
             broker: 'Broker Address',
             port: 'Port',
@@ -133,12 +137,14 @@ const getAdapterSchema = (adapterType: string): PluginConfigSchema => {
             client_key: 'Client Private Key',
             client_id: 'Client ID',
             subscribe_topics: 'Subscribe Topics',
+            device_id_field: 'Device ID Field (payload)',
           },
           placeholders: {
             ca_cert: '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
             client_cert: '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
             client_key: '-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----',
             client_id: 'Auto-generated if empty',
+            device_id_field: 'e.g. device_id, sn, mac (auto-detect if empty)',
           },
           help_texts: {
             ca_cert: 'Required for self-signed or private CA certificates. Leave empty for public CAs.',
@@ -146,6 +152,7 @@ const getAdapterSchema = (adapterType: string): PluginConfigSchema => {
             client_key: 'Required for mutual TLS (mTLS) authentication.',
             client_id: 'Unique identifier for this MQTT connection. Auto-generated if not specified.',
             subscribe_topics: 'System auto-subscribes: device/+/+/uplink, device/+/+/downlink. Add extra custom topics here.',
+            device_id_field: 'For gateways that forward many devices on one topic: set the JSON field that carries each device\'s unique id (e.g. device_id, sn, mac). If empty, NeoMind auto-detects common fields. Useful when devices publish on the same topic and would otherwise be treated as one device.',
           },
           visibility_rules: [
             {

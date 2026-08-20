@@ -63,6 +63,12 @@ pub struct MqttAdapterConfig {
     pub discovery_prefix: String,
     /// Enable auto-discovery
     pub auto_discovery: bool,
+    /// Payload field to use as the device identity when the topic cannot
+    /// uniquely identify a device (e.g. a gateway forwarding many devices on
+    /// one topic). `None`/empty → auto-detect common fields (device_id, sn,
+    /// mac, ...). Explicit value wins over auto-detection.
+    #[serde(default)]
+    pub device_id_field: Option<String>,
     /// Storage directory for persistence
     pub storage_dir: Option<String>,
 }
@@ -78,6 +84,7 @@ impl MqttAdapterConfig {
             discovery_topic: None,
             discovery_prefix: "neomind".to_string(),
             auto_discovery: true,
+            device_id_field: None,
             storage_dir: None,
         }
     }
@@ -2307,11 +2314,20 @@ impl MqttAdapter {
                             topic
                         );
 
-                        // Generate a device_id for auto-discovery
-                        // Try to extract from topic, or use a hash-based ID
-                        // Sanitize the extracted id (length + charset); fall back to a
-                        // hash-derived id (already safe format) if missing/invalid.
-                        let auto_device_id = extract_device_id_from_topic(&topic, config)
+                        // Generate a device_id for auto-discovery.
+                        // Precedence (gateway case: many devices forwarded on one
+                        // topic need a payload-carried identity):
+                        //   ① high-confidence topic extraction (device/{type}/{id},
+                        //      subscription patterns)
+                        //   ② payload identity (explicit config.device_id_field, or
+                        //      auto-detect common fields device_id/sn/mac/...)
+                        //   ③ weak topic fallback (parts[1])
+                        //   ④ topic hash (last resort)
+                        let auto_device_id = extract_device_id_from_topic_strong(&topic, config)
+                            .and_then(sanitize_auto_device_id)
+                            .or_else(|| extract_device_id_from_payload(&payload, config))
+                            .and_then(sanitize_auto_device_id)
+                            .or_else(|| extract_device_id_from_topic_weak(&topic))
                             .and_then(sanitize_auto_device_id)
                             .unwrap_or_else(|| {
                                 // Use topic hash as device_id
@@ -2551,6 +2567,13 @@ fn sanitize_auto_device_id(id: String) -> Option<String> {
 }
 
 fn extract_device_id_from_topic(topic: &str, config: &MqttAdapterConfig) -> Option<String> {
+    extract_device_id_from_topic_strong(topic, config)
+        .or_else(|| extract_device_id_from_topic_weak(topic))
+}
+
+/// High-confidence topic extraction: `device/{type}/{id}/...` or a matching
+/// subscription pattern (`+` at index 1 is the device id).
+fn extract_device_id_from_topic_strong(topic: &str, config: &MqttAdapterConfig) -> Option<String> {
     let parts: Vec<&str> = topic.split('/').collect();
 
     // Try device/{device_type}/{device_id}/{direction} format first
@@ -2565,12 +2588,56 @@ fn extract_device_id_from_topic(topic: &str, config: &MqttAdapterConfig) -> Opti
         }
     }
 
-    // Fallback: extract from common patterns
+    None
+}
+
+/// Weak fallback: the second topic segment. Generic (a gateway forwarding
+/// every device on `gateway/data` yields `"data"` for all), so only used
+/// after the payload identity check.
+fn extract_device_id_from_topic_weak(topic: &str) -> Option<String> {
+    let parts: Vec<&str> = topic.split('/').collect();
     if parts.len() >= 2 {
         Some(parts[1].to_string())
     } else {
         None
     }
+}
+
+/// Payload-carried device identity. Used when the topic cannot uniquely
+/// identify the device (gateway forwarding many devices on one topic).
+/// ① explicit `config.device_id_field` wins; ② otherwise auto-detect common
+/// fields (device_id / deviceId / sn / mac / mac_address / ...).
+fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) -> Option<String> {
+    let json: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let obj = json.as_object()?;
+
+    if let Some(field) = config.device_id_field.as_deref() {
+        if let Some(v) = obj.get(field).and_then(serde_json::Value::as_str) {
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+
+    // Auto-detect common device-identity fields, high confidence first.
+    // Case-insensitive (device_id / deviceId / DeviceID all match).
+    const CANDIDATES: &[&str] = &[
+        "device_id", "deviceid", "dev_id", "devid", "device_sn", "devicesn", "sn",
+        "serial", "serial_number", "serial_no", "mac", "mac_address", "macaddr",
+        "eui", "deveui", "devaddr", "imei", "iccid", "node_id", "nodeid",
+        "sensor_id", "sensorid", "device_uuid", "deviceuuid", "uuid",
+        "device_name", "devicename", "dev_name",
+    ];
+    for key in CANDIDATES {
+        if let Some(v) = obj.iter().find(|(k, _)| k.to_ascii_lowercase() == *key) {
+            if let Some(s) = v.1.as_str() {
+                if !s.is_empty() {
+                    return Some(s.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Helper function to match topic pattern.
@@ -2840,6 +2907,70 @@ mod tests {
         // exactly at limit -> kept
         let at = "a".repeat(MAX_AUTOONBOARD_DEVICE_ID_LEN);
         assert!(sanitize_auto_device_id(at).is_some());
+    }
+
+    #[test]
+    fn test_extract_device_id_from_payload_auto_detect() {
+        let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"device_id\":\"sensor-1\",\"data\":{}}", &cfg)
+                .as_deref(),
+            Some("sensor-1")
+        );
+        // case-insensitive deviceId
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"deviceId\":\"s2\",\"data\":{}}", &cfg).as_deref(),
+            Some("s2")
+        );
+        // mac
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"mac\":\"aa:bb:cc\",\"data\":{}}", &cfg).as_deref(),
+            Some("aa:bb:cc")
+        );
+        // no identity field -> None (caller falls back to topic/hash)
+        assert_eq!(extract_device_id_from_payload(b"{\"temp\":21.5}", &cfg), None);
+    }
+
+    #[test]
+    fn test_extract_device_id_from_payload_explicit_field() {
+        let cfg = MqttAdapterConfig {
+            device_id_field: Some("DEV".to_string()),
+            ..MqttAdapterConfig::new("test", "localhost:1883")
+        };
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"DEV\":\"gw-42\",\"data\":{}}", &cfg).as_deref(),
+            Some("gw-42")
+        );
+        // explicit field beats auto-detect
+        assert_eq!(
+            extract_device_id_from_payload(
+                b"{\"DEV\":\"gw-42\",\"device_id\":\"other\",\"data\":{}}",
+                &cfg
+            )
+            .as_deref(),
+            Some("gw-42")
+        );
+    }
+
+    #[test]
+    fn test_same_topic_different_payload_ids_distinct() {
+        // Gateway case: two devices forwarded on one topic must get distinct
+        // ids. The topic (`gateway/data`) yields a weak parts[1] = "data" for
+        // both, so the payload `device_id` must win.
+        let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+        let topic = "gateway/data";
+        let derive = |payload: &[u8]| {
+            extract_device_id_from_topic_strong(topic, &cfg)
+                .and_then(sanitize_auto_device_id)
+                .or_else(|| extract_device_id_from_payload(payload, &cfg))
+                .and_then(sanitize_auto_device_id)
+                .or_else(|| extract_device_id_from_topic_weak(topic))
+        };
+        let id1 = derive(b"{\"device_id\":\"sensor-1\",\"temp\":20}");
+        let id2 = derive(b"{\"device_id\":\"sensor-2\",\"temp\":21}");
+        assert_eq!(id1.as_deref(), Some("sensor-1"));
+        assert_eq!(id2.as_deref(), Some("sensor-2"));
+        assert_ne!(id1, id2);
     }
 
     #[test]

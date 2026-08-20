@@ -47,6 +47,10 @@ struct ExternalBrokerDto {
     updated_at: i64,
     /// Topics to subscribe to
     subscribe_topics: Vec<String>,
+    /// Payload field used as device identity when the topic can't uniquely
+    /// identify the device (gateway forwarding many devices on one topic).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_id_field: Option<String>,
 }
 
 impl From<ExternalBroker> for ExternalBrokerDto {
@@ -81,6 +85,7 @@ impl From<ExternalBroker> for ExternalBrokerDto {
             last_error: b.last_error,
             updated_at: b.updated_at,
             subscribe_topics: b.subscribe_topics,
+            device_id_field: b.device_id_field,
         }
     }
 }
@@ -116,6 +121,11 @@ pub struct ExternalBrokerRequest {
     /// Topics to subscribe to. Defaults to ["#"] for all topics.
     #[serde(default)]
     pub subscribe_topics: Option<Vec<String>>,
+    /// Payload field used as device identity when the topic can't uniquely
+    /// identify the device (gateway forwarding many devices on one topic).
+    /// Empty/None → auto-detect common fields (device_id, sn, mac, ...).
+    #[serde(default)]
+    pub device_id_field: Option<String>,
 }
 
 fn default_external_broker_port() -> u16 {
@@ -215,6 +225,7 @@ pub async fn create_and_connect_broker(
         discovery_topic: None,
         discovery_prefix: "neomind".to_string(),
         auto_discovery: false,
+        device_id_field: broker.device_id_field.clone(),
         storage_dir: Some("data".to_string()),
     };
 
@@ -463,6 +474,7 @@ pub async fn create_broker_handler(
     broker.client_key = req.client_key.clone();
     broker.client_id = req.client_id.clone();
     broker.enabled = req.enabled;
+    broker.device_id_field = req.device_id_field.clone();
     // Use custom subscribe_topics if provided and non-empty, otherwise keep default.
     // An empty array is ignored so it isn't treated as an intentional "clear all".
     if let Some(topics) = &req.subscribe_topics {
@@ -636,6 +648,7 @@ pub async fn update_broker_handler(
             broker.subscribe_topics = topics;
         }
     }
+    broker.device_id_field = req.device_id_field.clone();
     broker.touch();
 
     store

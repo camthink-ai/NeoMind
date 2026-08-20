@@ -414,6 +414,7 @@ impl ServerState {
                             discovery_topic: Some("device/+/+/uplink".to_string()),
                             discovery_prefix: "device".to_string(),
                             auto_discovery: true,
+                            device_id_field: None,
                             storage_dir: Some("data".to_string()),
                         };
                         if let Some(event_bus) = self.core.event_bus.as_ref() {
@@ -492,6 +493,7 @@ impl ServerState {
             discovery_topic: Some("device/+/+/uplink".to_string()),
             discovery_prefix: "device".to_string(),
             auto_discovery: true,
+            device_id_field: None,
             storage_dir: Some("data".to_string()),
         };
 
@@ -1719,6 +1721,7 @@ impl ServerState {
             discovery_topic: Some("device/+/+/uplink".to_string()),
             discovery_prefix: "device".to_string(),
             auto_discovery: true,
+            device_id_field: None,
             storage_dir: Some("data".to_string()),
         };
 
