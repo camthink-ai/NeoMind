@@ -57,7 +57,8 @@
     "shortDescription": "Edge AI Platform",
     "longDescription": "NeoMind - Edge-deployed LLM agent platform for IoT automation",
     "externalBin": [
-      "binaries/neomind-extension-runner"
+      "binaries/neomind-extension-runner",
+      "binaries/neomind-llama-server"
     ],
     "macOS": {
       "frameworks": [],
