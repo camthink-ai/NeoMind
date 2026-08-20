@@ -2622,11 +2622,34 @@ fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) ->
     // Auto-detect common device-identity fields, high confidence first.
     // Case-insensitive (device_id / deviceId / DeviceID all match).
     const CANDIDATES: &[&str] = &[
-        "device_id", "deviceid", "dev_id", "devid", "device_sn", "devicesn", "sn",
-        "serial", "serial_number", "serial_no", "mac", "mac_address", "macaddr",
-        "eui", "deveui", "devaddr", "imei", "iccid", "node_id", "nodeid",
-        "sensor_id", "sensorid", "device_uuid", "deviceuuid", "uuid",
-        "device_name", "devicename", "dev_name",
+        "device_id",
+        "deviceid",
+        "dev_id",
+        "devid",
+        "device_sn",
+        "devicesn",
+        "sn",
+        "serial",
+        "serial_number",
+        "serial_no",
+        "mac",
+        "mac_address",
+        "macaddr",
+        "eui",
+        "deveui",
+        "devaddr",
+        "imei",
+        "iccid",
+        "node_id",
+        "nodeid",
+        "sensor_id",
+        "sensorid",
+        "device_uuid",
+        "deviceuuid",
+        "uuid",
+        "device_name",
+        "devicename",
+        "dev_name",
     ];
     for key in CANDIDATES {
         if let Some(v) = obj.iter().find(|(k, _)| k.to_ascii_lowercase() == *key) {
@@ -2928,7 +2951,10 @@ mod tests {
             Some("aa:bb:cc")
         );
         // no identity field -> None (caller falls back to topic/hash)
-        assert_eq!(extract_device_id_from_payload(b"{\"temp\":21.5}", &cfg), None);
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"temp\":21.5}", &cfg),
+            None
+        );
     }
 
     #[test]

@@ -464,12 +464,9 @@ impl ShellTool {
                         .get(2)
                         .map(String::as_str)
                         .filter(|s| !s.starts_with('-'));
-                    if let Some(help) = Self::domain_help(
-                        domain.as_str(),
-                        subcommand,
-                        "retry with the exact one",
-                    )
-                    .await
+                    if let Some(help) =
+                        Self::domain_help(domain.as_str(), subcommand, "retry with the exact one")
+                            .await
                     {
                         stderr.push_str(&help);
                     }

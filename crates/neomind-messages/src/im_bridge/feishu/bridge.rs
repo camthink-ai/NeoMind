@@ -68,7 +68,10 @@ impl FeishuBridge {
             Some(domain.clone()),
         ));
         let messenger = FeishuMessenger::new(app_id, app_secret, Some(domain));
-        Self { ws_client, messenger }
+        Self {
+            ws_client,
+            messenger,
+        }
     }
 }
 
@@ -78,7 +81,9 @@ impl FeishuBridge {
 ///   relative URL and fail at the reqwest builder).
 fn normalize_domain(domain: Option<String>) -> String {
     const DEFAULT: &str = "https://open.feishu.cn";
-    let Some(d) = domain else { return DEFAULT.to_string() };
+    let Some(d) = domain else {
+        return DEFAULT.to_string();
+    };
     let d = d.trim();
     if d.is_empty() {
         return DEFAULT.to_string();
@@ -561,7 +566,10 @@ mod tests {
                 ..Default::default()
             });
             let app = Router::new()
-                .route("/open-apis/auth/v3/tenant_access_token/internal", post(handle_token))
+                .route(
+                    "/open-apis/auth/v3/tenant_access_token/internal",
+                    post(handle_token),
+                )
                 .route("/open-apis/im/v1/messages", post(handle_send))
                 .with_state(shared.clone());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -603,7 +611,11 @@ mod tests {
             .expect("reply ok");
 
         assert_eq!(msg_id.as_deref(), Some("om_reply_1"));
-        assert_eq!(server.send_calls(), 1, "exactly one POST /open-apis/im/v1/messages");
+        assert_eq!(
+            server.send_calls(),
+            1,
+            "exactly one POST /open-apis/im/v1/messages"
+        );
 
         let body = server.last_send_body();
         assert_eq!(body.receive_id, "oc_chat_9");

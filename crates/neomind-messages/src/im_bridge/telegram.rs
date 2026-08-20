@@ -52,7 +52,9 @@ impl TelegramBridge {
     /// an empty/scheme-less base builds a relative URL and reqwest fails at the builder).
     fn normalize_api_base(api_base: Option<String>) -> String {
         const DEFAULT: &str = "https://api.telegram.org";
-        let Some(b) = api_base else { return DEFAULT.to_string() };
+        let Some(b) = api_base else {
+            return DEFAULT.to_string();
+        };
         let b = b.trim();
         if b.is_empty() {
             return DEFAULT.to_string();
@@ -245,7 +247,11 @@ impl ImBridge for TelegramBridge {
     }
 
     async fn reply(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
-        tracing::info!(chat_id, text_len = text.len(), "telegram reply -> send_text");
+        tracing::info!(
+            chat_id,
+            text_len = text.len(),
+            "telegram reply -> send_text"
+        );
         match self.send_text(chat_id, text).await {
             Ok(mid) => {
                 tracing::info!(chat_id, message_id = ?mid, "telegram reply send_text ok");

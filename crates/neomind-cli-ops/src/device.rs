@@ -336,10 +336,9 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     let filepath = metric_dir.join(&filename);
 
     // Dedup: skip write if file already exists with same content hash
-    if !filepath.exists()
-        && std::fs::write(&filepath, &bytes).is_err() {
-            return None;
-        }
+    if !filepath.exists() && std::fs::write(&filepath, &bytes).is_err() {
+        return None;
+    }
 
     let url = format!("/api/images/{}/{}/{}", device_id, metric_name, filename);
 

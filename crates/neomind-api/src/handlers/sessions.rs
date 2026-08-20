@@ -404,24 +404,24 @@ pub async fn create_session_handler(
                 .map_err(|e| ErrorResponse::with_message(e.to_string()))?
         }
         None => match legacy_cfg {
-        Some(cfg) => {
-            // Legacy `config: AgentConfig` path — full struct. Translate to
-            // options patch (only the four commonly-overridden fields flow
-            // through; the rest of AgentConfig stays at platform default).
-            let opts = neomind_agent::CreateSessionOptions {
-                system_prompt: Some(cfg.system_prompt),
-                temperature: Some(cfg.temperature),
-                model: Some(cfg.model),
-                enable_tools: Some(cfg.enable_tools),
-                ..Default::default()
-            };
-            state
-                .agents
-                .session_manager
-                .create_session_with_options(opts)
-                .await
-                .map_err(|e| ErrorResponse::with_message(e.to_string()))?
-        }
+            Some(cfg) => {
+                // Legacy `config: AgentConfig` path — full struct. Translate to
+                // options patch (only the four commonly-overridden fields flow
+                // through; the rest of AgentConfig stays at platform default).
+                let opts = neomind_agent::CreateSessionOptions {
+                    system_prompt: Some(cfg.system_prompt),
+                    temperature: Some(cfg.temperature),
+                    model: Some(cfg.model),
+                    enable_tools: Some(cfg.enable_tools),
+                    ..Default::default()
+                };
+                state
+                    .agents
+                    .session_manager
+                    .create_session_with_options(opts)
+                    .await
+                    .map_err(|e| ErrorResponse::with_message(e.to_string()))?
+            }
             None => state
                 .agents
                 .session_manager

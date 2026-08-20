@@ -2817,7 +2817,9 @@ impl ServerState {
                     model,
                     capabilities: _,
                 } => {
-                    use neomind_agent::llm_backends::backends::llamacpp::{LlamaCppConfig, LlamaCppRuntime};
+                    use neomind_agent::llm_backends::backends::llamacpp::{
+                        LlamaCppConfig, LlamaCppRuntime,
+                    };
                     let timeout = std::env::var("LLAMACPP_TIMEOUT_SECS")
                         .ok()
                         .and_then(|s| s.parse().ok())

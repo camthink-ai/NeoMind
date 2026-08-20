@@ -79,7 +79,10 @@ impl FeishuMessenger {
         // Cache empty / stale → fetch a fresh token. `guard` stays held across
         // the await so a racing caller waits, then re-checks the now-populated
         // cache on its own lock acquisition (no duplicate fetch).
-        let url = format!("{}/open-apis/auth/v3/tenant_access_token/internal", self.domain);
+        let url = format!(
+            "{}/open-apis/auth/v3/tenant_access_token/internal",
+            self.domain
+        );
         let body = serde_json::json!({
             "app_id": self.app_id,
             "app_secret": self.app_secret,
@@ -115,7 +118,10 @@ impl FeishuMessenger {
     /// `TelegramBridge::reply`'s `Option<String>`.
     pub async fn send_text(&self, chat_id: &str, text: &str) -> anyhow::Result<Option<String>> {
         let token = self.tenant_access_token().await?;
-        let url = format!("{}/open-apis/im/v1/messages?receive_id_type=chat_id", self.domain);
+        let url = format!(
+            "{}/open-apis/im/v1/messages?receive_id_type=chat_id",
+            self.domain
+        );
 
         // Feishu requires `content` to be a JSON-encoded *string*, not a nested
         // object; `to_string` of `{"text": text}` yields exactly that.
@@ -253,7 +259,10 @@ mod tests {
                 expire_secs: AtomicI64::new(expire_secs),
             });
             let app = Router::new()
-                .route("/open-apis/auth/v3/tenant_access_token/internal", post(handle_token))
+                .route(
+                    "/open-apis/auth/v3/tenant_access_token/internal",
+                    post(handle_token),
+                )
                 .route("/open-apis/im/v1/messages", post(handle_send))
                 .with_state(shared.clone());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -304,7 +313,11 @@ mod tests {
         let id = m.send_text("oc_chat_1", "hello").await.expect("send ok");
 
         assert_eq!(id.as_deref(), Some("om_test_123"));
-        assert_eq!(server.send_calls(), 1, "exactly one POST /open-apis/im/v1/messages");
+        assert_eq!(
+            server.send_calls(),
+            1,
+            "exactly one POST /open-apis/im/v1/messages"
+        );
 
         let body = server.last_send_body();
         assert_eq!(body.receive_id, "oc_chat_1");

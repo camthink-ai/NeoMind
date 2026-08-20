@@ -473,7 +473,10 @@ mod tests {
 
         let replies = bridge.replies_snapshot();
         assert_eq!(replies.len(), 1, "error reply only (no ack)");
-        assert!(replies[0].1.contains("Failed to process"), "error surfaced to user");
+        assert!(
+            replies[0].1.contains("Failed to process"),
+            "error surfaced to user"
+        );
     }
 
     // ---- /start invite-bind tests (Task 2) ----
