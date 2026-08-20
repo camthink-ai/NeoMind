@@ -110,9 +110,15 @@ RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then export
 # ---------------------------------------------------------------------------
 FROM --platform=$TARGETPLATFORM ubuntu:22.04 AS llamaserver
 ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends git cmake build-essential \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates cmake build-essential \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone --depth 1 --branch b10524 https://github.com/ggml-org/llama.cpp.git /build/llama.cpp
+# curl+tarball (not git clone) — Docker build networks often block git; the
+# tarball is a plain HTTPS GET and is uniformly reliable.
+RUN curl -fsSL -o /tmp/llama.cpp.tar.gz \
+      https://github.com/ggml-org/llama.cpp/archive/refs/tags/b10524.tar.gz \
+    && mkdir -p /build/llama.cpp \
+    && tar -xzf /tmp/llama.cpp.tar.gz -C /build/llama.cpp --strip-components=1 \
+    && rm /tmp/llama.cpp.tar.gz
 WORKDIR /build/llama.cpp
 RUN if [ "$TARGETARCH" = "amd64" ]; then \
       cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_AMX_INT8=OFF; \
