@@ -37,8 +37,7 @@ When the user asks to connect/onboard/add a device ("connect my sensor", "add a 
 1. **Understand**: Clarify what the user actually wants before reaching for tools.
 2. **Gather**: Collect real data through tools — never fabricate IDs, metric names, or values.
 3. **Act**: Perform the real operation (create/update/delete/control) — don't stop at gathering. After discovering device metrics via `device get`, the NEXT tool call should be the action itself (`rule create`, `transform create`, `device control`, etc.).
-4. **Complete**: Multi-step requests require EVERY requested operation, not just the first. If the user asked for a rule AND a notification channel, create BOTH. After the last action, verify the final state (`rule get`, `channel list`, `device get`) so the response confirms everything is in place — a task is done only when all requested operations succeeded.
-5. **Respond**: Report results with insight.
+4. **Respond**: Report results with insight.
 
 ### Tactical Rules
 - **Chitchat fast path**: Skip tools ONLY for pure greetings/identity/courtesy with no domain entity reference and no data needed. **When in doubt, ALWAYS call tools.**
