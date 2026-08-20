@@ -206,12 +206,41 @@ impl ShellTool {
     /// SELECT `shell`; channel C is deterministic (fires only after the
     /// model already chose shell), so there is no intent-detection
     /// overtrigger risk.
-    async fn domain_help(domain: &str, note: &str) -> Option<String> {
+    async fn domain_help(domain: &str, subcommand: Option<&str>, note: &str) -> Option<String> {
         if domain.is_empty() {
             return None;
         }
         let exe = std::env::current_exe().ok()?;
-        let out = tokio::process::Command::new(exe)
+        // Prefer the SUBCOMMAND's help — it lists the actual flags/args the
+        // model guessed wrong (`device list --all`, `rule create --id=...`,
+        // `device types create ...`). A bare domain help only lists
+        // subcommands, which is why failed calls kept retrying bad flags.
+        let deeper = match subcommand {
+            Some(sub) if !sub.starts_with('-') => {
+                let out = tokio::process::Command::new(&exe)
+                    .arg(domain)
+                    .arg(sub)
+                    .arg("--help")
+                    .output()
+                    .await
+                    .ok()?;
+                let body: String = String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .take(28)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (body, format!("`neomind {} {}`", domain, sub))
+            }
+            _ => (String::new(), format!("`neomind {}`", domain)),
+        };
+        if !deeper.0.trim().is_empty() {
+            return Some(format!(
+                "\n\n[Reference — {} — {}]:\n{}",
+                deeper.1, note, deeper.0
+            ));
+        }
+        // Fallback: bare domain help.
+        let out = tokio::process::Command::new(&exe)
             .arg(domain)
             .arg("--help")
             .output()
@@ -383,11 +412,20 @@ impl ShellTool {
                     stdout.push_str(DOMAIN_INDEX);
                 }
                 if let Some(domain) = argv.get(1) {
+                    // First non-flag token after the domain = the subcommand;
+                    // its --help lists the actual flags the model may have
+                    // guessed wrong (`--all`, `--format=json`, ...).
+                    let subcommand = argv
+                        .get(2)
+                        .map(String::as_str)
+                        .filter(|s| !s.starts_with('-'));
                     let help: Option<String> = if !resp.success {
-                        Self::domain_help(domain.as_str(), "retry with the exact one").await
+                        Self::domain_help(domain.as_str(), subcommand, "retry with the exact one")
+                            .await
                     } else if !Self::domain_injected(domain.as_str()) {
                         let h = Self::domain_help(
                             domain.as_str(),
+                            subcommand,
                             "use the exact one for the next steps",
                         )
                         .await;
@@ -422,8 +460,16 @@ impl ShellTool {
                 let mut stderr = format!("error: {}", msg);
                 // [context-injection] bad subcommand/args → append domain --help.
                 if let Some(domain) = argv.get(1) {
-                    if let Some(help) =
-                        Self::domain_help(domain.as_str(), "retry with the exact one").await
+                    let subcommand = argv
+                        .get(2)
+                        .map(String::as_str)
+                        .filter(|s| !s.starts_with('-'));
+                    if let Some(help) = Self::domain_help(
+                        domain.as_str(),
+                        subcommand,
+                        "retry with the exact one",
+                    )
+                    .await
                     {
                         stderr.push_str(&help);
                     }
