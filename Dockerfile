@@ -103,6 +103,24 @@ RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then export
 # ---------------------------------------------------------------------------
 # Stage 3: Runtime (ubuntu:22.04 = glibc 2.35, same as build)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Stage 3: Bundled llama-server (llama.cpp) for the builtin LFM model.
+#   amd64 → GGML_AMX_INT8=OFF (llama.cpp #19184: AMX breaks LFM shortconv)
+#   arm64 → default (NEON)
+# ---------------------------------------------------------------------------
+FROM --platform=$TARGETPLATFORM ubuntu:22.04 AS llamaserver
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends git cmake build-essential \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth 1 --branch b10524 https://github.com/ggml-org/llama.cpp.git /build/llama.cpp
+WORKDIR /build/llama.cpp
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+      cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_AMX_INT8=OFF; \
+    else \
+      cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
+    fi \
+    && cmake --build build --target llama-server -j"$(nproc)"
+
 FROM ubuntu:22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -130,18 +148,30 @@ WORKDIR /app
 COPY --from=backend /build/target/release/neomind /usr/local/bin/neomind
 COPY --from=backend /build/target/release/neomind-extension-runner /usr/local/bin/neomind-extension-runner
 
+# Copy the bundled llama-server (spawned by the builtin LFM bootstrap)
+COPY --from=llamaserver /build/llama.cpp/build/bin/llama-server /usr/local/bin/neomind-llama-server
+
 # Copy frontend build output
 COPY --from=frontend /build/web/dist /var/www/neomind
 
-# Create data directory
-RUN mkdir -p /app/data && chown -R neomind:neomind /app/data
+# Create data directory + pre-bundle the builtin LFM model (QAD Q4_0) for
+# out-of-box agent use. The bootstrap reads the manifest, so both the GGUF
+# and manifest.json must land under /app/data/models/<id>/. The VOLUME at
+# /app/data initializes from this content on first run (named/anon volumes);
+# a bind-mounted /app/data skips the seed (use the download API there).
+RUN mkdir -p /app/data/models/lfm25-2.6b \
+    && curl -fsSL -o /app/data/models/lfm25-2.6b/lfm25-2.6b-qad_q4_0.gguf \
+       https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main/LFM2.5-2.6B-QAD-Q4_0.gguf \
+    && printf '{"id":"lfm25-2.6b","version":"1.0","file_name":"lfm25-2.6b-qad_q4_0.gguf","sha256":"a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03","quant":"qad_q4_0"}' \
+       > /app/data/models/lfm25-2.6b/manifest.json \
+    && chown -R neomind:neomind /app/data
 
 # Environment defaults
 ENV NEOMIND_WEB_DIR=/var/www/neomind
 ENV RUST_LOG=neomind=info
 ENV RUST_BACKTRACE=1
 
-EXPOSE 9375 1883
+EXPOSE 9375 1883 8081
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
