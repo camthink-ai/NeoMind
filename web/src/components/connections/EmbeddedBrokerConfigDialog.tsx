@@ -38,6 +38,7 @@ interface BrokerConfig {
   tls_cert_path: string | null
   tls_key_path: string | null
   tls_ca_path: string | null
+  device_id_field?: string | null
 }
 
 type CertMode = 'auto' | 'manual' | null
@@ -61,6 +62,7 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
   const [port, setPort] = useState(1883)
   const [authEnabled, setAuthEnabled] = useState(false)
   const [tlsEnabled, setTlsEnabled] = useState(false)
+  const [deviceIdField, setDeviceIdField] = useState('')
 
   // Form state for TLS certificates
   const [certPem, setCertPem] = useState('')
@@ -97,6 +99,7 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
         setPort(data.port || 1883)
         setAuthEnabled(data.auth_enabled ?? false)
         setTlsEnabled(data.tls_enabled ?? false)
+        setDeviceIdField(data.device_id_field ?? '')
         setCertPem('')
         setKeyPem('')
         setCaPem('')
@@ -198,6 +201,8 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
         port,
         auth_enabled: authEnabled,
         tls_enabled: tlsEnabled,
+        // 空串 = 清空(后端 trim 判空回 None);null 才是"不修改"
+        device_id_field: deviceIdField.trim(),
       })
 
       // Only upload manual certs if in manual mode and fields are filled
@@ -307,6 +312,19 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
                   setPort(Number(e.target.value))
                   setHasUnsavedChanges(true)
                 }}
+              />
+            </FormField>
+            <FormField
+              label={t('broker.deviceIdField')}
+              helpText={t('broker.deviceIdFieldHelp')}
+            >
+              <Input
+                value={deviceIdField}
+                onChange={(e) => {
+                  setDeviceIdField(e.target.value)
+                  setHasUnsavedChanges(true)
+                }}
+                placeholder="device_id, sn, mac — auto-detect if empty"
               />
             </FormField>
           </div>

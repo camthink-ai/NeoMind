@@ -48,6 +48,10 @@ struct BrokerConfigDto {
     /// TLS CA certificate path (if configured)
     #[serde(skip_serializing_if = "Option::is_none")]
     tls_ca_path: Option<String>,
+    /// Payload field used as device identity when auto-discovery can't
+    /// uniquely identify a device from the topic
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_id_field: Option<String>,
     /// User credentials (excluding internal system credentials)
     credentials: Vec<CredentialDto>,
 }
@@ -85,6 +89,11 @@ pub struct UpdateBrokerConfigRequest {
     /// Enable TLS
     #[serde(default)]
     tls_enabled: Option<bool>,
+    /// Payload field used as device identity when auto-discovery can't
+    /// uniquely identify a device from the topic (gateway forwarding many
+    /// devices on one topic). None/empty → auto-detect common fields.
+    #[serde(default)]
+    device_id_field: Option<String>,
 }
 
 /// Request body for adding a new credential.
@@ -143,6 +152,7 @@ pub async fn get_broker_config_handler() -> HandlerResult<serde_json::Value> {
         tls_cert_path: config.tls_cert_path,
         tls_key_path: config.tls_key_path,
         tls_ca_path: config.tls_ca_path,
+        device_id_field: config.device_id_field,
         credentials,
     };
 
@@ -216,6 +226,13 @@ pub async fn update_broker_config_handler(
             ));
         }
         config.tls_enabled = tls_enabled;
+    }
+    if let Some(field) = req.device_id_field.clone() {
+        if !field.trim().is_empty() {
+            config.device_id_field = Some(field.trim().to_string());
+        } else {
+            config.device_id_field = None;
+        }
     }
 
     // All changes require a broker restart.

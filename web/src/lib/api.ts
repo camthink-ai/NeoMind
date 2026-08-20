@@ -1117,6 +1117,7 @@ export const api = {
         tls_cert_path: string | null
         tls_key_path: string | null
         tls_ca_path: string | null
+        device_id_field?: string | null
       }
     }>('/mqtt/broker-config').then((res) => res.config),
 
@@ -1125,6 +1126,7 @@ export const api = {
     port?: number
     auth_enabled?: boolean
     tls_enabled?: boolean
+    device_id_field?: string | null
   }) => fetchAPI<{ message: string; restart_required?: boolean }>('/mqtt/broker-config', {
     method: 'PUT',
     body: JSON.stringify(config),

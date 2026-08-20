@@ -156,6 +156,8 @@
     "listen": "Listen Address",
     "port": "Port",
     "maxConnections": "Max Connections",
+    "deviceIdField": "Device ID Field (payload)",
+    "deviceIdFieldHelp": "When a gateway forwards many devices on one topic, use this payload field as each device's identity. Empty = auto-detect common fields (device_id, sn, mac, ...).",
     "auth": "Authentication",
     "authEnabled": "Authentication Enabled",
     "authDisabled": "Authentication Disabled",

@@ -86,6 +86,12 @@ pub struct EmbeddedBrokerConfig {
 
     #[serde(default)]
     pub tls_ca_path: Option<String>,
+
+    /// Payload field used as the device identity when auto-discovery cannot
+    /// uniquely identify a device from the topic (a gateway forwarding many
+    /// devices on one topic). None/empty → auto-detect common fields.
+    #[serde(default)]
+    pub device_id_field: Option<String>,
 }
 
 fn default_listen_addr() -> String {
@@ -117,6 +123,7 @@ impl Default for EmbeddedBrokerConfig {
             tls_cert_path: None,
             tls_key_path: None,
             tls_ca_path: None,
+            device_id_field: None,
         }
     }
 }

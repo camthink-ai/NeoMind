@@ -156,6 +156,8 @@
     "listen": "监听地址",
     "port": "端口",
     "maxConnections": "最大连接数",
+    "deviceIdField": "设备 ID 字段(payload)",
+    "deviceIdFieldHelp": "网关把多台设备发到同一主题时,用 payload 里的该字段区分设备身份。留空 = 自动检测常见字段(device_id/sn/mac 等)。",
     "auth": "认证",
     "authEnabled": "已启用认证",
     "authDisabled": "已禁用认证",

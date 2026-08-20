@@ -437,6 +437,7 @@ pub fn load_embedded_broker_config() -> Option<EmbeddedBrokerConfig> {
         tls_cert_path: None,
         tls_key_path: None,
         tls_ca_path: None,
+        device_id_field: None,
     })
 }
 
