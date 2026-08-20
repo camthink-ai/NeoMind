@@ -69,6 +69,7 @@ async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
         memory_store: None,
         backend_semaphores: None,
         skill_registry: None,
+        execution_semaphore: None,
     };
     let executor = AgentExecutor::new(config).await.expect("executor");
 
