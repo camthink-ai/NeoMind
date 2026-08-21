@@ -21,7 +21,7 @@ type SetupStep = 'account' | 'complete'
 
 export function SetupPage() {
   const navigate = useNavigate()
-  const { login } = useStore()
+  const login = useStore((s) => s.login)
   const { withErrorHandling } = useErrorHandler()
   const { t } = useTranslation(['setup'])
 
