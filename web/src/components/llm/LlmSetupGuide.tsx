@@ -34,37 +34,6 @@ export function LlmSetupGuide({ variant = 'full' }: LlmSetupGuideProps) {
     />
   )
 
-  const actions = (
-    <>
-      <button
-        onClick={() => setWizardOpen(true)}
-        className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted-50 transition-colors text-left group"
-      >
-        <div className="flex size-9 items-center justify-center rounded-lg bg-primary-light text-primary shrink-0">
-          <Download className="size-4" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium">{t('common:llmGuide.builtinTitle')}</div>
-          <div className="text-xs text-muted-foreground">{t('common:llmGuide.builtinDesc')}</div>
-        </div>
-        <ChevronRight className="size-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
-      </button>
-      <button
-        onClick={() => openSettings()}
-        className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted-50 transition-colors text-left group"
-      >
-        <div className="flex size-9 items-center justify-center rounded-lg bg-muted text-primary shrink-0">
-          <Server className="size-4" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium">{t('common:llmGuide.ownTitle')}</div>
-          <div className="text-xs text-muted-foreground">{t('common:llmGuide.ownDesc')}</div>
-        </div>
-        <ChevronRight className="size-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0" />
-      </button>
-    </>
-  )
-
   if (variant === 'banner') {
     return (
       <div className="mx-4 sm:mx-6 mt-4 rounded-xl border border-primary bg-primary-light p-4">
@@ -83,7 +52,7 @@ export function LlmSetupGuide({ variant = 'full' }: LlmSetupGuideProps) {
               <Download className="mr-1.5 h-3.5 w-3.5" />
               {t('common:llmGuide.builtinShort')}
             </Button>
-            <Button size="sm" variant="secondary" onClick={() => openSettings()}>
+            <Button size="sm" variant="secondary" onClick={() => openSettings('llm')}>
               <Server className="mr-1.5 h-3.5 w-3.5" />
               {t('common:llmGuide.ownShort')}
             </Button>
@@ -96,7 +65,7 @@ export function LlmSetupGuide({ variant = 'full' }: LlmSetupGuideProps) {
 
   return (
     <div className={cn('flex items-center justify-center', 'h-full', 'bg-background')}>
-      <div className="text-center max-w-md px-6">
+      <div className="text-center max-w-lg px-6">
         <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
           <Cpu className="size-7" />
         </div>
@@ -104,7 +73,44 @@ export function LlmSetupGuide({ variant = 'full' }: LlmSetupGuideProps) {
         <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
           {t('common:llmGuide.desc')}
         </p>
-        <div className="text-left space-y-2">{actions}</div>
+        {/* Two choice cards side by side — recommended path visually distinct */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+          <button
+            onClick={() => setWizardOpen(true)}
+            className="group relative rounded-xl border border-primary bg-primary-light p-4 transition-all hover:shadow-md text-left"
+          >
+            <span className="absolute right-3 top-3 rounded-full bg-primary text-primary-foreground px-2 py-0.5 text-[10px] font-medium">
+              {t('common:llmGuide.recommended')}
+            </span>
+            <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Download className="size-5" />
+            </div>
+            <div className="mt-3 text-sm font-semibold">{t('common:llmGuide.builtinTitleShort')}</div>
+            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+              {t('common:llmGuide.builtinDesc')}
+            </p>
+            <div className="mt-3 flex items-center gap-1 text-xs font-medium text-primary">
+              {t('common:llmGuide.builtinCta')}
+              <ChevronRight className="size-3 transition-transform group-hover:translate-x-0.5" />
+            </div>
+          </button>
+          <button
+            onClick={() => openSettings('llm')}
+            className="group rounded-xl border border-border p-4 transition-all hover:border-primary hover:shadow-md text-left"
+          >
+            <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-primary">
+              <Server className="size-5" />
+            </div>
+            <div className="mt-3 text-sm font-semibold">{t('common:llmGuide.ownTitleShort')}</div>
+            <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+              {t('common:llmGuide.ownDesc')}
+            </p>
+            <div className="mt-3 flex items-center gap-1 text-xs font-medium text-primary">
+              {t('common:llmGuide.ownCta')}
+              <ChevronRight className="size-3 transition-transform group-hover:translate-x-0.5" />
+            </div>
+          </button>
+        </div>
         <p className="mt-5 text-xs text-muted-foreground">{t('common:llmGuide.footnote')}</p>
       </div>
       {wizard}
