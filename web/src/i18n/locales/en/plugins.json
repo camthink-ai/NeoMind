@@ -59,8 +59,8 @@
     "serverConnected": "Server Connected",
     "serverUnreachable": "Server Unreachable",
     "builtinBadge": "Built-in",
-    "builtinTitle": "Built-in Model · LFM2.5-2.6B",
-    "builtinDesc": "Zero-config local agent model bundled with NeoMind — no external dependencies",
+    "builtinTitle": "Built-in Model",
+    "builtinDesc": "On-device agent model — no API key, fully offline. Pick one from the builtin catalog (downloads on first use).",
     "builtinNotDownloaded": "Not Downloaded",
     "builtinDownloading": "Downloading {{percent}}%",
     "builtinDownloadingNoProgress": "Downloading",
@@ -88,9 +88,7 @@
     "builtinWizardTitle": "First-run Wizard · Built-in Model",
     "builtinWizardIntro": "Install a zero-config on-device agent model. No API key needed — fully offline, data never leaves your device.",
     "builtinWizardSizeLabel": "Model size",
-    "builtinWizardSizeValue": "~1.5GB (Q4_K_M)",
-    "builtinWizardSpeedLabel": "Speed",
-    "builtinWizardSpeedValue": "~30–100 tok/s",
+    "builtinWizardSizeValue": "Model size varies by pick",
     "builtinWizardOfflineLabel": "Offline",
     "builtinWizardOfflineValue": "No network · data stays on device",
     "builtinWizardStart": "Start Download",
@@ -120,7 +118,8 @@
         "name": "Gemma4-E2B",
         "notes": "Official Google QAT quant — mmproj-ready for vision"
       }
-    }
+    },
+    "builtinWizardCtxLabel": "Context"
   },
   "yes": "Yes",
   "no": "No",

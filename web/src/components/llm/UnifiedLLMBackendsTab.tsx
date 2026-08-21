@@ -535,6 +535,14 @@ export function UnifiedLLMBackendsTab({
     // Built-in bundled LLM card (top of the list, above the provider grid).
     const builtinInstance = instances.find(i => i.is_builtin)
     const builtinIsActive = !!builtinInstance && builtinInstance.id === activeBackendId
+    const BUILTIN_MODEL_NAMES: Record<string, string> = {
+      'lfm25-2.6b': 'LFM2.5-2.6B',
+      'qwen3.5-4b': 'Qwen3.5-4B',
+      'gemma4-e2b': 'Gemma4-E2B',
+    }
+    const installedModelName = builtinStatus?.model_id
+      ? (BUILTIN_MODEL_NAMES[builtinStatus.model_id] ?? builtinStatus.model_id)
+      : null
     const builtinInfo = builtinStatus ? getBuiltinStatusInfo(builtinStatus, t) : null
     const builtinCard = builtinStatus && builtinInfo ? (
       <Card
@@ -550,7 +558,10 @@ export function UnifiedLLMBackendsTab({
                 <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-warning-light text-warning">
                   <Cpu className="h-4 w-4" />
                 </div>
-                <CardTitle className="text-base truncate min-w-0">{t('plugins:llm.builtinTitle')}</CardTitle>
+                <CardTitle className="text-base truncate min-w-0">
+                  {t('plugins:llm.builtinTitle')}
+                  {installedModelName && <span className="text-muted-foreground"> · {installedModelName}</span>}
+                </CardTitle>
                 <Badge variant="outline" className="text-xs shrink-0">{t('plugins:llm.builtinBadge')}</Badge>
                 {builtinIsActive && <Badge variant="default" className="text-xs shrink-0">{t('plugins:llm.active')}</Badge>}
               </div>

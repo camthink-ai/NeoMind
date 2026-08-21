@@ -109,6 +109,8 @@ export function BuiltinModelWizard({
   const [status, setStatus] = useState<BuiltinLlmStatus | null>(null)
   const [models, setModels] = useState<BuiltinModelDef[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
+  // Model the ready-phase tiles describe: the installed one, else selection.
+  const shownModel = models.find((m) => m.id === (status?.model_id ?? selectedModelId))
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [retryAction, setRetryAction] = useState<RetryAction>('download')
   const [progress, setProgress] = useState<DownloadProgressState>({
@@ -364,17 +366,27 @@ export function BuiltinModelWizard({
               </div>
             </div>
 
-            {/* Model info: size / speed / offline */}
+            {/* Model info: size / context / offline — values come from the
+                installed/selected model def, not static copy (hardware speed
+                claims were dropped: edge tok/s vary 20x, a number misleads). */}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <InfoTile
                 icon={<HardDrive className="h-4 w-4" />}
                 label={t('plugins:llm.builtinWizardSizeLabel')}
-                value={t('plugins:llm.builtinWizardSizeValue')}
+                value={
+                  shownModel
+                    ? `${(shownModel.size_bytes / 1e9).toFixed(1)}GB · ${shownModel.quant}`
+                    : t('plugins:llm.builtinWizardSizeValue')
+                }
               />
               <InfoTile
                 icon={<Zap className="h-4 w-4" />}
-                label={t('plugins:llm.builtinWizardSpeedLabel')}
-                value={t('plugins:llm.builtinWizardSpeedValue')}
+                label={t('plugins:llm.builtinWizardCtxLabel')}
+                value={
+                  shownModel
+                    ? `${Math.round(shownModel.default_ctx / 1024)}K context`
+                    : ''
+                }
               />
               <InfoTile
                 icon={<WifiOff className="h-4 w-4" />}

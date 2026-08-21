@@ -59,8 +59,8 @@
     "serverConnected": "服务器已连接",
     "serverUnreachable": "服务器不可达",
     "builtinBadge": "内置",
-    "builtinTitle": "内置模型 · LFM2.5-2.6B",
-    "builtinDesc": "随 NeoMind 分发的零配置本地 Agent 模型，无需外部依赖",
+    "builtinTitle": "内置模型",
+    "builtinDesc": "端侧 agent 模型——无需 API key、完全离线。从内置模型库任选一款(首次使用下载)。",
     "builtinNotDownloaded": "未下载",
     "builtinDownloading": "下载中 {{percent}}%",
     "builtinDownloadingNoProgress": "下载中",
@@ -88,11 +88,9 @@
     "builtinWizardTitle": "首启向导 · 内置模型",
     "builtinWizardIntro": "安装一个开箱即用的本地 Agent 模型。无需 API Key，完全离线运行，数据不出设备。",
     "builtinWizardSizeLabel": "模型大小",
-    "builtinWizardSizeValue": "~1.5GB (Q4_K_M)",
-    "builtinWizardSpeedLabel": "推理速度",
-    "builtinWizardSpeedValue": "~30–100 tok/s",
-    "builtinWizardOfflineLabel": "离线运行",
-    "builtinWizardOfflineValue": "无需联网 · 数据不出设备",
+    "builtinWizardSizeValue": "所选模型决定大小",
+    "builtinWizardOfflineLabel": "离线",
+    "builtinWizardOfflineValue": "无需网络 · 数据不出设备",
     "builtinWizardStart": "开始下载",
     "builtinWizardIdleHint": "选择要下载的内置模型——下载完成后自动激活，可后台继续。",
     "builtinWizardDownloadingHint": "下载可在后台继续，关闭此窗口不会中断",
@@ -120,7 +118,8 @@
         "name": "Gemma4-E2B",
         "notes": "Google 官方 QAT 量化——可挂 mmproj 加视觉"
       }
-    }
+    },
+    "builtinWizardCtxLabel": "上下文"
   },
   "yes": "是",
   "no": "否",
