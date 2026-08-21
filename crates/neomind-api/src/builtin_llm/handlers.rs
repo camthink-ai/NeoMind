@@ -161,13 +161,14 @@ fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Quant, Er
 
 /// The installed model, if any (scan the registry — one builtin model is
 /// installed at a time; the server runs one llama-server process).
-fn installed_model(mdir: &Path) -> Option<BuiltinModelDef> {
+///
+/// Returns the *on-disk* manifest (its `file_name` is the real file — e.g.
+/// Docker may pre-bundle QAD under the QAD name) plus the registry def (for
+/// ctx/name/thinking flags).
+fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> {
     BUILTIN_MODELS.iter().find_map(|def| {
         let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
-        manifest
-            .model_path(mdir)
-            .exists()
-            .then(|| def.clone())
+        manifest.model_path(mdir).exists().then(|| (def.clone(), manifest))
     })
 }
 
@@ -207,16 +208,12 @@ pub async fn status_handler(
     // manifest + model_path + installed, independent of download state so the
     // "downloading" branch below can still report `installed` truthfully.
     let mdir = models_dir(&state.data_dir);
-    let installed_def = installed_model(&mdir);
-    let model_id = installed_def.as_ref().map(|d| d.manifest.id.clone());
-    let installed = installed_def.is_some();
-    let model_path = installed_def
+    let installed_pair = installed_model(&mdir);
+    let model_id = installed_pair.as_ref().map(|(_, m)| m.id.clone());
+    let installed = installed_pair.is_some();
+    let model_path = installed_pair
         .as_ref()
-        .map(|d| {
-            cfg.model_path
-                .clone()
-                .unwrap_or_else(|| d.manifest.model_path(&mdir))
-        });
+        .map(|(_, m)| cfg.model_path.clone().unwrap_or_else(|| m.model_path(&mdir)));
 
     // Downloading overrides running/stopped/not_configured. The lock is the
     // authoritative single-flight gate (per the task design decision); the
@@ -236,7 +233,7 @@ pub async fn status_handler(
         }));
     }
 
-    let Some(_def) = installed_def else {
+    let Some(_) = installed_pair else {
         return ok(json!({
             "installed": false,
             "model_id": serde_json::Value::Null,
@@ -475,12 +472,12 @@ async fn spawn_builtin_server(
 ) -> anyhow::Result<String> {
     let binary = find_llama_server().map_err(|e| anyhow::anyhow!(e))?;
     let mdir = models_dir(data_dir);
-    let def = installed_model(&mdir)
+    let (def, installed_manifest) = installed_model(&mdir)
         .ok_or_else(|| anyhow::anyhow!("model not installed (no manifest)"))?;
     let model_path = cfg
         .model_path
         .clone()
-        .unwrap_or_else(|| def.manifest.model_path(&mdir));
+        .unwrap_or_else(|| installed_manifest.model_path(&mdir));
     if !model_path.exists() {
         anyhow::bail!("model file missing at {}", model_path.display());
     }
@@ -598,7 +595,7 @@ pub async fn delete_model_handler(
     }
 
     let model_id = installed_model(&models_dir(&state.data_dir))
-        .map(|d| d.manifest.id)
+        .map(|(_, m)| m.id)
         .unwrap_or_else(|| BUILTIN_MODEL_ID.to_string());
     let model_dir = models_dir(&state.data_dir).join(&model_id);
     let deleted = match std::fs::remove_dir_all(&model_dir) {
