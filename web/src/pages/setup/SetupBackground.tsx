@@ -15,7 +15,7 @@ export function SetupBackground() {
       {/* One soft brand glow — restrained, just enough warmth to avoid
           feeling flat. Brand orange ties to the logo. */}
       <div
-        className="absolute top-[28%] left-1/2 -translate-x-1/2 w-[42rem] h-[42rem] rounded-full blur-3xl"
+        className="absolute top-[45%] left-1/2 -translate-x-1/2 w-[42rem] h-[42rem] rounded-full blur-3xl"
         style={{ background: 'color-mix(in oklch, var(--accent-orange) 8%, transparent)' }}
       />
     </div>
