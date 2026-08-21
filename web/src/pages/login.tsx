@@ -18,6 +18,7 @@ import { LoadingState } from "@/components/shared/LoadingState"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { textNano } from '@/design-system/tokens/typography'
 import { tokenManager, getApiBase, getApiKey, setApiBase, clearApiKey, setApiKey } from "@/lib/api"
+import { handleWindowDragMouseDown } from "@/lib/windowDrag"
 import { INSTANCE_CACHE_KEY, CURRENT_INSTANCE_KEY, PENDING_SWITCH_KEY } from "@/lib/instance-constants"
 import { decryptApiKey } from "@/store/slices/instanceSlice"
 
@@ -372,9 +373,14 @@ export function LoginPage() {
         />
       </div>
 
-      {/* Top Header */}
+      {/* Top Header — doubles as the Tauri window drag region (the shell's
+          TopBar has the same contract; overlay titlebar means nothing native
+          is draggable here). Interactive elements are skipped by the helper. */}
       <header className="absolute top-0 left-0 right-0 z-50 safe-top">
-        <div className="flex items-center justify-between px-4 sm:px-6 h-14 sm:h-16">
+        <div
+          className="flex items-center justify-between px-4 sm:px-6 h-14 sm:h-16"
+          onMouseDown={handleWindowDragMouseDown}
+        >
           <div className="flex items-center gap-2 sm:gap-3">
             <BrandLogoHorizontal className="h-6 sm:h-7" />
           </div>

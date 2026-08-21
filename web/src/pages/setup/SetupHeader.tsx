@@ -4,6 +4,7 @@
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Languages } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { handleWindowDragMouseDown } from '@/lib/windowDrag'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,7 +27,13 @@ export function SetupHeader({ onBack, stepLabel }: SetupHeaderProps) {
 
   return (
     <header className="absolute top-0 left-0 right-0 z-50 safe-top">
-      <div className="flex items-center justify-between px-4 h-14 sm:px-6 sm:h-16">
+      {/* Doubles as the Tauri window drag region — overlay titlebar means
+          nothing native is draggable on the setup screens (same contract as
+          the shell TopBar; the helper skips interactive elements). */}
+      <div
+        className="flex items-center justify-between px-4 h-14 sm:px-6 sm:h-16"
+        onMouseDown={handleWindowDragMouseDown}
+      >
         <div className="flex items-center gap-3">
           {onBack && (
             <Button
