@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { SetupBackground } from './SetupBackground'
 import { SetupHeader } from './SetupHeader'
 import { getBrowserTimezone, COMMON_TIMEZONE_IDS } from '@/lib/time/format'
+import { notifySuccess } from '@/lib/notify'
 
 // Mailchimp subscription function
 function mcSubscribe(email: string, username?: string): Promise<{ result: string; msg: string }> {
@@ -144,9 +145,14 @@ export function AccountStep({ getApiUrl, onAccountCreated }: AccountStepProps) {
         console.warn('Failed to save timezone, continuing:', tzError)
       }
 
-      // Newsletter subscription (non-blocking)
+      // Newsletter subscription (non-blocking, best-effort — failures stay
+      // silent; success gets a toast so the opt-in is observably real)
       if (subscribeToNewsletter && email?.trim()) {
-        mcSubscribe(email, username).catch(() => {})
+        mcSubscribe(email.trim(), username)
+          .then((r) => {
+            if (r.result === "success") notifySuccess(t("setup:subscribedToast"))
+          })
+          .catch(() => {})
       }
 
       onAccountCreated(username, password, data.token, selectedTimezone)

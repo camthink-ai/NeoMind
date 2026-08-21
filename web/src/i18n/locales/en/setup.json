@@ -44,6 +44,7 @@
   "setupAlreadyCompleted": "Setup has already been completed",
   "setupFailed": "Setup failed. Please try again.",
   "subscribeNewsletter": "Subscribe to Camthink newsletter for product updates and new features",
+  "subscribedToast": "Subscribed to the Camthink newsletter",
   "nextSteps": "Next Steps",
   "quickChat": "Start a Conversation",
   "quickChatDesc": "Chat with AI to explore NeoMind capabilities",
