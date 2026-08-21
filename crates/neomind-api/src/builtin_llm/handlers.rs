@@ -28,10 +28,10 @@ use neomind_agent::llm_backends::{get_instance_manager, LlmBackendInstanceManage
 use neomind_agent::LlmBackend;
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::manifest::{
-    load_manifest, save_manifest, ModelManifest, BUILTIN_MODEL_ID,
+    load_manifest, save_manifest, model_def, BuiltinModelDef, ModelManifest,
+    BUILTIN_MODELS, BUILTIN_MODEL_ID,
 };
-use neomind_core::builtin_llm::variant::{default_quant, model_file_name, Quant};
-use neomind_core::extension::accel::detect_variant;
+use neomind_core::builtin_llm::variant::{model_file_name, Quant};
 use neomind_core::NeoMindEvent;
 use neomind_storage::{LlmBackendInstance, LlmBackendType};
 
@@ -59,6 +59,12 @@ static DL_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Latest progress values reported by the download callback (0 = unknown).
 static DL_DOWNLOADED: AtomicU64 = AtomicU64::new(0);
 static DL_TOTAL: AtomicU64 = AtomicU64::new(0);
+
+/// Model id currently downloading (for the status endpoint + events).
+static DL_MODEL: OnceLock<std::sync::Mutex<String>> = OnceLock::new();
+fn dl_model() -> &'static std::sync::Mutex<String> {
+    DL_MODEL.get_or_init(|| std::sync::Mutex::new(BUILTIN_MODEL_ID.to_string()))
+}
 
 fn download_lock() -> Arc<tokio::sync::Mutex<()>> {
     DOWNLOAD_LOCK
@@ -116,22 +122,75 @@ fn hf_sha256(quant: Quant) -> &'static str {
     }
 }
 
-/// The HF URL for a quant's GGUF.
-fn hf_url(quant: Quant) -> String {
-    format!("{}/{}", HF_REPO, hf_file_name(quant))
+/// Which model to install, defaulting to the registry default.
+fn resolve_model(model_id: Option<&str>) -> Result<&'static BuiltinModelDef, ErrorResponse> {
+    let id = model_id.unwrap_or(BUILTIN_MODEL_ID);
+    model_def(id).ok_or_else(|| {
+        ErrorResponse::bad_request(format!(
+            "unknown builtin model id: {id} (available: {})",
+            BUILTIN_MODELS
+                .iter()
+                .map(|d| d.manifest.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    })
 }
 
-/// Resolve the quant to download: user override → `default_quant(os, variant)`.
-fn resolve_quant(cfg: &BuiltinConfig) -> Result<Quant, ErrorResponse> {
-    match cfg.quant_override.as_deref() {
-        Some(q) if q.eq_ignore_ascii_case("q4_k_m") => Ok(Quant::Q4_K_M),
-        Some(q) if q.eq_ignore_ascii_case("q8_0") => Ok(Quant::Q8_0),
-        Some(q) if q.eq_ignore_ascii_case("qad_q4_0") => Ok(Quant::QAD_Q4_0),
-        Some(other) => Err(ErrorResponse::bad_request(format!(
-            "unsupported builtin quant: {}",
-            other
+/// Resolve the quant to download for a given model: LFM keeps the existing
+/// quant-override machinery (q4_k_m / q8_0 / qad_q4_0); other models ship a
+/// single canonical quant.
+fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Quant, ErrorResponse> {
+    let Some(q) = cfg.quant_override.as_deref() else {
+        return Ok(Quant::Q4_K_M);
+    };
+    if def.manifest.id != BUILTIN_MODEL_ID {
+        return Err(ErrorResponse::bad_request(format!(
+            "quant override is only supported for the default model ({BUILTIN_MODEL_ID})"
+        )));
+    }
+    match q {
+        "q4_k_m" => Ok(Quant::Q4_K_M),
+        "q8_0" => Ok(Quant::Q8_0),
+        "qad_q4_0" => Ok(Quant::QAD_Q4_0),
+        other => Err(ErrorResponse::bad_request(format!(
+            "unsupported builtin quant: {other}"
         ))),
-        None => Ok(default_quant(std::env::consts::OS, detect_variant())),
+    }
+}
+
+/// The installed model, if any (scan the registry — one builtin model is
+/// installed at a time; the server runs one llama-server process).
+fn installed_model(mdir: &Path) -> Option<BuiltinModelDef> {
+    BUILTIN_MODELS.iter().find_map(|def| {
+        let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
+        manifest
+            .model_path(mdir)
+            .exists()
+            .then(|| def.clone())
+    })
+}
+
+/// Download source for a def: HF repo + file + sha (LFM quant override swaps
+/// the repo file/sha via the existing hf_* tables).
+fn resolve_source(
+    cfg: &BuiltinConfig,
+    def: &BuiltinModelDef,
+) -> (String, String, String) {
+    if def.manifest.id == BUILTIN_MODEL_ID {
+        let quant = resolve_quant(cfg, def).unwrap_or(Quant::Q4_K_M);
+        let file_name = model_file_name(quant);
+        let sha = hf_sha256(quant).to_string();
+        let url = format!("{}/{}", HF_REPO, hf_file_name(quant));
+        (url, sha, file_name)
+    } else {
+        let url = format!(
+            "https://huggingface.co/{}/resolve/main/{}",
+            def.hf_repo, def.hf_file
+        );
+        let sha = def.manifest.sha256.clone();
+        let file_name = def.manifest.file_name.clone();
+        (url, sha, file_name)
     }
 }
 
@@ -148,27 +207,16 @@ pub async fn status_handler(
     // manifest + model_path + installed, independent of download state so the
     // "downloading" branch below can still report `installed` truthfully.
     let mdir = models_dir(&state.data_dir);
-    let (manifest, model_path, installed) = match load_manifest(&mdir, BUILTIN_MODEL_ID) {
-        Ok(Some(m)) => {
-            let p = cfg
-                .model_path
+    let installed_def = installed_model(&mdir);
+    let model_id = installed_def.as_ref().map(|d| d.manifest.id.clone());
+    let installed = installed_def.is_some();
+    let model_path = installed_def
+        .as_ref()
+        .map(|d| {
+            cfg.model_path
                 .clone()
-                .unwrap_or_else(|| m.model_path(&mdir));
-            let inst = p.exists();
-            (Some(m), Some(p), inst)
-        }
-        Ok(None) => (None, None, false),
-        Err(e) => {
-            tracing::warn!(error = %e, "builtin llm: manifest read failed");
-            return ok(json!({
-                "installed": false,
-                "model_id": serde_json::Value::Null,
-                "server_state": "error",
-                "downloaded_bytes": serde_json::Value::Null,
-                "total_bytes": serde_json::Value::Null,
-            }));
-        }
-    };
+                .unwrap_or_else(|| d.manifest.model_path(&mdir))
+        });
 
     // Downloading overrides running/stopped/not_configured. The lock is the
     // authoritative single-flight gate (per the task design decision); the
@@ -178,16 +226,17 @@ pub async fn status_handler(
     if downloading {
         let downloaded = DL_DOWNLOADED.load(Ordering::SeqCst);
         let total = DL_TOTAL.load(Ordering::SeqCst);
+        let dl_id = dl_model().lock().unwrap().clone();
         return ok(json!({
             "installed": installed,
-            "model_id": BUILTIN_MODEL_ID,
+            "model_id": dl_id,
             "server_state": "downloading",
             "downloaded_bytes": downloaded,
             "total_bytes": if total > 0 { json!(total) } else { serde_json::Value::Null },
         }));
     }
 
-    let Some(_manifest) = manifest else {
+    let Some(_def) = installed_def else {
         return ok(json!({
             "installed": false,
             "model_id": serde_json::Value::Null,
@@ -196,16 +245,6 @@ pub async fn status_handler(
             "total_bytes": serde_json::Value::Null,
         }));
     };
-
-    if !installed {
-        return ok(json!({
-            "installed": false,
-            "model_id": BUILTIN_MODEL_ID,
-            "server_state": "not_configured",
-            "downloaded_bytes": serde_json::Value::Null,
-            "total_bytes": serde_json::Value::Null,
-        }));
-    }
 
     let file_size = model_path
         .and_then(|p| std::fs::metadata(&p).ok())
@@ -219,7 +258,7 @@ pub async fn status_handler(
 
     ok(json!({
         "installed": true,
-        "model_id": BUILTIN_MODEL_ID,
+        "model_id": model_id,
         "server_state": server_state,
         "downloaded_bytes": file_size,
         "total_bytes": file_size,
@@ -227,12 +266,48 @@ pub async fn status_handler(
 }
 
 // ---------------------------------------------------------------------------
+// Models list (registry)
+// ---------------------------------------------------------------------------
+
+/// GET /api/builtin-llm/models — the installable builtin models with
+/// per-entry install state.
+pub async fn models_handler(
+    State(state): State<crate::server::types::ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    let mdir = models_dir(&state.data_dir);
+    let models: Vec<serde_json::Value> = BUILTIN_MODELS
+        .iter()
+        .map(|d| {
+            let installed = load_manifest(&mdir, &d.manifest.id)
+                .ok()
+                .flatten()
+                .map(|m| m.model_path(&mdir).exists())
+                .unwrap_or(false);
+            json!({
+                "id": d.manifest.id,
+                "name": d.display_name,
+                "file_name": d.manifest.file_name,
+                "quant": d.manifest.quant,
+                "size_bytes": d.size_bytes,
+                "default_ctx": d.default_ctx,
+                "notes": d.notes,
+                "recommended": d.recommended,
+                "installed": installed,
+            })
+        })
+        .collect();
+    ok(json!({ "models": models, "default_model_id": BUILTIN_MODEL_ID }))
+}
+
+// ---------------------------------------------------------------------------
 // Download
 // ---------------------------------------------------------------------------
 
-/// POST /api/builtin-llm/download
+/// POST /api/builtin-llm/download — body `{ "model_id"?: string }`, default
+/// model when omitted.
 pub async fn download_handler(
     State(state): State<crate::server::types::ServerState>,
+    payload: Option<axum::Json<serde_json::Value>>,
 ) -> HandlerResult<serde_json::Value> {
     let cfg = BuiltinConfig::from_env();
     if !cfg.enabled {
@@ -248,15 +323,20 @@ pub async fn download_handler(
         return ok(json!({ "started": false, "already_running": true }));
     };
 
-    let quant = resolve_quant(&cfg)?;
-    let file_name = model_file_name(quant);
-    let url = hf_url(quant);
-    let sha = hf_sha256(quant).to_string();
+    let model_id = payload.and_then(|Json| {
+        Json.0
+            .get("model_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    });
+    let def = resolve_model(model_id.as_deref())?;
+    let (url, sha, file_name) = resolve_source(&cfg, def);
     let dest = models_dir(&state.data_dir)
-        .join(BUILTIN_MODEL_ID)
+        .join(&def.manifest.id)
         .join(&file_name);
 
     tracing::info!(
+        model = %def.manifest.id,
         url = %url,
         dest = %dest.display(),
         "builtin llm: starting model download"
@@ -265,15 +345,17 @@ pub async fn download_handler(
     DL_ACTIVE.store(true, Ordering::SeqCst);
     DL_DOWNLOADED.store(0, Ordering::SeqCst);
     DL_TOTAL.store(0, Ordering::SeqCst);
+    *dl_model().lock().unwrap() = def.manifest.id.clone();
 
     let state_for_task = state.clone();
     let cfg_for_task = cfg.clone();
+    let model_id_task = def.manifest.id.clone();
     tokio::spawn(async move {
         // Hold both guards for the whole download: `guard` single-flights
         // concurrent POSTs, `_active` flips DL_ACTIVE back off on finish/panic.
         let _active = DownloadActiveGuard;
         let _guard = guard;
-        match run_builtin_download(&state_for_task, &cfg_for_task, &dest, &url, &sha, quant).await {
+        match run_builtin_download(&state_for_task, &cfg_for_task, &model_id_task, &dest, &url, &sha).await {
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "builtin llm: download failed"),
         }
@@ -285,10 +367,10 @@ pub async fn download_handler(
 async fn run_builtin_download(
     state: &crate::server::types::ServerState,
     cfg: &BuiltinConfig,
+    model_id: &str,
     dest: &Path,
     url: &str,
     sha: &str,
-    quant: Quant,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let bus = state.event_bus();
@@ -302,7 +384,7 @@ async fn run_builtin_download(
         DL_TOTAL.store(p.total.unwrap_or(0), Ordering::SeqCst);
         if let Some(bus) = &bus_for_cb {
             bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
-                model_id: BUILTIN_MODEL_ID.to_string(),
+                model_id: model_id.to_string(),
                 downloaded: p.downloaded,
                 total: p.total,
                 status: "downloading".to_string(),
@@ -318,20 +400,20 @@ async fn run_builtin_download(
             // Persist the manifest so bootstrap/status know the model exists.
             let mdir = models_dir(&state.data_dir);
             let manifest = ModelManifest {
-                id: BUILTIN_MODEL_ID.to_string(),
+                id: model_id.to_string(),
                 version: "1.0".to_string(),
                 file_name: dest
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| model_file_name(quant)),
+                    .unwrap_or_else(|| model_id.to_string()),
                 sha256: sha.to_string(),
-                quant: quant.key().to_string(),
+                quant: "q4_k_m".to_string(),
             };
             save_manifest(&mdir, &manifest)?;
 
             if let Some(bus) = &bus {
                 bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
-                    model_id: BUILTIN_MODEL_ID.to_string(),
+                    model_id: model_id.to_string(),
                     downloaded: DL_DOWNLOADED.load(Ordering::SeqCst),
                     total: Some(DL_TOTAL.load(Ordering::SeqCst)),
                     status: "complete".to_string(),
@@ -358,7 +440,7 @@ async fn run_builtin_download(
         Err(e) => {
             if let Some(bus) = &bus {
                 bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
-                    model_id: BUILTIN_MODEL_ID.to_string(),
+                    model_id: model_id.to_string(),
                     downloaded: DL_DOWNLOADED.load(Ordering::SeqCst),
                     total: if DL_TOTAL.load(Ordering::SeqCst) > 0 {
                         Some(DL_TOTAL.load(Ordering::SeqCst))
@@ -393,21 +475,24 @@ async fn spawn_builtin_server(
 ) -> anyhow::Result<String> {
     let binary = find_llama_server().map_err(|e| anyhow::anyhow!(e))?;
     let mdir = models_dir(data_dir);
-    let manifest = load_manifest(&mdir, BUILTIN_MODEL_ID)?
+    let def = installed_model(&mdir)
         .ok_or_else(|| anyhow::anyhow!("model not installed (no manifest)"))?;
     let model_path = cfg
         .model_path
         .clone()
-        .unwrap_or_else(|| manifest.model_path(&mdir));
+        .unwrap_or_else(|| def.manifest.model_path(&mdir));
     if !model_path.exists() {
         anyhow::bail!("model file missing at {}", model_path.display());
     }
 
+    // Per-model context: LFM runs its native 128K (cheap hybrid KV), other
+    // models default to 32K so their KV fits comfortably.
+    let ctx = def.default_ctx as usize;
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
         port: cfg.port,
-        ctx: cfg.ctx,
+        ctx,
         ngl: cfg.ngl,
         threads: None,
     };
@@ -435,14 +520,16 @@ async fn spawn_builtin_server(
         }
         None => LlmBackendInstance::new(
             BUILTIN_INSTANCE_ID.to_string(),
-            "LFM2.5-2.6B (内置)".to_string(),
+            format!("{} (内置)", def.display_name),
             LlmBackendType::LlamaCpp,
         ),
     };
     instance.is_builtin = true;
-    instance.thinking_is_integral = true;
+    // LFM2.5's thinking is integral (cannot be turned off); Qwen/Gemma's is
+    // a normal optional reasoning pass.
+    instance.thinking_is_integral = def.manifest.id == BUILTIN_MODEL_ID;
     instance.endpoint = Some(endpoint.clone());
-    instance.model = BUILTIN_MODEL_ID.to_string();
+    instance.model = def.manifest.id.clone();
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。
@@ -510,7 +597,10 @@ pub async fn delete_model_handler(
         }
     }
 
-    let model_dir = models_dir(&state.data_dir).join(BUILTIN_MODEL_ID);
+    let model_id = installed_model(&models_dir(&state.data_dir))
+        .map(|d| d.manifest.id)
+        .unwrap_or_else(|| BUILTIN_MODEL_ID.to_string());
+    let model_dir = models_dir(&state.data_dir).join(&model_id);
     let deleted = match std::fs::remove_dir_all(&model_dir) {
         Ok(_) => true,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
@@ -766,7 +856,7 @@ mod tests {
         let _lock = download_lock();
         let _guard = _lock.lock().await;
         // Direct handler call (matches crate test style for handlers).
-        let Json(resp) = download_handler(State(state)).await.unwrap();
+        let Json(resp) = download_handler(State(state), None).await.unwrap();
         let data = resp.data.unwrap();
         assert_eq!(data["started"], false);
         assert_eq!(data["already_running"], true);

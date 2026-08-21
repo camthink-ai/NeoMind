@@ -1097,6 +1097,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             get(crate::builtin_llm::handlers::status_handler),
         )
         .route(
+            "/api/builtin-llm/models",
+            get(crate::builtin_llm::handlers::models_handler),
+        )
+        .route(
             "/api/builtin-llm/download",
             post(crate::builtin_llm::handlers::download_handler),
         )
