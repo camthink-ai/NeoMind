@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
 import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
+import { CloudAiAddDialog } from '@/components/llm/CloudAiAddDialog'
 import type {
   LlmBackendInstance,
   BackendTypeDefinition,
@@ -94,6 +95,10 @@ const LLM_PROVIDER_CONFIG: Record<string, {
   llamacpp: {
     icon: <Server className="h-6 w-6" />,
     iconBg: 'bg-warning-light text-warning',
+  },
+  cloudai: {
+    icon: <Cloud className="h-6 w-6" />,
+    iconBg: 'bg-accent-indigo-light text-accent-indigo',
   },
 }
 
@@ -306,7 +311,7 @@ export function UnifiedLLMBackendsTab({
 
   // First-run wizard (empty-state strong guidance)
   const [wizardOpen, setWizardOpen] = useState(false)
-  const [cloudOpen, setCloudOpen] = useState(false)
+  const [cloudAddOpen, setCloudAddOpen] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -468,6 +473,11 @@ export function UnifiedLLMBackendsTab({
     setView('detail')
     setEditingInstance(null)
     setConfigDialogOpen(true)
+  }
+
+  // Cloud AI create — backend_type derived from the protocol pick.
+  const handleCreateCloudAi = async (data: CreateLlmBackendRequest) => {
+    return await onCreateBackend(data)
   }
 
   // Handle create instance
@@ -811,11 +821,29 @@ export function UnifiedLLMBackendsTab({
             )
           })}
 
-          {/* Cloud AI — one card, protocol path (OpenAI-compatible / Anthropic)
-              chosen inside. Other vendors ride the OpenAI path via endpoint. */}
+          {/* Cloud AI — one card; the add dialog picks the protocol path. */}
           <Card
-            className={cn('cursor-pointer transition-all duration-200 hover:shadow-md', cloudOpen && 'border-primary')}
-            onClick={() => setCloudOpen((o) => !o)}
+            className="cursor-pointer transition-all duration-200 hover:shadow-md"
+            onClick={() => {
+              setSelectedType({
+                id: 'cloudai',
+                type: 'llm_backend',
+                name: t('plugins:llm.protocol.cloudai.name'),
+                description: t('plugins:llm.protocol.cloudai.desc'),
+                icon: <Cloud className="h-6 w-6" />,
+                color: 'bg-accent-indigo-light text-accent-indigo',
+                // Never rendered as a form (add/edit dialogs use the concrete
+                // protocol type) — an empty schema satisfies the type.
+                config_schema: { type: 'object', properties: {} },
+                can_add_multiple: true,
+                builtin: false,
+                requires_api_key: true,
+                supports_streaming: true,
+                default_model: '',
+                default_endpoint: undefined,
+              })
+              setView('detail')
+            }}
           >
             <CardContent className="p-4">
               <div className="flex items-start gap-3">
@@ -828,30 +856,8 @@ export function UnifiedLLMBackendsTab({
                     {t('plugins:llm.protocol.cloudai.desc')}
                   </CardDescription>
                 </div>
-                <ChevronRight className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', cloudOpen && 'rotate-90')} />
+                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
               </div>
-              {cloudOpen && (
-                <div className="mt-3 space-y-2">
-                  {CLOUD_AI_PROTOCOLS.map((pid) => {
-                    const type = backendTypes.find((b) => b.id === pid)
-                    if (!type) return null
-                    return (
-                      <button
-                        key={pid}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openTypeDetail(pid)
-                        }}
-                        className="w-full flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-muted-50 transition-colors"
-                      >
-                        <span className="font-medium">{t(`plugins:llm.protocol.${pid}.name`)}</span>
-                        <span className="text-xs text-muted-foreground truncate">{t(`plugins:llm.protocol.${pid}.desc`)}</span>
-                        <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
             </CardContent>
           </Card>
         </div>
@@ -863,8 +869,29 @@ export function UnifiedLLMBackendsTab({
   // ========== DETAIL VIEW ==========
   if (view === 'detail' && selectedType) {
     const typeId = selectedType.id || 'ollama'
-    const typeInstances = getInstancesForType(typeId)
+    // Cloud AI groups both protocol paths (OpenAI-compatible + Anthropic).
+    const isCloudAi = typeId === 'cloudai'
+    // Include legacy vendor-typed instances too (qwen/deepseek/glm/xai/…
+    // created before the protocol-first refactor) — they are all cloud
+    // endpoints and their cards no longer exist.
+    const typeInstances = isCloudAi
+      ? instances.filter(i => !i.is_builtin && i.backend_type !== 'ollama' && i.backend_type !== 'llamacpp')
+      : getInstancesForType(typeId)
     const info = getLlmProviderInfo(typeId, t)
+    // 'cloudai' is a synthetic type — its display name/icon come from the
+    // card the user clicked, not from the per-vendor i18n key.
+    const displayName = isCloudAi ? selectedType.name : info.name
+    const displayIcon = isCloudAi ? selectedType.icon : info.icon
+    const displayIconBg = isCloudAi ? 'bg-accent-indigo-light text-accent-indigo' : info.iconBg
+    // Editing inside Cloud AI needs the concrete protocol type (its config
+    // schema + per-type dialog behavior) — the synthetic 'cloudai' type has
+    // no schema. Resolve from the instance's backend_type; also covers
+    // legacy vendor instances.
+    const dialogPluginType = (() => {
+      if (!isCloudAi || !editingInstance) return selectedType
+      const concrete = backendTypes.find(b => b.id === editingInstance.plugin_type)
+      return concrete ? toUnifiedPluginType(concrete, t) : selectedType
+    })()
     const pluginInstances = typeInstances.map(i => toPluginInstance(i, activeBackendId))
 
     return (
@@ -873,9 +900,9 @@ export function UnifiedLLMBackendsTab({
         <ListToolbar
           onBack={() => setView('list')}
           backLabel={t('plugins:llm.back')}
-          icon={info.icon}
-          iconBg={info.iconBg}
-          title={info.name}
+          icon={displayIcon}
+          iconBg={displayIconBg}
+          title={displayName}
           description={selectedType.description}
           badges={
             <>
@@ -900,19 +927,19 @@ export function UnifiedLLMBackendsTab({
         {pluginInstances.length === 0 ? (
           <Card className="border-dashed">
             <CardContent className="flex flex-col items-center justify-center py-12">
-              <div className={cn("flex items-center justify-center w-16 h-16 rounded-lg mb-4", info.iconBg)}>
-                {info.icon}
+              <div className={cn("flex items-center justify-center w-16 h-16 rounded-lg mb-4", displayIconBg)}>
+                {displayIcon}
               </div>
-              <h3 className="text-lg font-semibold mb-1">{t('plugins:llm.noInstanceYet', { name: info.name })}</h3>
+              <h3 className="text-lg font-semibold mb-1">{t('plugins:llm.noInstanceYet', { name: displayName })}</h3>
               <p className="text-sm text-muted-foreground mb-4">
-                {t('plugins:llm.configureToStart', { name: info.name })}
+                {t('plugins:llm.configureToStart', { name: displayName })}
               </p>
               <Button onClick={() => {
                 setEditingInstance(null)
-                setConfigDialogOpen(true)
+                if (isCloudAi) { setCloudAddOpen(true) } else { setConfigDialogOpen(true) }
               }}>
                 <Server className="mr-2 h-4 w-4" />
-                {t('plugins:llm.addInstance2', { name: info.name })}
+                {t('plugins:llm.addInstance2', { name: displayName })}
               </Button>
             </CardContent>
           </Card>
@@ -1036,7 +1063,7 @@ export function UnifiedLLMBackendsTab({
           <div className="mt-4">
             <Button onClick={() => {
               setEditingInstance(null)
-              setConfigDialogOpen(true)
+              if (isCloudAi) { setCloudAddOpen(true) } else { setConfigDialogOpen(true) }
             }}>
               <Server className="mr-2 h-4 w-4" />
               {t('plugins:llm.addInstance')}
@@ -1045,6 +1072,12 @@ export function UnifiedLLMBackendsTab({
         )}
 
         {/* Unified Config Dialog */}
+
+        <CloudAiAddDialog
+          open={cloudAddOpen}
+          onOpenChange={setCloudAddOpen}
+          onSubmit={handleCreateCloudAi}
+        />
         <UniversalPluginConfigDialog
           open={configDialogOpen}
           onOpenChange={(open) => {
@@ -1054,7 +1087,7 @@ export function UnifiedLLMBackendsTab({
               setTestResults({})
             }
           }}
-          pluginType={selectedType}
+          pluginType={dialogPluginType}
           instances={pluginInstances}
           editingInstance={editingInstance}
           onCreate={handleCreate}
