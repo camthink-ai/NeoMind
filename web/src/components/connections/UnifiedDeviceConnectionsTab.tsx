@@ -120,7 +120,8 @@ const getAdapterSchema = (adapterType: string): PluginConfigSchema => {
           },
           device_id_field: {
             type: 'string',
-            description: 'Payload field used as the device identity when auto-discovery cannot uniquely identify a device from the topic (e.g. a gateway forwarding many devices on one topic). Leave empty to auto-detect common fields (device_id, sn, mac, ...).',
+            format: 'multiline',
+            description: 'Payload fields used as the device identity when auto-discovery cannot uniquely identify a device from the topic (e.g. a gateway forwarding many devices on one topic). One field name per line, tried in order. Leave empty to auto-detect common fields (device_id, sn, mac, ...).',
           },
         },
         required: ['broker'],
@@ -144,7 +145,7 @@ const getAdapterSchema = (adapterType: string): PluginConfigSchema => {
             client_cert: '-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----',
             client_key: '-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----',
             client_id: 'Auto-generated if empty',
-            device_id_field: 'e.g. device_id, sn, mac (auto-detect if empty)',
+            device_id_field: 'device_id\nsn\nmac',
           },
           help_texts: {
             ca_cert: 'Required for self-signed or private CA certificates. Leave empty for public CAs.',
@@ -152,7 +153,7 @@ const getAdapterSchema = (adapterType: string): PluginConfigSchema => {
             client_key: 'Required for mutual TLS (mTLS) authentication.',
             client_id: 'Unique identifier for this MQTT connection. Auto-generated if not specified.',
             subscribe_topics: 'System auto-subscribes: device/+/+/uplink, device/+/+/downlink. Add extra custom topics here.',
-            device_id_field: 'For gateways that forward many devices on one topic: set the JSON field that carries each device\'s unique id (e.g. device_id, sn, mac). If empty, NeoMind auto-detects common fields. Useful when devices publish on the same topic and would otherwise be treated as one device.',
+            device_id_field: 'For gateways that forward many devices on one topic: these payload fields carry each device\'s unique id. One field name per line, tried in order. Leave empty to auto-detect common fields (device_id, sn, mac, ...).',
           },
           visibility_rules: [
             {
