@@ -26,11 +26,6 @@ import { useOnboarding } from "@/hooks/useOnboarding"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
 
-// Session-scoped guard: auto-open the onboarding dialog at most once per app
-// session, even if the chat page remounts (a useRef resets on remount and the
-// dialog would keep popping on every return to chat).
-let onboardingAutoShown = false
-
 // Hook to detect desktop breakpoint — md: 768px, matching the app-wide
 // breakpoint (useIsMobile < 768). The old 1024 left the 768–1024 band in a
 // hybrid state.
@@ -166,22 +161,6 @@ export function ChatPage() {
       }
     }
   }, [])
-
-  // Onboarding auto-detect: show getting-started dialog for new installations
-  const [onboardingOpen, setOnboardingOpen] = useState(false)
-  const { status: onboardingStatus, dismiss: dismissOnboarding } = useOnboarding()
-
-  useEffect(() => {
-    if (onboardingAutoShown || !onboardingStatus) return
-    // Auto-open onboarding if not dismissed and has incomplete steps.
-    // Fires once per session (module guard); closing the dialog dismisses so
-    // it does not nag on the next remount.
-    if (!onboardingStatus.dismissed && (!onboardingStatus.steps.llm.completed || !onboardingStatus.steps.device.completed)) {
-      onboardingAutoShown = true
-      const timer = setTimeout(() => setOnboardingOpen(true), 1000)
-      return () => clearTimeout(timer)
-    }
-  }, [onboardingStatus])
 
   // Refresh backends when window gains focus (e.g., returning from settings page)
   useEffect(() => {
@@ -1061,17 +1040,7 @@ export function ChatPage() {
       </div>
     </div>
 
-    <OnboardingDialog
-      open={onboardingOpen}
-      onOpenChange={(open) => {
-        setOnboardingOpen(open)
-        // Closing the dialog marks onboarding dismissed — otherwise the
-        // incomplete-steps state re-triggers the auto-open on every remount.
-        if (!open) dismissOnboarding()
-      }}
-      status={onboardingStatus}
-      onDismiss={dismissOnboarding}
-    />
+    
     </>
   )
 }
