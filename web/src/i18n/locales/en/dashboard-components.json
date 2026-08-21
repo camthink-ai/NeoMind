@@ -160,7 +160,7 @@
     "metric": "Metric",
     "entityIcon": "Entity Icon",
     "lucideIcon": "Lucide Icon",
-    "noDashboardFound": "No Dashboard Found",
+    "noDashboardFound": "No dashboards yet",
     "createFirstDashboard": "Create your first dashboard to get started",
     "share": {
       "title": "Share",
@@ -262,7 +262,12 @@
     "add": "Add",
     "loadingDashboard": "Loading Dashboard...",
     "device": "Device",
-    "command": "Command"
+    "command": "Command",
+    "emptyGuideDesc": "Build live monitoring views from widgets — charts, gauges, maps — fed by your devices.",
+    "emptyAskAi": "Ask AI to build one",
+    "emptyStep1": "Create a dashboard",
+    "emptyStep2": "Add widgets",
+    "emptyStep3": "Bind device data"
   },
   "mobileEditBar": {
     "component": "Component",
@@ -1241,8 +1246,5 @@
     "configureSource": "Configure Source",
     "failedToLoad": "Failed To Load"
   },
-  "installConfirm": "Install Confirm",
-  "emptyGuideDesc": "Build live monitoring views from widgets — charts, gauges, maps — fed by your devices.",
-  "emptyAskAi": "Ask AI to build one",
-  "noDashboardFound": "No dashboards yet"
+  "installConfirm": "Install Confirm"
 }

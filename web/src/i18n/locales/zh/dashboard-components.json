@@ -135,7 +135,7 @@
     "metric": "指标",
     "entityIcon": "实体图标",
     "lucideIcon": "Lucide 图标",
-    "noDashboardFound": "未找到仪表板",
+    "noDashboardFound": "还没有仪表板",
     "createFirstDashboard": "创建您的第一个仪表板以开始使用",
     "share": {
       "title": "分享",
@@ -262,7 +262,12 @@
     "preview": "预览",
     "systemDataSource": "此组件使用系统数据。",
     "configureDataSourceHint": "请在设置中配置数据源。",
-    "add": "添加"
+    "add": "添加",
+    "emptyGuideDesc": "用可视化组件搭建实时监控视图——图表、仪表、地图，数据来自你的设备。",
+    "emptyAskAi": "让 AI 帮我搭",
+    "emptyStep1": "创建仪表板",
+    "emptyStep2": "添加组件",
+    "emptyStep3": "绑定设备数据"
   },
   "mobileEditBar": {
     "component": "组件",
@@ -1241,8 +1246,5 @@
     "configureSource": "配置数据源",
     "failedToLoad": "加载失败"
   },
-  "installConfirm": "确认安装",
-  "emptyGuideDesc": "用可视化组件搭建实时监控视图——图表、仪表、地图，数据来自你的设备。",
-  "emptyAskAi": "让 AI 帮我搭",
-  "noDashboardFound": "还没有仪表板"
+  "installConfirm": "确认安装"
 }
