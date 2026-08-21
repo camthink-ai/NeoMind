@@ -968,13 +968,13 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           </div>
           {/* Three-step path so a first-time user knows what "building a
               dashboard" involves before clicking. */}
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-2 gap-y-1.5 text-xs text-muted-foreground">
+          <div className="mt-6 flex items-center justify-center gap-x-2 text-xs text-muted-foreground">
             {[
               t('visualDashboard.emptyStep1'),
               t('visualDashboard.emptyStep2'),
               t('visualDashboard.emptyStep3'),
             ].map((label, i) => (
-              <span key={label} className="flex items-center gap-1.5">
+              <span key={label} className="flex items-center gap-1.5 whitespace-nowrap">
                 {i > 0 && <ChevronRight className="size-3 opacity-50 mr-1" />}
                 <span className="flex size-4 items-center justify-center rounded-full bg-muted text-[10px] font-medium">
                   {i + 1}
