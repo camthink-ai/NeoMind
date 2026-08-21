@@ -37,16 +37,15 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
     }
 
     let cache_dir = llama_server_cache_dir(data_dir);
-    let cached = cache_dir.join(llama_server_cache_name());
-    if cached.exists() {
-        return Ok(cached);
+    if let Some(existing) = find_runtime_binary(&cache_dir) {
+        return Ok(existing);
     }
 
     let lock = runtime_lock();
     let _guard = lock.lock().await;
     // Re-check under the lock (another task may have just downloaded it).
-    if cached.exists() {
-        return Ok(cached);
+    if let Some(existing) = find_runtime_binary(&cache_dir) {
+        return Ok(existing);
     }
 
     let asset = llama_asset_name(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
@@ -92,55 +91,71 @@ async fn download_runtime(url: &str, cache_dir: &Path, is_zip: bool) -> Result<P
         .await
         .map_err(|e| format!("read llama.cpp runtime: {e}"))?;
 
-    // Extract `llama-server` from the release archive (zip on Windows).
-    let bin = extract_llama_server(&bytes, &tmp, is_zip).map_err(|e| e.to_string())?;
-
+    // Extract the WHOLE archive into the cache dir — the llama-server binary
+    // is a thin wrapper that dlopens sibling libs (macOS libllama-server-impl
+    // .dylib, Windows .dll), so a single-binary extract dies on exec.
+    let _ = std::fs::remove_dir_all(cache_dir);
     std::fs::create_dir_all(cache_dir).map_err(|e| format!("create cache dir: {e}"))?;
-    let dest = cache_dir.join(llama_server_cache_name());
-    std::fs::rename(&bin, &dest).map_err(|e| format!("move runtime into cache: {e}"))?;
+    extract_archive(&bytes, cache_dir, is_zip).map_err(|e| e.to_string())?;
+    let bin = find_runtime_binary(cache_dir)
+        .ok_or_else(|| "llama-server not found after extract".to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let perms = std::fs::Permissions::from_mode(0o755);
-        std::fs::set_permissions(&dest, perms).map_err(|e| format!("chmod runtime: {e}"))?;
+        std::fs::set_permissions(&bin, perms).map_err(|e| format!("chmod runtime: {e}"))?;
     }
     let _ = std::fs::remove_dir_all(&tmp);
 
-    tracing::info!(dest = %dest.display(), "builtin llm: llama-server runtime ready");
-    Ok(dest)
+    tracing::info!(dest = %bin.display(), "builtin llm: llama-server runtime ready");
+    Ok(bin)
 }
 
-fn extract_llama_server(bytes: &[u8], out_dir: &Path, is_zip: bool) -> anyhow::Result<PathBuf> {
-    let bin_name = llama_server_bin_name();
+/// Recursively locate the llama-server binary inside the cache dir.
+fn find_runtime_binary(dir: &Path) -> Option<PathBuf> {
+    let name = llama_server_bin_name();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.file_name().map(|n| n == name).unwrap_or(false) {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract every entry of the release archive into `out_dir` (paths
+/// preserved, so wrapper binaries find their sibling libs).
+fn extract_archive(bytes: &[u8], out_dir: &Path, is_zip: bool) -> anyhow::Result<()> {
     if is_zip {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
-        let target = zip
-            .file_names()
-            .find(|n| Path::new(n).file_name().map(|f| f == bin_name).unwrap_or(false))
-            .map(|n| n.to_string())
-            .ok_or_else(|| anyhow::anyhow!("{bin_name} not found in release zip"))?;
-        let mut entry = zip.by_name(&target)?;
-        let dest = out_dir.join(bin_name);
-        let mut out = std::fs::File::create(&dest)?;
-        std::io::copy(&mut entry, &mut out)?;
-        Ok(dest)
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i)?;
+            let rel = entry.name().trim_start_matches('/');
+            let dest = out_dir.join(rel);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&dest)?;
+                continue;
+            }
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut out = std::fs::File::create(&dest)?;
+            std::io::copy(&mut entry, &mut out)?;
+        }
+        Ok(())
     } else {
         use flate2::read::GzDecoder;
         let gz = GzDecoder::new(bytes);
         let mut ar = tar::Archive::new(gz);
-        let entries = ar.entries()?;
-        let mut found: Option<PathBuf> = None;
-        for entry in entries {
-            let mut entry = entry?;
-            let path = entry.path()?.into_owned();
-            if path.file_name().map(|n| n == bin_name).unwrap_or(false) {
-                let dest = out_dir.join(bin_name);
-                entry.unpack(&dest)?;
-                found = Some(dest);
-                break;
-            }
-        }
-        found.ok_or_else(|| anyhow::anyhow!("{bin_name} not found in release tarball"))
+        ar.unpack(out_dir)?;
+        Ok(())
     }
 }
 
@@ -182,8 +197,9 @@ mod tests {
         let out = std::env::temp_dir().join("llama-extract-test");
         let _ = std::fs::remove_dir_all(&out);
         std::fs::create_dir_all(&out).unwrap();
-        let bin = extract_llama_server(&tar_gz, &out, false).expect("extract");
-        assert_eq!(bin, out.join("llama-server"));
+        extract_archive(&tar_gz, &out, false).expect("extract");
+        let bin = find_runtime_binary(&out).expect("find binary");
+        assert_eq!(bin, out.join("bin/llama-server"));
         assert_eq!(std::fs::read_to_string(&bin).unwrap(), "probe");
         let _ = std::fs::remove_dir_all(&out);
     }
@@ -193,8 +209,8 @@ mod tests {
         use std::io::Write;
         let mut zip_buf = std::io::Cursor::new(Vec::new());
         {
-            let mut zw = zip::ZipWriter::new(&mut zip_buf);
-            zw.start_file("bin/llama-server.exe", zip::write::FileOptions::default())
+            let mut zw: zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>> = zip::ZipWriter::new(&mut zip_buf);
+            zw.start_file(format!("bin/{}", llama_server_bin_name()), zip::write::SimpleFileOptions::default())
                 .unwrap();
             zw.write_all(b"probe-exe").unwrap();
             zw.finish().unwrap();
@@ -202,8 +218,9 @@ mod tests {
         let out = std::env::temp_dir().join("llama-extract-zip-test");
         let _ = std::fs::remove_dir_all(&out);
         std::fs::create_dir_all(&out).unwrap();
-        let bin = extract_llama_server(zip_buf.get_ref(), &out, true).expect("extract zip");
-        assert_eq!(bin, out.join("llama-server.exe"));
+        extract_archive(zip_buf.get_ref(), &out, true).expect("extract zip");
+        let bin = find_runtime_binary(&out).expect("find binary");
+        assert_eq!(bin, out.join(format!("bin/{}", llama_server_bin_name())));
         assert_eq!(std::fs::read_to_string(&bin).unwrap(), "probe-exe");
         let _ = std::fs::remove_dir_all(&out);
     }
