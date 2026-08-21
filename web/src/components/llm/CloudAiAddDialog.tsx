@@ -24,8 +24,10 @@ interface Props {
 }
 
 const DEFAULTS: Record<'openai' | 'anthropic', { endpoint: string; model: string }> = {
+  // Anthropic MUST include /v1 — the runtime joins base_url + "/messages"
+  // verbatim (matches the backend schema default).
   openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
-  anthropic: { endpoint: 'https://api.anthropic.com', model: 'claude-sonnet-4-5' },
+  anthropic: { endpoint: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5' },
 }
 
 export function CloudAiAddDialog({ open, onOpenChange, onSubmit }: Props) {
