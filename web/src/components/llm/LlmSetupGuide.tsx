@@ -43,7 +43,7 @@ export function LlmSetupGuide() {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
           <button
             onClick={() => setWizardOpen(true)}
-            className="group relative rounded-xl border border-primary bg-primary-light p-4 transition-all hover:shadow-md text-left"
+            className="group relative flex flex-col rounded-xl border border-primary bg-primary-light p-4 transition-all hover:shadow-md text-left"
           >
             <span className="absolute right-3 top-3 rounded-full bg-primary text-primary-foreground px-2 py-0.5 text-[10px] font-medium">
               {t('common:llmGuide.recommended')}
@@ -55,14 +55,14 @@ export function LlmSetupGuide() {
             <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
               {t('common:llmGuide.builtinDesc')}
             </p>
-            <div className="mt-3 flex items-center gap-1 text-xs font-medium text-primary">
+            <div className="mt-auto pt-3 flex items-center gap-1 text-xs font-medium text-primary">
               {t('common:llmGuide.builtinCta')}
               <ChevronRight className="size-3 transition-transform group-hover:translate-x-0.5" />
             </div>
           </button>
           <button
             onClick={() => openSettings('llm')}
-            className="group rounded-xl border border-border p-4 transition-all hover:border-primary hover:shadow-md text-left"
+            className="group flex flex-col rounded-xl border border-border p-4 transition-all hover:border-primary hover:shadow-md text-left"
           >
             <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-primary">
               <Server className="size-5" />
@@ -71,7 +71,7 @@ export function LlmSetupGuide() {
             <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
               {t('common:llmGuide.ownDesc')}
             </p>
-            <div className="mt-3 flex items-center gap-1 text-xs font-medium text-primary">
+            <div className="mt-auto pt-3 flex items-center gap-1 text-xs font-medium text-primary">
               {t('common:llmGuide.ownCta')}
               <ChevronRight className="size-3 transition-transform group-hover:translate-x-0.5" />
             </div>
