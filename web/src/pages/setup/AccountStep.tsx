@@ -269,6 +269,10 @@ export function AccountStep({ getApiUrl, onAccountCreated }: AccountStepProps) {
                       className="pl-9 h-10 bg-bg-70 border-border scroll-mb-32"
                     />
                   </div>
+                  {/* Immediate mismatch feedback — don't wait for submit */}
+                  {confirmPassword.length > 0 && password !== confirmPassword && (
+                    <p className="text-xs text-error mt-1.5">{t('passwordsDoNotMatch', { ns: 'validation' })}</p>
+                  )}
                 </div>
 
                 {/* Password Strength */}
@@ -315,7 +319,7 @@ export function AccountStep({ getApiUrl, onAccountCreated }: AccountStepProps) {
                 {/* Submit — 44px touch target on mobile, 40px on desktop */}
                 <Button
                   type="submit"
-                  disabled={isLoading || !username || !password || !confirmPassword || passwordErrors.length > 0}
+                  disabled={isLoading || !username || !password || !confirmPassword || passwordErrors.length > 0 || (confirmPassword.length > 0 && password !== confirmPassword)}
                   className="h-11 sm:h-10 w-full mt-1"
                   size="default"
                 >
