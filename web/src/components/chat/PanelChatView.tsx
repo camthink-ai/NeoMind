@@ -11,6 +11,7 @@
 import { useState, useRef, useEffect, useCallback, useReducer, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useStore } from "@/store"
+import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
 import { api } from "@/lib/api"
@@ -27,7 +28,7 @@ import { pickPageAssistant, panelSessionKey } from "./pageAssistant"
 import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
-import { X, Minimize2, Bot, Plus, Settings } from "lucide-react"
+import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { ChatImage } from "@/types"
 
@@ -182,7 +183,7 @@ function streamReducer(state: StreamState, action: StreamAction): StreamState {
 }
 
 export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavigateToSettings }: PanelChatViewProps) {
-  const { t } = useTranslation("chat")
+  const { t } = useTranslation(["chat", "common"])
   const { toast } = useToast()
 
   // Only read LLM backend state from global store (read-only, never affects chat page)
@@ -190,6 +191,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const { loadBackends } = useStore(selectChatActions)
   const activeBackendId = useStore((s) => s.activeBackendId)
   const activateBackend = useStore((s) => s.activateBackend)
+  const [panelWizardOpen, setPanelWizardOpen] = useState(false)
   const user = useStore((s) => s.user)
 
   // Sync the active backend to the WS singleton — the same effect the chat
@@ -539,25 +541,40 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       >
         {!llmBackendLoading && (!llmBackends || llmBackends.length === 0) ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 px-4">
-              <div className="w-14 h-14 rounded-xl bg-muted flex items-center justify-center">
-                <Settings className="h-7 w-7 text-muted-foreground" />
+              <div className="w-14 h-14 rounded-xl bg-primary-light text-primary flex items-center justify-center">
+                <Cpu className="h-7 w-7" />
               </div>
               <h3 className="text-sm font-semibold mt-1">{t("notConfigured.title")}</h3>
               <p className="text-xs text-muted-foreground text-center leading-relaxed">
                 {t("notConfigured.description")}
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2 gap-1.5"
-                onClick={() => {
-                  onClose()
-                  onNavigateToSettings?.()
-                }}
-              >
-                <Settings className="h-3.5 w-3.5" />
-                {t("notConfigured.goToSettings")}
-              </Button>
+              <div className="w-full max-w-xs space-y-2">
+                <Button
+                  size="sm"
+                  className="w-full gap-1.5"
+                  onClick={() => setPanelWizardOpen(true)}
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  {t("common:llmGuide.builtinShort")}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full gap-1.5"
+                  onClick={() => {
+                    onClose()
+                    onNavigateToSettings?.()
+                  }}
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                  {t("common:llmGuide.ownShort")}
+                </Button>
+              </div>
+              <BuiltinModelWizard
+                open={panelWizardOpen}
+                onOpenChange={setPanelWizardOpen}
+                onActivated={() => { setPanelWizardOpen(false); loadBackends() }}
+              />
             </div>
           ) : isHistoryLoading ? (
             <div className="flex flex-col justify-end h-full">

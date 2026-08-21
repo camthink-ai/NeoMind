@@ -139,7 +139,7 @@ export function GlobalChatFab() {
         onClose={handleClose}
         onStreamingChange={setIsStreaming}
         showMinimize={!isWide}
-        onNavigateToSettings={() => openSettings()}
+        onNavigateToSettings={() => openSettings('llm')}
       />
     </Suspense>
   )
