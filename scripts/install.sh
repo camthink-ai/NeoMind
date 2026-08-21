@@ -579,7 +579,19 @@ install_llm_runtime() {
                 $SUDO mv "${INSTALL_DIR}/$(basename "$bin")" "${INSTALL_DIR}/neomind-llama-server"
             fi
             $SUDO chmod 0755 "${INSTALL_DIR}/neomind-llama-server"
-            success "Installed neomind-llama-server (whole archive) -> ${INSTALL_DIR}/neomind-llama-server"
+            # Post-install exec check: the prebuilt needs libgomp1 + a modern
+            # libstdc++ (GLIBCXX_3.4.32, gcc-13). On old bases it fails with a
+            # cryptic loader error — surface the real requirement instead.
+            if ! "${INSTALL_DIR}/neomind-llama-server" --version >/dev/null 2>&1; then
+                warning "neomind-llama-server failed to exec after install."
+                warning "The llama.cpp ${LLAMA_VERSION} prebuilt requires:"
+                warning "  - libgomp1 (OpenMP)"
+                warning "  - libstdc++ with GLIBCXX_3.4.32 (GCC 13 — e.g. Ubuntu 24.04+,"
+                warning "    or on 22.04: add-apt-repository ppa:ubuntu-toolchain-r/test && apt-get install -y gcc-13)"
+                warning "Fix the above, re-run with WITH_LLM=true, or build from source via scripts/build-llama-server.sh."
+            else
+                success "Installed neomind-llama-server (whole archive) -> ${INSTALL_DIR}/neomind-llama-server"
+            fi
         else
             warning "llama-server not found in the release archive"
         fi
