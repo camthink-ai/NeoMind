@@ -62,7 +62,7 @@ import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDia
 // edge) while keeping the rail visually tight.
 const SIDEBAR_WIDTH_PX = 72
 // Expanded (logo click): 176px fits icon + label + padding.
-const SIDEBAR_EXPANDED_PX = 200
+const SIDEBAR_EXPANDED_PX = 224
 
 // Tauri window drag — startDragging on mousedown over non-interactive areas
 // (data-tauri-drag-region is unreliable in Tauri 2 overlay mode).
