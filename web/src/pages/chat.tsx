@@ -20,6 +20,7 @@ import type { Message, ServerMessage, ChatImage } from "@/types"
 import { cn } from "@/lib/utils"
 import { getPortalRoot } from "@/lib/portal"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
+import { LoadingState } from "@/components/shared"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useToast } from "@/hooks/use-toast"
 import { useOnboarding } from "@/hooks/useOnboarding"
@@ -63,6 +64,9 @@ export function ChatPage() {
   const { handleError } = useErrorHandler()
   const llmBackends = useStore((state) => state.llmBackends)
   const llmBackendLoading = useStore((state) => state.llmBackendLoading)
+  // True once a load has resolved with an empty list — distinguishes the
+  // first load (skeleton) from refetches (keep the guide mounted).
+  const everLoadedBackendsRef = useRef(false)
   const activeBackendId = useStore((state) => state.activeBackendId)
   const activateBackend = useStore((state) => state.activateBackend)
   const loadBackends = useStore((state) => state.loadBackends)
@@ -691,8 +695,16 @@ export function ChatPage() {
     return { used, max: maxContext }
   }, [messages, isWelcomeMode, llmBackends, activeBackendId, lastTokenUsage, isStreaming, streamingContent, streamingThinking, streamingToolCalls])
 
-  // Show LLM setup prompt if not configured (only after loading completes)
-  if (!llmBackendLoading && (!llmBackends || llmBackends.length === 0)) {
+  // Show LLM setup prompt if not configured. First-ever load shows a
+  // skeleton; a REFETCH (focus/click re-triggers loadBackends, which flips
+  // llmBackendLoading true) keeps the guide mounted — the old gate fell
+  // through to the real chat UI for a frame on every refetch, flashing the
+  // conversation beneath the guide.
+  if (!llmBackends || llmBackends.length === 0) {
+    if (llmBackendLoading && !everLoadedBackendsRef.current) {
+      return <LoadingState variant="page" />
+    }
+    everLoadedBackendsRef.current = true
     return <LlmSetupGuide />
   }
 
