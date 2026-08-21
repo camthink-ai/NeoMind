@@ -130,6 +130,9 @@ export function BuiltinModelWizard({
   // Timestamp of the last live WS progress event — the poll fills progress gaps
   // only when this is stale (Task 15).
   const wsProgressAtRef = useRef(0)
+  // When the download completed (WS 'complete' / 100% poll) — bounds the
+  // 'starting' phase so a permanently failed spawn can't spin forever.
+  const completedAtRef = useRef(0)
 
   const failWith = (action: RetryAction, error: unknown) => {
     setRetryAction(action)
@@ -191,6 +194,7 @@ export function BuiltinModelWizard({
         })
         setPhase('downloading')
       } else if (d.status === 'complete') {
+        completedAtRef.current = Date.now()
         // Show 100% immediately; the poll observes installed + running and
         // drives the ready / auto-activate transition.
         setProgress({
@@ -281,6 +285,7 @@ export function BuiltinModelWizard({
     }
 
     if (s.installed) {
+      if (completedAtRef.current === 0) completedAtRef.current = Date.now()
       setProgress({
         percent: 100,
         downloadedBytes: s.downloaded_bytes ?? 0,
@@ -288,9 +293,16 @@ export function BuiltinModelWizard({
       })
       // Model is on disk but the bundled server isn't up yet — the post-
       // download spawn (incl. a first-time llama-server runtime download) is
-      // still in flight. Show "starting" instead of a silent 100% freeze; the
-      // poll flips to running → auto-activate when it lands.
-      if (sawDownloadingRef.current && !activatedRef.current && s.server_state !== 'running') {
+      // still in flight. Show "starting" for at most 90s; a spawn that failed
+      // permanently leaves status at 'stopped' forever, and an endless
+      // spinner with no error is worse than landing on ready (which carries
+      // the restart-engine button for exactly this case).
+      if (
+        sawDownloadingRef.current &&
+        !activatedRef.current &&
+        s.server_state !== 'running' &&
+        Date.now() - completedAtRef.current < 90_000
+      ) {
         setPhase('starting')
         return
       }

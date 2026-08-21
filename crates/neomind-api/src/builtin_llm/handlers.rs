@@ -432,6 +432,29 @@ async fn run_builtin_download(
             };
             save_manifest(&mdir, &manifest)?;
 
+            // Single-model invariant: the builtin server runs ONE llama-server
+            // and installed_model() picks by registry order — a leftover model
+            // from an earlier download would win over what the user just
+            // chose. Remove every other builtin model dir.
+            for other in BUILTIN_MODELS.iter() {
+                if other.manifest.id != model_id {
+                    let dir = mdir.join(&other.manifest.id);
+                    if dir.exists() {
+                        match std::fs::remove_dir_all(&dir) {
+                            Ok(_) => tracing::info!(
+                                model = %other.manifest.id,
+                                "builtin llm: removed other model (single-model invariant)"
+                            ),
+                            Err(e) => tracing::warn!(
+                                error = %e,
+                                model = %other.manifest.id,
+                                "builtin llm: failed to remove other model dir"
+                            ),
+                        }
+                    }
+                }
+            }
+
             // Model is on disk — release DL_ACTIVE so the status endpoint stops
             // reporting "downloading" (the wizard flips to installed → ready /
             // auto-activate). The spawn below (which may download the llama-

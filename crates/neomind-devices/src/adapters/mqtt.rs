@@ -2629,25 +2629,31 @@ fn lookup_id_field<'a>(
         for seg in segs {
             cur = cur.get(seg)?;
         }
-        return cur.as_str().filter(|s| !s.is_empty());
+        return id_value_to_string(cur).as_deref();
     }
     // Plain name: top level first…
-    if let Some(v) = root.get(field).and_then(serde_json::Value::as_str) {
-        if !v.is_empty() {
-            return Some(v);
-        }
+    if let Some(v) = root.get(field).and_then(id_value_to_string) {
+        return v;
     }
     // …then one level inside common wrappers.
     for w in ID_WRAPPER_KEYS {
         if let Some(inner) = root.get(*w).and_then(serde_json::Value::as_object) {
-            if let Some(v) = inner.get(field).and_then(serde_json::Value::as_str) {
-                if !v.is_empty() {
-                    return Some(v);
-                }
+            if let Some(v) = inner.get(field).and_then(id_value_to_string) {
+                return v;
             }
         }
     }
     None
+}
+
+/// Accept strings and integers as identity values — gateways do send
+/// numeric SNs (`"sn": 42`); refusing them silently merged those devices.
+fn id_value_to_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) if n.is_u64() || n.is_i64() => Some(n.to_string()),
+        _ => None,
+    }
 }
 
 fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) -> Option<String> {
@@ -2704,10 +2710,8 @@ fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) ->
     ];
     for key in CANDIDATES {
         if let Some(v) = obj.iter().find(|(k, _)| k.to_ascii_lowercase() == *key) {
-            if let Some(s) = v.1.as_str() {
-                if !s.is_empty() {
-                    return Some(s.to_string());
-                }
+            if let Some(s) = id_value_to_string(v.1) {
+                return Some(s);
             }
         }
     }
@@ -2719,10 +2723,8 @@ fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) ->
         };
         for key in CANDIDATES {
             if let Some(v) = inner.iter().find(|(k, _)| k.to_ascii_lowercase() == *key) {
-                if let Some(s) = v.1.as_str() {
-                    if !s.is_empty() {
-                        return Some(s.to_string());
-                    }
+                if let Some(s) = id_value_to_string(v.1) {
+                    return Some(s);
                 }
             }
         }
@@ -3092,9 +3094,18 @@ mod tests {
             .as_deref(),
             Some("TOP")
         );
-        // non-string leaf / broken path -> None
+        // numeric ids are accepted (gateways send numeric SNs)
         assert_eq!(
             extract_device_id_from_payload(b"{\"data\":{\"device_id\":42}}", &cfg).as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"sn\":777}", &cfg).as_deref(),
+            Some("777")
+        );
+        // non-id leaves (bool/object) still -> None
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"data\":{\"device_id\":true}}", &cfg).as_deref(),
             None
         );
     }
