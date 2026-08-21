@@ -106,7 +106,21 @@
     "builtinWizardEngineStopped": "The engine is not running. Start it to activate.",
     "builtinWizardRestartEngine": "Restart Engine",
     "builtinWizardNoModels": "Failed to load models — retry",
-    "installed": "Installed"
+    "installed": "Installed",
+    "models": {
+      "lfm25-2.6b": {
+        "name": "LFM2.5-2.6B",
+        "notes": "Small + native 128K context (hybrid KV is cheap) — the default for tight hardware"
+      },
+      "qwen3.5-4b": {
+        "name": "Qwen3.5-4B",
+        "notes": "Strongest edge agent in our 30-case evals (76% cmd_ok) — tool-calling first pick"
+      },
+      "gemma4-e2b": {
+        "name": "Gemma4-E2B",
+        "notes": "Official Google QAT quant — mmproj-ready for vision"
+      }
+    }
   },
   "yes": "Yes",
   "no": "No",

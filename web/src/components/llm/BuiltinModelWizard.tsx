@@ -398,45 +398,49 @@ export function BuiltinModelWizard({
                 </p>
                 {/* Model picker — one builtin model at a time; pick then
                     download (installed model is marked and pre-selected). */}
-                <div className="grid grid-cols-1 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   {models.length === 0 && (
-                    <div className="text-xs text-muted-foreground text-center py-2">
+                    <div className="col-span-full text-xs text-muted-foreground text-center py-2">
                       {t('plugins:llm.builtinWizardNoModels')}
                     </div>
                   )}
                   {models.map((m) => {
                     const selected = selectedModelId === m.id
+                    // Display copy is i18n'd on the frontend (fall back to the
+                    // backend's notes for non-i18n API consumers).
+                    const modelName = t(`plugins:llm.models.${m.id}.name`, { defaultValue: m.name })
+                    const modelNotes = t(`plugins:llm.models.${m.id}.notes`, { defaultValue: m.notes })
                     return (
                       <button
                         key={m.id}
                         onClick={() => setSelectedModelId(m.id)}
                         className={cn(
-                          'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                          'flex flex-col items-start gap-2 rounded-lg border p-3 text-left transition-colors',
                           selected
                             ? 'border-primary bg-primary-light'
                             : 'border-border hover:border-primary'
                         )}
                       >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium">{m.name}</span>
-                            {m.recommended && (
-                              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
-                                {t('common:llmGuide.recommended')}
-                              </span>
-                            )}
-                            {m.installed && (
-                              <span className="rounded-full bg-success-light px-1.5 py-0.5 text-[10px] font-medium text-success">
-                                {t('plugins:llm.installed')}
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-                            {m.notes}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-sm font-medium truncate">{modelName}</span>
+                          {m.recommended && (
+                            <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                              {t('common:llmGuide.recommended')}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {modelNotes}
+                        </p>
+                        <div className="mt-auto flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
                             {(m.size_bytes / 1e9).toFixed(1)} GB · {m.quant}
-                          </p>
+                          </span>
+                          {m.installed && (
+                            <span className="rounded-full bg-success-light px-1.5 py-0.5 text-[10px] font-medium text-success">
+                              {t('plugins:llm.installed')}
+                            </span>
+                          )}
                         </div>
                       </button>
                     )

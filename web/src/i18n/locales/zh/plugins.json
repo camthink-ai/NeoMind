@@ -106,7 +106,21 @@
     "builtinWizardEngineStopped": "引擎未运行，请先启动引擎。",
     "builtinWizardRestartEngine": "重启引擎",
     "builtinWizardNoModels": "模型列表加载失败，请重试",
-    "installed": "已安装"
+    "installed": "已安装",
+    "models": {
+      "lfm25-2.6b": {
+        "name": "LFM2.5-2.6B",
+        "notes": "小体积 + 原生 128K 上下文(hybrid KV 很省)——资源紧张设备的默认选择"
+      },
+      "qwen3.5-4b": {
+        "name": "Qwen3.5-4B",
+        "notes": "30 案 eval 最强的端侧 agent 模型(76% cmd_ok)——工具调用首选"
+      },
+      "gemma4-e2b": {
+        "name": "Gemma4-E2B",
+        "notes": "Google 官方 QAT 量化——可挂 mmproj 加视觉"
+      }
+    }
   },
   "yes": "是",
   "no": "否",
