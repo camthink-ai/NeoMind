@@ -17,6 +17,7 @@ import {
   Power,
   RotateCcw,
   Cpu,
+  BrainCircuit,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -556,7 +557,7 @@ export function UnifiedLLMBackendsTab({
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1 min-w-0">
                 <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-warning-light text-warning">
-                  <Cpu className="h-4 w-4" />
+                  <BrainCircuit className="h-4 w-4" />
                 </div>
                 <CardTitle className="text-base truncate min-w-0">
                   {t('plugins:llm.builtinTitle')}
