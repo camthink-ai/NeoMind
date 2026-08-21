@@ -912,6 +912,8 @@
     "builtinTitleShort": "内置模型",
     "builtinCta": "开始下载",
     "ownTitleShort": "自有后端",
-    "ownCta": "去配置"
+    "ownCta": "去配置",
+    "downloadingTitle": "内置模型下载中",
+    "downloading": "下载中"
   }
 }

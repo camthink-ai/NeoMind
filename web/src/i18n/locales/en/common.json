@@ -912,6 +912,8 @@
     "builtinTitleShort": "Built-in Model",
     "builtinCta": "Download now",
     "ownTitleShort": "Your Own Backend",
-    "ownCta": "Configure"
+    "ownCta": "Configure",
+    "downloadingTitle": "Built-in model downloading",
+    "downloading": "DL"
   }
 }
