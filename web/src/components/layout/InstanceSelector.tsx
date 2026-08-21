@@ -30,9 +30,10 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
 
   const currentInstance = instances.find((i) => i.id === currentInstanceId)
   const isSwitching = switchingState === 'switching'
-  // Remote instances: rely solely on wsConnected (last_status is from cache, may be stale)
-  // Local instance: check both wsConnected and last_status
-  const isOnline = isConnected && (!currentInstance || currentInstance.is_local ? (currentInstance?.last_status === 'online' || !currentInstance) : true)
+  // Liveness = the WebSocket to the current backend. last_status is a legacy
+  // field (defaults to "unknown", no health loop refreshes it) — gating on it
+  // made the local instance permanently red while the dialog showed it green.
+  const isOnline = isConnected
 
   return (
     <button

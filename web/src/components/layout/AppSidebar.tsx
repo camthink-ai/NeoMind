@@ -19,7 +19,7 @@ import { useCallback, useEffect, useLayoutEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useLocation, useNavigate } from "react-router-dom"
 import { startTransition } from "react"
-import { Rocket, Settings, Sun, Languages, Info, LogOut } from "lucide-react"
+import { Rocket, Settings, Sun, Languages, Info, LogOut, PanelLeftClose } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { isTauriEnv } from "@/lib/api"
 import { getCurrentWindow } from "@tauri-apps/api/window"
@@ -62,7 +62,7 @@ import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDia
 // edge) while keeping the rail visually tight.
 const SIDEBAR_WIDTH_PX = 72
 // Expanded (logo click): 176px fits icon + label + padding.
-const SIDEBAR_EXPANDED_PX = 176
+const SIDEBAR_EXPANDED_PX = 200
 
 // Tauri window drag — startDragging on mousedown over non-interactive areas
 // (data-tauri-drag-region is unreliable in Tauri 2 overlay mode).
@@ -307,13 +307,13 @@ export function AppSidebar() {
       >
         {/* Brand mark — top of the rail. Clicking it expands/collapses the
             rail (labels on/off) instead of navigating (nav has /chat). */}
-        <div className="flex w-full items-center justify-center pt-5 pb-2">
+        <div className={cn("flex w-full items-center pt-5 pb-2", expanded ? "justify-between pl-2 pr-1" : "justify-center")}>
           <button
             type="button"
             onClick={() => setExpanded((e) => !e)}
             aria-label={t("nav.toggleSidebar", { defaultValue: "Toggle navigation" })}
             aria-expanded={expanded}
-            className="flex items-center justify-center rounded-lg px-2 hover:bg-muted-50 transition-colors no-press-scale"
+            className={cn("flex items-center justify-center rounded-lg hover:bg-muted-50 transition-colors no-press-scale", expanded ? "h-8 px-1" : "px-2")}
           >
             {expanded ? (
               <BrandLogoHorizontal className="h-8" />
@@ -321,6 +321,18 @@ export function AppSidebar() {
               <BrandLogo className="h-7 w-7 rounded-lg" />
             )}
           </button>
+          {/* Explicit collapse affordance — the logo also toggles, but a
+              visible button makes collapsing discoverable. */}
+          {expanded && (
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              aria-label={t("nav.collapseSidebar", { defaultValue: "Collapse sidebar" })}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted-50 hover:text-foreground transition-colors no-press-scale"
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </button>
+          )}
         </div>
 
         {/* Nav — icon rail, tooltips carry the names */}
