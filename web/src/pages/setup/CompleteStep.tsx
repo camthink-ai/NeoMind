@@ -4,7 +4,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, MessageSquare, ChevronRight, Cpu, Zap, Globe } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SetupBackground } from './SetupBackground'
 import { SetupHeader } from './SetupHeader'
@@ -140,15 +139,9 @@ export function CompleteStep({ username, initialTimezone, token, getApiUrl, onCo
                 ))}
               </div>
 
-              {/* Main CTA */}
-              <Button
-                onClick={() => onComplete()}
-                className="w-full h-11 sm:h-10"
-                size="default"
-              >
-                {t('setup:goToDashboard')}
-                <ChevronRight className="ml-2 h-4 w-4" />
-              </Button>
+              {/* No separate "Go to Dashboard" CTA — the three cards ARE the
+                  actions (探索平台 already lands on home; a fourth button
+                  reading "Dashboard" was also wrong — it navigated to /chat). */}
             </div>
           </div>
         </div>
