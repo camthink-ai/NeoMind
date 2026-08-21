@@ -124,7 +124,14 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
       {/* Progress indicator */}
       <div className="shrink-0 pt-8 pb-3 px-6">
         <div className="max-w-5xl mx-auto flex items-center justify-center">
-          {STEPS.map((s, i) => (
+          {STEPS.map((s, i) => {
+            // A step is only "checked" when it is ACTUALLY complete — manual
+            // switching to step 2 must not paint step 1 as done when the LLM
+            // or device setup is still unfinished.
+            const stepDone = s === 'setup'
+              ? !!(status.steps.llm.completed && status.steps.device.completed)
+              : !!(status.steps.llm.completed && status.steps.device.completed)
+            return (
             <button
               key={s}
               onClick={() => setStep(s)}
@@ -133,11 +140,11 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
             >
               <span className={cn(
                 "flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-colors",
-                i < stepIndex && "bg-success text-primary-foreground",
-                i === stepIndex && "bg-primary text-primary-foreground",
-                i > stepIndex && "bg-muted-30 text-muted-foreground",
+                stepDone && "bg-success text-primary-foreground",
+                !stepDone && i === stepIndex && "bg-primary text-primary-foreground",
+                !stepDone && i !== stepIndex && "bg-muted-30 text-muted-foreground",
               )}>
-                {i < stepIndex ? <Check className="w-4 h-4" /> : i + 1}
+                {stepDone ? <Check className="w-4 h-4" /> : i + 1}
               </span>
               <span className={cn(
                 "ml-2 text-xs font-medium hidden sm:inline transition-colors",
@@ -149,7 +156,8 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
                 <span className="w-6 sm:w-10 h-px bg-border mx-3" />
               )}
             </button>
-          ))}
+            )
+          })}
         </div>
       </div>
 
