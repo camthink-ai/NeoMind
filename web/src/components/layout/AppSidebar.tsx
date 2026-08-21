@@ -189,9 +189,13 @@ export function AppSidebar() {
           className="w-full h-10 px-3 justify-start font-normal no-press-scale text-muted-foreground hover:text-foreground hover:bg-muted-50"
           onClick={onClick}
         >
-          {icon}
+          <div className="relative shrink-0">
+            {icon}
+            {badge && (
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
+            )}
+          </div>
           <span className="ml-3 truncate text-sm">{label}</span>
-          {badge && <span className="ml-2 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />}
         </Button>
       </div>
     ) : (

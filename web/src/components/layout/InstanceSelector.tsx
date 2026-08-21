@@ -52,20 +52,22 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
           : "text-error bg-muted"
       )}
     >
-      <Server className="h-5 w-5 shrink-0" />
+      <div className="relative shrink-0">
+        <Server className="h-5 w-5" />
+        {/* Status dot on the icon's top-right corner — same anchor as the
+            Setup Guide badge, so both markers align across rows. */}
+        <span
+          className={cn(
+            'absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-background',
+            isOnline ? 'bg-success' : 'bg-error'
+          )}
+          aria-label={isOnline ? t('status.online') : t('status.offline')}
+        />
+      </div>
       {!compact && (
-        <>
-          <span className="ml-3 flex-1 min-w-0 truncate text-left">
-            {currentInstance?.name || t('local')}
-          </span>
-          <span
-            className={cn(
-              'h-2 w-2 rounded-full shrink-0',
-              isOnline ? 'bg-success' : 'bg-error'
-            )}
-            aria-label={isOnline ? t('status.online') : t('status.offline')}
-          />
-        </>
+        <span className="ml-3 flex-1 min-w-0 truncate text-left">
+          {currentInstance?.name || t('local')}
+        </span>
       )}
     </button>
   )
