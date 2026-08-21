@@ -4,6 +4,7 @@
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, Languages } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { BrandLogoHorizontal } from '@/components/shared/BrandName'
 import { handleWindowDragMouseDown } from '@/lib/windowDrag'
 import {
   DropdownMenu,
@@ -35,6 +36,9 @@ export function SetupHeader({ onBack, stepLabel }: SetupHeaderProps) {
         onMouseDown={handleWindowDragMouseDown}
       >
         <div className="flex items-center gap-3">
+          {/* Same brand mark as the login page header — 0-to-1 keeps one
+              continuous brand line from first launch. */}
+          <BrandLogoHorizontal className="h-6 sm:h-7" />
           {onBack && (
             <Button
               variant="ghost"
