@@ -12,8 +12,17 @@
 use super::*;
 use crate::im_bridge::session_store::{ImSessionStore, SessionKey};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Resolves the default agent id at message time (not boot time). `None` =
+/// no Active agent yet — a fresh system legitimately starts with zero
+/// agents, so the router boots regardless and resolves per inbound message.
+pub type DefaultAgentResolver = Arc<
+    dyn Fn() -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync,
+>;
 
 /// 平台无关的入站消息。
 pub struct InboundMessage {
@@ -29,7 +38,7 @@ pub struct ImRouter {
     pub registry: ImBridgeRegistry,
     store: Arc<ImSessionStore>,
     runner: Arc<dyn AgentRunner>,
-    default_agent_id: String,
+    default_agent: DefaultAgentResolver,
     /// `None` = 允许所有（生产环境必须配置为 `Some`）。
     allowlist: Mutex<Option<HashSet<String>>>,
     /// msg_id 去重。
@@ -42,14 +51,14 @@ impl ImRouter {
     pub fn new(
         store: Arc<ImSessionStore>,
         runner: Arc<dyn AgentRunner>,
-        default_agent_id: String,
+        default_agent: DefaultAgentResolver,
         allowlist: Option<HashSet<String>>,
     ) -> Self {
         Self {
             registry: ImBridgeRegistry::default(),
             store,
             runner,
-            default_agent_id,
+            default_agent,
             allowlist: Mutex::new(allowlist),
             seen: Mutex::new(HashSet::new()),
             chat_locks: Mutex::new(HashMap::new()),
@@ -151,6 +160,25 @@ impl ImRouter {
         let rec = match self.store.get(&key) {
             Ok(Some(r)) => r,
             Ok(None) => {
+                // Resolve the default agent lazily — a fresh system may have
+                // none yet. Check BEFORE creating a session so we don't leak
+                // an orphan session we then refuse to bind.
+                let default_agent_id = match (self.default_agent)().await {
+                    Some(id) => id,
+                    None => {
+                        tracing::warn!(
+                            platform = ?m.platform,
+                            chat_id = %m.chat_id,
+                            "IM inbound dropped: no Active agent to bind as default — create or activate an agent first"
+                        );
+                        if let Some(b) = self.registry.get(&m.platform).await {
+                            let _ = b
+                                .reply(&m.chat_id, "No active agent yet — ask the operator to create one")
+                                .await;
+                        }
+                        return;
+                    }
+                };
                 let sid = match self.runner.create_session().await {
                     Ok(s) => s,
                     Err(e) => {
@@ -158,7 +186,7 @@ impl ImRouter {
                         return;
                     }
                 };
-                match self.store.get_or_create(&key, &sid, &self.default_agent_id) {
+                match self.store.get_or_create(&key, &sid, &default_agent_id) {
                     Ok(r) => r,
                     Err(e) => {
                         tracing::error!(error=%e, "im_session create failed");
@@ -232,6 +260,15 @@ impl ImRouter {
 }
 
 #[cfg(test)]
+fn resolver(id: &str) -> DefaultAgentResolver {
+    let id = id.to_string();
+    Arc::new(move || {
+        let id = id.clone();
+        Box::pin(async move { Some(id) }) as Pin<Box<dyn Future<Output = Option<String>> + Send>>
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::im_bridge::mock::MockBridge;
@@ -272,7 +309,12 @@ mod tests {
         store: Arc<ImSessionStore>,
         runner: Arc<EchoRunner>,
     ) -> (ImRouter, Arc<EchoRunner>) {
-        let r = ImRouter::new(store, runner.clone(), "agent-1".into(), None);
+        let r = ImRouter::new(
+            store,
+            runner.clone(),
+            Arc::new(|| Box::pin(async { Some("agent-1".to_string()) })),
+            None,
+        );
         (r, runner)
     }
 
@@ -391,7 +433,7 @@ mod tests {
         let router = ImRouter::new(
             store,
             Arc::new(EchoRunner::new()),
-            "agent-1".into(),
+            resolver("agent-1"),
             Some(allow),
         );
         router.registry.register(bridge.clone()).await;
@@ -457,7 +499,7 @@ mod tests {
         let bridge = MockBridge::new(ImPlatform::Telegram);
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
-        let router = ImRouter::new(store, Arc::new(FailingRunner), "agent-1".into(), None);
+        let router = ImRouter::new(store, Arc::new(FailingRunner), resolver("agent-1"), None);
         router.registry.register(bridge.clone()).await;
 
         router
@@ -489,7 +531,7 @@ mod tests {
         let router = ImRouter::new(
             store,
             Arc::new(EchoRunner::new()),
-            "agent-1".into(),
+            resolver("agent-1"),
             Some(HashSet::new()),
         );
         // 注册由调用方在返回后执行（与现有 helper 风格一致）。
@@ -703,7 +745,7 @@ mod tests {
         // 拒绝所有未知 sender；再 set(None) 又放开。验证「整组替换」语义。
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
-        let router = ImRouter::new(store, Arc::new(EchoRunner::new()), "a".into(), None);
+        let router = ImRouter::new(store, Arc::new(EchoRunner::new()), resolver("a"), None);
 
         // 替换为空 allowlist → 未知 sender 应被拒绝。
         router.set_allowlist(Some(HashSet::new())).await;
@@ -728,7 +770,7 @@ mod tests {
         let router = ImRouter::new(
             store.clone(),
             Arc::new(EchoRunner::new()),
-            "a".into(),
+            resolver("a"),
             Some(initial),
         );
 
@@ -757,7 +799,7 @@ mod tests {
         // store() 必须返回 router 持有的同一 Arc（可通过 create_invite 生效验证）。
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
-        let router = ImRouter::new(store.clone(), Arc::new(EchoRunner::new()), "a".into(), None);
+        let router = ImRouter::new(store.clone(), Arc::new(EchoRunner::new()), resolver("a"), None);
         let tok = router.store().create_invite().unwrap();
         // 通过返回的 &Arc 创建的 invite，应能在原始 store 上看到。
         let invites = store.list_invites().unwrap();
@@ -874,7 +916,7 @@ mod e2e_tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
         let runner = Arc::new(EchoRunner::new());
-        let router = Arc::new(ImRouter::new(store, runner.clone(), "agent-1".into(), None));
+        let router = Arc::new(ImRouter::new(store, runner.clone(), resolver("agent-1"), None));
         let bridge = MockBridge::new(ImPlatform::Telegram);
         router.registry.register(bridge.clone()).await;
 
@@ -919,7 +961,7 @@ mod e2e_tests {
         let router = Arc::new(ImRouter::new(
             store,
             Arc::new(EchoRunner::new()),
-            "agent-1".into(),
+            resolver("agent-1"),
             None,
         ));
         let bridge = MockBridge::new(ImPlatform::Telegram);
@@ -977,7 +1019,7 @@ mod e2e_tests {
         let router = Arc::new(ImRouter::new(
             store.clone(),
             Arc::new(EchoRunner::new()),
-            "agent-1".into(),
+            resolver("agent-1"),
             Some(HashSet::new()),
         ));
         let bridge = MockBridge::new(ImPlatform::Telegram);
@@ -1088,7 +1130,7 @@ mod e2e_tests {
         let router = Arc::new(ImRouter::new(
             store.clone(),
             Arc::new(EchoRunner::new()),
-            "agent-1".into(),
+            resolver("agent-1"),
             Some(HashSet::new()),
         ));
         let bridge = MockBridge::new(ImPlatform::Telegram);

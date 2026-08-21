@@ -714,7 +714,7 @@ mod tests {
         let router = Arc::new(ImRouter::new(
             store,
             Arc::new(NoopRunner),
-            "test-agent".into(),
+            Arc::new(|| Box::pin(async { Some("test-agent".to_string()) })),
             None,
         ));
 

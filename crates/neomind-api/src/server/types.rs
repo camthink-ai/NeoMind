@@ -3025,12 +3025,28 @@ impl ServerState {
         let runner: Arc<dyn neomind_messages::im_bridge::AgentRunner> =
             Arc::new(SessionManagerAgentRunner::new(self.session_manager()));
 
-        // Resolve the default IM agent. With no per-channel override mechanism
-        // yet (M1), bind the router to the first Active agent so /reset and
-        // future skill bindings have a stable handle. None-active is surfaced
-        // as an error so operators notice the bridge is dead rather than
-        // silently dropping every inbound message.
-        let default_agent_id = self.im_default_agent().await?;
+        // Resolve the default IM agent lazily, per inbound message. With no
+        // per-channel override mechanism yet (M1), sessions bind to the
+        // first Active agent at creation time. Resolving lazily (instead of
+        // hard-failing at boot) keeps a fresh system — which by definition
+        // has zero agents — from logging a scary "IM router not started"
+        // error and 503-ing every /im-bridges call before the user has done
+        // anything. An agent created later works without a server restart.
+        let agent_store = self.agent_store();
+        let default_agent_resolver: neomind_messages::im_bridge::router::DefaultAgentResolver =
+            Arc::new(move || {
+                let store = agent_store.clone();
+                Box::pin(async move {
+                    store
+                        .query_agents(neomind_storage::AgentFilter {
+                            status: Some(neomind_storage::AgentStatus::Active),
+                            ..Default::default()
+                        })
+                        .await
+                        .ok()
+                        .and_then(|agents| agents.into_iter().next().map(|a| a.id))
+                })
+            });
 
         // Clone a handle for the periodic expiry cleanup task (the original
         // `store` is moved into ImRouter below). Same Arc<ImSessionStore>,
@@ -3060,7 +3076,7 @@ impl ServerState {
         let router = Arc::new(neomind_messages::im_bridge::router::ImRouter::new(
             store,
             runner,
-            default_agent_id,
+            default_agent_resolver,
             Some(initial_allowlist),
         ));
 
@@ -3179,34 +3195,6 @@ impl ServerState {
         }
 
         Ok(())
-    }
-
-    /// Resolve the default agent id for the IM bridge.
-    ///
-    /// M1: bind to the first Active agent returned by the store. Once a per-IM
-    /// configuration surface exists (settings key / per-chat override), this
-    /// becomes the single swap point. Returns an `ErrorResponse` when no Active
-    /// agent exists so the startup `tracing::error!` in server/mod.rs surfaces
-    /// it instead of the bridge silently dropping every inbound message.
-    async fn im_default_agent(&self) -> Result<String, crate::models::ErrorResponse> {
-        let agents = self
-            .agent_store()
-            .query_agents(neomind_storage::AgentFilter {
-                status: Some(neomind_storage::AgentStatus::Active),
-                ..Default::default()
-            })
-            .await
-            .map_err(|e| {
-                crate::models::ErrorResponse::internal(format!(
-                    "Failed to query agents for IM default: {}",
-                    e
-                ))
-            })?;
-        agents.into_iter().next().map(|a| a.id).ok_or_else(|| {
-            crate::models::ErrorResponse::internal(
-                "No Active agent available to bind as IM default — create or activate an agent first",
-            )
-        })
     }
 
     /// Initialize AI Agent event listener.
