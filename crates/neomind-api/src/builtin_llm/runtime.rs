@@ -140,7 +140,8 @@ mod tests {
     #[test]
     fn cache_dir_is_versioned() {
         let d = llama_server_cache_dir(std::path::Path::new("/tmp/data"));
-        assert!(d.to_string_lossy().contains(LLAMA_CPP_VERSION));
-        assert!(d.ends_with("llama-server"));
+        let s = d.to_string_lossy();
+        assert!(s.contains("llama-server"));
+        assert!(s.ends_with(LLAMA_CPP_VERSION));
     }
 }
