@@ -486,7 +486,9 @@ export function BuiltinModelWizard({
                   onClick={() => handleStartDownload(selectedModelId ?? undefined)}
                 >
                   <Download className="mr-2 h-4 w-4" />
-                  {t('plugins:llm.builtinWizardStart')}
+                  {status?.installed
+                    ? t('plugins:llm.switchModelCta')
+                    : t('plugins:llm.builtinWizardStart')}
                 </Button>
               </div>
             )}
@@ -584,7 +586,13 @@ export function BuiltinModelWizard({
 
       <FullScreenDialogFooter>
         {phase === 'ready' ? (
-          <Button onClick={close}>{t('common:done')}</Button>
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setPhase('idle')} className="gap-1.5">
+              <Download className="h-3.5 w-3.5" />
+              {t('plugins:llm.switchModel')}
+            </Button>
+            <Button onClick={close}>{t('common:done')}</Button>
+          </>
         ) : (
           <Button variant="ghost" onClick={close}>
             {t('common:skip')}

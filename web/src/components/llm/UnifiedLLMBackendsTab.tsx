@@ -596,6 +596,14 @@ export function UnifiedLLMBackendsTab({
             ) : (
               <>
                 <Button
+                  variant="outline"
+                  onClick={() => setWizardOpen(true)}
+                  disabled={!!builtinBusyAction}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  {t('plugins:llm.switchModel')}
+                </Button>
+                <Button
                   onClick={() => handleBuiltinAction('activate')}
                   // Activate only makes sense while the bundled server is
                   // healthy — activating a stopped server would point chat at a

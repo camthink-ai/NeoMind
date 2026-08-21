@@ -120,7 +120,9 @@
       }
     },
     "builtinWizardCtxLabel": "上下文",
-    "builtinWizardStarting": "正在启动本地模型…"
+    "builtinWizardStarting": "正在启动本地模型…",
+    "switchModel": "更换模型",
+    "switchModelCta": "下载并替换当前模型"
   },
   "yes": "是",
   "no": "否",

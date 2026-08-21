@@ -455,6 +455,19 @@ async fn run_builtin_download(
                 }
             }
 
+            // If a server is still running the PREVIOUS model (its files were
+            // just removed above), it owns the port — a fresh spawn would die
+            // on bind while health-checks pass against the stale server
+            // (port misattribution). Free the port first.
+            if health_check(cfg.port).await {
+                tracing::info!(
+                    port = cfg.port,
+                    "builtin llm: stopping previous-model server before spawn"
+                );
+                kill_process_on_port(cfg.port);
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            }
+
             // Model is on disk — release DL_ACTIVE so the status endpoint stops
             // reporting "downloading" (the wizard flips to installed → ready /
             // auto-activate). The spawn below (which may download the llama-
