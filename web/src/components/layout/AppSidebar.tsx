@@ -341,7 +341,10 @@ export function AppSidebar() {
         </div>
 
         {/* Nav — icon rail, tooltips carry the names */}
-        <nav className="flex flex-col items-center gap-1 pt-2 pb-2">
+        {/* w-full required: in the items-center column, an auto-width nav
+            shrinks to content, so w-full children resolve against the content
+            width and stay narrow+centered instead of stretching. */}
+        <nav className="flex w-full flex-col items-center gap-1 pt-2 pb-2">
           {navItems.map(renderItem)}
         </nav>
 
