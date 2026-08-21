@@ -33,6 +33,7 @@ import {
   Monitor,
   Grid,
   Settings2,
+  Sparkles,
 } from 'lucide-react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -928,17 +929,24 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
       )
     }
 
-    // No dashboard found - show empty state with create button
+    // No dashboard found - guided empty state: manual create is primary,
+    // "let AI build it" routes to chat (which carries its own model setup
+    // guidance if no LLM backend exists yet).
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center space-y-4 px-4">
-          <LayoutDashboard className="h-16 w-16 mx-auto text-muted-foreground" />
-          <div>
-            <h2 className="text-lg font-medium mb-1">{t('visualDashboard.noDashboardFound')}</h2>
-            <p className="text-sm text-muted-foreground mb-4">
-              {t('visualDashboard.createFirstDashboard')}
-            </p>
+      <div className="flex items-center justify-center h-screen bg-background">
+        <div className="text-center max-w-md px-6">
+          <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
+            <LayoutDashboard className="size-7" />
+          </div>
+          <h2 className="mb-2 text-lg font-semibold tracking-tight">
+            {t('visualDashboard.noDashboardFound')}
+          </h2>
+          <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
+            {t('visualDashboard.emptyGuideDesc')}
+          </p>
+          <div className="flex flex-col items-center gap-3">
             <Button
+              className="w-full h-11 sm:h-10"
               onClick={() => {
                 handleDashboardCreate('Overview').catch((err) => {
                   console.error('[VisualDashboard] Failed to create dashboard:', err)
@@ -947,6 +955,14 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
             >
               <Plus className="h-4 w-4 mr-1" />
               {t('visualDashboard.createDashboard')}
+            </Button>
+            <Button
+              variant="secondary"
+              className="w-full h-11 sm:h-10 gap-2"
+              onClick={() => navigate('/chat')}
+            >
+              <Sparkles className="h-4 w-4" />
+              {t('visualDashboard.emptyAskAi')}
             </Button>
           </div>
         </div>

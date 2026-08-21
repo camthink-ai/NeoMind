@@ -897,5 +897,18 @@
         "selectDevice": "请选择设备"
       }
     }
+  },
+  "llmGuide": {
+    "title": "配置你的 AI 大脑",
+    "desc": "NeoMind 的核心是 AI 助手——设备、规则、仪表盘都能用自然语言操作。选择一条路径开始：",
+    "builtinTitle": "下载内置模型（推荐）",
+    "builtinDesc": "LFM2.5-2.6B，约 1.5GB——离线可用，无需 API key",
+    "ownTitle": "使用自己的后端",
+    "ownDesc": "Ollama / llama.cpp / OpenAI 等云厂商",
+    "builtinShort": "下载内置模型",
+    "ownShort": "配置后端",
+    "bannerTitle": "Agent 需要 AI 模型才能运行",
+    "bannerDesc": "内置模型一键下载、离线可用、无需 API key；或接入你自己的 LLM 后端。",
+    "footnote": "配置完成后，对话、设备、规则、仪表盘都可以用自然语言完成。"
   }
 }

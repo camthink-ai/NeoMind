@@ -1241,5 +1241,8 @@
     "configureSource": "Configure Source",
     "failedToLoad": "Failed To Load"
   },
-  "installConfirm": "Install Confirm"
+  "installConfirm": "Install Confirm",
+  "emptyGuideDesc": "Build live monitoring views from widgets — charts, gauges, maps — fed by your devices.",
+  "emptyAskAi": "Ask AI to build one",
+  "noDashboardFound": "No dashboards yet"
 }

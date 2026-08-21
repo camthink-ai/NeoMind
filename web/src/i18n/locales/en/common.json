@@ -897,5 +897,18 @@
         "selectDevice": "Please select a device"
       }
     }
+  },
+  "llmGuide": {
+    "title": "Set up your AI brain",
+    "desc": "AI is the primary way to interact with NeoMind — devices, rules, dashboards all work through conversation. Pick a path to start:",
+    "builtinTitle": "Download the built-in model (Recommended)",
+    "builtinDesc": "LFM2.5-2.6B, ~1.5GB — offline, no API key",
+    "ownTitle": "Bring your own backend",
+    "ownDesc": "Ollama / llama.cpp / OpenAI and other providers",
+    "builtinShort": "Built-in model",
+    "ownShort": "Configure",
+    "bannerTitle": "Agents need an AI model to run",
+    "bannerDesc": "One-click built-in model (offline, no API key) — or connect your own LLM backend.",
+    "footnote": "Once set up, chat, devices, rules and dashboards all happen through conversation."
   }
 }

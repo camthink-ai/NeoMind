@@ -6,7 +6,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { Settings, Sparkles, MessageSquare, Loader2, RotateCcw, Plus, Cpu } from "lucide-react"
+import { Settings, Sparkles, MessageSquare, Loader2, RotateCcw, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
@@ -24,7 +24,7 @@ import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useToast } from "@/hooks/use-toast"
 import { useOnboarding } from "@/hooks/useOnboarding"
 import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
-import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
+import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
 
 // Hook to detect desktop breakpoint — md: 768px, matching the app-wide
 // breakpoint (useIsMobile < 768). The old 1024 left the 768–1024 band in a
@@ -97,7 +97,6 @@ export function ChatPage() {
   const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number } | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [builtinWizardOpen, setBuiltinWizardOpen] = useState(false)
   const pageSidebarSlot = usePageSidebarSlot()
   // Track the ID of the last assistant message for tool call result updates
   const [lastAssistantMessageId, setLastAssistantMessageId] = useState<string | null>(null)
@@ -709,46 +708,7 @@ export function ChatPage() {
 
   // Show LLM setup prompt if not configured (only after loading completes)
   if (!llmBackendLoading && (!llmBackends || llmBackends.length === 0)) {
-    return (
-      <div className="flex h-full items-center justify-center bg-background">
-        <div className="text-center max-w-md px-6">
-          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-xl bg-muted">
-            <Settings className="h-8 w-8 text-muted-foreground" />
-          </div>
-          <h2 className="mb-3 text-lg font-semibold">{t('chat:notConfigured.title')}</h2>
-          <p className="text-sm text-muted-foreground mb-6">
-            {t('chat:notConfigured.description')}
-          </p>
-          <div className="flex flex-col items-center gap-3">
-            {/* Primary: one-click built-in model (offline, no API key) —
-                opens the wizard right here instead of making the user go
-                dig through settings. Secondary: bring your own backend. */}
-            <Button
-              onClick={() => setBuiltinWizardOpen(true)}
-              className="gap-2"
-              size="lg"
-            >
-              <Cpu className="h-4 w-4" />
-              {t('chat:notConfigured.downloadBuiltin')}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => openSettings()}
-              className="gap-2"
-              size="default"
-            >
-              <Settings className="h-4 w-4" />
-              {t('chat:notConfigured.goToSettings')}
-            </Button>
-          </div>
-        </div>
-        <BuiltinModelWizard
-          open={builtinWizardOpen}
-          onOpenChange={setBuiltinWizardOpen}
-          onActivated={() => setBuiltinWizardOpen(false)}
-        />
-      </div>
-    )
+    return <LlmSetupGuide variant="full" />
   }
 
   return (

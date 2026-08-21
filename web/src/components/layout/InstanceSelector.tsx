@@ -39,10 +39,13 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
       disabled={isSwitching}
       onClick={onManageInstances}
       className={cn(
-        "rounded-lg text-xs font-medium transition-colors cursor-pointer hover:opacity-80 disabled:opacity-50",
+        "rounded-lg text-sm font-medium transition-colors cursor-pointer hover:opacity-80 disabled:opacity-50",
         compact
           ? "flex items-center justify-center h-10 w-10"
-          : "flex items-center gap-1.5 px-2.5 h-10",
+          // Expanded: full-width row matching the other sidebar footer rows
+          // (w-full h-10 px-3 text-sm) so the rail doesn't reflow per
+          // instance-name length; name truncates, status shows as a dot.
+          : "w-full flex items-center gap-2 px-3 h-10",
         isOnline
           ? cn("bg-success-light text-success", !compact && "border border-success-light")
           : "text-error bg-muted"
@@ -51,12 +54,16 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
       <Server className="h-4 w-4 shrink-0" />
       {!compact && (
         <>
-          <span className="hidden sm:inline max-w-[120px] truncate">
+          <span className="flex-1 min-w-0 truncate text-left">
             {currentInstance?.name || t('local')}
           </span>
-          <span className="sm:hidden">
-            {isOnline ? t('status.online') : t('status.offline')}
-          </span>
+          <span
+            className={cn(
+              'h-2 w-2 rounded-full shrink-0',
+              isOnline ? 'bg-success' : 'bg-error'
+            )}
+            aria-label={isOnline ? t('status.online') : t('status.offline')}
+          />
         </>
       )}
     </button>

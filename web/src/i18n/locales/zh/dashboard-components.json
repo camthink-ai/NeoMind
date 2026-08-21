@@ -1241,5 +1241,8 @@
     "configureSource": "配置数据源",
     "failedToLoad": "加载失败"
   },
-  "installConfirm": "确认安装"
+  "installConfirm": "确认安装",
+  "emptyGuideDesc": "用可视化组件搭建实时监控视图——图表、仪表、地图，数据来自你的设备。",
+  "emptyAskAi": "让 AI 帮我搭",
+  "noDashboardFound": "还没有仪表板"
 }

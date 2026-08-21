@@ -8,10 +8,12 @@
  */
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
+import { useStore } from "@/store"
 import { useDataVersion } from "@/hooks/useDataVersion"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { PageLayout } from "@/components/layout/PageLayout"
+import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination } from "@/components/shared"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { api } from "@/lib/api"
@@ -59,6 +61,13 @@ export function AgentsPage() {
   const { handleError } = useErrorHandler()
   const location = useLocation()
   const navigate = useNavigate()
+
+  // LLM backend presence — drives the no-backend setup banner (agents are
+  // inert without a model).
+  const llmBackends = useStore((s) => s.llmBackends)
+  const llmBackendLoading = useStore((s) => s.llmBackendLoading)
+  const loadBackends = useStore((s) => s.loadBackends)
+  useEffect(() => { loadBackends() }, [loadBackends])
 
   // Determine active tab from URL path
   const getTabFromPath = () => {
@@ -616,6 +625,11 @@ export function AgentsPage() {
       }
     >
       <PageTabsContent value="agents" activeTab={activeTab}>
+        {/* No LLM backend yet → agents can be created but never run. Guide
+            the user to a model before they wonder why nothing executes. */}
+        {llmBackends.length === 0 && !llmBackendLoading && (
+          <LlmSetupGuide variant="banner" />
+        )}
         {agents.length === 0 && loading ? (
           <LoadingState variant="page" />
         ) : agents.length === 0 ? (
