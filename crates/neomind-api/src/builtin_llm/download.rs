@@ -43,13 +43,20 @@ pub async fn download_with_resume(
     }
     let resp = req.send().await?;
     let status = resp.status();
-    let total_hint = resp.content_length().or_else(|| {
-        resp.headers()
-            .get(reqwest::header::CONTENT_RANGE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.rsplit('/').next())
-            .and_then(|v| v.parse::<u64>().ok())
-    });
+    // Total size for progress. On a 206 (resumed) response `content_length()`
+    // is the REMAINING bytes, not the full file — without fixing it the bar
+    // reports 100% as soon as downloaded surpasses that remaining amount.
+    let total_hint = if status == reqwest::StatusCode::PARTIAL_CONTENT {
+        resp.content_length().map(|rem| existing + rem).or_else(|| {
+            resp.headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.rsplit('/').next())
+                .and_then(|v| v.parse::<u64>().ok())
+        })
+    } else {
+        resp.content_length()
+    };
     let total = if status == reqwest::StatusCode::PARTIAL_CONTENT {
         total_hint.or(Some(existing))
     } else {

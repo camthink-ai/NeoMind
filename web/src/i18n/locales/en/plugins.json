@@ -119,7 +119,8 @@
         "notes": "Official Google QAT quant — mmproj-ready for vision"
       }
     },
-    "builtinWizardCtxLabel": "Context"
+    "builtinWizardCtxLabel": "Context",
+    "builtinWizardStarting": "Starting local model…"
   },
   "yes": "Yes",
   "no": "No",

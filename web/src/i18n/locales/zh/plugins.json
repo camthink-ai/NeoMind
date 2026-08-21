@@ -119,7 +119,8 @@
         "notes": "Google 官方 QAT 量化——可挂 mmproj 加视觉"
       }
     },
-    "builtinWizardCtxLabel": "上下文"
+    "builtinWizardCtxLabel": "上下文",
+    "builtinWizardStarting": "正在启动本地模型…"
   },
   "yes": "是",
   "no": "否",

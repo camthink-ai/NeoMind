@@ -51,7 +51,7 @@ import type { BuiltinLlmStatus, BuiltinModelDef } from '@/types'
 
 const STATUS_POLL_MS = 2000
 
-type WizardPhase = 'loading' | 'idle' | 'downloading' | 'activating' | 'ready' | 'error'
+type WizardPhase = 'loading' | 'idle' | 'downloading' | 'starting' | 'activating' | 'ready' | 'error'
 
 type RetryAction = 'download' | 'activate' | 'restart'
 
@@ -285,6 +285,14 @@ export function BuiltinModelWizard({
         downloadedBytes: s.downloaded_bytes ?? 0,
         totalBytes: s.total_bytes,
       })
+      // Model is on disk but the bundled server isn't up yet — the post-
+      // download spawn (incl. a first-time llama-server runtime download) is
+      // still in flight. Show "starting" instead of a silent 100% freeze; the
+      // poll flips to running → auto-activate when it lands.
+      if (sawDownloadingRef.current && !activatedRef.current && s.server_state !== 'running') {
+        setPhase('starting')
+        return
+      }
       // 下载完成自动激活 — but only when nothing else is active ("有后端不抢")
       // and only when the bundled server is actually running (activating a
       // stopped server would point chat at a dead endpoint).
@@ -484,6 +492,13 @@ export function BuiltinModelWizard({
                 <p className="text-xs text-muted-foreground">
                   {t('plugins:llm.builtinWizardDownloadingHint')}
                 </p>
+              </div>
+            )}
+
+            {phase === 'starting' && (
+              <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm">{t('plugins:llm.builtinWizardStarting')}</span>
               </div>
             )}
 
