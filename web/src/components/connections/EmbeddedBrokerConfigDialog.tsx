@@ -322,13 +322,14 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
               label={t('broker.deviceIdField')}
               helpText={t('broker.deviceIdFieldHelp')}
             >
-              <Input
+              <Textarea
+                rows={2}
                 value={deviceIdField}
                 onChange={(e) => {
                   setDeviceIdField(e.target.value)
                   setHasUnsavedChanges(true)
                 }}
-                placeholder="device_id, sn, mac — auto-detect if empty"
+                placeholder={'device_id\nsn\nmac'}
               />
             </FormField>
           </div>

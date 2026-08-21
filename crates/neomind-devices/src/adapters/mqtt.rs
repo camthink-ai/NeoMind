@@ -2605,16 +2605,26 @@ fn extract_device_id_from_topic_weak(topic: &str) -> Option<String> {
 
 /// Payload-carried device identity. Used when the topic cannot uniquely
 /// identify the device (gateway forwarding many devices on one topic).
-/// ① explicit `config.device_id_field` wins; ② otherwise auto-detect common
-/// fields (device_id / deviceId / sn / mac / mac_address / ...).
+/// ① explicit `config.device_id_field` wins (comma-separated list, tried in
+/// order); ② otherwise auto-detect common fields (device_id / deviceId / sn /
+/// mac / mac_address / ...).
 fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) -> Option<String> {
     let json: serde_json::Value = serde_json::from_slice(payload).ok()?;
     let obj = json.as_object()?;
 
-    if let Some(field) = config.device_id_field.as_deref() {
-        if let Some(v) = obj.get(field).and_then(serde_json::Value::as_str) {
-            if !v.is_empty() {
-                return Some(v.to_string());
+    if let Some(fields) = config.device_id_field.as_deref() {
+        // Candidate list, tried in order — gateway payloads vary per
+        // firmware, so operators can chain fallbacks. Separators: newline
+        // (the UI is one-field-per-line) and comma (API callers).
+        for field in fields
+            .split([',', '\n', '\r'])
+            .map(str::trim)
+            .filter(|f| !f.is_empty())
+        {
+            if let Some(v) = obj.get(field).and_then(serde_json::Value::as_str) {
+                if !v.is_empty() {
+                    return Some(v.to_string());
+                }
             }
         }
     }
@@ -2975,6 +2985,50 @@ mod tests {
             )
             .as_deref(),
             Some("gw-42")
+        );
+    }
+
+    #[test]
+    fn test_extract_device_id_comma_separated_fallback() {
+        // Comma-separated candidate list: tried in order, first hit wins.
+        let cfg = MqttAdapterConfig {
+            device_id_field: Some("sn, dev_id, mac".to_string()),
+            ..MqttAdapterConfig::new("test", "localhost:1883")
+        };
+        // first candidate present
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"sn\":\"SN-1\",\"mac\":\"m1\"}", &cfg).as_deref(),
+            Some("SN-1")
+        );
+        // first absent -> second candidate
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"dev_id\":\"D-2\",\"mac\":\"m2\"}", &cfg)
+                .as_deref(),
+            Some("D-2")
+        );
+        // all explicit candidates absent -> falls through to auto-detect
+        // (device_id candidate)
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"device_id\":\"auto-3\"}", &cfg).as_deref(),
+            Some("auto-3")
+        );
+        // spaces around commas are trimmed
+        let cfg_spaced = MqttAdapterConfig {
+            device_id_field: Some("  sn ,  mac  ".to_string()),
+            ..MqttAdapterConfig::new("test", "localhost:1883")
+        };
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"mac\":\"mm\"}", &cfg_spaced).as_deref(),
+            Some("mm")
+        );
+        // newline-separated (the one-field-per-line UI form) — same behavior
+        let cfg_lines = MqttAdapterConfig {
+            device_id_field: Some("sn\n dev_id\nmac".to_string()),
+            ..MqttAdapterConfig::new("test", "localhost:1883")
+        };
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"dev_id\":\"L-9\"}", &cfg_lines).as_deref(),
+            Some("L-9")
         );
     }
 
