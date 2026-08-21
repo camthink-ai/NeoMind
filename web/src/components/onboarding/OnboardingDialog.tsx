@@ -215,15 +215,15 @@ interface LlmProvider {
 // backend_type passes straight through to the API (cli-ops/src/llm.rs),
 // so each provider's native type works. Endpoints from the user-guide README.
 const LLM_PROVIDERS: LlmProvider[] = [
-  { id: "ollama", label: "Ollama", type: "ollama", endpoint: "http://localhost:11434", model: "qwen3:8b", needsKey: false },
+  { id: "ollama", label: "Ollama", type: "ollama", endpoint: "http://localhost:11434", model: "qwen3.5:4b", needsKey: false },
   // Endpoint must NOT include /v1 — the llamacpp backend appends its own path.
   { id: "llamacpp", label: "llama.cpp", type: "llamacpp", endpoint: "http://127.0.0.1:8080", model: "qwen3.5-4b-q4_k_m", needsKey: false },
-  { id: "openai", label: "OpenAI", type: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true },
-  { id: "anthropic", label: "Anthropic", type: "anthropic", endpoint: "https://api.anthropic.com", model: "claude-sonnet-4-20250514", needsKey: true },
+  { id: "openai", label: "OpenAI", type: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-4.1-mini", needsKey: true },
+  { id: "anthropic", label: "Anthropic", type: "anthropic", endpoint: "https://api.anthropic.com", model: "claude-sonnet-4-5", needsKey: true },
   { id: "deepseek", label: "DeepSeek", type: "deepseek", endpoint: "https://api.deepseek.com", model: "deepseek-chat", needsKey: true },
-  { id: "glm", label: "GLM", type: "glm", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash", needsKey: true },
+  { id: "glm", label: "GLM", type: "glm", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.5-flash", needsKey: true },
   { id: "qwen", label: "Qwen", type: "qwen", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", needsKey: true },
-  { id: "xai", label: "xAI Grok", type: "xai", endpoint: "https://api.x.ai", model: "grok-2", needsKey: true },
+  { id: "xai", label: "xAI Grok", type: "xai", endpoint: "https://api.x.ai", model: "grok-3-mini", needsKey: true },
 ]
 
 function buildLlmCommand(p: LlmProvider): string {

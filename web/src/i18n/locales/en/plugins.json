@@ -139,6 +139,10 @@
       "anthropic": {
         "name": "Cloud AI · Anthropic",
         "desc": "Anthropic Messages API"
+      },
+      "cloudai": {
+        "name": "Cloud AI",
+        "desc": "Cloud providers: OpenAI-compatible or Anthropic — other vendors ride the OpenAI-compatible path (Qwen/DeepSeek/GLM/xAI/OpenRouter…)"
       }
     }
   },

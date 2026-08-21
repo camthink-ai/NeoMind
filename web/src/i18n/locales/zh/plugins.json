@@ -139,6 +139,10 @@
       "anthropic": {
         "name": "Cloud AI · Anthropic",
         "desc": "Anthropic Messages API"
+      },
+      "cloudai": {
+        "name": "Cloud AI",
+        "desc": "云端大模型：OpenAI 兼容或 Anthropic——其余厂商走 OpenAI 兼容端点（Qwen/DeepSeek/GLM/xAI/OpenRouter…）"
       }
     }
   },

@@ -1023,6 +1023,10 @@ impl LlmBackendInstanceManager {
 
     /// Get configuration schema for a backend type
     pub fn get_config_schema(&self, backend_type: &str) -> serde_json::Value {
+        // Sampling params differ by protocol: temperature is supported by
+        // every backend; top_p is an OpenAI-compat/Ollama concept and is NOT
+        // part of the Anthropic Messages API — hide it there.
+        let mut schema = {
         let requires_api_key = matches!(
             backend_type,
             "openai" | "anthropic" | "google" | "xai" | "qwen" | "deepseek" | "glm" | "minimax"
@@ -1077,10 +1081,10 @@ impl LlmBackendInstanceManager {
                     "description": "The model to use",
                     "default": match backend_type {
                         "ollama" => "qwen3.5:4b",
-                        "openai" => "gpt-4o-mini",
-                        "anthropic" => "claude-3-5-sonnet-20241022",
-                        "google" => "gemini-1.5-flash",
-                        "xai" => "grok-beta",
+                        "openai" => "gpt-4.1-mini",
+                        "anthropic" => "claude-sonnet-4-5",
+                        "google" => "gemini-2.5-flash",
+                        "xai" => "grok-3-mini",
                         _ => "",
                     },
                 },
@@ -1123,15 +1127,35 @@ impl LlmBackendInstanceManager {
                 "placeholders": {
                     "model": match backend_type {
                         "ollama" => "qwen3.5:4b",
-                        "openai" => "gpt-4o-mini",
-                        "anthropic" => "claude-3-5-sonnet-20241022",
-                        "google" => "gemini-1.5-flash",
-                        "xai" => "grok-beta",
+                        "openai" => "gpt-4.1-mini",
+                        "anthropic" => "claude-sonnet-4-5",
+                        "google" => "gemini-2.5-flash",
+                        "xai" => "grok-3-mini",
                         _ => "",
                     },
                 }
             }
         })
+        };
+        if backend_type == "anthropic" {
+            if let Some(props) = schema
+                .pointer_mut("/properties")
+                .and_then(|v| v.as_object_mut())
+            {
+                props.remove("top_p");
+            }
+            if let Some(order) = schema
+                .pointer_mut("/ui_hints/field_order")
+                .and_then(|v| v.as_array_mut())
+            {
+                order.retain(|s| s != "top_p");
+            }
+            schema
+                .pointer_mut("/ui_hints/display_names")
+                .and_then(|v| v.as_object_mut())
+                .map(|d| d.remove("top_p"));
+        }
+        schema
     }
 
     /// Clear the runtime cache (e.g., after configuration change)

@@ -18,6 +18,8 @@ import {
   RotateCcw,
   Cpu,
   BrainCircuit,
+  Cloud,
+  ChevronRight,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -114,7 +116,11 @@ function getLlmProviderInfo(providerType: string, t: (key: string) => string) {
 // key + model. Collapse to four protocol entries; other vendors are reached
 // through Cloud AI → OpenAI-compatible (any /v1 endpoint: OpenRouter, Qwen
 // dashscope compat, etc.).
-const PROTOCOL_TYPE_IDS = ['ollama', 'llamacpp', 'openai', 'anthropic'] as const
+const PROTOCOL_TYPE_IDS = ['ollama', 'llamacpp'] as const
+// Cloud AI is one card whose protocol paths (OpenAI-compatible / Anthropic)
+// are chosen inside it — other vendors ride the OpenAI path via their
+// compatible endpoint.
+const CLOUD_AI_PROTOCOLS = ['openai', 'anthropic'] as const
 
 // Built-in bundled LLM (LFM2.5-2.6B) card actions.
 type BuiltinAction = 'download' | 'restart' | 'activate' | 'delete'
@@ -300,6 +306,7 @@ export function UnifiedLLMBackendsTab({
 
   // First-run wizard (empty-state strong guidance)
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [cloudOpen, setCloudOpen] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -364,6 +371,14 @@ export function UnifiedLLMBackendsTab({
       setBuiltinStatus(await api.getBuiltinLlmStatus())
     } catch {
       setBuiltinStatus(null)
+    }
+  }
+
+  const openTypeDetail = (typeId: string) => {
+    const type = backendTypes.find((b) => b.id === typeId)
+    if (type) {
+      setSelectedType(toUnifiedPluginType(type, t))
+      setView('detail')
     }
   }
 
@@ -795,6 +810,50 @@ export function UnifiedLLMBackendsTab({
               </Card>
             )
           })}
+
+          {/* Cloud AI — one card, protocol path (OpenAI-compatible / Anthropic)
+              chosen inside. Other vendors ride the OpenAI path via endpoint. */}
+          <Card
+            className={cn('cursor-pointer transition-all duration-200 hover:shadow-md', cloudOpen && 'border-primary')}
+            onClick={() => setCloudOpen((o) => !o)}
+          >
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex items-center justify-center h-10 w-10 rounded-lg shrink-0 bg-accent-indigo-light text-accent-indigo">
+                  <Cloud className="h-5 w-5" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <CardTitle className="text-base truncate min-w-0">{t('plugins:llm.protocol.cloudai.name')}</CardTitle>
+                  <CardDescription className="text-xs mt-0.5 leading-relaxed">
+                    {t('plugins:llm.protocol.cloudai.desc')}
+                  </CardDescription>
+                </div>
+                <ChevronRight className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', cloudOpen && 'rotate-90')} />
+              </div>
+              {cloudOpen && (
+                <div className="mt-3 space-y-2">
+                  {CLOUD_AI_PROTOCOLS.map((pid) => {
+                    const type = backendTypes.find((b) => b.id === pid)
+                    if (!type) return null
+                    return (
+                      <button
+                        key={pid}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openTypeDetail(pid)
+                        }}
+                        className="w-full flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-muted-50 transition-colors"
+                      >
+                        <span className="font-medium">{t(`plugins:llm.protocol.${pid}.name`)}</span>
+                        <span className="text-xs text-muted-foreground truncate">{t(`plugins:llm.protocol.${pid}.desc`)}</span>
+                        <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
         {wizardElement}
       </>
