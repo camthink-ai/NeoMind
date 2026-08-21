@@ -94,7 +94,7 @@ export function CompleteStep({ username, initialTimezone, token, getApiUrl, onCo
               {/* Single CTA — setup is done, just go in. Model/device guidance
                   lives in the app (chat empty state, LLM settings). */}
               <Button
-                onClick={() => onComplete()}
+                onClick={() => onComplete("/chat")}
                 className="w-full h-11 sm:h-10 gap-2"
                 size="default"
               >
