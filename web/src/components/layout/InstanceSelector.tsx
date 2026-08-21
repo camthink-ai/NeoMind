@@ -51,7 +51,7 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
           : "text-error bg-muted"
       )}
     >
-      <Server className="h-4 w-4 shrink-0" />
+      <Server className="h-5 w-5 shrink-0" />
       {!compact && (
         <>
           <span className="ml-3 flex-1 min-w-0 truncate text-left">
