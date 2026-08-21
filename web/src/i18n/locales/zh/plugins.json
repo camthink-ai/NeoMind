@@ -133,16 +133,16 @@
         "desc": "本地 llama.cpp（/v1 OpenAI 兼容）"
       },
       "openai": {
-        "name": "Cloud AI · OpenAI 兼容",
-        "desc": "任意 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / GLM / xAI / OpenRouter…"
+        "name": "OpenAI 兼容",
+        "desc": "任意 OpenAI 兼容端点"
       },
       "anthropic": {
-        "name": "Cloud AI · Anthropic",
+        "name": "Anthropic",
         "desc": "Anthropic Messages API"
       },
       "cloudai": {
         "name": "Cloud AI",
-        "desc": "云端大模型：OpenAI 兼容或 Anthropic——其余厂商走 OpenAI 兼容端点（Qwen/DeepSeek/GLM/xAI/OpenRouter…）"
+        "desc": "云端大模型——OpenAI 兼容或 Anthropic"
       }
     }
   },

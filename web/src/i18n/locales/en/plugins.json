@@ -133,16 +133,16 @@
         "desc": "Local llama.cpp (/v1 OpenAI-compatible)"
       },
       "openai": {
-        "name": "Cloud AI · OpenAI-compatible",
-        "desc": "Any OpenAI-compatible endpoint: OpenAI / Qwen / DeepSeek / GLM / xAI / OpenRouter…"
+        "name": "OpenAI-compatible",
+        "desc": "Any OpenAI-compatible endpoint"
       },
       "anthropic": {
-        "name": "Cloud AI · Anthropic",
+        "name": "Anthropic",
         "desc": "Anthropic Messages API"
       },
       "cloudai": {
         "name": "Cloud AI",
-        "desc": "Cloud providers: OpenAI-compatible or Anthropic — other vendors ride the OpenAI-compatible path (Qwen/DeepSeek/GLM/xAI/OpenRouter…)"
+        "desc": "Cloud LLMs — OpenAI-compatible or Anthropic"
       }
     }
   },
