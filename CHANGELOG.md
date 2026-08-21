@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.9.19] - 2026-08-21
+
+### Built-in AI, out of the box — the version's theme
+NeoMind now ships its own brain. The built-in LLM became a choice of three models with a self-bootstrapping runtime — download once, everything runs offline with zero configuration:
+
+- **Multi-model registry**: pick **LFM2.5-2.6B** (QAD Q4_0 — small, native 128K context, default), **Qwen3.5-4B** (the strongest edge agent in our 30-case evals at 76% cmd_ok, runs non-thinking by default for speed), or **Gemma4-E2B** (official Google QAT quant, mmproj-ready for vision). The wizard is a bilingual three-tile picker; each model carries its own context window and thinking defaults (LFM's thinking is integral; Qwen/Gemma's is optional).
+- **Self-bootstrapping llama-server runtime**: the bundled binary is used when present (desktop/Docker); otherwise the server downloads the official llama.cpp prebuilt for its platform (macOS arm64/x64, Linux x64/arm64, Windows x64/arm64) into a versioned cache. The whole release archive is extracted — the binary is a thin wrapper that dlopens sibling libraries, and a single-file extract dies on exec. Unsupported platforms (Jetson/CUDA) get a clear source-build pointer.
+- **Hardened download chain**: resumable downloads with SHA-256 verification, a resumed response's progress total now counts already-downloaded bytes (the bar used to clamp to a false 100%), WS progress events throttled to ~250ms (per-chunk events re-render-stormed the UI), a "starting local model…" phase while the server spawns, and auto-activation when no other backend is active. A persistent top-right indicator reopens the wizard after you close it mid-download.
+- **Honest capability reporting**: the builtin instance registers with its real context window (LFM 128K / Qwen·Gemma 32K — a storage default of 4096 previously surfaced as a tiny chat window), streaming, tool support, and per-model thinking flags.
+
+### Critical fix: llamacpp agents crashed the server
+The agent-runtime builder had no arm for `LlmBackend::LlamaCpp` — any llamacpp backend hit `unreachable!()` during agent creation/execution, crashing the server. This silently broke agent workloads on llamacpp backends and had been contaminating cross-model eval comparisons (Qwen's real score was 76%, not the polluted 37%; Gemma doubled to 60%). Post-fix baselines are committed for Qwen, LFM QAD (67%, tool_ok 100%), and Gemma QAT.
+
+### Deployment: the LLM backend is optional everywhere
+- **Docker**: `NEOMIND_BUNDLE_MODEL=lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none` build arg — `none` produces a 221MB image (vs 1.81GB with a model) for deployments that bring their own backend. Also fixed: the runtime stage was missing `libgomp1`, so the bundled llama-server couldn't exec; and CI now **smoke-gates every image before pushing** (`/api/health` green + "Builtin LLM ready" in logs) — build-green ≠ runnable.
+- **install.sh**: `WITH_LLM` (default true) downloads the llama.cpp runtime from official prebuilt binaries; `BUILTIN_MODEL` pre-downloads a chosen model. Both opt out cleanly.
+- **Desktop**: llama-server is bundled via Tauri externalBin (macOS/Linux/Windows).
+
+### MQTT: gateways no longer merge devices
+Auto-discovery derived device identity from the topic alone — a gateway forwarding many devices on one topic collapsed them into one device. Payload identity now wins: an explicit `device_id_field` (internal and external broker, one fallback field per line in the UI, comma also accepted) or auto-detection of ~30 common fields (device_id/sn/mac/eui/imei…).
+
+### First-run polish — driven by a real 0-to-1 walkthrough
+A full fresh-install walkthrough (wipe → register → download → chat) surfaced and fixed a chain of paper cuts:
+- **Window drag on setup/login**: the overlay titlebar left those two pages with no drag region at all.
+- **Theme**: fresh installs now follow the system theme correctly (WKWebView reports `prefers-color-scheme` from the app's effective appearance — now explicitly set), and desktop defaults to dark when unspecified.
+- **Newsletter opt-in actually works in packaged builds** — the Mailchimp JSONP was blocked by CSP; the domain is allow-listed and success now toasts.
+- **Guided empty states**: chat, agents, and dashboards each teach instead of block — one story (built-in model recommended, bring-your-own second) across four surfaces, with the agents page branching its empty state on backend presence.
+- **Onboarding dialog opens manually only** (sidebar button); step checkmarks reflect real completion, not UI position; the setup-complete page is a clean success + one CTA into chat.
+- **Sidebar**: 224px expanded width, explicit collapse button, nav rows stretch full-width, status/badge markers anchor to icon corners, instance liveness follows the WebSocket.
+- **Three flicker roots fixed**: a stale API key's 401s were swallowed while `isAuthenticated` stayed true, bouncing routes between / and /setup (each revealing the other beneath); focus-triggered backend refetches flipped the chat empty state through the real UI for a frame; a whole-store subscription re-rendered the setup page on any state change.
+- **Confirm-password mismatch** shows inline immediately and disables submit while fields disagree.
+
+### Smaller fixes
+- IM router no longer errors on fresh systems (default agent resolution moved from boot-time to message-time; an agent created later works without restart).
+- Subcommand-level `--help` injection on shell failures; thinking-override ignored for integral-thinking models.
+- Broker-config dialog opened beneath the z-[100] settings layer (invisible) — now z-[110].
+- `docker build` fetches llama.cpp via curl tarball (Docker networks commonly block git).
+- `cargo fmt` across five crates; behavior_tests compile again under `test-utils`.
+
+### Eval
+- Post-panic-fix regression baselines: Qwen3.5-4B **76%** cmd_ok (strongest), LFM2.5 QAD **67%** with 100% tool_ok, Gemma4-E2B QAT **60%** — the 30-case gate now compares against clean references.
+- LFM2.5-2.6B defaults to the official QAD quant (verified sha); llama.cpp pinned to b10545 for runtime downloads (b10524 has no release binaries).
+
+---
+
 ## [0.9.18] - 2026-08-19
 
 ### Small-model agent reliability — the version's theme
