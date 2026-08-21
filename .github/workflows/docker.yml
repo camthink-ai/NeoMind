@@ -67,18 +67,51 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Build ONE arch natively and push a per-arch tag. The merge job below
+      # Build ONE arch natively, LOAD locally (no push yet), smoke-test the
+      # runtime, and only then push the per-arch tag. The merge job below
       # combines the per-arch tags into the multi-arch :<version> + :latest.
-      - name: Build and push (${{ matrix.arch }})
+      # The smoke gate exists because "it compiled" is not "it runs": the
+      # libgomp1 gap (faa3fc9b) shipped a llama-server that exec'd into a
+      # zombie on every arch while the build stayed green.
+      - name: Build (load locally, no push)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: ${{ matrix.platform }}
-          push: true
-          tags: ${{ env.IMAGE }}:${{ steps.ver.outputs.version }}-${{ matrix.arch }}
+          push: false
+          load: true
+          tags: neomind:smoke-${{ matrix.arch }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+
+      - name: Runtime smoke — builtin LLM must come up
+        run: |
+          docker run -d --name smoke -p 127.0.0.1:9375:9375 neomind:smoke-${{ matrix.arch }}
+          trap 'docker rm -f smoke >/dev/null 2>&1 || true' EXIT
+
+          # 1. API server healthy
+          ok=0
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9375/api/health && { ok=1; break; } || sleep 2
+          done
+          [ "$ok" = 1 ] || { echo "::error::API never became healthy"; docker logs smoke 2>&1 | tail -50; exit 1; }
+
+          # 2. Builtin llama-server spawned, loaded the model, passed its
+          #    health probe (this is the line that never fires when the
+          #    bundled binary can't exec — e.g. missing shared libs).
+          ok=0
+          for i in $(seq 1 60); do
+            docker logs smoke 2>&1 | grep -q "Builtin LLM ready" && { ok=1; break; } || sleep 3
+          done
+          [ "$ok" = 1 ] || { echo "::error::builtin LLM never became ready"; docker logs smoke 2>&1 | tail -80; exit 1; }
+          echo "smoke OK: API healthy + builtin LLM ready (${{ matrix.arch }})"
+
+      - name: Push per-arch tag
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          docker tag neomind:smoke-${{ matrix.arch }} ${{ env.IMAGE }}:${V}-${{ matrix.arch }}
+          docker push ${{ env.IMAGE }}:${V}-${{ matrix.arch }}
 
   merge:
     needs: build
