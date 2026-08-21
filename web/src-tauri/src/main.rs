@@ -402,6 +402,14 @@ pub fn run() {
 
 /// Application setup function
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    // Follow the OS appearance explicitly. Without this the webview's
+    // effective appearance can stay light (WKWebView on macOS dark
+    // systems reports prefers-color-scheme: light), which breaks the
+    // frontend "system" theme mode. `None` = follow the system.
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_theme(None);
+    }
+
     // Get and set up data directory
     let app_data_dir = get_app_data_dir(app.handle());
     fs::create_dir_all(&app_data_dir)?;

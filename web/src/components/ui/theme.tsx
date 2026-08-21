@@ -1,6 +1,14 @@
 import { createContext, useContext, useEffect, useState } from "react"
+import { isTauriEnv } from "@/lib/api"
 
 type Theme = "dark" | "light" | "system"
+
+// Fresh-install default. Desktop defaults dark: the product is
+// dark-first (dashboards/monitoring), and WKWebView's
+// prefers-color-scheme is unreliable until the window appearance is
+// explicitly set (see main.rs set_theme). Browsers detect correctly,
+// so they keep following the system.
+const defaultTheme: Theme = isTauriEnv() ? "dark" : "system"
 
 interface ThemeContextType {
   theme: Theme
@@ -11,9 +19,12 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("system")
+  const [theme, setTheme] = useState<Theme>(defaultTheme)
   const [resolvedTheme, setResolvedTheme] = useState<"dark" | "light">(() => {
-    // Detect system theme immediately to prevent flash
+    // Detect system theme immediately to prevent flash. Tauri default is
+    // dark (see defaultTheme) so start there; browsers probe the real
+    // system preference.
+    if (isTauriEnv()) return "dark"
     if (typeof window !== "undefined") {
       return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
     }
@@ -37,7 +48,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Apply theme immediately on mount to prevent flash
-    const actualTheme = getActualTheme(stored || "system")
+    const actualTheme = getActualTheme(stored || defaultTheme)
     const root = document.documentElement
     root.classList.remove("light", "dark")
     root.classList.add(actualTheme)
