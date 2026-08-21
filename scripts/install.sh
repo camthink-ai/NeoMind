@@ -9,6 +9,12 @@
 #   WEB_DIR        - Frontend static files directory (default: /var/www/neomind)
 #   NO_WEB        - Skip frontend installation, backend only (default: false)
 #   NO_SERVICE     - Skip service installation (default: false)
+#   WITH_LLM      - Install the llama.cpp runtime (neomind-llama-server) from
+#                   official prebuilt binaries (default: true)
+#   LLAMA_VERSION - llama.cpp release tag for the runtime (default: b10524)
+#   BUILTIN_MODEL - Pre-download a builtin model GGUF + manifest into DATA_DIR:
+#                   lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none (default: none —
+#                   the in-app wizard offers the same choices)
 #   USE_NGINX      - Configure nginx reverse proxy (default: false)
 #   PORT           - Backend API port (default: 9375)
 
@@ -32,6 +38,9 @@ NO_WEB="${NO_WEB:-false}"
 NO_SERVICE="${NO_SERVICE:-false}"
 USE_NGINX="${USE_NGINX:-false}"
 PORT="${PORT:-9375}"
+WITH_LLM="${WITH_LLM:-true}"
+LLAMA_VERSION="${LLAMA_VERSION:-b10524}"
+BUILTIN_MODEL="${BUILTIN_MODEL:-none}"
 
 status() { echo "${BLUE}[INFO]${NC} $*"; }
 success() { echo "${GREEN}[OK]${NC} $*"; }
@@ -524,6 +533,74 @@ print_post_install() {
     echo ""
 }
 
+# llama.cpp prebuilt asset name for OS/ARCH (official ggml-org releases).
+llama_asset() {
+    case "$OS/$ARCH" in
+        linux/x86_64) echo "ubuntu-x64" ;;
+        linux/aarch64|linux/arm64) echo "ubuntu-arm64" ;;
+        darwin/arm64) echo "macos-arm64" ;;
+        darwin/x86_64) echo "macos-x64" ;;
+        *) return 1 ;;
+    esac
+}
+
+# Optional: download the llama.cpp runtime (neomind-llama-server) from
+# official prebuilt binaries so the built-in LLM works out of the box.
+install_llm_runtime() {
+    [ "$WITH_LLM" = "true" ] || return 0
+    local asset url tmp bin
+    if ! asset=$(llama_asset); then
+        warning "No official llama.cpp prebuilt for ${OS}/${ARCH} — skipping LLM runtime (build from source via scripts/build-llama-server.sh)"
+        return 0
+    fi
+    url="https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_VERSION}/llama-${LLAMA_VERSION}-bin-${asset}.tar.gz"
+    status "Downloading llama.cpp runtime (${LLAMA_VERSION}, ${asset})..."
+    tmp=$(mktemp -d)
+    if curl -fsSL "$url" -o "$tmp/llama.tar.gz" && tar -xzf "$tmp/llama.tar.gz" -C "$tmp"; then
+        bin=$(find "$tmp" -name llama-server -type f | head -n1)
+        if [ -n "$bin" ]; then
+            $SUDO install -m 0755 "$bin" "${INSTALL_DIR}/neomind-llama-server"
+            success "Installed neomind-llama-server -> ${INSTALL_DIR}/neomind-llama-server"
+        else
+            warning "llama-server not found in the release archive"
+        fi
+    else
+        warning "Failed to download llama.cpp runtime from ${url}"
+    fi
+    rm -rf "$tmp"
+}
+
+# Optional: pre-download a builtin model GGUF + manifest into DATA_DIR.
+# ids must match crates/neomind-core/src/builtin_llm/manifest.rs.
+install_builtin_model() {
+    [ "$BUILTIN_MODEL" = "none" ] && return 0
+    local id="$BUILTIN_MODEL" repo file local sha quant dir
+    case "$id" in
+        lfm25-2.6b)
+            repo="LiquidAI/LFM2.5-2.6B-GGUF"; file="LFM2.5-2.6B-QAD-Q4_0.gguf"
+            local="lfm25-2.6b-qad_q4_0.gguf"
+            sha="a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03"; quant="qad_q4_0" ;;
+        qwen3.5-4b)
+            repo="unsloth/Qwen3.5-4B-GGUF"; file="Qwen3.5-4B-Q4_K_M.gguf"
+            local="qwen3.5-4b-q4_k_m.gguf"
+            sha="00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"; quant="q4_k_m" ;;
+        gemma4-e2b)
+            repo="google/gemma-4-E2B-it-qat-q4_0-gguf"; file="gemma-4-E2B_q4_0-it.qat.gguf"
+            local="gemma-4-E2B_q4_0-it.qat.gguf"
+            sha="fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"; quant="qat_q4_0" ;;
+        *) error "Unknown BUILTIN_MODEL: ${id} (lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none)" ;;
+    esac
+    dir="${DATA_DIR}/models/${id}"
+    $SUDO mkdir -p "$dir"
+    status "Downloading builtin model ${id}..."
+    $SUDO curl -fsSL -o "$dir/$local" "https://huggingface.co/$repo/resolve/main/$file" || {
+        error "Failed to download ${id} from HuggingFace"
+    }
+    $SUDO sh -c "printf '{\"id\":\"%s\",\"version\":\"1.0\",\"file_name\":\"%s\",\"sha256\":\"%s\",\"quant\":\"%s\"}' \"$id\" \"$local\" \"$sha\" \"$quant\" > \"$dir/manifest.json\""
+    $SUDO chown -R neomind:neomind "$dir" 2>/dev/null || true
+    success "Builtin model ${id} installed -> ${dir}"
+}
+
 main() {
     echo ""
     echo "${BOLD}╔═══════════════════════════════════════════════════════════╗${NC}"
@@ -553,6 +630,11 @@ main() {
         linux) install_linux ;;
         darwin) install_darwin ;;
     esac
+
+    # Optional LLM runtime + model (closed-loop: the built-in model works
+    # right after install; WITH_LLM=false / BUILTIN_MODEL=none opt out).
+    install_llm_runtime
+    install_builtin_model
 
     print_post_install
 }
