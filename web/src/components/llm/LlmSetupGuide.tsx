@@ -12,7 +12,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
-import { Cpu, Server, ChevronRight, Download } from 'lucide-react'
+import { BrainCircuit, Server, ChevronRight, Download } from 'lucide-react'
 import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 
 export function LlmSetupGuide() {
@@ -33,7 +33,7 @@ export function LlmSetupGuide() {
     <div className={cn('flex items-center justify-center', 'h-full', 'bg-background')}>
       <div className="text-center max-w-2xl px-6">
         <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
-          <Cpu className="size-7" />
+          <BrainCircuit className="size-7" />
         </div>
         <h2 className="mb-2 text-lg font-semibold tracking-tight">{t('common:llmGuide.title')}</h2>
         <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
