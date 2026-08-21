@@ -65,7 +65,7 @@ export function LlmSetupGuide({ variant = 'full' }: LlmSetupGuideProps) {
 
   return (
     <div className={cn('flex items-center justify-center', 'h-full', 'bg-background')}>
-      <div className="text-center max-w-lg px-6">
+      <div className="text-center max-w-2xl px-6">
         <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
           <Cpu className="size-7" />
         </div>
