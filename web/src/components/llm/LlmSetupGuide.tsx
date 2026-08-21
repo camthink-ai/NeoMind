@@ -18,13 +18,14 @@ import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 export function LlmSetupGuide() {
   const { t } = useTranslation(['common'])
   const openSettings = useStore((s) => s.openSettings)
+  const loadBackends = useStore((s) => s.loadBackends)
   const [wizardOpen, setWizardOpen] = useState(false)
 
   const wizard = (
     <BuiltinModelWizard
       open={wizardOpen}
       onOpenChange={setWizardOpen}
-      onActivated={() => setWizardOpen(false)}
+      onActivated={() => { setWizardOpen(false); loadBackends() }}
     />
   )
 

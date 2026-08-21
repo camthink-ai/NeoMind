@@ -656,7 +656,7 @@ export function AgentsPage() {
                 <BuiltinModelWizard
                   open={agentWizardOpen}
                   onOpenChange={setAgentWizardOpen}
-                  onActivated={() => setAgentWizardOpen(false)}
+                  onActivated={() => { setAgentWizardOpen(false); loadBackends() }}
                 />
               </div>
             ) : (
