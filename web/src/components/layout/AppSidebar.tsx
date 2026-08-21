@@ -323,7 +323,7 @@ export function AppSidebar() {
             {expanded ? (
               <BrandLogoHorizontal className="h-8" />
             ) : (
-              <BrandLogo className="h-7 w-7 rounded-lg" />
+              <BrandLogo className="h-9 w-9 rounded-lg" />
             )}
           </button>
           {/* Explicit collapse affordance — the logo also toggles, but a
