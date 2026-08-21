@@ -2615,10 +2615,10 @@ const ID_WRAPPER_KEYS: &[&str] = &["data", "payload", "state", "params", "body",
 
 /// Resolve a field to a string: dotted paths walk (`data.sn`), plain names
 /// check the top level first and then one level inside the wrapper keys.
-fn lookup_id_field<'a>(
-    root: &'a serde_json::Map<String, serde_json::Value>,
+fn lookup_id_field(
+    root: &serde_json::Map<String, serde_json::Value>,
     field: &str,
-) -> Option<&'a str> {
+) -> Option<String> {
     if field.contains('.') {
         // Dotted path: walk segments through nested objects; the leaf must
         // be a non-empty string. `Value::get` returns None on non-objects,
@@ -2629,17 +2629,17 @@ fn lookup_id_field<'a>(
         for seg in segs {
             cur = cur.get(seg)?;
         }
-        return id_value_to_string(cur).as_deref();
+        return id_value_to_string(cur);
     }
     // Plain name: top level first…
     if let Some(v) = root.get(field).and_then(id_value_to_string) {
-        return v;
+        return Some(v);
     }
     // …then one level inside common wrappers.
     for w in ID_WRAPPER_KEYS {
         if let Some(inner) = root.get(*w).and_then(serde_json::Value::as_object) {
             if let Some(v) = inner.get(field).and_then(id_value_to_string) {
-                return v;
+                return Some(v);
             }
         }
     }
@@ -2671,7 +2671,7 @@ fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) ->
             .filter(|f| !f.is_empty())
         {
             if let Some(v) = lookup_id_field(obj, field) {
-                return Some(v.to_string());
+                return Some(v);
             }
         }
     }
