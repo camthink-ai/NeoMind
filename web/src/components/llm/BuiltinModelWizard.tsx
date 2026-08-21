@@ -348,7 +348,7 @@ export function BuiltinModelWizard({
       />
       <FullScreenDialogContent>
         <FullScreenDialogMain className="p-4 md:p-6">
-          <div className="mx-auto w-full max-w-lg space-y-6">
+          <div className="mx-auto w-full max-w-3xl space-y-6">
             {/* Model identity */}
             <div className="flex items-start gap-3">
               <div className="flex items-center justify-center h-12 w-12 rounded-xl shrink-0 bg-warning-light text-warning">

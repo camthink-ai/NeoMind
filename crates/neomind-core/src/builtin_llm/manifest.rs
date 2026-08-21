@@ -40,6 +40,11 @@ pub struct BuiltinModelDef {
     pub notes: &'static str,
     /// This entry is a fallback if the model cannot run (reserved).
     pub recommended: bool,
+    /// Whether thinking/reasoning is enabled by default for this model.
+    /// LFM's thinking is integral (cannot be off); Qwen3.5 runs faster
+    /// non-thinking for agent tool calls (eval 76% cmd_ok was non-thinking);
+    /// Gemma defaults to thinking.
+    pub default_thinking: bool,
 }
 
 /// The builtin model registry. LFM2.5 is the default (small + cheap KV);
@@ -50,17 +55,18 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| vec
         manifest: ModelManifest {
             id: "lfm25-2.6b".to_string(),
             version: "1.0".to_string(),
-            file_name: "lfm25-2.6b-q4_k_m.gguf".to_string(),
-            sha256: "79fdf00351b46cf26f020aead28d01889886be87c55fa0eb907e6f9b00bfee14".to_string(),
-            quant: "q4_k_m".to_string(),
+            file_name: "lfm25-2.6b-qad_q4_0.gguf".to_string(),
+            sha256: "a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03".to_string(),
+            quant: "qad_q4_0".to_string(),
         },
         display_name: "LFM2.5-2.6B",
         hf_repo: "LiquidAI/LFM2.5-2.6B-GGUF",
-        hf_file: "LFM2.5-2.6B-Q4_K_M.gguf",
-        size_bytes: 1_600_000_000,
+        hf_file: "LFM2.5-2.6B-QAD-Q4_0.gguf",
+        size_bytes: 1_500_000_000,
         default_ctx: 131072,
         notes: "小体积 + 原生 128K 上下文(hybrid KV 很省) — 资源紧张设备的默认选择",
         recommended: true,
+        default_thinking: true,
     },
     BuiltinModelDef {
         manifest: ModelManifest {
@@ -77,6 +83,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| vec
         default_ctx: 32768,
         notes: "30 案 eval 最强的端侧 agent 模型(76% cmd_ok) — 工具调用首选",
         recommended: false,
+        default_thinking: false,
     },
     BuiltinModelDef {
         manifest: ModelManifest {
@@ -93,6 +100,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| vec
         default_ctx: 32768,
         notes: "Google 官方 QAT 量化 — 可挂 mmproj 加视觉",
         recommended: false,
+        default_thinking: true,
     },
 ]);
 

@@ -172,27 +172,32 @@ fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> {
     })
 }
 
-/// Download source for a def: HF repo + file + sha (LFM quant override swaps
-/// the repo file/sha via the existing hf_* tables).
+/// Download source for a def: HF repo + file + sha. Every model downloads its
+/// registry entry directly (LFM's entry is now QAD Q4_0, the default); the
+/// env `quant_override` swaps LFM to q8_0/q4_k_m for power users.
 fn resolve_source(
     cfg: &BuiltinConfig,
     def: &BuiltinModelDef,
 ) -> (String, String, String) {
     if def.manifest.id == BUILTIN_MODEL_ID {
-        let quant = resolve_quant(cfg, def).unwrap_or(Quant::Q4_K_M);
-        let file_name = model_file_name(quant);
-        let sha = hf_sha256(quant).to_string();
-        let url = format!("{}/{}", HF_REPO, hf_file_name(quant));
-        (url, sha, file_name)
-    } else {
-        let url = format!(
+        if let Ok(quant) = resolve_quant(cfg, def) {
+            if quant != Quant::QAD_Q4_0 {
+                return (
+                    format!("{}/{}", HF_REPO, hf_file_name(quant)),
+                    hf_sha256(quant).to_string(),
+                    model_file_name(quant),
+                );
+            }
+        }
+    }
+    (
+        format!(
             "https://huggingface.co/{}/resolve/main/{}",
             def.hf_repo, def.hf_file
-        );
-        let sha = def.manifest.sha256.clone();
-        let file_name = def.manifest.file_name.clone();
-        (url, sha, file_name)
-    }
+        ),
+        def.manifest.sha256.clone(),
+        def.manifest.file_name.clone(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -522,9 +527,11 @@ async fn spawn_builtin_server(
         ),
     };
     instance.is_builtin = true;
-    // LFM2.5's thinking is integral (cannot be turned off); Qwen/Gemma's is
-    // a normal optional reasoning pass.
+    // LFM2.5's thinking is integral (cannot be turned off); Qwen3.5 runs
+    // non-thinking by default (faster + strongest tool-calling eval); Gemma
+    // keeps its default thinking.
     instance.thinking_is_integral = def.manifest.id == BUILTIN_MODEL_ID;
+    instance.thinking_enabled = def.default_thinking;
     instance.endpoint = Some(endpoint.clone());
     instance.model = def.manifest.id.clone();
     let _ = manager.upsert_instance(instance).await;
