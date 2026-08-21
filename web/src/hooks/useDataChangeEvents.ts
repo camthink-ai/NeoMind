@@ -90,8 +90,21 @@ export function useDataChangeEvents() {
       )
     })
 
+    // Builtin model download completion: the wizard/indicator observe status,
+    // but gated surfaces (chat empty state, agents banner) read llmBackends
+    // from the store — refresh it so they flip without a manual reload. The
+    // server also auto-activates, so onboarding's own 5s poll flips too.
+    const offBuiltin = conn.on('ModelDownloadProgress', (event) => {
+      const d = (event as { data?: { status?: string } }).data
+      if (d?.status !== 'complete') return
+      const s = useStore.getState()
+      fetchCache.invalidate('llmBackends')
+      void s.loadBackends()
+    })
+
     return () => {
       off()
+      offBuiltin()
       timers.current.forEach((t) => clearTimeout(t))
       timers.current.clear()
     }
