@@ -95,7 +95,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| vec
         },
         display_name: "Gemma4-E2B",
         hf_repo: "google/gemma-4-E2B-it-qat-q4_0-gguf",
-        hf_file: "gemma-4-E2B_q4_0-it.qat.gguf",
+        hf_file: "gemma-4-E2B_q4_0-it.gguf",
         size_bytes: 3_100_000_000,
         default_ctx: 32768,
         notes: "Google 官方 QAT 量化 — 可挂 mmproj 加视觉",

@@ -39,7 +39,7 @@ NO_SERVICE="${NO_SERVICE:-false}"
 USE_NGINX="${USE_NGINX:-false}"
 PORT="${PORT:-9375}"
 WITH_LLM="${WITH_LLM:-true}"
-LLAMA_VERSION="${LLAMA_VERSION:-b10524}"
+LLAMA_VERSION="${LLAMA_VERSION:-b10545}"
 BUILTIN_MODEL="${BUILTIN_MODEL:-none}"
 
 status() { echo "${BLUE}[INFO]${NC} $*"; }
@@ -585,7 +585,7 @@ install_builtin_model() {
             local="qwen3.5-4b-q4_k_m.gguf"
             sha="00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4"; quant="q4_k_m" ;;
         gemma4-e2b)
-            repo="google/gemma-4-E2B-it-qat-q4_0-gguf"; file="gemma-4-E2B_q4_0-it.qat.gguf"
+            repo="google/gemma-4-E2B-it-qat-q4_0-gguf"; file="gemma-4-E2B_q4_0-it.gguf"
             local="gemma-4-E2B_q4_0-it.qat.gguf"
             sha="fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634"; quant="qat_q4_0" ;;
         *) error "Unknown BUILTIN_MODEL: ${id} (lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none)" ;;

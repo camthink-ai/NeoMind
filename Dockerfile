@@ -193,7 +193,7 @@ RUN set -eu; \
         printf '{"id":"qwen3.5-4b","version":"1.0","file_name":"qwen3.5-4b-q4_k_m.gguf","sha256":"00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4","quant":"q4_k_m"}' > "$d/manifest.json";; \
       gemma4-e2b) \
         d=/app/data/models/gemma4-e2b; mkdir -p "$d"; \
-        curl -fsSL -o "$d/gemma-4-E2B_q4_0-it.qat.gguf" https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.qat.gguf; \
+        curl -fsSL -o "$d/gemma-4-E2B_q4_0-it.qat.gguf" https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.gguf; \
         printf '{"id":"gemma4-e2b","version":"1.0","file_name":"gemma-4-E2B_q4_0-it.qat.gguf","sha256":"fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634","quant":"qat_q4_0"}' > "$d/manifest.json";; \
       *) echo "Unknown NEOMIND_BUNDLE_MODEL: $id" >&2; exit 1;; \
     esac; \
