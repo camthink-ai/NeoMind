@@ -39,7 +39,24 @@ use tower_http::timeout::{RequestBodyTimeoutLayer, TimeoutLayer};
 
 /// Start the web server on a specific address.
 /// This is the main entry point for running the server.
+/// Recorded at startup so URL resolution can tell whether the server is
+/// reachable on the LAN (0.0.0.0) or only locally (127.0.0.1/localhost).
+static HTTP_BIND_LOOPBACK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HTTP_BIND_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+
+/// Whether the HTTP server is bound to loopback only.
+pub fn http_bind_is_loopback() -> bool {
+    HTTP_BIND_LOOPBACK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The bound HTTP port (0 if not yet bound).
+pub fn http_bind_port() -> u16 {
+    HTTP_BIND_PORT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
+    HTTP_BIND_LOOPBACK.store(bind.ip().is_loopback(), std::sync::atomic::Ordering::Relaxed);
+    HTTP_BIND_PORT.store(bind.port(), std::sync::atomic::Ordering::Relaxed);
     use crate::startup::{ServiceStatus, StartupLogger};
 
     // Note: V2 extension system doesn't require panic hook installation

@@ -397,18 +397,20 @@ pub fn resolve_server_url(headers: Option<&axum::http::HeaderMap>) -> (String, S
         }
     }
 
-    // 3. Auto-detect LAN IP + known port.
-    //
-    // Previously this returned "http://localhost:9375" — which works for the
-    // FRONTEND running on the same machine, but is wrong when displayed to
-    // the user as the webhook URL devices should POST to (a device's
-    // `localhost` is the device itself, not the server). The auto-detected
-    // LAN IP is what devices actually need.
-    //
-    // MQTT status already does this correctly via `get_server_host()` — this
-    // brings webhook URL resolution in line.
+    // 3. Reachability-aware: if the server is bound to loopback only, the LAN
+    // IP is NOT reachable — return localhost (works for same-machine users and
+    // no device could reach a loopback-bound server anyway). If bound to
+    // 0.0.0.0 (production), auto-detect the LAN IP so devices can POST.
+    let port = crate::server::http_bind_port();
+    let port = if port == 0 { 9375 } else { port };
+    if crate::server::http_bind_is_loopback() {
+        return (
+            format!("http://localhost:{port}"),
+            ServerUrlSource::Fallback,
+        );
+    }
     let host = get_server_host();
-    (format!("http://{}:9375", host), ServerUrlSource::Fallback)
+    (format!("http://{}:{port}", host), ServerUrlSource::Fallback)
 }
 
 #[cfg(test)]

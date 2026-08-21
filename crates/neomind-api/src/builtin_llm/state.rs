@@ -9,7 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use neomind_agent::llm_backends::LlmBackendInstanceManager;
-use neomind_core::builtin_llm::manifest::{load_manifest, BuiltinModelDef, ModelManifest, BUILTIN_MODEL_ID};
+use neomind_core::builtin_llm::manifest::{load_manifest, model_def, default_model_def, BuiltinModelDef, ModelManifest, BUILTIN_MODEL_ID};
 use neomind_storage::{LlmBackendInstance, LlmBackendType};
 
 use super::config::BuiltinConfig;
@@ -62,6 +62,20 @@ pub async fn bootstrap(
         .any(|i| i.id == BUILTIN_INSTANCE_ID)
         && health_check(cfg.port).await
     {
+        // Refresh capabilities even on the already-running path — a restart
+        // otherwise leaves an instance registered with the storage default
+        // max_context (4096) from before this instance existed.
+        if let Some(inst) = manager.get_instance(BUILTIN_INSTANCE_ID) {
+            let mut updated = inst;
+            if let Some(def) = model_def(&updated.model).or_else(|| Some(default_model_def()))
+            {
+                updated.capabilities.supports_streaming = true;
+                updated.capabilities.supports_tools = true;
+                updated.capabilities.supports_thinking = def.default_thinking;
+                updated.capabilities.max_context = def.default_ctx as usize;
+                let _ = manager.upsert_instance(updated).await;
+            }
+        }
         return BootstrapOutcome::ServerAlreadyRunning;
     }
 
@@ -121,7 +135,7 @@ pub async fn bootstrap(
         }
         None => LlmBackendInstance::new(
             BUILTIN_INSTANCE_ID.to_string(),
-            format!("{} (内置)", def.display_name),
+            def.display_name.to_string(),
             LlmBackendType::LlamaCpp,
         ),
     };
@@ -130,6 +144,12 @@ pub async fn bootstrap(
     instance.thinking_enabled = def.default_thinking;
     instance.endpoint = Some(endpoint.clone());
     instance.model = def.manifest.id.clone();
+    // Same as handlers::spawn_builtin_server — the capability refresh loop
+    // predates this instance; set the real ctx so chat shows 128K/32K.
+    instance.capabilities.supports_streaming = true;
+    instance.capabilities.supports_tools = true;
+    instance.capabilities.supports_thinking = def.default_thinking;
+    instance.capabilities.max_context = def.default_ctx as usize;
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。

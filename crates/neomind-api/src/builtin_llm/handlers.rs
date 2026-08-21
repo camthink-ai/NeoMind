@@ -355,11 +355,13 @@ pub async fn download_handler(
     let cfg_for_task = cfg.clone();
     let model_id_task = def.manifest.id.clone();
     tokio::spawn(async move {
-        // Hold both guards for the whole download: `guard` single-flights
-        // concurrent POSTs, `_active` flips DL_ACTIVE back off on finish/panic.
+        // `guard` single-flights concurrent POSTs; `_active` flips DL_ACTIVE
+        // back off on finish/panic (or earlier — run_builtin_download drops it
+        // right after the model lands, so the post-download spawn/runtime
+        // download doesn't keep the UI stuck at "downloading 100%").
         let _active = DownloadActiveGuard;
         let _guard = guard;
-        match run_builtin_download(&state_for_task, &cfg_for_task, &model_id_task, &dest, &url, &sha).await {
+        match run_builtin_download(&state_for_task, &cfg_for_task, &model_id_task, &dest, &url, &sha, _active).await {
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "builtin llm: download failed"),
         }
@@ -375,6 +377,7 @@ async fn run_builtin_download(
     dest: &Path,
     url: &str,
     sha: &str,
+    _active: DownloadActiveGuard,
 ) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let bus = state.event_bus();
@@ -383,9 +386,23 @@ async fn run_builtin_download(
     // outer `bus` would be moved in and unavailable for the complete/error
     // events below.
     let bus_for_cb = bus.clone();
+    // The downloader calls on_progress per network chunk (8-64KB) — that can
+    // be 30-250 events/sec. Atomics update cheaply every chunk, but the WS
+    // publish is throttled to ~250ms so the frontend doesn't re-render storm
+    // (that manifested as UI flicker during downloads).
+    let last_publish_ms = Arc::new(AtomicU64::new(0));
     let on_progress = move |p: DownloadProgress| {
         DL_DOWNLOADED.store(p.downloaded, Ordering::SeqCst);
         DL_TOTAL.store(p.total.unwrap_or(0), Ordering::SeqCst);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let last = last_publish_ms.load(Ordering::Relaxed);
+        if now.saturating_sub(last) < 250 && last != 0 {
+            return;
+        }
+        last_publish_ms.store(now, Ordering::Relaxed);
         if let Some(bus) = &bus_for_cb {
             bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
                 model_id: model_id.to_string(),
@@ -414,6 +431,13 @@ async fn run_builtin_download(
                 quant: "q4_k_m".to_string(),
             };
             save_manifest(&mdir, &manifest)?;
+
+            // Model is on disk — release DL_ACTIVE so the status endpoint stops
+            // reporting "downloading" (the wizard flips to installed → ready /
+            // auto-activate). The spawn below (which may download the llama-
+            // server runtime on first use) then runs without keeping the UI
+            // frozen at 100%.
+            drop(_active);
 
             if let Some(bus) = &bus {
                 bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
@@ -526,7 +550,7 @@ async fn spawn_builtin_server(
         }
         None => LlmBackendInstance::new(
             BUILTIN_INSTANCE_ID.to_string(),
-            format!("{} (内置)", def.display_name),
+            def.display_name.to_string(),
             LlmBackendType::LlamaCpp,
         ),
     };
@@ -538,6 +562,14 @@ async fn spawn_builtin_server(
     instance.thinking_enabled = def.default_thinking;
     instance.endpoint = Some(endpoint.clone());
     instance.model = def.manifest.id.clone();
+    // Capabilities must be set here — the startup capability-refresh loop ran
+    // before this instance existed, so a default (max_context=4096) would
+    // surface as a tiny chat context window. Report the ctx we actually
+    // spawned with (LFM 128K / Qwen/Gemma 32K).
+    instance.capabilities.supports_streaming = true;
+    instance.capabilities.supports_tools = true;
+    instance.capabilities.supports_thinking = def.default_thinking;
+    instance.capabilities.max_context = ctx as usize;
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。
