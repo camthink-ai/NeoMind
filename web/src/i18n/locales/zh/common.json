@@ -788,7 +788,7 @@
       },
       "llm": {
         "title": "配置 AI 模型",
-        "description": "NeoMind 的核心是 AI 助手。配置一个 LLM 后端——支持 Ollama 本地（免费、隐私），或 OpenAI / Anthropic / Google 等云端——就能用自然语言管理整个系统。",
+        "description": "NeoMind 的核心是 AI 助手。一键下载内置模型（离线可用、无需 API key），或配置你自己的后端——本地 Ollama / llama.cpp，或 OpenAI / Anthropic / Google 等云端——就能用自然语言管理整个系统。",
         "purpose": "AI 是 NeoMind 的主要交互入口。配好后，连接设备、创建规则、搭建看板都能通过对话完成，不必逐页手动配置。",
         "action": "配置 AI 模型"
       },

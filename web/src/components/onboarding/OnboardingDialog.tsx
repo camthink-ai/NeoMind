@@ -207,6 +207,8 @@ interface LlmProvider {
 // so each provider's native type works. Endpoints from the user-guide README.
 const LLM_PROVIDERS: LlmProvider[] = [
   { id: "ollama", label: "Ollama", type: "ollama", endpoint: "http://localhost:11434", model: "qwen3:8b", needsKey: false },
+  // Endpoint must NOT include /v1 — the llamacpp backend appends its own path.
+  { id: "llamacpp", label: "llama.cpp", type: "llamacpp", endpoint: "http://127.0.0.1:8080", model: "qwen3.5-4b-q4_k_m", needsKey: false },
   { id: "openai", label: "OpenAI", type: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-4o-mini", needsKey: true },
   { id: "anthropic", label: "Anthropic", type: "anthropic", endpoint: "https://api.anthropic.com", model: "claude-sonnet-4-20250514", needsKey: true },
   { id: "deepseek", label: "DeepSeek", type: "deepseek", endpoint: "https://api.deepseek.com", model: "deepseek-chat", needsKey: true },
@@ -218,6 +220,7 @@ const LLM_PROVIDERS: LlmProvider[] = [
 function buildLlmCommand(p: LlmProvider): string {
   const lines: string[] = []
   if (p.id === "ollama") lines.push(`ollama pull ${p.model}`)
+  if (p.id === "llamacpp") lines.push(`llama-server -m ${p.model}.gguf -c 32768 --port 8080`)
   const parts = [
     "neomind llm create",
     `--name ${p.id}`,

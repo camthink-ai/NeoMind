@@ -650,7 +650,8 @@ export function UnifiedLLMBackendsTab({
     if (backendTypes.length === 0) {
       return (
         <>
-          {builtinCard}
+          {/* No builtinCard here — the CTA buttons below already pitch the
+              built-in model; stacking both was the duplicate CTA users saw. */}
           <EmptyState
             icon="plugin"
             title={t('plugins:llm.noBackends')}
@@ -673,7 +674,12 @@ export function UnifiedLLMBackendsTab({
 
     return (
       <>
-        {builtinCard}
+        {/* While the first-run banner below is pitching the built-in model,
+            don't also render the builtin card — that duplication (two
+            download CTAs on one screen) is what fresh users saw. Once
+            installed, the banner disappears and the card takes over as the
+            persistent status/management surface. */}
+        {!(builtinStatus && !builtinStatus.installed && instances.length === 0) && builtinCard}
 
         {/* First-run guidance (non-empty type grid): no backend configured AND
             the built-in model not yet installed → prominent CTA into the

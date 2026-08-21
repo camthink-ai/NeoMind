@@ -47,13 +47,13 @@
   "subscribedToast": "Subscribed to the Camthink newsletter",
   "nextSteps": "Next Steps",
   "quickChat": "Start a Conversation",
-  "quickChatDesc": "Chat with AI to explore NeoMind capabilities",
-  "quickLlm": "Configure AI Model",
-  "quickLlmDesc": "Set up Ollama, OpenAI, or other LLM providers",
+  "quickChatDesc": "Chat with AI once the model is ready",
   "quickExplore": "Explore Platform",
   "quickExploreDesc": "Discover devices, automation, and more features",
   "minPasswordLength": "Min Password Length",
   "minUsernameLength": "Min Username Length",
   "passwordNeedsLetter": "Password Needs Letter",
-  "passwordNeedsNumber": "Password Needs Number"
+  "passwordNeedsNumber": "Password Needs Number",
+  "quickBuiltin": "Use the Built-in Model (Recommended)",
+  "quickBuiltinDesc": "One-click download of LFM2.5-2.6B (~1.5GB) — offline, no API key"
 }

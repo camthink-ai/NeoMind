@@ -186,8 +186,9 @@
   },
   "notConfigured": {
     "title": "LLM Not Configured",
-    "description": "Please configure LLM backend to use chat feature",
-    "goToSettings": "Go to Settings"
+    "description": "Download the built-in model (~1.5GB, offline, no API key) — or configure your own LLM backend.",
+    "goToSettings": "Go to Settings",
+    "downloadBuiltin": "Download Built-in Model (Recommended)"
   },
   "build": {
     "view": "View",

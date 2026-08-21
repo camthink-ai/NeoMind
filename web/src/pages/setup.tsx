@@ -87,10 +87,10 @@ export function SetupPage() {
     setStep('complete')
   }
 
-  const handleComplete = () => {
+  const handleComplete = (dest = '/') => {
     if (accountInfo) {
       login(accountInfo.username, accountInfo.password, true).then(() => {
-        window.location.href = '/'
+        window.location.href = dest
       }).catch(() => {
         navigate('/login')
       })

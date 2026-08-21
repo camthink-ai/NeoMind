@@ -186,8 +186,9 @@
   },
   "notConfigured": {
     "title": "LLM 未配置",
-    "description": "请先配置 LLM 后端以使用聊天功能",
-    "goToSettings": "前往设置"
+    "description": "下载内置模型（约 1.5GB，离线可用、无需 API key），或配置你自己的 LLM 后端",
+    "goToSettings": "前往设置",
+    "downloadBuiltin": "下载内置 AI 模型（推荐）"
   },
   "build": {
     "view": "查看",

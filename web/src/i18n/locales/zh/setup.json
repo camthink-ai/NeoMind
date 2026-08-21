@@ -47,13 +47,13 @@
   "subscribedToast": "已订阅 Camthink 邮件通知",
   "nextSteps": "下一步",
   "quickChat": "开始对话",
-  "quickChatDesc": "与 AI 对话，探索 NeoMind 的能力",
-  "quickLlm": "配置 AI 模型",
-  "quickLlmDesc": "设置 Ollama、OpenAI 等 LLM 提供商",
+  "quickChatDesc": "模型就绪后即可与 AI 对话，探索 NeoMind 能力",
   "quickExplore": "探索平台",
   "quickExploreDesc": "发现设备、自动化等更多功能",
   "minPasswordLength": "密码最少字符数",
   "minUsernameLength": "用户名最少字符数",
   "passwordNeedsLetter": "密码需要包含字母",
-  "passwordNeedsNumber": "密码需要包含数字"
+  "passwordNeedsNumber": "密码需要包含数字",
+  "quickBuiltin": "使用内置 AI 模型（推荐）",
+  "quickBuiltinDesc": "一键下载 LFM2.5-2.6B（约 1.5GB）——离线可用，无需 API key"
 }

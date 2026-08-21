@@ -3,13 +3,12 @@
  */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
-import { useStore } from '@/store'
-import { Check, MessageSquare, Settings, ChevronRight, Cpu, Zap, Globe } from 'lucide-react'
+import { Check, MessageSquare, ChevronRight, Cpu, Zap, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SetupBackground } from './SetupBackground'
 import { SetupHeader } from './SetupHeader'
+import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 import { getLocalizedTimezones } from '@/lib/time/format'
 
 interface CompleteStepProps {
@@ -17,13 +16,11 @@ interface CompleteStepProps {
   initialTimezone: string
   token: string
   getApiUrl: (path: string) => string
-  onComplete: () => void
+  onComplete: (dest?: string) => void
 }
 
 export function CompleteStep({ username, initialTimezone, token, getApiUrl, onComplete }: CompleteStepProps) {
   const { t } = useTranslation(['common', 'setup'])
-  const navigate = useNavigate()
-  const openSettings = useStore((s) => s.openSettings)
   const [timezone, setTimezone] = useState(initialTimezone)
   const timezoneOptions = getLocalizedTimezones(t)
 
@@ -44,27 +41,32 @@ export function CompleteStep({ username, initialTimezone, token, getApiUrl, onCo
     }
   }
 
+  // Built-in model wizard — opens right here on the complete screen (the
+  // setup token is already in localStorage from AccountStep, so the wizard's
+  // API calls authenticate). Download runs in the background while the user
+  // finishes setup; activation is automatic.
+  const [wizardOpen, setWizardOpen] = useState(false)
+
   const quickActions = [
+    {
+      icon: Cpu,
+      title: t('setup:quickBuiltin'),
+      description: t('setup:quickBuiltinDesc'),
+      action: () => setWizardOpen(true),
+    },
     {
       icon: MessageSquare,
       title: t('setup:quickChat'),
       description: t('setup:quickChatDesc'),
-      action: () => { onComplete() },
-    },
-    {
-      icon: Cpu,
-      title: t('setup:quickLlm'),
-      description: t('setup:quickLlmDesc'),
-      action: () => { onComplete(); setTimeout(() => openSettings(), 100) },
+      action: () => onComplete('/chat'),
     },
     {
       icon: Zap,
       title: t('setup:quickExplore'),
       description: t('setup:quickExploreDesc'),
-      action: () => { onComplete() },
+      action: () => onComplete(),
     },
   ]
-
   return (
     <div className="viewport-full flex flex-col bg-background relative overflow-hidden">
       <SetupBackground />
@@ -140,7 +142,7 @@ export function CompleteStep({ username, initialTimezone, token, getApiUrl, onCo
 
               {/* Main CTA */}
               <Button
-                onClick={onComplete}
+                onClick={() => onComplete()}
                 className="w-full h-11 sm:h-10"
                 size="default"
               >
@@ -151,6 +153,11 @@ export function CompleteStep({ username, initialTimezone, token, getApiUrl, onCo
           </div>
         </div>
       </main>
+      <BuiltinModelWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        onActivated={() => setWizardOpen(false)}
+      />
     </div>
   )
 }
