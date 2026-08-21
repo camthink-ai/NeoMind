@@ -697,6 +697,5 @@
     "saving": "Saving"
   },
   "executionNotFound": "Execution Not Found",
-  "noAgentsNoBackendDesc": "Agents need an AI model to run. Download the built-in model (offline, no API key) — or configure your own backend first.",
-  "createAgentAnyway": "Create an agent first, configure a model later →"
+  "noAgentsNoBackendDesc": "Agents need an AI model to run. Download the built-in model (offline, no API key) — or configure your own backend first."
 }

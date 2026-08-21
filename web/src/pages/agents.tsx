@@ -653,12 +653,6 @@ export function AgentsPage() {
                     {tCommon('llmGuide.ownShort')}
                   </Button>
                 </div>
-                <button
-                  className="mt-4 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  onClick={handleCreate}
-                >
-                  {tAgent('createAgentAnyway')}
-                </button>
                 <BuiltinModelWizard
                   open={agentWizardOpen}
                   onOpenChange={setAgentWizardOpen}
