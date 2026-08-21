@@ -643,12 +643,12 @@ export function AgentsPage() {
                 <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
                   {tAgent('noAgentsNoBackendDesc')}
                 </p>
-                <div className="flex flex-col items-center gap-3">
-                  <Button className="w-full h-11 sm:h-10 gap-2" onClick={() => setAgentWizardOpen(true)}>
+                <div className="flex items-center justify-center gap-3">
+                  <Button className="h-11 sm:h-10 gap-2" onClick={() => setAgentWizardOpen(true)}>
                     <Download className="h-4 w-4" />
                     {tCommon('llmGuide.builtinShort')}
                   </Button>
-                  <Button variant="secondary" className="w-full h-11 sm:h-10 gap-2" onClick={() => openSettings('llm')}>
+                  <Button variant="secondary" className="h-11 sm:h-10 gap-2" onClick={() => openSettings('llm')}>
                     <Server className="h-4 w-4" />
                     {tCommon('llmGuide.ownShort')}
                   </Button>

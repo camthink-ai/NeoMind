@@ -945,9 +945,9 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
           <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
             {t('visualDashboard.emptyGuideDesc')}
           </p>
-          <div className="flex flex-col items-center gap-3">
+          <div className="flex items-center justify-center gap-3">
             <Button
-              className="w-full h-11 sm:h-10"
+              className="h-11 sm:h-10"
               onClick={() => {
                 handleDashboardCreate('Overview').catch((err) => {
                   console.error('[VisualDashboard] Failed to create dashboard:', err)
@@ -959,7 +959,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
             </Button>
             <Button
               variant="secondary"
-              className="w-full h-11 sm:h-10 gap-2"
+              className="h-11 sm:h-10 gap-2"
               onClick={() => navigate('/chat')}
             >
               <Sparkles className="h-4 w-4" />
