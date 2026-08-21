@@ -61,7 +61,8 @@ import { InstanceManagerDialog } from "@/components/instances/InstanceManagerDia
 // 72px — still clears the macOS traffic lights (~14–66px from the window
 // edge) while keeping the rail visually tight.
 const SIDEBAR_WIDTH_PX = 72
-// Expanded (logo click): 176px fits icon + label + padding.
+// Expanded (logo click / collapse toggle): 224px — fits icon + label +
+// padding with room for i18n labels and instance names.
 const SIDEBAR_EXPANDED_PX = 224
 
 // Tauri window drag — startDragging on mousedown over non-interactive areas
