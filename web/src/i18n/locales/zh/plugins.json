@@ -122,7 +122,25 @@
     "builtinWizardCtxLabel": "上下文",
     "builtinWizardStarting": "正在启动本地模型…",
     "switchModel": "更换模型",
-    "switchModelCta": "下载并替换当前模型"
+    "switchModelCta": "下载并替换当前模型",
+    "protocol": {
+      "ollama": {
+        "name": "Ollama（本地）",
+        "desc": "本地 Ollama——免 API key"
+      },
+      "llamacpp": {
+        "name": "llama.cpp（本地）",
+        "desc": "本地 llama.cpp（/v1 OpenAI 兼容）"
+      },
+      "openai": {
+        "name": "Cloud AI · OpenAI 兼容",
+        "desc": "任意 OpenAI 兼容端点：OpenAI / Qwen / DeepSeek / GLM / xAI / OpenRouter…"
+      },
+      "anthropic": {
+        "name": "Cloud AI · Anthropic",
+        "desc": "Anthropic Messages API"
+      }
+    }
   },
   "yes": "是",
   "no": "否",

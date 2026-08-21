@@ -109,6 +109,13 @@ function getLlmProviderInfo(providerType: string, t: (key: string) => string) {
   }
 }
 
+// Protocol-first backend types. The old UI surfaced every vendor as a card
+// (openai/qwen/deepseek/glm/xai/minimax/...) — they are all just endpoint +
+// key + model. Collapse to four protocol entries; other vendors are reached
+// through Cloud AI → OpenAI-compatible (any /v1 endpoint: OpenRouter, Qwen
+// dashscope compat, etc.).
+const PROTOCOL_TYPE_IDS = ['ollama', 'llamacpp', 'openai', 'anthropic'] as const
+
 // Built-in bundled LLM (LFM2.5-2.6B) card actions.
 type BuiltinAction = 'download' | 'restart' | 'activate' | 'delete'
 
@@ -736,17 +743,24 @@ export function UnifiedLLMBackendsTab({
           </Card>
         )}
 
-        {/* Provider Cards Grid */}
+        {/* Provider Cards Grid — protocol-first: Ollama / llama.cpp / Cloud AI
+            (OpenAI-compatible, Anthropic). All other vendors ride the
+            OpenAI-compatible path via their endpoint. */}
         <div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(max(25%_-_1rem,260px),1fr))]">
-          {backendTypes.map((type) => {
+          {PROTOCOL_TYPE_IDS.map((pid) => {
+            const type = backendTypes.find((b) => b.id === pid)
+            if (!type) return null
             const typeInstances = getInstancesForType(type.id)
             const info = getLlmProviderInfo(type.id, t)
+            // Protocol label overrides the raw vendor name (Cloud AI buckets).
+            const protocolName = t(`plugins:llm.protocol.${type.id}.name`, { defaultValue: info.name })
+            const protocolDesc = t(`plugins:llm.protocol.${type.id}.desc`, { defaultValue: type.description })
             const activeInstance = typeInstances.find(i => i.id === activeBackendId)
             const hasActive = !!activeInstance
 
             return (
               <Card
-                key={type.id}
+                key={pid}
                 className={cn(
                   "cursor-pointer transition-all duration-200 hover:shadow-md",
                   hasActive && "border-success border-2"
@@ -763,13 +777,13 @@ export function UnifiedLLMBackendsTab({
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <CardTitle className="text-base truncate min-w-0">{info.name}</CardTitle>
+                        <CardTitle className="text-base truncate min-w-0">{protocolName}</CardTitle>
                         <span className={cn("text-xs font-medium shrink-0", hasActive ? "text-success" : "text-muted-foreground")}>
                           {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
                         </span>
                       </div>
                       <CardDescription className="mt-1 text-xs line-clamp-1">
-                        {type.description}
+                        {protocolDesc}
                       </CardDescription>
                     </div>
                   </div>

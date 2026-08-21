@@ -122,7 +122,25 @@
     "builtinWizardCtxLabel": "Context",
     "builtinWizardStarting": "Starting local model…",
     "switchModel": "Switch Model",
-    "switchModelCta": "Download & replace current model"
+    "switchModelCta": "Download & replace current model",
+    "protocol": {
+      "ollama": {
+        "name": "Ollama (Local)",
+        "desc": "Local Ollama — no API key"
+      },
+      "llamacpp": {
+        "name": "llama.cpp (Local)",
+        "desc": "Local llama.cpp (/v1 OpenAI-compatible)"
+      },
+      "openai": {
+        "name": "Cloud AI · OpenAI-compatible",
+        "desc": "Any OpenAI-compatible endpoint: OpenAI / Qwen / DeepSeek / GLM / xAI / OpenRouter…"
+      },
+      "anthropic": {
+        "name": "Cloud AI · Anthropic",
+        "desc": "Anthropic Messages API"
+      }
+    }
   },
   "yes": "Yes",
   "no": "No",
