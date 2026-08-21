@@ -140,9 +140,13 @@ fn resolve_model(model_id: Option<&str>) -> Result<&'static BuiltinModelDef, Err
 /// Resolve the quant to download for a given model: LFM keeps the existing
 /// quant-override machinery (q4_k_m / q8_0 / qad_q4_0); other models ship a
 /// single canonical quant.
-fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Quant, ErrorResponse> {
+/// Resolve an explicit quant override for LFM (env `quant_override`). `None`
+/// = no override → the registry def wins (LFM downloads QAD Q4_0, the agreed
+/// default, whose sha is verified — the old implicit Q4_K_M default had a
+/// stale sha and downloads kept failing verification).
+fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Option<Quant>, ErrorResponse> {
     let Some(q) = cfg.quant_override.as_deref() else {
-        return Ok(Quant::Q4_K_M);
+        return Ok(None);
     };
     if def.manifest.id != BUILTIN_MODEL_ID {
         return Err(ErrorResponse::bad_request(format!(
@@ -150,9 +154,9 @@ fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Quant, Er
         )));
     }
     match q {
-        "q4_k_m" => Ok(Quant::Q4_K_M),
-        "q8_0" => Ok(Quant::Q8_0),
-        "qad_q4_0" => Ok(Quant::QAD_Q4_0),
+        "q4_k_m" => Ok(Some(Quant::Q4_K_M)),
+        "q8_0" => Ok(Some(Quant::Q8_0)),
+        "qad_q4_0" => Ok(Some(Quant::QAD_Q4_0)),
         other => Err(ErrorResponse::bad_request(format!(
             "unsupported builtin quant: {other}"
         ))),
@@ -180,14 +184,12 @@ fn resolve_source(
     def: &BuiltinModelDef,
 ) -> (String, String, String) {
     if def.manifest.id == BUILTIN_MODEL_ID {
-        if let Ok(quant) = resolve_quant(cfg, def) {
-            if quant != Quant::QAD_Q4_0 {
-                return (
-                    format!("{}/{}", HF_REPO, hf_file_name(quant)),
-                    hf_sha256(quant).to_string(),
-                    model_file_name(quant),
-                );
-            }
+        if let Ok(Some(quant)) = resolve_quant(cfg, def) {
+            return (
+                format!("{}/{}", HF_REPO, hf_file_name(quant)),
+                hf_sha256(quant).to_string(),
+                model_file_name(quant),
+            );
         }
     }
     (
