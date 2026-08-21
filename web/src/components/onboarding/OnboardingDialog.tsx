@@ -13,12 +13,13 @@ import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
 import { useStore } from "@/store"
+import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { useThemeColor } from "@/hooks/useThemeColor"
 import type { SettingsSection } from "@/store/types"
 import {
   Rocket, Sparkles, Cpu, Check, X, ChevronLeft, ChevronRight,
   LayoutDashboard, Zap, Puzzle, MessageSquareText,
-  Terminal, Copy, BookOpen, ExternalLink,
+  Terminal, Copy, BookOpen, ExternalLink, Download,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
@@ -361,6 +362,9 @@ interface SetupItem {
   actionLabel: string
   onAction: () => void
   extra: React.ReactNode
+  /** Optional primary CTA shown before the secondary `actionLabel` button
+      (e.g. the built-in model download in the LLM card). */
+  primaryAction?: { label: string; onClick: () => void }
 }
 
 function SetupStep({
@@ -383,6 +387,7 @@ function SetupStep({
       : "llm"
 
   const [selected, setSelected] = useState<SetupCardId>(defaultSelected)
+  const [builtinWizardOpen, setBuiltinWizardOpen] = useState(false)
 
   // Re-derive selection when the dialog opens (preserves manual selection while open).
   useEffect(() => {
@@ -403,6 +408,10 @@ function SetupStep({
       actionLabel: t("onboarding.setup.llm.action"),
       onAction: () => onAction("/settings?tab=llm"),
       extra: <LlmCliHelper />,
+      primaryAction: {
+        label: t("common:llmGuide.builtinShort"),
+        onClick: () => setBuiltinWizardOpen(true),
+      },
     },
     {
       id: "device",
@@ -463,6 +472,11 @@ function SetupStep({
       <div className="rounded-xl bg-muted-30 p-4 text-center">
         <p className="text-sm text-muted-foreground">{t("onboarding.setup.hint")}</p>
       </div>
+      <BuiltinModelWizard
+        open={builtinWizardOpen}
+        onOpenChange={setBuiltinWizardOpen}
+        onActivated={() => setBuiltinWizardOpen(false)}
+      />
     </div>
   )
 }
@@ -577,8 +591,19 @@ function SetupDetailPane({ item }: { item: SetupItem }) {
         <>
           <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{item.purpose}</p>
           {item.extra}
-          <div className="mt-auto pt-4 flex justify-end">
-            <Button size="sm" onClick={item.onAction} className="gap-1.5">
+          <div className="mt-auto pt-4 flex justify-end gap-2">
+            {item.primaryAction && (
+              <Button size="sm" onClick={item.primaryAction.onClick} className="gap-1.5">
+                <Download className="w-3.5 h-3.5" />
+                {item.primaryAction.label}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant={item.primaryAction ? "secondary" : "default"}
+              onClick={item.onAction}
+              className="gap-1.5"
+            >
               {item.actionLabel}
               <ChevronRight className="w-3.5 h-3.5" />
             </Button>

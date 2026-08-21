@@ -192,7 +192,7 @@ export function AppSidebar() {
           <div className="relative shrink-0">
             {icon}
             {badge && (
-              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-foreground ring-2 ring-background" />
             )}
           </div>
           <span className="ml-3 truncate text-sm">{label}</span>
