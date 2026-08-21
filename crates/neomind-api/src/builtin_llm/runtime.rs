@@ -144,4 +144,31 @@ mod tests {
         assert!(s.contains("llama-server"));
         assert!(s.ends_with(LLAMA_CPP_VERSION));
     }
+
+    #[test]
+    fn extracts_llama_server_from_tarball() {
+        // Build a tiny in-memory tar.gz containing a llama-server entry.
+        use std::io::Write;
+        let mut builder = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(5);
+        header.set_mode(0o755);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "bin/llama-server", std::io::Cursor::new(b"probe"))
+            .unwrap();
+        let uncompressed = builder.into_inner().unwrap();
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&uncompressed).unwrap();
+        let tar_gz = gz.finish().unwrap();
+        let _ = std::fs::remove_file(std::env::temp_dir().join("llama-probe"));
+
+        let out = std::env::temp_dir().join("llama-extract-test");
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        let bin = extract_llama_server(&tar_gz, &out).expect("extract");
+        assert_eq!(bin, out.join("llama-server"));
+        assert_eq!(std::fs::read_to_string(&bin).unwrap(), "probe");
+        let _ = std::fs::remove_dir_all(&out);
+    }
 }

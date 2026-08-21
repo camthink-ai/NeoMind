@@ -8,10 +8,12 @@
 
 use std::path::PathBuf;
 
-/// llama.cpp release tag the runtime is pinned to. Must match
-/// `scripts/build-llama-server.sh` (LLAMA_CPP_TAG) so bundled and downloaded
-/// binaries are the same llama.cpp revision.
-pub const LLAMA_CPP_VERSION: &str = "b10524";
+/// llama.cpp RELEASE tag the on-demand runtime downloads from. Must be a tag
+/// that actually publishes `-bin-{platform}.tar.gz` assets (b10524 and earlier
+/// are git tags WITHOUT release binaries — that's why this differs from
+/// `scripts/build-llama-server.sh`'s source-build pin of b10524). Bump the two
+/// together whenever the source pin moves to a tag with binaries.
+pub const LLAMA_CPP_VERSION: &str = "b10545";
 
 /// Official release asset name for an OS/arch, if one ships.
 pub fn llama_asset_name(os: &str, arch: &str) -> Option<&'static str> {

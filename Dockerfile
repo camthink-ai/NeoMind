@@ -129,6 +129,13 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
 
 FROM ubuntu:22.04 AS runtime
 
+# Which builtin model to pre-bundle into the image (out-of-box agent use).
+#   lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none
+# `none` skips the ~1.5-3GB download — for deployments that bring their own
+# LLM backend or want the smallest image (the in-app wizard can still
+# download a model on demand).
+ARG NEOMIND_BUNDLE_MODEL=lfm25-2.6b
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 # apt-get upgrade patches base-image packages between refreshes (the main
@@ -163,17 +170,34 @@ COPY --from=llamaserver /build/llama.cpp/build/bin/llama-server /usr/local/bin/n
 # Copy frontend build output
 COPY --from=frontend /build/web/dist /var/www/neomind
 
-# Create data directory + pre-bundle the builtin LFM model (QAD Q4_0) for
-# out-of-box agent use. The bootstrap reads the manifest, so both the GGUF
-# and manifest.json must land under /app/data/models/<id>/. The VOLUME at
-# /app/data initializes from this content on first run (named/anon volumes);
-# a bind-mounted /app/data skips the seed (use the download API there).
-RUN mkdir -p /app/data/models/lfm25-2.6b \
-    && curl -fsSL -o /app/data/models/lfm25-2.6b/lfm25-2.6b-qad_q4_0.gguf \
-       https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main/LFM2.5-2.6B-QAD-Q4_0.gguf \
-    && printf '{"id":"lfm25-2.6b","version":"1.0","file_name":"lfm25-2.6b-qad_q4_0.gguf","sha256":"a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03","quant":"qad_q4_0"}' \
-       > /app/data/models/lfm25-2.6b/manifest.json \
-    && chown -R neomind:neomind /app/data
+# Pre-bundle the chosen builtin model (or none). The bootstrap reads the
+# manifest, so both the GGUF and manifest.json must land under
+# /app/data/models/<id>/. The VOLUME at /app/data initializes from this
+# content on first run; a bind-mounted /app/data skips the seed (use the
+# download API there).
+#
+# Each model maps to its HF repo file + the canonical local name + pinned
+# sha (must match crates/neomind-core/src/builtin_llm/manifest.rs).
+RUN set -eu; \
+    mkdir -p /app/data; \
+    id="$NEOMIND_BUNDLE_MODEL"; \
+    case "$id" in \
+      none) echo "NEOMIND_BUNDLE_MODEL=none — no model pre-bundled";; \
+      lfm25-2.6b) \
+        d=/app/data/models/lfm25-2.6b; mkdir -p "$d"; \
+        curl -fsSL -o "$d/lfm25-2.6b-qad_q4_0.gguf" https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF/resolve/main/LFM2.5-2.6B-QAD-Q4_0.gguf; \
+        printf '{"id":"lfm25-2.6b","version":"1.0","file_name":"lfm25-2.6b-qad_q4_0.gguf","sha256":"a247afd6414918eac8e520a9e6137dc271235461ecbe1180462221d5b8d40b03","quant":"qad_q4_0"}' > "$d/manifest.json";; \
+      qwen3.5-4b) \
+        d=/app/data/models/qwen3.5-4b; mkdir -p "$d"; \
+        curl -fsSL -o "$d/qwen3.5-4b-q4_k_m.gguf" https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf; \
+        printf '{"id":"qwen3.5-4b","version":"1.0","file_name":"qwen3.5-4b-q4_k_m.gguf","sha256":"00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4","quant":"q4_k_m"}' > "$d/manifest.json";; \
+      gemma4-e2b) \
+        d=/app/data/models/gemma4-e2b; mkdir -p "$d"; \
+        curl -fsSL -o "$d/gemma-4-E2B_q4_0-it.qat.gguf" https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf/resolve/main/gemma-4-E2B_q4_0-it.qat.gguf; \
+        printf '{"id":"gemma4-e2b","version":"1.0","file_name":"gemma-4-E2B_q4_0-it.qat.gguf","sha256":"fa401b55b07ee70a54c6dae3903c783a6e65064312529ea57175cb5f8dec6634","quant":"qat_q4_0"}' > "$d/manifest.json";; \
+      *) echo "Unknown NEOMIND_BUNDLE_MODEL: $id" >&2; exit 1;; \
+    esac; \
+    chown -R neomind:neomind /app/data
 
 # Environment defaults
 ENV NEOMIND_WEB_DIR=/var/www/neomind
