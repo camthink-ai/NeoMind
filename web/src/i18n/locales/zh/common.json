@@ -907,8 +907,6 @@
     "ownDesc": "Ollama / llama.cpp / OpenAI 等云厂商",
     "builtinShort": "下载内置模型",
     "ownShort": "配置后端",
-    "bannerTitle": "Agent 需要 AI 模型才能运行",
-    "bannerDesc": "内置模型一键下载、离线可用、无需 API key；或接入你自己的 LLM 后端。",
     "footnote": "配置完成后，对话、设备、规则、仪表盘都可以用自然语言完成。",
     "recommended": "推荐",
     "builtinTitleShort": "内置模型",

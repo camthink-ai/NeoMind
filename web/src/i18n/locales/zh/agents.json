@@ -696,5 +696,7 @@
     "save": "保存",
     "saving": "保存中"
   },
-  "executionNotFound": "未找到执行记录"
+  "executionNotFound": "未找到执行记录",
+  "noAgentsNoBackendDesc": "Agent 需要 AI 模型才能运行。先下载内置模型（离线可用、无需 API key），或配置你自己的后端。",
+  "createAgentAnyway": "先创建 Agent，稍后再配模型 →"
 }

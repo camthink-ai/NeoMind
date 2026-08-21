@@ -13,7 +13,7 @@ import { useDataVersion } from "@/hooks/useDataVersion"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { PageLayout } from "@/components/layout/PageLayout"
-import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
+import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { PageTabsBar, PageTabsContent, PageTabsBottomNav, Pagination } from "@/components/shared"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { api } from "@/lib/api"
@@ -23,7 +23,7 @@ import { useEvents } from "@/hooks/useEvents"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { showErrorToast } from "@/lib/error-messages"
 import { useIsMobile } from "@/hooks/useMobile"
-import { Bot, Plus, Brain, Cpu, Settings, BookOpen, Edit, Play, FileText, Wrench, Search } from "lucide-react"
+import { Bot, Plus, Brain, Cpu, Settings, BookOpen, Edit, Play, FileText, Wrench, Search, Download, Server } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -67,7 +67,9 @@ export function AgentsPage() {
   const llmBackends = useStore((s) => s.llmBackends)
   const llmBackendLoading = useStore((s) => s.llmBackendLoading)
   const loadBackends = useStore((s) => s.loadBackends)
+  const openSettings = useStore((s) => s.openSettings)
   useEffect(() => { loadBackends() }, [loadBackends])
+  const [agentWizardOpen, setAgentWizardOpen] = useState(false)
 
   // Determine active tab from URL path
   const getTabFromPath = () => {
@@ -625,24 +627,55 @@ export function AgentsPage() {
       }
     >
       <PageTabsContent value="agents" activeTab={activeTab}>
-        {/* No LLM backend yet → agents can be created but never run. Guide
-            the user to a model before they wonder why nothing executes. */}
-        {llmBackends.length === 0 && !llmBackendLoading && (
-          <LlmSetupGuide variant="banner" />
-        )}
         {agents.length === 0 && loading ? (
           <LoadingState variant="page" />
         ) : agents.length === 0 ? (
           <div className="flex min-h-[500px] items-center justify-center">
-            <EmptyState
-              icon={<Bot className="h-12 w-12" />}
-              title={tAgent('noAgents')}
-              description={tAgent('noAgentsDesc')}
-              action={{
-                label: tAgent('createAgent'),
-                onClick: handleCreate,
-              }}
-            />
+            {llmBackends.length === 0 && !llmBackendLoading ? (
+              /* No backend — same empty-state visual, but the guidance swaps:
+                 agents are inert without a model, so the CTAs lead with model
+                 setup; creating an agent first stays reachable via text link. */
+              <div className="text-center max-w-md px-6">
+                <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
+                  <Bot className="size-7" />
+                </div>
+                <h2 className="mb-2 text-lg font-semibold tracking-tight">{tAgent('noAgents')}</h2>
+                <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
+                  {tAgent('noAgentsNoBackendDesc')}
+                </p>
+                <div className="flex flex-col items-center gap-3">
+                  <Button className="w-full h-11 sm:h-10 gap-2" onClick={() => setAgentWizardOpen(true)}>
+                    <Download className="h-4 w-4" />
+                    {tCommon('llmGuide.builtinShort')}
+                  </Button>
+                  <Button variant="secondary" className="w-full h-11 sm:h-10 gap-2" onClick={() => openSettings('llm')}>
+                    <Server className="h-4 w-4" />
+                    {tCommon('llmGuide.ownShort')}
+                  </Button>
+                </div>
+                <button
+                  className="mt-4 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={handleCreate}
+                >
+                  {tAgent('createAgentAnyway')}
+                </button>
+                <BuiltinModelWizard
+                  open={agentWizardOpen}
+                  onOpenChange={setAgentWizardOpen}
+                  onActivated={() => setAgentWizardOpen(false)}
+                />
+              </div>
+            ) : (
+              <EmptyState
+                icon={<Bot className="h-12 w-12" />}
+                title={tAgent('noAgents')}
+                description={tAgent('noAgentsDesc')}
+                action={{
+                  label: tAgent('createAgent'),
+                  onClick: handleCreate,
+                }}
+              />
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 @md:grid-cols-2 @lg:grid-cols-3 @xl:grid-cols-4 gap-4">

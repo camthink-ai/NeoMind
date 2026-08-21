@@ -907,8 +907,6 @@
     "ownDesc": "Ollama / llama.cpp / OpenAI and other providers",
     "builtinShort": "Built-in model",
     "ownShort": "Configure",
-    "bannerTitle": "Agents need an AI model to run",
-    "bannerDesc": "One-click built-in model (offline, no API key) — or connect your own LLM backend.",
     "footnote": "Once set up, chat, devices, rules and dashboards all happen through conversation.",
     "recommended": "Recommended",
     "builtinTitleShort": "Built-in Model",

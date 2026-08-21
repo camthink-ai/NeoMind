@@ -708,7 +708,7 @@ export function ChatPage() {
 
   // Show LLM setup prompt if not configured (only after loading completes)
   if (!llmBackendLoading && (!llmBackends || llmBackends.length === 0)) {
-    return <LlmSetupGuide variant="full" />
+    return <LlmSetupGuide />
   }
 
   return (

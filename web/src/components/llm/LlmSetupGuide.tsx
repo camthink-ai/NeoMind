@@ -3,7 +3,7 @@
  *
  * One story on every surface: the built-in model is the fastest path
  * (one click, offline, no API key), bring-your-own-backend is the second.
- * Used full-screen (chat) and as a page banner (agents). The explanatory
+ * Used full-screen (chat empty state). The explanatory
  * copy folds in the onboarding guide's LLM section — why an AI brain
  * matters — so the empty state teaches instead of just blocking.
  */
@@ -13,15 +13,9 @@ import { useTranslation } from 'react-i18next'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { Cpu, Server, ChevronRight, Download } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 
-interface LlmSetupGuideProps {
-  /** Full-screen centered card (chat empty state) */
-  variant?: 'full' | 'banner'
-}
-
-export function LlmSetupGuide({ variant = 'full' }: LlmSetupGuideProps) {
+export function LlmSetupGuide() {
   const { t } = useTranslation(['common'])
   const openSettings = useStore((s) => s.openSettings)
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -33,35 +27,6 @@ export function LlmSetupGuide({ variant = 'full' }: LlmSetupGuideProps) {
       onActivated={() => setWizardOpen(false)}
     />
   )
-
-  if (variant === 'banner') {
-    return (
-      <div className="mx-4 sm:mx-6 mt-4 rounded-xl border border-primary bg-primary-light p-4">
-        <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-center">
-          <div className="flex size-11 items-center justify-center rounded-xl bg-primary-light text-primary shrink-0">
-            <Cpu className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold">{t('common:llmGuide.bannerTitle')}</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
-              {t('common:llmGuide.bannerDesc')}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <Button size="sm" onClick={() => setWizardOpen(true)}>
-              <Download className="mr-1.5 h-3.5 w-3.5" />
-              {t('common:llmGuide.builtinShort')}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => openSettings('llm')}>
-              <Server className="mr-1.5 h-3.5 w-3.5" />
-              {t('common:llmGuide.ownShort')}
-            </Button>
-          </div>
-        </div>
-        {wizard}
-      </div>
-    )
-  }
 
   return (
     <div className={cn('flex items-center justify-center', 'h-full', 'bg-background')}>
