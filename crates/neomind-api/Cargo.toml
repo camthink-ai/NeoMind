@@ -105,6 +105,8 @@ cron = "0.12"
 
 # ZIP archive support
 zip = "2"
+tar = "0.4"
+flate2 = "1"
 
 # Image processing (decode headers for dimensions)
 image = { workspace = true }

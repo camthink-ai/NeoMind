@@ -26,7 +26,7 @@ use serde_json::json;
 
 use neomind_agent::llm_backends::{get_instance_manager, LlmBackendInstanceManager};
 use neomind_agent::LlmBackend;
-use neomind_core::builtin_llm::find::find_llama_server;
+use super::runtime::ensure_llama_server;
 use neomind_core::builtin_llm::manifest::{
     load_manifest, save_manifest, model_def, BuiltinModelDef, ModelManifest,
     BUILTIN_MODELS, BUILTIN_MODEL_ID,
@@ -165,7 +165,7 @@ fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Quant, Er
 /// Returns the *on-disk* manifest (its `file_name` is the real file — e.g.
 /// Docker may pre-bundle QAD under the QAD name) plus the registry def (for
 /// ctx/name/thinking flags).
-fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> {
+pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> {
     BUILTIN_MODELS.iter().find_map(|def| {
         let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
         manifest.model_path(mdir).exists().then(|| (def.clone(), manifest))
@@ -475,7 +475,9 @@ async fn spawn_builtin_server(
     cfg: &BuiltinConfig,
     manager: &LlmBackendInstanceManager,
 ) -> anyhow::Result<String> {
-    let binary = find_llama_server().map_err(|e| anyhow::anyhow!(e))?;
+    let binary = ensure_llama_server(data_dir)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
     let mdir = models_dir(data_dir);
     let (def, installed_manifest) = installed_model(&mdir)
         .ok_or_else(|| anyhow::anyhow!("model not installed (no manifest)"))?;

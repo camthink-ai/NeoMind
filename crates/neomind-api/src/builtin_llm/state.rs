@@ -9,13 +9,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use neomind_agent::llm_backends::LlmBackendInstanceManager;
-use neomind_core::builtin_llm::{
-    find::find_llama_server,
-    manifest::{load_manifest, BUILTIN_MODEL_ID},
-};
+use neomind_core::builtin_llm::manifest::{load_manifest, BuiltinModelDef, ModelManifest, BUILTIN_MODEL_ID};
 use neomind_storage::{LlmBackendInstance, LlmBackendType};
 
 use super::config::BuiltinConfig;
+use super::handlers::installed_model;
+use super::runtime::ensure_llama_server;
 use super::server::{health_check, LlamaServerConfig, LlamaServerProcess};
 
 /// Stable instance id for the builtin bundled model (survives restarts).
@@ -66,18 +65,17 @@ pub async fn bootstrap(
         return BootstrapOutcome::ServerAlreadyRunning;
     }
 
-    let binary = match find_llama_server() {
+    let binary = match ensure_llama_server(data_dir).await {
         Ok(b) => b,
-        Err(e) => return BootstrapOutcome::Failed(format!("bundled server missing: {}", e)),
+        Err(e) => return BootstrapOutcome::Failed(format!("llama-server unavailable: {}", e)),
     };
 
     let mdir = models_dir(data_dir);
-    let manifest = match load_manifest(&mdir, BUILTIN_MODEL_ID) {
-        Ok(Some(m)) => m,
-        Ok(None) => return BootstrapOutcome::ModelMissing,
-        Err(e) => return BootstrapOutcome::Failed(format!("manifest read failed: {}", e)),
+    let Some((def, manifest)): Option<(BuiltinModelDef, ModelManifest)> =
+        installed_model(&mdir)
+    else {
+        return BootstrapOutcome::ModelMissing;
     };
-
     let model_path = cfg
         .model_path
         .clone()
@@ -91,7 +89,7 @@ pub async fn bootstrap(
         binary,
         model: model_path,
         port: cfg.port,
-        ctx: cfg.ctx,
+        ctx: def.default_ctx as usize,
         ngl: cfg.ngl,
         threads: None,
     };
@@ -123,14 +121,15 @@ pub async fn bootstrap(
         }
         None => LlmBackendInstance::new(
             BUILTIN_INSTANCE_ID.to_string(),
-            "LFM2.5-2.6B (内置)".to_string(),
+            format!("{} (内置)", def.display_name),
             LlmBackendType::LlamaCpp,
         ),
     };
     instance.is_builtin = true;
-    instance.thinking_is_integral = true;
+    instance.thinking_is_integral = def.manifest.id == BUILTIN_MODEL_ID;
+    instance.thinking_enabled = def.default_thinking;
     instance.endpoint = Some(endpoint.clone());
-    instance.model = BUILTIN_MODEL_ID.to_string();
+    instance.model = def.manifest.id.clone();
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。
