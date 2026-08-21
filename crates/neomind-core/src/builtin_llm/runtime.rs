@@ -69,8 +69,10 @@ mod tests {
         assert_eq!(llama_asset_name("macos", "x86_64"), Some("macos-x64"));
         assert_eq!(llama_asset_name("linux", "x86_64"), Some("ubuntu-x64"));
         assert_eq!(llama_asset_name("linux", "aarch64"), Some("ubuntu-arm64"));
+        assert_eq!(llama_asset_name("windows", "x86_64"), Some("win-cpu-x64"));
+        assert_eq!(llama_asset_name("windows", "aarch64"), Some("win-cpu-arm64"));
         assert_eq!(llama_asset_name("linux", "s390x"), None);
-        assert_eq!(llama_asset_name("windows", "x86_64"), None);
+        assert_eq!(llama_asset_name("freebsd", "x86_64"), None);
     }
 
     #[test]
