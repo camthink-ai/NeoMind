@@ -7,7 +7,8 @@ use std::sync::{Arc, OnceLock};
 
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::runtime::{
-    llama_asset_name, llama_server_cache_dir, llama_server_url, LLAMA_CPP_VERSION,
+    llama_asset_is_zip, llama_asset_name, llama_server_bin_name, llama_server_cache_dir,
+    llama_server_cache_name, llama_server_url, LLAMA_CPP_VERSION,
 };
 
 /// Single-flight gate so concurrent ensure_llama_server calls don't download
@@ -36,7 +37,7 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
     }
 
     let cache_dir = llama_server_cache_dir(data_dir);
-    let cached = cache_dir.join("neomind-llama-server");
+    let cached = cache_dir.join(llama_server_cache_name());
     if cached.exists() {
         return Ok(cached);
     }
@@ -59,7 +60,7 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
     tracing::info!(url = %url, "builtin llm: downloading llama-server runtime");
 
     RUNTIME_DL_ACTIVE.store(true, Ordering::SeqCst);
-    let result = download_runtime(&url, &cache_dir).await;
+    let result = download_runtime(&url, &cache_dir, llama_asset_is_zip(&asset)).await;
     RUNTIME_DL_ACTIVE.store(false, Ordering::SeqCst);
     result
 }
@@ -69,7 +70,7 @@ pub fn runtime_download_active() -> bool {
     RUNTIME_DL_ACTIVE.load(Ordering::SeqCst)
 }
 
-async fn download_runtime(url: &str, cache_dir: &Path) -> Result<PathBuf, String> {
+async fn download_runtime(url: &str, cache_dir: &Path, is_zip: bool) -> Result<PathBuf, String> {
     let client = reqwest::Client::new();
     let tmp = std::env::temp_dir().join(format!(
         "neomind-llama-runtime-{}",
@@ -91,11 +92,11 @@ async fn download_runtime(url: &str, cache_dir: &Path) -> Result<PathBuf, String
         .await
         .map_err(|e| format!("read llama.cpp runtime: {e}"))?;
 
-    // Extract `llama-server` from the release tarball.
-    let bin = extract_llama_server(&bytes, &tmp).map_err(|e| e.to_string())?;
+    // Extract `llama-server` from the release archive (zip on Windows).
+    let bin = extract_llama_server(&bytes, &tmp, is_zip).map_err(|e| e.to_string())?;
 
     std::fs::create_dir_all(cache_dir).map_err(|e| format!("create cache dir: {e}"))?;
-    let dest = cache_dir.join("neomind-llama-server");
+    let dest = cache_dir.join(llama_server_cache_name());
     std::fs::rename(&bin, &dest).map_err(|e| format!("move runtime into cache: {e}"))?;
     #[cfg(unix)]
     {
@@ -109,23 +110,38 @@ async fn download_runtime(url: &str, cache_dir: &Path) -> Result<PathBuf, String
     Ok(dest)
 }
 
-fn extract_llama_server(tar_gz: &[u8], out_dir: &Path) -> anyhow::Result<PathBuf> {
-    use flate2::read::GzDecoder;
-    let gz = GzDecoder::new(tar_gz);
-    let mut ar = tar::Archive::new(gz);
-    let entries = ar.entries()?;
-    let mut found: Option<PathBuf> = None;
-    for entry in entries {
-        let mut entry = entry?;
-        let path = entry.path()?.into_owned();
-        if path.file_name().map(|n| n == "llama-server").unwrap_or(false) {
-            let dest = out_dir.join("llama-server");
-            entry.unpack(&dest)?;
-            found = Some(dest);
-            break;
+fn extract_llama_server(bytes: &[u8], out_dir: &Path, is_zip: bool) -> anyhow::Result<PathBuf> {
+    let bin_name = llama_server_bin_name();
+    if is_zip {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+        let target = zip
+            .file_names()
+            .find(|n| Path::new(n).file_name().map(|f| f == bin_name).unwrap_or(false))
+            .map(|n| n.to_string())
+            .ok_or_else(|| anyhow::anyhow!("{bin_name} not found in release zip"))?;
+        let mut entry = zip.by_name(&target)?;
+        let dest = out_dir.join(bin_name);
+        let mut out = std::fs::File::create(&dest)?;
+        std::io::copy(&mut entry, &mut out)?;
+        Ok(dest)
+    } else {
+        use flate2::read::GzDecoder;
+        let gz = GzDecoder::new(bytes);
+        let mut ar = tar::Archive::new(gz);
+        let entries = ar.entries()?;
+        let mut found: Option<PathBuf> = None;
+        for entry in entries {
+            let mut entry = entry?;
+            let path = entry.path()?.into_owned();
+            if path.file_name().map(|n| n == bin_name).unwrap_or(false) {
+                let dest = out_dir.join(bin_name);
+                entry.unpack(&dest)?;
+                found = Some(dest);
+                break;
+            }
         }
+        found.ok_or_else(|| anyhow::anyhow!("{bin_name} not found in release tarball"))
     }
-    found.ok_or_else(|| anyhow::anyhow!("llama-server not found in release tarball"))
 }
 
 /// Version tag for diagnostics/logging.
@@ -166,9 +182,29 @@ mod tests {
         let out = std::env::temp_dir().join("llama-extract-test");
         let _ = std::fs::remove_dir_all(&out);
         std::fs::create_dir_all(&out).unwrap();
-        let bin = extract_llama_server(&tar_gz, &out).expect("extract");
+        let bin = extract_llama_server(&tar_gz, &out, false).expect("extract");
         assert_eq!(bin, out.join("llama-server"));
         assert_eq!(std::fs::read_to_string(&bin).unwrap(), "probe");
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn extracts_llama_server_from_zip() {
+        use std::io::Write;
+        let mut zip_buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut zip_buf);
+            zw.start_file("bin/llama-server.exe", zip::write::FileOptions::default())
+                .unwrap();
+            zw.write_all(b"probe-exe").unwrap();
+            zw.finish().unwrap();
+        }
+        let out = std::env::temp_dir().join("llama-extract-zip-test");
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        let bin = extract_llama_server(zip_buf.get_ref(), &out, true).expect("extract zip");
+        assert_eq!(bin, out.join("llama-server.exe"));
+        assert_eq!(std::fs::read_to_string(&bin).unwrap(), "probe-exe");
         let _ = std::fs::remove_dir_all(&out);
     }
 }
