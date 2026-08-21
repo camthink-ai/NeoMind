@@ -814,7 +814,32 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
     }
 
+    /// Pin the builtin port to a just-freed ephemeral port for the duration
+    /// of the closure. The status handler health-checks `cfg.port` — with the
+    /// default 8081 the tests collided with any live dev instance's
+    /// llama-server (reported "running" instead of "stopped", and the panic
+    /// poisoned the shared serial lock for the following tests).
+    async fn with_ephemeral_port<F, Fut>(f: F) -> serde_json::Value
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = serde_json::Value>,
+    {
+        let port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").expect("ephemeral bind");
+            l.local_addr().expect("addr").port()
+        };
+        let prev = std::env::var("NEOMIND_BUILTIN_LLM_PORT").ok();
+        std::env::set_var("NEOMIND_BUILTIN_LLM_PORT", port.to_string());
+        let out = f().await;
+        match prev {
+            Some(v) => std::env::set_var("NEOMIND_BUILTIN_LLM_PORT", v),
+            None => std::env::remove_var("NEOMIND_BUILTIN_LLM_PORT"),
+        }
+        out
+    }
+
     async fn status_body(data_dir: PathBuf) -> serde_json::Value {
+        with_ephemeral_port(|| async {
         let mut state = ServerState::new_for_testing().await;
         state.data_dir = data_dir;
         let app = Router::new()
@@ -834,6 +859,8 @@ mod tests {
             .await
             .unwrap();
         serde_json::from_slice(&body).unwrap()
+        })
+        .await
     }
 
     #[tokio::test]

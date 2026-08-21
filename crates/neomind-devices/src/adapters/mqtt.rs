@@ -2608,6 +2608,48 @@ fn extract_device_id_from_topic_weak(topic: &str) -> Option<String> {
 /// ① explicit `config.device_id_field` wins (comma-separated list, tried in
 /// order); ② otherwise auto-detect common fields (device_id / deviceId / sn /
 /// mac / mac_address / ...).
+/// Wrapper keys gateways commonly nest telemetry under. Identity lookup
+/// descends ONE level into these when the field isn't at the top level
+/// (e.g. `{"data": {"device_id": "x"}}`).
+const ID_WRAPPER_KEYS: &[&str] = &["data", "payload", "state", "params", "body", "device"];
+
+/// Resolve a field to a string: dotted paths walk (`data.sn`), plain names
+/// check the top level first and then one level inside the wrapper keys.
+fn lookup_id_field<'a>(
+    root: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<&'a str> {
+    if field.contains('.') {
+        // Dotted path: walk segments through nested objects; the leaf must
+        // be a non-empty string. `Value::get` returns None on non-objects,
+        // which is the walk's natural stop.
+        let mut segs = field.split('.');
+        let first = segs.next()?;
+        let mut cur: &serde_json::Value = root.get(first)?;
+        for seg in segs {
+            cur = cur.get(seg)?;
+        }
+        return cur.as_str().filter(|s| !s.is_empty());
+    }
+    // Plain name: top level first…
+    if let Some(v) = root.get(field).and_then(serde_json::Value::as_str) {
+        if !v.is_empty() {
+            return Some(v);
+        }
+    }
+    // …then one level inside common wrappers.
+    for w in ID_WRAPPER_KEYS {
+        if let Some(inner) = root.get(*w).and_then(serde_json::Value::as_object) {
+            if let Some(v) = inner.get(field).and_then(serde_json::Value::as_str) {
+                if !v.is_empty() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) -> Option<String> {
     let json: serde_json::Value = serde_json::from_slice(payload).ok()?;
     let obj = json.as_object()?;
@@ -2615,16 +2657,15 @@ fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) ->
     if let Some(fields) = config.device_id_field.as_deref() {
         // Candidate list, tried in order — gateway payloads vary per
         // firmware, so operators can chain fallbacks. Separators: newline
-        // (the UI is one-field-per-line) and comma (API callers).
+        // (the UI is one-field-per-line) and comma (API callers). Dotted
+        // paths (`data.sn`) walk nested objects.
         for field in fields
             .split([',', '\n', '\r'])
             .map(str::trim)
             .filter(|f| !f.is_empty())
         {
-            if let Some(v) = obj.get(field).and_then(serde_json::Value::as_str) {
-                if !v.is_empty() {
-                    return Some(v.to_string());
-                }
+            if let Some(v) = lookup_id_field(obj, field) {
+                return Some(v.to_string());
             }
         }
     }
@@ -2666,6 +2707,22 @@ fn extract_device_id_from_payload(payload: &[u8], config: &MqttAdapterConfig) ->
             if let Some(s) = v.1.as_str() {
                 if !s.is_empty() {
                     return Some(s.to_string());
+                }
+            }
+        }
+    }
+    // Same candidates one level inside common wrappers — gateways often
+    // nest identity with the telemetry (`{"data":{"device_id":"x"}}`).
+    for w in ID_WRAPPER_KEYS {
+        let Some(inner) = obj.get(*w).and_then(serde_json::Value::as_object) else {
+            continue;
+        };
+        for key in CANDIDATES {
+            if let Some(v) = inner.iter().find(|(k, _)| k.to_ascii_lowercase() == *key) {
+                if let Some(s) = v.1.as_str() {
+                    if !s.is_empty() {
+                        return Some(s.to_string());
+                    }
                 }
             }
         }
@@ -2985,6 +3042,60 @@ mod tests {
             )
             .as_deref(),
             Some("gw-42")
+        );
+    }
+
+    #[test]
+    fn test_extract_device_id_nested_wrapper() {
+        let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+        // auto-detect descends into common wrappers
+        assert_eq!(
+            extract_device_id_from_payload(
+                b"{\"data\":{\"device_id\":\"nested-1\",\"temperature\":21}}",
+                &cfg
+            )
+            .as_deref(),
+            Some("nested-1")
+        );
+        // explicit plain field also descends
+        let cfg2 = MqttAdapterConfig {
+            device_id_field: Some("sn".to_string()),
+            ..MqttAdapterConfig::new("test", "localhost:1883")
+        };
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"payload\":{\"sn\":\"SN-9\"}}", &cfg2).as_deref(),
+            Some("SN-9")
+        );
+        // dotted path walks explicitly
+        let cfg3 = MqttAdapterConfig {
+            device_id_field: Some("state.meta.mac".to_string()),
+            ..MqttAdapterConfig::new("test", "localhost:1883")
+        };
+        assert_eq!(
+            extract_device_id_from_payload(
+                b"{\"state\":{\"meta\":{\"mac\":\"aa:bb\"}}}",
+                &cfg3
+            )
+            .as_deref(),
+            Some("aa:bb")
+        );
+        // top level wins over nested
+        let cfg4 = MqttAdapterConfig {
+            device_id_field: Some("sn".to_string()),
+            ..MqttAdapterConfig::new("test", "localhost:1883")
+        };
+        assert_eq!(
+            extract_device_id_from_payload(
+                b"{\"sn\":\"TOP\",\"data\":{\"sn\":\"NESTED\"}}",
+                &cfg4
+            )
+            .as_deref(),
+            Some("TOP")
+        );
+        // non-string leaf / broken path -> None
+        assert_eq!(
+            extract_device_id_from_payload(b"{\"data\":{\"device_id\":42}}", &cfg).as_deref(),
+            None
         );
     }
 
