@@ -548,6 +548,15 @@ llama_asset() {
 # official prebuilt binaries so the built-in LLM works out of the box.
 install_llm_runtime() {
     [ "$WITH_LLM" = "true" ] || return 0
+    # The prebuilt binaries link OpenMP — on glibc Linux they need libgomp1
+    # (identical to the Docker runtime stage's libgomp1 fix). Missing → the
+    # binary fails to exec with "libgomp.so.1: cannot open shared object".
+    if command -v apt-get >/dev/null 2>&1; then
+        if ! ldconfig -p 2>/dev/null | grep -q 'libgomp.so.1'; then
+            status "Installing libgomp1 (llama.cpp OpenMP dependency)..."
+            apt-get install -y -qq libgomp1 >/dev/null 2>&1 ||                 warning "Could not install libgomp1 — neomind-llama-server may fail to start"
+        fi
+    fi
     local asset url tmp bin
     if ! asset=$(llama_asset); then
         warning "No official llama.cpp prebuilt for ${OS}/${ARCH} — skipping LLM runtime (build from source via scripts/build-llama-server.sh)"
@@ -559,8 +568,18 @@ install_llm_runtime() {
     if curl -fsSL "$url" -o "$tmp/llama.tar.gz" && tar -xzf "$tmp/llama.tar.gz" -C "$tmp"; then
         bin=$(find "$tmp" -name llama-server -type f | head -n1)
         if [ -n "$bin" ]; then
-            $SUDO install -m 0755 "$bin" "${INSTALL_DIR}/neomind-llama-server"
-            success "Installed neomind-llama-server -> ${INSTALL_DIR}/neomind-llama-server"
+            # The binary is a THIN WRAPPER that dlopens sibling libraries
+            # (macOS libllama-server-impl.dylib, Linux libllama-server-impl.so,
+            # Windows .dll) — installing only llama-server makes it fail to
+            # exec. Copy the whole extraction tree (binary + libs together)
+            # into INSTALL_DIR, then rename the binary.
+            libdir=$(dirname "$bin")
+            $SUDO cp -r "$libdir"/. "${INSTALL_DIR}/"
+            if [ "$libdir" != "${INSTALL_DIR}" ]; then
+                $SUDO mv "${INSTALL_DIR}/$(basename "$bin")" "${INSTALL_DIR}/neomind-llama-server"
+            fi
+            $SUDO chmod 0755 "${INSTALL_DIR}/neomind-llama-server"
+            success "Installed neomind-llama-server (whole archive) -> ${INSTALL_DIR}/neomind-llama-server"
         else
             warning "llama-server not found in the release archive"
         fi
