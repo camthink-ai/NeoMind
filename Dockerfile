@@ -144,7 +144,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # line below — the image then grows to ~450MB.
 RUN apt-get update && apt-get upgrade -y && \
     apt-get install -y --no-install-recommends ca-certificates curl tzdata \
-        python3 python3-pip python-is-python3 && \
+        python3 python3-pip python-is-python3 \
+        libgomp1 && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --system neomind && useradd --system --gid neomind --home-dir /app neomind
 
@@ -154,7 +155,9 @@ WORKDIR /app
 COPY --from=backend /build/target/release/neomind /usr/local/bin/neomind
 COPY --from=backend /build/target/release/neomind-extension-runner /usr/local/bin/neomind-extension-runner
 
-# Copy the bundled llama-server (spawned by the builtin LFM bootstrap)
+# Copy the bundled llama-server (spawned by the builtin LFM bootstrap).
+# NOTE: links against libgomp (OpenMP) — the runtime stage's `libgomp1` is
+# what makes this binary exec; removing it silently breaks the builtin LLM.
 COPY --from=llamaserver /build/llama.cpp/build/bin/llama-server /usr/local/bin/neomind-llama-server
 
 # Copy frontend build output
