@@ -56,6 +56,7 @@ import type {
   UpdateLlmBackendRequest,
   LlmBackendListResponse,
   BuiltinLlmStatus,
+  BuiltinModelDef,
   BackendTypeDefinition,
   BackendTestResult,
   AdapterType,
@@ -1018,10 +1019,17 @@ export const api = {
    * Start / resume the model download (single-flight on the server).
    * POST /api/builtin-llm/download
    */
-  downloadBuiltinLlm: () =>
+  downloadBuiltinLlm: (modelId?: string) =>
     fetchAPI<{ started: boolean; already_running: boolean }>('/builtin-llm/download', {
       method: 'POST',
+      body: modelId ? JSON.stringify({ model_id: modelId }) : undefined,
     }),
+  /**
+   * List installable builtin models with per-entry install state.
+   * GET /api/builtin-llm/models
+   */
+  getBuiltinModels: () =>
+    fetchAPI<{ models: BuiltinModelDef[]; default_model_id: string }>('/builtin-llm/models'),
   /**
    * Delete the downloaded model files (stops the server first).
    * DELETE /api/builtin-llm/model

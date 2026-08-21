@@ -30,6 +30,7 @@ import {
   FullScreenDialogFooter,
 } from '@/components/automation/dialog'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Progress } from '@/components/ui/progress'
 import {
   AlertCircle,
@@ -46,7 +47,7 @@ import {
 import { api } from '@/lib/api'
 import { useEvents } from '@/hooks/useEvents'
 import type { ModelDownloadProgressEvent } from '@/lib/events'
-import type { BuiltinLlmStatus } from '@/types'
+import type { BuiltinLlmStatus, BuiltinModelDef } from '@/types'
 
 const STATUS_POLL_MS = 2000
 
@@ -106,6 +107,8 @@ export function BuiltinModelWizard({
 
   const [phase, setPhase] = useState<WizardPhase>('loading')
   const [status, setStatus] = useState<BuiltinLlmStatus | null>(null)
+  const [models, setModels] = useState<BuiltinModelDef[]>([])
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [retryAction, setRetryAction] = useState<RetryAction>('download')
   const [progress, setProgress] = useState<DownloadProgressState>({
@@ -220,6 +223,21 @@ export function BuiltinModelWizard({
       }
     }
     poll()
+    api
+      .getBuiltinModels()
+      .then((r) => {
+        setModels(r.models)
+        // Pre-select: already-installed → recommended → default id → first.
+        const preferred =
+          r.models.find((m) => m.installed) ??
+          r.models.find((m) => m.recommended) ??
+          r.models.find((m) => m.id === r.default_model_id) ??
+          r.models[0]
+        if (preferred) setSelectedModelId(preferred.id)
+      })
+      .catch(() => {
+        // Transient — the picker just stays empty and the poll retries status.
+      })
     const timer = window.setInterval(poll, STATUS_POLL_MS)
     return () => {
       cancelled = true
@@ -284,11 +302,11 @@ export function BuiltinModelWizard({
     }
   }, [status, open, hasActiveBackend, handleActivate])
 
-  const handleStartDownload = async () => {
+  const handleStartDownload = async (modelId?: string) => {
     setErrorMsg(null)
     downloadFailedRef.current = false
     try {
-      await api.downloadBuiltinLlm()
+      await api.downloadBuiltinLlm(modelId)
       // Optimistically switch to the downloading phase; live WS events supply
       // real progress numbers (and the poll confirms/resumes if the socket is
       // not delivering).
@@ -374,11 +392,62 @@ export function BuiltinModelWizard({
             )}
 
             {phase === 'idle' && (
-              <div className="space-y-4 rounded-lg border border-border bg-card p-5">
+              <div className="space-y-3 rounded-lg border border-border bg-card p-5">
                 <p className="text-sm text-muted-foreground leading-relaxed">
                   {t('plugins:llm.builtinWizardIdleHint')}
                 </p>
-                <Button size="lg" className="w-full" onClick={handleStartDownload}>
+                {/* Model picker — one builtin model at a time; pick then
+                    download (installed model is marked and pre-selected). */}
+                <div className="grid grid-cols-1 gap-2">
+                  {models.length === 0 && (
+                    <div className="text-xs text-muted-foreground text-center py-2">
+                      {t('plugins:llm.builtinWizardNoModels')}
+                    </div>
+                  )}
+                  {models.map((m) => {
+                    const selected = selectedModelId === m.id
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => setSelectedModelId(m.id)}
+                        className={cn(
+                          'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                          selected
+                            ? 'border-primary bg-primary-light'
+                            : 'border-border hover:border-primary'
+                        )}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{m.name}</span>
+                            {m.recommended && (
+                              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
+                                {t('common:llmGuide.recommended')}
+                              </span>
+                            )}
+                            {m.installed && (
+                              <span className="rounded-full bg-success-light px-1.5 py-0.5 text-[10px] font-medium text-success">
+                                {t('plugins:llm.installed')}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                            {m.notes}
+                          </p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {(m.size_bytes / 1e9).toFixed(1)} GB · {m.quant}
+                          </p>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+                <Button
+                  size="lg"
+                  className="w-full"
+                  disabled={!selectedModelId}
+                  onClick={() => handleStartDownload(selectedModelId ?? undefined)}
+                >
                   <Download className="mr-2 h-4 w-4" />
                   {t('plugins:llm.builtinWizardStart')}
                 </Button>

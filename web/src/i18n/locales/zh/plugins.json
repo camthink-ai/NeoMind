@@ -94,7 +94,7 @@
     "builtinWizardOfflineLabel": "离线运行",
     "builtinWizardOfflineValue": "无需联网 · 数据不出设备",
     "builtinWizardStart": "开始下载",
-    "builtinWizardIdleHint": "下载约 1.5GB，完成后自动激活；可在后台继续。",
+    "builtinWizardIdleHint": "选择要下载的内置模型——下载完成后自动激活，可后台继续。",
     "builtinWizardDownloadingHint": "下载可在后台继续，关闭此窗口不会中断",
     "builtinWizardActivating": "正在激活…",
     "builtinWizardReady": "已就绪",
@@ -104,7 +104,9 @@
     "builtinWizardErrorTitle": "出错了",
     "builtinWizardErrorDesc": "{{message}}",
     "builtinWizardEngineStopped": "引擎未运行，请先启动引擎。",
-    "builtinWizardRestartEngine": "重启引擎"
+    "builtinWizardRestartEngine": "重启引擎",
+    "builtinWizardNoModels": "模型列表加载失败，请重试",
+    "installed": "已安装"
   },
   "yes": "是",
   "no": "否",

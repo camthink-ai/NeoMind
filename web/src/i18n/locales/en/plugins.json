@@ -94,7 +94,7 @@
     "builtinWizardOfflineLabel": "Offline",
     "builtinWizardOfflineValue": "No network · data stays on device",
     "builtinWizardStart": "Start Download",
-    "builtinWizardIdleHint": "Downloads ~1.5GB and auto-activates when done — it continues in the background.",
+    "builtinWizardIdleHint": "Pick the built-in model to download — it auto-activates when done and continues in the background.",
     "builtinWizardDownloadingHint": "Download continues in the background — closing this window won't interrupt it",
     "builtinWizardActivating": "Activating…",
     "builtinWizardReady": "Ready",
@@ -104,7 +104,9 @@
     "builtinWizardErrorTitle": "Something went wrong",
     "builtinWizardErrorDesc": "{{message}}",
     "builtinWizardEngineStopped": "The engine is not running. Start it to activate.",
-    "builtinWizardRestartEngine": "Restart Engine"
+    "builtinWizardRestartEngine": "Restart Engine",
+    "builtinWizardNoModels": "Failed to load models — retry",
+    "installed": "Installed"
   },
   "yes": "Yes",
   "no": "No",

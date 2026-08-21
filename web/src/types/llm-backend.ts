@@ -95,6 +95,19 @@ export interface LlmBackendListResponse {
  * Status of the built-in bundled LLM (LFM2.5-2.6B).
  * GET /api/builtin-llm/status
  */
+/** One installable builtin model (from GET /api/builtin-llm/models). */
+export interface BuiltinModelDef {
+  id: string
+  name: string
+  file_name: string
+  quant: string
+  size_bytes: number
+  default_ctx: number
+  notes: string
+  recommended: boolean
+  installed: boolean
+}
+
 export interface BuiltinLlmStatus {
   /** Whether the model GGUF is present on disk. */
   installed: boolean
