@@ -243,6 +243,10 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
       description={t('broker.settingsDescription')}
       icon={<Server className="h-5 w-5 text-muted-foreground" />}
       width="lg"
+      /* Settings dialog is a z-[100] full-screen layer — a default z-50
+         form dialog opens UNDERNEATH it and is invisible. z-[110] is the
+         spec for nested dialogs above full-screen layers. */
+      className="z-[110]"
       loading={!config}
       isSubmitting={saving}
       onSubmit={handleSave}
