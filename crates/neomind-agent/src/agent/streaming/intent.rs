@@ -89,6 +89,18 @@ pub(crate) fn all_tools_were_read_only(
         " channel-create",
         " channel-update",
         " channel-delete",
+        // Component-level mutations (dashboard widget edits) — without these,
+        // an add-components/remove-components pair (a REAL mutation) reads as
+        // "list/query only" and the forced continuation keeps firing after
+        // the user's change is already applied.
+        " add-component",
+        " remove-component",
+        " update-component",
+        // Misc mutations
+        " publish",
+        " push",
+        " register",
+        " import",
     ];
 
     // If no commands were executed, we can't determine — assume not read-only
@@ -136,6 +148,21 @@ pub(crate) fn build_list_only_dead_end_prompt(
     }
 
     let action_hint = extract_action_hint(user_message);
+
+    // If we can't name the action, the verb match was almost certainly a
+    // false positive — e.g. 「温度趋势的数据绑定好像不对?」 matches the
+    // verb 绑定 as part of the NOUN 数据绑定 (data binding). Injecting an
+    // unnamed "execute the action NOW" demand contradicts the model every
+    // round and burns the whole iteration budget without producing text
+    // (observed: 11 rounds / 17 tool calls / no final answer).
+    if action_hint.is_empty() {
+        tracing::debug!(
+            "List-only dead end suspected, but no action hint could be extracted \
+             (likely a noun false-positive on an action verb) — skipping forced continuation"
+        );
+        return None;
+    }
+
     tracing::warn!(
         "List-only dead end detected! User wants action '{}' but only list/query tools were called. Injecting forced continuation.",
         action_hint
@@ -349,5 +376,56 @@ mod tests {
             "neomind dashboard create"
         );
         assert_eq!(extract_action_hint("查看状态"), "");
+    }
+
+    #[test]
+    fn test_noun_verb_collision_skips_forced_continuation() {
+        // Real incident (2026-08-22): 「温度趋势的数据绑定好像不对?」— the
+        // noun 数据绑定 contains the ACTION_VERB 绑定, so requires_action
+        // matched, but extract_action_hint found no action. The injected
+        // "execute the action NOW" prompt then contradicted the model every
+        // round → 11 rounds / 17 tool calls / no final text.
+        let msg = "温度趋势的数据绑定好像不对?";
+        assert!(user_message_requires_action(msg), "verb collision still matches");
+        assert_eq!(extract_action_hint(msg), "");
+
+        // Read-only investigation commands → dead-end condition holds, but
+        // the empty hint must suppress the injection.
+        let cmds = ["neomind widget get sparkline", "neomind device get demo-001"];
+        assert!(all_tools_were_read_only(&cmds, &[]));
+        assert!(build_list_only_dead_end_prompt(msg, &cmds, &[]).is_none());
+    }
+
+    #[test]
+    fn test_named_action_still_injects() {
+        // Guard must not over-suppress: a genuine action request with a
+        // nameable action still injects.
+        let msg = "创建一个温湿度仪表盘";
+        let cmds = ["neomind device list", "neomind widget list"];
+        assert!(build_list_only_dead_end_prompt(msg, &cmds, &[]).is_some());
+    }
+
+    #[test]
+    fn test_component_mutations_are_not_read_only() {
+        // Incident addendum: an add-components + remove-components pair IS a
+        // mutation — the detector used to keep firing after the change was
+        // already applied, burning the turn to the 5-minute wall clock.
+        assert!(!all_tools_were_read_only(
+            &["neomind dashboard add-components d1 --components '[]'"],
+            &[]
+        ));
+        assert!(!all_tools_were_read_only(
+            &["neomind dashboard remove-components d1 --ids '[\"c3\"]'"],
+            &[]
+        ));
+        assert!(!all_tools_were_read_only(
+            &["neomind dashboard update-component d1 --id c3 --set '{}'"],
+            &[]
+        ));
+        // Query commands remain read-only.
+        assert!(all_tools_were_read_only(
+            &["neomind dashboard get d1", "neomind widget list"],
+            &[]
+        ));
     }
 }

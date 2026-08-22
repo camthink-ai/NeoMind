@@ -304,6 +304,13 @@ pub async fn process_stream_events_with_safeguards(
         // === SAFEGUARD: Track multi-round tool calling iterations ===
         let mut tool_iteration_count = 0usize;
         const MAX_TOOL_ITERATIONS: usize = 30;
+        // Soft wall-clock budget for the tool loop. The chat WS path has no
+        // total-turn timeout (only a 1200s per-event idle cap), so a
+        // pathological loop grinds forever with no text answer (observed:
+        // 16+ min of verify rounds). Exiting here falls through to the
+        // forced-summary path below, so the user ALWAYS gets a text reply.
+        const TURN_WALL_CLOCK_BUDGET: std::time::Duration = std::time::Duration::from_secs(240);
+        let turn_started_at = Instant::now();
         // Accumulate ALL tool results across rounds for final summary
         let mut all_round_tool_results: Vec<(String, String)> = Vec::new();
         // Track per-round thinking and content for persistence (round number → text)
@@ -315,6 +322,12 @@ pub async fn process_stream_events_with_safeguards(
         // Track whether an incomplete tool call JSON was suppressed
         // (LLM stopped mid-JSON, e.g. hit backend token limit)
         let mut incomplete_tool_json = false;
+
+        // The list-only dead-end forced continuation fires AT MOST ONCE per
+        // turn. Re-injecting every round while the condition holds traps the
+        // model in an investigate→contradict loop until MAX_TOOL_ITERATIONS
+        // (observed: 11 rounds, no final text).
+        let mut list_only_dead_end_injected = false;
 
         // === INTENT & PLAN VISUALIZATION ===
         // Send intent and plan events first to show user what's happening
@@ -373,13 +386,21 @@ pub async fn process_stream_events_with_safeguards(
                     // If the user asked for an action (create/delete/control/enable/etc)
                     // but all executed tools were read-only (list/get/latest/history),
                     // inject a FORCED continuation prompt to push the LLM to complete the task.
+                    // At most once per turn (see list_only_dead_end_injected).
                     let commands_ref: Vec<&str> = recently_executed_commands.iter().map(|s| s.as_str()).collect();
 
-                    if let Some(dead_end_msg) = build_list_only_dead_end_prompt(
-                        &user_message,
-                        &commands_ref,
-                        &all_round_tool_results,
-                    ) {
+                    let dead_end_msg = if list_only_dead_end_injected {
+                        None
+                    } else {
+                        build_list_only_dead_end_prompt(
+                            &user_message,
+                            &commands_ref,
+                            &all_round_tool_results,
+                        )
+                    };
+
+                    if let Some(dead_end_msg) = dead_end_msg {
+                        list_only_dead_end_injected = true;
                         dead_end_msg
                     } else {
                         // Normal context message — no list-only dead end detected
@@ -1105,8 +1126,22 @@ pub async fn process_stream_events_with_safeguards(
                 // then let the LLM decide in the next round whether to call more tools
                 // or give the final answer.
 
-                // Check iteration limit and duplicate detection
-                let should_continue = tool_iteration_count < MAX_TOOL_ITERATIONS - 1;
+                // Check iteration limit, wall-clock budget and duplicate detection
+                let wall_clock_exhausted = turn_started_at.elapsed() >= TURN_WALL_CLOCK_BUDGET;
+                if wall_clock_exhausted {
+                    tracing::warn!(
+                        elapsed = ?turn_started_at.elapsed(),
+                        rounds = tool_iteration_count + 1,
+                        "Turn wall-clock budget exhausted — exiting tool loop for the final summary"
+                    );
+                    yield AgentEvent::progress(
+                        "Time budget reached — generating final response...".to_string(),
+                        "summarizing",
+                        0,
+                    );
+                }
+                let should_continue = !wall_clock_exhausted
+                    && tool_iteration_count < MAX_TOOL_ITERATIONS - 1;
 
                 // === Save assistant message with tool_calls BEFORE tool results ===
                 let response_to_save = if content_before_tools.is_empty() {
