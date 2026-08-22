@@ -72,6 +72,9 @@ interface BuiltinModelWizardProps {
   isBuiltinActive?: boolean
   /** Called after the builtin backend is successfully activated (parent refreshes). */
   onActivated?: () => void
+  /** Open directly at the model picker (切换模型 entry) instead of the
+   *  ready screen — the card's switch button uses this. */
+  startInPicker?: boolean
 }
 
 function extractErrorMessage(error: unknown): string {
@@ -103,6 +106,7 @@ export function BuiltinModelWizard({
   hasActiveBackend = false,
   isBuiltinActive = false,
   onActivated,
+  startInPicker = false,
 }: BuiltinModelWizardProps) {
   const { t } = useTranslation(['plugins', 'common'])
 
@@ -133,6 +137,11 @@ export function BuiltinModelWizard({
   // When the download completed (WS 'complete' / 100% poll) — bounds the
   // 'starting' phase so a permanently failed spawn can't spin forever.
   const completedAtRef = useRef(0)
+  // True while the user explicitly chose 切换模型 and is browsing the model
+  // picker. The status poll re-runs the phase-derivation effect every 2s and
+  // would otherwise yank an installed model's user straight back to 'ready'
+  // before they can pick another one.
+  const browsingPickerRef = useRef(false)
 
   const failWith = (action: RetryAction, error: unknown) => {
     setRetryAction(action)
@@ -157,15 +166,17 @@ export function BuiltinModelWizard({
   }, [onActivated])
 
   // Reset per-open-session state. If the model is already installed when the
-  // wizard reopens, jump straight to ready instead of re-downloading.
+  // wizard reopens, jump straight to ready instead of re-downloading —
+  // unless the switch-model entry asked for the picker directly.
   useEffect(() => {
     if (open) {
       activatedRef.current = false
       sawDownloadingRef.current = false
       downloadFailedRef.current = false
+      browsingPickerRef.current = startInPicker
       wsProgressAtRef.current = 0
       setErrorMsg(null)
-      setPhase(status?.installed ? 'ready' : 'loading')
+      setPhase(startInPicker ? 'idle' : status?.installed ? 'ready' : 'loading')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
@@ -285,6 +296,10 @@ export function BuiltinModelWizard({
     }
 
     if (s.installed) {
+      // User is browsing the picker (switch model) — leave them there; a
+      // poll snapshot of the already-installed model must not bounce the
+      // UI back to 'ready'. The guard clears on download start / reopen.
+      if (browsingPickerRef.current) return
       if (completedAtRef.current === 0) completedAtRef.current = Date.now()
       setProgress({
         percent: 100,
@@ -328,6 +343,7 @@ export function BuiltinModelWizard({
   const handleStartDownload = async (modelId?: string) => {
     setErrorMsg(null)
     downloadFailedRef.current = false
+    browsingPickerRef.current = false
     try {
       await api.downloadBuiltinLlm(modelId)
       // Optimistically switch to the downloading phase; live WS events supply
@@ -587,7 +603,15 @@ export function BuiltinModelWizard({
       <FullScreenDialogFooter>
         {phase === 'ready' ? (
           <>
-            <Button variant="ghost" size="sm" onClick={() => setPhase('idle')} className="gap-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                browsingPickerRef.current = true
+                setPhase('idle')
+              }}
+              className="gap-1.5"
+            >
               <Download className="h-3.5 w-3.5" />
               {t('plugins:llm.switchModel')}
             </Button>

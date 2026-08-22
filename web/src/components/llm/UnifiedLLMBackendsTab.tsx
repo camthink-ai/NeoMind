@@ -311,6 +311,9 @@ export function UnifiedLLMBackendsTab({
 
   // First-run wizard (empty-state strong guidance)
   const [wizardOpen, setWizardOpen] = useState(false)
+  // The card's 切换模型 button opens the wizard straight at the model
+  // picker; first-run CTAs (banner / empty state) use the default entry.
+  const [wizardStartInPicker, setWizardStartInPicker] = useState(false)
   const [cloudAddOpen, setCloudAddOpen] = useState(false)
 
   useEffect(() => {
@@ -475,9 +478,14 @@ export function UnifiedLLMBackendsTab({
     setConfigDialogOpen(true)
   }
 
-  // Cloud AI create — backend_type derived from the protocol pick.
+  // Cloud AI create — backend_type derived from the protocol pick. The tab
+  // keeps its own `instances` state (separate from the store slice), so
+  // refresh it after create or the new card won't appear until the settings
+  // dialog is reopened (the old dialog did this via onRefresh).
   const handleCreateCloudAi = async (data: CreateLlmBackendRequest) => {
-    return await onCreateBackend(data)
+    const id = await onCreateBackend(data)
+    await loadData(true)
+    return id
   }
 
   // Handle create instance
@@ -629,7 +637,10 @@ export function UnifiedLLMBackendsTab({
               <>
                 <Button
                   variant="outline"
-                  onClick={() => setWizardOpen(true)}
+                  onClick={() => {
+                    setWizardStartInPicker(true)
+                    setWizardOpen(true)
+                  }}
                   disabled={!!builtinBusyAction}
                 >
                   <Download className="mr-2 h-4 w-4" />
@@ -684,6 +695,7 @@ export function UnifiedLLMBackendsTab({
       <BuiltinModelWizard
         open={wizardOpen}
         onOpenChange={setWizardOpen}
+        startInPicker={wizardStartInPicker}
         hasActiveBackend={!!activeBackendId && !builtinIsActive}
         isBuiltinActive={builtinIsActive}
         onActivated={() => {
@@ -710,7 +722,10 @@ export function UnifiedLLMBackendsTab({
             description={t('plugins:llm.noBackendsDesc')}
           />
           <div className="mt-2 flex flex-col items-center gap-3">
-            <Button size="lg" onClick={() => setWizardOpen(true)}>
+            <Button size="lg" onClick={() => {
+              setWizardStartInPicker(false)
+              setWizardOpen(true)
+            }}>
               <Download className="mr-2 h-4 w-4" />
               {t('plugins:llm.emptyStateDownloadBuiltin')}
             </Button>
@@ -754,7 +769,10 @@ export function UnifiedLLMBackendsTab({
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
-                  <Button onClick={() => setWizardOpen(true)}>
+                  <Button onClick={() => {
+                    setWizardStartInPicker(false)
+                    setWizardOpen(true)
+                  }}>
                     <Download className="mr-2 h-4 w-4" />
                     {t('plugins:llm.emptyStateDownloadBuiltin')}
                   </Button>
