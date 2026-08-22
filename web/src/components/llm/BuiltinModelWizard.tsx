@@ -390,8 +390,8 @@ export function BuiltinModelWizard({
           <div className="mx-auto w-full max-w-3xl space-y-6">
             {/* Model identity */}
             <div className="flex items-start gap-3">
-              <div className="flex items-center justify-center h-12 w-12 rounded-xl shrink-0 bg-warning-light text-warning">
-                <Cpu className="h-6 w-6" />
+              <div className="flex items-center justify-center h-12 w-12 rounded-xl shrink-0 bg-accent-indigo-light text-accent-indigo">
+                <BrainCircuit className="h-6 w-6" />
               </div>
               <div className="min-w-0 flex-1">
                 <h2 className="text-lg font-semibold text-foreground">
