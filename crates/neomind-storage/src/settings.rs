@@ -166,7 +166,7 @@ impl Default for LlmSettings {
         Self {
             backend: LlmBackendType::Ollama,
             endpoint: Some("http://localhost:11434".to_string()),
-            model: "ministral-3:3b".to_string(),
+            model: "qwen3.5:4b".to_string(),
             api_key: None,
             temperature: default_temperature(),
             top_p: default_top_p(),
@@ -1444,7 +1444,7 @@ mod tests {
     fn test_llm_settings_default() {
         let settings = LlmSettings::default();
         assert_eq!(settings.backend_name(), "ollama");
-        assert_eq!(settings.model, "ministral-3:3b");
+        assert_eq!(settings.model, "qwen3.5:4b");
         assert_eq!(settings.temperature, 0.7);
     }
 

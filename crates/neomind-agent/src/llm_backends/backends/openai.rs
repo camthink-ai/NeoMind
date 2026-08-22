@@ -56,7 +56,10 @@ pub enum CloudProvider {
 }
 
 impl CloudProvider {
-    /// Get the base URL for this provider.
+    /// Get the base URL for this provider. Only used when the backend carries
+    /// no explicit endpoint — every other default in the codebase points GLM
+    /// at the public paas endpoint, so the earlier coding-endpoint default
+    /// here silently routed endpoint-less GLM instances elsewhere.
     fn base_url(&self) -> &str {
         match self {
             Self::OpenAI => "https://api.openai.com/v1",
@@ -66,23 +69,25 @@ impl CloudProvider {
             Self::Custom => "",
             Self::Qwen => "https://dashscope.aliyuncs.com/compatible-mode/v1",
             Self::DeepSeek => "https://api.deepseek.com/v1",
-            Self::GLM => "https://open.bigmodel.cn/api/coding/paas/v4",
+            Self::GLM => "https://open.bigmodel.cn/api/paas/v4",
             Self::MiniMax => "https://api.minimax.chat/v1",
         }
     }
 
-    /// Get the default model for this provider.
+    /// Get the default model for this provider. Effectively unreachable in
+    /// production (every construction path sets a model) — kept current with
+    /// the fresh-model list so it can't resurface as a stale default.
     fn default_model(&self) -> &str {
         match self {
-            Self::OpenAI => "gpt-4o-mini",
-            Self::Anthropic => "claude-3-5-sonnet-20241022",
-            Self::Google => "gemini-1.5-flash",
-            Self::Grok => "grok-beta",
+            Self::OpenAI => "gpt-4.1-mini",
+            Self::Anthropic => "claude-sonnet-4-5",
+            Self::Google => "gemini-2.5-flash",
+            Self::Grok => "grok-3-mini",
             Self::Custom => "unknown",
-            Self::Qwen => "qwen-max-latest",
-            Self::DeepSeek => "deepseek-v3",
-            Self::GLM => "glm-4-plus",
-            Self::MiniMax => "m2-1-19b",
+            Self::Qwen => "qwen-plus",
+            Self::DeepSeek => "deepseek-chat",
+            Self::GLM => "glm-4.5-flash",
+            Self::MiniMax => "MiniMax-M2",
         }
     }
 

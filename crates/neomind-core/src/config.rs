@@ -69,14 +69,14 @@ pub mod endpoints {
 /// 默认模型常量
 pub mod models {
     pub const OLLAMA_DEFAULT: &str = "qwen3.5:4b";
-    pub const OPENAI_DEFAULT: &str = "gpt-4o-mini";
-    pub const ANTHROPIC_DEFAULT: &str = "claude-3-haiku";
-    pub const GOOGLE_DEFAULT: &str = "gemini-pro";
-    pub const XAI_DEFAULT: &str = "grok-beta";
+    pub const OPENAI_DEFAULT: &str = "gpt-4.1-mini";
+    pub const ANTHROPIC_DEFAULT: &str = "claude-sonnet-4-5";
+    pub const GOOGLE_DEFAULT: &str = "gemini-2.5-flash";
+    pub const XAI_DEFAULT: &str = "grok-3-mini";
     pub const QWEN_DEFAULT: &str = "qwen-plus";
     pub const DEEPSEEK_DEFAULT: &str = "deepseek-chat";
-    pub const GLM_DEFAULT: &str = "glm-4-flash";
-    pub const MINIMAX_DEFAULT: &str = "MiniMax-Text-01";
+    pub const GLM_DEFAULT: &str = "glm-4.5-flash";
+    pub const MINIMAX_DEFAULT: &str = "MiniMax-M2";
     pub const LLAMACPP_DEFAULT: &str = "";
 }
 

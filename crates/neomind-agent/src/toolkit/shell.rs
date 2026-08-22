@@ -1068,9 +1068,9 @@ impl ShellTool {
                 if is_not_found {
                     Some("Run 'neomind llm list' to see configured backends.".to_string())
                 } else if action == "create" && is_validation {
-                    Some("Required fields: --name, --type (ollama|openai|custom), --endpoint, --model. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3:4b".to_string())
+                    Some("Required fields: --name, --type (ollama|llamacpp|openai|anthropic), --endpoint, --model. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b".to_string())
                 } else {
-                    Some("Available actions: list, get, models, create, update, delete, activate, test. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3:4b".to_string())
+                    Some("Available actions: list, get, models, create, update, delete, activate, test. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b".to_string())
                 }
             }
             _ => None,

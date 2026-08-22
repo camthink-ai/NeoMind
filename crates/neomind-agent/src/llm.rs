@@ -1214,7 +1214,7 @@ impl LlmInterface {
                 llm.model_name().to_string()
             } else {
                 // Ultimate fallback
-                "ministral-3:3b".to_string()
+                "qwen3.5:4b".to_string()
             }
         };
 
@@ -1401,7 +1401,7 @@ impl LlmInterface {
                 llm.model_name().to_string()
             } else {
                 // Ultimate fallback
-                "ministral-3:3b".to_string()
+                "qwen3.5:4b".to_string()
             }
         };
 
@@ -1655,7 +1655,7 @@ impl LlmInterface {
                 llm.model_name().to_string()
             } else {
                 // Ultimate fallback
-                "ministral-3:3b".to_string()
+                "qwen3.5:4b".to_string()
             }
         };
 
@@ -1894,7 +1894,7 @@ impl LlmInterface {
                 llm.model_name().to_string()
             } else {
                 // Ultimate fallback
-                "ministral-3:3b".to_string()
+                "qwen3.5:4b".to_string()
             }
         };
 
@@ -2281,7 +2281,7 @@ impl Default for ChatConfig {
     fn default() -> Self {
         let ad = neomind_storage::AgentDefaults::get();
         Self {
-            model: "ministral-3:3b".to_string(),
+            model: "qwen3.5:4b".to_string(),
             temperature: std::env::var(agent_env_vars::TEMPERATURE)
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -2319,7 +2319,7 @@ mod tests {
     #[test]
     fn test_chat_config_default() {
         let config = ChatConfig::default();
-        assert_eq!(config.model, "ministral-3:3b");
+        assert_eq!(config.model, "qwen3.5:4b");
         assert_eq!(config.temperature, 0.3);
         assert_eq!(config.top_p, 0.7);
         assert_eq!(config.max_tokens, 4096);

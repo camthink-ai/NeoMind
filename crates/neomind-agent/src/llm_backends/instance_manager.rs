@@ -918,8 +918,8 @@ impl LlmBackendInstanceManager {
             BackendTypeDefinition {
                 id: "openai".to_string(),
                 name: "OpenAI".to_string(),
-                description: "OpenAI API (GPT-4, GPT-3.5)".to_string(),
-                default_model: "gpt-4o-mini".to_string(),
+                description: "OpenAI API (GPT-4.1)".to_string(),
+                default_model: "gpt-4.1-mini".to_string(),
                 default_endpoint: Some("https://api.openai.com/v1".to_string()),
                 requires_api_key: true,
                 supports_streaming: true,
@@ -930,7 +930,7 @@ impl LlmBackendInstanceManager {
                 id: "anthropic".to_string(),
                 name: "Anthropic".to_string(),
                 description: "Anthropic Claude API".to_string(),
-                default_model: "claude-3-5-sonnet-20241022".to_string(),
+                default_model: "claude-sonnet-4-5".to_string(),
                 default_endpoint: Some("https://api.anthropic.com/v1".to_string()),
                 requires_api_key: true,
                 supports_streaming: true,
@@ -941,7 +941,7 @@ impl LlmBackendInstanceManager {
                 id: "google".to_string(),
                 name: "Google".to_string(),
                 description: "Google Gemini API".to_string(),
-                default_model: "gemini-1.5-flash".to_string(),
+                default_model: "gemini-2.5-flash".to_string(),
                 default_endpoint: Some(
                     "https://generativelanguage.googleapis.com/v1beta".to_string(),
                 ),
@@ -954,7 +954,7 @@ impl LlmBackendInstanceManager {
                 id: "xai".to_string(),
                 name: "xAI".to_string(),
                 description: "xAI Grok API".to_string(),
-                default_model: "grok-beta".to_string(),
+                default_model: "grok-3-mini".to_string(),
                 default_endpoint: Some("https://api.x.ai/v1".to_string()),
                 requires_api_key: true,
                 supports_streaming: true,
@@ -989,7 +989,7 @@ impl LlmBackendInstanceManager {
                 id: "glm".to_string(),
                 name: "GLM".to_string(),
                 description: "智谱 GLM API".to_string(),
-                default_model: "glm-4-flash".to_string(),
+                default_model: "glm-4.5-flash".to_string(),
                 default_endpoint: Some("https://open.bigmodel.cn/api/paas/v4".to_string()),
                 requires_api_key: true,
                 supports_streaming: true,
@@ -1000,7 +1000,7 @@ impl LlmBackendInstanceManager {
                 id: "minimax".to_string(),
                 name: "MiniMax".to_string(),
                 description: "MiniMax API".to_string(),
-                default_model: "abab6.5s-chat".to_string(),
+                default_model: "MiniMax-M2".to_string(),
                 default_endpoint: Some("https://api.minimax.chat/v1".to_string()),
                 requires_api_key: true,
                 supports_streaming: true,
@@ -1027,115 +1027,127 @@ impl LlmBackendInstanceManager {
         // every backend; top_p is an OpenAI-compat/Ollama concept and is NOT
         // part of the Anthropic Messages API — hide it there.
         let mut schema = {
-        let requires_api_key = matches!(
-            backend_type,
-            "openai" | "anthropic" | "google" | "xai" | "qwen" | "deepseek" | "glm" | "minimax"
-        );
+            let requires_api_key = matches!(
+                backend_type,
+                "openai" | "anthropic" | "google" | "xai" | "qwen" | "deepseek" | "glm" | "minimax"
+            );
 
-        // Build required fields array - only essential fields are required
-        let required: Vec<&str> = vec!["name"]
-            .into_iter()
-            .chain(if requires_api_key {
-                Some("api_key")
-            } else {
-                None
-            })
-            .collect();
+            // Build required fields array - only essential fields are required
+            let required: Vec<&str> = vec!["name"]
+                .into_iter()
+                .chain(if requires_api_key {
+                    Some("api_key")
+                } else {
+                    None
+                })
+                .collect();
 
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "id": {
-                    "type": "string",
-                    "title": "实例ID",
-                    "description": "唯一标识符，自动生成",
-                },
-                "name": {
-                    "type": "string",
-                    "title": "名称",
-                    "description": "显示名称",
-                },
-                "backend_type": {
-                    "type": "string",
-                    "title": "后端类型",
-                    "enum": ["ollama", "openai", "anthropic", "google", "xai", "qwen", "deepseek", "glm", "minimax", "llamacpp"],
-                    "default": backend_type,
-                },
-                "endpoint": {
-                    "type": "string",
-                    "title": "API 端点",
-                    "format": "uri",
-                    "default": match backend_type {
-                        "ollama" => "http://localhost:11434",
-                        "openai" => "https://api.openai.com/v1",
-                        "anthropic" => "https://api.anthropic.com/v1",
-                        "google" => "https://generativelanguage.googleapis.com/v1beta",
-                        "xai" => "https://api.x.ai/v1",
-                        "llamacpp" => "http://127.0.0.1:8080",
-                        _ => "",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "title": "实例ID",
+                        "description": "唯一标识符，自动生成",
+                    },
+                    "name": {
+                        "type": "string",
+                        "title": "名称",
+                        "description": "显示名称",
+                    },
+                    "backend_type": {
+                        "type": "string",
+                        "title": "后端类型",
+                        "enum": ["ollama", "openai", "anthropic", "google", "xai", "qwen", "deepseek", "glm", "minimax", "llamacpp"],
+                        "default": backend_type,
+                    },
+                    "endpoint": {
+                        "type": "string",
+                        "title": "API 端点",
+                        "format": "uri",
+                        "default": match backend_type {
+                            "ollama" => "http://localhost:11434",
+                            "openai" => "https://api.openai.com/v1",
+                            "anthropic" => "https://api.anthropic.com/v1",
+                            "google" => "https://generativelanguage.googleapis.com/v1beta",
+                            "xai" => "https://api.x.ai/v1",
+                            "qwen" => "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                            "deepseek" => "https://api.deepseek.com/v1",
+                            "glm" => "https://open.bigmodel.cn/api/paas/v4",
+                            "minimax" => "https://api.minimax.chat/v1",
+                            "llamacpp" => "http://127.0.0.1:8080",
+                            _ => "",
+                        },
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "Model Name",
+                        "description": "The model to use",
+                        "default": match backend_type {
+                            "ollama" => "qwen3.5:4b",
+                            "openai" => "gpt-4.1-mini",
+                            "anthropic" => "claude-sonnet-4-5",
+                            "google" => "gemini-2.5-flash",
+                            "xai" => "grok-3-mini",
+                            "qwen" => "qwen-plus",
+                            "deepseek" => "deepseek-chat",
+                            "glm" => "glm-4.5-flash",
+                            "minimax" => "MiniMax-M2",
+                            _ => "",
+                        },
+                    },
+                    "api_key": {
+                        "type": "string",
+                        "title": "API Key",
+                        "description": "Leave blank when editing to keep existing key",
+                        "x_secret": true,
+                    },
+                    "temperature": {
+                        "type": "number",
+                        "title": "Temperature",
+                        "description": "Controls generation randomness (0.0-2.0)",
+                        "minimum": 0.0,
+                        "maximum": 2.0,
+                        "default": 0.7,
+                    },
+                    "top_p": {
+                        "type": "number",
+                        "title": "Top-P",
+                        "description": "Nucleus sampling parameter (0.0-1.0)",
+                        "minimum": 0.0,
+                        "maximum": 1.0,
+                        "default": 0.9,
                     },
                 },
-                "model": {
-                    "type": "string",
-                    "title": "Model Name",
-                    "description": "The model to use",
-                    "default": match backend_type {
-                        "ollama" => "qwen3.5:4b",
-                        "openai" => "gpt-4.1-mini",
-                        "anthropic" => "claude-sonnet-4-5",
-                        "google" => "gemini-2.5-flash",
-                        "xai" => "grok-3-mini",
-                        _ => "",
+                "required": required,
+                "ui_hints": {
+                    "field_order": ["name", "endpoint", "model", "api_key", "temperature", "top_p"],
+                    "display_names": {
+                        "id": "Instance ID",
+                        "name": "Display Name",
+                        "backend_type": "Backend Type",
+                        "endpoint": "API Endpoint",
+                        "model": "Model",
+                        "api_key": "API Key",
+                        "temperature": "Temperature",
+                        "top_p": "Top-P",
                     },
-                },
-                "api_key": {
-                    "type": "string",
-                    "title": "API Key",
-                    "description": "Leave blank when editing to keep existing key",
-                    "x_secret": true,
-                },
-                "temperature": {
-                    "type": "number",
-                    "title": "Temperature",
-                    "description": "Controls generation randomness (0.0-2.0)",
-                    "minimum": 0.0,
-                    "maximum": 2.0,
-                    "default": 0.7,
-                },
-                "top_p": {
-                    "type": "number",
-                    "title": "Top-P",
-                    "description": "Nucleus sampling parameter (0.0-1.0)",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                    "default": 0.9,
-                },
-            },
-            "required": required,
-            "ui_hints": {
-                "field_order": ["name", "endpoint", "model", "api_key", "temperature", "top_p"],
-                "display_names": {
-                    "id": "Instance ID",
-                    "name": "Display Name",
-                    "backend_type": "Backend Type",
-                    "endpoint": "API Endpoint",
-                    "model": "Model",
-                    "api_key": "API Key",
-                    "temperature": "Temperature",
-                    "top_p": "Top-P",
-                },
-                "placeholders": {
-                    "model": match backend_type {
-                        "ollama" => "qwen3.5:4b",
-                        "openai" => "gpt-4.1-mini",
-                        "anthropic" => "claude-sonnet-4-5",
-                        "google" => "gemini-2.5-flash",
-                        "xai" => "grok-3-mini",
-                        _ => "",
-                    },
+                    "placeholders": {
+                        "model": match backend_type {
+                            "ollama" => "qwen3.5:4b",
+                            "openai" => "gpt-4.1-mini",
+                            "anthropic" => "claude-sonnet-4-5",
+                            "google" => "gemini-2.5-flash",
+                            "xai" => "grok-3-mini",
+                            "qwen" => "qwen-plus",
+                            "deepseek" => "deepseek-chat",
+                            "glm" => "glm-4.5-flash",
+                            "minimax" => "MiniMax-M2",
+                            _ => "",
+                        },
+                    }
                 }
-            }
-        })
+            })
         };
         if backend_type == "anthropic" {
             if let Some(props) = schema
