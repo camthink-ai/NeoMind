@@ -777,6 +777,9 @@
       "setup": "Core Setup",
       "ready": "Ready"
     },
+    "stages": {
+      "welcome": "Welcome"
+    },
     "setup": {
       "title": "Welcome to NeoMind",
       "heroSubtitle": "An edge AI platform for IoT. Configure your AI brain and connect devices, then just describe what you want in natural language.",

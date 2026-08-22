@@ -23,8 +23,6 @@ import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { LoadingState } from "@/components/shared"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useToast } from "@/hooks/use-toast"
-import { useOnboarding } from "@/hooks/useOnboarding"
-import { OnboardingDialog } from "@/components/onboarding/OnboardingDialog"
 import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
 
 // Hook to detect desktop breakpoint — md: 768px, matching the app-wide

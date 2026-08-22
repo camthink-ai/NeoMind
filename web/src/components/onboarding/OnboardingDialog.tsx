@@ -1,14 +1,18 @@
 /**
  * OnboardingDialog — Full-screen getting-started wizard
  *
- * Two-step guide:
- *   1. Core setup (configure LLM, connect devices) — with completion status + CLI helpers
- *   2. Ready (clickable prompt cards that hand off to chat via ?q= URL param)
+ * Four steps, mapping 1:1 onto the progress stages:
+ *   1. Welcome — platform intro + docs entry points
+ *   2. LLM backend — configure the AI model (built-in download, custom
+ *      backend, or CLI) with live completion status
+ *   3. Devices  — connect/approve devices (UI action + webhook quick-start)
+ *   4. Ready    — clickable prompt cards that hand off to chat via ?q=
  *
- * Freely browsable; clicking Finish or Skip marks the guide as seen.
+ * Freely browsable; the progress stages jump directly between steps, and
+ * clicking Finish or Skip marks the guide as seen.
  */
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { useNavigate } from "react-router-dom"
@@ -35,15 +39,15 @@ interface OnboardingDialogProps {
   onDismiss: () => void
 }
 
-const STEPS = ["setup", "ready"] as const
+const STEPS = ["welcome", "llm", "device", "ready"] as const
 
-// Progress stages mirror the actual journey (model → devices → done), not
-// the internal dialog steps — the user thinks in setup items, not wizard
-// pages. Labels reuse the setup item titles / common:done.
-const PROGRESS_STAGES = [
-  { key: "llm" as const, icon: <Sparkles className="w-4 h-4" />, label: "onboarding.setup.llm.title" },
-  { key: "device" as const, icon: <Cpu className="w-4 h-4" />, label: "onboarding.setup.device.title" },
-  { key: "ready" as const, icon: <Rocket className="w-4 h-4" />, label: "done" },
+// Progress stages map 1:1 onto the wizard steps — clicking a stage jumps
+// straight to it. Labels reuse the setup item titles / common:done.
+const PROGRESS_STAGES: { key: StepKey; icon: React.ReactNode; label: string }[] = [
+  { key: "welcome", icon: <Rocket className="w-4 h-4" />, label: "onboarding.stages.welcome" },
+  { key: "llm", icon: <Sparkles className="w-4 h-4" />, label: "onboarding.setup.llm.title" },
+  { key: "device", icon: <Cpu className="w-4 h-4" />, label: "onboarding.setup.device.title" },
+  { key: "ready", icon: <Check className="w-4 h-4" />, label: "done" },
 ]
 type StepKey = (typeof STEPS)[number]
 
@@ -51,7 +55,10 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
   const { t } = useTranslation("common")
   const navigate = useNavigate()
   const openSettings = useStore((s) => s.openSettings)
-  const [step, setStep] = useState<StepKey>("setup")
+  const [step, setStep] = useState<StepKey>("welcome")
+  // Lifted to dialog level so the wizard survives step navigation
+  // mid-download — only closing the dialog itself dismisses it.
+  const [builtinWizardOpen, setBuiltinWizardOpen] = useState(false)
 
   const stepIndex = STEPS.indexOf(step)
   const isFirst = stepIndex === 0
@@ -62,9 +69,22 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
   // dialog body (see useThemeColor).
   useThemeColor("bg-90", open)
 
-  // Reset to first step each time the dialog opens
+  // Land on the first incomplete step each time the dialog opens (Ready when
+  // everything is done) — returning users skip straight to what's left. Users
+  // who haven't configured the LLM yet start from the Welcome step, since
+  // that's the top of the journey. Status is read through a ref so the 5s
+  // status poll never re-triggers navigation and yank the user off their
+  // current step.
+  const statusRef = useRef(status)
+  statusRef.current = status
   useEffect(() => {
-    if (open) setStep("setup")
+    if (!open) return
+    const s = statusRef.current
+    setStep(
+      !s || !s.steps.llm.completed ? "welcome"
+        : !s.steps.device.completed ? "device"
+        : "ready",
+    )
   }, [open])
 
   // Lock body scroll + Escape to close
@@ -130,65 +150,83 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
         <X className="w-5 h-5" />
       </button>
 
-      {/* Progress indicator — three real stages with state colors and
-          connecting lines that fill as stages complete. */}
+      {/* Progress indicator — one stage per wizard step, icon above label
+          (vertical), with connector lines aligned to the circle row. State
+          colors fill as stages complete; clicking a stage navigates
+          directly to that step. */}
       <div className="shrink-0 pt-8 pb-3 px-6">
-        <div className="max-w-5xl mx-auto flex items-center justify-center">
-          {(() => {
-            // Active stage: within setup, the first incomplete item; on the
-            // ready step, the Done stage.
-            const firstIncomplete = !status.steps.llm.completed
-              ? "llm"
-              : !status.steps.device.completed
-                ? "device"
-                : "ready"
-            return PROGRESS_STAGES.map((stage, i) => {
-              const completed =
-                stage.key === "llm"
-                  ? !!status.steps.llm.completed
-                  : stage.key === "device"
-                    ? !!status.steps.device.completed
+        <div className="max-w-5xl mx-auto flex items-start justify-center">
+          {PROGRESS_STAGES.map((stage, i) => {
+            // Welcome has no backend completion state — it counts as done
+            // once the user has moved past it (wizard "visited" check).
+            const completed =
+              stage.key === "llm"
+                ? !!status.steps.llm.completed
+                : stage.key === "device"
+                  ? !!status.steps.device.completed
+                  : stage.key === "welcome"
+                    ? stepIndex > i
                     : false
-              const active = step === "ready" ? stage.key === "ready" : stage.key === firstIncomplete
-              return (
+            const active = stage.key === step
+            return (
+              <div key={stage.key} className="flex items-start">
                 <button
-                  key={stage.key}
-                  onClick={() => setStep(stage.key === "ready" ? "ready" : "setup")}
-                  className="flex items-center"
+                  onClick={() => setStep(stage.key)}
+                  className="flex flex-col items-center gap-1.5"
                   aria-label={t(stage.label)}
                 >
                   <span className={cn(
                     "flex items-center justify-center w-8 h-8 rounded-full transition-all duration-300",
-                    completed && "bg-success text-primary-foreground",
+                    completed && !active && "bg-success text-primary-foreground",
+                    completed && active && "bg-success text-primary-foreground ring-4 ring-primary-light",
                     !completed && active && "bg-primary text-primary-foreground ring-4 ring-primary-light",
                     !completed && !active && "bg-muted-30 text-muted-foreground",
                   )}>
                     {completed ? <Check className="w-4 h-4" /> : stage.icon}
                   </span>
                   <span className={cn(
-                    "ml-2 text-xs font-medium hidden sm:inline transition-colors",
+                    "text-xs font-medium hidden sm:block text-center max-w-[6rem] leading-tight transition-colors",
                     active ? "text-foreground" : completed ? "text-success" : "text-muted-foreground",
                   )}>
                     {t(stage.label)}
                   </span>
-                  {i < PROGRESS_STAGES.length - 1 && (
-                    <span className={cn(
-                      "w-6 sm:w-12 h-0.5 rounded-full mx-3 transition-colors duration-500",
-                      completed ? "bg-success" : "bg-border",
-                    )} />
-                  )}
                 </button>
-              )
-            })
-          })()}
+                {i < PROGRESS_STAGES.length - 1 && (
+                  <span className={cn(
+                    // mt-[15px] centers the 2px line on the 32px circle's
+                    // midpoint (columns are top-aligned via items-start).
+                    "w-6 sm:w-10 h-0.5 rounded-full mt-[15px] mx-2 sm:mx-3 shrink-0 transition-colors duration-500",
+                    completed ? "bg-success" : "bg-border",
+                  )} />
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
 
-      {/* Scrollable content */}
+      {/* Scrollable content — my-auto centers each step vertically on tall
+          viewports and degrades to top-aligned scrolling when content
+          overflows (auto margins don't clip like justify-center does). */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-6 sm:px-10 py-6 sm:py-8">
-          {step === "setup" && <SetupStep open={open} status={status} onAction={handleAction} />}
-          {step === "ready" && <ReadyStep status={status} onPromptNavigate={handlePromptNavigate} onStartChat={handleStartChat} />}
+        <div className="max-w-5xl mx-auto px-6 sm:px-10 min-h-full flex flex-col py-6 sm:py-8">
+          <div className="my-auto w-full">
+            {step === "welcome" && <WelcomeStep />}
+            {step === "llm" && (
+              <SetupStep
+                which="llm"
+                status={status}
+                onAction={handleAction}
+                onOpenBuiltinWizard={() => setBuiltinWizardOpen(true)}
+              />
+            )}
+            {step === "device" && (
+              <SetupStep which="device" status={status} onAction={handleAction} />
+            )}
+            {step === "ready" && (
+              <ReadyStep status={status} onPromptNavigate={handlePromptNavigate} onStartChat={handleStartChat} />
+            )}
+          </div>
         </div>
       </div>
 
@@ -219,6 +257,14 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
           </div>
         </div>
       </div>
+
+      {/* Kept mounted at dialog level so an in-progress download survives
+          step navigation (see state comment above). */}
+      <BuiltinModelWizard
+        open={builtinWizardOpen}
+        onOpenChange={setBuiltinWizardOpen}
+        onActivated={() => setBuiltinWizardOpen(false)}
+      />
     </div>,
     root,
   )
@@ -235,18 +281,24 @@ interface LlmProvider {
   needsKey: boolean
 }
 
-// backend_type passes straight through to the API (cli-ops/src/llm.rs),
-// so each provider's native type works. Endpoints from the user-guide README.
+// backend_type passes straight through to the API (cli-ops/src/llm.rs).
+// Protocol-first story (matches the Settings Cloud AI card): local runners
+// use their native type; every cloud vendor rides --type openai with its own
+// endpoint. The runtime sniffs the endpoint for vendor-specific params
+// (DashScope enable_thinking, DeepSeek thinking toggle), so this is
+// functionally identical to the legacy vendor types.
 const LLM_PROVIDERS: LlmProvider[] = [
   { id: "ollama", label: "Ollama", type: "ollama", endpoint: "http://localhost:11434", model: "qwen3.5:4b", needsKey: false },
   // Endpoint must NOT include /v1 — the llamacpp backend appends its own path.
   { id: "llamacpp", label: "llama.cpp", type: "llamacpp", endpoint: "http://127.0.0.1:8080", model: "qwen3.5-4b-q4_k_m", needsKey: false },
+  // OpenAI-compatible endpoints must carry /v1 — the runtime joins
+  // base + /chat/completions and only Anthropic auto-appends /v1.
   { id: "openai", label: "OpenAI", type: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-4.1-mini", needsKey: true },
   { id: "anthropic", label: "Anthropic", type: "anthropic", endpoint: "https://api.anthropic.com", model: "claude-sonnet-4-5", needsKey: true },
-  { id: "deepseek", label: "DeepSeek", type: "deepseek", endpoint: "https://api.deepseek.com", model: "deepseek-chat", needsKey: true },
-  { id: "glm", label: "GLM", type: "glm", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.5-flash", needsKey: true },
-  { id: "qwen", label: "Qwen", type: "qwen", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", needsKey: true },
-  { id: "xai", label: "xAI Grok", type: "xai", endpoint: "https://api.x.ai", model: "grok-3-mini", needsKey: true },
+  { id: "deepseek", label: "DeepSeek", type: "openai", endpoint: "https://api.deepseek.com/v1", model: "deepseek-chat", needsKey: true },
+  { id: "glm", label: "GLM", type: "openai", endpoint: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4.5-flash", needsKey: true },
+  { id: "qwen", label: "Qwen", type: "openai", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", needsKey: true },
+  { id: "xai", label: "xAI Grok", type: "openai", endpoint: "https://api.x.ai/v1", model: "grok-3-mini", needsKey: true },
 ]
 
 function buildLlmCommand(p: LlmProvider): string {
@@ -322,7 +374,7 @@ function LlmCliHelper() {
 }
 
 // ── Device CLI quick-start helper ──
-// POSTing telemetry to the webhook endpoint auto-disovers unregistered devices
+// POSTing telemetry to the webhook endpoint auto-discovers unregistered devices
 // (webhook.rs:343 emits DeviceDiscovered for unknown device IDs). This gives a
 // pure-curl closed loop: publish → draft created → approve → device registered.
 
@@ -377,12 +429,51 @@ function DeviceQuickStart() {
   )
 }
 
-// ── Step 1: Core setup (master-detail layout) ──
+// ── Step 1: Welcome — platform intro + docs entry points ──
+// Kept as its own step (not folded into the LLM card) so the two setup steps
+// share an identical structure, and the welcome moment gets a full screen.
 
-type SetupCardId = "llm" | "device"
+const DOC_LINKS = [
+  { labelKey: "onboarding.setup.docs.quickStart", href: "https://wiki.camthink.ai/docs/neomind/quick-start/five-minute-guide" },
+  { labelKey: "onboarding.setup.docs.installSetup", href: "https://wiki.camthink.ai/docs/neomind/user-guide/install-setup" },
+  { labelKey: "onboarding.setup.docs.developerGuide", href: "https://wiki.camthink.ai/docs/neomind/developer-guide/overview" },
+]
+
+function WelcomeStep() {
+  const { t } = useTranslation("common")
+
+  return (
+    <div className="max-w-2xl mx-auto text-center">
+      <div className="w-16 h-16 rounded-2xl bg-accent-indigo-light flex items-center justify-center mx-auto mb-5">
+        <Rocket className="w-8 h-8 text-accent-indigo" />
+      </div>
+      <h2 className="text-2xl font-bold text-foreground mb-3">{t("onboarding.setup.title")}</h2>
+      <p className="text-sm text-muted-foreground leading-relaxed mb-8">{t("onboarding.setup.heroSubtitle")}</p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
+        {DOC_LINKS.map((doc) => (
+          <a
+            key={doc.href}
+            href={doc.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group rounded-xl border border-border bg-card p-4 hover:border-primary transition-colors"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <BookOpen className="w-4 h-4 text-muted-foreground" />
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground opacity-60 group-hover:opacity-100 transition-opacity" />
+            </div>
+            <span className="text-sm font-medium text-foreground">{t(doc.labelKey)}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Steps 2 & 3: setup items (LLM / Devices), one wizard step each ──
 
 interface SetupItem {
-  id: SetupCardId
   icon: React.ReactNode
   tint: string
   title: string
@@ -399,176 +490,78 @@ interface SetupItem {
 }
 
 function SetupStep({
-  open,
+  which,
   status,
   onAction,
+  onOpenBuiltinWizard,
 }: {
-  open: boolean
+  which: "llm" | "device"
   status: OnboardingStatus
   onAction: (path: string) => void
+  onOpenBuiltinWizard?: () => void
 }) {
   const { t } = useTranslation("common")
   const completedLabel = t("onboarding.completed")
 
-  // First incomplete card wins; fall back to LLM when both done.
-  const defaultSelected: SetupCardId = !status.steps.llm.completed
-    ? "llm"
-    : !status.steps.device.completed
-      ? "device"
-      : "llm"
-
-  const [selected, setSelected] = useState<SetupCardId>(defaultSelected)
-  const [builtinWizardOpen, setBuiltinWizardOpen] = useState(false)
-
-  // Re-derive selection when the dialog opens (preserves manual selection while open).
-  useEffect(() => {
-    if (open) setSelected(defaultSelected)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
-
-  const items: SetupItem[] = [
-    {
-      id: "llm",
-      icon: <Sparkles className="w-5 h-5" />,
-      tint: "bg-accent-indigo-light text-accent-indigo",
-      title: t("onboarding.setup.llm.title"),
-      description: t("onboarding.setup.llm.description"),
-      purpose: t("onboarding.setup.llm.purpose"),
-      completed: status.steps.llm.completed,
-      completedLabel,
-      actionLabel: t("onboarding.setup.llm.action"),
-      onAction: () => onAction("/settings?tab=llm"),
-      extra: <LlmCliHelper />,
-      primaryAction: {
-        label: t("common:llmGuide.builtinShort"),
-        onClick: () => setBuiltinWizardOpen(true),
-      },
-    },
-    {
-      id: "device",
-      icon: <Cpu className="w-5 h-5" />,
-      tint: "bg-accent-cyan-light text-accent-cyan",
-      title: t("onboarding.setup.device.title"),
-      description: t("onboarding.setup.device.description"),
-      purpose: t("onboarding.setup.device.purpose"),
-      completed: status.steps.device.completed,
-      completedLabel,
-      actionLabel: t("onboarding.setup.device.action"),
-      // Land on the pending-registration tab — the step is about approving
-      // auto-discovered devices, and the general list starts empty for a
-      // fresh install.
-      onAction: () => onAction("/devices/drafts"),
-      extra: <DeviceQuickStart />,
-    },
-  ]
-
-  const active = items.find((i) => i.id === selected) ?? items[0]
+  const item: SetupItem =
+    which === "llm"
+      ? {
+          icon: <Sparkles className="w-5 h-5" />,
+          tint: "bg-accent-indigo-light text-accent-indigo",
+          title: t("onboarding.setup.llm.title"),
+          description: t("onboarding.setup.llm.description"),
+          purpose: t("onboarding.setup.llm.purpose"),
+          completed: status.steps.llm.completed,
+          completedLabel,
+          actionLabel: t("onboarding.setup.llm.action"),
+          onAction: () => onAction("/settings?tab=llm"),
+          extra: <LlmCliHelper />,
+          primaryAction: onOpenBuiltinWizard
+            ? { label: t("common:llmGuide.builtinShort"), onClick: onOpenBuiltinWizard }
+            : undefined,
+        }
+      : {
+          icon: <Cpu className="w-5 h-5" />,
+          tint: "bg-accent-cyan-light text-accent-cyan",
+          title: t("onboarding.setup.device.title"),
+          description: t("onboarding.setup.device.description"),
+          purpose: t("onboarding.setup.device.purpose"),
+          completed: status.steps.device.completed,
+          completedLabel,
+          actionLabel: t("onboarding.setup.device.action"),
+          // Land on the pending-registration tab — the step is about approving
+          // auto-discovered devices, and the general list starts empty for a
+          // fresh install.
+          onAction: () => onAction("/devices/drafts"),
+          extra: <DeviceQuickStart />,
+        }
 
   return (
     <div>
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <div className="w-10 h-10 rounded-xl bg-accent-indigo-light flex items-center justify-center shrink-0">
-            <Rocket className="w-5 h-5 text-accent-indigo" />
-          </div>
-          <h2 className="text-lg font-bold text-foreground">{t("onboarding.setup.title")}</h2>
+      <SetupDetailPane item={item} />
+
+      {which === "llm" && (
+        <div className="mt-6 rounded-xl bg-muted-30 p-4 text-center">
+          <p className="text-sm text-muted-foreground">{t("onboarding.setup.hint")}</p>
         </div>
-        <p className="text-sm text-muted-foreground leading-relaxed">{t("onboarding.setup.heroSubtitle")}</p>
-      </div>
-
-      {/* Docs strip — fixed above the variable-height grid so it never shifts */}
-      <div className="mb-4 rounded-lg bg-muted-30 px-4 py-2.5 flex items-center gap-4 flex-wrap">
-        <BookOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-        {[
-          { label: t("onboarding.setup.docs.quickStart"), href: "https://wiki.camthink.ai/docs/neomind/quick-start/five-minute-guide" },
-          { label: t("onboarding.setup.docs.installSetup"), href: "https://wiki.camthink.ai/docs/neomind/user-guide/install-setup" },
-          { label: t("onboarding.setup.docs.developerGuide"), href: "https://wiki.camthink.ai/docs/neomind/developer-guide/overview" },
-        ].map((doc) => (
-          <a
-            key={doc.href}
-            href={doc.href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-primary hover:underline inline-flex items-center gap-1"
-          >
-            {doc.label}
-            <ExternalLink className="w-3 h-3" />
-          </a>
-        ))}
-      </div>
-
-      <div className="mb-6">
-        <SetupTopTabs items={items} selectedId={selected} onSelect={setSelected} />
-        <SetupDetailPane item={active} />
-      </div>
-
-      {/* Hint */}
-      <div className="rounded-xl bg-muted-30 p-4 text-center">
-        <p className="text-sm text-muted-foreground">{t("onboarding.setup.hint")}</p>
-      </div>
-      <BuiltinModelWizard
-        open={builtinWizardOpen}
-        onOpenChange={setBuiltinWizardOpen}
-        onActivated={() => setBuiltinWizardOpen(false)}
-      />
-    </div>
-  )
-}
-
-// Top tab strip — app-standard capsule style (same shape as PageTabsBar),
-// replacing the former left vertical list so the detail pane gets full
-// width. Completed steps swap their icon for a check (green when idle).
-function SetupTopTabs({
-  items,
-  selectedId,
-  onSelect,
-}: {
-  items: SetupItem[]
-  selectedId: SetupCardId
-  onSelect: (id: SetupCardId) => void
-}) {
-  return (
-    <div className="mb-4 flex items-center gap-1 rounded-lg border border-border bg-card p-1">
-      {items.map((item) => {
-        const isActive = item.id === selectedId
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onSelect(item.id)}
-            className={cn(
-              "inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-sm px-4 text-sm font-medium whitespace-nowrap transition-all md:max-w-[15rem]",
-              isActive
-                ? "bg-foreground text-background shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-              item.completed && !isActive && "text-success hover:text-success",
-            )}
-          >
-            <span className="h-4 w-4 shrink-0">
-              {item.completed ? <Check className="h-4 w-4" /> : item.icon}
-            </span>
-            <span>{item.title}</span>
-          </button>
-        )
-      })}
+      )}
     </div>
   )
 }
 
 // Detail pane: two equal columns — intro/purpose/actions on the left,
-// the CLI quick-start on the right — so full-width doesn't leave a void.
+// the CLI quick-start on the right. A completed item shows a success strip
+// above the content instead of replacing it, so the actions stay reachable
+// (e.g. adding a second backend or more devices).
 function SetupDetailPane({ item }: { item: SetupItem }) {
-  if (item.completed) {
-    return (
-      <div className="flex items-center gap-1.5 rounded-2xl border border-success bg-success-light p-5 text-xs font-medium text-success">
-        <Check className="w-4 h-4" />
-        {item.completedLabel}
-      </div>
-    )
-  }
-
   return (
     <div className="rounded-2xl border border-border bg-card p-5 transition-colors">
+      {item.completed && (
+        <div className="mb-4 flex items-center gap-1.5 rounded-xl bg-success-light px-3.5 py-2.5 text-xs font-medium text-success">
+          <Check className="w-4 h-4 shrink-0" />
+          {item.completedLabel}
+        </div>
+      )}
       <div className="grid items-stretch gap-6 md:grid-cols-2">
         {/* Left: intro + purpose + actions */}
         <div className="flex min-w-0 flex-col">
@@ -613,7 +606,7 @@ function SetupDetailPane({ item }: { item: SetupItem }) {
   )
 }
 
-// ── Step 2: Ready — actionable prompt cards that hand off to chat ──
+// ── Step 4: Ready — actionable prompt cards that hand off to chat ──
 
 function ReadyStep({
   status,

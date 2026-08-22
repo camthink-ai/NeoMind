@@ -777,6 +777,9 @@
       "setup": "核心设置",
       "ready": "准备就绪"
     },
+    "stages": {
+      "welcome": "欢迎"
+    },
     "setup": {
       "title": "欢迎使用 NeoMind",
       "heroSubtitle": "面向物联网的边缘 AI 平台。配好 AI 模型、连上设备，然后用自然语言描述你想做的事。",
