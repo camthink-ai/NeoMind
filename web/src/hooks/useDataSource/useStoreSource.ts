@@ -17,6 +17,7 @@ import {
   resolveDeviceInfoValue, insertAndMaintain, isImageDataSource, normalizeImageValue,
 } from './helpers'
 import { fetchDeviceTelemetry, fetchedDevices, hasActiveFetch, telemetryCache } from './fetch'
+import { parseExprRefs, refParts, evalExpression } from '@/lib/expressionSource'
 import { processTelemetryEvent, processNonTelemetryEvent, getTs } from './eventProcessors'
 
 // Performance probe — gated by module-level flag to avoid function call overhead in production
@@ -161,6 +162,7 @@ export function useStoreSource<T = unknown>(
     const result = dsList.filter(
       (ds) => {
         if (ds.mode === 'timeseries') return false
+        if (ds.mode === 'latest' && ds.source === 'expression') return true
         if (ds.mode === 'latest' && ds.source === 'device') return true
         if (ds.mode === 'info' && ds.source === 'device') return true
         if (ds.mode === 'command' && ds.source === 'device') return true
@@ -204,7 +206,29 @@ export function useStoreSource<T = unknown>(
         const mode = ds.mode
         const source = ds.source
 
-        if (mode === 'latest' && source === 'device') {
+        if (mode === 'latest' && source === 'expression') {
+          // Inline computed value: resolve refs from live telemetry, evaluate,
+          // fall back to the last valid value while a ref is transiently empty.
+          const expr = ds.expr ?? ''
+          if (!expr) { result = fallbackVal ?? null; return result }
+          const values: Record<string, number> = {}
+          for (const ref of parseExprRefs(expr)) {
+            const parts = refParts(ref)
+            if (!parts) continue
+            const cv = currentTelemetry[parts.id]
+            const raw = cv && typeof cv === 'object' ? extractValueFromData(cv, parts.field) : undefined
+            const num = typeof raw === 'number' ? raw : Number(raw)
+            if (Number.isFinite(num)) values[ref] = num
+          }
+          const evaluated = evalExpression(expr, values)
+          const cacheKey = `expr:${expr}`
+          if (evaluated.value !== null) {
+            lastValidDataRef.current[cacheKey] = evaluated.value
+            result = evaluated.value
+          } else {
+            result = lastValidDataRef.current[cacheKey] ?? '-'
+          }
+        } else if (mode === 'latest' && source === 'device') {
           const deviceId = getUnifiedId(ds)
           if (!deviceId) { result = fallbackVal ?? null; return result }
           const property = getUnifiedField(ds) as string | undefined

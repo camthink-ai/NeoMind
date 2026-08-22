@@ -191,6 +191,25 @@ neomind dashboard update-component <ID> --component-id c2 \
 
 Find component IDs with `neomind dashboard get <ID>` (each component has an `id`).
 
+## Expression Data Source (inline computed values — NO transform needed)
+
+For computed values (averages, differences, sums of MULTIPLE devices), bind a
+component directly with an inline expression instead of pre-creating a transform:
+
+```json
+{"type": "telemetry", "source": "expression", "mode": "latest",
+ "expr": "avg(device:sensor-001:values.battery, device:sensor-002:values.battery)"}
+```
+
+- Refs: `device:<id>:<field>` (canonical) or `<id>.<field>` (sugar). Use REAL
+  metric names from `device get` (e.g. `values.battery`).
+- Operators: `+ - * / ( )`; functions: `avg sum min max abs round floor ceil sqrt pow`.
+- Best for value-card / gauge / led-indicator (mode `latest`, live updates).
+- Charts needing a COMPUTED CURVE (mode `timeseries`): community widgets support
+  it; built-in charts still need a transform — create one via `transform create`.
+- Example — 温差卡片:
+  `--set '{"data_source":{"type":"telemetry","source":"expression","mode":"latest","expr":"device:sensor-001:temperature - device:sensor-002:temperature"}}'`
+
 ## DataSource Binding Reference
 
 All data sources use **unified fields** (`source`/`mode`/`id`/`field`) plus legacy fields for backward compatibility.

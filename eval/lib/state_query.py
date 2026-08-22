@@ -287,6 +287,27 @@ def run_query(q: dict, base: str, key: str, response: str | None = None) -> dict
                         break
                 if actual:
                     break
+    elif t == "dashboard_component_expr":
+        # Verify a component binds an inline EXPRESSION data source
+        # (source:"expression") whose expr contains all given substrings.
+        v = _get_with_name_fallback(base, key, "/dashboards", "/dashboards/{id}", "dashboards", params)
+        comps = v.get("components") if isinstance(v, dict) else None
+        want = [str(x).lower() for x in (params.get("expr_contains") or [])]
+        actual = False
+        if isinstance(comps, list):
+            for comp in comps:
+                if not isinstance(comp, dict):
+                    continue
+                ds = comp.get("data_source")
+                sources = ds if isinstance(ds, list) else ([ds] if isinstance(ds, dict) else [])
+                for src in sources:
+                    if isinstance(src, dict) and src.get("source") == "expression":
+                        expr = str(src.get("expr", "")).lower()
+                        if all(w in expr for w in want):
+                            actual = True
+                            break
+                if actual:
+                    break
     elif t == "extension_installed":
         actual = _id_or_name_exists(base, key, "/extensions", "/extensions/{id}", params)
     elif t == "widget_exists":

@@ -31,6 +31,25 @@ export async function resolveDataSourceData(
 
   switch (mode) {
     case 'latest': {
+      if (source === 'expression') {
+        // Inline computed value — resolve each ref from live store telemetry
+        // (same store the device branch reads), then evaluate.
+        const expr = ds.expr ?? ''
+        if (!expr) return { value: undefined }
+        const { parseExprRefs, refParts, evalExpression } = await import('@/lib/expressionSource')
+        const storeState = useStore.getState()
+        const values: Record<string, number> = {}
+        for (const ref of parseExprRefs(expr)) {
+          const parts = refParts(ref)
+          if (!parts) continue
+          const cv = storeState.deviceTelemetry[parts.id]
+          const raw = cv !== undefined ? extractValueFromData(cv, parts.field) : undefined
+          const num = typeof raw === 'number' ? raw : Number(raw)
+          if (Number.isFinite(num)) values[ref] = num
+        }
+        const result = evalExpression(expr, values)
+        return result.value === null ? { value: undefined } : { value: result.value }
+      }
       if (source === 'device') {
         const storeState = useStore.getState()
         const device = findDevice(storeState.devices, id)
@@ -63,6 +82,35 @@ export async function resolveDataSourceData(
       break
     }
     case 'timeseries': {
+      if (source === 'expression') {
+        // Per-timestamp evaluation over forward-fill aligned history of
+        // every referenced metric.
+        const expr = ds.expr ?? ''
+        if (!expr) return { series: [] }
+        const timeRange = options?.timeRange ?? (ds.timeRange && ds.timeRange > 0 ? ds.timeRange : 24)
+        const limit = options?.limit ?? ds.limit ?? 50
+        const { parseExprRefs, refParts, evalExpressionSeries } = await import('@/lib/expressionSource')
+        const seriesByRef: Record<string, { t: number; v: number }[]> = {}
+        for (const ref of parseExprRefs(expr)) {
+          const parts = refParts(ref)
+          if (!parts) continue
+          try {
+            const response = await fetchHistoricalTelemetry(parts.id, parts.field, timeRange, limit, 'raw', true, true)
+            const raw = (response.raw ?? response.data) as Array<{ timestamp: number; value: number } | number>
+            const pts = (Array.isArray(raw) ? raw : [])
+              .map((p) =>
+                typeof p === 'number'
+                  ? { t: NaN, v: p }
+                  : { t: (p.timestamp as number) * 1000, v: Number(p.value) }
+              )
+              .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.v))
+              .sort((a, b) => a.t - b.t)
+            if (pts.length > 0) seriesByRef[ref] = pts
+          } catch { /* ref without history — evalExpressionSeries reports */ }
+        }
+        const { series } = evalExpressionSeries(expr, seriesByRef)
+        return { series: series.map((p) => ({ timestamp: p.t / 1000, value: p.v })) }
+      }
       const timeRange = options?.timeRange ?? (ds.timeRange && ds.timeRange > 0 ? ds.timeRange : 24)
       const limit = options?.limit ?? ds.limit ?? 50
       try {

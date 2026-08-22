@@ -22,6 +22,7 @@ import { usePollingSource } from './usePollingSource'
 import { useExtensionSource } from './useExtensionSource'
 import { useTelemetrySource } from './useTelemetrySource'
 import { useStoreSource } from './useStoreSource'
+import { parseExprRefs, refParts } from '@/lib/expressionSource'
 
 // Re-export for backward compatibility
 export { fetchHistoricalTelemetry, clearGlobalCacheIntervals }
@@ -182,6 +183,18 @@ export function useDataSource<T = unknown>(
         const id = getEventDeviceId(ds)
         if (id) deviceIds.add(id)
         if (mode === 'info') infoIds.add(id!)
+      }
+      if (source === 'expression') {
+        // Every referenced device metric feeds the expression — subscribe to
+        // all of them so store telemetry changes re-trigger the store read.
+        const refs = parseExprRefs(ds.expr ?? '')
+        for (const r of refs) {
+          const parts = refParts(r)
+          if (parts) deviceIds.add(parts.id)
+        }
+        // Handled by the store read (latest) / componentDataApi (timeseries
+        // via community widgets) — never pushed to tel/poll/ext.
+        continue
       }
       if (ds.source === 'extension') { ext.push(ds); continue }
       if (ds.mode === 'timeseries' && ds.source !== 'system') { tel.push(ds); continue }

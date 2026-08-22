@@ -17,7 +17,7 @@
 export type DataSourceType = 'device' | 'metric' | 'command' | 'telemetry' | 'device-info' | 'system' | 'extension' | 'extension-metric' | 'extension-command' | 'transform' | 'agent'
 
 /** Unified source type — identifies where data comes from */
-export type DataSourceSource = 'device' | 'extension' | 'system' | 'transform' | 'ai'
+export type DataSourceSource = 'device' | 'extension' | 'system' | 'transform' | 'ai' | 'expression'
 /** Unified mode — identifies how data is consumed */
 export type DataSourceMode = 'latest' | 'timeseries' | 'command' | 'info' | 'list'
 
@@ -230,6 +230,10 @@ export interface DataSource {
   extensionUnit?: string
   transformId?: string
   agentId?: string
+  /** Inline computed value (source:'expression'). Refs `device:<id>:<field>`
+   *  or `<id>.<field>`; arithmetic + avg/sum/min/max/abs/round/floor/ceil/sqrt/pow.
+   *  No pre-created transform needed. */
+  expr?: string
   // Unified fields (Phase 1)
   source?: DataSourceSource
   id?: string

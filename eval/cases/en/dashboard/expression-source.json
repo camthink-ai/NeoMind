@@ -1,0 +1,56 @@
+{
+ "id": "dashboard-expression-source",
+ "lang": "en",
+ "category": "dashboard",
+ "workflow": "dashboard-management",
+ "scenario_type": "single_turn",
+ "description": "表达式数据源:多设备计算值(平均电量)直接内联绑定,不该先建 transform。新维度:expression data_source(覆盖 source:expression + expr 引用真实指标)",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Create a dashboard called Avg Board with one card showing the average battery level of sensor-001 and sensor-002."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Turn 1: `neomind device get` (discover values.battery) → `neomind dashboard create --components` (or add-components) with data_source {\"type\":\"telemetry\",\"source\":\"expression\",\"mode\":\"latest\",\"expr\":\"avg(device:sensor-001:values.battery, device:sensor-002:values.battery)\"} — NO pre-created transform"
+  ],
+  "overall": "组件为 expression 数据源且 expr 含 avg 与两个设备引用"
+ },
+ "expect": {
+  "tools": [
+   "shell"
+  ],
+  "commands": [
+   "neomind dashboard create"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_exists",
+   "params": {
+    "name": "Avg Board"
+   },
+   "expected": true
+  },
+  {
+   "type": "dashboard_component_expr",
+   "params": {
+    "name": "Avg Board",
+    "expr_contains": [
+     "avg",
+     "sensor-001",
+     "sensor-002"
+    ]
+   },
+   "expected": true
+  }
+ ]
+}
