@@ -822,44 +822,66 @@ export function UnifiedLLMBackendsTab({
           })}
 
           {/* Cloud AI — one card; the add dialog picks the protocol path. */}
-          <Card
-            className="cursor-pointer transition-all duration-200 hover:shadow-md"
-            onClick={() => {
-              setSelectedType({
-                id: 'cloudai',
-                type: 'llm_backend',
-                name: t('plugins:llm.protocol.cloudai.name'),
-                description: t('plugins:llm.protocol.cloudai.desc'),
-                icon: <Cloud className="h-6 w-6" />,
-                color: 'bg-accent-indigo-light text-accent-indigo',
-                // Never rendered as a form (add/edit dialogs use the concrete
-                // protocol type) — an empty schema satisfies the type.
-                config_schema: { type: 'object', properties: {} },
-                can_add_multiple: true,
-                builtin: false,
-                requires_api_key: true,
-                supports_streaming: true,
-                default_model: '',
-                default_endpoint: undefined,
-              })
-              setView('detail')
-            }}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-start gap-3">
-                <div className="flex items-center justify-center h-10 w-10 rounded-lg shrink-0 bg-accent-indigo-light text-accent-indigo">
-                  <Cloud className="h-5 w-5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <CardTitle className="text-base truncate min-w-0">{t('plugins:llm.protocol.cloudai.name')}</CardTitle>
-                  <CardDescription className="text-xs mt-0.5 leading-relaxed">
-                    {t('plugins:llm.protocol.cloudai.desc')}
-                  </CardDescription>
-                </div>
-                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-              </div>
-            </CardContent>
-          </Card>
+          {(() => {
+            // Same grouping as the detail view: every non-local, non-builtin
+            // instance (incl. legacy vendor types from before the
+            // protocol-first refactor) lives under Cloud AI.
+            const cloudInstances = instances.filter(
+              i => !i.is_builtin && i.backend_type !== 'ollama' && i.backend_type !== 'llamacpp'
+            )
+            const hasActive = cloudInstances.some(i => i.id === activeBackendId)
+            return (
+              <Card
+                className={cn(
+                  "cursor-pointer transition-all duration-200 hover:shadow-md",
+                  hasActive && "border-success border-2"
+                )}
+                onClick={() => {
+                  setSelectedType({
+                    id: 'cloudai',
+                    type: 'llm_backend',
+                    name: t('plugins:llm.protocol.cloudai.name'),
+                    description: t('plugins:llm.protocol.cloudai.desc'),
+                    icon: <Cloud className="h-6 w-6" />,
+                    color: 'bg-accent-indigo-light text-accent-indigo',
+                    // Never rendered as a form (add/edit dialogs use the concrete
+                    // protocol type) — an empty schema satisfies the type.
+                    config_schema: { type: 'object', properties: {} },
+                    can_add_multiple: true,
+                    builtin: false,
+                    requires_api_key: true,
+                    supports_streaming: true,
+                    default_model: '',
+                    default_endpoint: undefined,
+                  })
+                  setView('detail')
+                }}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex items-center justify-center h-10 w-10 rounded-lg shrink-0 bg-accent-indigo-light text-accent-indigo">
+                      <Cloud className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="text-base truncate min-w-0">{t('plugins:llm.protocol.cloudai.name')}</CardTitle>
+                        <span className={cn("text-xs font-medium shrink-0", hasActive ? "text-success" : "text-muted-foreground")}>
+                          {hasActive ? t('plugins:llm.running') : t('plugins:llm.notConfigured')}
+                        </span>
+                      </div>
+                      <CardDescription className="mt-1 text-xs line-clamp-1">
+                        {t('plugins:llm.protocol.cloudai.desc')}
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">{t('plugins:llm.instances')}</span>
+                    <span className="font-medium text-foreground">{t('plugins:llm.instancesCount', { count: cloudInstances.length })}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            )
+          })()}
         </div>
         {wizardElement}
       </>
