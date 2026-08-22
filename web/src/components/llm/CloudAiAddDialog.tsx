@@ -1,10 +1,17 @@
 /**
- * CloudAiAddDialog — the add dialog for the Cloud AI card.
+ * CloudAiAddDialog — the add/edit dialog for the Cloud AI card.
  *
  * One card, two protocol paths: the user picks the protocol (OpenAI-
  * compatible / Anthropic) inside this dialog, then fills the standard
  * fields. `backend_type` is mapped from the selection; capabilities come
  * from the concrete type (registry + runtime probe) as usual.
+ *
+ * Edit mode: pass `editing`. The protocol select doubles as the type
+ * switcher — changing it PUTs a different backend_type, and the server
+ * re-bases capabilities (the endpoint/model fields are kept, so switching
+ * protocols usually also means editing the endpoint). The API key field
+ * prefills with the API_KEY_MASK sentinel when a key is stored; both the
+ * untouched mask and an empty value mean "keep the existing key".
  */
 
 import { useEffect, useState } from 'react'
@@ -15,22 +22,43 @@ import { FormField } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { API_KEY_MASK } from '@/components/plugins/UniversalPluginConfigDialog'
 import type { CreateLlmBackendRequest } from '@/types'
+
+/** An existing instance loaded into the dialog for editing. */
+export interface CloudAiEditTarget {
+  id: string
+  name: string
+  /** Concrete stored backend_type ('openai' | 'anthropic' | legacy vendor). */
+  backend_type: string
+  endpoint: string
+  model: string
+  api_key_configured: boolean
+}
 
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSubmit: (data: CreateLlmBackendRequest) => Promise<string>
+  /** Receives the payload plus the instance id when editing. */
+  onSubmit: (data: CreateLlmBackendRequest, editingId?: string) => Promise<void>
+  /** Present → edit mode. */
+  editing?: CloudAiEditTarget | null
 }
 
 const DEFAULTS: Record<'openai' | 'anthropic', { endpoint: string; model: string }> = {
-  // Anthropic MUST include /v1 — the runtime joins base_url + "/messages"
-  // verbatim (matches the backend schema default).
+  // Anthropic may be pasted with or without /v1 — the runtime normalizes
+  // (auto-appends /v1 before joining "/messages").
   openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-4.1-mini' },
   anthropic: { endpoint: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5' },
 }
 
-export function CloudAiAddDialog({ open, onOpenChange, onSubmit }: Props) {
+/** Map a stored backend_type onto a protocol path. Legacy vendor types
+ *  (qwen/deepseek/glm/…) are all OpenAI-compatible endpoints. */
+function protocolOf(backendType: string): 'openai' | 'anthropic' {
+  return backendType === 'anthropic' ? 'anthropic' : 'openai'
+}
+
+export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Props) {
   const { t } = useTranslation(['plugins'])
   const [protocol, setProtocol] = useState<'openai' | 'anthropic'>('openai')
   const [name, setName] = useState('')
@@ -40,43 +68,60 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Reset to the newly-selected protocol's defaults on dialog open.
   useEffect(() => {
-    if (open) {
+    if (!open) return
+    setError(null)
+    if (editing) {
+      const p = protocolOf(editing.backend_type)
+      setProtocol(p)
+      setName(editing.name)
+      setEndpoint(editing.endpoint)
+      setModel(editing.model)
+      // Never returned by the API — sentinel mask says "configured".
+      setApiKey(editing.api_key_configured ? API_KEY_MASK : '')
+    } else {
+      setProtocol('openai')
       setName('')
       setApiKey('')
-      setError(null)
-      setProtocol('openai')
       setEndpoint(DEFAULTS.openai.endpoint)
       setModel(DEFAULTS.openai.model)
     }
-  }, [open])
+  }, [open, editing])
 
   const switchProtocol = (p: 'openai' | 'anthropic') => {
     setProtocol(p)
+    // A protocol change means the endpoint must change too (e.g. GLM's
+    // /api/anthropic vs /api/paas/v4) — offer the new path's default so
+    // the user isn't left on a mismatched URL.
     setEndpoint(DEFAULTS[p].endpoint)
     setModel(DEFAULTS[p].model)
     setError(null)
   }
 
+  const keyProvided =
+    apiKey.trim() && apiKey !== API_KEY_MASK ? apiKey.trim() : undefined
+
   const handleSubmit = async () => {
-    // Cloud protocol paths require an API key (backend validate() enforces
-    // it for openai/anthropic) — catch it client-side for a cleaner error.
-    if (!name.trim() || !endpoint.trim() || !model.trim() || !apiKey.trim()) {
+    // Create: cloud protocol paths require an API key (backend validate()
+    // enforces it) — catch it client-side. Edit: blank/masked = keep stored.
+    if (!name.trim() || !endpoint.trim() || !model.trim() || (!editing && !keyProvided)) {
       setError(t('plugins:llm.cloudFillRequired'))
       return
     }
     setSaving(true)
     try {
-      await onSubmit({
-        name: name.trim(),
-        backend_type: protocol,
-        endpoint: endpoint.trim(),
-        model: model.trim(),
-        ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-        temperature: 0.7,
-        ...(protocol === 'openai' ? { top_p: 0.9 } : {}),
-      })
+      await onSubmit(
+        {
+          name: name.trim(),
+          backend_type: protocol,
+          endpoint: endpoint.trim(),
+          model: model.trim(),
+          ...(keyProvided ? { api_key: keyProvided } : {}),
+          temperature: 0.7,
+          ...(protocol === 'openai' ? { top_p: 0.9 } : {}),
+        },
+        editing?.id
+      )
       onOpenChange(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -89,20 +134,21 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit }: Props) {
     <UnifiedFormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title={t('plugins:llm.cloudAddTitle')}
+      title={editing ? t('plugins:llm.cloudEditTitle') : t('plugins:llm.cloudAddTitle')}
       description={t('plugins:llm.cloudAddDesc')}
       icon={<Cloud className="h-5 w-5 text-muted-foreground" />}
+      className="z-[110]"
       loading={false}
       isSubmitting={saving}
       onSubmit={handleSubmit}
-      submitLabel={t('common:add')}
-      cancelLabel={t('common:cancel')}
-      submitDisabled={!name.trim() || !endpoint.trim() || !model.trim() || !apiKey.trim() || saving}
+      submitLabel={editing ? t('common:save', { defaultValue: 'Save' }) : t('common:add', { defaultValue: 'Add' })}
+      cancelLabel={t('common:cancel', { defaultValue: 'Cancel' })}
+      submitDisabled={!name.trim() || !endpoint.trim() || !model.trim() || (!editing && !keyProvided) || saving}
       submitError={error ?? undefined}
-      className="z-[110]"
     >
       <div className="space-y-4">
-        {/* Protocol path — OpenAI-compatible / Anthropic */}
+        {/* Protocol path — OpenAI-compatible / Anthropic. In edit mode this
+            switches the instance's backend_type. */}
         <FormField label={t('plugins:llm.cloudProtocol')} helpText={t('plugins:llm.cloudProtocolHelp')}>
           <Select value={protocol} onValueChange={(v) => switchProtocol(v as 'openai' | 'anthropic')}>
             <SelectTrigger className="w-full">
@@ -128,7 +174,11 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit }: Props) {
         </FormField>
 
         <FormField label={t('plugins:llm.apiKey')} helpText={t('plugins:llm.apiKeyHelp')}>
-          <PasswordInput value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          <PasswordInput
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={editing && editing.api_key_configured ? t('plugins:llm.apiKeyKeepHint') : undefined}
+          />
         </FormField>
       </div>
     </UnifiedFormDialog>

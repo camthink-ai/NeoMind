@@ -77,6 +77,9 @@ export interface UpdateLlmBackendRequest {
   endpoint?: string
   model?: string
   api_key?: string
+  /** Protocol switch (openai ↔ anthropic ↔ vendor types). Server re-bases
+   *  capabilities on the new type's defaults; same value = no-op. */
+  backend_type?: LlmBackendType
   temperature?: number
   top_p?: number
   top_k?: number

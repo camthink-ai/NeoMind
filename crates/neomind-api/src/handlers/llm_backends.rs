@@ -105,6 +105,11 @@ pub struct UpdateBackendRequest {
     /// API key
     pub api_key: Option<String>,
 
+    /// Backend type / protocol (e.g. openai ↔ anthropic). Changing it
+    /// re-bases capabilities on the new type's defaults (model-adjusted);
+    /// endpoint/model/api_key are kept as-is.
+    pub backend_type: Option<String>,
+
     /// Temperature
     pub temperature: Option<f32>,
 
@@ -323,6 +328,24 @@ pub async fn get_backend_handler(
 /// Create a new LLM backend instance
 ///
 /// POST /api/llm-backends
+/// Parse an API-facing backend type string (used by create + protocol
+/// switch on update).
+fn parse_backend_type(s: &str) -> Option<LlmBackendType> {
+    match s {
+        "ollama" => Some(LlmBackendType::Ollama),
+        "llamacpp" => Some(LlmBackendType::LlamaCpp),
+        "openai" => Some(LlmBackendType::OpenAi),
+        "anthropic" => Some(LlmBackendType::Anthropic),
+        "google" => Some(LlmBackendType::Google),
+        "xai" => Some(LlmBackendType::XAi),
+        "qwen" => Some(LlmBackendType::Qwen),
+        "deepseek" => Some(LlmBackendType::DeepSeek),
+        "glm" => Some(LlmBackendType::GLM),
+        "minimax" => Some(LlmBackendType::MiniMax),
+        _ => None,
+    }
+}
+
 pub async fn create_backend_handler(
     State(_state): State<ServerState>,
     Json(req): Json<CreateBackendRequest>,
@@ -330,24 +353,9 @@ pub async fn create_backend_handler(
     let manager = get_manager()?;
 
     // Parse backend type
-    let backend_type = match req.backend_type.as_str() {
-        "ollama" => LlmBackendType::Ollama,
-        "llamacpp" => LlmBackendType::LlamaCpp,
-        "openai" => LlmBackendType::OpenAi,
-        "anthropic" => LlmBackendType::Anthropic,
-        "google" => LlmBackendType::Google,
-        "xai" => LlmBackendType::XAi,
-        "qwen" => LlmBackendType::Qwen,
-        "deepseek" => LlmBackendType::DeepSeek,
-        "glm" => LlmBackendType::GLM,
-        "minimax" => LlmBackendType::MiniMax,
-        _ => {
-            return Err(ErrorResponse::bad_request(format!(
-                "Unknown backend type: {}",
-                req.backend_type
-            )));
-        }
-    };
+    let backend_type = parse_backend_type(&req.backend_type).ok_or_else(|| {
+        ErrorResponse::bad_request(format!("Unknown backend type: {}", req.backend_type))
+    })?;
 
     // Generate unique ID
     let id = LlmBackendStore::generate_id(&req.backend_type);
@@ -433,7 +441,7 @@ pub async fn create_backend_handler(
 pub async fn update_backend_handler(
     State(_state): State<ServerState>,
     Path(id): Path<String>,
-    Json(req): Json<UpdateBackendRequest>,
+    Json(mut req): Json<UpdateBackendRequest>,
 ) -> HandlerResult<serde_json::Value> {
     let manager = get_manager()?;
 
@@ -441,6 +449,34 @@ pub async fn update_backend_handler(
     let mut instance = manager
         .get_instance(&id)
         .ok_or_else(|| ErrorResponse::not_found(format!("Backend instance {}", id)))?;
+
+    // Protocol switch (openai ↔ anthropic ↔ vendor types). Capabilities are
+    // type-specific, so re-base them on the new type's defaults (model-
+    // adjusted). Endpoint/model/key are kept; the runtime cache is cleared
+    // by upsert so the next request builds a runtime for the new type.
+    // Note: the instance ID keeps its historical type prefix (e.g.
+    // `anthropic_…` after switching to openai) — IDs are opaque and
+    // referenced by active_id / sessions, so they never change.
+    if let Some(new_type_str) = req.backend_type.as_deref() {
+        let new_type = parse_backend_type(new_type_str).ok_or_else(|| {
+            ErrorResponse::bad_request(format!("Unknown backend type: {new_type_str}"))
+        })?;
+        if new_type != instance.backend_type {
+            tracing::info!(
+                backend_id = %id,
+                from = ?instance.backend_type,
+                to = ?new_type,
+                "Backend type (protocol) changed"
+            );
+            let mut caps = get_default_capabilities(&new_type);
+            adjust_capabilities_for_model(&instance.model, &mut caps);
+            instance.backend_type = new_type;
+            instance.capabilities = caps;
+            // A type change supersedes the client-sent capabilities below —
+            // drop them so the re-based ones aren't overwritten.
+            req.capabilities = None;
+        }
+    }
 
     // Update fields
     if let Some(name) = req.name {

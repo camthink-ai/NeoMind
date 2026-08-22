@@ -154,7 +154,8 @@
         "desc": "云端大模型——OpenAI 兼容或 Anthropic"
       }
     },
-    "apiKeyKeepHint": "已配置——留空保持不变"
+    "apiKeyKeepHint": "已配置——留空保持不变",
+    "cloudEditTitle": "编辑云端 AI 后端"
   },
   "yes": "是",
   "no": "否",

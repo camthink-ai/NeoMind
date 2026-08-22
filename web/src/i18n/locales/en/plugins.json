@@ -154,7 +154,8 @@
         "desc": "Cloud LLMs — OpenAI-compatible or Anthropic"
       }
     },
-    "apiKeyKeepHint": "Configured — leave blank to keep"
+    "apiKeyKeepHint": "Configured — leave blank to keep",
+    "cloudEditTitle": "Edit Cloud AI Backend"
   },
   "yes": "Yes",
   "no": "No",

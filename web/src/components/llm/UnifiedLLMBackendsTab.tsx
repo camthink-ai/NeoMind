@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
 import { UniversalPluginConfigDialog, API_KEY_MASK, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
 import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
-import { CloudAiAddDialog } from '@/components/llm/CloudAiAddDialog'
+import { CloudAiAddDialog, type CloudAiEditTarget } from '@/components/llm/CloudAiAddDialog'
 import type {
   LlmBackendInstance,
   BackendTypeDefinition,
@@ -318,6 +318,8 @@ export function UnifiedLLMBackendsTab({
   // picker; first-run CTAs (banner / empty state) use the default entry.
   const [wizardStartInPicker, setWizardStartInPicker] = useState(false)
   const [cloudAddOpen, setCloudAddOpen] = useState(false)
+  // Non-null → the add dialog is in edit mode for that instance.
+  const [cloudEditTarget, setCloudEditTarget] = useState<CloudAiEditTarget | null>(null)
 
   useEffect(() => {
     loadData()
@@ -481,14 +483,18 @@ export function UnifiedLLMBackendsTab({
     setConfigDialogOpen(true)
   }
 
-  // Cloud AI create — backend_type derived from the protocol pick. The tab
-  // keeps its own `instances` state (separate from the store slice), so
-  // refresh it after create or the new card won't appear until the settings
-  // dialog is reopened (the old dialog did this via onRefresh).
-  const handleCreateCloudAi = async (data: CreateLlmBackendRequest) => {
-    const id = await onCreateBackend(data)
+  // Cloud AI create/edit — backend_type derived from the protocol pick
+  // (edit mode: also how the type is switched). The tab keeps its own
+  // `instances` state (separate from the store slice), so refresh it after
+  // the mutation or the card won't update until the settings dialog is
+  // reopened.
+  const handleCloudAiSubmit = async (data: CreateLlmBackendRequest, editingId?: string) => {
+    if (editingId) {
+      await onUpdateBackend(editingId, data)
+    } else {
+      await onCreateBackend(data)
+    }
     await loadData(true)
-    return id
   }
 
   // Handle create instance
@@ -1073,8 +1079,23 @@ export function UnifiedLLMBackendsTab({
                           size="sm"
                           className="h-8 w-8 p-0"
                           onClick={() => {
-                            setEditingInstance(instance)
-                            setConfigDialogOpen(true)
+                            if (isCloudAi) {
+                              // Cloud AI edits go through the add dialog in
+                              // edit mode — its protocol select doubles as
+                              // the backend_type switcher.
+                              setCloudEditTarget({
+                                id: instance.id,
+                                name: instance.name,
+                                backend_type: instance.plugin_type,
+                                endpoint: String(instance.config?.endpoint ?? ''),
+                                model: String(instance.config?.model ?? ''),
+                                api_key_configured: !!(instance as { api_key_configured?: boolean }).api_key_configured,
+                              })
+                              setCloudAddOpen(true)
+                            } else {
+                              setEditingInstance(instance)
+                              setConfigDialogOpen(true)
+                            }
                           }}
                         >
                           <Edit className="h-4 w-4" />
@@ -1134,8 +1155,12 @@ export function UnifiedLLMBackendsTab({
 
         <CloudAiAddDialog
           open={cloudAddOpen}
-          onOpenChange={setCloudAddOpen}
-          onSubmit={handleCreateCloudAi}
+          onOpenChange={(open) => {
+            setCloudAddOpen(open)
+            if (!open) setCloudEditTarget(null)
+          }}
+          onSubmit={handleCloudAiSubmit}
+          editing={cloudEditTarget}
         />
         <UniversalPluginConfigDialog
           open={configDialogOpen}
