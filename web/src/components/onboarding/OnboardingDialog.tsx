@@ -431,7 +431,10 @@ function SetupStep({
       completed: status.steps.device.completed,
       completedLabel,
       actionLabel: t("onboarding.setup.device.action"),
-      onAction: () => onAction("/devices"),
+      // Land on the pending-registration tab — the step is about approving
+      // auto-discovered devices, and the general list starts empty for a
+      // fresh install.
+      onAction: () => onAction("/devices/drafts"),
       extra: <DeviceQuickStart />,
     },
   ]
