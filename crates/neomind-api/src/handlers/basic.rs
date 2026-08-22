@@ -155,6 +155,10 @@ pub async fn network_info_handler(
         "ip": ip,
         "server_url": server_url,
         "server_url_source": url_source.as_str(),
+        // Whether LAN devices can actually reach the server (bind ≠ loopback).
+        // The URL may still be the LAN address when this is false — the UI
+        // teaches the rebind instead of hiding the address.
+        "lan_reachable": !crate::server::http_bind_is_loopback(),
     }))
 }
 

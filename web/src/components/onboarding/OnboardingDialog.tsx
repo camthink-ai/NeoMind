@@ -29,7 +29,7 @@ import { Button } from "@/components/ui/button"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import { notifySuccess, notifyError } from "@/lib/notify"
-import { useServerUrl } from "@/lib/server-url"
+import { useServerUrl, useServerLanReachable } from "@/lib/server-url"
 import type { OnboardingStatus } from "@/hooks/useOnboarding"
 
 interface OnboardingDialogProps {
@@ -396,10 +396,22 @@ function DeviceQuickStart() {
   ].join("\n"), [serverUrl])
 
   // Loopback in the displayed URL is unreachable for LAN devices — either the
-  // canonical-URL prefetch hasn't resolved yet (Tauri/dev first paint) or the
-  // server is actually loopback-bound. Flag it so users copying the command
-  // for a device don't walk into a connection refused.
-  const isLocalhostUrl = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/i.test(serverUrl)
+  // canonical-URL prefetch hasn't resolved yet (Tauri/dev first paint) or no
+  // LAN host was detectable. Flag it so users copying the command for a
+  // device don't walk into a connection refused. Exact-hostname comparison —
+  // a substring test would false-positive on domains like localhost.example.com.
+  const isLocalhostUrl = (() => {
+    try {
+      const h = new URL(serverUrl).hostname.toLowerCase()
+      return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "[::1]"
+    } catch {
+      return false
+    }
+  })()
+  // URL is a real LAN address but the server only listens on loopback — the
+  // address is right, the bind isn't. Teach the rebind instead.
+  const lanReachable = useServerLanReachable()
+  const notLanReachable = !isLocalhostUrl && lanReachable === false
 
   const handleCopy = async () => {
     try {
@@ -423,6 +435,12 @@ function DeviceQuickStart() {
         <p className="text-xs text-warning leading-relaxed flex items-start gap-1.5">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
           {t("onboarding.deviceCli.localhostHint")}
+        </p>
+      )}
+      {notLanReachable && (
+        <p className="text-xs text-warning leading-relaxed flex items-start gap-1.5">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          {t("onboarding.deviceCli.unreachableHint")}
         </p>
       )}
       <Button size="sm" variant="outline" onClick={handleCopy} className="gap-1.5">

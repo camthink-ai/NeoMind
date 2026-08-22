@@ -772,6 +772,7 @@
       "toggle": "Quick device onboarding via CLI",
       "note": "POST simulated telemetry to the webhook URL below. The system auto-discovers unknown devices and creates a draft — no pre-registration or extra tools needed.",
       "localhostHint": "This command uses a localhost address. Devices on the LAN should replace localhost with the server's LAN IP.",
+      "unreachableHint": "The server is listening on loopback only (127.0.0.1) — LAN devices cannot connect. Restart it with the default 0.0.0.0 bind (CLI: --host 0.0.0.0; desktop: NEOMIND_HOST=0.0.0.0).",
       "followup": "After publishing, the system auto-discovers the device as a draft. Run these to view and approve it, completing onboarding:"
     },
     "stepLabels": {

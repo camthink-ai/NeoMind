@@ -114,10 +114,15 @@ export async function prefetchServerUrl(): Promise<void> {
   prefetchStarted = true
 
   try {
-    const resp = await api.get<{ server_url?: string }>('/system/network-info')
+    const resp = await api.get<{
+      server_url?: string
+      lan_reachable?: boolean
+    }>('/system/network-info')
     const url = resp?.server_url
     if (url && /^https?:\/\//.test(url)) {
       cachedServerUrl = url
+      // Absent field (older backend) → assume reachable rather than nag.
+      cachedLanReachable = resp?.lan_reachable ?? true
       notifyAll()
       return
     }
@@ -159,6 +164,38 @@ export function useServerUrl(): string {
     subscribe,
     getSyncSnapshot,
     getSyncSnapshot, // server snapshot = same as client (no SSR here)
+  )
+}
+
+// ============================================================================
+// LAN reachability — rides the same prefetch/network-info call
+// ============================================================================
+
+/**
+ * `null` = unknown (not consulted — browser via LAN IP/domain, or prefetch
+ * pending/failed). `false` = the server is bound to loopback only: the URL is
+ * the LAN address traffic should aim at, but nothing can connect until the
+ * server is rebound (NEOMIND_HOST=0.0.0.0).
+ */
+let cachedLanReachable: boolean | null = null
+
+/**
+ * Returns whether LAN devices can reach the server (`null` = unknown).
+ *
+ * - Browser accessing via non-localhost origin → `true` (that URL works).
+ * - Tauri / browser-via-localhost → from the prefetched network-info
+ *   (`lan_reachable`); `null` until it resolves.
+ */
+export function useServerLanReachable(): boolean | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      if (!isTauriEnv() && typeof window !== 'undefined') {
+        if (!isLocalhostOrigin(window.location.origin)) return true
+      }
+      return cachedLanReachable
+    },
+    () => cachedLanReachable,
   )
 }
 
