@@ -678,7 +678,7 @@ export function UnifiedLLMBackendsTab({
                 onClick={() => {
                   // Snap to the nearest preset (the Select only offers presets).
                   const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
-                  const presets = [4096, 8192, 16384, 32768, 65536, 131072]
+                  const presets = [32768, 65536, 131072]
                   setCtxDialogInput(presets.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a, presets[0]))
                   setCtxDialogOpen(true)
                 }}
@@ -1015,7 +1015,7 @@ export function UnifiedLLMBackendsTab({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {[4096, 8192, 16384, 32768, 65536, 131072].map((n) => {
+                  {[32768, 65536, 131072].map((n) => {
                     const def = builtinStatus?.default_ctx ?? 32768
                     return (
                       <SelectItem key={n} value={String(n)}>
