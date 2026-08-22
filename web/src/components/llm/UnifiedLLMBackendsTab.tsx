@@ -988,6 +988,13 @@ export function UnifiedLLMBackendsTab({
             {pluginInstances.map((instance) => {
               const isActive = instance.id === activeBackendId
               const testResult = testResults[instance.id]
+              // Cloud AI groups multiple protocols — label each card with
+              // its concrete one (protocol key first, legacy vendor name as
+              // fallback). The type is immutable after creation (backend
+              // contract has no backend_type on update).
+              const protocolLabel = t(`plugins:llm.protocol.${instance.plugin_type}.name`, {
+                defaultValue: getLlmProviderInfo(instance.plugin_type, t).name,
+              })
 
               return (
                 <Card
@@ -1002,6 +1009,9 @@ export function UnifiedLLMBackendsTab({
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 min-w-0">
                           <CardTitle className="text-base truncate min-w-0">{instance.name}</CardTitle>
+                          {isCloudAi && (
+                            <Badge variant="outline" className="text-xs shrink-0">{protocolLabel}</Badge>
+                          )}
                           {isActive && <Badge variant="default" className="text-xs">{t('plugins:llm.active')}</Badge>}
                         </div>
                         <CardDescription className="font-mono text-xs">
