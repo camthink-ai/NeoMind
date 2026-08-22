@@ -388,7 +388,22 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             description,
             layout,
             components,
+            replace_all,
         } => {
+            // Explicit gate: --components replaces the ENTIRE component array.
+            // Small models repeatedly reach for it when they mean "add" or
+            // "tweak one widget" — without this gate those mistakes silently
+            // wipe the dashboard. Fail loudly with the right command instead.
+            if components.is_some() && !replace_all {
+                return Err(anyhow::anyhow!(
+                    "--components replaces ALL dashboard components and needs an explicit --replace-all confirmation.\n\
+                     Most likely you want one of these instead:\n\
+                     - ADD widgets:    neomind dashboard add-components {id} --components '[...]'\n\
+                     - TWEAK one widget: neomind dashboard update-component {id} --component-id <cid> --set '{...}'\n\
+                     - TRULY replace everything: re-run with --replace-all"
+                        .replace("{id}", &id)
+                ));
+            }
             let layout_json = if let Some(layout_str) = layout {
                 Some(serde_json::from_str(&layout_str)?)
             } else {

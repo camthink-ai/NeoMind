@@ -959,10 +959,13 @@ pub enum DashboardCommand {
     },
     /// Update dashboard.
     ///
-    /// Modify name, description, layout, or components.
-    /// For changing ONE component's fields, prefer `dashboard update-component`.
-    /// WARNING: --components replaces ALL existing components.
-    /// Workflow: `dashboard get <ID>` → edit JSON → `dashboard update <ID> --components '...'`
+    /// Modify name, description, or layout. For changing ONE component's
+    /// fields, prefer `dashboard update-component`.
+    /// --components REPLACES ALL components and requires the explicit
+    /// `--replace-all` confirmation flag (without it the command fails with
+    /// guidance — most "update component" intents want `add-components` or
+    /// `update-component` instead).
+    /// Workflow: `dashboard get <ID>` → edit JSON → `dashboard update <ID> --replace-all --components '...'`
     Update {
         /// Dashboard ID.
         #[arg(required = true)]
@@ -981,6 +984,10 @@ pub enum DashboardCommand {
         /// Each component: {"type":"widget-type","data_source":{"..."},"display":{...},"config":{...}}
         #[arg(short, long)]
         components: Option<String>,
+        /// REQUIRED together with --components: confirms you want to replace
+        /// the entire component array (destructive).
+        #[arg(long)]
+        replace_all: bool,
     },
     /// Update ONE component of a dashboard (PREFERRED for tweaks).
     ///

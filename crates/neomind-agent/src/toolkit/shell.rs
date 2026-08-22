@@ -89,7 +89,7 @@ const DOMAIN_INDEX: &str = r#"
 - device: list get create update delete history control <ID> <CMD> types write-metric webhook-url drafts
 - agent: list get create update delete invoke memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`)
 - rule: list get create update delete enable disable test history
-- dashboard: list get create update delete add-components update-component remove-components share (update-component = deep-merge patch for ONE widget — prefer it over full update for tweaks)
+- dashboard: list get create update delete add-components update-component remove-components share (ADD widgets → add-components (append); TWEAK one widget → update-component; `update --components` replaces ALL and needs --replace-all — almost never what you want; `dashboard get <ID>` first to see layout/ids)
 - connector: list get create update delete enable disable test subscribe (external I/O bridges: MQTT broker / webhook / HTTP — NOT devices)
 - extension: list get install uninstall status logs config reload create build market-list market-install validate
 - transform: list get create update delete enable disable metrics test-code data-sources
