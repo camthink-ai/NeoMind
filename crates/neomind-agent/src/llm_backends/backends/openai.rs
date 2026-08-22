@@ -670,7 +670,12 @@ impl CloudRuntime {
             CloudProvider::OpenAI | CloudProvider::Custom
         ) {
             let base = self.config.get_base_url();
-            if base.contains("dashscope.aliyuncs.com") {
+            // Both DashScope regions: cn (dashscope.aliyuncs.com) and the
+            // international site (dashscope-intl.aliyuncs.com) — the intl
+            // host doesn't contain the cn substring.
+            if base.contains("dashscope.aliyuncs.com")
+                || base.contains("dashscope-intl.aliyuncs.com")
+            {
                 return CloudProvider::Qwen;
             }
             if base.contains("api.deepseek.com") {
@@ -2833,27 +2838,31 @@ mod tests {
     #[test]
     fn test_openai_typed_dashscope_endpoint_keeps_enable_thinking() {
         // backend_type "openai" + DashScope endpoint — exactly what the
-        // Cloud AI dialog creates for Qwen today.
-        let cfg = CloudConfig::openai("sk-test")
-            .with_model("qwen3.7-plus")
-            .with_base_url_opt(Some(
-                "https://dashscope.aliyuncs.com/compatible-mode/v1".into(),
-            ));
-        let runtime = CloudRuntime::new(cfg).expect("runtime builds");
+        // Cloud AI dialog creates for Qwen today. Covers both regions: cn
+        // (dashscope.aliyuncs.com) and intl (dashscope-intl.aliyuncs.com).
+        for host in [
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        ] {
+            let cfg = CloudConfig::openai("sk-test")
+                .with_model("qwen3.7-plus")
+                .with_base_url_opt(Some(host.into()));
+            let runtime = CloudRuntime::new(cfg).expect("runtime builds");
 
-        let request = runtime.build_chat_request(llm_input_with_thinking_disabled(), false);
-        let json = serde_json::to_value(&request).expect("serialize");
-        assert_eq!(
-            json["enable_thinking"],
-            serde_json::Value::Bool(false),
-            "openai-typed DashScope endpoint must still wire enable_thinking"
-        );
-        assert!(
-            json.get("reasoning_effort")
-                .map(|v| v.is_null())
-                .unwrap_or(true),
-            "openai-typed DashScope endpoint must NOT receive reasoning_effort"
-        );
+            let request = runtime.build_chat_request(llm_input_with_thinking_disabled(), false);
+            let json = serde_json::to_value(&request).expect("serialize");
+            assert_eq!(
+                json["enable_thinking"],
+                serde_json::Value::Bool(false),
+                "openai-typed DashScope endpoint ({host}) must still wire enable_thinking"
+            );
+            assert!(
+                json.get("reasoning_effort")
+                    .map(|v| v.is_null())
+                    .unwrap_or(true),
+                "openai-typed DashScope endpoint ({host}) must NOT receive reasoning_effort"
+            );
+        }
     }
 
     #[test]

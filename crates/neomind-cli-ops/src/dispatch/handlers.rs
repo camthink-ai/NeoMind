@@ -93,7 +93,7 @@ pub async fn run_llm_cmd(cmd: LlmCommand) -> Result<(CliResponse, OutputFormat)>
     let response = match cmd {
         LlmCommand::List {} => list_backends(&client).await?,
         LlmCommand::Get { id } => get_backend(&client, &id).await?,
-        LlmCommand::Models { endpoint: _ } => list_ollama_models(&client).await?,
+        LlmCommand::Models { endpoint } => list_ollama_models(&client, Some(&endpoint)).await?,
         LlmCommand::Create {
             name,
             r#type,
@@ -384,8 +384,14 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             } else {
                 None
             };
-            let resp =
-                create_dashboard(&client, &name, description.as_deref(), layout_json, components_json).await?;
+            let resp = create_dashboard(
+                &client,
+                &name,
+                description.as_deref(),
+                layout_json,
+                components_json,
+            )
+            .await?;
             (resp, output_format)
         }
         DashboardCommand::Update {

@@ -81,9 +81,31 @@ pub async fn get_backend(client: &ApiClient, id: &str) -> Result<CliResponse> {
 }
 
 /// List available models from Ollama
-pub async fn list_ollama_models(client: &ApiClient) -> Result<CliResponse> {
-    let data = client.get("/llm-backends/ollama/models").await?;
+///
+/// `endpoint` overrides the Ollama server to query (the API defaults to
+/// http://localhost:11434 when absent) — the skill teaches
+/// `llm models --endpoint http://gpu-host:11434` for remote servers.
+pub async fn list_ollama_models(client: &ApiClient, endpoint: Option<&str>) -> Result<CliResponse> {
+    let path = match endpoint.map(str::trim).filter(|e| !e.is_empty()) {
+        Some(e) => format!("/llm-backends/ollama/models?endpoint={}", urlencode(e)),
+        None => "/llm-backends/ollama/models".to_string(),
+    };
+    let data = client.get(&path).await?;
     Ok(CliResponse::success(data, "Ollama models listed"))
+}
+
+/// Percent-encode a query value (keep URL-safe characters as-is).
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
 
 /// Create a new LLM backend
