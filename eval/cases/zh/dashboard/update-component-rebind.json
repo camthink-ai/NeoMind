@@ -1,0 +1,83 @@
+{
+ "id": "dashboard-update-component-rebind",
+ "lang": "zh",
+ "category": "dashboard",
+ "workflow": "dashboard-management",
+ "scenario_type": "single_turn",
+ "description": "组件编辑:把已有组件的数据绑定从 sensor-001 改到 sensor-002(覆盖 `neomind dashboard update-component`,新维度:单组件深合并补丁,不该走 remove+add 全量替换)",
+ "setup": {
+  "fixture": "seed-default",
+  "extras": {
+   "dashboards": [
+    {
+     "name": "Monitor Board",
+     "components": [
+      {
+       "id": "battery-card",
+       "type": "value-card",
+       "title": "Battery",
+       "position": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 2
+       },
+       "data_source": {
+        "type": "telemetry",
+        "source": "device",
+        "id": "sensor-001",
+        "field": "values.battery",
+        "mode": "latest",
+        "sourceId": "sensor-001",
+        "metricId": "values.battery"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "turns": [
+  {
+   "user": "把 Monitor Board 上的 Battery 卡片改成显示 sensor-002 的电量。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Turn 1: `neomind dashboard get Monitor Board`(找组件 id)→ `neomind dashboard update-component <ID> --component-id battery-card --set '{\"data_source\":{\"id\":\"sensor-002\",\"sourceId\":\"sensor-002\"}}'`(或等价,仅改绑定字段)"
+  ],
+  "overall": "组件仍在(count=1)且 data_source 已指向 sensor-002,其余字段未丢失"
+ },
+ "expect": {
+  "tools": [
+   "shell"
+  ],
+  "commands": [
+   "neomind dashboard get",
+   "neomind dashboard update-component"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_component_bound",
+   "params": {
+    "name": "Monitor Board",
+    "device_id": "sensor-002",
+    "metric": "battery"
+   },
+   "expected": true
+  },
+  {
+   "type": "dashboard_component_count",
+   "params": {
+    "name": "Monitor Board"
+   },
+   "expected": 1
+  }
+ ]
+}

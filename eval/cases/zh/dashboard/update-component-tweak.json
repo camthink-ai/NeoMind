@@ -1,0 +1,64 @@
+{
+ "id": "dashboard-update-component-tweak",
+ "lang": "zh",
+ "category": "dashboard",
+ "workflow": "dashboard-management",
+ "scenario_type": "multi_turn",
+ "description": "多轮:建仪表盘 → 加电量卡片 → 改标题(覆盖 update-component 单字段补丁;关键回归点:编辑后组件不丢、绑定不变——旧的 remove+add 路径曾丢组件)",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "新建一个空仪表盘，名字 Demo Board。"
+  },
+  {
+   "user": "给它添加一个数值卡片，显示 sensor-001 的当前电量。"
+  },
+  {
+   "user": "把这个电量卡片的标题改成 'Battery Level'。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "context_retention",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Turn 1: `neomind dashboard create --name 'Demo Board'`",
+   "Turn 2: `neomind device get sensor-001`(发现 values.battery)→ `neomind dashboard add-components`",
+   "Turn 3: `neomind dashboard update-component <ID> --component-id <cid> --set '{\"title\":\"Battery Level\"}'`(不该 remove 后重加整个组件)"
+  ],
+  "overall": "Turn 3 后组件仍存在且绑定仍指向 sensor-001 电量"
+ },
+ "expect": {
+  "tools": [
+   "shell"
+  ],
+  "commands": [
+   "neomind dashboard create",
+   "neomind dashboard add-components",
+   "neomind dashboard update-component"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_component_count",
+   "params": {
+    "name": "Demo Board"
+   },
+   "expected": 1
+  },
+  {
+   "type": "dashboard_component_bound",
+   "params": {
+    "name": "Demo Board",
+    "device_id": "sensor-001",
+    "metric": "battery"
+   },
+   "expected": true
+  }
+ ]
+}
