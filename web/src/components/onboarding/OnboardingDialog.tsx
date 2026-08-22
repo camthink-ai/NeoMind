@@ -36,6 +36,15 @@ interface OnboardingDialogProps {
 }
 
 const STEPS = ["setup", "ready"] as const
+
+// Progress stages mirror the actual journey (model → devices → done), not
+// the internal dialog steps — the user thinks in setup items, not wizard
+// pages. Labels reuse the setup item titles / common:done.
+const PROGRESS_STAGES = [
+  { key: "llm" as const, icon: <Sparkles className="w-4 h-4" />, label: "onboarding.setup.llm.title" },
+  { key: "device" as const, icon: <Cpu className="w-4 h-4" />, label: "onboarding.setup.device.title" },
+  { key: "ready" as const, icon: <Rocket className="w-4 h-4" />, label: "done" },
+]
 type StepKey = (typeof STEPS)[number]
 
 export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: OnboardingDialogProps) {
@@ -121,43 +130,57 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
         <X className="w-5 h-5" />
       </button>
 
-      {/* Progress indicator */}
+      {/* Progress indicator — three real stages with state colors and
+          connecting lines that fill as stages complete. */}
       <div className="shrink-0 pt-8 pb-3 px-6">
         <div className="max-w-5xl mx-auto flex items-center justify-center">
-          {STEPS.map((s, i) => {
-            // A step is only "checked" when it is ACTUALLY complete — manual
-            // switching to step 2 must not paint step 1 as done when the LLM
-            // or device setup is still unfinished.
-            const stepDone = s === 'setup'
-              ? !!(status.steps.llm.completed && status.steps.device.completed)
-              : !!(status.steps.llm.completed && status.steps.device.completed)
-            return (
-            <button
-              key={s}
-              onClick={() => setStep(s)}
-              className="flex items-center"
-              aria-label={t(`onboarding.stepLabels.${s}`)}
-            >
-              <span className={cn(
-                "flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold transition-colors",
-                stepDone && "bg-success text-primary-foreground",
-                !stepDone && i === stepIndex && "bg-primary text-primary-foreground",
-                !stepDone && i !== stepIndex && "bg-muted-30 text-muted-foreground",
-              )}>
-                {stepDone ? <Check className="w-4 h-4" /> : i + 1}
-              </span>
-              <span className={cn(
-                "ml-2 text-xs font-medium hidden sm:inline transition-colors",
-                i === stepIndex ? "text-foreground" : "text-muted-foreground",
-              )}>
-                {t(`onboarding.stepLabels.${s}`)}
-              </span>
-              {i < STEPS.length - 1 && (
-                <span className="w-6 sm:w-10 h-px bg-border mx-3" />
-              )}
-            </button>
-            )
-          })}
+          {(() => {
+            // Active stage: within setup, the first incomplete item; on the
+            // ready step, the Done stage.
+            const firstIncomplete = !status.steps.llm.completed
+              ? "llm"
+              : !status.steps.device.completed
+                ? "device"
+                : "ready"
+            return PROGRESS_STAGES.map((stage, i) => {
+              const completed =
+                stage.key === "llm"
+                  ? !!status.steps.llm.completed
+                  : stage.key === "device"
+                    ? !!status.steps.device.completed
+                    : false
+              const active = step === "ready" ? stage.key === "ready" : stage.key === firstIncomplete
+              return (
+                <button
+                  key={stage.key}
+                  onClick={() => setStep(stage.key === "ready" ? "ready" : "setup")}
+                  className="flex items-center"
+                  aria-label={t(stage.label)}
+                >
+                  <span className={cn(
+                    "flex items-center justify-center w-8 h-8 rounded-full transition-all duration-300",
+                    completed && "bg-success text-primary-foreground",
+                    !completed && active && "bg-primary text-primary-foreground ring-4 ring-primary-light",
+                    !completed && !active && "bg-muted-30 text-muted-foreground",
+                  )}>
+                    {completed ? <Check className="w-4 h-4" /> : stage.icon}
+                  </span>
+                  <span className={cn(
+                    "ml-2 text-xs font-medium hidden sm:inline transition-colors",
+                    active ? "text-foreground" : completed ? "text-success" : "text-muted-foreground",
+                  )}>
+                    {t(stage.label)}
+                  </span>
+                  {i < PROGRESS_STAGES.length - 1 && (
+                    <span className={cn(
+                      "w-6 sm:w-12 h-0.5 rounded-full mx-3 transition-colors duration-500",
+                      completed ? "bg-success" : "bg-border",
+                    )} />
+                  )}
+                </button>
+              )
+            })
+          })()}
         </div>
       </div>
 
