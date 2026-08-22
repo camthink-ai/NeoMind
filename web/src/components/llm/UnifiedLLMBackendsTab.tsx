@@ -799,81 +799,6 @@ export function UnifiedLLMBackendsTab({
               {t('plugins:llm.emptyStateAddOwnBackend')}
             </Button>
           </div>
-          {/* Builtin engine settings (ctx) */}
-        <UnifiedFormDialog
-          open={ctxDialogOpen}
-          onOpenChange={(o) => { setCtxDialogOpen(o); if (!o) setCtxDialogError(null) }}
-          title={t('plugins:llm.builtinEngineSettings')}
-          description={t('plugins:llm.builtinEngineSettingsDesc', {
-            def: (builtinStatus?.default_ctx ?? 0).toLocaleString(),
-            model: builtinStatus?.model_id ?? '',
-          })}
-          icon={<BrainCircuit className="h-5 w-5 text-muted-foreground" />}
-          className="z-[110]"
-          isSubmitting={ctxDialogSaving}
-          onSubmit={async () => {
-            const v = ctxDialogInput
-            if (v == null || !Number.isFinite(v) || v < 1024 || v > 1_048_576) {
-              setCtxDialogError(t('plugins:llm.builtinCtxInvalid'))
-              return
-            }
-            setCtxDialogSaving(true)
-            setCtxDialogError(null)
-            try {
-              await api.restartBuiltinLlm(v)
-              toast({ title: t('plugins:llm.builtinCtxApplied', { ctx: v.toLocaleString() }) })
-              setCtxDialogOpen(false)
-              await refreshBuiltinStatus()
-              await loadData(true)
-            } catch (e) {
-              setCtxDialogError(e instanceof Error ? e.message : String(e))
-            } finally {
-              setCtxDialogSaving(false)
-            }
-          }}
-          submitLabel={t('plugins:llm.builtinCtxApply')}
-          submitDisabled={ctxDialogSaving}
-          submitError={ctxDialogError ?? undefined}
-        >
-          <div className="space-y-4">
-            <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
-              <Input
-                type="number"
-                min={1024}
-                max={1048576}
-                step={1024}
-                value={ctxDialogInput ?? ''}
-                onChange={(e) => setCtxDialogInput(e.target.value === '' ? null : Number(e.target.value))}
-                className="font-mono"
-              />
-            </FormField>
-            {builtinStatus?.ctx_override != null && (
-              <Button
-                size="sm"
-                variant="ghost"
-                type="button"
-                disabled={ctxDialogSaving}
-                onClick={async () => {
-                  setCtxDialogSaving(true)
-                  try {
-                    await api.restartBuiltinLlm(builtinStatus!.default_ctx!)
-                    toast({ title: t('plugins:llm.builtinCtxReset') })
-                    setCtxDialogOpen(false)
-                    setCtxDialogInput(null)
-                    await refreshBuiltinStatus()
-                    await loadData(true)
-                  } catch (e) {
-                    setCtxDialogError(e instanceof Error ? e.message : String(e))
-                  } finally {
-                    setCtxDialogSaving(false)
-                  }
-                }}
-              >
-                {t('plugins:llm.builtinCtxResetBtn')}
-              </Button>
-            )}
-          </div>
-        </UnifiedFormDialog>
         {wizardElement}
         </>
       )
@@ -1041,6 +966,82 @@ export function UnifiedLLMBackendsTab({
             )
           })()}
         </div>
+          {/* Builtin engine settings (ctx) */}
+        <UnifiedFormDialog
+          open={ctxDialogOpen}
+          onOpenChange={(o) => { setCtxDialogOpen(o); if (!o) setCtxDialogError(null) }}
+          title={t('plugins:llm.builtinEngineSettings')}
+          description={t('plugins:llm.builtinEngineSettingsDesc', {
+            def: (builtinStatus?.default_ctx ?? 0).toLocaleString(),
+            model: builtinStatus?.model_id ?? '',
+          })}
+          icon={<BrainCircuit className="h-5 w-5 text-muted-foreground" />}
+          className="z-[110]"
+          isSubmitting={ctxDialogSaving}
+          onSubmit={async () => {
+            const v = ctxDialogInput
+            if (v == null || !Number.isFinite(v) || v < 1024 || v > 1_048_576) {
+              setCtxDialogError(t('plugins:llm.builtinCtxInvalid'))
+              return
+            }
+            setCtxDialogSaving(true)
+            setCtxDialogError(null)
+            try {
+              await api.restartBuiltinLlm(v)
+              toast({ title: t('plugins:llm.builtinCtxApplied', { ctx: v.toLocaleString() }) })
+              setCtxDialogOpen(false)
+              await refreshBuiltinStatus()
+              await loadData(true)
+            } catch (e) {
+              setCtxDialogError(e instanceof Error ? e.message : String(e))
+            } finally {
+              setCtxDialogSaving(false)
+            }
+          }}
+          submitLabel={t('plugins:llm.builtinCtxApply')}
+          submitDisabled={ctxDialogSaving}
+          submitError={ctxDialogError ?? undefined}
+        >
+          <div className="space-y-4">
+            <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
+              <Input
+                type="number"
+                min={1024}
+                max={1048576}
+                step={1024}
+                value={ctxDialogInput ?? ''}
+                onChange={(e) => setCtxDialogInput(e.target.value === '' ? null : Number(e.target.value))}
+                className="font-mono"
+              />
+            </FormField>
+            {builtinStatus?.ctx_override != null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                type="button"
+                disabled={ctxDialogSaving}
+                onClick={async () => {
+                  setCtxDialogSaving(true)
+                  try {
+                    await api.restartBuiltinLlm(builtinStatus!.default_ctx!)
+                    toast({ title: t('plugins:llm.builtinCtxReset') })
+                    setCtxDialogOpen(false)
+                    setCtxDialogInput(null)
+                    await refreshBuiltinStatus()
+                    await loadData(true)
+                  } catch (e) {
+                    setCtxDialogError(e instanceof Error ? e.message : String(e))
+                  } finally {
+                    setCtxDialogSaving(false)
+                  }
+                }}
+              >
+                {t('plugins:llm.builtinCtxResetBtn')}
+              </Button>
+            )}
+          </div>
+        </UnifiedFormDialog>
+
         {wizardElement}
       </>
     )
