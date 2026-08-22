@@ -43,7 +43,7 @@
     "cloudAddTitle": "添加云端 AI 后端",
     "cloudAddDesc": "选择协议路径并填写端点信息",
     "cloudProtocol": "协议",
-    "cloudProtocolHelp": "OpenAI 兼容适用绝大多数服务商；Anthropic 仅用于原生 Messages API",
+    "cloudProtocolHelp": "OpenAI 兼容适用绝大多数服务商；Anthropic 端点需以 /v1 结尾（如智谱 Anthropic 兼容入口 open.bigmodel.cn/api/anthropic/v1）",
     "cloudFillRequired": "请填写名称、端点、模型和 API Key",
     "latency": "延迟",
     "noBackends": "暂无 LLM 后端",

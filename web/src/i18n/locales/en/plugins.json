@@ -43,7 +43,7 @@
     "cloudAddTitle": "Add Cloud AI Backend",
     "cloudAddDesc": "Pick a protocol path and fill in the endpoint details",
     "cloudProtocol": "Protocol",
-    "cloudProtocolHelp": "OpenAI-compatible covers most providers; Anthropic is for the native Messages API",
+    "cloudProtocolHelp": "OpenAI-compatible covers most providers; Anthropic endpoints must end with /v1 (e.g. GLM /api/anthropic/v1)",
     "cloudFillRequired": "Name, endpoint, model and API key are required",
     "latency": "Latency",
     "noBackends": "No LLM Backends",
