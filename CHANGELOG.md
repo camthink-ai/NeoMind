@@ -16,13 +16,31 @@ NeoMind now ships its own brain. The built-in LLM became a choice of three model
 - **Self-bootstrapping llama-server runtime**: the bundled binary is used when present (desktop/Docker); otherwise the server downloads the official llama.cpp prebuilt for its platform (macOS arm64/x64, Linux x64/arm64, Windows x64/arm64) into a versioned cache. The whole release archive is extracted — the binary is a thin wrapper that dlopens sibling libraries, and a single-file extract dies on exec. Unsupported platforms (Jetson/CUDA) get a clear source-build pointer.
 - **Hardened download chain**: resumable downloads with SHA-256 verification, a resumed response's progress total now counts already-downloaded bytes (the bar used to clamp to a false 100%), WS progress events throttled to ~250ms (per-chunk events re-render-stormed the UI), a "starting local model…" phase while the server spawns, and auto-activation when no other backend is active. A persistent top-right indicator reopens the wizard after you close it mid-download.
 - **Honest capability reporting**: the builtin instance registers with its real context window (LFM 128K / Qwen·Gemma 32K — a storage default of 4096 previously surfaced as a tiny chat window), streaming, tool support, and per-model thinking flags.
+- **One-click model switch**: replacing the serving model no longer leaves a stale llama-server answering for the old one.
+
+### Protocol-first LLM backends — two cloud protocols, one card
+The vendor grid is gone: settings now offers **Ollama / llama.cpp / Cloud AI**, where Cloud AI is a single card with an inline protocol chooser (**OpenAI-compatible / Anthropic**) — every other vendor (Qwen, DeepSeek, GLM, xAI, OpenRouter, vLLM…) rides the OpenAI-compatible path through its endpoint. Legacy vendor-typed instances keep rendering (folded into the Cloud AI detail view) and remain editable, including switching their protocol.
+
+- **Vendor params survive the protocol path**: backends created as plain OpenAI-compatible with a DashScope/DeepSeek endpoint keep their vendor-specific wiring — `enable_thinking` for DashScope hybrid models (both cn and intl regions), DeepSeek's `thinking` on/off toggle — and stop receiving `reasoning_effort`, which those APIs reject. The runtime sniffs the endpoint (`param_provider()`), so how a backend was typed no longer changes its request behavior; the persisted reasoning-control report (Boolean vs Effort — what the settings UI renders) follows it. Without this, every DashScope/DeepSeek backend created after the aggregation silently lost thinking control (the gotcha #7 non-chat token burn).
+- **DeepSeek's thinking toggle now honors `thinking_enabled: Some(false)`** — the flag analyzer/intent/compression actually set; previously only an explicit effort level disabled it, so non-chat calls kept thinking on.
+- **Anthropic base URLs**: `/v1` auto-appended when missing (SDK/Claude Code convention — `https://api.anthropic.com` and GLM's `/api/anthropic` both land correctly), and responses containing `thinking`/`redacted_thinking` content blocks no longer fail deserialization.
+- **Sampling is protocol-aware**: temperature everywhere, `top_p` hidden for Anthropic (not in the Messages API). Editing supports switching a backend's protocol without clobbering endpoint/model fields; a stored API key prefills as a mask sentinel (blank keeps it).
+- **Fresh default models**: gpt-4.1-mini, claude-sonnet-4-5, gemini-2.5-flash, grok-3-mini, glm-4.5-flash, qwen3.5:4b (schema defaults + onboarding CLI list).
+
+### The AI-facing CLI tells the truth again
+A full audit of everything the agent reads and runs for LLM backend management:
+- The clap help (injected into context by the shell tool's domain-help channel) and the llm-management skill taught `--type custom` — a value the API rejects with 400. Both now teach the four-type story (`ollama` / `llamacpp` / `openai` / `anthropic`), with legacy vendor values noted as back-compat and every vendor reachable via `--type openai` + its endpoint.
+- `llm models --endpoint` was silently discarded by the dispatcher — the skill's remote-Ollama example queried localhost regardless of the flag. The endpoint now reaches the API.
+- The onboarding CLI quick-setup's xAI endpoint lacked `/v1` (URL joins base + `/chat/completions`; only Anthropic auto-appends) — the command as printed 404'd.
+- Endpoint conventions documented once, everywhere they're taught: llamacpp without `/v1`, OpenAI-compatible with `/v1`, Anthropic either way.
+- Verified end-to-end on a live server through the exact commands the skill teaches: create (openai-typed DeepSeek + DashScope) / list / get / activate / test (reached the real vendor API) / delete; `custom` fails cleanly with a teaching error.
 
 ### Critical fix: llamacpp agents crashed the server
 The agent-runtime builder had no arm for `LlmBackend::LlamaCpp` — any llamacpp backend hit `unreachable!()` during agent creation/execution, crashing the server. This silently broke agent workloads on llamacpp backends and had been contaminating cross-model eval comparisons (Qwen's real score was 76%, not the polluted 37%; Gemma doubled to 60%). Post-fix baselines are committed for Qwen, LFM QAD (67%, tool_ok 100%), and Gemma QAT.
 
 ### Deployment: the LLM backend is optional everywhere
 - **Docker**: `NEOMIND_BUNDLE_MODEL=lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none` build arg — `none` produces a 221MB image (vs 1.81GB with a model) for deployments that bring their own backend. Also fixed: the runtime stage was missing `libgomp1`, so the bundled llama-server couldn't exec; and CI now **smoke-gates every image before pushing** (`/api/health` green + "Builtin LLM ready" in logs) — build-green ≠ runnable.
-- **install.sh**: `WITH_LLM` (default true) downloads the llama.cpp runtime from official prebuilt binaries; `BUILTIN_MODEL` pre-downloads a chosen model. Both opt out cleanly.
+- **install.sh**: `WITH_LLM` (default true) downloads the llama.cpp runtime from official prebuilt binaries; `BUILTIN_MODEL` pre-downloads a chosen model. Both opt out cleanly. A post-install exec check flags a broken runtime with baseline guidance for old-libstdc++ systems.
 - **Desktop**: llama-server is bundled via Tauri externalBin (macOS/Linux/Windows).
 
 ### MQTT: gateways no longer merge devices
@@ -38,6 +56,19 @@ A full fresh-install walkthrough (wipe → register → download → chat) surfa
 - **Sidebar**: 224px expanded width, explicit collapse button, nav rows stretch full-width, status/badge markers anchor to icon corners, instance liveness follows the WebSocket.
 - **Three flicker roots fixed**: a stale API key's 401s were swallowed while `isAuthenticated` stayed true, bouncing routes between / and /setup (each revealing the other beneath); focus-triggered backend refetches flipped the chat empty state through the real UI for a frame; a whole-store subscription re-rendered the setup page on any state change.
 - **Confirm-password mismatch** shows inline immediately and disables submit while fields disagree.
+
+### Onboarding wizard — four steps that ARE the journey
+The progress stages now map 1:1 onto wizard steps: welcome (platform intro + docs cards) → LLM backend → devices → ready. The welcome content moved out of the LLM step so the two setup steps share one structure; the built-in model wizard stays mounted across step navigation (mid-download too); completed items show a success strip with actions still reachable instead of a dead-end banner; the stage indicator stacks icon above label and every stage jumps directly; opening lands on the first incomplete step.
+
+### Dashboard AI tool chain — tweak one widget without a full rebuild
+- **`update-component`**: deep-merge patch for a single widget (`--set '{"data_source":{"timeWindow":{...}}}'`) — previously a one-field change meant remove + re-add of the full component JSON (one incident burned 11 rounds on exactly that). `id`/`type` immutable; 404s carry a get-command hint.
+- **`update --components` is gated behind `--replace-all`**: models kept reaching for full-array replace when they meant add or tweak — without the flag it now fails with a teaching error naming the right command. `create --components` offers one-shot create-with-widgets; `dashboard get` falls back to a name match; malformed `--components`/`--ids` JSON propagates instead of silently acting on an empty array; duplicate component ids are rejected.
+- **Inline expression data sources**: a component binds a computed KPI directly (`avg(device:s1:values.battery, device:s2:values.battery)`) — no pre-created transform. Ref parsing + whitelisted-function evaluation with injection rejection (10 vitest cases), forward-filled aligned timeseries.
+- **`transform executions`**: every transform run has been recorded all along but nothing surfaced it — the CLI subcommand + skill debugging section now expose status/error/output, including the "completed with metric_count 0 = code ran but returned nothing" diagnosis.
+
+### Agent reliability & chat
+- **List-only dead-end detector**: a diagnostic question containing the noun 绑定 triggered the "execute now" injection every round — 17 tool calls, no answer, still grinding 16 minutes later. Now it fires only on nameable actions, at most once per turn, and recognizes component-level mutations.
+- **Chat panel converges to server truth**: a send landing mid-generation duplicated bubbles in the floating panel; after every stream the panel refetches the session history and replaces its local assembly.
 
 ### Smaller fixes
 - IM router no longer errors on fresh systems (default agent resolution moved from boot-time to message-time; an agent created later works without restart).
