@@ -474,8 +474,8 @@ function SetupStep({
         ))}
       </div>
 
-      <div className="grid md:grid-cols-[18rem_1fr] gap-4 mb-6">
-        <SetupSelectorList items={items} selectedId={selected} onSelect={setSelected} />
+      <div className="mb-6">
+        <SetupTopTabs items={items} selectedId={selected} onSelect={setSelected} />
         <SetupDetailPane item={active} />
       </div>
 
@@ -492,8 +492,10 @@ function SetupStep({
   )
 }
 
-// Left pane: vertical selector list on desktop, segmented toggle on mobile.
-function SetupSelectorList({
+// Top tab strip — app-standard capsule style (same shape as PageTabsBar),
+// replacing the former left vertical list so the detail pane gets full
+// width. Completed steps swap their icon for a check (green when idle).
+function SetupTopTabs({
   items,
   selectedId,
   onSelect,
@@ -503,68 +505,30 @@ function SetupSelectorList({
   onSelect: (id: SetupCardId) => void
 }) {
   return (
-    <>
-      {/* Desktop vertical list */}
-      <div className="hidden md:flex flex-col gap-2">
-        {items.map((item) => {
-          const isActive = item.id === selectedId
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelect(item.id)}
-              className={cn(
-                "flex items-center gap-3 rounded-xl border p-3 text-left transition-colors",
-                isActive
-                  ? "border-primary bg-card"
-                  : "border-border bg-card hover:bg-muted-30",
-              )}
-            >
-              <div className={cn(
-                "w-9 h-9 rounded-lg flex items-center justify-center shrink-0",
-                item.completed ? "bg-success-light text-success" : item.tint,
-              )}>
-                {item.completed ? <Check className="w-4 h-4" /> : item.icon}
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className={cn(
-                  "text-sm font-semibold",
-                  item.completed ? "text-muted-foreground line-through" : "text-foreground",
-                )}>
-                  {item.title}
-                </div>
-                <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed line-clamp-1">
-                  {item.completed ? item.completedLabel : item.description}
-                </div>
-              </div>
-            </button>
-          )
-        })}
-      </div>
-
-      {/* Mobile segmented toggle */}
-      <div className="md:hidden grid grid-cols-2 gap-2">
-        {items.map((item) => {
-          const isActive = item.id === selectedId
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelect(item.id)}
-              className={cn(
-                "flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
-                isActive
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted-30 text-muted-foreground",
-              )}
-            >
-              {item.completed && <Check className="w-3.5 h-3.5" />}
-              {item.title}
-            </button>
-          )
-        })}
-      </div>
-    </>
+    <div className="mb-4 flex items-center gap-1 rounded-lg border border-border bg-card p-1">
+      {items.map((item) => {
+        const isActive = item.id === selectedId
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelect(item.id)}
+            className={cn(
+              "inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-sm px-4 text-sm font-medium whitespace-nowrap transition-all md:flex-none",
+              isActive
+                ? "bg-foreground text-background shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+              item.completed && !isActive && "text-success hover:text-success",
+            )}
+          >
+            <span className="h-4 w-4 shrink-0">
+              {item.completed ? <Check className="h-4 w-4" /> : item.icon}
+            </span>
+            <span>{item.title}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }
 
