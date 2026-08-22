@@ -318,35 +318,41 @@ pub enum LlmCommand {
     /// Create a new LLM backend.
     ///
     /// Registers a new LLM backend instance for use by agents.
-    /// Backend types: ollama, openai, custom.
+    /// Backend types: ollama, llamacpp (local runners) and openai, anthropic
+    /// (the two cloud protocols). Any cloud vendor (Qwen/DeepSeek/GLM/xAI...)
+    /// or OpenAI-compatible server (vLLM, OpenRouter, LM Studio) rides
+    /// --type openai with its own --endpoint. Legacy vendor type values
+    /// (qwen/deepseek/glm/xai/google/minimax) still parse for back-compat.
     ///
     /// Workflow:
     ///   1. `llm list` — see existing backends
     ///   2. `llm models` — find available model names (Ollama)
-    ///   3. `llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3:4b`
+    ///   3. `llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b`
     ///   4. `llm test <ID>` — verify connection
     ///   5. `llm activate <ID>` — set as default
     ///
-    /// Example: `neomind llm create --name my-llm --type ollama --endpoint http://localhost:11434 --model qwen3:4b`
+    /// Example: `neomind llm create --name my-llm --type openai --endpoint https://api.openai.com/v1 --model gpt-4.1-mini --api-key sk-xxx`
     Create {
         /// Backend display name.
         #[arg(short, long)]
         name: String,
-        /// Backend type: ollama | openai | custom.
+        /// Backend type: ollama | llamacpp | openai | anthropic (legacy vendor
+        /// values qwen/deepseek/glm/xai/google/minimax accepted for back-compat).
         #[arg(short, long)]
         r#type: String,
         /// API endpoint URL.
         ///   Ollama: http://localhost:11434
-        ///   OpenAI: https://api.openai.com/v1
-        ///   Custom: your API URL
+        ///   llama.cpp: http://127.0.0.1:8080 (no /v1 — the client appends its own path)
+        ///   OpenAI: https://api.openai.com/v1 (with /v1)
+        ///   Anthropic: https://api.anthropic.com (/v1 auto-appended when missing)
         #[arg(short, long)]
         endpoint: String,
         /// Model name.
-        ///   Ollama: qwen3:4b, llama3:8b, etc.
-        ///   OpenAI: gpt-4o, gpt-4o-mini, etc.
+        ///   Ollama: qwen3.5:4b, llama3:8b, etc.
+        ///   OpenAI: gpt-4.1-mini, gpt-4.1, etc.
         #[arg(short, long)]
         model: String,
-        /// API key (required for openai/custom, optional for ollama).
+        /// API key (required for cloud providers, not for ollama/llamacpp).
         #[arg(short, long)]
         api_key: Option<String>,
         /// Temperature (0.0 - 2.0). Default: 0.7.
@@ -357,7 +363,7 @@ pub enum LlmCommand {
     ///
     /// Modify endpoint, model, or other settings. Changes apply immediately.
     ///
-    /// Example: `neomind llm update my-llm --model qwen3:8b`
+    /// Example: `neomind llm update my-llm --model qwen3.5:8b`
     Update {
         /// Backend ID.
         #[arg(required = true)]
