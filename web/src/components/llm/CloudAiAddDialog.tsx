@@ -89,12 +89,10 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Prop
   }, [open, editing])
 
   const switchProtocol = (p: 'openai' | 'anthropic') => {
+    // Only the protocol changes — never clobber the endpoint/model the
+    // user already has (custom gateways may serve both protocol shapes;
+    // /v1 is auto-normalized per protocol on the backend).
     setProtocol(p)
-    // A protocol change means the endpoint must change too (e.g. GLM's
-    // /api/anthropic vs /api/paas/v4) — offer the new path's default so
-    // the user isn't left on a mismatched URL.
-    setEndpoint(DEFAULTS[p].endpoint)
-    setModel(DEFAULTS[p].model)
     setError(null)
   }
 
