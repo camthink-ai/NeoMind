@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
+use std::collections::HashMap;
 use serde_json::json;
 
 use neomind_agent::llm_backends::{get_instance_manager, LlmBackendInstanceManager};
@@ -260,12 +261,32 @@ pub async fn status_handler(
         "stopped"
     };
 
+    // Effective ctx: override (env / restart API) else per-model default —
+    // surfaced so the UI can show and edit it.
+    let model_def_ctx = installed_pair
+        .as_ref()
+        .map(|(d, _)| d.default_ctx)
+        .unwrap_or(0);
+    let effective_ctx = cfg.effective_ctx(model_def_ctx);
+    let (total_mb, available_mb) = memory_snapshot_mb();
+    let min_ram_mb = installed_pair
+        .as_ref()
+        .map(|(d, _)| d.min_ram_mb)
+        .unwrap_or(0);
+
     ok(json!({
         "installed": true,
         "model_id": model_id,
         "server_state": server_state,
         "downloaded_bytes": file_size,
         "total_bytes": file_size,
+        "ctx": effective_ctx,
+        "ctx_override": cfg.ctx,
+        "default_ctx": model_def_ctx,
+        "memory_ok": available_mb >= min_ram_mb,
+        "min_ram_mb": min_ram_mb,
+        "available_ram_mb": available_mb,
+        "total_ram_mb": total_mb,
     }))
 }
 
@@ -279,6 +300,7 @@ pub async fn models_handler(
     State(state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {
     let mdir = models_dir(&state.data_dir);
+    let (total_mb, available_mb) = memory_snapshot_mb();
     let models: Vec<serde_json::Value> = BUILTIN_MODELS
         .iter()
         .map(|d| {
@@ -294,6 +316,9 @@ pub async fn models_handler(
                 "quant": d.manifest.quant,
                 "size_bytes": d.size_bytes,
                 "default_ctx": d.default_ctx,
+                "min_ram_mb": d.min_ram_mb,
+                // Below the model's floor → the UI discourages the install.
+                "memory_ok": available_mb >= d.min_ram_mb,
                 "notes": d.notes,
                 "recommended": d.recommended,
                 "installed": installed,
@@ -552,8 +577,9 @@ async fn spawn_builtin_server(
     }
 
     // Per-model context: LFM runs its native 128K (cheap hybrid KV), other
-    // models default to 32K so their KV fits comfortably.
-    let ctx = def.default_ctx as usize;
+    // models default to 32K so their KV fits comfortably — an explicit
+    // override (NEOMIND_BUILTIN_LLM_CTX / restart ?ctx=) wins.
+    let ctx = cfg.effective_ctx(def.default_ctx);
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
@@ -707,15 +733,51 @@ pub async fn delete_model_handler(
 /// (best-effort) and spawns a fresh one.
 pub async fn restart_handler(
     State(state): State<crate::server::types::ServerState>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> HandlerResult<serde_json::Value> {
-    let cfg = BuiltinConfig::from_env();
+    // Optional ctx override (?ctx=N): applied for this spawn and persisted in
+    // the process env so subsequent bootstraps keep it (matches the port
+    // override pattern). Validated to a sane window; 0/garbage → 400.
+    let mut cfg = BuiltinConfig::from_env();
+    // The installed model's own default — used to give `?ctx=<default>` a
+    // "reset to default" meaning (clears the override instead of pinning it).
+    let model_default_ctx: Option<u32> = installed_model(&models_dir(&state.data_dir))
+        .map(|(d, _)| d.default_ctx);
+    if let Some(ctx_str) = params.get("ctx") {
+        match ctx_str.trim().parse::<usize>() {
+            Ok(n) if (1024..=1_048_576).contains(&n) => {
+                if model_default_ctx == Some(n as u32) {
+                    // Requested == the model default → clear any override.
+                    std::env::remove_var("NEOMIND_BUILTIN_LLM_CTX");
+                    cfg.ctx = None;
+                } else {
+                    std::env::set_var("NEOMIND_BUILTIN_LLM_CTX", n.to_string());
+                    cfg.ctx = Some(n);
+                }
+            }
+            _ => {
+                return Err(ErrorResponse::bad_request(
+                    "invalid ctx (expected 1024..=1048576)",
+                ));
+            }
+        }
+    }
     if !cfg.enabled {
         return Err(ErrorResponse::bad_request(
             "builtin LLM disabled (NEOMIND_BUILTIN_LLM=off)",
         ));
     }
 
-    if health_check(cfg.port).await {
+    // A healthy server is normally left alone — EXCEPT when a ctx override
+    // was requested that differs from the running server's actual n_ctx:
+    // applying a new context requires a respawn.
+    let current_n_ctx = query_server_n_ctx(cfg.port).await;
+    let ctx_change_requested = params
+        .get("ctx")
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .map(|want| current_n_ctx.map(|cur| cur != want).unwrap_or(true))
+        .unwrap_or(false);
+    if health_check(cfg.port).await && !ctx_change_requested {
         return ok(json!({
             "restarted": true,
             "already_running": true,
@@ -792,6 +854,39 @@ pub async fn activate_handler(
         "id": BUILTIN_INSTANCE_ID,
         "message": "Builtin backend activated",
     }))
+}
+
+/// One-shot system memory snapshot for the installability check (MB).
+fn memory_snapshot_mb() -> (u64, u64) {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let total = sys.total_memory() / (1024 * 1024);
+    let mut available = sys.available_memory() / (1024 * 1024);
+    if available == 0 {
+        // Some platforms (observed: macOS with System::new) report 0
+        // available — fall back to total instead of falsely blocking every
+        // model. Linux (the main deployment target) reports real numbers.
+        available = total;
+    }
+    (total, available)
+}
+
+/// Read the running llama-server's actual context size from /props.
+/// `None` when the server is unreachable or the field is absent.
+async fn query_server_n_ctx(port: u16) -> Option<usize> {
+    let url = format!("http://127.0.0.1:{}/props", port);
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+        .ok()?;
+    let v: serde_json::Value = resp.json().await.ok()?;
+    v.get("default_generation_settings")
+        .and_then(|g| g.get("n_ctx"))
+        .and_then(|n| n.as_u64())
+        .map(|n| n as usize)
+        .or_else(|| v.get("n_ctx").and_then(|n| n.as_u64()).map(|n| n as usize))
 }
 
 /// Convert storage `BackendCapabilities` to core `BackendCapabilities`

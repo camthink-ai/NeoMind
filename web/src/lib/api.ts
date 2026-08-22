@@ -1042,9 +1042,9 @@ export const api = {
    * Ensure the bundled llama-server is running (starts it if stopped).
    * POST /api/builtin-llm/restart
    */
-  restartBuiltinLlm: () =>
+  restartBuiltinLlm: (ctx?: number) =>
     fetchAPI<{ restarted: boolean; already_running: boolean; endpoint?: string }>(
-      '/builtin-llm/restart',
+      `/builtin-llm/restart${ctx ? `?ctx=${ctx}` : ''}`,
       { method: 'POST' }
     ),
   /**

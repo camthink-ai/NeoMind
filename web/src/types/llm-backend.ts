@@ -106,6 +106,10 @@ export interface BuiltinModelDef {
   quant: string
   size_bytes: number
   default_ctx: number
+  /** Recommended minimum AVAILABLE RAM (MB) — install discouraged below. */
+  min_ram_mb: number
+  /** Whether the host currently has enough available RAM. */
+  memory_ok: boolean
   notes: string
   recommended: boolean
   installed: boolean
@@ -124,6 +128,17 @@ export interface BuiltinLlmStatus {
    * - `error`          — manifest unreadable
    */
   server_state: 'not_configured' | 'downloading' | 'running' | 'stopped' | 'error'
+  /** Effective context size (override if set, else per-model default). */
+  ctx?: number
+  /** Explicit override from env / restart API (null = per-model default). */
+  ctx_override?: number | null
+  /** The installed model's own default context. */
+  default_ctx?: number
+  /** Feasibility: available RAM ≥ the installed model's minimum. */
+  memory_ok?: boolean
+  min_ram_mb?: number
+  available_ram_mb?: number
+  total_ram_mb?: number
   downloaded_bytes: number | null
   total_bytes: number | null
 }

@@ -155,7 +155,19 @@
       }
     },
     "apiKeyKeepHint": "Configured — leave blank to keep",
-    "cloudEditTitle": "Edit Cloud AI Backend"
+    "cloudEditTitle": "Edit Cloud AI Backend",
+    "builtinCtx": "Context",
+    "builtinCtxOverride": "override (default {{def}})",
+    "builtinCtxApply": "Apply & restart",
+    "builtinCtxInvalid": "Context must be between 1024 and 1048576",
+    "builtinCtxApplied": "Context {{ctx}} applied — engine restarting",
+    "builtinCtxReset": "Context reset to model default",
+    "builtinCtxResetBtn": "Reset",
+    "builtinEngineSettings": "Engine Settings",
+    "builtinEngineSettingsDesc": "Tune the bundled inference engine (model {{model}}, default context {{def}}). The engine restarts on apply.",
+    "builtinCtxHelp": "1024–1048576; larger contexts use more memory",
+    "builtinMemLow": "Low available memory on this device (recommend ≥{{min}} GB free) — the model may fail to run or be very slow",
+    "builtinMemLowInstalled": "This model recommends ≥{{min}} GB free RAM; only {{avail}} GB available — inference may be very slow or fail. Consider a cloud backend or freeing memory."
   },
   "yes": "Yes",
   "no": "No",

@@ -98,12 +98,14 @@ pub async fn bootstrap(
         return BootstrapOutcome::ModelMissing;
     }
 
-    // spawn + healthy
+    // spawn + healthy — ctx: explicit override (NEOMIND_BUILTIN_LLM_CTX /
+    // restart API) wins over the per-model default.
+    let effective_ctx = cfg.effective_ctx(def.default_ctx);
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
         port: cfg.port,
-        ctx: def.default_ctx as usize,
+        ctx: effective_ctx,
         ngl: cfg.ngl,
         threads: None,
     };
@@ -149,7 +151,7 @@ pub async fn bootstrap(
     instance.capabilities.supports_streaming = true;
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = def.default_thinking;
-    instance.capabilities.max_context = def.default_ctx as usize;
+    instance.capabilities.max_context = effective_ctx;
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。

@@ -44,6 +44,7 @@ import {
   RotateCcw,
   WifiOff,
   Zap,
+  AlertTriangle,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useEvents } from '@/hooks/useEvents'
@@ -491,6 +492,16 @@ export function BuiltinModelWizard({
                             </span>
                           )}
                         </div>
+                        {m.memory_ok === false && (
+                          <div className="flex items-start gap-1.5 rounded-md bg-warning-light px-2 py-1.5 text-warning">
+                            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                            <span className="text-[11px] leading-snug">
+                              {t('plugins:llm.builtinMemLow', {
+                                min: (m.min_ram_mb / 1024).toFixed(0),
+                              })}
+                            </span>
+                          </div>
+                        )}
                       </button>
                     )
                   })}

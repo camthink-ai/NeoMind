@@ -16,15 +16,21 @@ import {
   Download,
   Power,
   RotateCcw,
+  Zap,
   Cpu,
   BrainCircuit,
   Cloud,
   ChevronRight,
+  Settings2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
+import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
+import { FormField } from '@/components/ui/field'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
@@ -317,6 +323,11 @@ export function UnifiedLLMBackendsTab({
   // The card's 切换模型 button opens the wizard straight at the model
   // picker; first-run CTAs (banner / empty state) use the default entry.
   const [wizardStartInPicker, setWizardStartInPicker] = useState(false)
+  // Builtin engine-settings dialog (ctx today; port and friends later).
+  const [ctxDialogOpen, setCtxDialogOpen] = useState(false)
+  const [ctxDialogInput, setCtxDialogInput] = useState<number | null>(null)
+  const [ctxDialogSaving, setCtxDialogSaving] = useState(false)
+  const [ctxDialogError, setCtxDialogError] = useState<string | null>(null)
   const [cloudAddOpen, setCloudAddOpen] = useState(false)
   // Non-null → the add dialog is in edit mode for that instance.
   const [cloudEditTarget, setCloudEditTarget] = useState<CloudAiEditTarget | null>(null)
@@ -637,6 +648,43 @@ export function UnifiedLLMBackendsTab({
               <p className="text-xs text-muted-foreground">{builtinInfo.text}</p>
             </div>
           )}
+          {builtinStatus.installed && builtinStatus.memory_ok === false && (
+            <div className="flex items-start gap-2 rounded-md bg-warning-light px-3 py-2 text-warning">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+              <span className="text-xs leading-snug">
+                {t('plugins:llm.builtinMemLowInstalled', {
+                  min: ((builtinStatus.min_ram_mb ?? 0) / 1024).toFixed(0),
+                  avail: ((builtinStatus.available_ram_mb ?? 0) / 1024).toFixed(1),
+                })}
+              </span>
+            </div>
+          )}
+          {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">
+                {t('plugins:llm.builtinCtx')}:
+                <span className="font-mono text-foreground ml-1">{(builtinStatus.ctx ?? builtinStatus.default_ctx ?? 0).toLocaleString()}</span>
+              </span>
+              {builtinStatus.ctx_override != null && (
+                <Badge variant="outline" className="text-[10px] shrink-0">
+                  {t('plugins:llm.builtinCtxOverride', { def: (builtinStatus.default_ctx ?? 0).toLocaleString() })}
+                </Badge>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 px-2"
+                disabled={!!builtinBusyAction}
+                onClick={() => {
+                  setCtxDialogInput(builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? null)
+                  setCtxDialogOpen(true)
+                }}
+              >
+                <Settings2 className="h-3.5 w-3.5" />
+                {t('plugins:llm.builtinEngineSettings')}
+              </Button>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             {builtinStatus.server_state === 'downloading' ? (
               // Progress shown above; no actions while a download is in flight.
@@ -671,7 +719,9 @@ export function UnifiedLLMBackendsTab({
                 >
                   {builtinBusyAction === 'activate'
                     ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    : <Power className="mr-2 h-4 w-4" />}
+                    : builtinIsActive
+                      ? <CheckCircle2 className="mr-2 h-4 w-4" />
+                      : <Zap className="mr-2 h-4 w-4" />}
                   {builtinIsActive ? t('plugins:llm.builtinActive') : t('plugins:llm.builtinActivate')}
                 </Button>
                 {builtinStatus.server_state === 'stopped' && (
@@ -749,7 +799,82 @@ export function UnifiedLLMBackendsTab({
               {t('plugins:llm.emptyStateAddOwnBackend')}
             </Button>
           </div>
-          {wizardElement}
+          {/* Builtin engine settings (ctx) */}
+        <UnifiedFormDialog
+          open={ctxDialogOpen}
+          onOpenChange={(o) => { setCtxDialogOpen(o); if (!o) setCtxDialogError(null) }}
+          title={t('plugins:llm.builtinEngineSettings')}
+          description={t('plugins:llm.builtinEngineSettingsDesc', {
+            def: (builtinStatus?.default_ctx ?? 0).toLocaleString(),
+            model: builtinStatus?.model_id ?? '',
+          })}
+          icon={<BrainCircuit className="h-5 w-5 text-muted-foreground" />}
+          className="z-[110]"
+          isSubmitting={ctxDialogSaving}
+          onSubmit={async () => {
+            const v = ctxDialogInput
+            if (v == null || !Number.isFinite(v) || v < 1024 || v > 1_048_576) {
+              setCtxDialogError(t('plugins:llm.builtinCtxInvalid'))
+              return
+            }
+            setCtxDialogSaving(true)
+            setCtxDialogError(null)
+            try {
+              await api.restartBuiltinLlm(v)
+              toast({ title: t('plugins:llm.builtinCtxApplied', { ctx: v.toLocaleString() }) })
+              setCtxDialogOpen(false)
+              await refreshBuiltinStatus()
+              await loadData(true)
+            } catch (e) {
+              setCtxDialogError(e instanceof Error ? e.message : String(e))
+            } finally {
+              setCtxDialogSaving(false)
+            }
+          }}
+          submitLabel={t('plugins:llm.builtinCtxApply')}
+          submitDisabled={ctxDialogSaving}
+          submitError={ctxDialogError ?? undefined}
+        >
+          <div className="space-y-4">
+            <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
+              <Input
+                type="number"
+                min={1024}
+                max={1048576}
+                step={1024}
+                value={ctxDialogInput ?? ''}
+                onChange={(e) => setCtxDialogInput(e.target.value === '' ? null : Number(e.target.value))}
+                className="font-mono"
+              />
+            </FormField>
+            {builtinStatus?.ctx_override != null && (
+              <Button
+                size="sm"
+                variant="ghost"
+                type="button"
+                disabled={ctxDialogSaving}
+                onClick={async () => {
+                  setCtxDialogSaving(true)
+                  try {
+                    await api.restartBuiltinLlm(builtinStatus!.default_ctx!)
+                    toast({ title: t('plugins:llm.builtinCtxReset') })
+                    setCtxDialogOpen(false)
+                    setCtxDialogInput(null)
+                    await refreshBuiltinStatus()
+                    await loadData(true)
+                  } catch (e) {
+                    setCtxDialogError(e instanceof Error ? e.message : String(e))
+                  } finally {
+                    setCtxDialogSaving(false)
+                  }
+                }}
+              >
+                {t('plugins:llm.builtinCtxResetBtn')}
+              </Button>
+            )}
+          </div>
+        </UnifiedFormDialog>
+        {wizardElement}
         </>
       )
     }

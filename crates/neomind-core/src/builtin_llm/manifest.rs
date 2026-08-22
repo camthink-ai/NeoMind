@@ -45,6 +45,9 @@ pub struct BuiltinModelDef {
     /// non-thinking for agent tool calls (eval 76% cmd_ok was non-thinking);
     /// Gemma defaults to thinking.
     pub default_thinking: bool,
+    /// Recommended MINIMUM available RAM (MB): weights + KV cache + runtime
+    /// + OS headroom. The UI discourages (not blocks) installs below this.
+    pub min_ram_mb: u64,
 }
 
 /// The builtin model registry. LFM2.5 is the default (small + cheap KV);
@@ -67,6 +70,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| vec
         notes: "小体积 + 原生 128K 上下文(hybrid KV 很省) — 资源紧张设备的默认选择",
         recommended: true,
         default_thinking: true,
+        min_ram_mb: 3_072,
     },
     BuiltinModelDef {
         manifest: ModelManifest {
@@ -84,6 +88,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| vec
         notes: "30 案 eval 最强的端侧 agent 模型(76% cmd_ok) — 工具调用首选",
         recommended: false,
         default_thinking: false,
+        min_ram_mb: 4_096,
     },
     BuiltinModelDef {
         manifest: ModelManifest {
@@ -101,6 +106,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| vec
         notes: "Google 官方 QAT 量化 — 可挂 mmproj 加视觉",
         recommended: false,
         default_thinking: true,
+        min_ram_mb: 4_608,
     },
 ]);
 
