@@ -128,6 +128,13 @@ export interface UIState {
    * deps to refetch without a manual reload.
    */
   dataVersions: Record<string, number>
+  /**
+   * Request counter for opening the global chat side panel (GlobalChatFab).
+   * Any page can call openChatPanel() — e.g. the dashboard empty state's
+   * "Ask AI" CTA — without navigating to /chat. The FAB owns the actual
+   * open/close state; it subscribes to this counter and opens on change.
+   */
+  chatPanelRequest: number
 }
 
 // ============================================================================

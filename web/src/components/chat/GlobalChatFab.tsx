@@ -66,6 +66,7 @@ export function GlobalChatFab() {
   const location = useLocation()
   const navigate = useNavigate()
   const openSettings = useStore((s) => s.openSettings)
+  const chatPanelRequest = useStore((s) => s.chatPanelRequest)
   const { t } = useTranslation("chat")
   const fabRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
@@ -90,6 +91,12 @@ export function GlobalChatFab() {
 
   const handleOpen = () => setPanelState("open")
   const handleClose = () => setPanelState("closed")
+
+  // External open requests (e.g. the dashboard empty state's "Ask AI" CTA)
+  // arrive as a counter bump — open the panel without leaving the page.
+  useEffect(() => {
+    if (chatPanelRequest > 0) setPanelState("open")
+  }, [chatPanelRequest])
 
   // Drag the panel's left edge to resize (right-anchored: width = right edge − pointer x)
   const startResize = (e: React.PointerEvent<HTMLDivElement>) => {

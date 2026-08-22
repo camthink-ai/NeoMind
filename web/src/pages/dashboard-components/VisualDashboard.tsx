@@ -931,8 +931,8 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
     }
 
     // No dashboard found - guided empty state: manual create is primary,
-    // "let AI build it" routes to chat (which carries its own model setup
-    // guidance if no LLM backend exists yet).
+    // "let AI build it" opens the in-page side chat panel (the floating
+    // button's panel) instead of navigating away to /chat.
     return (
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center max-w-md px-6">
@@ -960,7 +960,7 @@ const VisualDashboardMemo = memo(function VisualDashboard() {
             <Button
               variant="secondary"
               className="h-11 sm:h-10 gap-2"
-              onClick={() => navigate('/chat')}
+              onClick={() => useStore.getState().openChatPanel()}
             >
               <Sparkles className="h-4 w-4" />
               {t('visualDashboard.emptyAskAi')}

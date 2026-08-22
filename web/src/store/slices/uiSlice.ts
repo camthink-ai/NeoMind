@@ -13,6 +13,8 @@ export interface UISlice extends UIState {
   setWsConnected: (connected: boolean) => void
   /** Bump a domain's data version (triggers version-gated page refetches). */
   bumpDataVersion: (domain: string) => void
+  /** Open the global chat side panel (counter-based request — see UIState). */
+  openChatPanel: () => void
 }
 
 export const createUISlice: StateCreator<
@@ -23,6 +25,7 @@ export const createUISlice: StateCreator<
 > = (set) => ({
   wsConnected: false,
   dataVersions: {},
+  chatPanelRequest: 0,
 
   setWsConnected: (connected: boolean) => {
     set({ wsConnected: connected })
@@ -32,5 +35,9 @@ export const createUISlice: StateCreator<
     set((state) => ({
       dataVersions: { ...state.dataVersions, [domain]: (state.dataVersions[domain] ?? 0) + 1 },
     }))
+  },
+
+  openChatPanel: () => {
+    set((state) => ({ chatPanelRequest: state.chatPanelRequest + 1 }))
   },
 })
