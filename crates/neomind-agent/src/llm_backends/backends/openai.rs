@@ -655,6 +655,31 @@ impl CloudRuntime {
     /// `stream` controls both the `stream` flag and whether `stream_options`
     /// is populated (OpenAI requires `include_usage: true` to receive token
     /// counts in the final chunk).
+    /// Declared provider refined by endpoint sniffing — the param-level view
+    /// of where these requests actually go. Protocol-first Cloud AI (and
+    /// `--type openai` + vendor endpoint on the CLI) reaches DashScope /
+    /// DeepSeek as plain OpenAI-compatible backends, which would otherwise
+    /// lose the vendor-specific param wiring (enable_thinking for DashScope
+    /// hybrid models, the thinking on/off toggle for DeepSeek) and emit
+    /// reasoning_effort where the vendor doesn't accept it. Sniff the base
+    /// URL so the gates follow the endpoint regardless of how the backend
+    /// was typed; native vendor types pass through unchanged.
+    fn param_provider(&self) -> CloudProvider {
+        if matches!(
+            self.config.provider,
+            CloudProvider::OpenAI | CloudProvider::Custom
+        ) {
+            let base = self.config.get_base_url();
+            if base.contains("dashscope.aliyuncs.com") {
+                return CloudProvider::Qwen;
+            }
+            if base.contains("api.deepseek.com") {
+                return CloudProvider::DeepSeek;
+            }
+        }
+        self.config.provider
+    }
+
     fn build_chat_request(&self, input: LlmInput, stream: bool) -> ChatCompletionRequest {
         let model = input.model.unwrap_or_else(|| self.model.clone());
 
@@ -674,9 +699,11 @@ impl CloudRuntime {
         // tool_result.rs (gotcha #7) was silently dropped on cloud, while the
         // Ollama path (ollama.rs:826-844) honored it. Other OpenAI-compatible
         // providers may reject unknown fields, so emit ONLY for Qwen.
+        // `param_provider()` also catches DashScope reached via --type openai
+        // (protocol-first Cloud AI).
         //
         // Unified effort takes precedence: `None` → disable, any other → enable.
-        let enable_thinking = if matches!(self.config.provider, CloudProvider::Qwen) {
+        let enable_thinking = if matches!(self.param_provider(), CloudProvider::Qwen) {
             input
                 .params
                 .thinking_effort
@@ -691,7 +718,7 @@ impl CloudRuntime {
         // Emitted only for providers that accept it (OpenAI, Custom, GLM);
         // others reject unknown fields. Gemini via OpenAI-compat also accepts it.
         let reasoning_effort = if matches!(
-            self.config.provider,
+            self.param_provider(),
             CloudProvider::OpenAI
                 | CloudProvider::Custom
                 | CloudProvider::GLM
@@ -704,13 +731,17 @@ impl CloudRuntime {
 
         // DeepSeek thinking-mode toggle. DeepSeek defaults thinking ON at
         // `high` effort; an explicit `{"type":"disabled"}` is required to turn
-        // it off. Only emitted for DeepSeek.
-        let thinking = if matches!(self.config.provider, CloudProvider::DeepSeek) {
+        // it off. Only emitted for DeepSeek (`param_provider()` also catches
+        // DeepSeek reached via --type openai).
+        let thinking = if matches!(self.param_provider(), CloudProvider::DeepSeek) {
+            // Effort takes precedence; otherwise honor thinking_enabled
+            // (Some(false) from analyzer.rs / intent.rs — gotcha #7), and
+            // default to enabled when unset (DeepSeek's own default).
             let disabled = input
                 .params
                 .thinking_effort
                 .map(|e| e.is_disabled())
-                .unwrap_or(input.params.thinking_enabled.unwrap_or(false));
+                .unwrap_or_else(|| !input.params.thinking_enabled.unwrap_or(true));
             Some(Thinking {
                 thinking_type: if disabled { "disabled" } else { "enabled" }.to_string(),
             })
@@ -1803,7 +1834,10 @@ impl LlmRuntime for CloudRuntime {
             modalities: vec!["text".to_string()],
             thinking_display: supports_thinking,
             supports_images: supports_multimodal,
-            reasoning: reasoning_capabilities_for(self.config.provider, supports_thinking),
+            // param_provider: the persisted reasoning control must match what
+            // requests actually do — an openai-typed DashScope/DeepSeek
+            // endpoint is Boolean-controlled, not effort-leveled.
+            reasoning: reasoning_capabilities_for(self.param_provider(), supports_thinking),
         }
     }
 
@@ -2771,6 +2805,101 @@ mod tests {
                 .map(|v| v.is_null())
                 .unwrap_or(true),
             "non-Qwen providers must not receive enable_thinking field"
+        );
+    }
+
+    // ── protocol-first Cloud AI: vendor endpoints via --type openai ──────
+    //
+    // The Cloud AI card (and the CLI `--type openai` + vendor endpoint path)
+    // creates DashScope/DeepSeek backends typed as plain OpenAI-compatible.
+    // Regression guard: the vendor-specific param wiring must survive —
+    // `param_provider()` sniffs the endpoint so enable_thinking /
+    // thinking-toggle follow where the requests actually go, and
+    // reasoning_effort is NOT sent to vendors that reject it.
+
+    fn llm_input_with_thinking_disabled() -> LlmInput {
+        LlmInput {
+            messages: vec![Message::new(MessageRole::User, Content::text("hi"))],
+            params: GenerationParams {
+                thinking_enabled: Some(false),
+                ..Default::default()
+            },
+            model: None,
+            stream: false,
+            tools: None,
+        }
+    }
+
+    #[test]
+    fn test_openai_typed_dashscope_endpoint_keeps_enable_thinking() {
+        // backend_type "openai" + DashScope endpoint — exactly what the
+        // Cloud AI dialog creates for Qwen today.
+        let cfg = CloudConfig::openai("sk-test")
+            .with_model("qwen3.7-plus")
+            .with_base_url_opt(Some(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1".into(),
+            ));
+        let runtime = CloudRuntime::new(cfg).expect("runtime builds");
+
+        let request = runtime.build_chat_request(llm_input_with_thinking_disabled(), false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(
+            json["enable_thinking"],
+            serde_json::Value::Bool(false),
+            "openai-typed DashScope endpoint must still wire enable_thinking"
+        );
+        assert!(
+            json.get("reasoning_effort")
+                .map(|v| v.is_null())
+                .unwrap_or(true),
+            "openai-typed DashScope endpoint must NOT receive reasoning_effort"
+        );
+    }
+
+    #[test]
+    fn test_openai_typed_deepseek_endpoint_keeps_thinking_toggle() {
+        // DeepSeek defaults thinking ON; without the toggle the disable
+        // request is silently dropped.
+        let cfg = CloudConfig::openai("sk-test")
+            .with_model("deepseek-chat")
+            .with_base_url_opt(Some("https://api.deepseek.com/v1".into()));
+        let runtime = CloudRuntime::new(cfg).expect("runtime builds");
+
+        let request = runtime.build_chat_request(llm_input_with_thinking_disabled(), false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(
+            json["thinking"]["type"], "disabled",
+            "openai-typed DeepSeek endpoint must still emit the thinking disabled toggle"
+        );
+    }
+
+    #[test]
+    fn test_openai_endpoint_unrelated_to_vendors_stays_openai() {
+        // A genuinely generic OpenAI-compatible endpoint (vLLM etc.) must not
+        // be sniffed into a vendor — reasoning_effort stays available.
+        let cfg = CloudConfig::openai("sk-test")
+            .with_model("my-model")
+            .with_base_url_opt(Some("http://gpu-host:8000/v1".into()));
+        let runtime = CloudRuntime::new(cfg).expect("runtime builds");
+
+        let input = LlmInput {
+            params: GenerationParams {
+                thinking_effort: Some(ThinkingEffort::Medium),
+                ..Default::default()
+            },
+            ..llm_input_with_thinking_disabled()
+        };
+        let request = runtime.build_chat_request(input, false);
+        let json = serde_json::to_value(&request).expect("serialize");
+        assert!(
+            json.get("enable_thinking")
+                .map(|v| v.is_null())
+                .unwrap_or(true),
+            "generic endpoint must not receive enable_thinking"
+        );
+        assert!(
+            json.get("thinking").map(|v| v.is_null()).unwrap_or(true),
+            "generic endpoint must not receive the DeepSeek thinking toggle"
         );
     }
 
