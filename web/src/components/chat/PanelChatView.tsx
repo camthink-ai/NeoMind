@@ -407,6 +407,20 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           streamingToolCallsAcc = []
           roundContentsAcc = {}
           currentRound = 1
+          // Reconcile with the server's canonical history. The live assembly
+          // above can diverge from what the server persisted (interleaved
+          // turns, replayed round events, mid-stream remounts) — reloading
+          // converges the panel to exactly what /chat renders.
+          const sid = panelSessionIdRef.current
+          if (sid) {
+            isStreamingRef.current = false
+            api.getSessionHistory(sid, { skipErrorToast: true }).then(result => {
+              // A new stream started while the fetch was in flight — keep
+              // the live state; the next end reconciles again.
+              if (isStreamingRef.current) return
+              setPanelMessages(mergeAssistantMessages(result.messages || []))
+            }).catch(() => { /* keep the live assembly */ })
+          }
           break
         case "Error":
           addPanelMessage({
@@ -416,6 +430,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             timestamp: Math.floor(Date.now() / 1000),
           })
           dispatch({ type: 'ERROR' })
+          isStreamingRef.current = false
           break
       }
     }
@@ -457,6 +472,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setInput("")
     if (inputRef.current) inputRef.current.style.height = "auto"
     dispatch({ type: 'START_STREAM' })
+    isStreamingRef.current = true
     const streamMsgId = generateId()
     setCurrentStreamMessageId(streamMsgId)
     currentStreamMessageIdRef.current = streamMsgId
