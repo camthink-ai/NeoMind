@@ -986,6 +986,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             post(dashboards::add_components_handler),
         )
         .route(
+            "/api/dashboards/:id/components/:component_id",
+            axum::routing::patch(dashboards::update_component_handler),
+        )
+        .route(
             "/api/dashboards/:id/components",
             delete(dashboards::remove_components_handler),
         )

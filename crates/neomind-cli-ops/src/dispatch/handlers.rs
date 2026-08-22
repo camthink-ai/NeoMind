@@ -416,6 +416,15 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             let resp = add_components(&client, &id, comps).await?;
             (resp, output_format)
         }
+        DashboardCommand::UpdateComponent {
+            id,
+            component_id,
+            set,
+        } => {
+            let patch = serde_json::from_str(&set)?;
+            let resp = update_component(&client, &id, &component_id, patch).await?;
+            (resp, output_format)
+        }
         DashboardCommand::RemoveComponents { id, ids } => {
             let ids_val = serde_json::from_str(&ids).unwrap_or(serde_json::json!([]));
             let resp = remove_components(&client, &id, ids_val).await?;

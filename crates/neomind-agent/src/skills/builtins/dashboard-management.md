@@ -10,7 +10,7 @@ triggers:
   keywords: [dashboard, 仪表盘, 仪表板, create dashboard, 组件, widget, component, 数据源, data source, dashboard component, dashboard widget, 绑定数据, bind data, 创建仪表盘, 监控面板, share dashboard, 共享仪表盘, add-components, 添加组件, 删除组件, remove component]
   tool_target:
     - tool: dashboard
-      actions: [list, get, create, update, delete, share, add-components, remove-components]
+      actions: [list, get, create, update, delete, share, add-components, update-component, remove-components]
     - tool: widget
       actions: [list, get]
     - tool: device
@@ -34,6 +34,7 @@ Always RUN the command yourself and report the real output.
 | `neomind dashboard create` | Create a new dashboard |
 | `neomind dashboard update <id>` | Update a dashboard |
 | `neomind dashboard add-components <id>` | Add components (append mode) |
+| `neomind dashboard update-component <id> --component-id <cid> --set '<partial JSON>'` | **Tweak ONE component** (deep merge — preferred) |
 | `neomind dashboard remove-components <id>` | Remove components by ID |
 | `neomind dashboard delete <id>` | Delete a dashboard |
 | `neomind dashboard share <id>` | Share a dashboard |
@@ -44,18 +45,19 @@ Creating dashboards with data-bound components is the most complex CLI operation
 
 1. **NEVER guess metric names** — always discover them via `device list` (metric_fields per type) or `device get <ID>`
 2. **Use `add-components` to add widgets** — this appends without replacing existing components
-3. **`update --components` replaces ALL components** — avoid this unless intentionally replacing everything
-4. **Grid is 12 columns wide** — plan layout accordingly
-5. **NEVER use Python/pipe/file tricks** — each shell call is an isolated process; you cannot share data between calls via files, pipes, or variables. Build the complete JSON string inline.
-6. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
-7. **NEVER use emoji in component titles or descriptions** — use plain text labels only. Example: use "Temperature" not "Temperature", use "Humidity" not "Humidity"
-8. **Charts (line-chart, area-chart, bar-chart, sparkline, pie-chart) MUST use `mode: "timeseries"`** — using `mode: "latest"` on charts causes rendering errors. Always include `timeWindow` (e.g., `"timeWindow": {"type": "last_24hours"}`) for proper historical data. Value-cards and indicators use `mode: "latest"`.
+3. **To change ONE component's fields use `update-component`** — deep-merges a partial JSON into it; no need to re-send the whole component or remove+re-add
+4. **`update --components` replaces ALL components** — avoid this unless intentionally replacing everything — plan layout accordingly
+6. **NEVER use Python/pipe/file tricks** — each shell call is an isolated process; you cannot share data between calls via files, pipes, or variables. Build the complete JSON string inline.
+7. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
+8. **NEVER use emoji in component titles or descriptions** — use plain text labels only. Example: use "Temperature" not "Temperature", use "Humidity" not "Humidity"
+9. **Charts (line-chart, area-chart, bar-chart, sparkline, pie-chart) MUST use `mode: "timeseries"`** — using `mode: "latest"` on charts causes rendering errors. Always include `timeWindow` (e.g., `"timeWindow": {"type": "last_24hours"}`) for proper historical data. Value-cards and indicators use `mode: "latest"`.
 
 ## Component Management Commands
 
 | Command | Purpose |
 |---------|---------|
 | `dashboard add-components <ID> --components '<JSON>'` | **Append** new components (RECOMMENDED) |
+| `dashboard update-component <ID> --component-id c1 --set '{"title":"New"}'` | **Change fields of ONE component** (deep merge — preferred for tweaks) |
 | `dashboard remove-components <ID> --ids '["c1","c2"]'` | Remove components by ID |
 | `dashboard update <ID> --name 'New Name'` | Update metadata only (name, description) |
 | `dashboard update <ID> --components '<JSON>'` | Replace ALL components (dangerous!) |
@@ -166,6 +168,26 @@ neomind dashboard remove-components <DASHBOARD_ID> --ids '["b1","chart"]'
 ```bash
 neomind dashboard delete <DASHBOARD_ID>
 ```
+
+## Modify ONE Component (PREFERRED for tweaks)
+
+`update-component` deep-merges a partial JSON into an existing component — objects merge recursively, scalars/arrays replace. Only the fields you pass change; `id`/`type` are immutable. This beats remove+re-add or full `update --components`.
+
+```bash
+# Fix a chart's time window (only that field changes)
+neomind dashboard update-component <ID> --component-id c3 \
+  --set '{"data_source":{"timeWindow":{"type":"last_6hours"}}}'
+
+# Re-bind to another device/metric
+neomind dashboard update-component <ID> --component-id c1 \
+  --set '{"data_source":{"id":"sensor-002","field":"humidity","metricId":"humidity"}}'
+
+# Retitle + resize + display tweak
+neomind dashboard update-component <ID> --component-id c2 \
+  --set '{"title":"Humidity","position":{"w":6},"display":{"unit":"%"}}'
+```
+
+Find component IDs with `neomind dashboard get <ID>` (each component has an `id`).
 
 ## DataSource Binding Reference
 
@@ -397,7 +419,7 @@ neomind dashboard share <ID> --expires 3600
 | Error | Cause | Solution |
 |-------|-------|----------|
 | "Invalid widget type" | Type doesn't exist | Run `neomind widget list` to see valid types |
-| Components disappear after update | Used `update --components` which replaces all | Use `add-components` instead |
+| Components disappear after update | Used `update --components` which replaces all | Use `add-components` (add) or `update-component` (tweak) instead |
 | "Device not found" | Wrong id | Run `neomind device list` for valid IDs |
 | No data shows | Wrong field name | Run `neomind device list` (metric_fields) or `neomind device get <ID>` for exact metric names |
 | Extension data not binding | Missing unified fields | Add `source:"extension"`, `id`, `field` (format: `COMMAND:FIELD`) |

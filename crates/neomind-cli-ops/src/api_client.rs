@@ -162,6 +162,31 @@ impl ApiClient {
         anyhow::bail!("API request failed after retry")
     }
 
+    pub async fn patch(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value> {
+        for attempt in 0..=MAX_RETRIES {
+            let url = format!("{}{}", self.base_url, path);
+            let resp = self
+                .add_auth(self.client.patch(&url).json(body))
+                .send()
+                .await?;
+            let status = resp.status();
+            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+                self.refresh_api_key();
+                continue;
+            }
+            let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!(
+                    "API error ({}): {}",
+                    status,
+                    extract_error_message(&resp_body)
+                );
+            }
+            return Ok(resp_body);
+        }
+        anyhow::bail!("API request failed after retry")
+    }
+
     pub async fn delete(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
             let url = format!("{}{}", self.base_url, path);

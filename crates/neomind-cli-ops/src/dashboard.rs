@@ -156,6 +156,29 @@ pub async fn delete_dashboard(client: &ApiClient, id: &str) -> Result<CliRespons
     ))
 }
 
+/// Update ONE component of a dashboard (deep-merge patch)
+pub async fn update_component(
+    client: &ApiClient,
+    id: &str,
+    component_id: &str,
+    set: serde_json::Value,
+) -> Result<CliResponse> {
+    let body = json!({ "set": set });
+    let data = client
+        .patch(&format!("/dashboards/{}/components/{}", id, component_id), &body)
+        .await?;
+    let updated_id = data
+        .get("data")
+        .and_then(|d| d.get("component_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(component_id)
+        .to_string();
+    Ok(CliResponse::success(
+        data,
+        format!("Component '{}' updated", updated_id),
+    ))
+}
+
 /// Add components to a dashboard (append mode)
 pub async fn add_components(
     client: &ApiClient,

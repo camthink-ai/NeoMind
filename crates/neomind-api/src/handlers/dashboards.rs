@@ -667,6 +667,99 @@ pub struct RemoveComponentsRequest {
     pub ids: Vec<String>,
 }
 
+/// Request to patch a single component (deep merge)
+#[derive(Debug, Deserialize)]
+pub struct UpdateComponentRequest {
+    /// Partial component JSON, DEEP-MERGED into the stored component:
+    /// objects merge recursively, everything else (scalars, arrays) replaces.
+    /// `id` and `type` are immutable and ignored.
+    pub set: Option<JsonValue>,
+}
+
+/// Recursive JSON merge: objects merge key-by-key, everything else replaces.
+fn deep_merge_json(target: &mut JsonValue, patch: &JsonValue) {
+    if let (JsonValue::Object(t), JsonValue::Object(p)) = (target, patch) {
+        for (k, v) in p {
+            match t.get_mut(k) {
+                Some(JsonValue::Object(_)) if v.is_object() => {
+                    if let Some(child) = t.get_mut(k) {
+                        deep_merge_json(child, v);
+                    }
+                }
+                _ => {
+                    t.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+}
+
+/// Patch ONE component of a dashboard (deep merge) — the cheap way to tweak a
+/// single field (e.g. a data_source timeWindow) without round-tripping the
+/// whole component array through `dashboard update --components`.
+pub async fn update_component_handler(
+    State(state): State<ServerState>,
+    Path((id, component_id)): Path<(String, String)>,
+    Json(req): Json<UpdateComponentRequest>,
+) -> HandlerResult<serde_json::Value> {
+    let set = req.set.unwrap_or(JsonValue::Null);
+    if !set.is_object() {
+        return Err(ErrorResponse::bad_request(
+            "`set` must be a JSON object of partial component fields",
+        ));
+    }
+
+    let mut dashboard = state
+        .dashboard_store
+        .load(&id)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load dashboard: {}", e)))?
+        .ok_or_else(|| ErrorResponse::not_found(format!("Dashboard '{}' not found", id)))?;
+
+    let component = dashboard
+        .components
+        .iter_mut()
+        .find(|c| c.id == component_id)
+        .ok_or_else(|| {
+            ErrorResponse::not_found(format!(
+                "Component '{}' not found on dashboard '{}' (use `dashboard get {}` to list component ids)",
+                component_id, id, id
+            ))
+        })?;
+
+    // Round-trip through JSON so the patch can touch any field generically.
+    let mut value = serde_json::to_value(&*component)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to serialize component: {}", e)))?;
+    // id and type identify the component — never let a patch move/retype it.
+    if let JsonValue::Object(patch) = &set {
+        let mut sanitized = patch.clone();
+        sanitized.remove("id");
+        sanitized.remove("type");
+        deep_merge_json(&mut value, &JsonValue::Object(sanitized));
+    }
+    let patched: StoredComponent = serde_json::from_value(value).map_err(|e| {
+        ErrorResponse::bad_request(format!("Patched component is invalid: {}", e))
+    })?;
+    let patched_id = patched.id.clone();
+    *component = patched;
+
+    dashboard.updated_at = chrono::Utc::now().timestamp();
+    state
+        .dashboard_store
+        .save(&dashboard)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to save dashboard: {}", e)))?;
+
+    emit_dashboard_event(&state, &id, "update_component");
+
+    ok(serde_json::json!({
+        "ok": true,
+        "dashboard_id": id,
+        "component_id": patched_id,
+        "component": serde_json::to_value(
+            dashboard.components.iter().find(|c| c.id == patched_id)
+        ).unwrap_or(JsonValue::Null),
+    }))
+}
+
 /// Delete a dashboard
 pub async fn delete_dashboard_handler(
     State(state): State<ServerState>,
@@ -1500,7 +1593,7 @@ fn is_allowed_readonly_method(path: &str, method: &Method) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_duplicate_dashboard, new_output_prefix, rewrite_component_transform_refs};
+    use super::{build_duplicate_dashboard, deep_merge_json, new_output_prefix, rewrite_component_transform_refs};
     use neomind_storage::dashboards::{
         Dashboard as StoredDashboard, DashboardComponent as StoredComponent,
         DashboardLayout as StoredLayout,
@@ -1756,5 +1849,28 @@ mod tests {
         };
         let result = build_duplicate_dashboard(&src, vec![], 0);
         assert_eq!(result.dashboard.name, "X (copy) (copy)");
+    }
+
+    #[test]
+    fn deep_merge_json_merges_objects_and_replaces_scalars() {
+        let mut target = serde_json::json!({
+            "title": "Old",
+            "position": {"x": 0, "y": 0, "w": 4, "h": 2},
+            "data_source": {"id": "demo-001", "field": "temperature", "timeWindow": {"type": "last_24hours"}},
+            "tags": ["a", "b"]
+        });
+        let patch = serde_json::json!({
+            "title": "New",
+            "position": {"w": 6},                       // partial — x/y/h kept
+            "data_source": {"timeWindow": {"type": "last_6hours"}}, // nested merge
+            "tags": ["z"]                                // arrays REPLACE
+        });
+        deep_merge_json(&mut target, &patch);
+        assert_eq!(target["title"], "New");
+        assert_eq!(target["position"], serde_json::json!({"x": 0, "y": 0, "w": 6, "h": 2}));
+        assert_eq!(target["data_source"]["id"], "demo-001");
+        assert_eq!(target["data_source"]["field"], "temperature");
+        assert_eq!(target["data_source"]["timeWindow"]["type"], "last_6hours");
+        assert_eq!(target["tags"], serde_json::json!(["z"]));
     }
 }

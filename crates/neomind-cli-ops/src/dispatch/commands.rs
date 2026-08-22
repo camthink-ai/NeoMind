@@ -960,6 +960,7 @@ pub enum DashboardCommand {
     /// Update dashboard.
     ///
     /// Modify name, description, layout, or components.
+    /// For changing ONE component's fields, prefer `dashboard update-component`.
     /// WARNING: --components replaces ALL existing components.
     /// Workflow: `dashboard get <ID>` → edit JSON → `dashboard update <ID> --components '...'`
     Update {
@@ -980,6 +981,29 @@ pub enum DashboardCommand {
         /// Each component: {"type":"widget-type","data_source":{"..."},"display":{...},"config":{...}}
         #[arg(short, long)]
         components: Option<String>,
+    },
+    /// Update ONE component of a dashboard (PREFERRED for tweaks).
+    ///
+    /// Deep-merges a partial JSON object into the existing component —
+    /// objects merge recursively, scalars/arrays replace. Only the fields
+    /// you pass change; id and type are immutable.
+    /// NO need to re-send the full component or remove+re-add.
+    ///
+    /// Examples:
+    ///   change a binding field:
+    ///   `dashboard update-component <ID> --component-id c3 --set '{"data_source":{"timeWindow":{"type":"last_6hours"}}}'`
+    ///   retitle + resize:
+    ///   `dashboard update-component <ID> --component-id c3 --set '{"title":"温度","position":{"w":6}}'`
+    UpdateComponent {
+        /// Dashboard ID.
+        #[arg(required = true)]
+        id: String,
+        /// Component ID (from `dashboard get <ID>`).
+        #[arg(short, long)]
+        component_id: String,
+        /// Partial component JSON, deep-merged into the component.
+        #[arg(short, long)]
+        set: String,
     },
     /// Add components to dashboard (append mode).
     ///
