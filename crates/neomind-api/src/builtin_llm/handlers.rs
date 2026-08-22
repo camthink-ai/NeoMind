@@ -792,6 +792,25 @@ pub async fn restart_handler(
     let manager = get_manager()?;
     match spawn_builtin_server(&state.data_dir, &cfg, &manager).await {
         Ok(endpoint) => {
+            // The builtin may be the ACTIVE chat backend — its session-manager
+            // snapshot still carries the OLD endpoint/capabilities (prompt
+            // budget + Context X/Y display). Re-push the backend when active.
+            let builtin_active = manager
+                .get_active_instance()
+                .map(|i| i.id == BUILTIN_INSTANCE_ID)
+                .unwrap_or(false);
+            if builtin_active {
+                if let Some(instance) = manager.get_instance(BUILTIN_INSTANCE_ID) {
+                    let backend = LlmBackend::LlamaCpp {
+                        endpoint: instance.endpoint.clone().unwrap_or_else(|| endpoint.clone()),
+                        model: instance.model.clone(),
+                        capabilities: Some(convert_capabilities(&instance.capabilities)),
+                    };
+                    if let Err(e) = state.agents.session_manager.set_llm_backend(backend).await {
+                        tracing::warn!(error = %e, "Failed to refresh session backend after ctx change");
+                    }
+                }
+            }
             ok(json!({ "restarted": true, "already_running": false, "endpoint": endpoint }))
         }
         Err(e) => Err(ErrorResponse::internal(format!(

@@ -27,7 +27,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { FormField } from '@/components/ui/field'
@@ -676,7 +676,10 @@ export function UnifiedLLMBackendsTab({
                 className="h-7 gap-1.5 px-2"
                 disabled={!!builtinBusyAction}
                 onClick={() => {
-                  setCtxDialogInput(builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? null)
+                  // Snap to the nearest preset (the Select only offers presets).
+                  const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
+                  const presets = [4096, 8192, 16384, 32768, 65536, 131072]
+                  setCtxDialogInput(presets.reduce((a, b) => Math.abs(b - cur) < Math.abs(a - cur) ? b : a, presets[0]))
                   setCtxDialogOpen(true)
                 }}
               >
@@ -980,7 +983,7 @@ export function UnifiedLLMBackendsTab({
           isSubmitting={ctxDialogSaving}
           onSubmit={async () => {
             const v = ctxDialogInput
-            if (v == null || !Number.isFinite(v) || v < 1024 || v > 1_048_576) {
+            if (v == null || !Number.isFinite(v) || v < 1024 || v > 131_072) {
               setCtxDialogError(t('plugins:llm.builtinCtxInvalid'))
               return
             }
@@ -1004,15 +1007,24 @@ export function UnifiedLLMBackendsTab({
         >
           <div className="space-y-4">
             <FormField label={t('plugins:llm.builtinCtx')} helpText={t('plugins:llm.builtinCtxHelp')}>
-              <Input
-                type="number"
-                min={1024}
-                max={1048576}
-                step={1024}
-                value={ctxDialogInput ?? ''}
-                onChange={(e) => setCtxDialogInput(e.target.value === '' ? null : Number(e.target.value))}
-                className="font-mono"
-              />
+              <Select
+                value={String(ctxDialogInput ?? '')}
+                onValueChange={(v) => setCtxDialogInput(Number(v))}
+              >
+                <SelectTrigger className="w-full font-mono">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {[4096, 8192, 16384, 32768, 65536, 131072].map((n) => {
+                    const def = builtinStatus?.default_ctx ?? 32768
+                    return (
+                      <SelectItem key={n} value={String(n)}>
+                        {(n / 1024).toFixed(0)}K{n === def ? ` · ${t('plugins:llm.builtinCtxDefault')}` : ''}
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
             </FormField>
             {builtinStatus?.ctx_override != null && (
               <Button

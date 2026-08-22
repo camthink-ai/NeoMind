@@ -167,7 +167,8 @@
     "builtinEngineSettingsDesc": "调整内置推理引擎参数(当前模型 {{model}},默认上下文 {{def}});应用后引擎会重启。",
     "builtinCtxHelp": "1024–1048576;更大上下文占用更多内存",
     "builtinMemLow": "此设备可用内存不足(建议 ≥{{min}} GB 可用),安装后可能无法运行或极慢",
-    "builtinMemLowInstalled": "当前模型建议 ≥{{min}} GB 可用内存,本机仅 {{avail}} GB 可用——推理可能极慢或失败,建议改用云端后端或释放内存"
+    "builtinMemLowInstalled": "当前模型建议 ≥{{min}} GB 可用内存,本机仅 {{avail}} GB 可用——推理可能极慢或失败,建议改用云端后端或释放内存",
+    "builtinCtxDefault": "模型默认"
   },
   "yes": "是",
   "no": "否",
