@@ -23,7 +23,7 @@ import type { SettingsSection } from "@/store/types"
 import {
   Rocket, Sparkles, Cpu, Check, X, ChevronLeft, ChevronRight,
   LayoutDashboard, Zap, Puzzle, MessageSquareText,
-  Terminal, Copy, BookOpen, ExternalLink, Download,
+  Terminal, Copy, BookOpen, ExternalLink, Download, AlertTriangle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
@@ -395,6 +395,12 @@ function DeviceQuickStart() {
     `  -d '{"data": {"temperature": 25.5, "humidity": 60}}'`,
   ].join("\n"), [serverUrl])
 
+  // Loopback in the displayed URL is unreachable for LAN devices — either the
+  // canonical-URL prefetch hasn't resolved yet (Tauri/dev first paint) or the
+  // server is actually loopback-bound. Flag it so users copying the command
+  // for a device don't walk into a connection refused.
+  const isLocalhostUrl = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?/i.test(serverUrl)
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(DEVICE_CURL_COMMAND)
@@ -413,6 +419,12 @@ function DeviceQuickStart() {
       <pre className="text-xs font-mono bg-background border border-border rounded-lg p-3 overflow-x-auto text-foreground whitespace-pre leading-relaxed">
         {DEVICE_CURL_COMMAND}
       </pre>
+      {isLocalhostUrl && (
+        <p className="text-xs text-warning leading-relaxed flex items-start gap-1.5">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          {t("onboarding.deviceCli.localhostHint")}
+        </p>
+      )}
       <Button size="sm" variant="outline" onClick={handleCopy} className="gap-1.5">
         <Copy className="w-3.5 h-3.5" />
         {t("onboarding.cli.copy")}

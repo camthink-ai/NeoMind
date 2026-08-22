@@ -83,12 +83,23 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 async fn get_webhook_adapter(
     state: &ServerState,
 ) -> Result<neomind_devices::adapters::webhook::WebhookAdapter, ErrorResponse> {
+    // Phase A binds the HTTP listener before Phase B registers device
+    // adapters (server/mod.rs: fast path to serving) — for the first seconds
+    // after startup this lookup misses. That's a transient startup state,
+    // not a server fault: answer 503 with retry guidance so devices (and
+    // curl users copying the onboarding example) retry instead of treating
+    // it as a broken endpoint.
     let adapter = state
         .devices
         .service
         .get_adapter("internal-webhook")
         .await
-        .ok_or_else(|| ErrorResponse::internal("Webhook adapter not initialized"))?;
+        .ok_or_else(|| {
+            ErrorResponse::service_unavailable(
+                "Device ingestion is still starting up — retry in a few seconds",
+            )
+            .with_hint("The webhook endpoint becomes available shortly after the server starts")
+        })?;
 
     adapter
         .as_any()

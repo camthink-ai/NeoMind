@@ -771,6 +771,7 @@
     "deviceCli": {
       "toggle": "Quick device onboarding via CLI",
       "note": "POST simulated telemetry to the webhook URL below. The system auto-discovers unknown devices and creates a draft — no pre-registration or extra tools needed.",
+      "localhostHint": "This command uses a localhost address. Devices on the LAN should replace localhost with the server's LAN IP.",
       "followup": "After publishing, the system auto-discovers the device as a draft. Run these to view and approve it, completing onboarding:"
     },
     "stepLabels": {
