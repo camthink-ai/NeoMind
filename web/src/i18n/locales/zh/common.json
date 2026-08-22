@@ -5,7 +5,6 @@
   },
   "alerts": {
     "title": "告警",
-    "unread": "未读",
     "noAlerts": "暂无告警",
     "acknowledge": "确认",
     "moreAlerts": "还有{{count}}条"
@@ -43,7 +42,6 @@
       "allVisible": "显示全部消息",
       "activeCount": "{{count}} 个筛选条件"
     },
-    "items": "条",
     "severity": {
       "label": "严重程度",
       "info": "信息",
@@ -74,16 +72,10 @@
       "total": "总计",
       "active": "活跃",
       "byCategory": {
-        "alert": "告警",
-        "notification": "通知",
-        "system": "系统",
-        "business": "业务"
+        "alert": "告警"
       },
       "bySeverity": {
-        "info": "信息",
-        "warning": "警告",
-        "critical": "严重",
-        "emergency": "紧急"
+        "critical": "严重"
       }
     },
     "channels": {
@@ -92,7 +84,6 @@
       "createTitle": "创建通道",
       "createDescription": "创建新的消息通知通道",
       "test": "测试",
-      "sendTest": "发送测试消息",
       "config": "配置",
       "name": "通道名称",
       "type": "通道类型",
@@ -105,15 +96,12 @@
       "deleteChannel": "删除通道",
       "confirmDelete": "确定要删除通道 \"{{name}}\" 吗？",
       "deleteSuccess": "通道删除成功",
-      "deleteError": "删除通道失败",
       "manageRecipients": "管理收件人",
       "recipients": "收件人",
       "currentRecipients": "当前收件人",
       "noRecipients": "未配置收件人",
       "recipientAdded": "收件人添加成功",
       "recipientRemoved": "收件人删除成功",
-      "addRecipientError": "添加收件人失败",
-      "removeRecipientError": "删除收件人失败",
       "emailPlaceholder": "email@example.com",
       "channelDetails": "通道详情",
       "empty": {
@@ -136,16 +124,10 @@
       "optionalPlaceholder": "(可选)",
       "emailFrom": "发件地址",
       "emailFromPlaceholder": "noreply@example.com",
-      "emailTo": "收件地址",
-      "yourEmailPlaceholder": "your@email.com",
       "recipientsHint": "创建通道后点击「管理收件人」添加收件人",
       "channelNamePlaceholder": "我的通道",
-      "goToSettings": "设置",
       "filterConfig": "消息过滤配置",
       "filterConfigDesc": "配置此通道接收哪些消息",
-      "messageTypes": "消息类型",
-      "notification": "通知",
-      "messageTypesHint": "不选择则接收所有类型",
       "sourceTypes": "来源类型",
       "sourceTypesHint": "不选择则接收所有来源",
       "categories": "消息分类",
@@ -176,25 +158,13 @@
       "typeFeishu": "飞书",
       "typeFeishuDesc": "自定义机器人",
       "webhookConfig": "Webhook 配置",
-      "webhookConfigHint": "配置 Webhook 端点和认证方式",
       "emailConfig": "邮件配置",
-      "emailConfigHint": "配置 SMTP 设置以发送邮件通知",
-      "telegramConfig": "Telegram 配置",
-      "telegramConfigHint": "配置 Telegram 机器人发送通知",
       "botToken": "机器人令牌",
       "chatId": "聊天 ID",
-      "wecomConfig": "企业微信配置",
-      "wecomConfigHint": "配置企业微信机器人 Webhook",
       "webhookKey": "Webhook 密钥",
-      "dingtalkConfig": "钉钉配置",
-      "dingtalkConfigHint": "配置钉钉自定义机器人",
       "accessToken": "访问令牌",
       "secret": "签名密钥",
       "secretOptional": "可选，用于签名验证",
-      "slackConfig": "Slack 配置",
-      "slackConfigHint": "配置 Slack Incoming Webhook",
-      "feishuConfig": "飞书配置",
-      "feishuConfigHint": "配置飞书自定义机器人",
       "hookId": "Hook ID",
       "authType": "认证方式",
       "authNone": "无",
@@ -220,10 +190,6 @@
       "smtpPass": "密码",
       "smtpPassPlaceholder": "SMTP 密码",
       "fromAddress": "发件地址",
-      "failed": "失败",
-      "retrying": "重试中",
-      "pending": "等待中",
-      "retryCount": "重试 {{count}} 次",
       "timeoutLabel": "超时",
       "timeoutHint": "Webhook 投递超时时间",
       "webhookConfigDesc": "配置 Webhook 端点 URL 和请求头",
@@ -235,13 +201,10 @@
     "confirmBulkDelete": "删除消息",
     "confirmBulkDeleteDesc": "确定要删除 {{count}} 条消息吗?",
     "deleteSuccess": "删除成功",
-    "deleteSuccessDesc": "成功删除 {{count}} 条消息",
     "deleteError": "删除失败",
     "acknowledgeSuccess": "确认成功",
-    "acknowledgeSuccessDesc": "已确认 {{count}} 条消息",
     "acknowledgeError": "确认失败",
     "resolveSuccess": "解决成功",
-    "resolveSuccessDesc": "已解决 {{count}} 条消息",
     "resolveError": "解决失败",
     "formTitle": {
       "label": "标题",
@@ -263,16 +226,6 @@
     },
     "sourceLabel": "来源",
     "sourcePlaceholder": "如: api, system",
-    "sourceId": {
-      "label": "来源 ID",
-      "hint": "用于筛选的唯一标识符 (如: device:001)"
-    },
-    "payload": {
-      "label": "数据载荷 (JSON)",
-      "section": "数据载荷",
-      "sectionDesc": "数据推送消息的结构化数据 (JSON 格式)",
-      "invalidJson": "JSON 格式无效"
-    },
     "timestamp": "时间戳",
     "metadata": "元数据",
     "basicSettings": "基本设置",
@@ -293,10 +246,7 @@
   },
   "connection": {
     "connected": "已连接",
-    "disconnected": "未连接",
-    "connecting": "连接中",
-    "wsConnected": "WebSocket 连接正常",
-    "wsDisconnected": "WebSocket 已断开"
+    "disconnected": "未连接"
   },
   "nav": {
     "dashboard": "对话",
@@ -304,13 +254,10 @@
     "devices": "设备",
     "automation": "自动化",
     "agents": "智能体",
-    "alerts": "告警",
     "data": "数据",
-    "decisions": "决策",
     "messages": "消息",
     "extensions": "扩展",
-    "settings": "设置",
-    "primary": "主导航"
+    "settings": "设置"
   },
   "add": "添加",
   "edit": "编辑",
@@ -346,11 +293,8 @@
   "register": "注册",
   "registering": "注册中...",
   "runStatus": {
-    "running": "运行中",
-    "stopped": "已停止",
-    "error": "错误"
+    "running": "运行中"
   },
-  "systemRunning": "系统运行中",
   "selectAll": "全选 (当前页)",
   "deselectAll": "取消选择",
   "hour": "小时",
@@ -389,9 +333,7 @@
   "approve": "批准",
   "reject": "拒绝",
   "logout": "退出登录",
-  "loggingOut": "退出中...",
   "selected": "已选择 {{count}} 项",
-  "cancelSelection": "取消选择",
   "pagination": {
     "total": "共 {{total}} 条 · 第 {{currentPage}}/{{totalPages}} 页",
     "perPage": "{{size}} 条/页",
@@ -402,13 +344,6 @@
   "hint": "提示",
   "actionFailed": "操作失败",
   "imageProcessFailed": "图片处理失败，请重试",
-  "timeAgo": {
-    "justNow": "刚刚",
-    "minutesAgo": "{{count}} 分钟前",
-    "hoursAgo": "{{count}} 小时前",
-    "daysAgo": "{{count}} 天前",
-    "date": "日期"
-  },
   "info": "信息",
   "createdAt": "创建时间",
   "updatedAt": "更新时间",
@@ -459,10 +394,6 @@
       "minimax": "MiniMax",
       "llamacpp": "llama.cpp",
       "default": "默认模型"
-    },
-    "providerTypes": {
-      "local": "本地",
-      "cloud": "云端"
     }
   },
   "im": {
@@ -483,16 +414,6 @@
     "recommended": "推荐",
     "moreOptions": "更多选项",
     "keyboardHint": "按 ↑↓ 导航，Enter 选择",
-    "timeContext": {
-      "morning": "早上例行检查",
-      "evening": "节能模式",
-      "night": "夜间安全"
-    },
-    "context": {
-      "devices": "{{count}} 个设备",
-      "current": "当前有 {{count}} 个设备",
-      "online": "{{online}}/{{total}} 在线"
-    },
     "categories": {
       "device": "设备",
       "automation": "自动化",
@@ -502,41 +423,6 @@
       "settings": "设置",
       "general": "通用"
     }
-  },
-  "units": {
-    "celsius": "°C",
-    "percent": "%",
-    "kilogram": "kg",
-    "dollar": "¥",
-    "degrees": "°",
-    "bytes": "B",
-    "kb": "KB",
-    "mb": "MB",
-    "gb": "GB",
-    "tb": "TB",
-    "milliseconds": "毫秒",
-    "seconds": "秒",
-    "minutes": "分钟",
-    "hours": "小时"
-  },
-  "emptyStates": {
-    "noData": "暂无数据",
-    "noResults": "未找到结果",
-    "noItems": "暂无项目",
-    "noDevices": "暂无设备",
-    "noAgents": "暂无智能体",
-    "noMessages": "暂无消息",
-    "noAlerts": "暂无告警",
-    "trySearch": "尝试不同的搜索关键词",
-    "getStarted": "添加第一个项目开始使用"
-  },
-  "loadingStates": {
-    "loading": "加载中...",
-    "saving": "保存中...",
-    "processing": "处理中...",
-    "fetching": "获取中...",
-    "updating": "更新中...",
-    "deleting": "删除中..."
   },
   "alertLevels": {
     "critical": "严重",
@@ -598,13 +484,8 @@
     "discard": "放弃",
     "resume": "恢复"
   },
-  "language": {
-    "switchToEnglish": "Switch to English",
-    "switchToChinese": "切换到中文"
-  },
+  "language": {},
   "dataPush": {
-    "title": "数据推送目标",
-    "loading": "加载推送目标...",
     "empty": "暂无推送目标",
     "emptyHint": "创建推送目标以将数据转发到外部系统",
     "create": "创建目标",
@@ -625,17 +506,13 @@
     "targetType": "目标类型",
     "webhookUrl": "Webhook URL",
     "mqttBroker": "MQTT 代理",
-    "mqttTopic": "MQTT 主题",
     "schedule": "调度方式",
     "eventDriven": "事件驱动",
     "intervalSchedule": "定时推送",
     "interval": "每 {{secs}} 秒",
     "intervalSecs": "推送间隔（秒）",
     "sourcePatterns": "数据源匹配模式",
-    "sourcePatternsPlaceholder": "device:sensor1:, extension:weather:",
     "sourcePatternsHint": "逗号分隔的模式，如 device:sensor1:, extension:weather:",
-    "template": "负载模板（可选）",
-    "templateHint": "Handlebars 模板，可用变量：{{source_id}}, {{value}}, {{timestamp}}",
     "allSources": "所有数据源",
     "createTarget": "创建推送目标",
     "editTarget": "编辑推送目标",
@@ -644,19 +521,10 @@
     "noLogsHint": "数据推送后将在此显示日志",
     "attempts": "{{count}} 次尝试",
     "attemptsLabel": "尝试次数",
-    "stepBasics": "基本信息",
-    "stepBasicsDesc": "名称和目标类型",
-    "stepTarget": "目标配置",
-    "stepTargetDesc": "连接设置",
-    "stepSources": "数据源",
-    "stepSourcesDesc": "数据源选择",
-    "stepTemplate": "模板",
-    "stepTemplateDesc": "负载格式",
     "sourcePicker": "数据源选择",
     "sourcePickerDesc": "选择要推送的数据源。留空表示推送所有数据源。",
     "sourceSearch": "搜索数据源...",
     "sourceSelected": "已选 {{count}} 项",
-    "sourceAllFields": "全部字段",
     "sourceAdvanced": "高级（手动模式）",
     "sourceLoading": "加载中...",
     "sourceEmpty": "未找到数据源",
@@ -665,10 +533,7 @@
     "sourceTypeTransform": "转换",
     "sourceTypeSystem": "系统",
     "removeSource": "移除",
-    "selectAllFields": "全选",
     "deselectAllFields": "取消全选",
-    "back": "上一步",
-    "next": "下一步",
     "webhookAuthToken": "Bearer 令牌",
     "webhookAuthTokenPlaceholder": "认证令牌",
     "webhookBasicAuth": "Basic 认证",
@@ -679,7 +544,6 @@
     "mqttPort": "端口",
     "mqttUsername": "用户名",
     "mqttPassword": "密码",
-    "mqttQos": "QoS",
     "mqttSelectBroker": "选择已有 Broker",
     "mqttManualInput": "手动输入",
     "testSuccess": "测试成功",
@@ -731,9 +595,7 @@
       "deviceBinding": "设备绑定",
       "noCompatibleDevices": "无兼容设备",
       "selectDevice": "选择设备"
-    },
-    "defaultTitle": "仪表板",
-    "newChat": "新建对话"
+    }
   },
   "minPasswordLength": "密码最少字符数",
   "minUsernameLength": "用户名最少字符数",
@@ -760,7 +622,6 @@
       "finish": "完成"
     },
     "cli": {
-      "toggle": "用命令行快速配置",
       "provider": "厂商",
       "keyHint": "运行前请把 YOUR_API_KEY 换成你的密钥",
       "copy": "复制命令",
@@ -769,15 +630,10 @@
       "followup": "创建成功后会返回后端 ID，把下方 <ID> 替换掉即可验证连接并设为默认后端："
     },
     "deviceCli": {
-      "toggle": "用命令行快速体验设备接入",
       "note": "向下方 webhook 地址 POST 一条模拟遥测数据，系统会自动发现该未知设备并生成草稿——无需预注册，无需安装额外工具。",
       "localhostHint": "当前命令使用的是本机地址（localhost）。局域网内的设备上报数据时，请把 localhost 替换为服务器的局域网 IP。",
       "unreachableHint": "服务器当前仅监听本机回环地址（127.0.0.1），局域网设备无法连接。请改用默认绑定 0.0.0.0 重启服务（CLI：--host 0.0.0.0；桌面：NEOMIND_HOST=0.0.0.0）。",
       "followup": "发布数据后，系统会自动发现该设备并生成草稿。执行以下命令查看并批准，即可完成接入："
-    },
-    "stepLabels": {
-      "setup": "核心设置",
-      "ready": "准备就绪"
     },
     "stages": {
       "welcome": "欢迎"
@@ -840,10 +696,7 @@
     "goBack": "返回上页"
   },
   "userMenu": {
-    "preferences": "偏好设置",
     "about": "关于",
-    "help": "帮助",
-    "role": "角色",
     "language": "语言"
   },
   "systemHealth": {
@@ -862,7 +715,6 @@
   "system": {
     "pageTitle": "系统",
     "menu": "菜单",
-    "sectionPrimary": "主要",
     "sectionBusiness": "业务",
     "sectionSystem": "系统",
     "sectionAbout": "关于",
@@ -889,7 +741,6 @@
     "templates": {
       "title": "从模板创建规则",
       "subtitle": "选择一个模板快速配置常见规则",
-      "createFromTemplate": "从模板创建",
       "deviceOffline": {
         "label": "设备离线告警",
         "description": "设备长时间无数据时触发告警",
