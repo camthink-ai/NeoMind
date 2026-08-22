@@ -372,14 +372,20 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             name,
             description,
             layout,
+            components,
         } => {
             let layout_json = if let Some(layout_str) = layout {
                 Some(serde_json::from_str(&layout_str)?)
             } else {
                 None
             };
+            let components_json = if let Some(components_str) = components {
+                Some(serde_json::from_str(&components_str)?)
+            } else {
+                None
+            };
             let resp =
-                create_dashboard(&client, &name, description.as_deref(), layout_json).await?;
+                create_dashboard(&client, &name, description.as_deref(), layout_json, components_json).await?;
             (resp, output_format)
         }
         DashboardCommand::Update {
@@ -427,7 +433,10 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
         }
         DashboardCommand::Delete { id } => (delete_dashboard(&client, &id).await?, output_format),
         DashboardCommand::AddComponents { id, components } => {
-            let comps = serde_json::from_str(&components).unwrap_or(serde_json::json!([]));
+            // Propagate parse errors — a silent empty-array fallback made
+            // malformed JSON "succeed" with zero components added, and the
+            // model retried in a confused loop (observed ×5 in evals).
+            let comps = serde_json::from_str(&components)?;
             let resp = add_components(&client, &id, comps).await?;
             (resp, output_format)
         }
@@ -441,7 +450,7 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             (resp, output_format)
         }
         DashboardCommand::RemoveComponents { id, ids } => {
-            let ids_val = serde_json::from_str(&ids).unwrap_or(serde_json::json!([]));
+            let ids_val = serde_json::from_str(&ids)?;
             let resp = remove_components(&client, &id, ids_val).await?;
             (resp, output_format)
         }

@@ -93,6 +93,10 @@ pub struct DashboardComponent {
 pub struct Dashboard {
     pub id: String,
     pub name: String,
+    /// Optional human description. Old rows predate this field — serde
+    /// default keeps them readable (None).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub layout: DashboardLayout,
     pub components: Vec<DashboardComponent>,
     #[serde(alias = "created_at")]
@@ -141,6 +145,7 @@ impl Dashboard {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             name,
+            description: None,
             layout,
             components: Vec::new(),
             created_at: now,
@@ -753,6 +758,7 @@ mod tests {
         let dashboard = Dashboard {
             id: "test".to_string(),
             name: "Test Dashboard".to_string(),
+            description: None,
             layout: DashboardLayout {
                 columns: 12,
                 rows: RowsValue::String("auto".to_string()),

@@ -150,6 +150,8 @@ pub struct DashboardComponent {
 pub struct Dashboard {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub layout: DashboardLayout,
     pub components: Vec<DashboardComponent>,
     #[serde(alias = "created_at", rename = "created_at")]
@@ -175,6 +177,8 @@ pub struct Dashboard {
 #[derive(Debug, Deserialize)]
 pub struct CreateDashboardRequest {
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub layout: DashboardLayout,
     #[serde(default)]
@@ -226,6 +230,8 @@ pub struct CreateDashboardComponent {
 pub struct UpdateDashboardRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<DashboardLayout>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -288,6 +294,7 @@ fn stored_to_api(dashboard: &StoredDashboard) -> Dashboard {
     Dashboard {
         id: dashboard.id.clone(),
         name: dashboard.name.clone(),
+        description: dashboard.description.clone(),
         layout: convert_layout(&dashboard.layout),
         components: dashboard.components.iter().map(convert_component).collect(),
         created_at: dashboard.created_at,
@@ -462,6 +469,7 @@ pub async fn get_dashboard_handler(
         return ok(Dashboard {
             id: template.id.clone(),
             name: template.name.clone(),
+            description: Some(template.description.clone()),
             layout: convert_layout(&template.layout),
             components: vec![],
             created_at: now,
@@ -471,11 +479,29 @@ pub async fn get_dashboard_handler(
         });
     }
 
-    let dashboard = state
-        .dashboard_store
-        .load(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load dashboard: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Dashboard '{}' not found", id)))?;
+    let dashboard = match state.dashboard_store.load(&id) {
+        Ok(d) => d,
+        Err(e) => return Err(ErrorResponse::internal(format!("Failed to load dashboard: {}", e))),
+    };
+    let dashboard = match dashboard {
+        Some(d) => d,
+        // LLM callers naturally use the dashboard NAME (they only ever saw
+        // it in prose) — fall back to a name match instead of a bare 404.
+        // First match wins on duplicate names; the response carries the
+        // real id so the caller self-corrects.
+        None => {
+            let all = state
+                .dashboard_store
+                .list_all()
+                .map_err(|e| ErrorResponse::internal(format!("Failed to list dashboards: {}", e)))?;
+            all.into_iter().find(|d| d.name == id).ok_or_else(|| {
+                ErrorResponse::not_found(format!(
+                    "Dashboard '{}' not found (by id or name) — run `neomind dashboard list` for valid ids",
+                    id
+                ))
+            })?
+        }
+    };
 
     ok(stored_to_api(&dashboard))
 }
@@ -496,7 +522,8 @@ pub async fn create_dashboard_handler(
 
     let stored_dashboard = StoredDashboard {
         id: id.clone(),
-        name: req.name,
+        name: req.name.clone(),
+        description: req.description,
         layout: api_to_stored_layout(&req.layout),
         components: req
             .components
@@ -541,6 +568,9 @@ pub async fn update_dashboard_handler(
     // Update fields if provided
     if let Some(name) = req.name {
         dashboard.name = name;
+    }
+    if let Some(description) = req.description {
+        dashboard.description = Some(description);
     }
     if let Some(layout) = req.layout {
         dashboard.layout = api_to_stored_layout(&layout);
@@ -610,6 +640,29 @@ pub async fn add_components_handler(
                  \"data_source\":{\"type\":\"device\",\"sourceId\":\"<device-id>\",\"property\":\"<metric>\"}}",
             )
         })?;
+
+    // Reject component-id collisions: duplicates make `update-component`
+    // (find-first) ambiguous and break the frontend's React keys.
+    if let Some(dup) = new_components
+        .iter()
+        .find(|c| dashboard.components.iter().any(|existing| existing.id == c.id))
+    {
+        return Err(ErrorResponse::bad_request(format!(
+            "Component id '{}' already exists on dashboard '{}' — component ids must be unique. \
+             Use `dashboard get {}` to list existing ids, or `update-component` to modify one.",
+            dup.id, id, id
+        )));
+    }
+    // Also reject duplicates WITHIN the same batch.
+    {
+        let mut seen = std::collections::HashSet::new();
+        if let Some(dup) = new_components.iter().find(|c| !seen.insert(&c.id)) {
+            return Err(ErrorResponse::bad_request(format!(
+                "Duplicate component id '{}' within the same --components batch",
+                dup.id
+            )));
+        }
+    }
 
     dashboard.components.extend(new_components);
     dashboard.updated_at = chrono::Utc::now().timestamp();
@@ -1422,6 +1475,7 @@ fn build_duplicate_dashboard(
     let new_dashboard = StoredDashboard {
         id: new_dashboard_id,
         name: format!("{} (copy)", source.name),
+        description: source.description.clone(),
         layout: source.layout.clone(),
         components: new_components,
         created_at: now,
@@ -1784,6 +1838,7 @@ mod tests {
         let src_dashboard = StoredDashboard {
             id: "dashboard_src".to_string(),
             name: "My Dashboard".to_string(),
+            description: None,
             layout: StoredLayout::default_layout(),
             components: vec![src_component],
             created_at: 100,
@@ -1840,6 +1895,7 @@ mod tests {
         let src = StoredDashboard {
             id: "x".to_string(),
             name: "X (copy)".to_string(),
+            description: None,
             layout: StoredLayout::default_layout(),
             components: vec![],
             created_at: 0,

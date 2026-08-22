@@ -939,13 +939,14 @@ pub enum DashboardCommand {
     },
     /// Create a new dashboard.
     ///
-    /// Creates an empty dashboard. Add widgets in a second step using
-    /// `dashboard update --components`.
+    /// Creates a dashboard (optionally with components in one shot via
+    /// --components). To add widgets to an EXISTING dashboard, use
+    /// `dashboard add-components` (append mode).
     ///
     /// Workflow:
-    ///   1. `neomind dashboard create --name "My Dashboard"`
+    ///   1. `neomind dashboard create --name "My Dashboard"` (optionally `--components '[...]'`)
     ///   2. `neomind widget list` — see available widget types
-    ///   3. `neomind dashboard update <ID> --components '[...]'` — add widgets
+    ///   3. `neomind dashboard add-components <ID> --components '[...]'` — add widgets later
     Create {
         /// Dashboard name.
         #[arg(short, long)]
@@ -956,6 +957,10 @@ pub enum DashboardCommand {
         /// Layout configuration JSON (optional, auto-generated if omitted).
         #[arg(short, long)]
         layout: Option<String>,
+        /// Components JSON array (optional) — create the dashboard AND its
+        /// widgets in one shot. Same component shape as `add-components`.
+        #[arg(short, long)]
+        components: Option<String>,
     },
     /// Update dashboard.
     ///
