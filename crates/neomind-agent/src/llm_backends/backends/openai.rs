@@ -260,10 +260,25 @@ impl CloudConfig {
 
     /// Get the effective base URL.
     fn get_base_url(&self) -> String {
-        if let Some(base) = &self.base_url {
+        let base = if let Some(base) = &self.base_url {
             base.clone()
         } else {
             self.provider.base_url().to_string()
+        };
+        // Anthropic path: requests join base + "/messages". The ecosystem
+        // convention (Anthropic SDK / Claude Code) is a base WITHOUT /v1
+        // that the client expands to /v1/messages — accept both forms so
+        // users can paste either (also covers Anthropic-compatible entries
+        // like GLM's open.bigmodel.cn/api/anthropic).
+        if matches!(self.provider, CloudProvider::Anthropic) {
+            let trimmed = base.trim_end_matches('/');
+            if trimmed.ends_with("/v1") {
+                trimmed.to_string()
+            } else {
+                format!("{}/v1", trimmed)
+            }
+        } else {
+            base
         }
     }
 
@@ -1066,6 +1081,10 @@ impl CloudRuntime {
                         "arguments": input
                     }));
                 }
+                // Thinking blocks are model reasoning, not visible output.
+                AnthropicContentBlock::Thinking { .. }
+                | AnthropicContentBlock::RedactedThinking { .. }
+                | AnthropicContentBlock::Unknown => {}
             }
         }
 
@@ -2204,6 +2223,25 @@ enum AnthropicContentBlock {
         name: String,
         input: serde_json::Value,
     },
+    /// Extended-thinking blocks — emitted by the official API (and
+    /// Anthropic-compatible providers like GLM) when thinking is enabled.
+    /// Not part of the visible text; skipped during extraction.
+    #[serde(rename = "thinking")]
+    Thinking {
+        #[serde(default)]
+        thinking: Option<String>,
+        #[serde(default)]
+        signature: Option<String>,
+    },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking {
+        #[serde(default)]
+        data: Option<String>,
+    },
+    /// Future/unknown block types — tolerate instead of failing the whole
+    /// response (a provider adding a block kind must not break chat).
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2361,6 +2399,62 @@ mod tests {
             "https://generativelanguage.googleapis.com/v1beta"
         );
         assert_eq!(CloudProvider::Grok.base_url(), "https://api.x.ai/v1");
+    }
+
+    #[test]
+    fn test_anthropic_base_url_normalization() {
+        let cfg = |base: &str| CloudConfig {
+            api_key: "k".into(),
+            provider: CloudProvider::Anthropic,
+            model: None,
+            base_url: Some(base.into()),
+            timeout_secs: 60,
+        };
+        // Ecosystem convention: base without /v1 → client expands it.
+        assert_eq!(
+            cfg("https://open.bigmodel.cn/api/anthropic").get_base_url(),
+            "https://open.bigmodel.cn/api/anthropic/v1"
+        );
+        assert_eq!(
+            cfg("https://api.anthropic.com").get_base_url(),
+            "https://api.anthropic.com/v1"
+        );
+        // Already-/v1 forms pass through untouched (trailing slash trimmed).
+        assert_eq!(
+            cfg("https://api.anthropic.com/v1").get_base_url(),
+            "https://api.anthropic.com/v1"
+        );
+        assert_eq!(
+            cfg("https://open.bigmodel.cn/api/anthropic/v1/").get_base_url(),
+            "https://open.bigmodel.cn/api/anthropic/v1"
+        );
+        // Other providers are not normalized.
+        let mut openai_cfg = cfg("https://api.deepseek.com");
+        openai_cfg.provider = CloudProvider::Custom;
+        assert_eq!(openai_cfg.get_base_url(), "https://api.deepseek.com");
+    }
+
+    #[test]
+    fn test_anthropic_response_tolerates_thinking_blocks() {
+        // GLM's Anthropic-compatible endpoint emits thinking blocks (as does
+        // the official API with extended thinking). The response must parse
+        // and extraction must keep only text + tool_use.
+        let body = r#"{"content":[
+            {"type":"thinking","thinking":"reasoning…","signature":"sig"},
+            {"type":"redacted_thinking","data":"opaque"},
+            {"type":"text","text":"Hello!"},
+            {"type":"some_future_block","foo":1}
+        ],"stop_reason":"end_turn","usage":{"input_tokens":13,"output_tokens":4}}"#;
+        let resp: AnthropicResponse = serde_json::from_str(body).expect("parses");
+        let text: String = resp
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                AnthropicContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, "Hello!");
     }
 
     #[test]
