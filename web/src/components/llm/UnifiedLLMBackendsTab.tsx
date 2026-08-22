@@ -28,7 +28,7 @@ import { Progress } from '@/components/ui/progress'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
-import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
+import { UniversalPluginConfigDialog, API_KEY_MASK, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
 import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 import { CloudAiAddDialog } from '@/components/llm/CloudAiAddDialog'
 import type {
@@ -510,15 +510,21 @@ export function UnifiedLLMBackendsTab({
 
   // Handle update instance
   const handleUpdate = async (id: string, config: Record<string, unknown>) => {
+    // api_key: the API never returns it, so the edit form prefills with the
+    // API_KEY_MASK sentinel when a key is stored. Both the untouched mask
+    // and an empty value mean "keep the existing key" — omit the field so
+    // the backend's `if let Some` skips it.
+    const apiKeyProvided =
+      typeof config.api_key === 'string' &&
+      config.api_key.trim() &&
+      config.api_key !== API_KEY_MASK
+        ? config.api_key
+        : undefined
     const data: UpdateLlmBackendRequest = {
       name: config.name as string,
       endpoint: config.endpoint as string,
       model: config.model as string,
-      // Only include api_key if it's provided (non-empty string)
-      // This prevents overwriting the existing key with an empty value
-      ...(config.api_key && typeof config.api_key === 'string' && config.api_key.trim()
-        ? { api_key: config.api_key }
-        : {}),
+      ...(apiKeyProvided ? { api_key: apiKeyProvided } : {}),
       temperature: config.temperature as number,
       top_p: config.top_p as number,
       top_k: config.top_k as number,

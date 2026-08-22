@@ -60,6 +60,13 @@ export interface PluginInstance {
 }
 
 /**
+ * Sentinel shown in the api_key field when a key is stored server-side
+ * (the real key is never returned). Submit paths treat it exactly like an
+ * empty value — "keep the existing key" — so it can never be persisted.
+ */
+export const API_KEY_MASK = "••••••••••••"
+
+/**
  * Unified plugin type definition
  */
 export interface UnifiedPluginType {
@@ -501,11 +508,17 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
     }
 
     // api_key is write-only (never returned by the API), so the edit form
-    // always starts empty — hint that a blank save keeps the stored key
-    // instead of looking like the key was lost.
+    // would always start empty — which reads as "my key is gone". Prefill
+    // with a mask when a key is stored. The mask is a SENTINEL: the update
+    // path strips it (same as empty) so it can never be saved as a real key.
     if (editingInstance && schema.properties?.api_key) {
       const configured = (editingInstance as any).api_key_configured
       if (configured) {
+        schema.properties.api_key = {
+          ...schema.properties.api_key as any,
+          default: API_KEY_MASK,
+        }
+        // Placeholder still applies if the user clears the field.
         schema.ui_hints = {
           ...schema.ui_hints,
           placeholders: {
