@@ -11,7 +11,7 @@
 #   NO_SERVICE     - Skip service installation (default: false)
 #   WITH_LLM      - Install the llama.cpp runtime (neomind-llama-server) from
 #                   official prebuilt binaries (default: true)
-#   LLAMA_VERSION - llama.cpp release tag for the runtime (default: b10524)
+#   LLAMA_VERSION - llama.cpp release tag for the runtime (default: b10545)
 #   BUILTIN_MODEL - Pre-download a builtin model GGUF + manifest into DATA_DIR:
 #                   lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none (default: none —
 #                   the in-app wizard offers the same choices)

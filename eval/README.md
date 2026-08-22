@@ -76,8 +76,9 @@ python3 eval/run_eval.py validate-all --root eval/cases
 # 3. Run a single case (requires AGENT_LLM_*)
 AGENT_LLM_API_KEY=sk-xxx \
 AGENT_LLM_ENDPOINT=https://api.deepseek.com/v1 \
-AGENT_LLM_MODEL=deepseek-v4-flash \
-AGENT_LLM_BACKEND_TYPE=deepseek \
+AGENT_LLM_MODEL=deepseek-chat \
+AGENT_LLM_BACKEND_TYPE=openai \
+AGENT_LLM_ENDPOINT=https://api.deepseek.com/v1 \
   python3 eval/run_eval.py run-case --case eval/smoke/good-002.json
 
 # 4. Run smoke cases (no judge)
@@ -145,7 +146,7 @@ Weights renormalize over `applies[]` subset.
 | Var | Purpose | Where |
 |-----|---------|-------|
 | `AGENT_LLM_API_KEY` / `AGENT_LLM_ENDPOINT` / `AGENT_LLM_MODEL` | Powers the chat agent (model under test) | Set on runner; propagated to server via API |
-| `AGENT_LLM_BACKEND_TYPE` | `openai` (default) / `deepseek` / `qwen` / `anthropic` / etc. | Same as above |
+| `AGENT_LLM_BACKEND_TYPE` | `ollama` / `llamacpp` / `openai` (default) / `anthropic` — vendors ride `openai` + their endpoint | Same as above |
 | `AGENT_LLM_THINKING` | `true` / `false` (default; commit c6385169) | Same as above |
 | `ANTHROPIC_API_KEY` | Powers the Claude judge | Runner process only |
 | `EVAL_JUDGE_MODEL` | Override judge model (default `claude-opus-4-6`) | Runner process only |
@@ -158,7 +159,7 @@ it to the subprocess.
 ## Known limitations
 
 - **Greeting fast-path false positive**: smoke-good-001 (`你好`) triggers the
-  agent's canned greeting response at `agent/mod.rs:1355` (4ms, no LLM). The
+  agent's canned greeting response at `agent/mod.rs:1434` (`try_fast_path`) (4ms, no LLM). The
   fallback heuristic flags this as `suspected_fallback=true` because
   expectations mention tool words. This is a known false positive — the agent
   behavior is correct for greetings.

@@ -73,6 +73,7 @@ COPY crates/neomind-messages/Cargo.toml crates/neomind-messages/Cargo.toml
 COPY crates/neomind-extension-sdk/Cargo.toml crates/neomind-extension-sdk/Cargo.toml
 COPY crates/neomind-extension-runner/Cargo.toml crates/neomind-extension-runner/Cargo.toml
 COPY crates/neomind-data-push/Cargo.toml crates/neomind-data-push/Cargo.toml
+COPY crates/neomind-core/tests/fixtures/smoke-extension/Cargo.toml crates/neomind-core/tests/fixtures/smoke-extension/Cargo.toml
 
 # Create dummy source files for dependency caching
 RUN mkdir -p crates/neomind-core/src && echo "" > crates/neomind-core/src/lib.rs && \
@@ -86,7 +87,9 @@ RUN mkdir -p crates/neomind-core/src && echo "" > crates/neomind-core/src/lib.rs
     mkdir -p crates/neomind-messages/src && echo "" > crates/neomind-messages/src/lib.rs && \
     mkdir -p crates/neomind-extension-sdk/src && echo "" > crates/neomind-extension-sdk/src/lib.rs && \
     mkdir -p crates/neomind-extension-runner/src && echo "" > crates/neomind-extension-runner/src/lib.rs && \
-    mkdir -p crates/neomind-data-push/src && echo "" > crates/neomind-data-push/src/lib.rs
+    mkdir -p crates/neomind-data-push/src && echo "" > crates/neomind-data-push/src/lib.rs && \
+    mkdir -p crates/neomind-core/tests/fixtures/smoke-extension/src && echo "" > crates/neomind-core/tests/fixtures/smoke-extension/src/lib.rs && \
+    mkdir -p crates/neomind-core/tests/fixtures/smoke-extension && echo "fn main(){}" > crates/neomind-core/tests/fixtures/smoke-extension/build.rs
 
 # jemalloc (neomind-cli global allocator) must assume 64KB pages on ARM, else it
 # crashes on 64KB-page hosts like Raspberry Pi 5 / Jetson (the arm64 container
@@ -115,7 +118,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 # curl+tarball (not git clone) — Docker build networks often block git; the
 # tarball is a plain HTTPS GET and is uniformly reliable.
 RUN curl -fsSL -o /tmp/llama.cpp.tar.gz \
-      https://github.com/ggml-org/llama.cpp/archive/refs/tags/b10524.tar.gz \
+      https://github.com/ggml-org/llama.cpp/archive/refs/tags/b10545.tar.gz \
     && mkdir -p /build/llama.cpp \
     && tar -xzf /tmp/llama.cpp.tar.gz -C /build/llama.cpp --strip-components=1 \
     && rm /tmp/llama.cpp.tar.gz

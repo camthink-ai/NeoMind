@@ -12,8 +12,9 @@ Group=neomind
 # Working directory
 WorkingDirectory=/var/lib/neomind
 
-# Executables
-ExecStart=/usr/local/bin/neomind
+# Executables — `serve` is required; the install script generates the same
+# unit inline with the chosen host/port.
+ExecStart=/usr/local/bin/neomind serve --host 0.0.0.0 --port 9375
 ExecReload=/bin/kill -HUP $MAINPID
 
 # Auto-restart
@@ -25,7 +26,6 @@ StartLimitInterval=60
 # Environment
 Environment="RUST_LOG=info"
 Environment="NEOMIND_DATA_DIR=/var/lib/neomind"
-Environment="NEOMIND_BIND_ADDR=0.0.0.0:9375"
 
 # Security settings
 NoNewPrivileges=true

@@ -49,10 +49,12 @@ matter (test aborted — effect below noise for the effort).
 
 ## Registering in NeoMind
 
-1. **Agent backend (active)**: Settings → LLM Backends → add an
-   OpenAI-compatible backend pointing at the *text* server
-   (`http://<host>:8081`, no `/v1` suffix — NeoMind appends it), then activate
-   it. This is the model that drives chat and scheduled agents.
+1. **Agent backend (active)**: Settings → LLM Backends → add a
+   **llama.cpp** backend pointing at the *text* server
+   (`http://<host>:8081`, no `/v1` suffix — the llamacpp client appends its
+   own path), then activate it. This is the model that drives chat and
+   scheduled agents. (An OpenAI-compatible registration also works, but its
+   endpoint must carry `/v1` — that protocol does not auto-append it.)
 2. **Perception backend (non-active)**: add a second backend for the *vision*
    server and leave it **not active**. NeoMind's built-in `vision` tool
    automatically prefers dedicated multimodal backends over the active one
@@ -79,7 +81,7 @@ Gemma4-E2B.
 | Symptom | Cause / fix |
 |---|---|
 | Every tool call fails, model produces plain text | Missing `--jinja` on the server |
-| 404 on every request from NeoMind | Endpoint was given with `/v1` — remove it (NeoMind appends `/v1` itself) |
+| 404 on every request from NeoMind | Endpoint/type mismatch: **llama.cpp** backends take no `/v1` (client appends it); **OpenAI-compatible** backends need `/v1` in the endpoint; Anthropic accepts either |
 | Agent picks `skill`/wrong tool constantly on a ≤3B model | You are on an old NeoMind build with the bloated `shell` description — upgrade (fixed 2026-08; small models avoid huge tool descriptions) |
 | Long multi-step deploys die mid-run | Chat turn bound was raised to 2400s; if you run a custom harness, make sure *its* per-turn and per-case budgets exceed the model's realistic completion time (~20+ min for 20-round deploys at edge speeds) |
 | Vision works in isolation but agent never "sees" images | The active (text) backend not being multimodal is fine for tool-routed vision, but *user-uploaded chat images* currently require a multimodal active backend — upload via the vision flow instead |

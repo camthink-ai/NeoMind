@@ -68,7 +68,7 @@ NeoMind 是一个**边缘部署的 AI 平台**，将智能带入物联网。它�
 ### AI 智能
 - **自然语言对话** — 用自然语言查询和控制所有已连接设备
 - **自主智能体** — 定时 AI 智能体，独立监控、分析和处理设备数据
-- **10+ LLM 后端** — Ollama、OpenAI、Anthropic、Google、xAI、Qwen、DeepSeek、GLM、MiniMax 及任何 OpenAI 兼容接口
+- **内置 LLM + 任意后端** — 自带本地模型开箱即用；Ollama、llama.cpp，或任何云厂商（OpenAI、Anthropic、Qwen、DeepSeek、GLM、xAI…）经两个云协议（OpenAI 兼容 / Anthropic）接入
 - **记忆系统** — 多层级记忆（用户画像、知识库、任务记录、系统演化），支持自动提取和压缩
 - **技能系统** — YAML+Markdown 技能，引导智能体在特定场景下的行为
 - **多模态** — 支持图片上传和视觉分析
@@ -82,7 +82,7 @@ NeoMind 是一个**边缘部署的 AI 平台**，将智能带入物联网。它�
 - **自定义设备类型** — 通过 JSON 定义设备指标和命令
 
 ### 自动化
-- **DSL 规则引擎** — 人类可读的规则语言：`WHEN device("sensor").temperature > 30 DO device("ac").power_on()`
+- **JSON 规则引擎** — 纯 JSON 条件/动作结构，UI 可视化编辑，自动生成人类可读的规则预览文本
 - **数据转换** — 基于 JavaScript 的数据转换，创建虚拟指标
 - **定时智能体** — 基于时间和事件驱动的 AI 智能体执行
 - **事件总线** — 发布/订阅架构，组件间解耦通信
@@ -175,7 +175,7 @@ NE301（边缘 AI 摄像头）和 NE101（感知摄像头）。完整设备类�
 | Windows | `.msi` / `.exe` |
 | Linux | `.AppImage` / `.deb` |
 
-首次启动时，设置向导会引导你创建管理员账户、配置 LLM 后端、连接设备。
+首次启动时，四步引导向导（欢迎 → LLM 后端 → 设备 → 就绪）带你完成核心配置（管理员账户在首次运行流程中创建）。
 
 ### 服务器部署
 
@@ -262,7 +262,7 @@ server {
 
 ### 开发模式
 
-**环境要求：** Rust 1.85+、Node.js 20+、Ollama（或其他 LLM 后端）
+**环境要求：** Rust 1.85+、Node.js 20+（LLM 后端可选 — 服务器会自举内置模型）
 
 ```bash
 # 克隆
@@ -331,11 +331,12 @@ NeoMind/
 │   ├── neomind-devices/         # 设备管理（MQTT、BLE、Webhook）
 │   ├── neomind-storage/         # 存储层（redb）
 │   ├── neomind-messages/        # 通知系统（7 种渠道）
-│   ├── neomind-rules/           # DSL 规则引擎
+│   ├── neomind-rules/           # JSON 规则引擎
 │   ├── neomind-data-push/       # 数据推送到外部系统
 │   ├── neomind-extension-sdk/   # 扩展开发 SDK
 │   ├── neomind-extension-runner/# 扩展进程隔离运行器
-│   └── neomind-cli/             # 命令行工具
+│   ├── neomind-cli/             # 命令行工具
+│   └── neomind-cli-ops/         # CLI 命令定义与进程内分发
 ├── web/
 │   ├── src/                     # React 前端（TypeScript）
 │   └── src-tauri/               # Tauri 桌面后端（Rust）
@@ -403,17 +404,14 @@ NeoMind/
 
 ### LLM 后端
 
-| 后端 | 端点 |
-|------|------|
-| Ollama | `http://localhost:11434` |
-| OpenAI | `https://api.openai.com/v1` |
-| Anthropic | `https://api.anthropic.com/v1` |
-| Google | `https://generativelanguage.googleapis.com/v1beta` |
-| xAI | `https://api.x.ai/v1` |
-| Qwen | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
-| DeepSeek | `https://api.deepseek.com/v1` |
-| GLM | `https://open.bigmodel.cn/api/paas/v4` |
-| MiniMax | `https://api.minimax.chat/v1` |
+本地：Ollama（`http://localhost:11434`）、llama.cpp（`http://127.0.0.1:8080`，不带 `/v1`）以及内置捆绑模型。
+
+云端为单一 **Cloud AI** 卡片，两种协议：
+
+| 协议 | 端点示例 |
+|------|----------|
+| OpenAI 兼容（带 `/v1`） | OpenAI `https://api.openai.com/v1` · Qwen `https://dashscope.aliyuncs.com/compatible-mode/v1` · DeepSeek `https://api.deepseek.com/v1` · GLM `https://open.bigmodel.cn/api/paas/v4` · xAI `https://api.x.ai/v1` · vLLM/OpenRouter 等任意 `/v1` 端点 |
+| Anthropic | `https://api.anthropic.com`（`/v1` 可省略，自动补全） |
 
 ### 环境变量
 

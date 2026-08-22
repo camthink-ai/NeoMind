@@ -1,6 +1,6 @@
 # NeoMind Extension SDK V2
 
-**版本**: 2.0.0 | **ABI 版本**: 3
+**版本**: 0.6.4 | **ABI 版本**: 3
 
 统一的 NeoMind 扩展开发工具包，支持 Native 和 WASM 目标。
 
@@ -11,7 +11,7 @@
 - **ABI 版本 3** - 新的扩展接口，改进的安全性
 - **类型安全** - 完整的类型定义和辅助宏
 - **异步支持** - 基于 Tokio 的异步运行时
-- **能力系统** - 11 种内置能力，支持自定义扩展
+- **能力系统** - 20 种内置能力，支持自定义扩展
 
 ## 能力系统
 
@@ -32,6 +32,15 @@
 | ExtensionCall | `extension_call` | 扩展间调用 |
 | AgentTrigger | `agent_trigger` | 触发代理执行 |
 | RuleTrigger | `rule_trigger` | 触发规则执行 |
+| ChatStream | `chat_stream` | 聊天流式推理 |
+| ChatStreamCancel | `chat_stream_cancel` | 取消聊天流 |
+| ChatSessionOpen | `chat_session_open` | 打开聊天会话 |
+| ChatSessionSend | `chat_session_send` | 发送会话消息 |
+| ChatSessionClose | `chat_session_close` | 关闭聊天会话 |
+| ChatStreamCancelTurn | `chat_stream_cancel_turn` | 取消当前回合 |
+| DeviceTemplateRegister | `device_template_register` | 注册设备类型模板 |
+| DeviceRegister | `device_register` | 注册设备 |
+| DeviceUnregister | `device_unregister` | 注销设备 |
 
 ### 使用能力 API
 
@@ -368,6 +377,8 @@ NeoMind 提供以下内置能力提供者：
 | `AgentCapabilityProvider` | AgentTrigger |
 | `RuleCapabilityProvider` | RuleTrigger |
 | `ExtensionCallCapabilityProvider` | ExtensionCall |
+| Chat 系列能力 | ChatStream, ChatStreamCancel, ChatSessionOpen/Send/Close, ChatStreamCancelTurn |
+| 设备注册能力 | DeviceTemplateRegister, DeviceRegister, DeviceUnregister |
 
 ## 许可证
 

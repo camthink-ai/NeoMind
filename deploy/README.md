@@ -149,10 +149,10 @@ After starting the container, IoT devices can connect via:
 
 ### Connecting LLM Backends
 
-NeoMind supports multiple LLM backends. Configure them in the Web UI under **Settings > LLM**:
+NeoMind supports multiple LLM backends. Configure them in the Web UI under **Settings > LLM Backends**:
 
 - **Ollama** (local): If running Ollama on the same host, use `http://host.docker.internal:11434` or the host's IP
-- **Cloud APIs**: OpenAI, Anthropic, Google, Qwen, DeepSeek, GLM, etc.
+- **Cloud AI** (single card, two protocols): OpenAI-compatible covers OpenAI, Qwen, DeepSeek, GLM, xAI and any `/v1` endpoint; Anthropic covers Claude and Anthropic-compatible endpoints.
 
 ### Connecting to External Ollama
 
@@ -168,7 +168,7 @@ Ollama Endpoint: http://192.168.x.x:11434
 # Option 3: Add Ollama as a compose service
 ```
 
-To add Ollama as a companion service, create `docker-compose.override.yml`:
+To add Ollama as a companion service, edit the existing `docker-compose.override.yml` (the repo already ships one for the llama.cpp companion — don't replace it wholesale):
 
 ```yaml
 services:
@@ -293,8 +293,8 @@ tar xzf neomind-server-linux-amd64.tar.gz
 # Start service
 ./neomind serve
 
-# Or specify port and data directory
-./neomind serve --port 9375 --data-dir /var/lib/neomind
+# Or specify the port (data dir comes from NEOMIND_DATA_DIR, not a flag)
+./neomind serve --port 9375
 ```
 
 ### 3. Deploy Frontend

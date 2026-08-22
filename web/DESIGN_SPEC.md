@@ -345,16 +345,6 @@ const yes = await confirm({ title: 'Delete?', description: 'This cannot be undon
 if (yes) await api.deleteItem(id)
 ```
 
-### Dialog State Hook: `useDialog`
-
-```tsx
-import { useDialog } from '@/hooks/useDialog'
-
-const { open, data, openDialog, closeDialog } = useDialog<User>()
-openDialog(user)  // passes user as data
-```
-
----
 
 ## 5. Loading States
 
@@ -450,10 +440,6 @@ const { isLoading, handleClick } = useLoadingButton(async () => { await api.save
 
 **Empty state (hard rule):** `ResponsiveTable` always renders the header and shows its built-in `EmptyStateCompact` when `data` is empty. Do NOT swap the whole table for a standalone `EmptyState` on empty data, and do NOT hand-roll a custom `<p>` empty hint. If you need a custom message, pass it via `emptyState={<EmptyState .../>}` (same component family) — never a bare paragraph. The table + header must stay visible at all times so every tab's empty state looks the same.
 
-### Virtual List: `VirtualList`
-
-For rendering 1000+ items (sessions, logs, etc.), use `VirtualList` from `@/components/ui/virtual-list` for high-performance rendering.
-
 ### Pagination: `Pagination`
 
 Default page size is **10** across all pages.
@@ -467,25 +453,6 @@ Default page size is **10** across all pages.
   hideOnMobile  // enables infinite scroll on mobile
   onLoadMore={loadMore}
 />
-```
-
-### Bulk Actions: `BulkActionBar`
-
-For multi-select operations:
-
-```tsx
-<BulkActionBar
-  selectedCount={selected.length}
-  onCancel={() => setSelected([])}
-  actions={[{ label: 'Delete', variant: 'destructive', onClick: handleBulkDelete }]}
-/>
-```
-
-### Stats Display: `StatsCard` / `MonitorStatsGrid`
-
-```tsx
-<StatsCard title="Devices" value={42} icon={Server} trend="+5%" />
-<MonitorStatsGrid stats={stats} />
 ```
 
 ### Status Badges: `StatusBadge`
@@ -744,22 +711,20 @@ All slices follow the same pattern with `fetchCache`:
 | Slice | File | Key Resources |
 |-------|------|---------------|
 | device | `store/slices/deviceSlice.ts` | Devices, adapters, device metrics |
-| agent | `store/slices/agentSlice.ts` | AI agents |
+| agent | (no slice — pages fetch via `api` + local state) | AI agents |
 | llmBackend | `store/slices/llmBackendSlice.ts` | LLM backends |
 | extension | `store/slices/extensionSlice.ts` | Extensions |
 | session | `store/slices/sessionSlice.ts` | Chat sessions |
 | alert | `store/slices/alertSlice.ts` | Alerts |
-| dashboard | `store/slices/dashboardSlice.ts` | Dashboards |
+| dashboard | `store/slices/dashboard{Config,Crud,Layout,UI}Slice.ts` | Dashboards (four slices) |
 | settings | `store/slices/settingsSlice.ts` | System settings |
 | auth | `store/slices/authSlice.ts` | Authentication (JWT + API key) |
 | ui | `store/slices/uiSlice.ts` | UI state |
 | update | `store/slices/updateSlice.ts` | Update checks |
 | aiAnalyst | `store/slices/aiAnalystSlice.ts` | AI analyst |
 | instance | `store/slices/instanceSlice.ts` | Multi-instance management |
-| command | `store/slices/commandSlice.ts` | Device commands |
-| message | `store/slices/messageSlice.ts` | Notification messages |
-| transform | `store/slices/transformSlice.ts` | Data transforms |
-| storage | `store/slices/storageSlice.ts` | Storage metrics |
+| dataPush | `store/slices/dataPushSlice.ts` | Data-push targets + delivery logs |
+| frontendComponent | `store/slices/frontendComponentSlice.ts` | Community dashboard widgets |
 
 ### useDataSource Hook
 
@@ -1919,7 +1884,6 @@ The `Field` component from `@/components/ui/field` auto-links labels, errors, an
 | i18n Locales | `web/src/i18n/locales/{en,zh}/` |
 | Mobile Hooks | `web/src/hooks/useMobile.ts` |
 | Form Hook | `web/src/hooks/useForm.ts` |
-| Dialog Hook | `web/src/hooks/useDialog.ts` |
 | Infinite Scroll | `web/src/hooks/useInfiniteScroll.ts` |
 | Store Slices | `web/src/store/slices/` |
 | API Client | `web/src/lib/api.ts` |

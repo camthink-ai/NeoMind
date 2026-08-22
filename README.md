@@ -79,7 +79,7 @@ NeoMind is an **edge-deployed AI platform** that brings intelligence to IoT. It 
 ### AI-Powered Intelligence
 - **Natural Language Chat** — Conversational interface to query and control all connected devices
 - **Autonomous Agents** — Scheduled AI agents that monitor, analyze, and act on device data independently
-- **10+ LLM Backends** — llama.cpp (recommended), OpenAI, Anthropic, Google, xAI, Qwen, DeepSeek, GLM, MiniMax, Ollama, and any OpenAI-compatible endpoint
+- **Built-in LLM + any backend** — a bundled local model runs out of the box; bring Ollama, llama.cpp, or any cloud vendor (OpenAI, Anthropic, Qwen, DeepSeek, GLM, xAI…) via the two cloud protocols (OpenAI-compatible / Anthropic)
 - **Memory System** — Multi-tier memory (User, Knowledge, Procedures, Session) with automatic extraction and compression
 - **Skill System** — YAML+Markdown skills that guide agent behavior for specific scenarios
 - **Multimodal** — Image upload and visual analysis support
@@ -186,7 +186,7 @@ Download the latest release from [GitHub Releases](https://github.com/camthink-a
 | Windows | `.msi` / `.exe` |
 | Linux | `.AppImage` / `.deb` |
 
-On first launch, a setup wizard guides you through creating an admin account, configuring your LLM backend, and connecting devices.
+On first launch, a four-step onboarding wizard (welcome → LLM backend → devices → ready) walks you through the essentials after you create an admin account.
 
 ### Server Deployment
 
@@ -285,7 +285,7 @@ Rule of thumb: **Gemma E2B QAT** for minimal hardware, **Qwen 3.5 4B** for visio
 
 ### Development
 
-**Prerequisites:** Rust 1.85+, Node.js 20+, llama.cpp (or other LLM backend)
+**Prerequisites:** Rust 1.85+, Node.js 20+ (an LLM backend is optional — the server self-bootstraps a built-in model)
 
 ```bash
 # Clone
@@ -427,7 +427,7 @@ NeoMind/
 
 ### Supported LLM Backends
 
-llama.cpp (local, recommended), OpenAI, Anthropic, Google, xAI, Qwen, DeepSeek, GLM, MiniMax, Ollama, and any OpenAI-compatible endpoint. Configure via the **Settings → LLM Backends** page in the UI.
+Local: Ollama, llama.cpp (and the built-in bundled model). Cloud: a single **Cloud AI** card with two protocols — OpenAI-compatible (OpenAI, Qwen, DeepSeek, GLM, xAI, vLLM, OpenRouter, any `/v1` endpoint) and Anthropic. Configure via the **Settings → LLM Backends** page in the UI.
 
 <details>
 <summary>Environment variables</summary>

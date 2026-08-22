@@ -120,7 +120,7 @@ No DSL parser. `POST /rules` body: `{name, condition, actions, trigger, cooldown
 Format `{type}:{id}:{field}` — examples: `device:temp-sensor-001:temperature`, `extension:weather:temp`, `transform:avg_temp:value`. Transform output uses **dots** for dashboard binding (`extensionMetric: "<prefix>.<field>"`) but **colons** in DataSourceId — both correct for their context.
 
 ### LLM Backend Capabilities
-Resolution chain: `user_override > runtime_api (Ollama /api/show) > registry (LiteLLM, 2748 entries) > heuristic > false`. Each `BackendCapabilities` tracks `multimodal_source` (`user_override | runtime_api | registry | heuristic`). `ensure_instance_capabilities` skips re-detection only for `user_override` and `runtime_api` sources — never let runtime clobber a user override.
+Resolution chain: `user_override > runtime_api (Ollama /api/show) > registry (LiteLLM, 2988 entries) > heuristic > false`. Each `BackendCapabilities` tracks `multimodal_source` (`user_override | runtime_api | registry | heuristic`). `ensure_instance_capabilities` skips re-detection only for `user_override` and `runtime_api` sources — never let runtime clobber a user override.
 
 ### CLI In-Process Dispatch
 The LLM's `shell` tool intercepts `neomind ...` commands and dispatches them **in-process** via `neomind_cli_ops::dispatch::dispatch(argv)` — no subprocess. `dispatch()` uses `try_parse_from` (bad args → `Parse` error, not `exit()`). Falls back to subprocess only for `Serve | Prompt | Chat | Logs | Health`. Failed commands return a `CliResponse` with `suggestion: Option<String>` recovery hints.
