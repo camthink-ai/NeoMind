@@ -281,6 +281,9 @@ function toPluginInstance(instance: LlmBackendInstance, activeId: string | null)
     },
     // Store capabilities at top level for easier access
     capabilities: instance.capabilities,
+    // Whether a key is stored on the server (the key itself is never
+    // returned) — drives the edit form's "leave blank to keep" hint.
+    api_key_configured: instance.api_key_configured,
   }
 }
 

@@ -500,6 +500,22 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
       }
     }
 
+    // api_key is write-only (never returned by the API), so the edit form
+    // always starts empty — hint that a blank save keeps the stored key
+    // instead of looking like the key was lost.
+    if (editingInstance && schema.properties?.api_key) {
+      const configured = (editingInstance as any).api_key_configured
+      if (configured) {
+        schema.ui_hints = {
+          ...schema.ui_hints,
+          placeholders: {
+            ...schema.ui_hints?.placeholders,
+            api_key: t("plugins:llm.apiKeyKeepHint", { defaultValue: "Configured — leave blank to keep" }),
+          },
+        }
+      }
+    }
+
     return schema
   }
 
