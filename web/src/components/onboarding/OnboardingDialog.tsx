@@ -514,7 +514,7 @@ function SetupTopTabs({
             type="button"
             onClick={() => onSelect(item.id)}
             className={cn(
-              "inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-sm px-4 text-sm font-medium whitespace-nowrap transition-all md:flex-none",
+              "inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-sm px-4 text-sm font-medium whitespace-nowrap transition-all md:max-w-[15rem]",
               isActive
                 ? "bg-foreground text-background shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
@@ -532,41 +532,39 @@ function SetupTopTabs({
   )
 }
 
-// Right pane: full detail for the selected item.
+// Detail pane: two equal columns — intro/purpose/actions on the left,
+// the CLI quick-start on the right — so full-width doesn't leave a void.
 function SetupDetailPane({ item }: { item: SetupItem }) {
-  return (
-    <div
-      className={cn(
-        "rounded-2xl border p-5 transition-colors flex flex-col",
-        item.completed
-          ? "border-success bg-success-light"
-          : "border-border bg-card",
-      )}
-    >
-      <div className="flex items-start gap-3 mb-3">
-        <div className={cn(
-          "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-          item.completed ? "bg-success-light text-success" : item.tint,
-        )}>
-          {item.completed ? <Check className="w-5 h-5" /> : item.icon}
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className={cn("font-semibold text-sm", item.completed && "text-muted-foreground line-through")}>
-            {item.title}
-          </h3>
-          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.description}</p>
-        </div>
+  if (item.completed) {
+    return (
+      <div className="flex items-center gap-1.5 rounded-2xl border border-success bg-success-light p-5 text-xs font-medium text-success">
+        <Check className="w-4 h-4" />
+        {item.completedLabel}
       </div>
-      {item.completed ? (
-        <div className="mt-auto flex items-center gap-1.5 text-xs font-medium text-success">
-          <Check className="w-3.5 h-3.5" />
-          {item.completedLabel}
-        </div>
-      ) : (
-        <>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-5 transition-colors">
+      <div className="grid items-stretch gap-6 md:grid-cols-2">
+        {/* Left: intro + purpose + actions */}
+        <div className="flex min-w-0 flex-col">
+          <div className="flex items-start gap-3 mb-3">
+            <div className={cn(
+              "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+              item.tint,
+            )}>
+              {item.icon}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-sm">
+                {item.title}
+              </h3>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.description}</p>
+            </div>
+          </div>
           <p className="text-xs text-muted-foreground mb-4 leading-relaxed">{item.purpose}</p>
-          {item.extra}
-          <div className="mt-auto pt-4 flex justify-end gap-2">
+          <div className="mt-auto pt-4 flex flex-wrap justify-end gap-2">
             {item.primaryAction && (
               <Button size="sm" onClick={item.primaryAction.onClick} className="gap-1.5">
                 <Download className="w-3.5 h-3.5" />
@@ -583,8 +581,11 @@ function SetupDetailPane({ item }: { item: SetupItem }) {
               <ChevronRight className="w-3.5 h-3.5" />
             </Button>
           </div>
-        </>
-      )}
+        </div>
+
+        {/* Right: quick-start (CLI helper / curl) */}
+        <div className="min-w-0">{item.extra}</div>
+      </div>
     </div>
   )
 }
