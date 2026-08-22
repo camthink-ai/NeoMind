@@ -527,6 +527,9 @@ pub async fn run_transform_cmd(cmd: TransformCommand) -> Result<(CliResponse, Ou
     let response = match cmd {
         TransformCommand::List => list_transforms(&client).await?,
         TransformCommand::Get { id } => get_transform(&client, &id).await?,
+        TransformCommand::Executions { id, limit } => {
+            get_transform_executions(&client, &id, limit).await?
+        }
         TransformCommand::Create {
             name,
             scope,

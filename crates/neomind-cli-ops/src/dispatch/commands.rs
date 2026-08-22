@@ -1207,6 +1207,21 @@ pub enum TransformCommand {
         #[arg(required = true)]
         id: String,
     },
+    /// Recent execution records of a transform.
+    ///
+    /// Every run (triggered by incoming device data) is recorded with
+    /// status/error/output summary — use this to debug a transform that
+    /// produces no metrics or fails. Records are kept for 30 days.
+    ///
+    /// Example: `neomind transform executions transform-001 --limit 20`
+    Executions {
+        /// Transform ID.
+        #[arg(required = true)]
+        id: String,
+        /// Max records to show (default 10).
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
     /// Create a new transform.
     ///
     /// Code receives `input` object with metric data, must return transformed value.

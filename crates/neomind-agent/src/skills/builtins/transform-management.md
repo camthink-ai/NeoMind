@@ -23,6 +23,7 @@ Always RUN the command yourself and report the real output.
 
 | Command | Purpose |
 |---|---|
+| `neomind transform executions <id>` | Recent run records (status/error/output) — check when output is empty or failing |
 | `neomind transform list` | List all transforms |
 | `neomind transform get <id>` | Transform details |
 | `neomind transform create` | Create a new transform |
