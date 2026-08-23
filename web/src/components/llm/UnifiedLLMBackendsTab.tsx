@@ -34,6 +34,7 @@ import { FormField } from '@/components/ui/field'
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api, fetchAPI } from '@/lib/api'
+import { useStore } from '@/store'
 import { UniversalPluginConfigDialog, API_KEY_MASK, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
 import { BuiltinModelWizard } from '@/components/llm/BuiltinModelWizard'
 import { CloudAiAddDialog, type CloudAiEditTarget } from '@/components/llm/CloudAiAddDialog'
@@ -995,6 +996,13 @@ export function UnifiedLLMBackendsTab({
               setCtxDialogOpen(false)
               await refreshBuiltinStatus()
               await loadData(true)
+              // The builtin instance's max_context changed — the chat header
+              // (Context X/Y) reads the STORE's llmBackends, which is also
+              // 10s-fetchCache guarded. Invalidate + reload or the display
+              // stays stale until a window-focus refetch.
+              const { fetchCache } = await import('@/lib/utils/async')
+              fetchCache.invalidate('llmBackends')
+              await useStore.getState().loadBackends()
             } catch (e) {
               setCtxDialogError(e instanceof Error ? e.message : String(e))
             } finally {
@@ -1041,6 +1049,9 @@ export function UnifiedLLMBackendsTab({
                     setCtxDialogInput(null)
                     await refreshBuiltinStatus()
                     await loadData(true)
+                    const { fetchCache } = await import('@/lib/utils/async')
+                    fetchCache.invalidate('llmBackends')
+                    await useStore.getState().loadBackends()
                   } catch (e) {
                     setCtxDialogError(e instanceof Error ? e.message : String(e))
                   } finally {
