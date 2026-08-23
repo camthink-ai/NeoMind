@@ -240,6 +240,19 @@ impl ConfigSource {
                     capabilities: None,
                 })
             }
+            "llamacpp" => {
+                // The served model is whatever llama-server loaded — the TOML
+                // model field is informational. Endpoint takes no /v1 (the
+                // client appends its own path).
+                let endpoint = llm_config
+                    .endpoint
+                    .unwrap_or_else(|| endpoints::LLAMACPP.to_string());
+                Some(LlmBackend::LlamaCpp {
+                    endpoint,
+                    model: llm_config.model.unwrap_or_default(),
+                    capabilities: None,
+                })
+            }
             _ => {
                 warn!(category = "config", backend = %llm_config.backend, "Unknown backend in TOML");
                 None
@@ -552,6 +565,28 @@ endpoint = "http://localhost:11434"
 "#;
         let result = ConfigSource::Toml(toml_content.to_string()).parse();
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_parse_toml_llamacpp_backend() {
+        // llamacpp via TOML: endpoint defaults to :8080 and takes no /v1;
+        // the model field is informational (whatever llama-server loaded).
+        let toml_content = r#"
+[llm]
+backend = "llamacpp"
+model = "qwen3.5-4b-q4_k_m"
+"#;
+        let result = ConfigSource::Toml(toml_content.to_string())
+            .parse()
+            .expect("llamacpp TOML must parse");
+        let LlmBackend::LlamaCpp {
+            endpoint, model, ..
+        } = result
+        else {
+            panic!("expected LlamaCpp backend");
+        };
+        assert_eq!(endpoint, "http://127.0.0.1:8080");
+        assert_eq!(model, "qwen3.5-4b-q4_k_m");
     }
 
     #[test]

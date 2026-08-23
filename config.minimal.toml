@@ -2,20 +2,37 @@
 # NeoMind Quick Start Configuration
 # ============================================================
 #
-# Minimal configuration for first-time users
+# Minimal configuration for first-time users.
+#
+# No LLM configuration is needed: the server ships a built-in model
+# (bundled llama.cpp runtime) that self-bootstraps on first use —
+# download once in the onboarding wizard, then everything runs offline.
 #
 # Setup steps:
-#   1. Install Ollama: curl -fsSL https://ollama.com/install.sh | sh
-#   2. Pull model: ollama pull qwen3.5:4b
-#   3. Copy this file: cp config.minimal.toml config.toml
-#   4. Start server: cargo run -p neomind-cli -- serve
-#   5. Open: http://localhost:9375
+#   1. Copy this file: cp config.minimal.toml config.toml
+#   2. Start server: cargo run -p neomind-cli -- serve
+#   3. Open: http://localhost:9375 and follow the onboarding wizard
+#
+# Bringing your own backend instead? Uncomment one of these:
+#
+# External llama-server (the built-in runtime's big sibling):
+# [llm]
+# backend = "llamacpp"
+# endpoint = "http://127.0.0.1:8080"   # no /v1 — the client appends its own path
+# model = "qwen3.5-4b-q4_k_m"          # informational: whatever the server loaded
+#
+# Ollama:
+# [llm]
+# backend = "ollama"
+# model = "qwen3.5:4b"                 # ollama pull qwen3.5:4b first
+#
+# Cloud (OpenAI-compatible):
+# [llm]
+# backend = "openai"
+# model = "gpt-4.1-mini"
+# api_key = "sk-..."
 #
 # For full configuration options, see config.toml or CLAUDE.md
-
-[llm]
-backend = "ollama"
-model = "qwen3.5:4b"
 
 [mqtt]
 listen = "0.0.0.0"
