@@ -35,6 +35,7 @@ import { Progress } from '@/components/ui/progress'
 import {
   AlertCircle,
   BrainCircuit,
+  Info,
   CheckCircle2,
   Cpu,
   Download,
@@ -46,10 +47,37 @@ import {
   Zap,
   AlertTriangle,
 } from 'lucide-react'
-import { api } from '@/lib/api'
+import { api, isTauriEnv } from '@/lib/api'
 import { useEvents } from '@/hooks/useEvents'
 import type { ModelDownloadProgressEvent } from '@/lib/events'
 import type { BuiltinLlmStatus, BuiltinModelDef } from '@/types'
+
+/**
+ * Platform-specific runtime guidance for the download wizard.
+ *
+ * The runtime download only happens where no bundled llama-server exists
+ * (bare server installs / dev) — the Tauri desktop ships one, so hints are
+ * desktop-hidden. Browser access == server deployment, exactly the audience
+ * that needs the CUDA/Jetson pointers.
+ */
+type PlatformHintKey = 'platformHintLinux' | 'platformHintLinuxArm' | 'platformHintWindows' | null
+
+function detectPlatformHint(): PlatformHintKey {
+  if (typeof navigator === 'undefined' || isTauriEnv()) return null
+  const platform = navigator.platform || ''
+  const ua = navigator.userAgent
+  if (/Win/i.test(platform) || /Windows/.test(ua)) {
+    // Windows CUDA hint is x64-only (win-cuda asset); ARM64 Windows runs CPU.
+    return /arm64|aarch64/i.test(platform) ? null : 'platformHintWindows'
+  }
+  if (/Mac/.test(platform) || /Macintosh/.test(ua)) return null // Metal just works
+  if (/Linux/.test(ua) || /Linux/i.test(platform)) {
+    return /arm64|aarch64/i.test(platform + ' ' + ua)
+      ? 'platformHintLinuxArm'
+      : 'platformHintLinux'
+  }
+  return null
+}
 
 const STATUS_POLL_MS = 2000
 
@@ -446,6 +474,18 @@ export function BuiltinModelWizard({
                 <p className="text-sm text-muted-foreground leading-relaxed">
                   {t('plugins:llm.builtinWizardIdleHint')}
                 </p>
+                {(() => {
+                  // Static per session — compute once, no reactive need.
+                  const hint = detectPlatformHint()
+                  return hint ? (
+                    <div className="flex items-start gap-1.5 rounded-md bg-muted-30 px-2.5 py-2">
+                      <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-muted-foreground" />
+                      <span className="text-[11px] leading-snug text-muted-foreground">
+                        {t(`plugins:llm.${hint}`)}
+                      </span>
+                    </div>
+                  ) : null
+                })()}
                 {/* Model picker — one builtin model at a time; pick then
                     download (installed model is marked and pre-selected). */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
