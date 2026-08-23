@@ -47,7 +47,7 @@ Creating dashboards with data-bound components is the most complex CLI operation
 2. **Use `add-components` to add widgets** — this appends without replacing existing components
 3. **To change ONE component's fields use `update-component`** — deep-merges a partial JSON into it; no need to re-send the whole component or remove+re-add
 4. **`update --components` is GATED** — it replaces ALL components and requires the explicit `--replace-all` flag; without it the command fails. You almost never want it: ADD → `add-components`, TWEAK → `update-component`
-5. **ALWAYS `dashboard get <ID>` before adding components** — you need the current layout (next y = max(existing y+h), avoid overlaps) and existing component ids (avoid collisions)
+5. **ALWAYS `dashboard get <ID>` before adding components** — its output ends with a grid summary (occupied rows + `next free row: y=N`); place new widgets at that y. Component ids are listed too (avoid collisions)
 6. **Grid is 12 columns wide** — plan layout accordingly
 7. **NEVER use Python/pipe/file tricks** — each shell call is an isolated process; you cannot share data between calls via files, pipes, or variables. Build the complete JSON string inline.
 8. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
@@ -58,7 +58,7 @@ Creating dashboards with data-bound components is the most complex CLI operation
 
 | Command | Purpose |
 |---------|---------|
-| `dashboard add-components <ID> --components '<JSON>'` | **Append** new components (RECOMMENDED) |
+| `dashboard add-components <ID> --components '<JSON>'` | **Append** new components — the reply lists added ids, confirms types verified, and gives the next free row (no follow-up get needed) |
 | `dashboard update-component <ID> --component-id c1 --set '{"title":"New"}'` | **Change fields of ONE component** (deep merge — preferred for tweaks) |
 | `dashboard remove-components <ID> --ids '["c1","c2"]'` | Remove components by ID |
 | `dashboard update <ID> --name 'New Name'` | Update metadata only (name, description) |
