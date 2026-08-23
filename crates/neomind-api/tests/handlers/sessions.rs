@@ -30,7 +30,7 @@ mod tests {
         // Isolated per-test session store starts empty; create a session so
         // the list has something to return. (Previously relied on sessions
         // leaked from other tests via the global SessionStore singleton.)
-        create_session_handler(State(state.clone()), None)
+        let _ = create_session_handler(State(state.clone()), None)
             .await
             .unwrap();
         let query = ListSessionsQuery {

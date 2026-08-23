@@ -1305,7 +1305,7 @@ mod tests {
             domain: Some("http://127.0.0.1:1".into()),
             allowlist: None,
         };
-        create_bridge_handler(State(state.clone()), Json(req))
+        let _ = create_bridge_handler(State(state.clone()), Json(req))
             .await
             .expect("create ok");
 
@@ -1341,7 +1341,7 @@ mod tests {
             domain: Some("http://127.0.0.1:1".into()),
             allowlist: None,
         };
-        create_bridge_handler(State(state.clone()), Json(req))
+        let _ = create_bridge_handler(State(state.clone()), Json(req))
             .await
             .expect("create ok");
         assert!(store

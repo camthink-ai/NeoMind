@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Build the bundled `neomind-llama-server` (llama.cpp llama-server) for Tauri.
+# Build a local `neomind-llama-server` (llama.cpp llama-server) manually — the Tauri
+# app no longer bundles it (on-demand download when a builtin model is installed);
+# this script remains for source builds, custom variants (CUDA=1), and air-gapped hosts.
 #
 # The desktop app spawns this sibling binary (externalBin) for the builtin
 # LFM2.5 model. Same pattern as `neomind-extension-runner`.

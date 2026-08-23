@@ -2269,8 +2269,10 @@ enum AnthropicContentBlock {
     },
     /// Extended-thinking blocks — emitted by the official API (and
     /// Anthropic-compatible providers like GLM) when thinking is enabled.
-    /// Not part of the visible text; skipped during extraction.
+    /// Not part of the visible text; skipped during extraction — the fields
+    /// exist for deserialization tolerance only, hence dead-code-allowed.
     #[serde(rename = "thinking")]
+    #[allow(dead_code)]
     Thinking {
         #[serde(default)]
         thinking: Option<String>,
@@ -2278,6 +2280,7 @@ enum AnthropicContentBlock {
         signature: Option<String>,
     },
     #[serde(rename = "redacted_thinking")]
+    #[allow(dead_code)]
     RedactedThinking {
         #[serde(default)]
         data: Option<String>,

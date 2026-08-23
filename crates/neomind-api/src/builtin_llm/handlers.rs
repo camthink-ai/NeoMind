@@ -357,8 +357,8 @@ pub async fn download_handler(
         return ok(json!({ "started": false, "already_running": true }));
     };
 
-    let model_id = payload.and_then(|Json| {
-        Json.0
+    let model_id = payload.and_then(|json| {
+        json.0
             .get("model_id")
             .and_then(|v| v.as_str())
             .map(str::to_string)
@@ -577,12 +577,15 @@ async fn spawn_builtin_server(
     cfg: &BuiltinConfig,
     manager: &LlmBackendInstanceManager,
 ) -> anyhow::Result<String> {
-    let binary = ensure_llama_server(data_dir)
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
+    // Model check BEFORE the runtime fetch — same ordering contract as
+    // bootstrap: the llama-server download belongs to the user's decision to
+    // install a builtin model, never to a restart hitting a model-less host.
     let mdir = models_dir(data_dir);
     let (def, installed_manifest) = installed_model(&mdir)
         .ok_or_else(|| anyhow::anyhow!("model not installed (no manifest)"))?;
+    let binary = ensure_llama_server(data_dir)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
     let model_path = cfg
         .model_path
         .clone()

@@ -237,12 +237,6 @@ jobs:
           echo "✅ External binary built for ${{ matrix.target }}"
           ls -lh web/src-tauri/binaries/
 
-      - name: Build external binary (bundled llama-server)
-        shell: bash
-        run: |
-          TARGET=${{ matrix.target }} scripts/build-llama-server.sh
-          echo "✅ bundled llama-server built for ${{ matrix.target }}"
-          ls -lh web/src-tauri/binaries/
 
       - name: Clean old bundle artifacts
         shell: bash

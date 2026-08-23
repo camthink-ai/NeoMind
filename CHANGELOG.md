@@ -43,7 +43,7 @@ The agent-runtime builder had no arm for `LlmBackend::LlamaCpp` — any llamacpp
 ### Deployment: the LLM backend is optional everywhere
 - **Docker**: `NEOMIND_BUNDLE_MODEL=lfm25-2.6b | qwen3.5-4b | gemma4-e2b | none` build arg — `none` produces a 221MB image (vs 1.81GB with a model) for deployments that bring their own backend. Also fixed: the runtime stage was missing `libgomp1`, so the bundled llama-server couldn't exec; and CI now **smoke-gates every image before pushing** (`/api/health` green + "Builtin LLM ready" in logs) — build-green ≠ runnable.
 - **install.sh**: `WITH_LLM` (default true) downloads the llama.cpp runtime from official prebuilt binaries; `BUILTIN_MODEL` pre-downloads a chosen model. Both opt out cleanly. A post-install exec check flags a broken runtime with baseline guidance for old-libstdc++ systems.
-- **Desktop**: llama-server is bundled via Tauri externalBin (macOS/Linux/Windows).
+- **Desktop**: llama-server is NOT bundled — the installer stays lean and the runtime downloads on demand the moment a user actually installs a builtin model (official prebuilt per platform; CUDA via `NEOMIND_BUILTIN_RUNTIME_VARIANT=cuda` with auto-fallback to CPU). Hosts without any model never fetch anything.
 
 ### Device quick-start tells the truth about your network
 The onboarding curl example printed a URL that only worked from the same machine when the server binds loopback — it now shows the LAN IP when reachable, survives rebinding, and a 503 mid-flow explains the rebind instead of failing raw.
