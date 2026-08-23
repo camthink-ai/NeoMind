@@ -418,7 +418,16 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               // A new stream started while the fetch was in flight — keep
               // the live state; the next end reconciles again.
               if (isStreamingRef.current) return
-              setPanelMessages(mergeAssistantMessages(result.messages || []))
+              const merged = mergeAssistantMessages(result.messages || [])
+              setPanelMessages(prev =>
+                // Same turn count → the live assembly is already correct AND
+                // holds stable local ids. Adopting server ids here would
+                // change every React key and remount the whole list (the
+                // visible "snap to one message" at completion). Only take
+                // server truth when it actually diverges (interleaved turns,
+                // replayed rounds).
+                merged.length === prev.length ? prev : merged
+              )
             }).catch(() => { /* keep the live assembly */ })
           }
           break

@@ -115,14 +115,15 @@ export function ToolProcessBlock({
   isStreaming = false,
 }: ToolProcessBlockProps) {
   const { t } = useTranslation("chat")
-  const [isExpanded, setIsExpanded] = useState(true)
-
-  // Auto-collapse when many tool calls are present and all completed
-  useEffect(() => {
-    if (toolCalls.length > 4 && !isStreaming) {
-      setIsExpanded(false)
-    }
-  }, [toolCalls.length, isStreaming])
+  // Expansion is decided ONCE at mount: long completed batches start
+  // collapsed, streaming/short ones start expanded. The previous auto-collapse
+  // effect fired exactly when isStreaming flipped false — a message that
+  // streamed expanded would visually SNAP shut at completion (bubble
+  // re-layout mid-view). A streamed message keeps its expansion until the
+  // user toggles it.
+  const [isExpanded, setIsExpanded] = useState(
+    !(toolCalls.length > 4 && !isStreaming)
+  )
 
   if (!toolCalls || toolCalls.length === 0) return null
 
