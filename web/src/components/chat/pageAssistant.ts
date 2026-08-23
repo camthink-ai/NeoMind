@@ -185,12 +185,14 @@ Notes: the MQTT route works equally (publish the same JSON to the device topic o
     tools: [...CORE_TOOLS, ...FILE_TOOLS],
     skillKeywords: ['dashboard', 'chart', 'widget', 'visualization', '看板', '组件'],
     greeting: {
-      zh: '搭建可视化看板 —— 组件、数据源绑定、布局、自定义组件，随时指导',
-      en: 'Dashboard building — components, data binding, layout, custom widgets',
+      zh: '搭建可视化看板 —— 新建看板、加组件、改组件、计算指标(平均/温差)、自定义组件，随时指导',
+      en: 'Dashboard building — create boards, add & tweak widgets, computed metrics (avg/diff), custom widgets',
     },
     quickActions: [
-      { label: { zh: '添加图表组件', en: 'Add a chart' }, prompt: { zh: '如何在看板中添加一个图表组件并绑定设备指标数据源？', en: 'How do I add a chart widget and bind a device metric as its data source?' } },
-      { label: { zh: '调整布局', en: 'Adjust layout' }, prompt: { zh: '讲解看板编辑模式的布局调整：拖拽、缩放、网格对齐', en: 'Explain edit-mode layout: drag, resize, grid snapping' } },
+      { label: { zh: '新建看板', en: 'Create a dashboard' }, prompt: { zh: '帮我创建一个新看板。先问我想要监控什么（哪些设备/指标），然后创建看板并添加合适的组件、绑定好数据源。', en: 'Create a new dashboard for me. Ask what I want to monitor (devices/metrics) first, then create the board, add fitting widgets, and bind their data sources.' } },
+      { label: { zh: '添加图表组件', en: 'Add a chart' }, prompt: { zh: '在看板中添加一个图表组件并绑定设备指标数据源', en: 'Add a chart widget to this dashboard and bind a device metric as its data source' } },
+      { label: { zh: '修改组件配置', en: 'Tweak a widget' }, prompt: { zh: '我想修改当前看板里某个组件的配置（标题、数据绑定、时间窗口、单位等），先看看现在有哪些组件再帮我改', en: 'I want to change a widget on this dashboard (title, data binding, time window, unit…) — list the current widgets first, then apply my change' } },
+      { label: { zh: '多设备计算值', en: 'Computed metric' }, prompt: { zh: '我想在看板上显示多个设备指标的计算值（比如两个传感器的平均温度或温差），不要用 transform，直接帮我加一个表达式组件', en: "I want a card showing a computed value across devices (e.g. average temp or temp difference of two sensors) — add an expression widget directly, no transform" } },
       { label: { zh: '自定义组件开发', en: 'Custom component dev' }, prompt: { zh: '我想写一个自定义看板组件，请说明组件清单格式和代码结构', en: 'I want to write a custom dashboard component — manifest format and code structure' } },
     ],
   },
@@ -207,7 +209,7 @@ Notes: the MQTT route works equally (publish the same JSON to the device topic o
     },
     quickActions: [
       { label: { zh: '创建温度报警规则', en: 'Create a temp alert rule' }, prompt: { zh: '帮我创建一个规则：温度超过 30 度时发送告警消息', en: 'Create a rule: send an alert when temperature exceeds 30°' } },
-      { label: { zh: '数据转换是什么', en: 'What are transforms?' }, prompt: { zh: '解释数据转换（transforms）的用途，并举两个典型例子', en: 'Explain data transforms with two typical examples' } },
+      { label: { zh: '转换没输出排查', en: 'Debug a transform' }, prompt: { zh: '我建的数据转换没有产生指标，帮我查最近的执行记录，定位是代码问题还是没触发', en: "My transform produces no metrics — check its recent execution records and tell me whether the code failed or it never triggered" } },
     ],
   },
   data: {
