@@ -98,9 +98,16 @@ RUN mkdir -p crates/neomind-core/src && echo "" > crates/neomind-core/src/lib.rs
 RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then export JEMALLOC_SYS_WITH_LG_PAGE=16; fi && \
     cargo build --release -p neomind-cli -p neomind-extension-runner 2>/dev/null || true
 
-# Copy real source code and build
+# Copy real source code and build.
 COPY crates/ crates/
-RUN if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then export JEMALLOC_SYS_WITH_LG_PAGE=16; fi && \
+# COPY preserves the context's (git-checkout) mtimes, which can be OLDER than
+# the dummy-source artifacts from the dependency-cache layer above — cargo's
+# mtime fingerprints then consider the real sources unchanged and silently
+# reuses the EMPTY dummy crates (observed: extension-runner importing an SDK
+# that "has no symbols"). Touching every source file after the copy forces a
+# rebuild of all workspace crates while keeping the dependency cache.
+RUN find crates/ -name "*.rs" -exec touch {} + && \
+    if [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then export JEMALLOC_SYS_WITH_LG_PAGE=16; fi && \
     cargo build --release -p neomind-cli -p neomind-extension-runner
 
 # ---------------------------------------------------------------------------
