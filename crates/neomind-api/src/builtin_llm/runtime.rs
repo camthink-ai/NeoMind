@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::runtime::{
     llama_asset_is_zip, llama_asset_name, llama_cudart_marker, llama_cudart_url,
-    llama_server_bin_name, llama_server_cache_dir, llama_server_cache_name, llama_server_url,
+    llama_server_bin_name, llama_server_cache_dir, llama_server_url,
     RuntimeVariant, LLAMA_CPP_VERSION,
 };
 

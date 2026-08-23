@@ -305,7 +305,7 @@ pub async fn models_handler(
     State(state): State<crate::server::types::ServerState>,
 ) -> HandlerResult<serde_json::Value> {
     let mdir = models_dir(&state.data_dir);
-    let (total_mb, available_mb) = memory_snapshot_mb();
+    let (_total_mb, available_mb) = memory_snapshot_mb();
     let models: Vec<serde_json::Value> = BUILTIN_MODELS
         .iter()
         .map(|d| {

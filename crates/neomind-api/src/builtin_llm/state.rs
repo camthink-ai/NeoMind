@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use neomind_agent::llm_backends::LlmBackendInstanceManager;
 use neomind_core::builtin_llm::manifest::{
-    default_model_def, load_manifest, model_def, BuiltinModelDef, ModelManifest, BUILTIN_MODEL_ID,
+    default_model_def, model_def, BuiltinModelDef, ModelManifest, BUILTIN_MODEL_ID,
 };
 use neomind_storage::{LlmBackendInstance, LlmBackendType};
 
