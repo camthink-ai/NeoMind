@@ -273,15 +273,17 @@ server {
 
 ### Recommended Local Models
 
-All three run NeoMind's full agent toolkit (tool selection, in-process CLI dispatch, multi-step tasks) — validated on our bilingual agent eval suite:
+All three are **built in** — pick one in the app (**Settings → LLM Backends** → built-in model, or the first-run wizard) and it downloads, boots its own engine, and becomes chat-ready with zero configuration. The picker shows each model's memory feasibility on your hardware before anything downloads, and the context size is adjustable per model (32K/64K/128K).
 
-| Model | Download | Size | Best for |
-|-------|----------|------|----------|
-| **Gemma 4 E2B (QAT)** | [google/gemma-4-E2B-it-qat-q4_0-gguf](https://huggingface.co/google/gemma-4-E2B-it-qat-q4_0-gguf) (official) | 3.1 GB | Tightest RAM budget (~2 GB at runtime). The official QAT int4 beats community Q4_K_M quantizations on agent accuracy (90% vs 81% on our eval set). Strong native function calling; vision via the `mmproj` file. Run with thinking disabled. |
-| **Qwen 3.5 4B** | [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) (official; GGUF quants e.g. [unsloth](https://huggingface.co/unsloth/Qwen3.5-4B-GGUF), Q4_K_M) | ~2.5 GB | Best hard-pass rate on the full agent suite and the only one of the three with built-in vision (add the mmproj file). Run with thinking disabled. |
-| **LFM 2.5 2.6B** | [LiquidAI/LFM2.5-2.6B-GGUF](https://huggingface.co/LiquidAI/LFM2.5-2.6B-GGUF) (official) | ~2 GB | Mamba-hybrid architecture: cheap 128K context and fast ingestion (~800 tok/s), with tool-calling on par with 4B models at 2.6B params. Serve with `--jinja`; check the LFM license before redistribution. |
+All three run NeoMind's full agent toolkit (tool selection, in-process CLI dispatch, multi-step tasks) — validated on our 30-case bilingual agent eval suite:
 
-Rule of thumb: **Gemma E2B QAT** for minimal hardware, **Qwen 3.5 4B** for vision and top reliability, **LFM 2.5** for long agent sessions on modest devices. All three are GGUF — the recommended way to serve them is [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`; add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works.
+| Model | Quant | Size | Min free RAM | Eval (cmd_ok) | Best for |
+|-------|-------|------|--------------|---------------|----------|
+| **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | **76%** — strongest | Top agent reliability and the only one of the three with built-in vision (add the mmproj file). Runs non-thinking by default for speed. |
+| **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 67% (100% tool-selection) | Smallest footprint with native 128K context (hybrid KV is cheap). Thinking is integral to the model. Check the LFM license before redistribution. |
+| **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 60% | Google's official QAT quant; vision-ready via the `mmproj` file. Thinking on by default. |
+
+Rule of thumb: **Qwen 3.5 4B** for the best agent experience, **LFM 2.5** for modest devices and long sessions, **Gemma E2B QAT** when you want the Google ecosystem and vision. Prefer a manual setup? All three are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works.
 
 ### Development
 
