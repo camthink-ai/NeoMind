@@ -223,10 +223,33 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // and matching skills get pinned on every send.
   const location = useLocation()
   const { i18n } = useTranslation()
-  const assistant = useMemo(
-    () => pickPageAssistant(location.pathname, i18n.language),
-    [location.pathname, i18n.language]
-  )
+  const dashboards = useStore((s) => s.dashboards)
+  const assistant = useMemo(() => {
+    const base = pickPageAssistant(location.pathname, i18n.language)
+    if (!base) return null
+    // Dashboard-aware bucket: /visual-dashboard/:id gets its OWN session and
+    // a suffix naming the open dashboard + a component snapshot, so "给它加
+    // 个图表" is unambiguous. The snapshot is taken at session creation — the
+    // suffix also tells the agent to fetch live truth via `dashboard get`.
+    const m = location.pathname.match(/^\/visual-dashboard\/([^/]+)/)
+    if (base.key === "visual-dashboard" && m) {
+      const dash = dashboards.find((d) => d.id === m[1])
+      if (dash) {
+        const comps = dash.components
+          .slice(0, 12)
+          .map((c) => `- ${c.id}: ${c.title || "(untitled)"} (${c.type})`)
+          .join("\n")
+        return {
+          ...base,
+          key: `visual-dashboard:${dash.id}`,
+          systemPromptSuffix:
+            base.systemPromptSuffix +
+            `\n\n## 当前打开的看板\n「${dash.name}」(id: ${dash.id}),${dash.components.length} 个组件:\n${comps}\n组件清单是会话建立时的快照——操作前先用 \`neomind dashboard get ${dash.id}\` 获取实时状态。用户说「这个看板/这里」时指的就是它。`,
+        }
+      }
+    }
+    return base
+  }, [location.pathname, i18n.language, dashboards])
   // Current page bucket ('devices' | … | 'default') — drives the per-page
   // session key. Kept in a ref for stable callbacks.
   const currentPageKeyRef = useRef(assistant?.key ?? "default")
