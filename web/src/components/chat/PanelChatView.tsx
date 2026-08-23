@@ -224,32 +224,50 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const location = useLocation()
   const { i18n } = useTranslation()
   const dashboards = useStore((s) => s.dashboards)
+
+  // Base profile — derived from URL + language ONLY. This is the fingerprint
+  // source: the fingerprint decides whether a stored session is still valid,
+  // so anything store-derived must stay out of it. (The dashboard component
+  // snapshot below used to ride the fingerprint — editing the dashboard via
+  // the panel, or the dashboards store not having loaded yet at restore
+  // time, both flipped it and readStoredPanelSession DELETED the pointer.
+  // Conversations on dashboard pages were lost on every refresh.)
+  const baseAssistant = useMemo(
+    () => pickPageAssistant(location.pathname, i18n.language),
+    [location.pathname, i18n.language]
+  )
+  const sessionFingerprint = useMemo(() => profileFingerprint(baseAssistant), [baseAssistant])
+
   const assistant = useMemo(() => {
-    const base = pickPageAssistant(location.pathname, i18n.language)
-    if (!base) return null
-    // Dashboard-aware bucket: /visual-dashboard/:id gets its OWN session and
-    // a suffix naming the open dashboard + a component snapshot, so "给它加
-    // 个图表" is unambiguous. The snapshot is taken at session creation — the
+    if (!baseAssistant) return null
+    // Dashboard-aware bucket: /visual-dashboard/:id gets its OWN session key
+    // derived from the ROUTE PARAM (store-independent), plus a suffix naming
+    // the open dashboard + a component snapshot when it's loaded. The
+    // snapshot is a creation-time bonus baked into the session prompt — the
     // suffix also tells the agent to fetch live truth via `dashboard get`.
+    // It is NEVER part of the validity fingerprint.
     const m = location.pathname.match(/^\/visual-dashboard\/([^/]+)/)
-    if (base.key === "visual-dashboard" && m) {
+    if (baseAssistant.key === "visual-dashboard" && m) {
       const dash = dashboards.find((d) => d.id === m[1])
-      if (dash) {
-        const comps = dash.components
-          .slice(0, 12)
-          .map((c) => `- ${c.id}: ${c.title || "(untitled)"} (${c.type})`)
-          .join("\n")
-        return {
-          ...base,
-          key: `visual-dashboard:${dash.id}`,
-          systemPromptSuffix:
-            base.systemPromptSuffix +
-            `\n\n## 当前打开的看板\n「${dash.name}」(id: ${dash.id}),${dash.components.length} 个组件:\n${comps}\n组件清单是会话建立时的快照——操作前先用 \`neomind dashboard get ${dash.id}\` 获取实时状态。用户说「这个看板/这里」时指的就是它。`,
-        }
+      if (!dash) {
+        // Dashboards still loading — same per-dashboard bucket (URL-derived),
+        // base profile only.
+        return { ...baseAssistant, key: `visual-dashboard:${m[1]}` }
+      }
+      const comps = dash.components
+        .slice(0, 12)
+        .map((c) => `- ${c.id}: ${c.title || "(untitled)"} (${c.type})`)
+        .join("\n")
+      return {
+        ...baseAssistant,
+        key: `visual-dashboard:${dash.id}`,
+        systemPromptSuffix:
+          baseAssistant.systemPromptSuffix +
+          `\n\n## 当前打开的看板\n「${dash.name}」(id: ${dash.id}),${dash.components.length} 个组件:\n${comps}\n组件清单是会话建立时的快照——操作前先用 \`neomind dashboard get ${dash.id}\` 获取实时状态。用户说「这个看板/这里」时指的就是它。`,
       }
     }
-    return base
-  }, [location.pathname, i18n.language, dashboards])
+    return baseAssistant
+  }, [baseAssistant, location.pathname, dashboards])
   // Current page bucket ('devices' | … | 'default') — drives the per-page
   // session key. Kept in a ref for stable callbacks.
   const currentPageKeyRef = useRef(assistant?.key ?? "default")
@@ -283,7 +301,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   // Create a new panel session for the current page. The page profile
   // (system-prompt suffix + tool allowlist) rides the creation request —
-  // the backend honors sessionConfig only at this moment.
+  // the backend honors sessionConfig only at this moment. The stored
+  // fingerprint is the BASE profile's (never the dashboard snapshot) — see
+  // the baseAssistant comment.
   const createPanelSession = useCallback(async () => {
     try {
       const cfg = assistant
@@ -292,13 +312,13 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       const result = await api.createSession(cfg)
       if (result?.sessionId) {
         panelSessionIdRef.current = result.sessionId
-        writeStoredPanelSession(currentPageKeyRef.current, result.sessionId, profileFingerprint(assistant))
+        writeStoredPanelSession(currentPageKeyRef.current, result.sessionId, profileFingerprint(baseAssistant))
         ws.setSessionId(result.sessionId)
         setPanelMessages([])
       }
     } catch { /* ignore — panel just won't work until backend is available */ }
     setIsHistoryLoading(false)
-  }, [assistant])
+  }, [assistant, baseAssistant])
 
   // Initialize/re-init the panel for the current page. Runs on mount AND on
   // route change — each page bucket has its own session (own system prompt
@@ -319,7 +339,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // Fingerprint-aware: a session whose creation-time profile (prompt
     // suffix / tool allowlist / language) no longer matches is dropped —
     // reusing it would silently keep the OLD specialization forever.
-    const persistedId = readStoredPanelSession(pageKey, profileFingerprint(assistant))
+    // sessionFingerprint comes from the URL/i18n-derived base profile, so
+    // neither dashboard edits nor store load timing can flip it.
+    const persistedId = readStoredPanelSession(pageKey, sessionFingerprint)
     if (persistedId) {
       // Load history for this page's persisted session
       api.getSessionHistory(persistedId, { skipErrorToast: true }).then(result => {

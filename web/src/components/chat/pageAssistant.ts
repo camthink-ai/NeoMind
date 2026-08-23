@@ -83,7 +83,17 @@ export function panelSessionKey(pageKey: string): string {
   return PANEL_SESSION_PREFIX + (pageKey || 'default')
 }
 
-/** Structural fingerprint of what rides session creation (tools + suffix). */
+/**
+ * Structural fingerprint of what rides session creation (tools + suffix).
+ *
+ * INVARIANT: must be derived from URL + language ONLY — never from store
+ * data (e.g. a dashboard component snapshot). A fingerprint that flaps on
+ * store timing or user edits turns readStoredPanelSession's
+ * mismatch-removal into a permanent conversation loss: callers pass the
+ * BASE profile (see PanelChatView's baseAssistant), while page-specific
+ * extras like the dashboard snapshot are creation-time content, not
+ * validity conditions.
+ */
 export function profileFingerprint(a: ResolvedPageAssistant | null): string {
   if (!a) return 'generic'
   return a.tools.join(',') + '|' + a.systemPromptSuffix
