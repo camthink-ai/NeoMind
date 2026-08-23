@@ -17,6 +17,8 @@ NeoMind now ships its own brain. The built-in LLM became a choice of three model
 - **Hardened download chain**: resumable downloads with SHA-256 verification, a resumed response's progress total now counts already-downloaded bytes (the bar used to clamp to a false 100%), WS progress events throttled to ~250ms (per-chunk events re-render-stormed the UI), a "starting local model…" phase while the server spawns, and auto-activation when no other backend is active. A persistent top-right indicator reopens the wizard after you close it mid-download.
 - **Honest capability reporting**: the builtin instance registers with its real context window (LFM 128K / Qwen·Gemma 32K — a storage default of 4096 previously surfaced as a tiny chat window), streaming, tool support, and per-model thinking flags.
 - **One-click model switch**: replacing the serving model no longer leaves a stale llama-server answering for the old one.
+- **Engine settings dialog**: the context size is finally adjustable — an Engine Settings dialog on the builtin card offers 32K/64K/128K presets (the config field existed all along but both spawn sites hard-used the per-model default). Changing it respawns the server immediately (only when the requested value differs from the live `/props` n_ctx), updates the instance capabilities, re-pushes the backend to every active session, and the chat header's Context X/Y reflects the new size without a refocus. `NEOMIND_BUILTIN_LLM_CTX` covers scripted deployments; passing the model's own default resets the override.
+- **Memory feasibility before install**: each model declares its minimum available RAM (LFM 3G / Qwen 4G / Gemma 4.5G); the wizard's picker shows an amber warning per infeasible model BEFORE anything downloads, and the installed card keeps a persistent warning with the available-memory numbers.
 
 ### Protocol-first LLM backends — two cloud protocols, one card
 The vendor grid is gone: settings now offers **Ollama / llama.cpp / Cloud AI**, where Cloud AI is a single card with an inline protocol chooser (**OpenAI-compatible / Anthropic**) — every other vendor (Qwen, DeepSeek, GLM, xAI, OpenRouter, vLLM…) rides the OpenAI-compatible path through its endpoint. Legacy vendor-typed instances keep rendering (folded into the Cloud AI detail view) and remain editable, including switching their protocol.
@@ -43,6 +45,9 @@ The agent-runtime builder had no arm for `LlmBackend::LlamaCpp` — any llamacpp
 - **install.sh**: `WITH_LLM` (default true) downloads the llama.cpp runtime from official prebuilt binaries; `BUILTIN_MODEL` pre-downloads a chosen model. Both opt out cleanly. A post-install exec check flags a broken runtime with baseline guidance for old-libstdc++ systems.
 - **Desktop**: llama-server is bundled via Tauri externalBin (macOS/Linux/Windows).
 
+### Device quick-start tells the truth about your network
+The onboarding curl example printed a URL that only worked from the same machine when the server binds loopback — it now shows the LAN IP when reachable, survives rebinding, and a 503 mid-flow explains the rebind instead of failing raw.
+
 ### MQTT: gateways no longer merge devices
 Auto-discovery derived device identity from the topic alone — a gateway forwarding many devices on one topic collapsed them into one device. Payload identity now wins: an explicit `device_id_field` (internal and external broker, one fallback field per line in the UI, comma also accepted) or auto-detection of ~30 common fields (device_id/sn/mac/eui/imei…).
 
@@ -65,10 +70,16 @@ The progress stages now map 1:1 onto wizard steps: welcome (platform intro + doc
 - **`update --components` is gated behind `--replace-all`**: models kept reaching for full-array replace when they meant add or tweak — without the flag it now fails with a teaching error naming the right command. `create --components` offers one-shot create-with-widgets; `dashboard get` falls back to a name match; malformed `--components`/`--ids` JSON propagates instead of silently acting on an empty array; duplicate component ids are rejected.
 - **Inline expression data sources**: a component binds a computed KPI directly (`avg(device:s1:values.battery, device:s2:values.battery)`) — no pre-created transform. Ref parsing + whitelisted-function evaluation with injection rejection (10 vitest cases), forward-filled aligned timeseries.
 - **`transform executions`**: every transform run has been recorded all along but nothing surfaced it — the CLI subcommand + skill debugging section now expose status/error/output, including the "completed with metric_count 0 = code ran but returned nothing" diagnosis.
+- **Unknown types are rejected at the door**: a typo'd type (`value_card`) used to persist silently and render as an UnknownComponent placeholder while the agent claimed success — add-components now validates against builtin ∪ community ∪ extension types and 400s with the `widget list` hint.
+- **Uniform name resolution**: `dashboard get` accepted names but mutations 404'd on them — the model's correct-looking get-then-mutate-by-name pattern died mid-chain (and small models papered over the 404 with a success claim). Every `:id` route now resolves id-first-then-name identically.
+- **Receipts that end the verification loop**: `add-components` replies with the added component ids, a types-verified confirmation, and the next free grid row; `dashboard get` ends with an occupied-rows summary and an explicit next-free-row placement hint — adding N widgets needs exactly one `get`.
 
 ### Agent reliability & chat
 - **List-only dead-end detector**: a diagnostic question containing the noun 绑定 triggered the "execute now" injection every round — 17 tool calls, no answer, still grinding 16 minutes later. Now it fires only on nameable actions, at most once per turn, and recognizes component-level mutations.
 - **Chat panel converges to server truth**: a send landing mid-generation duplicated bubbles in the floating panel; after every stream the panel refetches the session history and replaces its local assembly.
+- **Failure-honesty guard**: when any earlier command exited non-zero, the round context now forbids claiming failed operations successful and points at the recovery path — the "404 → 已成功添加" hallucination pattern.
+- **No more completion snaps**: the tool block auto-collapsed the instant a stream ended (whole bubble relaid out mid-view) and the post-end history reconcile changed every React key (full list remount). Expansion is now decided at mount; reconcile keeps local ids when the shape already matches.
+- **Page panels that stay current and know where they are**: panel sessions rebuild when their page profile drifts (new SOP/tools/language — the config was previously frozen at first creation forever); opening the panel on a specific dashboard gets a per-dashboard session whose prompt names the board and its components; the quick-action sets are refreshed (dashboard: create board / tweak widget / computed metric; automation: transform debugging).
 
 ### Smaller fixes
 - IM router no longer errors on fresh systems (default agent resolution moved from boot-time to message-time; an agent created later works without restart).
@@ -76,6 +87,7 @@ The progress stages now map 1:1 onto wizard steps: welcome (platform intro + doc
 - Broker-config dialog opened beneath the z-[100] settings layer (invisible) — now z-[110].
 - `docker build` fetches llama.cpp via curl tarball (Docker networks commonly block git).
 - `cargo fmt` across five crates; behavior_tests compile again under `test-utils`.
+- Staleness sweep across docs/build configs/deploy files; 7 dead frontend files and 88 stale i18n keys removed; stale LLM model/endpoint defaults refreshed backend-wide; llamacpp documented in the TOML config example.
 
 ### Eval
 - Post-panic-fix regression baselines: Qwen3.5-4B **76%** cmd_ok (strongest), LFM2.5 QAD **67%** with 100% tool_ok, Gemma4-E2B QAT **60%** — the 30-case gate now compares against clean references.
