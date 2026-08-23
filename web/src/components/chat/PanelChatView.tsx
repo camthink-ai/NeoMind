@@ -24,7 +24,7 @@ import {
 } from "@/store/selectors"
 import { useToast } from "@/hooks/use-toast"
 import type { SkillSummary } from "@/types/skill"
-import { pickPageAssistant, panelSessionKey } from "./pageAssistant"
+import { pickPageAssistant, panelSessionKey, profileFingerprint, readStoredPanelSession, writeStoredPanelSession } from "./pageAssistant"
 import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
@@ -269,7 +269,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       const result = await api.createSession(cfg)
       if (result?.sessionId) {
         panelSessionIdRef.current = result.sessionId
-        localStorage.setItem(panelSessionKey(currentPageKeyRef.current), result.sessionId)
+        writeStoredPanelSession(currentPageKeyRef.current, result.sessionId, profileFingerprint(assistant))
         ws.setSessionId(result.sessionId)
         setPanelMessages([])
       }
@@ -293,8 +293,10 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     setIsHistoryLoading(true)
     dispatch({ type: 'RESET' })
 
-    const storageKey = panelSessionKey(pageKey)
-    const persistedId = localStorage.getItem(storageKey)
+    // Fingerprint-aware: a session whose creation-time profile (prompt
+    // suffix / tool allowlist / language) no longer matches is dropped —
+    // reusing it would silently keep the OLD specialization forever.
+    const persistedId = readStoredPanelSession(pageKey, profileFingerprint(assistant))
     if (persistedId) {
       // Load history for this page's persisted session
       api.getSessionHistory(persistedId, { skipErrorToast: true }).then(result => {
@@ -306,7 +308,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       }).catch(() => {
         // Session no longer exists — clear the bucket; a fresh one (with the
         // page profile) is created lazily on first send.
-        localStorage.removeItem(storageKey)
+        localStorage.removeItem(panelSessionKey(pageKey))
         setIsHistoryLoading(false)
       })
     } else {

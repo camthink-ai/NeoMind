@@ -69,14 +69,50 @@ function routeKey(pathname: string): string {
 }
 
 /**
- * localStorage key for a page's panel session. v2: sessions are per-page so
- * each page's session can carry its own system-prompt suffix + tool profile
- * (v1 was one shared session, which froze the first page's focus).
+ * localStorage key for a page's panel session. v3: the stored value is
+ * {id, fp} — the backend applies the page profile (prompt suffix + tool
+ * allowlist) ONLY at session creation, so a session outliving a profile
+ * change (release update, language switch) would silently keep the OLD
+ * config forever. The fingerprint detects drift and drops the stale
+ * session; a fresh one with the CURRENT profile is created lazily.
+ * v2 stored a bare session id — treated as stale.
  */
-export const PANEL_SESSION_PREFIX = 'neomind:panelSession:v2:'
+export const PANEL_SESSION_PREFIX = 'neomind:panelSession:v3:'
 
 export function panelSessionKey(pageKey: string): string {
   return PANEL_SESSION_PREFIX + (pageKey || 'default')
+}
+
+/** Structural fingerprint of what rides session creation (tools + suffix). */
+export function profileFingerprint(a: ResolvedPageAssistant | null): string {
+  if (!a) return 'generic'
+  return a.tools.join(',') + '|' + a.systemPromptSuffix
+}
+
+interface StoredPanelSession { id: string; fp: string }
+
+/**
+ * Read a page's stored session id, but ONLY when its profile fingerprint
+ * still matches — a stale entry (old profile / v2 format) is removed and
+ * returns null so the next send creates a session with the current config.
+ */
+export function readStoredPanelSession(pageKey: string, currentFp: string): string | null {
+  const key = panelSessionKey(pageKey)
+  try {
+    const raw = localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<StoredPanelSession>
+    if (parsed?.id && parsed.fp === currentFp) return parsed.id
+    localStorage.removeItem(key)
+    return null
+  } catch {
+    localStorage.removeItem(key)
+    return null
+  }
+}
+
+export function writeStoredPanelSession(pageKey: string, id: string, fp: string): void {
+  localStorage.setItem(panelSessionKey(pageKey), JSON.stringify({ id, fp }))
 }
 
 /** Tools every page profile keeps (domain filtering only trims specialists). */
