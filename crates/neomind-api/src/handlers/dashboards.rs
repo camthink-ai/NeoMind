@@ -25,6 +25,33 @@ use neomind_storage::dashboards::{
     SharePermissions as StoredSharePermissions, ShareToken as StoredShareToken,
 };
 
+/// Resolve a dashboard by id first, then by exact NAME. Every handler that
+/// takes :id must resolve identically — LLM callers naturally address boards
+/// by name (or reuse the name after a `dashboard get` that itself accepts
+/// names); a get-by-name that succeeds followed by a mutation-by-name that
+/// 404s traps small models into hallucinating success (observed 2026-08-23).
+fn resolve_dashboard(
+    state: &ServerState,
+    id_or_name: &str,
+) -> Result<StoredDashboard, ErrorResponse> {
+    match state.dashboard_store.load(id_or_name) {
+        Ok(Some(d)) => Ok(d),
+        Ok(None) => {
+            let all = state
+                .dashboard_store
+                .list_all()
+                .map_err(|e| ErrorResponse::internal(format!("Failed to list dashboards: {}", e)))?;
+            all.into_iter().find(|d| d.name == id_or_name).ok_or_else(|| {
+                ErrorResponse::not_found(format!(
+                    "Dashboard '{}' not found (by id or name) — run `neomind dashboard list` for valid ids",
+                    id_or_name
+                ))
+            })
+        }
+        Err(e) => Err(ErrorResponse::internal(format!("Failed to load dashboard: {}", e))),
+    }
+}
+
 /// Emit a DashboardUpdated event to notify frontend of changes.
 fn emit_dashboard_event(state: &ServerState, dashboard_id: &str, action: &str) {
     if let Some(event_bus) = state.core.event_bus.clone() {
@@ -479,29 +506,7 @@ pub async fn get_dashboard_handler(
         });
     }
 
-    let dashboard = match state.dashboard_store.load(&id) {
-        Ok(d) => d,
-        Err(e) => return Err(ErrorResponse::internal(format!("Failed to load dashboard: {}", e))),
-    };
-    let dashboard = match dashboard {
-        Some(d) => d,
-        // LLM callers naturally use the dashboard NAME (they only ever saw
-        // it in prose) — fall back to a name match instead of a bare 404.
-        // First match wins on duplicate names; the response carries the
-        // real id so the caller self-corrects.
-        None => {
-            let all = state
-                .dashboard_store
-                .list_all()
-                .map_err(|e| ErrorResponse::internal(format!("Failed to list dashboards: {}", e)))?;
-            all.into_iter().find(|d| d.name == id).ok_or_else(|| {
-                ErrorResponse::not_found(format!(
-                    "Dashboard '{}' not found (by id or name) — run `neomind dashboard list` for valid ids",
-                    id
-                ))
-            })?
-        }
-    };
+    let dashboard = resolve_dashboard(&state, &id)?;
 
     ok(stored_to_api(&dashboard))
 }
@@ -559,11 +564,7 @@ pub async fn update_dashboard_handler(
     Path(id): Path<String>,
     Json(req): Json<UpdateDashboardRequest>,
 ) -> HandlerResult<Dashboard> {
-    let mut dashboard = state
-        .dashboard_store
-        .load(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load dashboard: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Dashboard '{}' not found", id)))?;
+    let mut dashboard = resolve_dashboard(&state, &id)?;
 
     // Update fields if provided
     if let Some(name) = req.name {
@@ -615,11 +616,7 @@ pub async fn add_components_handler(
     Path(id): Path<String>,
     Json(req): Json<AddComponentsRequest>,
 ) -> HandlerResult<Dashboard> {
-    let mut dashboard = state
-        .dashboard_store
-        .load(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load dashboard: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Dashboard '{}' not found", id)))?;
+    let mut dashboard = resolve_dashboard(&state, &id)?;
 
     // Parse and append new components
     let new_components: Vec<StoredComponent> = req
@@ -683,11 +680,7 @@ pub async fn remove_components_handler(
     Path(id): Path<String>,
     Json(req): Json<RemoveComponentsRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let mut dashboard = state
-        .dashboard_store
-        .load(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load dashboard: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Dashboard '{}' not found", id)))?;
+    let mut dashboard = resolve_dashboard(&state, &id)?;
 
     let before = dashboard.components.len();
     dashboard.components.retain(|c| !req.ids.contains(&c.id));
@@ -762,11 +755,7 @@ pub async fn update_component_handler(
         ));
     }
 
-    let mut dashboard = state
-        .dashboard_store
-        .load(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load dashboard: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Dashboard '{}' not found", id)))?;
+    let mut dashboard = resolve_dashboard(&state, &id)?;
 
     let component = dashboard
         .components

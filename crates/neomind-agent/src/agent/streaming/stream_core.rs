@@ -403,16 +403,31 @@ pub async fn process_stream_events_with_safeguards(
                         list_only_dead_end_injected = true;
                         dead_end_msg
                     } else {
-                        // Normal context message — no list-only dead end detected
+                        // Normal context message — no list-only dead end detected.
+                        // Anti-hallucination guard: small models sometimes
+                        // report FAILED commands as successful in the final
+                        // answer (observed: 404 on add-components → "已成功
+                        // 添加"). When any prior shell command exited non-zero,
+                        // remind the model that lying about it is forbidden and
+                        // point at the recovery path.
+                        let has_failed_cmds = all_round_tool_results.iter().any(|(_, r)| {
+                            r.contains("\"exit_code\"") && !r.contains("\"exit_code\":0")
+                        });
+                        let failure_guard = if has_failed_cmds {
+                            "\n\n⚠️ Some earlier command FAILED (exit≠0). You MUST NOT claim failed operations succeeded in your answer. Either fix and retry using the error/suggestion (e.g. resolve the REAL id via `neomind dashboard list` / `device list`), or report the failure honestly with its cause.".to_string()
+                        } else {
+                            String::new()
+                        };
                         format!(
                             "Round {} of processing.\n\n\
                             Previously executed tools (results are in context above):\n{}\n\n\
                             STOP AND THINK: Do you need MORE tools, or can you answer from the results above?\n\
                             - If tools above already returned the data you need → give the final response NOW. Do NOT call them again.\n\
                             - If you need different tools → call them in ONE batch using JSON array: [{{\"name\":\"tool\",\"arguments\":{{...}}}}]\n\
-                            - NEVER call the same tool with the same arguments — results are already in context.",
+                            - NEVER call the same tool with the same arguments — results are already in context.{}",
                             tool_iteration_count + 1,
-                            executed_summary
+                            executed_summary,
+                            failure_guard
                         )
                     }
                 };
