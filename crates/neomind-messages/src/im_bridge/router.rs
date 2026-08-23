@@ -20,9 +20,8 @@ use tokio::sync::Mutex;
 /// Resolves the default agent id at message time (not boot time). `None` =
 /// no Active agent yet — a fresh system legitimately starts with zero
 /// agents, so the router boots regardless and resolves per inbound message.
-pub type DefaultAgentResolver = Arc<
-    dyn Fn() -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync,
->;
+pub type DefaultAgentResolver =
+    Arc<dyn Fn() -> Pin<Box<dyn Future<Output = Option<String>> + Send>> + Send + Sync>;
 
 /// 平台无关的入站消息。
 pub struct InboundMessage {
@@ -173,7 +172,10 @@ impl ImRouter {
                         );
                         if let Some(b) = self.registry.get(&m.platform).await {
                             let _ = b
-                                .reply(&m.chat_id, "No active agent yet — ask the operator to create one")
+                                .reply(
+                                    &m.chat_id,
+                                    "No active agent yet — ask the operator to create one",
+                                )
                                 .await;
                         }
                         return;
@@ -799,7 +801,12 @@ mod tests {
         // store() 必须返回 router 持有的同一 Arc（可通过 create_invite 生效验证）。
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
-        let router = ImRouter::new(store.clone(), Arc::new(EchoRunner::new()), resolver("a"), None);
+        let router = ImRouter::new(
+            store.clone(),
+            Arc::new(EchoRunner::new()),
+            resolver("a"),
+            None,
+        );
         let tok = router.store().create_invite().unwrap();
         // 通过返回的 &Arc 创建的 invite，应能在原始 store 上看到。
         let invites = store.list_invites().unwrap();
@@ -916,7 +923,12 @@ mod e2e_tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Arc::new(ImSessionStore::open(tmp.path()).unwrap());
         let runner = Arc::new(EchoRunner::new());
-        let router = Arc::new(ImRouter::new(store, runner.clone(), resolver("agent-1"), None));
+        let router = Arc::new(ImRouter::new(
+            store,
+            runner.clone(),
+            resolver("agent-1"),
+            None,
+        ));
         let bridge = MockBridge::new(ImPlatform::Telegram);
         router.registry.register(bridge.clone()).await;
 

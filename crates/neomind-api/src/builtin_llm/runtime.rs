@@ -7,8 +7,9 @@ use std::sync::{Arc, OnceLock};
 
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::runtime::{
-    llama_asset_is_zip, llama_asset_name, llama_server_bin_name, llama_server_cache_dir,
-    llama_server_cache_name, llama_server_url, LLAMA_CPP_VERSION,
+    llama_asset_is_zip, llama_asset_name, llama_cudart_marker, llama_cudart_url,
+    llama_server_bin_name, llama_server_cache_dir, llama_server_cache_name, llama_server_url,
+    RuntimeVariant, LLAMA_CPP_VERSION,
 };
 
 /// Single-flight gate so concurrent ensure_llama_server calls don't download
@@ -24,42 +25,82 @@ fn runtime_lock() -> Arc<tokio::sync::Mutex<()>> {
 
 /// Resolve a runnable `neomind-llama-server`:
 /// 1. bundled binary (next to the executable, or PATH) — always wins;
-/// 2. previously downloaded cache (`data/llama-server/<version>/`);
-/// 3. download the official prebuilt tarball for this platform, extract
+/// 2. previously downloaded cache (`data/llama-server/<version>[-cuda]/`);
+/// 3. download the official prebuilt for this platform (and variant), extract
 ///    `llama-server`, cache it, and return it.
 ///
-/// Unsupported platforms (no official prebuilt — e.g. Windows, Jetson/CUDA)
-/// surface a clear error pointing at the source build.
+/// With `NEOMIND_BUILTIN_RUNTIME_VARIANT=cuda` on Windows x64 the CUDA build
+/// is fetched plus the cudart DLL bundle (driver-only hosts). Platforms with
+/// no official CUDA prebuilt (Linux/Jetson) surface a clear error naming the
+/// env to unset and the source-build script.
 pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
     // Fast path — bundled binary, no network.
     if let Ok(b) = find_llama_server() {
         return Ok(b);
     }
 
-    let cache_dir = llama_server_cache_dir(data_dir);
-    if let Some(existing) = find_runtime_binary(&cache_dir) {
-        return Ok(existing);
+    let variant = RuntimeVariant::from_env();
+    let cache_dir = llama_server_cache_dir(data_dir, variant);
+    // A CUDA cache is only complete with its cudart DLLs — a partial one
+    // (crashed between the two downloads) must not short-circuit.
+    let cache_complete = |dir: &Path| {
+        find_runtime_binary(dir).is_some()
+            && (variant == RuntimeVariant::Cpu || dir.join(llama_cudart_marker()).exists())
+    };
+    if cache_complete(&cache_dir) {
+        return Ok(find_runtime_binary(&cache_dir).expect("checked above"));
     }
 
     let lock = runtime_lock();
     let _guard = lock.lock().await;
     // Re-check under the lock (another task may have just downloaded it).
-    if let Some(existing) = find_runtime_binary(&cache_dir) {
-        return Ok(existing);
+    if cache_complete(&cache_dir) {
+        return Ok(find_runtime_binary(&cache_dir).expect("checked above"));
     }
 
-    let asset = llama_asset_name(std::env::consts::OS, std::env::consts::ARCH).ok_or_else(|| {
-        format!(
-            "no official llama.cpp prebuilt for {}/{} — bundle neomind-llama-server or build via scripts/build-llama-server.sh",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        )
-    })?;
+    let asset = llama_asset_name(std::env::consts::OS, std::env::consts::ARCH, variant)
+        .ok_or_else(|| {
+            if variant == RuntimeVariant::Cuda {
+                format!(
+                    "no official llama.cpp CUDA prebuilt for {}/{} — unset \
+                         NEOMIND_BUILTIN_RUNTIME_VARIANT to use the CPU build, or build one \
+                         via scripts/build-llama-server.sh",
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                )
+            } else {
+                format!(
+                    "no official llama.cpp prebuilt for {}/{} — bundle neomind-llama-server \
+                         or build via scripts/build-llama-server.sh",
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                )
+            }
+        })?;
     let url = llama_server_url(asset);
-    tracing::info!(url = %url, "builtin llm: downloading llama-server runtime");
+    tracing::info!(url = %url, variant = ?variant, "builtin llm: downloading llama-server runtime");
 
     RUNTIME_DL_ACTIVE.store(true, Ordering::SeqCst);
-    let result = download_runtime(&url, &cache_dir, llama_asset_is_zip(&asset)).await;
+    // Fresh cache for the primary archive; a cudart bundle (if any) then
+    // extracts INTO it without wiping.
+    let result = download_runtime(&url, &cache_dir, llama_asset_is_zip(&asset), true).await;
+    let result = match result {
+        Ok(bin) => match llama_cudart_url(asset) {
+            // CUDA builds dlopen cudart/cublas DLLs — the bundle puts them
+            // next to llama-server.exe so a driver-only host just works.
+            Some(cudart_url) => {
+                match download_runtime(&cudart_url, &cache_dir, true, false).await {
+                    Ok(_) => {
+                        let _ = std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
+                        Ok(bin)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            None => Ok(bin),
+        },
+        Err(e) => Err(e),
+    };
     RUNTIME_DL_ACTIVE.store(false, Ordering::SeqCst);
     result
 }
@@ -69,12 +110,16 @@ pub fn runtime_download_active() -> bool {
     RUNTIME_DL_ACTIVE.load(Ordering::SeqCst)
 }
 
-async fn download_runtime(url: &str, cache_dir: &Path, is_zip: bool) -> Result<PathBuf, String> {
+/// `wipe` clears the cache dir first — true for the primary archive, false
+/// for the cudart bundle (it must land in the freshly populated dir).
+async fn download_runtime(
+    url: &str,
+    cache_dir: &Path,
+    is_zip: bool,
+    wipe: bool,
+) -> Result<PathBuf, String> {
     let client = reqwest::Client::new();
-    let tmp = std::env::temp_dir().join(format!(
-        "neomind-llama-runtime-{}",
-        std::process::id()
-    ));
+    let tmp = std::env::temp_dir().join(format!("neomind-llama-runtime-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| format!("create tmp dir: {e}"))?;
 
@@ -84,7 +129,10 @@ async fn download_runtime(url: &str, cache_dir: &Path, is_zip: bool) -> Result<P
         .await
         .map_err(|e| format!("download llama.cpp runtime: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("download llama.cpp runtime: HTTP {}", resp.status()));
+        return Err(format!(
+            "download llama.cpp runtime: HTTP {}",
+            resp.status()
+        ));
     }
     let bytes = resp
         .bytes()
@@ -94,7 +142,9 @@ async fn download_runtime(url: &str, cache_dir: &Path, is_zip: bool) -> Result<P
     // Extract the WHOLE archive into the cache dir — the llama-server binary
     // is a thin wrapper that dlopens sibling libs (macOS libllama-server-impl
     // .dylib, Windows .dll), so a single-binary extract dies on exec.
-    let _ = std::fs::remove_dir_all(cache_dir);
+    if wipe {
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
     std::fs::create_dir_all(cache_dir).map_err(|e| format!("create cache dir: {e}"))?;
     extract_archive(&bytes, cache_dir, is_zip).map_err(|e| e.to_string())?;
     let bin = find_runtime_binary(cache_dir)
@@ -170,7 +220,7 @@ mod tests {
 
     #[test]
     fn cache_dir_is_versioned() {
-        let d = llama_server_cache_dir(std::path::Path::new("/tmp/data"));
+        let d = llama_server_cache_dir(std::path::Path::new("/tmp/data"), RuntimeVariant::Cpu);
         let s = d.to_string_lossy();
         assert!(s.contains("llama-server"));
         assert!(s.ends_with(LLAMA_CPP_VERSION));
@@ -186,7 +236,11 @@ mod tests {
         header.set_mode(0o755);
         header.set_cksum();
         builder
-            .append_data(&mut header, "bin/llama-server", std::io::Cursor::new(b"probe"))
+            .append_data(
+                &mut header,
+                "bin/llama-server",
+                std::io::Cursor::new(b"probe"),
+            )
             .unwrap();
         let uncompressed = builder.into_inner().unwrap();
         let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
@@ -209,9 +263,13 @@ mod tests {
         use std::io::Write;
         let mut zip_buf = std::io::Cursor::new(Vec::new());
         {
-            let mut zw: zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>> = zip::ZipWriter::new(&mut zip_buf);
-            zw.start_file(format!("bin/{}", llama_server_bin_name()), zip::write::SimpleFileOptions::default())
-                .unwrap();
+            let mut zw: zip::ZipWriter<&mut std::io::Cursor<Vec<u8>>> =
+                zip::ZipWriter::new(&mut zip_buf);
+            zw.start_file(
+                format!("bin/{}", llama_server_bin_name()),
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
             zw.write_all(b"probe-exe").unwrap();
             zw.finish().unwrap();
         }

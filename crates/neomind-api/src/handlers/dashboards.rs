@@ -37,10 +37,9 @@ fn resolve_dashboard(
     match state.dashboard_store.load(id_or_name) {
         Ok(Some(d)) => Ok(d),
         Ok(None) => {
-            let all = state
-                .dashboard_store
-                .list_all()
-                .map_err(|e| ErrorResponse::internal(format!("Failed to list dashboards: {}", e)))?;
+            let all = state.dashboard_store.list_all().map_err(|e| {
+                ErrorResponse::internal(format!("Failed to list dashboards: {}", e))
+            })?;
             all.into_iter().find(|d| d.name == id_or_name).ok_or_else(|| {
                 ErrorResponse::not_found(format!(
                     "Dashboard '{}' not found (by id or name) — run `neomind dashboard list` for valid ids",
@@ -48,7 +47,10 @@ fn resolve_dashboard(
                 ))
             })
         }
-        Err(e) => Err(ErrorResponse::internal(format!("Failed to load dashboard: {}", e))),
+        Err(e) => Err(ErrorResponse::internal(format!(
+            "Failed to load dashboard: {}",
+            e
+        ))),
     }
 }
 
@@ -668,7 +670,10 @@ pub async fn add_components_handler(
                 }
             }
         }
-        if let Some(bad) = new_components.iter().find(|c| !known.contains(&c.component_type)) {
+        if let Some(bad) = new_components
+            .iter()
+            .find(|c| !known.contains(&c.component_type))
+        {
             return Err(ErrorResponse::bad_request(format!(
                 "Unknown component type '{}' — run `neomind widget list` for valid types",
                 bad.component_type
@@ -681,10 +686,12 @@ pub async fn add_components_handler(
 
     // Reject component-id collisions: duplicates make `update-component`
     // (find-first) ambiguous and break the frontend's React keys.
-    if let Some(dup) = new_components
-        .iter()
-        .find(|c| dashboard.components.iter().any(|existing| existing.id == c.id))
-    {
+    if let Some(dup) = new_components.iter().find(|c| {
+        dashboard
+            .components
+            .iter()
+            .any(|existing| existing.id == c.id)
+    }) {
         return Err(ErrorResponse::bad_request(format!(
             "Component id '{}' already exists on dashboard '{}' — component ids must be unique. \
              Use `dashboard get {}` to list existing ids, or `update-component` to modify one.",
@@ -819,9 +826,8 @@ pub async fn update_component_handler(
         sanitized.remove("type");
         deep_merge_json(&mut value, &JsonValue::Object(sanitized));
     }
-    let patched: StoredComponent = serde_json::from_value(value).map_err(|e| {
-        ErrorResponse::bad_request(format!("Patched component is invalid: {}", e))
-    })?;
+    let patched: StoredComponent = serde_json::from_value(value)
+        .map_err(|e| ErrorResponse::bad_request(format!("Patched component is invalid: {}", e)))?;
     let patched_id = patched.id.clone();
     *component = patched;
 
@@ -1677,7 +1683,10 @@ fn is_allowed_readonly_method(path: &str, method: &Method) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_duplicate_dashboard, deep_merge_json, new_output_prefix, rewrite_component_transform_refs};
+    use super::{
+        build_duplicate_dashboard, deep_merge_json, new_output_prefix,
+        rewrite_component_transform_refs,
+    };
     use neomind_storage::dashboards::{
         Dashboard as StoredDashboard, DashboardComponent as StoredComponent,
         DashboardLayout as StoredLayout,
@@ -1953,7 +1962,10 @@ mod tests {
         });
         deep_merge_json(&mut target, &patch);
         assert_eq!(target["title"], "New");
-        assert_eq!(target["position"], serde_json::json!({"x": 0, "y": 0, "w": 6, "h": 2}));
+        assert_eq!(
+            target["position"],
+            serde_json::json!({"x": 0, "y": 0, "w": 6, "h": 2})
+        );
         assert_eq!(target["data_source"]["id"], "demo-001");
         assert_eq!(target["data_source"]["field"], "temperature");
         assert_eq!(target["data_source"]["timeWindow"]["type"], "last_6hours");

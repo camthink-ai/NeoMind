@@ -386,12 +386,18 @@ mod tests {
         // "execute the action NOW" prompt then contradicted the model every
         // round → 11 rounds / 17 tool calls / no final text.
         let msg = "温度趋势的数据绑定好像不对?";
-        assert!(user_message_requires_action(msg), "verb collision still matches");
+        assert!(
+            user_message_requires_action(msg),
+            "verb collision still matches"
+        );
         assert_eq!(extract_action_hint(msg), "");
 
         // Read-only investigation commands → dead-end condition holds, but
         // the empty hint must suppress the injection.
-        let cmds = ["neomind widget get sparkline", "neomind device get demo-001"];
+        let cmds = [
+            "neomind widget get sparkline",
+            "neomind device get demo-001",
+        ];
         assert!(all_tools_were_read_only(&cmds, &[]));
         assert!(build_list_only_dead_end_prompt(msg, &cmds, &[]).is_none());
     }

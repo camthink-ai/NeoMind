@@ -3074,11 +3074,8 @@ mod tests {
             ..MqttAdapterConfig::new("test", "localhost:1883")
         };
         assert_eq!(
-            extract_device_id_from_payload(
-                b"{\"state\":{\"meta\":{\"mac\":\"aa:bb\"}}}",
-                &cfg3
-            )
-            .as_deref(),
+            extract_device_id_from_payload(b"{\"state\":{\"meta\":{\"mac\":\"aa:bb\"}}}", &cfg3)
+                .as_deref(),
             Some("aa:bb")
         );
         // top level wins over nested
@@ -3087,11 +3084,8 @@ mod tests {
             ..MqttAdapterConfig::new("test", "localhost:1883")
         };
         assert_eq!(
-            extract_device_id_from_payload(
-                b"{\"sn\":\"TOP\",\"data\":{\"sn\":\"NESTED\"}}",
-                &cfg4
-            )
-            .as_deref(),
+            extract_device_id_from_payload(b"{\"sn\":\"TOP\",\"data\":{\"sn\":\"NESTED\"}}", &cfg4)
+                .as_deref(),
             Some("TOP")
         );
         // numeric ids are accepted (gateways send numeric SNs)
@@ -3124,8 +3118,7 @@ mod tests {
         );
         // first absent -> second candidate
         assert_eq!(
-            extract_device_id_from_payload(b"{\"dev_id\":\"D-2\",\"mac\":\"m2\"}", &cfg)
-                .as_deref(),
+            extract_device_id_from_payload(b"{\"dev_id\":\"D-2\",\"mac\":\"m2\"}", &cfg).as_deref(),
             Some("D-2")
         );
         // all explicit candidates absent -> falls through to auto-detect

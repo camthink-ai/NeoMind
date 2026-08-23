@@ -22,15 +22,15 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::extract::{Query, State};
-use std::collections::HashMap;
 use serde_json::json;
+use std::collections::HashMap;
 
+use super::runtime::ensure_llama_server;
 use neomind_agent::llm_backends::{get_instance_manager, LlmBackendInstanceManager};
 use neomind_agent::LlmBackend;
-use super::runtime::ensure_llama_server;
 use neomind_core::builtin_llm::manifest::{
-    load_manifest, save_manifest, model_def, BuiltinModelDef, ModelManifest,
-    BUILTIN_MODELS, BUILTIN_MODEL_ID,
+    load_manifest, model_def, save_manifest, BuiltinModelDef, ModelManifest, BUILTIN_MODELS,
+    BUILTIN_MODEL_ID,
 };
 use neomind_core::builtin_llm::variant::{model_file_name, Quant};
 use neomind_core::NeoMindEvent;
@@ -145,7 +145,10 @@ fn resolve_model(model_id: Option<&str>) -> Result<&'static BuiltinModelDef, Err
 /// = no override → the registry def wins (LFM downloads QAD Q4_0, the agreed
 /// default, whose sha is verified — the old implicit Q4_K_M default had a
 /// stale sha and downloads kept failing verification).
-fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Option<Quant>, ErrorResponse> {
+fn resolve_quant(
+    cfg: &BuiltinConfig,
+    def: &BuiltinModelDef,
+) -> Result<Option<Quant>, ErrorResponse> {
     let Some(q) = cfg.quant_override.as_deref() else {
         return Ok(None);
     };
@@ -173,17 +176,17 @@ fn resolve_quant(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> Result<Option<Qu
 pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> {
     BUILTIN_MODELS.iter().find_map(|def| {
         let manifest = load_manifest(mdir, &def.manifest.id).ok().flatten()?;
-        manifest.model_path(mdir).exists().then(|| (def.clone(), manifest))
+        manifest
+            .model_path(mdir)
+            .exists()
+            .then(|| (def.clone(), manifest))
     })
 }
 
 /// Download source for a def: HF repo + file + sha. Every model downloads its
 /// registry entry directly (LFM's entry is now QAD Q4_0, the default); the
 /// env `quant_override` swaps LFM to q8_0/q4_k_m for power users.
-fn resolve_source(
-    cfg: &BuiltinConfig,
-    def: &BuiltinModelDef,
-) -> (String, String, String) {
+fn resolve_source(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> (String, String, String) {
     if def.manifest.id == BUILTIN_MODEL_ID {
         if let Ok(Some(quant)) = resolve_quant(cfg, def) {
             return (
@@ -219,9 +222,11 @@ pub async fn status_handler(
     let installed_pair = installed_model(&mdir);
     let model_id = installed_pair.as_ref().map(|(_, m)| m.id.clone());
     let installed = installed_pair.is_some();
-    let model_path = installed_pair
-        .as_ref()
-        .map(|(_, m)| cfg.model_path.clone().unwrap_or_else(|| m.model_path(&mdir)));
+    let model_path = installed_pair.as_ref().map(|(_, m)| {
+        cfg.model_path
+            .clone()
+            .unwrap_or_else(|| m.model_path(&mdir))
+    });
 
     // Downloading overrides running/stopped/not_configured. The lock is the
     // authoritative single-flight gate (per the task design decision); the
@@ -386,7 +391,17 @@ pub async fn download_handler(
         // download doesn't keep the UI stuck at "downloading 100%").
         let _active = DownloadActiveGuard;
         let _guard = guard;
-        match run_builtin_download(&state_for_task, &cfg_for_task, &model_id_task, &dest, &url, &sha, _active).await {
+        match run_builtin_download(
+            &state_for_task,
+            &cfg_for_task,
+            &model_id_task,
+            &dest,
+            &url,
+            &sha,
+            _active,
+        )
+        .await
+        {
             Ok(_) => {}
             Err(e) => tracing::warn!(error = %e, "builtin llm: download failed"),
         }
@@ -741,8 +756,8 @@ pub async fn restart_handler(
     let mut cfg = BuiltinConfig::from_env();
     // The installed model's own default — used to give `?ctx=<default>` a
     // "reset to default" meaning (clears the override instead of pinning it).
-    let model_default_ctx: Option<u32> = installed_model(&models_dir(&state.data_dir))
-        .map(|(d, _)| d.default_ctx);
+    let model_default_ctx: Option<u32> =
+        installed_model(&models_dir(&state.data_dir)).map(|(d, _)| d.default_ctx);
     if let Some(ctx_str) = params.get("ctx") {
         match ctx_str.trim().parse::<usize>() {
             Ok(n) if (1024..=1_048_576).contains(&n) => {
@@ -802,7 +817,10 @@ pub async fn restart_handler(
             if builtin_active {
                 if let Some(instance) = manager.get_instance(BUILTIN_INSTANCE_ID) {
                     let backend = LlmBackend::LlamaCpp {
-                        endpoint: instance.endpoint.clone().unwrap_or_else(|| endpoint.clone()),
+                        endpoint: instance
+                            .endpoint
+                            .clone()
+                            .unwrap_or_else(|| endpoint.clone()),
                         model: instance.model.clone(),
                         capabilities: Some(convert_capabilities(&instance.capabilities)),
                     };
@@ -990,25 +1008,25 @@ mod tests {
 
     async fn status_body(data_dir: PathBuf) -> serde_json::Value {
         with_ephemeral_port(|| async {
-        let mut state = ServerState::new_for_testing().await;
-        state.data_dir = data_dir;
-        let app = Router::new()
-            .route("/api/builtin-llm/status", get(super::status_handler))
-            .with_state(state);
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/builtin-llm/status")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        serde_json::from_slice(&body).unwrap()
+            let mut state = ServerState::new_for_testing().await;
+            state.data_dir = data_dir;
+            let app = Router::new()
+                .route("/api/builtin-llm/status", get(super::status_handler))
+                .with_state(state);
+            let resp = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/builtin-llm/status")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            serde_json::from_slice(&body).unwrap()
         })
         .await
     }

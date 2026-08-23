@@ -3,7 +3,6 @@ use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
 
-
 /// Compact grid-occupancy summary computed from a dashboard's components —
 /// lets the agent place new widgets without a follow-up get or blind guessing.
 /// Returns (occupied_rows_desc, next_free_y). Grid is 12 columns.
@@ -11,8 +10,15 @@ fn grid_summary(components: &[serde_json::Value]) -> (String, u64) {
     let mut occupied: Vec<bool> = Vec::new();
     for c in components {
         let pos = c.get("position");
-        let y = pos.and_then(|p| p.get("y")).and_then(|v| v.as_u64()).unwrap_or(0);
-        let h = pos.and_then(|p| p.get("h")).and_then(|v| v.as_u64()).unwrap_or(1).max(1);
+        let y = pos
+            .and_then(|p| p.get("y"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let h = pos
+            .and_then(|p| p.get("h"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .max(1);
         let bottom = y + h;
         if occupied.len() < bottom as usize {
             occupied.resize(bottom as usize, false);
@@ -30,7 +36,11 @@ fn grid_summary(components: &[serde_json::Value]) -> (String, u64) {
                 while i < occupied.len() && occupied[i] {
                     i += 1;
                 }
-                out.push(if start == i - 1 { format!("{}", start) } else { format!("{}-{}", start, i - 1) });
+                out.push(if start == i - 1 {
+                    format!("{}", start)
+                } else {
+                    format!("{}-{}", start, i - 1)
+                });
             } else {
                 i += 1;
             }
@@ -38,7 +48,11 @@ fn grid_summary(components: &[serde_json::Value]) -> (String, u64) {
         out
     };
     (
-        if rows.is_empty() { "none".to_string() } else { rows.join(",") },
+        if rows.is_empty() {
+            "none".to_string()
+        } else {
+            rows.join(",")
+        },
         occupied.len() as u64,
     )
 }
@@ -234,7 +248,10 @@ pub async fn update_component(
 ) -> Result<CliResponse> {
     let body = json!({ "set": set });
     let data = client
-        .patch(&format!("/dashboards/{}/components/{}", id, component_id), &body)
+        .patch(
+            &format!("/dashboards/{}/components/{}", id, component_id),
+            &body,
+        )
         .await?;
     let updated_id = data
         .get("data")
