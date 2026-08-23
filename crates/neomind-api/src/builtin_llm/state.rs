@@ -80,15 +80,19 @@ pub async fn bootstrap(
         return BootstrapOutcome::ServerAlreadyRunning;
     }
 
-    let binary = match ensure_llama_server(data_dir).await {
-        Ok(b) => b,
-        Err(e) => return BootstrapOutcome::Failed(format!("llama-server unavailable: {}", e)),
-    };
-
+    // Model check FIRST: a host with no installed model must not fetch the
+    // llama-server runtime — the download belongs to the user's decision to
+    // install a builtin model (harmless-but-wrong on bundled-binary hosts,
+    // a real uninvited download on source builds).
     let mdir = models_dir(data_dir);
     let Some((def, manifest)): Option<(BuiltinModelDef, ModelManifest)> = installed_model(&mdir)
     else {
         return BootstrapOutcome::ModelMissing;
+    };
+
+    let binary = match ensure_llama_server(data_dir).await {
+        Ok(b) => b,
+        Err(e) => return BootstrapOutcome::Failed(format!("llama-server unavailable: {}", e)),
     };
     let model_path = cfg
         .model_path
