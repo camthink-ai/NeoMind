@@ -638,6 +638,47 @@ pub async fn add_components_handler(
             )
         })?;
 
+    // Reject unknown component TYPES up front: a typo'd type ("value_card")
+    // used to persist silently and render as an UnknownComponent placeholder
+    // while the agent claimed success. Known = builtin ∪ community ∪
+    // extension-bundled.
+    {
+        let mut known: std::collections::HashSet<String> =
+            neomind_core::dashboard::BUILTIN_WIDGET_TYPES
+                .iter()
+                .map(|t| t.type_id.to_string())
+                .collect();
+        if let Ok(installed) = state.frontend_component_store.list_all() {
+            for m in installed {
+                known.insert(m.id.clone());
+            }
+        }
+        // Extension-bundled components (from installed extensions). The
+        // async runtime list is not awaitable here (sync validation block),
+        // so read the store's file paths and scan frontend/ manifests.
+        for rec in state.extensions.store.load_all().unwrap_or_default() {
+            let dir = std::path::Path::new(&rec.file_path)
+                .parent()
+                .map(|p| p.to_path_buf());
+            if let Some(dir) = dir {
+                for c in super::extensions::load_extension_components(&rec.id, Some(&dir))
+                    .unwrap_or_default()
+                {
+                    known.insert(c.component_type.clone());
+                }
+            }
+        }
+        if let Some(bad) = new_components.iter().find(|c| !known.contains(&c.component_type)) {
+            return Err(ErrorResponse::bad_request(format!(
+                "Unknown component type '{}' — run `neomind widget list` for valid types",
+                bad.component_type
+            ))
+            .with_hint(
+                "Use the exact type id (kebab-case, e.g. value-card / line-chart / sparkline).",
+            ));
+        }
+    }
+
     // Reject component-id collisions: duplicates make `update-component`
     // (find-first) ambiguous and break the frontend's React keys.
     if let Some(dup) = new_components

@@ -3558,7 +3558,7 @@ pub async fn get_extension_components_handler(
 }
 
 /// Load dashboard components from extension manifest.
-fn load_extension_components(
+pub(crate) fn load_extension_components(
     // Log path configuration for debugging
     extension_id: &str,
     file_path: Option<&std::path::PathBuf>,
