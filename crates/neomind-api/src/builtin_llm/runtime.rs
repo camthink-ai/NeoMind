@@ -39,7 +39,34 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
         return Ok(b);
     }
 
-    let variant = RuntimeVariant::from_env();
+    let mut variant = RuntimeVariant::from_env();
+    match ensure_runtime_variant(data_dir, variant).await {
+        Ok(bin) => Ok(bin),
+        Err(err) if variant == RuntimeVariant::Cuda => {
+            // CUDA is opt-in, but a dead backend helps nobody — degrade to
+            // the CPU build (always available) instead of failing the boot.
+            // Sticky via env so a restart doesn't re-download CUDA and hit
+            // the same wall (same override pattern as port/ctx).
+            tracing::warn!(
+                error = %err,
+                "builtin llm: CUDA runtime unusable ({}) — falling back to the CPU build for this process; unset NEOMIND_BUILTIN_RUNTIME_VARIANT or fix the driver to retry CUDA",
+                if llama_asset_name(std::env::consts::OS, std::env::consts::ARCH, variant).is_some() {
+                    "download or exec failed"
+                } else {
+                    "no official prebuilt for this platform"
+                }
+            );
+            std::env::set_var("NEOMIND_BUILTIN_RUNTIME_VARIANT", "cpu");
+            variant = RuntimeVariant::Cpu;
+            ensure_runtime_variant(data_dir, variant).await
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Download (or reuse from cache) the runtime for ONE variant — the fallback
+/// chain lives in `ensure_llama_server` above.
+async fn ensure_runtime_variant(data_dir: &Path, variant: RuntimeVariant) -> Result<PathBuf, String> {
     let cache_dir = llama_server_cache_dir(data_dir, variant);
     // A CUDA cache is only complete with its cudart DLLs — a partial one
     // (crashed between the two downloads) must not short-circuit.
@@ -91,8 +118,17 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
             Some(cudart_url) => {
                 match download_runtime(&cudart_url, &cache_dir, true, false).await {
                     Ok(_) => {
-                        let _ = std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
-                        Ok(bin)
+                        // A CUDA build with no (or too old) NVIDIA driver
+                        // fails to load cudart/cublas DLLs — detect that HERE
+                        // with a fast `--version` exec so the caller can fall
+                        // back to CPU, instead of dying at first spawn.
+                        match exec_check(&bin).await {
+                            Ok(()) => {
+                                let _ = std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
+                                Ok(bin)
+                            }
+                            Err(e) => Err(format!("CUDA runtime exec check failed: {e}")),
+                        }
                     }
                     Err(e) => Err(e),
                 }
@@ -159,6 +195,28 @@ async fn download_runtime(
 
     tracing::info!(dest = %bin.display(), "builtin llm: llama-server runtime ready");
     Ok(bin)
+}
+
+/// Fast exec sanity check — `<binary> --version` must exit 0 within 10s.
+/// Catches missing/old NVIDIA drivers (cudart DLL load failure) at download
+/// time instead of at first spawn.
+async fn exec_check(bin: &Path) -> Result<(), String> {
+    use tokio::time::{timeout, Duration};
+    let out = tokio::process::Command::new(bin)
+        .arg("--version")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+    match timeout(Duration::from_secs(10), out).await {
+        Ok(Ok(status)) if status.status.success() => Ok(()),
+        Ok(Ok(status)) => Err(format!(
+            "exit {}: {}",
+            status.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&status.stderr).chars().take(200).collect::<String>()
+        )),
+        Ok(Err(e)) => Err(format!("spawn: {e}")),
+        Err(_) => Err("--version timed out after 10s".to_string()),
+    }
 }
 
 /// Recursively locate the llama-server binary inside the cache dir.
