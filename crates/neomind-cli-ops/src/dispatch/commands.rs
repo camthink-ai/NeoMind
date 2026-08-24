@@ -641,7 +641,7 @@ pub enum DeviceCommand {
         #[arg(short, long)]
         device_type: String,
         /// Adapter type: mqtt (default) | webhook.
-        #[arg(short, long)]
+        #[arg(short, long, default_value = "mqtt")]
         adapter_type: String,
         /// Optional explicit device ID. Auto-generated if omitted. Use this when
         /// the user provides a specific identifier (e.g. `cam-office`) — never

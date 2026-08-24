@@ -1538,20 +1538,14 @@ impl ServerState {
     /// Falls back to LlmBackendInstanceManager if no config file is found.
     /// Only sets the default backend for NEW sessions.
     pub async fn init_llm(&self) {
-        // First try to load from config file
-        if let Some(backend) = crate::config::load_llm_config() {
-            self.agents
-                .session_manager
-                .set_default_llm_backend(backend)
-                .await;
-            tracing::info!(
-                category = "ai",
-                "Configured default LLM backend successfully from config file"
-            );
-            return;
-        }
-
-        // Fallback: try to load from LlmBackendInstanceManager (database-stored backends)
+        // Priority: DB active instance FIRST, config file as fallback. The
+        // instance manager reflects the user's latest explicit activation
+        // (incl. the builtin model); a config-file entry is a static
+        // deployment default. File-over-DB used to resurrect a stale
+        // config.toml backend after restart on upgraded installs — the user
+        // activates builtin, restarts, and every new session silently routes
+        // back to the dead endpoint the TOML names (observed on a real
+        // 0.9.4→0.9.19 Jetson upgrade).
         match self
             .agents
             .session_manager
@@ -1561,10 +1555,23 @@ impl ServerState {
             Ok(_) => {
                 tracing::info!(
                     category = "ai",
-                    "Configured LLM backend successfully from instance manager"
+                    "Configured LLM backend successfully from instance manager (active instance)"
                 );
             }
             Err(e) => {
+                // No active instance in the DB — fall back to the config file.
+                if let Some(backend) = crate::config::load_llm_config() {
+                    self.agents
+                        .session_manager
+                        .set_default_llm_backend(backend)
+                        .await;
+                    tracing::info!(
+                        category = "ai",
+                        prior_error = %e,
+                        "Configured default LLM backend from config file (no active DB instance)"
+                    );
+                    return;
+                }
                 tracing::warn!(category = "ai", error = %e, "No LLM backend configured. Set up via Web UI or create config.toml");
             }
         }

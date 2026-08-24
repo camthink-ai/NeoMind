@@ -2569,10 +2569,18 @@ pub async fn install_marketplace_extension_handler(
                             .unwrap_or("native")
                             .to_string();
 
-                        // Save to storage
+                        // Save to storage. An upgrade/reinstall overwrites the
+                        // whole row — carry the previous user config (YOLO
+                        // thresholds, bindings, …) into the new record so it
+                        // survives, instead of resetting to defaults.
                         let store = state.extensions.store.clone();
+                        let preserved_config = store
+                            .load(&ext_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|old| old.config.clone());
                         {
-                            let record = ExtensionRecord::new(
+                            let mut record = ExtensionRecord::new(
                                 ext_id.clone(),
                                 ext_metadata.name.clone(),
                                 result.binary_path.to_string_lossy().to_string(),
@@ -2589,6 +2597,9 @@ pub async fn install_marketplace_extension_handler(
                                     .as_ref()
                                     .map(|p| p.to_string_lossy().to_string()),
                             );
+                            if let Some(cfg) = preserved_config.clone() {
+                                record = record.with_config(cfg);
+                            }
 
                             if let Err(e) = store.save(&record) {
                                 tracing::warn!("Failed to save extension to storage: {}", e);
@@ -2597,6 +2608,25 @@ pub async fn install_marketplace_extension_handler(
 
                         // Rebuild tool registry so the new extension's tools are visible to the LLM
                         state.refresh_extension_tools().await;
+
+                        // Push the preserved config to the freshly-started
+                        // runtime — without this the running process stays on
+                        // defaults until the next restart (same gap the reload
+                        // path closes with its send_config_update).
+                        if let Some(cfg) = preserved_config {
+                            if let Err(e) = state
+                                .extensions
+                                .runtime
+                                .send_config_update(&ext_id, &cfg)
+                                .await
+                            {
+                                tracing::warn!(
+                                    extension_id = %ext_id,
+                                    error = %e,
+                                    "Failed to apply preserved config after market upgrade"
+                                );
+                            }
+                        }
 
                         ok(MarketplaceInstallResponse {
                             success: true,

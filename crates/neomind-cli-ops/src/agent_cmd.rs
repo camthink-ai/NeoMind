@@ -177,9 +177,20 @@ pub async fn create_agent(
         }
     }
     if let Some(res_str) = resources {
-        if let Ok(res_val) = serde_json::from_str::<serde_json::Value>(res_str) {
-            body["resources"] = res_val;
-        }
+        // Malformed JSON must FAIL, not silently drop the binding — the agent
+        // would be created without its resources while the caller believes it
+        // succeeded (focused-validation bypass / free-mode degradation).
+        let parsed: serde_json::Value = match serde_json::from_str(res_str) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid JSON in --resources: {e}"),
+                    "INVALID_JSON",
+                    "Pass a JSON array, e.g. --resources '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
+                ));
+            }
+        };
+        body["resources"] = parsed;
     }
     if let Some(etc) = enable_tool_chaining {
         body["enable_tool_chaining"] = json!(etc);
@@ -194,14 +205,36 @@ pub async fn create_agent(
         body["context_window_size"] = json!(cws);
     }
     if let Some(metrics_str) = metrics {
-        if let Ok(metrics_val) = serde_json::from_str::<serde_json::Value>(metrics_str) {
-            body["metrics"] = metrics_val;
-        }
+        // Malformed JSON must FAIL, not silently drop the binding — the agent
+        // would be created without its resources while the caller believes it
+        // succeeded (focused-validation bypass / free-mode degradation).
+        let parsed: serde_json::Value = match serde_json::from_str(metrics_str) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid JSON in --metrics: {e}"),
+                    "INVALID_JSON",
+                    "Pass a JSON array, e.g. --metrics '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
+                ));
+            }
+        };
+        body["metrics"] = parsed;
     }
     if let Some(commands_str) = commands {
-        if let Ok(commands_val) = serde_json::from_str::<serde_json::Value>(commands_str) {
-            body["commands"] = commands_val;
-        }
+        // Malformed JSON must FAIL, not silently drop the binding — the agent
+        // would be created without its resources while the caller believes it
+        // succeeded (focused-validation bypass / free-mode degradation).
+        let parsed: serde_json::Value = match serde_json::from_str(commands_str) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid JSON in --commands: {e}"),
+                    "INVALID_JSON",
+                    "Pass a JSON array, e.g. --commands '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
+                ));
+            }
+        };
+        body["commands"] = parsed;
     }
 
     // focused mode requires resources
@@ -317,9 +350,20 @@ pub async fn update_agent(
         body["device_ids"] = json!(id_list);
     }
     if let Some(res_str) = resources {
-        if let Ok(res_val) = serde_json::from_str::<serde_json::Value>(res_str) {
-            body["resources"] = res_val;
-        }
+        // Malformed JSON must FAIL, not silently drop the binding — the agent
+        // would be created without its resources while the caller believes it
+        // succeeded (focused-validation bypass / free-mode degradation).
+        let parsed: serde_json::Value = match serde_json::from_str(res_str) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid JSON in --resources: {e}"),
+                    "INVALID_JSON",
+                    "Pass a JSON array, e.g. --resources '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
+                ));
+            }
+        };
+        body["resources"] = parsed;
     }
     if let Some(etc) = enable_tool_chaining {
         body["enable_tool_chaining"] = json!(etc);
@@ -334,14 +378,36 @@ pub async fn update_agent(
         body["context_window_size"] = json!(cws);
     }
     if let Some(metrics_str) = metrics {
-        if let Ok(metrics_val) = serde_json::from_str::<serde_json::Value>(metrics_str) {
-            body["metrics"] = metrics_val;
-        }
+        // Malformed JSON must FAIL, not silently drop the binding — the agent
+        // would be created without its resources while the caller believes it
+        // succeeded (focused-validation bypass / free-mode degradation).
+        let parsed: serde_json::Value = match serde_json::from_str(metrics_str) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid JSON in --metrics: {e}"),
+                    "INVALID_JSON",
+                    "Pass a JSON array, e.g. --metrics '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
+                ));
+            }
+        };
+        body["metrics"] = parsed;
     }
     if let Some(commands_str) = commands {
-        if let Ok(commands_val) = serde_json::from_str::<serde_json::Value>(commands_str) {
-            body["commands"] = commands_val;
-        }
+        // Malformed JSON must FAIL, not silently drop the binding — the agent
+        // would be created without its resources while the caller believes it
+        // succeeded (focused-validation bypass / free-mode degradation).
+        let parsed: serde_json::Value = match serde_json::from_str(commands_str) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid JSON in --commands: {e}"),
+                    "INVALID_JSON",
+                    "Pass a JSON array, e.g. --commands '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
+                ));
+            }
+        };
+        body["commands"] = parsed;
     }
 
     let data = client.put(&format!("/agents/{}", id), &body).await?;

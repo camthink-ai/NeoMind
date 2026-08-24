@@ -547,6 +547,19 @@ pub(crate) async fn build_and_register_bridge(
             ));
         }
     };
+    // Re-registration must not orphan the previous bridge: its spawned
+    // start() loop holds its own Arc and keeps polling — two Telegram
+    // getUpdates loops then fight each other (409 Conflict) forever.
+    // Hand the old Arc out and stop it (same hand-back as the DELETE path).
+    if let Some(old) = router.registry.remove(platform).await {
+        if let Err(e) = old.stop().await {
+            tracing::warn!(
+                platform = %platform.as_str(),
+                error = %e,
+                "failed to stop superseded IM bridge on re-registration"
+            );
+        }
+    }
     router.registry.register(bridge.clone()).await;
 
     // Spawn the long-poll / WS run loop. FeishuBridge::start spawns its WS loop

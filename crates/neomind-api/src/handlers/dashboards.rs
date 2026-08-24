@@ -25,6 +25,38 @@ use neomind_storage::dashboards::{
     SharePermissions as StoredSharePermissions, ShareToken as StoredShareToken,
 };
 
+/// All widget type ids the frontend can render: builtin ∪ community ∪
+/// extension-bundled. Shared by the add-components and update (full-replace)
+/// paths so both reject unknown types at the door.
+fn collect_known_widget_types(state: &ServerState) -> std::collections::HashSet<String> {
+    let mut known: std::collections::HashSet<String> =
+        neomind_core::dashboard::BUILTIN_WIDGET_TYPES
+            .iter()
+            .map(|t| t.type_id.to_string())
+            .collect();
+    if let Ok(installed) = state.frontend_component_store.list_all() {
+        for m in installed {
+            known.insert(m.id.clone());
+        }
+    }
+    // Extension-bundled components (from installed extensions). The
+    // async runtime list is not awaitable here (sync validation block),
+    // so read the store's file paths and scan frontend/ manifests.
+    for rec in state.extensions.store.load_all().unwrap_or_default() {
+        let dir = std::path::Path::new(&rec.file_path)
+            .parent()
+            .map(|p| p.to_path_buf());
+        if let Some(dir) = dir {
+            for c in super::extensions::load_extension_components(&rec.id, Some(&dir))
+                .unwrap_or_default()
+            {
+                known.insert(c.component_type.clone());
+            }
+        }
+    }
+    known
+}
+
 /// Resolve a dashboard by id first, then by exact NAME. Every handler that
 /// takes :id must resolve identically — LLM callers naturally address boards
 /// by name (or reuse the name after a `dashboard get` that itself accepts
@@ -589,7 +621,24 @@ pub async fn update_dashboard_handler(
             })
             .collect();
         match parsed {
-            Ok(parsed_components) => dashboard.components = parsed_components,
+            Ok(parsed_components) => {
+                // Same type gate as add-components — the full-replace path is
+                // the one place a typo'd type could still sneak in silently.
+                let known = collect_known_widget_types(&state);
+                if let Some(bad) = parsed_components
+                    .iter()
+                    .find(|c| !known.contains(&c.component_type))
+                {
+                    return Err(ErrorResponse::bad_request(format!(
+                        "Unknown component type '{}' — run `neomind widget list` for valid types",
+                        bad.component_type
+                    ))
+                    .with_hint(
+                        "Use the exact type id (kebab-case, e.g. value-card / line-chart / sparkline).",
+                    ));
+                }
+                dashboard.components = parsed_components;
+            }
             Err(e) => {
                 return Err(
                     ErrorResponse::bad_request(format!("Invalid component data: {}", e)).with_hint(
@@ -644,44 +693,18 @@ pub async fn add_components_handler(
     // used to persist silently and render as an UnknownComponent placeholder
     // while the agent claimed success. Known = builtin ∪ community ∪
     // extension-bundled.
+    let known = collect_known_widget_types(&state);
+    if let Some(bad) = new_components
+        .iter()
+        .find(|c| !known.contains(&c.component_type))
     {
-        let mut known: std::collections::HashSet<String> =
-            neomind_core::dashboard::BUILTIN_WIDGET_TYPES
-                .iter()
-                .map(|t| t.type_id.to_string())
-                .collect();
-        if let Ok(installed) = state.frontend_component_store.list_all() {
-            for m in installed {
-                known.insert(m.id.clone());
-            }
-        }
-        // Extension-bundled components (from installed extensions). The
-        // async runtime list is not awaitable here (sync validation block),
-        // so read the store's file paths and scan frontend/ manifests.
-        for rec in state.extensions.store.load_all().unwrap_or_default() {
-            let dir = std::path::Path::new(&rec.file_path)
-                .parent()
-                .map(|p| p.to_path_buf());
-            if let Some(dir) = dir {
-                for c in super::extensions::load_extension_components(&rec.id, Some(&dir))
-                    .unwrap_or_default()
-                {
-                    known.insert(c.component_type.clone());
-                }
-            }
-        }
-        if let Some(bad) = new_components
-            .iter()
-            .find(|c| !known.contains(&c.component_type))
-        {
-            return Err(ErrorResponse::bad_request(format!(
-                "Unknown component type '{}' — run `neomind widget list` for valid types",
-                bad.component_type
-            ))
-            .with_hint(
-                "Use the exact type id (kebab-case, e.g. value-card / line-chart / sparkline).",
-            ));
-        }
+        return Err(ErrorResponse::bad_request(format!(
+            "Unknown component type '{}' — run `neomind widget list` for valid types",
+            bad.component_type
+        ))
+        .with_hint(
+            "Use the exact type id (kebab-case, e.g. value-card / line-chart / sparkline).",
+        ));
     }
 
     // Reject component-id collisions: duplicates make `update-component`
