@@ -58,8 +58,6 @@ pub(crate) enum StopReason {
     NaturalCompletion,
     /// Hit the round budget (`max_rounds`); Phase 2 synthesized a summary.
     MaxRounds,
-    /// StuckDetector flagged a pathological loop pattern.
-    Stuck,
     /// Every tool call this round was a cross-round duplicate (results in hand).
     AllDuplicate,
     /// LLM generation failed (after transient retries).
@@ -74,7 +72,6 @@ impl StopReason {
         match self {
             StopReason::NaturalCompletion => "natural-completion",
             StopReason::MaxRounds => "max-rounds",
-            StopReason::Stuck => "stuck",
             StopReason::AllDuplicate => "all-duplicate",
             StopReason::LlmError => "llm-error",
             StopReason::Cancelled => "cancelled",
@@ -168,7 +165,6 @@ mod intent;
 mod llm_runtime;
 mod memory;
 mod response_parser;
-pub(crate) mod stuck_detector;
 mod tool_loop;
 mod tool_prompt;
 pub(crate) mod tool_result; // pub(crate): hallucinated_tool_hint reused by chat streaming path

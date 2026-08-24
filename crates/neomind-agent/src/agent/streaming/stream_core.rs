@@ -28,8 +28,10 @@ use crate::agent::tool_parser::{
     is_degenerate_fence_only_output, parse_tool_calls, remove_tool_calls_from_response,
 };
 use crate::agent::types::{AgentEvent, AgentInternalState, AgentMessage, ToolCall};
-// StuckDetector is NOT used in the chat path — the user is watching and can
-// abort manually. It remains on the scheduled-agent path (tool_loop.rs).
+// No stuck-loop breaker in the chat path — the user is watching and can
+// abort manually. (The scheduled-agent path brakes via cross-round dedup →
+// AllDuplicate; StuckDetector was removed in 0.9.20 — it was unreachable
+// behind that same dedup.)
 use crate::error::{NeoMindError, Result};
 use crate::llm::LlmInterface;
 use neomind_core::llm::compaction::CompactionConfig;
@@ -339,10 +341,9 @@ pub async fn process_stream_events_with_safeguards(
         }
 
         // === MULTI-ROUND TOOL CALLING LOOP ===
-        // Chat path: no StuckDetector — the user is watching and can abort.
+        // Chat path: no loop breaker — the user is watching and can abort.
         // Safety nets: MAX_TOOL_ITERATIONS (30) + stream timeout (max_stream_duration).
-        // StuckDetector remains on the scheduled-agent path (tool_loop.rs) where
-        // no human is watching.
+        // (The scheduled-agent path brakes via cross-round dedup → AllDuplicate.)
         'multi_round_loop: loop {
             if tool_iteration_count > 0 {
                 tracing::debug!("Starting tool iteration round {}", tool_iteration_count + 1);
@@ -1111,7 +1112,7 @@ pub async fn process_stream_events_with_safeguards(
                 // circling at 9–15 consecutive similar commands). The hint is
                 // appended to this round's shell tool result, so the LLM sees it
                 // with the next prompt. Deliberately a HINT, not a stop — chat
-                // never force-aborts (by-design; StuckDetector is for scheduled
+                // never force-aborts (by-design; hard brakes are for scheduled
                 // agents only). Fires at streak 4 and every +4 after that.
                 if shell_ran_this_round {
                     if let Some((key, streak)) =

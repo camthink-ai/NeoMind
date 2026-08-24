@@ -11,7 +11,6 @@ use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 use neomind_storage::AiAgent;
 
 use super::super::AgentExecutor;
-use super::stuck_detector::{observation_fingerprint, StuckDetector, StuckEvent};
 use super::{
     compact, summarize_tool_output, truncate_to, DedupOutcome, RoundData, StopReason,
     ToolCallRecord, ToolLoopOutput,
@@ -78,9 +77,6 @@ impl AgentExecutor {
         // the same tool with the same arguments across rounds.
         let mut all_executed_signatures: HashSet<String> = HashSet::new();
         // Duplicate round detection: track tool signatures per round to detect loops.
-        // Rolling stuck-pattern detector (OpenHands-style, 5 patterns). Fed each
-        // round's (action, outcome) events and checked at the top of every round.
-        let mut stuck_detector = StuckDetector::new(StuckDetector::DEFAULT_WINDOW);
 
         // Get context window for token-aware compaction
         let context_window = llm_runtime.max_context_length();
@@ -98,25 +94,6 @@ impl AgentExecutor {
                 break;
             }
 
-            // Non-destructive stuck detection (OpenHands-style): inspect the
-            // rolling event window at the top of each round and break gracefully
-            // if a pathological pattern is observed — instead of burning the
-            // remaining round budget (or, previously, tripping the max_rounds
-            // extension hack).
-            if let Some(pattern) = stuck_detector.check() {
-                self.send_thinking(
-                    &agent.id,
-                    execution_id,
-                    step_num,
-                    &format!(
-                        "Stopping: detected stuck loop ({}), forcing text response",
-                        pattern.label()
-                    ),
-                )
-                .await;
-                stop_reason = StopReason::Stuck;
-                break;
-            }
             // Inject accumulated skill reference into system prompt once, after first tool round
             if round > 0 && !skill_reference.is_empty() && !skill_injected {
                 if let Some(sys_msg) = messages.first_mut() {
@@ -449,9 +426,9 @@ impl AgentExecutor {
                 }
             }
 
-            // Stuck-pattern detection now runs at the top of the loop via the
-            // StuckDetector (covers repeated action+obs, repeated errors,
-            // A-B-A-B ping-pong, monologue loops, and context-overflow loops).
+            // Stuck-pattern detection is not a separate mechanism here: the
+            // cross-round dedup above IS the loop brake (a fully-duplicated
+            // round trips AllDuplicate below and exits via the Phase 2 summary).
 
             tracing::debug!(
                 agent_id = %agent.id, round = round + 1, tool_count = tool_calls.len(),
@@ -640,23 +617,6 @@ impl AgentExecutor {
                     })
                     .collect()
             };
-
-            // Feed this round's (action, outcome) pairs into the stuck detector.
-            for (tc, result) in tool_calls.iter().zip(results.iter()) {
-                let sig = tool_signature(tc);
-                match &result.result {
-                    Ok(tool_output) if tool_output.success => {
-                        stuck_detector.push(StuckEvent::ActionObs {
-                            sig,
-                            content_key: observation_fingerprint(&tool_output.data),
-                        })
-                    }
-                    // Ok-but-failed (tool returned an error payload) OR Err: count
-                    // as an action error so error-retry loops trip the lower (3x)
-                    // threshold, matching the chat path's behavior.
-                    _ => stuck_detector.push(StuckEvent::ActionError { sig }),
-                }
-            }
 
             let round_tool_calls = build_round_tool_calls(&tool_calls, &results, tool_name_map);
 
