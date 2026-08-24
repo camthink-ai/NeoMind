@@ -98,6 +98,12 @@ pub async fn acknowledge_message(client: &ApiClient, id: &str) -> Result<CliResp
     ))
 }
 
+/// Delete a message by ID
+pub async fn delete_message(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    client.delete(&format!("/messages/{}", id)).await?;
+    Ok(CliResponse::success(json!({ "id": id }), "Message deleted"))
+}
+
 // ---- Message Channel operations ----
 
 /// List all message channels

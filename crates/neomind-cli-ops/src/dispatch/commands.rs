@@ -187,6 +187,14 @@ pub enum Command {
         #[command(subcommand)]
         system_cmd: SystemCommand,
     },
+    /// Backup / restore the full system configuration.
+    ///
+    /// Example: `neomind config export > backup.json`
+    /// Example: `neomind config import backup.json` (reads the file)
+    Config {
+        #[command(subcommand)]
+        config_cmd: ConfigCommand,
+    },
     /// Data connector management (MQTT, webhook, HTTP, etc.).
     Connector {
         #[command(subcommand)]
@@ -1722,6 +1730,14 @@ pub enum MessageCommand {
         #[arg(required = true)]
         id: String,
     },
+    /// Delete a message by ID.
+    ///
+    /// Example: `neomind message delete msg-001`
+    Delete {
+        /// Message ID.
+        #[arg(required = true)]
+        id: String,
+    },
     /// List message channels.
     ///
     /// Shows all notification channels (webhook, email, etc.) and their status.
@@ -2067,6 +2083,29 @@ pub enum SystemCommand {
     /// Example: `neomind system info`
     #[command(alias = "status")]
     Info {},
+}
+
+/// Config subcommands (backup / restore).
+#[derive(Subcommand, Debug)]
+pub enum ConfigCommand {
+    /// Export the full system configuration as JSON.
+    ///
+    /// Pipe to a file for backup: `neomind config export > backup.json`
+    Export {},
+    /// Import a configuration from a JSON file (overwrites matching domains).
+    ///
+    /// Example: `neomind config import backup.json`
+    Import {
+        /// Path to a JSON file produced by `config export`.
+        #[arg(required = true)]
+        file: String,
+    },
+    /// Validate a configuration JSON without applying it.
+    Validate {
+        /// Path to a JSON file to check.
+        #[arg(required = true)]
+        file: String,
+    },
 }
 
 /// System settings subcommands (timezone, data retention).

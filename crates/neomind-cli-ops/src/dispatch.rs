@@ -144,6 +144,12 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
+        Command::Config { config_cmd } => {
+            let (resp, _) = handlers::run_config_cmd(config_cmd)
+                .await
+                .map_err(|e| DispatchError::Api(e.to_string()))?;
+            Ok(resp)
+        }
         Command::Settings { settings_cmd } => {
             let (resp, _) = handlers::run_settings_cmd(settings_cmd)
                 .await

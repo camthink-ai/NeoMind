@@ -767,6 +767,7 @@ pub async fn run_message_cmd(cmd: MessageCommand) -> Result<(CliResponse, Output
             source,
         } => send_message(&client, &title, &body, &severity, source.as_deref()).await?,
         MessageCommand::Read { id } => acknowledge_message(&client, &id).await?,
+        MessageCommand::Delete { id } => delete_message(&client, &id).await?,
         MessageCommand::ChannelList => list_channels(&client).await?,
         MessageCommand::ChannelGet { name } => get_channel(&client, &name).await?,
         MessageCommand::ChannelTypes => list_channel_types(&client).await?,
@@ -946,6 +947,42 @@ pub async fn run_system_cmd(cmd: SystemCommand) -> Result<(CliResponse, OutputFo
         SystemCommand::Info {} => {
             let resp = crate::system::system_info(&client).await?;
             (resp, base_format)
+        }
+    };
+    Ok(result)
+}
+
+pub async fn run_config_cmd(
+    cmd: crate::dispatch::commands::ConfigCommand,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::dispatch::commands::ConfigCommand;
+    let client = crate::ApiClient::new();
+    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Human
+    };
+
+    let result = match cmd {
+        ConfigCommand::Export {} => (
+            crate::config_cmd::export_config(&client).await?,
+            base_format,
+        ),
+        ConfigCommand::Import { file } => {
+            let config_json = std::fs::read_to_string(&file)
+                .map_err(|e| anyhow::anyhow!("cannot read config file '{}': {}", file, e))?;
+            (
+                crate::config_cmd::import_config(&client, &config_json).await?,
+                base_format,
+            )
+        }
+        ConfigCommand::Validate { file } => {
+            let config_json = std::fs::read_to_string(&file)
+                .map_err(|e| anyhow::anyhow!("cannot read config file '{}': {}", file, e))?;
+            (
+                crate::config_cmd::validate_config(&client, &config_json).await?,
+                base_format,
+            )
         }
     };
     Ok(result)

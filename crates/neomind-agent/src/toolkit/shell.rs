@@ -1087,7 +1087,7 @@ impl ShellTool {
                 } else if action == "channel-update" {
                     Some("Usage: neomind message channel-update --name <N> --config '<JSON>'. To filter by severity: --config '{\"min_severity\":\"warning\"}'. To filter by source type: --config '{\"source_types\":[\"device\"]}'. channel-create uses --name flag; channel-delete/channel-test take name as positional arg.".to_string())
                 } else {
-                    Some("Available actions: list, get, send, read, channel-get, channel-type-schema, channel-create, channel-update, channel-delete, channel-test.".to_string())
+                    Some("Available actions: list, get, send, read, delete, channel-list, channel-get, channel-types, channel-type-schema, channel-create, channel-update, channel-delete, channel-test.".to_string())
                 }
             }
             "llm" => {
