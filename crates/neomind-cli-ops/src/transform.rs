@@ -121,7 +121,8 @@ pub async fn create_transform(
         .and_then(|a| a.get("metadata"))
         .and_then(|m| m.get("id"))
         .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
+        .unwrap_or("unknown")
+        .to_string();
     let meta = BuildMeta {
         r#type: "transform".to_string(),
         action: "create".to_string(),
@@ -131,7 +132,12 @@ pub async fn create_transform(
     };
     Ok(CliResponse::success_with_meta(
         data,
-        "Transform created",
+        // Transforms only run when data flows — teach where to look instead
+        // of leaving the workflow at "created, now what".
+        &format!(
+            "Transform created. It runs on new data points; check results with: neomind transform executions {}",
+            transform_id
+        ),
         meta,
     ))
 }

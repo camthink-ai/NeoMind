@@ -232,7 +232,19 @@ pub async fn create_agent(
         undo_command: format!("neomind agent delete {}", agent_id),
     };
 
-    Ok(CliResponse::success_with_meta(data, "Agent created", meta))
+    Ok(CliResponse::success_with_meta(
+        data,
+        // Agents are created Paused — they never run until activated. The
+        // follow-up command is the difference between a finished workflow
+        // and a "created it but nothing happened" failure mode (a top eval
+        // failure class), so the receipt teaches it explicitly.
+        &format!(
+            "Agent created (status: paused — it will NOT run until activated). \
+             Next: neomind agent control {} active",
+            agent_id
+        ),
+        meta,
+    ))
 }
 
 /// Update agent

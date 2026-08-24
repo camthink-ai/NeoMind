@@ -831,6 +831,32 @@ fn kill_process_by_pid(pid: Option<u32>) {
 /// has unbalanced quotes (so the caller can fall back to the subprocess and
 /// surface the real shell error message).
 fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, String> {
+    // Shell-construct guard: a pipe / redirection / command-substitution char
+    // OUTSIDE quotes means this is a real shell command line, not a pure
+    // `neomind` invocation — bail so the caller routes it to the subprocess
+    // path. (Previously such chars were silently swallowed as ordinary
+    // arguments and clap rejected the result: `neomind x | grep y` died as
+    // "unexpected argument '|'".)
+    {
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut prev = '\0';
+        for c in input.chars() {
+            match c {
+                '\'' if !in_double => in_single = !in_single,
+                '"' if !in_single => in_double = !in_double,
+                '|' | '<' | '>' | '`' if !in_single && !in_double => {
+                    return Err("shell construct outside quotes".to_string())
+                }
+                '$' if !in_single && !in_double && prev != '\\' => {
+                    return Err("shell construct outside quotes".to_string())
+                }
+                _ => {}
+            }
+            prev = c;
+        }
+    }
+
     let mut tokens: Vec<String> = Vec::new();
     let mut current = String::new();
     let mut in_single = false;
@@ -974,9 +1000,9 @@ impl ShellTool {
                 if is_not_found {
                     Some("Run 'neomind device list' to see available devices, then retry with a valid ID.".to_string())
                 } else if action == "create" && is_validation {
-                    Some("Required fields: --name, --type. Use 'neomind device types list' to see valid device types.".to_string())
+                    Some("Required flags: --name, --device-type, --adapter-type (mqtt|webhook). Use 'neomind device types list' to see built-in types.".to_string())
                 } else if action == "control" && is_not_found {
-                    Some("Device not found. Run 'neomind device list' first, then use 'neomind device control <ID> --command <CMD>'.".to_string())
+                    Some("Device not found. Run 'neomind device list' first, then 'neomind device control <ID> <COMMAND> --params {json}' (COMMAND is positional, not a flag).".to_string())
                 } else if (action == "history" || action == "latest") && combined.contains("metric")
                 {
                     Some("Don't guess metric names. Run 'neomind device list' to see all metric_fields per type, or 'neomind device get <ID>' for a specific device's actual field names.".to_string())
@@ -990,9 +1016,9 @@ impl ShellTool {
                 } else if action == "create" && is_validation {
                     Some("Required field: --name. Example: neomind dashboard create --name \"My Dashboard\"".to_string())
                 } else if action == "update" {
-                    Some("Use --components to update widgets. Run 'neomind widget list' to see available widget types, and 'neomind dashboard get <ID>' to see current layout.".to_string())
+                    Some("update --components full-replaces the widget array and requires --replace-all. For ONE widget use 'neomind dashboard update-component <ID> --component-id <CID> --set {json}' (deep-merge patch); to add widgets use 'add-components'; to remove use 'remove-components'.".to_string())
                 } else {
-                    Some("Available actions: list, get, create, update, delete, share".to_string())
+                    Some("Available actions: list, get, create, update, add-components, update-component, remove-components, delete, share.".to_string())
                 }
             }
             "rule" => {
@@ -1014,7 +1040,7 @@ impl ShellTool {
                 } else if action == "create" && is_validation {
                     Some("Required fields: --name, --prompt, --schedule-type (event|interval|cron). Example: neomind agent create --name \"monitor\" --prompt \"Check devices\" --schedule-type event".to_string())
                 } else if action == "control" && is_validation {
-                    Some("Valid status values: active, paused. Example: neomind agent control <ID> --action active".to_string())
+                    Some("Status is positional: neomind agent control <ID> <active|paused>. Example: neomind agent control abc123 active".to_string())
                 } else {
                     Some("Available actions: list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message".to_string())
                 }
@@ -1034,9 +1060,9 @@ impl ShellTool {
                 if is_not_found {
                     Some("Run 'neomind transform list' to see available transforms.".to_string())
                 } else if action == "create" && is_validation {
-                    Some("Required fields: --name, --code (JavaScript function). Use --scope to set input scope. Example: neomind transform create --name \"celsius\" --code \"return value * 9/5 + 32\" --scope global".to_string())
+                    Some("Required flags: --name, --scope (global|device_type:X|device:ID), --code (JavaScript; the input value is bound to `input`). Example: neomind transform create --name \"celsius\" --code \"return input * 1.8 + 32\" --scope global".to_string())
                 } else {
-                    Some("Available actions: list, get, create, update, delete, test-code, metrics, data-sources".to_string())
+                    Some("Available actions: list, get, create, update, enable, disable, delete, test-code, metrics, data-sources, executions".to_string())
                 }
             }
             "widget" => {
@@ -1061,7 +1087,7 @@ impl ShellTool {
                 } else if action == "channel-update" {
                     Some("Usage: neomind message channel-update --name <N> --config '<JSON>'. To filter by severity: --config '{\"min_severity\":\"warning\"}'. To filter by source type: --config '{\"source_types\":[\"device\"]}'. channel-create uses --name flag; channel-delete/channel-test take name as positional arg.".to_string())
                 } else {
-                    Some("Available actions: list, get, send, read, channel-list, channel-get, channel-create, channel-update, channel-delete, channel-types, channel-test".to_string())
+                    Some("Available actions: list, get, send, read, channel-get, channel-type-schema, channel-create, channel-update, channel-delete, channel-test.".to_string())
                 }
             }
             "llm" => {
@@ -1073,7 +1099,9 @@ impl ShellTool {
                     Some("Available actions: list, get, models, create, update, delete, activate, test. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b".to_string())
                 }
             }
-            _ => None,
+            _ => Some(format!(
+                "Run 'neomind {domain} --help' for the exact actions and flags. Quick map — connector: list,get,create,test,enable,disable,subscribe. push: get,create,test,enable,disable,logs. settings: timezone,timezones,retention,cleanup. system: info."
+            )),
         }
     }
 

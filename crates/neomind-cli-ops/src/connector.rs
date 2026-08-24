@@ -102,12 +102,16 @@ pub async fn create_connector(
         .unwrap_or(false);
 
     let type_label = connector_type.unwrap_or("mqtt");
+    let name = name.to_string();
     let msg = if connected {
-        format!("{} connector created and connected", type_label)
+        format!(
+            "{} connector created and connected. Verify anytime: neomind connector test {}",
+            type_label, name
+        )
     } else {
         format!(
-            "{} connector created (connection pending or failed)",
-            type_label
+            "{} connector created (connection pending or failed). Next: neomind connector test {}",
+            type_label, name
         )
     };
 
