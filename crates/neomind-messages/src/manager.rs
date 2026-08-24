@@ -160,6 +160,31 @@ impl MessageManager {
                     let factory = crate::EmailChannelFactory;
                     factory.create(&config).map(Some)
                 }
+                #[cfg(feature = "telegram")]
+                "telegram" => {
+                    let factory = crate::TelegramChannelFactory;
+                    factory.create(&config).map(Some)
+                }
+                #[cfg(feature = "wecom")]
+                "wecom" => {
+                    let factory = crate::WeComChannelFactory;
+                    factory.create(&config).map(Some)
+                }
+                #[cfg(feature = "dingtalk")]
+                "dingtalk" => {
+                    let factory = crate::DingTalkChannelFactory;
+                    factory.create(&config).map(Some)
+                }
+                #[cfg(feature = "slack")]
+                "slack" => {
+                    let factory = crate::SlackChannelFactory;
+                    factory.create(&config).map(Some)
+                }
+                #[cfg(feature = "feishu")]
+                "feishu" => {
+                    let factory = crate::FeishuChannelFactory;
+                    factory.create(&config).map(Some)
+                }
                 _ => {
                     tracing::warn!("Unknown channel type: {}, skipping", stored.channel_type);
                     Ok(None)
@@ -833,6 +858,48 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (0.9.20): channels persisted via the create/update API must
+    /// come back on restart. `load_persisted_channels` used to only restore
+    /// webhook/email — telegram/wecom/dingtalk/slack/feishu configs sat in
+    /// storage while the registry came up empty, silently disabling alerts.
+    #[tokio::test]
+    async fn test_persisted_channels_restored_across_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let data_dir = dir.path().join("data");
+
+        {
+            let manager = MessageManager::with_storage(&data_dir).unwrap();
+            let registry = manager.channels.read().await;
+            let cases: Vec<(&str, serde_json::Value, Box<dyn crate::channels::ChannelFactory>)> = vec![
+                ("telegram", serde_json::json!({"token": "t", "chat_id": "c"}), Box::new(crate::TelegramChannelFactory)),
+                ("feishu", serde_json::json!({"hook_id": "h", "secret": "s"}), Box::new(crate::FeishuChannelFactory)),
+                ("webhook", serde_json::json!({"url": "https://example.com/wh"}), Box::new(crate::WebhookChannelFactory)),
+            ];
+            for (i, (ty, cfg, factory)) in cases.into_iter().enumerate() {
+                let _ = ty;
+                let mut with_name = cfg.clone();
+                with_name["name"] = serde_json::json!(format!("ch{i}"));
+                let channel = factory
+                    .create(&with_name)
+                    .expect("factory must accept the same config the create handler does");
+                registry
+                    .register_with_config(format!("ch{i}"), channel, cfg.clone())
+                    .await;
+            }
+        }
+
+        // Fresh manager over the same storage == process restart.
+        let manager = MessageManager::with_storage(&data_dir).unwrap();
+        manager.load_persisted_channels().await;
+        let registry = manager.channels.read().await;
+        for i in 0..3 {
+            assert!(
+                registry.get(&format!("ch{i}")).await.is_some(),
+                "persisted channel ch{i} must be restored after restart"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn test_manager_creation() {
