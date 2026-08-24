@@ -42,8 +42,12 @@ pub struct ChatRequest {
     #[serde(rename = "backendId")]
     pub backend_id: Option<String>,
     /// Optional skill IDs pinned by the user for this session.
+    /// `None` (field omitted) = leave pins untouched; `Some(vec![])` =
+    /// explicit clear (user unpinned everything). The old `Vec` type made
+    /// "omitted" and "cleared" indistinguishable, so unpinning all skills
+    /// silently kept injecting the stale pins every turn.
     #[serde(rename = "selectedSkills", default)]
-    pub selected_skills: Vec<String>,
+    pub selected_skills: Option<Vec<String>>,
     /// Optional page context for first message (short neutral description of current page).
     #[serde(rename = "pageContext", default)]
     pub page_context: Option<String>,

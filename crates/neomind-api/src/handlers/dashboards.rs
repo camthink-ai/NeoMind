@@ -1242,7 +1242,14 @@ pub async fn share_proxy_handler(
     } else {
         format!("?{}", query)
     };
-    let target_url = format!("http://127.0.0.1:9375/api/{}{}", path_str, qs);
+    // Bind port is configurable (NEOMIND_PORT / config) — a hardcoded 9375
+    // broke every shared-dashboard data proxy on non-default-port installs.
+    let target_url = format!(
+        "http://127.0.0.1:{}/api/{}{}",
+        crate::server::http_bind_port(),
+        path_str,
+        qs
+    );
 
     // 6. Forward via reqwest (internal loopback, skips auth middleware)
     let client = reqwest::Client::new();

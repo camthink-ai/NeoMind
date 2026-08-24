@@ -126,7 +126,7 @@ mod tests {
             session_id: None,
             images: None,
             backend_id: None,
-            selected_skills: vec![],
+            selected_skills: None,
             page_context: None,
             session_config: None,
         };
@@ -165,7 +165,7 @@ mod tests {
             session_id: None,
             images: None,
             backend_id: None,
-            selected_skills: vec![],
+            selected_skills: None,
             page_context: None,
             session_config: None,
         };
@@ -221,7 +221,7 @@ mod tests {
             session_id: Some("session123".to_string()),
             images: None,
             backend_id: None,
-            selected_skills: vec![],
+            selected_skills: None,
             page_context: None,
             session_config: None,
         };

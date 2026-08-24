@@ -8,8 +8,8 @@ use std::sync::{Arc, OnceLock};
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::runtime::{
     llama_asset_is_zip, llama_asset_name, llama_cudart_marker, llama_cudart_url,
-    llama_server_bin_name, llama_server_cache_dir, llama_server_url,
-    RuntimeVariant, LLAMA_CPP_VERSION,
+    llama_server_bin_name, llama_server_cache_dir, llama_server_url, RuntimeVariant,
+    LLAMA_CPP_VERSION,
 };
 
 /// Single-flight gate so concurrent ensure_llama_server calls don't download
@@ -66,7 +66,10 @@ pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
 
 /// Download (or reuse from cache) the runtime for ONE variant — the fallback
 /// chain lives in `ensure_llama_server` above.
-async fn ensure_runtime_variant(data_dir: &Path, variant: RuntimeVariant) -> Result<PathBuf, String> {
+async fn ensure_runtime_variant(
+    data_dir: &Path,
+    variant: RuntimeVariant,
+) -> Result<PathBuf, String> {
     let cache_dir = llama_server_cache_dir(data_dir, variant);
     // A CUDA cache is only complete with its cudart DLLs — a partial one
     // (crashed between the two downloads) must not short-circuit.
@@ -124,7 +127,8 @@ async fn ensure_runtime_variant(data_dir: &Path, variant: RuntimeVariant) -> Res
                         // back to CPU, instead of dying at first spawn.
                         match exec_check(&bin).await {
                             Ok(()) => {
-                                let _ = std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
+                                let _ =
+                                    std::fs::write(cache_dir.join(llama_cudart_marker()), b"ok");
                                 Ok(bin)
                             }
                             Err(e) => Err(format!("CUDA runtime exec check failed: {e}")),
@@ -212,7 +216,10 @@ async fn exec_check(bin: &Path) -> Result<(), String> {
         Ok(Ok(status)) => Err(format!(
             "exit {}: {}",
             status.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&status.stderr).chars().take(200).collect::<String>()
+            String::from_utf8_lossy(&status.stderr)
+                .chars()
+                .take(200)
+                .collect::<String>()
         )),
         Ok(Err(e)) => Err(format!("spawn: {e}")),
         Err(_) => Err("--version timed out after 10s".to_string()),

@@ -1395,17 +1395,20 @@ impl SessionManager {
         message: &str,
         backend_id: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        self.process_message_events_with_backend_and_skills(session_id, message, backend_id, &[])
+        self.process_message_events_with_backend_and_skills(session_id, message, backend_id, None)
             .await
     }
 
     /// Process a message in a session with event streaming, optional backend override, and pinned skills.
+    ///
+    /// `selected_skills`: `None` = leave the session's pins untouched;
+    /// `Some(list)` = replace the pins (an empty list clears them).
     pub async fn process_message_events_with_backend_and_skills(
         &self,
         session_id: &str,
         message: &str,
         backend_id: Option<&str>,
-        selected_skills: &[String],
+        selected_skills: Option<&[String]>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         // If a specific backend is requested, configure the agent with it
         if let Some(backend) = backend_id {
@@ -1423,9 +1426,9 @@ impl SessionManager {
         }
 
         // Update pinned skills on the agent if provided
-        if !selected_skills.is_empty() {
+        if let Some(skills) = selected_skills {
             if let Ok(agent) = self.get_session(session_id).await {
-                agent.set_pinned_skills(selected_skills.to_vec()).await;
+                agent.set_pinned_skills(skills.to_vec()).await;
             }
         }
 

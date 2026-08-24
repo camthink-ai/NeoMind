@@ -3401,7 +3401,7 @@ impl neomind_messages::im_bridge::AgentRunner for SessionManagerAgentRunner {
         // selected_skills=&[] → no pinned skills for this turn.
         let stream = self
             .sm
-            .process_message_events_with_backend_and_skills(session_id, text, None, &[])
+            .process_message_events_with_backend_and_skills(session_id, text, None, None)
             .await?;
         let mut s = stream;
         let mut out = String::new();

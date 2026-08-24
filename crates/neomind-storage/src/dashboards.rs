@@ -398,9 +398,17 @@ impl DashboardStore {
             let mut table = write_txn.open_table(DASHBOARDS_TABLE)?;
             table.remove(id)?;
 
-            // Also remove from default table if it was the default
+            // Drop the default pointer ONLY if it pointed at the deleted
+            // dashboard — deleting any non-default board used to clear the
+            // global default too, silently losing the user's default page.
             let mut default_table = write_txn.open_table(DEFAULT_TABLE)?;
-            let _ = default_table.remove("default");
+            let is_default = default_table
+                .get("default")?
+                .map(|v| v.value() == id)
+                .unwrap_or(false);
+            if is_default {
+                let _ = default_table.remove("default");
+            }
         }
 
         write_txn.commit()?;

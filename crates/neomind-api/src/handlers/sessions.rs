@@ -688,7 +688,7 @@ pub async fn chat_handler(
         session_id = %id,
         message_len = req.message.chars().count(),
         backend_id = ?req.backend_id,
-        pinned_skills = req.selected_skills.len(),
+        pinned_skills = req.selected_skills.as_ref().map_or(0, |s| s.len()),
         "chat_handler: HTTP chat via multi-round event stream"
     );
 
@@ -717,9 +717,10 @@ pub async fn chat_handler(
     let stream_result = if has_images {
         // The multimodal stream variant has no selected_skills param; set pinned
         // skills on the agent directly first (same as the WS multimodal path).
-        if !req.selected_skills.is_empty() {
+        // Some(empty) clears — None leaves the pins untouched.
+        if let Some(skills) = &req.selected_skills {
             if let Ok(agent) = state.agents.session_manager.get_session(&id).await {
-                agent.set_pinned_skills(req.selected_skills.clone()).await;
+                agent.set_pinned_skills(skills.clone()).await;
             }
         }
         let images: Vec<String> = req
@@ -747,7 +748,7 @@ pub async fn chat_handler(
                 &id,
                 &final_message,
                 req.backend_id.as_deref(),
-                &req.selected_skills,
+                req.selected_skills.as_deref(),
             )
             .await
     };
@@ -1219,8 +1220,8 @@ async fn handle_ws_socket(
                                         // (now handled inside Agent::process to avoid cross-session races)
 
                                         // Apply pinned skills for multimodal messages
-                                        let selected_skills = chat_req.selected_skills.clone();
-                                        if !selected_skills.is_empty() {
+                                        // Some(empty) clears — None leaves pins untouched.
+                                        if let Some(selected_skills) = chat_req.selected_skills.clone() {
                                             if let Ok(agent) = task_state.agents.session_manager.get_session(&task_session_id).await {
                                                 agent.set_pinned_skills(selected_skills).await;
                                             }
@@ -1323,7 +1324,7 @@ async fn handle_ws_socket(
                                                         &task_session_id,
                                                         &task_final_message,
                                                         task_backend_id.as_deref(),
-                                                        &task_skills,
+                                                        task_skills.as_deref(),
                                                     )
                                                     .await
                                                 {

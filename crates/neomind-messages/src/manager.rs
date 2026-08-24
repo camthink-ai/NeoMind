@@ -871,10 +871,26 @@ mod tests {
         {
             let manager = MessageManager::with_storage(&data_dir).unwrap();
             let registry = manager.channels.read().await;
-            let cases: Vec<(&str, serde_json::Value, Box<dyn crate::channels::ChannelFactory>)> = vec![
-                ("telegram", serde_json::json!({"token": "t", "chat_id": "c"}), Box::new(crate::TelegramChannelFactory)),
-                ("feishu", serde_json::json!({"hook_id": "h", "secret": "s"}), Box::new(crate::FeishuChannelFactory)),
-                ("webhook", serde_json::json!({"url": "https://example.com/wh"}), Box::new(crate::WebhookChannelFactory)),
+            let cases: Vec<(
+                &str,
+                serde_json::Value,
+                Box<dyn crate::channels::ChannelFactory>,
+            )> = vec![
+                (
+                    "telegram",
+                    serde_json::json!({"token": "t", "chat_id": "c"}),
+                    Box::new(crate::TelegramChannelFactory),
+                ),
+                (
+                    "feishu",
+                    serde_json::json!({"hook_id": "h", "secret": "s"}),
+                    Box::new(crate::FeishuChannelFactory),
+                ),
+                (
+                    "webhook",
+                    serde_json::json!({"url": "https://example.com/wh"}),
+                    Box::new(crate::WebhookChannelFactory),
+                ),
             ];
             for (i, (ty, cfg, factory)) in cases.into_iter().enumerate() {
                 let _ = ty;

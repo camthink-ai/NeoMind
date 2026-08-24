@@ -331,13 +331,18 @@ impl ChannelRegistry {
             state.configs.insert(name.clone(), config.clone());
         }
 
-        // Persist to storage
+        // Persist to storage. The filter is NOT this function's to manage —
+        // overwriting it with the default wiped a user-configured
+        // ChannelFilter whenever the channel was re-registered (e.g. via the
+        // update handler), silently routing the channel back to accept-all.
+        // Preserve the stored filter; only a fresh channel starts at default.
+        let existing_filter = self.get_filter(&name).await;
         let stored = StoredChannelConfig {
             name: name.clone(),
             channel_type,
             config,
             enabled,
-            filter: ChannelFilter::default(),
+            filter: existing_filter,
         };
         if let Err(e) = self.save_channel(&stored).await {
             tracing::warn!("Failed to persist channel config: {}", e);
