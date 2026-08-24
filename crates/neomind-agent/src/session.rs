@@ -812,9 +812,14 @@ impl SessionManager {
         } else if let Some(suffix) = opts.system_prompt_suffix {
             if !suffix.trim().is_empty() {
                 // Append on top of the platform default — page-scoped focus
-                // without losing the base agent instructions.
-                cfg.system_prompt =
-                    format!("{}\n\n{}", cfg.system_prompt.trim_end(), suffix.trim());
+                // without losing the base agent instructions. Both slots get
+                // it: `system_prompt` feeds the non-streaming paths, the new
+                // dedicated suffix field feeds the streaming chat builder
+                // (which builds its own slim-template prompt and never read
+                // `system_prompt` — the suffix used to die there silently).
+                let trimmed = suffix.trim().to_string();
+                cfg.system_prompt = format!("{}\n\n{}", cfg.system_prompt.trim_end(), trimmed);
+                cfg.system_prompt_suffix = Some(trimmed);
             }
         }
         if let Some(t) = opts.temperature {
@@ -1886,6 +1891,30 @@ mod tests {
         assert!(sp.ends_with("## Current page focus: devices"));
         // And the merge must not mutate the manager default
         assert_eq!(manager.default_config.system_prompt, default_prompt);
+    }
+
+    #[tokio::test]
+    async fn test_suffix_survives_into_streaming_chat_prompt() {
+        // Regression (0.9.20): the streaming chat path builds its own
+        // slim-template prompt and never read `system_prompt` — the
+        // page-scoped suffix silently died in tool-enabled sessions. The
+        // dedicated suffix slot must be appended by the streaming builder.
+        let manager = create_temp_manager();
+        let opts = CreateSessionOptions {
+            system_prompt_suffix: Some("## Current page focus: dashboards".to_string()),
+            ..Default::default()
+        };
+        let session_id = manager.create_session_with_options(opts).await.unwrap();
+        let agent = manager.get_session(&session_id).await.unwrap();
+
+        let streaming_prompt = agent
+            .llm_interface()
+            .build_system_prompt_with_tools(Some("list my boards"))
+            .await;
+        assert!(
+            streaming_prompt.contains("## Current page focus: dashboards"),
+            "streaming chat prompt must carry the session suffix"
+        );
     }
 
     #[tokio::test]

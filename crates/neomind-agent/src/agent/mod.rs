@@ -769,8 +769,11 @@ impl Agent {
             concurrent_limit: 3,    // Default to 3 concurrent LLM requests
         };
 
-        let llm_interface =
-            Arc::new(LlmInterface::new(llm_config).with_system_prompt(&config.system_prompt));
+        let llm_interface = Arc::new(
+            LlmInterface::new(llm_config)
+                .with_system_prompt(&config.system_prompt)
+                .with_system_prompt_suffix(config.system_prompt_suffix.clone()),
+        );
 
         // Create semantic mapper with resource index
         let resource_index = Arc::new(RwLock::new(ResourceIndex::new()));

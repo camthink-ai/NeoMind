@@ -253,6 +253,11 @@ pub struct AgentConfig {
     pub name: String,
     /// System prompt
     pub system_prompt: String,
+    /// Session-scoped suffix appended to the STREAMING chat system prompt
+    /// (page-scoped focus). Kept separate from `system_prompt` so the
+    /// streaming builder can inject it without dragging in the legacy full
+    /// prompt that `system_prompt` carries for the non-streaming paths.
+    pub system_prompt_suffix: Option<String>,
     /// Maximum tokens in context
     pub max_context_tokens: usize,
     /// Temperature for LLM
@@ -305,6 +310,7 @@ impl Default for AgentConfig {
         Self {
             name: "NeoMind Agent".to_string(),
             system_prompt: default_system_prompt(),
+            system_prompt_suffix: None,
             // Load from environment variables with fallback to defaults
             max_context_tokens: agent_env_vars::max_context_tokens(),
             temperature: agent_env_vars::temperature(),

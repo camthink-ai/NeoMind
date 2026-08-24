@@ -245,6 +245,11 @@ pub struct LlmInterface {
     max_tokens: usize,
     /// Default system prompt (wrapped for dynamic updates).
     system_prompt: Arc<RwLock<String>>,
+    /// Session-scoped suffix appended by the streaming chat prompt builder
+    /// (page-scoped focus). Kept separate from `system_prompt` — the
+    /// streaming builder assembles its own slim-template prompt and only
+    /// injects this suffix, never the full legacy prompt.
+    system_prompt_suffix: Arc<RwLock<Option<String>>>,
     /// Tool definitions for function calling.
     tool_definitions: Arc<RwLock<Vec<neomind_core::llm::backend::ToolDefinition>>>,
     /// System prompt cache to avoid rebuilding on every request.
@@ -364,6 +369,7 @@ impl LlmInterface {
             top_k: config.top_k,
             max_tokens: config.max_tokens,
             system_prompt: Arc::new(RwLock::new("You are a helpful AI assistant.".to_string())),
+            system_prompt_suffix: Arc::new(RwLock::new(None)),
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
             system_prompt_cache: Arc::new(RwLock::new(None)),
             cached_tools_hash: Arc::new(RwLock::new(None)),
@@ -397,6 +403,7 @@ impl LlmInterface {
             top_k: config.top_k,
             max_tokens: config.max_tokens,
             system_prompt: Arc::new(RwLock::new("You are a helpful AI assistant.".to_string())),
+            system_prompt_suffix: Arc::new(RwLock::new(None)),
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
             system_prompt_cache: Arc::new(RwLock::new(None)),
             cached_tools_hash: Arc::new(RwLock::new(None)),
@@ -795,6 +802,23 @@ impl LlmInterface {
         self
     }
 
+    /// Set the streaming-path system prompt suffix (builder pattern).
+    pub fn with_system_prompt_suffix(mut self, suffix: Option<String>) -> Self {
+        self.system_prompt_suffix = Arc::new(RwLock::new(suffix));
+        self
+    }
+
+    /// Set the streaming-path system prompt suffix (for runtime changes).
+    /// Invalidates nothing — the suffix is appended after the cached base.
+    pub async fn set_system_prompt_suffix(&self, suffix: Option<String>) {
+        *self.system_prompt_suffix.write().await = suffix;
+    }
+
+    /// The streaming-path system prompt suffix, if set.
+    pub async fn get_system_prompt_suffix(&self) -> Option<String> {
+        self.system_prompt_suffix.read().await.clone()
+    }
+
     /// Set the system prompt (for dynamic updates).
     pub async fn set_system_prompt(&self, prompt: &str) {
         *self.system_prompt.write().await = prompt.to_string();
@@ -935,71 +959,37 @@ impl LlmInterface {
     /// Build the base system prompt with current time injected.
     /// This replaces the time placeholders with actual time values using the configured global timezone.
     pub async fn build_base_system_prompt_with_time(&self, timezone: Option<&str>) -> String {
-        use crate::prompts::{
-            CURRENT_TIME_PLACEHOLDER, LOCAL_TIME_PLACEHOLDER, TIMEZONE_PLACEHOLDER,
-        };
-
-        // Get the base prompt (which contains placeholders)
+        // Get the base prompt (which contains placeholders), then resolve them.
         let base_prompt = self.build_base_system_prompt().await;
-
-        // Calculate current times
-        let now = chrono::Utc::now();
-        let current_time_utc = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
-
-        // Use self.global_timezone first, then parameter, then default
-        let effective_timezone = self
-            .global_timezone
-            .read()
-            .await
-            .as_ref()
-            .cloned()
-            .or_else(|| timezone.map(|s| s.to_string()))
-            .unwrap_or_else(|| "Asia/Shanghai".to_string());
-
-        // Parse timezone to get local time
-        let tz = effective_timezone
-            .parse::<chrono_tz::Tz>()
-            .unwrap_or(chrono_tz::Tz::Asia__Shanghai); // Default to Shanghai on error
-
-        let local_time = now
-            .with_timezone(&tz)
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string();
-
-        // Get additional time context for better LLM understanding
-        let day_of_week = now.with_timezone(&tz).format("%A").to_string();
-        let date_str = now.with_timezone(&tz).format("%B %d, %Y").to_string();
-
-        // Get time period description (morning, afternoon, evening, night)
-        let hour_str = now.with_timezone(&tz).format("%H").to_string();
-        let hour: u32 = hour_str.parse().unwrap_or(12);
-        let time_period = match hour {
-            5..=11 => "Morning",
-            12..=13 => "Noon",
-            14..=17 => "Afternoon",
-            18..=22 => "Evening",
-            _ => "Night",
-        };
-
-        // Build enhanced time context
-        let local_time_with_context = format!(
-            "{} {} ({}{})",
-            date_str, local_time, time_period, day_of_week
-        );
-
-        // Replace placeholders
-        base_prompt
-            .replace(CURRENT_TIME_PLACEHOLDER, &current_time_utc)
-            .replace(LOCAL_TIME_PLACEHOLDER, &local_time_with_context)
-            .replace(TIMEZONE_PLACEHOLDER, &effective_timezone)
+        self.inject_time_placeholders(base_prompt, timezone).await
     }
 
     /// Build system prompt with tool descriptions.
     /// Uses enhanced prompts from prompts module for better conversation quality.
     /// Uses cached base prompt with time placeholders replaced and adds user-specific parts.
-    async fn build_system_prompt_with_tools(&self, user_message: Option<&str>) -> String {
-        // Get base prompt with time placeholders replaced
-        let mut prompt = self.build_base_system_prompt_with_time(None).await;
+    pub(crate) async fn build_system_prompt_with_tools(
+        &self,
+        user_message: Option<&str>,
+    ) -> String {
+        // Start from the RAW base prompt (time placeholders still intact).
+        // Time is injected LAST, after all variable sections are appended —
+        // the template deliberately places the time block near the end for
+        // KV-prefix caching, and appending sections after a resolved time
+        // block used to re-prefill pinned skills / memory / suffix on every
+        // time change.
+        let mut prompt = self.build_base_system_prompt().await;
+
+        // Session-scoped suffix (page-scoped focus). This is the ONLY place
+        // the streaming path honors it — `system_prompt` (the legacy full
+        // prompt) is intentionally not appended here to avoid duplicating
+        // tools/capability sections the slim template already carries.
+        if let Some(suffix) = self.system_prompt_suffix.read().await.clone() {
+            if !suffix.trim().is_empty() {
+                prompt.push_str("\n\n");
+                prompt.push_str(suffix.trim());
+                prompt.push('\n');
+            }
+        }
 
         // Inject pinned skills (user-selected) as full guides
         let pinned = self.pinned_skills.read().await.clone();
@@ -1070,9 +1060,70 @@ impl LlmInterface {
             }
         }
 
-        // Note: Tools are already included in base_prompt from build_base_system_prompt()
-        // No need to duplicate them here unless we want to do user-specific filtering
+        // Inject time LAST (see the comment at the top of this builder) —
+        // everything above the time block is now prefix-cache stable.
+        self.inject_time_placeholders(prompt, None).await
+    }
+
+    /// Replace the base prompt's time placeholders with current values.
+    /// Extracted so the streaming builder can defer time injection until all
+    /// variable sections are appended (KV-prefix-cache friendly) while the
+    /// other callers keep the up-front behavior.
+    async fn inject_time_placeholders(&self, prompt: String, timezone: Option<&str>) -> String {
+        use crate::prompts::{
+            CURRENT_TIME_PLACEHOLDER, LOCAL_TIME_PLACEHOLDER, TIMEZONE_PLACEHOLDER,
+        };
+
+        // Calculate current times
+        let now = chrono::Utc::now();
+        let current_time_utc = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
+
+        // Use self.global_timezone first, then parameter, then default
+        let effective_timezone = self
+            .global_timezone
+            .read()
+            .await
+            .as_ref()
+            .cloned()
+            .or_else(|| timezone.map(|s| s.to_string()))
+            .unwrap_or_else(|| "Asia/Shanghai".to_string());
+
+        // Parse timezone to get local time
+        let tz = effective_timezone
+            .parse::<chrono_tz::Tz>()
+            .unwrap_or(chrono_tz::Tz::Asia__Shanghai); // Default to Shanghai on error
+
+        let local_time = now
+            .with_timezone(&tz)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        // Get additional time context for better LLM understanding
+        let day_of_week = now.with_timezone(&tz).format("%A").to_string();
+        let date_str = now.with_timezone(&tz).format("%B %d, %Y").to_string();
+
+        // Get time period description (morning, afternoon, evening, night)
+        let hour_str = now.with_timezone(&tz).format("%H").to_string();
+        let hour: u32 = hour_str.parse().unwrap_or(12);
+        let time_period = match hour {
+            5..=11 => "Morning",
+            12..=13 => "Noon",
+            14..=17 => "Afternoon",
+            18..=22 => "Evening",
+            _ => "Night",
+        };
+
+        // Build enhanced time context
+        let local_time_with_context = format!(
+            "{} {} ({}{})",
+            date_str, local_time, time_period, day_of_week
+        );
+
+        // Replace placeholders
         prompt
+            .replace(CURRENT_TIME_PLACEHOLDER, &current_time_utc)
+            .replace(LOCAL_TIME_PLACEHOLDER, &local_time_with_context)
+            .replace(TIMEZONE_PLACEHOLDER, &effective_timezone)
     }
 
     /// Update the model name.
