@@ -1030,6 +1030,13 @@ export const api = {
    */
   getBuiltinModels: () =>
     fetchAPI<{ models: BuiltinModelDef[]; default_model_id: string }>('/builtin-llm/models'),
+
+  /** POST /api/builtin-llm/import-local — register a local GGUF into the catalog. */
+  importLocalModel: (path: string) =>
+    fetchAPI<{ success: boolean; model_id: string; installed: boolean }>(
+      '/builtin-llm/import-local',
+      { method: 'POST', body: JSON.stringify({ path }) },
+    ),
   /**
    * Delete the downloaded model files (stops the server first).
    * DELETE /api/builtin-llm/model

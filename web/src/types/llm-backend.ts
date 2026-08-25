@@ -113,6 +113,8 @@ export interface BuiltinModelDef {
   notes: string
   recommended: boolean
   installed: boolean
+  /** Locally imported GGUF (open catalog local channel). */
+  custom?: boolean
 }
 
 export interface BuiltinLlmStatus {

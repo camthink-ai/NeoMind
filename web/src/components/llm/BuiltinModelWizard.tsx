@@ -143,6 +143,9 @@ export function BuiltinModelWizard({
   const [status, setStatus] = useState<BuiltinLlmStatus | null>(null)
   const [models, setModels] = useState<BuiltinModelDef[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
+  const [importPath, setImportPath] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
+  const [importMsg, setImportMsg] = useState<string | null>(null)
   // Model the ready-phase tiles describe: the installed one, else selection.
   const shownModel = models.find((m) => m.id === (status?.model_id ?? selectedModelId))
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -369,6 +372,31 @@ export function BuiltinModelWizard({
     }
   }, [status, open, hasActiveBackend, handleActivate])
 
+  // Open-catalog local channel: register a local GGUF (path on the server's
+  // filesystem — the desktop app shares the host FS). On success the model
+  // is installed + spawned; refresh the picker and select it.
+  const handleImportLocal = async () => {
+    const path = importPath.trim()
+    if (!path || importBusy) return
+    setImportBusy(true)
+    setImportMsg(null)
+    try {
+      const r = await api.importLocalModel(path)
+      setImportMsg(
+        r.success
+          ? t('plugins:llm.importLocalOk', { id: r.model_id })
+          : t('plugins:llm.importLocalFailed'),
+      )
+      const m = await api.getBuiltinModels()
+      setModels(m.models)
+      if (r.success) setSelectedModelId(r.model_id)
+    } catch (e) {
+      setImportMsg(t('plugins:llm.importLocalFailed') + (String(e) ? ` — ${String(e)}` : ''))
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
   const handleStartDownload = async (modelId?: string) => {
     setErrorMsg(null)
     downloadFailedRef.current = false
@@ -488,7 +516,7 @@ export function BuiltinModelWizard({
                 })()}
                 {/* Model picker — one builtin model at a time; pick then
                     download (installed model is marked and pre-selected). */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                   {models.length === 0 && (
                     <div className="col-span-full text-xs text-muted-foreground text-center py-2">
                       {t('plugins:llm.builtinWizardNoModels')}
@@ -518,6 +546,11 @@ export function BuiltinModelWizard({
                               {t('common:llmGuide.recommended')}
                             </span>
                           )}
+                          {m.custom && (
+                            <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                              {t('plugins:llm.importLocalBadge')}
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
                           {modelNotes}
@@ -545,6 +578,32 @@ export function BuiltinModelWizard({
                       </button>
                     )
                   })}
+                  {/* Open-catalog local channel: import your own GGUF */}
+                  <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-3 text-left">
+                    <span className="text-sm font-medium text-foreground">
+                      {t('plugins:llm.importLocalCard')}
+                    </span>
+                    <input
+                      value={importPath}
+                      onChange={(e) => setImportPath(e.target.value)}
+                      placeholder={t('plugins:llm.importLocalPlaceholder')}
+                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full"
+                      disabled={importBusy || !importPath.trim()}
+                      onClick={handleImportLocal}
+                    >
+                      {importBusy
+                        ? t('plugins:llm.importLocalBusy')
+                        : t('plugins:llm.importLocalCta')}
+                    </Button>
+                    {importMsg && (
+                      <span className="text-[11px] text-muted-foreground leading-snug">{importMsg}</span>
+                    )}
+                  </div>
                 </div>
                 <Button
                   size="lg"
