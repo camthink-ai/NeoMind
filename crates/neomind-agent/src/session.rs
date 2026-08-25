@@ -1137,7 +1137,11 @@ Assistant: {ar}\n"
                 messages: vec![Message::new(MessageRole::User, Content::text(prompt))],
                 params: GenerationParams {
                     temperature: Some(0.2),
-                    max_tokens: Some(800),
+                    // LFM's integral thinking eats a big budget before content
+                    // (measured ~5700 chars of reasoning); 800 still ended
+                    // empty. 2000 leaves room for the tagged facts. Background
+                    // call, so the latency is invisible to the user.
+                    max_tokens: Some(2000),
                     thinking_enabled: Some(false), // gotcha #7 — no wasted thinking tokens
                     ..Default::default()
                 },
@@ -1160,16 +1164,24 @@ Assistant: {ar}\n"
                 let line = line.trim();
                 let rest = line.strip_prefix("- ").or_else(|| line.strip_prefix("• "));
                 let Some(rest) = rest else { continue };
-                if let Some(fact) = rest.strip_prefix("[user]") {
-                    let f = fact.trim().to_string();
-                    if !f.is_empty() {
-                        new_user.push(f);
+                let strip_tag = |tag: &str| -> Option<String> {
+                    let f = rest.strip_prefix(tag)?.trim().to_string();
+                    // The model sometimes copies the format word: "- [user] fact …"
+                    let f = f
+                        .strip_prefix("fact")
+                        .map(str::trim_start)
+                        .unwrap_or(&f)
+                        .to_string();
+                    if f.is_empty() {
+                        None
+                    } else {
+                        Some(f)
                     }
-                } else if let Some(fact) = rest.strip_prefix("[knowledge]") {
-                    let f = fact.trim().to_string();
-                    if !f.is_empty() {
-                        new_knowledge.push(f);
-                    }
+                };
+                if let Some(f) = strip_tag("[user]") {
+                    new_user.push(f);
+                } else if let Some(f) = strip_tag("[knowledge]") {
+                    new_knowledge.push(f);
                 }
             }
             if new_user.is_empty() && new_knowledge.is_empty() {
