@@ -380,6 +380,14 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 })?;
 
                 let mut registry_guard = self.registry.write().await;
+                if let Some(skill) = registry_guard.get(id) {
+                    if skill.metadata.origin == crate::skills::types::SkillOrigin::Builtin {
+                        return Ok(ToolOutput::error(format!(
+                            "Skill '{}' is builtin and read-only — copy it to a user skill instead",
+                            id
+                        )));
+                    }
+                }
                 match registry_guard.update_user_skill(id, content) {
                     Ok(()) => {
                         let skill = registry_guard.get(id)
@@ -404,6 +412,14 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 }
 
                 let mut registry_guard = self.registry.write().await;
+                if let Some(skill) = registry_guard.get(id) {
+                    if skill.metadata.origin == crate::skills::types::SkillOrigin::Builtin {
+                        return Ok(ToolOutput::error(format!(
+                            "Skill '{}' is builtin and read-only — copy it to a user skill instead",
+                            id
+                        )));
+                    }
+                }
                 match registry_guard.delete_skill(id) {
                     Ok(skill) => {
                         self.remove_file(id);

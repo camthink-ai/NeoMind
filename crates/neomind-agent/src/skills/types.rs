@@ -10,6 +10,16 @@ pub enum SkillOrigin {
     Builtin,
 }
 
+impl SkillOrigin {
+    /// Stable serialized form for API responses / filters.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SkillOrigin::User => "user",
+            SkillOrigin::Builtin => "builtin",
+        }
+    }
+}
+
 /// Category of a skill for grouping.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

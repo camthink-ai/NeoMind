@@ -13,6 +13,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use neomind_agent::skills::types::SkillOrigin;
 use neomind_agent::skills::{match_skills, Skill, SkillCategory, SkillRegistry, TokenBudgetConfig};
 
 use super::ServerState;
@@ -109,7 +110,7 @@ impl From<&Skill> for SkillSummary {
                 SkillCategory::General => "general",
             }
             .to_string(),
-            origin: "user".to_string(),
+            origin: skill.metadata.origin.as_str().to_string(),
             priority: skill.metadata.priority,
             token_budget: skill.metadata.token_budget,
             keywords: skill.metadata.triggers.keywords.clone(),
@@ -153,7 +154,7 @@ impl From<&Skill> for SkillDetail {
                 SkillCategory::General => "general",
             }
             .to_string(),
-            origin: "user".to_string(),
+            origin: skill.metadata.origin.as_str().to_string(),
             priority: skill.metadata.priority,
             token_budget: skill.metadata.token_budget,
             keywords: skill.metadata.triggers.keywords.clone(),
@@ -318,6 +319,18 @@ pub async fn update_skill_handler(
     let registry = state.agents.session_manager.skill_registry();
     let mut guard = registry.write().await;
 
+    // Builtin skills are read-only — a shadow overwrite here would persist
+    // forever and mask future builtin content shipped with NeoMind upgrades.
+    if let Some(skill) = guard.get(&id) {
+        if skill.metadata.origin == SkillOrigin::Builtin {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": format!("Skill '{}' is builtin and read-only", id) })),
+            )
+                .into_response();
+        }
+    }
+
     match guard.update_user_skill(&id, &req.content) {
         Ok(()) => {
             if let Err(e) = persist_skill(&state.data_dir, &id, &req.content) {
@@ -350,6 +363,17 @@ pub async fn delete_skill_handler(
 ) -> Response {
     let registry = state.agents.session_manager.skill_registry();
     let mut guard = registry.write().await;
+
+    // Builtin skills are read-only (see update handler).
+    if let Some(skill) = guard.get(&id) {
+        if skill.metadata.origin == SkillOrigin::Builtin {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({ "error": format!("Skill '{}' is builtin and read-only", id) })),
+            )
+                .into_response();
+        }
+    }
 
     match guard.delete_skill(&id) {
         Ok(_) => {
