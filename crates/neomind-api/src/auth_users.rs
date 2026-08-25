@@ -471,6 +471,66 @@ impl AuthUserState {
     }
 
     /// Remove one session row (write-through on logout). Best-effort.
+    /// Delete every persisted session belonging to `username` (sweeps the
+    /// sessions table directly — covers rows not present in memory). Used by
+    /// delete_user / change_password so a deleted or re-credentialed user's
+    /// JWTs die immediately instead of surviving up to `session_duration`.
+    fn delete_user_sessions_from_db(path: &str, username: &str) {
+        if path == ":memory:" || !std::path::Path::new(path).exists() {
+            return;
+        }
+        let Ok(db) = Database::open(path) else {
+            return;
+        };
+        // Collect matching keys (read), then delete (write) — redb cannot
+        // mutate while iterating the same table.
+        let mut keys_to_remove: Vec<String> = Vec::new();
+        if let Ok(read_txn) = db.begin_read() {
+            if let Ok(table) = read_txn.open_table(SESSIONS_TABLE) {
+                if let Ok(iter) = table.iter() {
+                    for item in iter.flatten() {
+                        let (k, v) = item;
+                        let ok_match = bincode::deserialize::<SessionInfo>(v.value())
+                            .map(|info| info.username == username)
+                            .unwrap_or(false);
+                        if ok_match {
+                            keys_to_remove.push(k.value().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        if keys_to_remove.is_empty() {
+            return;
+        }
+        if let Ok(w) = db.begin_write() {
+            if let Ok(mut t) = w.open_table(SESSIONS_TABLE) {
+                for k in &keys_to_remove {
+                    let _ = t.remove(k.as_str());
+                }
+            }
+            let _ = w.commit();
+        }
+    }
+
+    /// Revoke all of `username`'s sessions — in-memory map AND persisted
+    /// rows. Called on user deletion and password change.
+    fn revoke_user_sessions(&self, username: &str) {
+        let keys: Vec<String> = {
+            let sessions = self.sessions.read().unwrap();
+            sessions
+                .iter()
+                .filter(|(_, info)| info.username == username)
+                .map(|(k, _)| k.clone())
+                .collect()
+        };
+        if !keys.is_empty() {
+            self.sessions.write().unwrap().retain(|_, info| info.username != username);
+        }
+        Self::delete_user_sessions_from_db(self.db_path, username);
+        info!(category = "auth", username = username, count = keys.len(), "Revoked user sessions");
+    }
+
     fn delete_session_from_db(path: &str, key: &str) {
         if path == ":memory:" || !std::path::Path::new(path).exists() {
             return;
@@ -876,6 +936,10 @@ impl AuthUserState {
             )));
         }
         users.remove(username);
+        drop(users);
+        // The user is gone — their JWTs must die with them, not survive in
+        // the session whitelist for up to `session_duration` (7 days).
+        self.revoke_user_sessions(username);
         Ok(())
     }
 
@@ -913,6 +977,12 @@ impl AuthUserState {
             )));
         }
         user.password_hash = new_hash;
+        drop(users);
+
+        // Password changed — invalidate all existing sessions for this user.
+        // Tokens minted before the change must not remain valid (a leaked
+        // token from the old-password era otherwise survives the rotation).
+        self.revoke_user_sessions(username);
 
         info!(category = "auth", username = username, "Password changed");
 
@@ -1097,6 +1167,45 @@ mod tests {
         let response = auth.login("testuser", "password123").await.unwrap();
         assert_eq!(response.user.username, "testuser");
         assert!(!response.token.is_empty());
+    }
+
+    /// Password change must revoke the user's sessions — a token minted before
+    /// the change surviving the rotation would keep a leaked token alive.
+    #[tokio::test]
+    async fn test_change_password_revokes_sessions() {
+        let (auth, _) = make_test_auth("pw_revoke");
+        auth.register("alice", "oldpass", UserRole::User).await.unwrap();
+        let token = auth.login("alice", "oldpass").await.unwrap().token;
+        assert!(auth.validate_token(&token).is_ok());
+
+        auth.change_password("alice", "oldpass", "newpass123")
+            .await
+            .unwrap();
+
+        assert!(
+            matches!(auth.validate_token(&token), Err(AuthError::SessionRevoked)),
+            "old-era token must be dead after password change"
+        );
+        // The new password works and issues a fresh valid token.
+        let fresh = auth.login("alice", "newpass123").await.unwrap().token;
+        assert!(auth.validate_token(&fresh).is_ok());
+    }
+
+    /// Deleting a user must kill their sessions immediately — not leave them
+    /// valid in the whitelist for up to `session_duration`.
+    #[tokio::test]
+    async fn test_delete_user_revokes_sessions() {
+        let (auth, _) = make_test_auth("del_revoke");
+        auth.register("bob", "pass123", UserRole::User).await.unwrap();
+        let token = auth.login("bob", "pass123").await.unwrap().token;
+        assert!(auth.validate_token(&token).is_ok());
+
+        auth.delete_user("bob").await.unwrap();
+
+        assert!(
+            matches!(auth.validate_token(&token), Err(AuthError::SessionRevoked)),
+            "deleted user's token must be revoked"
+        );
     }
 
     #[tokio::test]

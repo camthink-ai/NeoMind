@@ -53,6 +53,9 @@ Jetson hosts (Orin, sm_87) auto-detect via `/etc/nv_tegra-release` and fetch OUR
 ### Four one-liners that were each silent failures
 share-proxy hardcoded port 127.0.0.1:9375 (non-default-port installs served broken shared dashboards — now resolves the real bind port); deleting ANY dashboard cleared the global default pointer (only the deleted one should); updating a channel wiped its routing filter (register persisted `ChannelFilter::default()` over the user's); `selectedSkills: []` couldn't clear pinned skills (the guard treated "explicitly emptied" as "not provided").
 
+### Security hygiene
+- **Deleting a user or changing a password now revokes that user's sessions immediately** — both the in-memory whitelist and every persisted row in `sessions.redb`. Previously a JWT minted before the change kept working for up to `session_duration` (7 days): a leaked token survived a password rotation, and a deleted user's token kept authenticating. Logout-level revocation existed; user-level did not.
+
 ### Frontend
 - "Add your own API backend" opens the Cloud AI dialog (protocol chooser) — it built an inline OpenAI type and bypassed the protocol path.
 - The builtin model wizard gains the **import-your-own-GGUF card** + a `Custom` badge on imported models.
