@@ -401,7 +401,7 @@ pub async fn import_local_handler(
     // corrupting the curated entry and orphaning the real model. Reject.
     if BUILTIN_MODELS.iter().any(|d| d.manifest.id == id) {
         return Err(ErrorResponse::bad_request(format!(
-            "imported model id '{id}' collides with a built-in model — rename the GGUF's              general.name (or the file) so it doesn't map to a curated id"
+            "imported model id '{id}' collides with a built-in model — rename the GGUF's general.name (or the file) so it doesn't map to a curated id"
         )));
     }
     let file_name = format!("{id}.gguf");
@@ -434,14 +434,20 @@ pub async fn import_local_handler(
         kill_process_on_port(cfg.port);
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    let mut spawned_endpoint = None;
-    let mut spawn_attempted = false;
-    if let Ok(manager) = get_instance_manager() {
-        spawn_attempted = true;
-        match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await {
+    // The ctx the server will actually run with (env override wins) — compute
+    // from the header ONCE, before any rollback could delete the file.
+    let spawn_ctx = cfg.effective_ctx(import_default_ctx(&dest));
+    let report_ctx = meta
+        .context_length
+        .and_then(|c| u32::try_from(c).ok())
+        .map(|c| c.min(131_072))
+        .unwrap_or(32768);
+
+    let spawned_endpoint = match get_instance_manager() {
+        Ok(manager) => match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await
+        {
             Ok(endpoint) => {
                 tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
-                spawned_endpoint = Some(endpoint);
                 // Single-model invariant confirmed: the imported model is live.
                 // Remove every OTHER model dir (builtin + prior customs).
                 if let Ok(entries) = std::fs::read_dir(&mdir) {
@@ -454,27 +460,35 @@ pub async fn import_local_handler(
                         }
                     }
                 }
+                Some(endpoint)
             }
             Err(e) => {
-                tracing::warn!(error = %e, model = %id, "builtin llm: spawn after local import failed — rolling back the import, keeping the previous model intact");
-                // Rollback only on an ATTEMPTED-and-failed spawn. The copy may
-                // have overwritten a same-id prior import, so deleting the dir
-                // is correct there; but if the manager was unavailable we never
-                // touched spawn state — leave the (valid) import in place for
-                // a later /restart instead of deleting it.
+                // A failed spawn rolls the import back so the previous working
+                // model is untouched — and reports an ERROR, not a 200 with
+                // installed:true pointing at a deleted model.
+                tracing::warn!(error = %e, model = %id, "builtin llm: import spawn failed — rolling back, keeping the previous model intact");
                 let _ = std::fs::remove_dir_all(mdir.join(&id));
+                return Err(ErrorResponse::internal(format!(
+                    "imported model copied but could not start ({e}) — rolled back, previous model kept"
+                )));
             }
+        },
+        Err(e) => {
+            tracing::warn!(error = %e, model = %id, "builtin llm: import spawn skipped (instance manager unavailable) — rolling back");
+            let _ = std::fs::remove_dir_all(mdir.join(&id));
+            return Err(ErrorResponse::internal(format!(
+                "instance manager unavailable — import rolled back, retry once the server is fully started"
+            )));
         }
-    } else {
-        tracing::warn!(model = %id, "builtin llm: instance manager unavailable — import installed but not spawned (run /restart)");
-    }
+    };
 
     ok(json!({
         "success": true,
         "model_id": id,
         "name": meta.name.unwrap_or_else(|| id.clone()),
-        // Report the SAME capped ctx the spawn uses (imports cap at 128K).
-        "ctx": import_default_ctx(&dest),
+        // The ctx the server actually runs with (env override wins).
+        "ctx": spawn_ctx,
+        "report_ctx": report_ctx,
         "quant": manifest.quant,
         "arch": meta.architecture,
         "installed": true,

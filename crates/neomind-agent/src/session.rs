@@ -1130,7 +1130,7 @@ impl SessionManager {
         let session_id = session_id.to_string();
 
         tokio::spawn(async move {
-            use neomind_core::llm::backend::{GenerationParams, LlmInput, LlmRuntime as _};
+            use neomind_core::llm::backend::{GenerationParams, LlmInput};
             use neomind_core::message::{Content, Message, MessageRole};
 
             let prompt = format!(
