@@ -674,6 +674,10 @@ impl AgentExecutor {
                 let sig = tool_signature(tc);
                 if matches!(&result.result, Ok(o) if o.success) {
                     all_executed_signatures.insert(sig.clone());
+                    // A success resets the failure counter — only CONSECUTIVE
+                    // failures should blacklist (a flaky call that recovered is
+                    // not a persistently-broken one).
+                    failed_retries.remove(&sig);
                 } else {
                     // Failed call: allow a bounded number of retries, then
                     // blacklist so dedup skips it and AllDuplicate breaks the
