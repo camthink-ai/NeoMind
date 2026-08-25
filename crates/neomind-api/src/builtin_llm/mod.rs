@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod download;
+pub mod gguf;
 pub mod handlers;
 pub mod runtime;
 pub mod server;

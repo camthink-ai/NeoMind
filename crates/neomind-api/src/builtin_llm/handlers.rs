@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use axum::extract::{Query, State};
+use axum::extract::{Json, Query, State};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -183,6 +183,80 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
     })
 }
 
+/// Owned view of the currently installed builtin-LLM model — builtin registry
+/// OR a locally imported "custom" GGUF. Decouples the spawn/status paths from
+/// the static `BuiltinModelDef` (whose string fields are `&'static`), so a
+/// custom model participates in the single-model switch uniformly.
+pub struct InstalledModel {
+    pub manifest: ModelManifest,
+    pub display_name: String,
+    pub default_ctx: u32,
+    pub default_thinking: bool,
+    pub is_custom: bool,
+}
+
+/// The installed model: a builtin registry entry first, else the most recent
+/// locally-imported custom model (`data/models/<id>/manifest.json`, id not in
+/// the builtin registry).
+pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
+    if let Some((def, manifest)) = installed_model(mdir) {
+        return Some(InstalledModel {
+            manifest,
+            display_name: def.display_name.to_string(),
+            default_ctx: def.default_ctx,
+            default_thinking: def.default_thinking,
+            is_custom: false,
+        });
+    }
+    // Custom scan: newest manifest whose id isn't builtin.
+    let builtin_ids: std::collections::HashSet<&str> = BUILTIN_MODELS
+        .iter()
+        .map(|d| d.manifest.id.as_str())
+        .collect();
+    let mut best: Option<(ModelManifest, std::time::SystemTime)> = None;
+    if let Ok(entries) = std::fs::read_dir(mdir) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let Some(id) = dir.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if builtin_ids.contains(id) {
+                continue;
+            }
+            let Ok(Some(manifest)) = load_manifest(mdir, id) else {
+                continue;
+            };
+            if !manifest.model_path(mdir).exists() {
+                continue;
+            }
+            let mtime = std::fs::metadata(&dir)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            if best.as_ref().map(|(_, t)| mtime > *t).unwrap_or(true) {
+                best = Some((manifest, mtime));
+            }
+        }
+    }
+    let (manifest, _) = best?;
+    let name = manifest.id.clone();
+    // Context from the GGUF header (cheap read); fall back to 32K.
+    let ctx: u32 = super::gguf::parse_gguf(&manifest.model_path(mdir))
+        .ok()
+        .and_then(|m| m.context_length)
+        .and_then(|c| u32::try_from(c).ok())
+        .unwrap_or(32768);
+    Some(InstalledModel {
+        display_name: name,
+        default_ctx: ctx,
+        default_thinking: false,
+        is_custom: true,
+        manifest,
+    })
+}
+
 /// Download source for a def: HF repo + file + sha. Every model downloads its
 /// registry entry directly (LFM's entry is now QAD Q4_0, the default); the
 /// env `quant_override` swaps LFM to q8_0/q4_k_m for power users.
@@ -204,6 +278,133 @@ fn resolve_source(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> (String, String
         def.manifest.sha256.clone(),
         def.manifest.file_name.clone(),
     )
+}
+
+// ---------------------------------------------------------------------------
+// Local import (open catalog)
+// ---------------------------------------------------------------------------
+
+fn slugify(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.trim().to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if out.ends_with('-') {
+            continue;
+        } else {
+            out.push('-');
+        }
+    }
+    let out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "imported-model".to_string()
+    } else {
+        out
+    }
+}
+
+fn sha256_of_file(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|e| format!("open: {e}"))?;
+    let mut h = Sha256::new();
+    let mut buf = [0u8; 65536];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| format!("read: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// POST /api/builtin-llm/import-local — body `{ "path": "/abs/to/model.gguf" }`.
+///
+/// The open-catalog local channel: register an arbitrary GGUF into the builtin
+/// model directory (validated + header-parsed), then participate in the
+/// single-model switch exactly like a downloaded builtin — other model dirs are
+/// removed, the port freed, and the server respawned for the imported model.
+pub async fn import_local_handler(
+    State(state): State<crate::server::types::ServerState>,
+    Json(req): Json<serde_json::Value>,
+) -> HandlerResult<serde_json::Value> {
+    let path = req
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ErrorResponse::bad_request("field 'path' required"))?;
+    let src = std::path::Path::new(path);
+    if !src.is_file() {
+        return Err(ErrorResponse::bad_request(format!("not a file: {path}")));
+    }
+    let meta = super::gguf::parse_gguf(src)
+        .map_err(|e| ErrorResponse::bad_request(format!("not a valid GGUF: {e}")))?;
+
+    let mdir = models_dir(&state.data_dir);
+    let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
+    let id = slugify(meta.name.as_deref().unwrap_or(stem));
+    let file_name = format!("{id}.gguf");
+    let dest = mdir.join(&id).join(&file_name);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ErrorResponse::internal(format!("mkdir: {e}")))?;
+    }
+    std::fs::copy(src, &dest)
+        .map_err(|e| ErrorResponse::internal(format!("copy to {}: {e}", dest.display())))?;
+
+    let sha = sha256_of_file(&dest).map_err(|e| ErrorResponse::internal(format!("sha256: {e}")))?;
+    let quant = meta.quant.clone().unwrap_or_else(|| "imported".to_string());
+    let manifest = ModelManifest {
+        id: id.clone(),
+        version: "1.0".to_string(),
+        file_name,
+        sha256: sha,
+        quant,
+    };
+    save_manifest(&mdir, &manifest)
+        .map_err(|e| ErrorResponse::internal(format!("manifest: {e}")))?;
+
+    // Single-model invariant: the builtin server runs ONE llama-server.
+    // Remove every OTHER model dir (builtin + prior customs).
+    if let Ok(entries) = std::fs::read_dir(&mdir) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if dir.is_dir() && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str()) {
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+        }
+    }
+
+    // Free the port the previous model's server may still hold, then spawn
+    // for the imported model (mirrors the download tail).
+    let cfg = BuiltinConfig::from_env();
+    if super::server::health_check(cfg.port).await {
+        kill_process_on_port(cfg.port);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let mut spawned_endpoint = None;
+    if let Ok(manager) = get_instance_manager() {
+        match spawn_builtin_server(&state.data_dir, &cfg, &manager).await {
+            Ok(endpoint) => {
+                tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
+                spawned_endpoint = Some(endpoint);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, model = %id, "builtin llm: spawn after local import failed (run /restart)");
+            }
+        }
+    }
+
+    ok(json!({
+        "success": true,
+        "model_id": id,
+        "name": meta.name.unwrap_or_else(|| id.clone()),
+        "ctx": meta.context_length.and_then(|c| u32::try_from(c).ok()).unwrap_or(32768),
+        "quant": manifest.quant,
+        "arch": meta.architecture,
+        "installed": true,
+        "endpoint": spawned_endpoint,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +507,7 @@ pub async fn models_handler(
 ) -> HandlerResult<serde_json::Value> {
     let mdir = models_dir(&state.data_dir);
     let (_total_mb, available_mb) = memory_snapshot_mb();
-    let models: Vec<serde_json::Value> = BUILTIN_MODELS
+    let mut models: Vec<serde_json::Value> = BUILTIN_MODELS
         .iter()
         .map(|d| {
             let installed = load_manifest(&mdir, &d.manifest.id)
@@ -327,9 +528,59 @@ pub async fn models_handler(
                 "notes": d.notes,
                 "recommended": d.recommended,
                 "installed": installed,
+                "custom": false,
             })
         })
         .collect();
+
+    // Open catalog local channel: every imported GGUF (id not in the builtin
+    // registry) is listed so the picker shows it alongside the curated three.
+    let builtin_ids: std::collections::HashSet<&str> = BUILTIN_MODELS
+        .iter()
+        .map(|d| d.manifest.id.as_str())
+        .collect();
+    if let Ok(entries) = std::fs::read_dir(&mdir) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let Some(id) = dir.file_name().and_then(|s| s.to_str()).map(str::to_string) else {
+                continue;
+            };
+            if builtin_ids.contains(id.as_str()) {
+                continue;
+            }
+            let Ok(Some(m)) = load_manifest(&mdir, &id) else {
+                continue;
+            };
+            if !m.model_path(&mdir).exists() {
+                continue;
+            }
+            let ctx = super::gguf::parse_gguf(&m.model_path(&mdir))
+                .ok()
+                .and_then(|g| g.context_length)
+                .and_then(|c| u32::try_from(c).ok())
+                .unwrap_or(32768);
+            let size = std::fs::metadata(m.model_path(&mdir))
+                .map(|x| x.len())
+                .unwrap_or(0);
+            models.push(json!({
+                "id": m.id,
+                "name": m.id,
+                "file_name": m.file_name,
+                "quant": m.quant,
+                "size_bytes": size,
+                "default_ctx": ctx,
+                "min_ram_mb": 0,
+                "memory_ok": true,
+                "notes": "本地导入的模型",
+                "recommended": false,
+                "installed": true,
+                "custom": true,
+            }));
+        }
+    }
     ok(json!({ "models": models, "default_model_id": BUILTIN_MODEL_ID }))
 }
 
@@ -530,7 +781,7 @@ async fn run_builtin_download(
             // only when nothing else is active). Failures here are logged, not
             // fatal — the model is downloaded and restart/status can recover.
             if let Ok(manager) = get_instance_manager() {
-                match spawn_builtin_server(&state.data_dir, cfg, &manager).await {
+                match spawn_builtin_server(&state.data_dir, &cfg, &manager).await {
                     Ok(endpoint) => {
                         tracing::info!(endpoint = %endpoint, "builtin llm: server started after download")
                     }
@@ -581,7 +832,10 @@ async fn spawn_builtin_server(
     // bootstrap: the llama-server download belongs to the user's decision to
     // install a builtin model, never to a restart hitting a model-less host.
     let mdir = models_dir(data_dir);
-    let (def, installed_manifest) = installed_model(&mdir)
+    // installed_model_any covers BOTH builtin registry models AND locally
+    // imported custom GGUFs — the open-catalog local channel participates in
+    // the single-model switch like any builtin.
+    let installed = installed_model_any(&mdir)
         .ok_or_else(|| anyhow::anyhow!("model not installed (no manifest)"))?;
     let binary = ensure_llama_server(data_dir)
         .await
@@ -589,7 +843,7 @@ async fn spawn_builtin_server(
     let model_path = cfg
         .model_path
         .clone()
-        .unwrap_or_else(|| installed_manifest.model_path(&mdir));
+        .unwrap_or_else(|| installed.manifest.model_path(&mdir));
     if !model_path.exists() {
         anyhow::bail!("model file missing at {}", model_path.display());
     }
@@ -597,7 +851,7 @@ async fn spawn_builtin_server(
     // Per-model context: LFM runs its native 128K (cheap hybrid KV), other
     // models default to 32K so their KV fits comfortably — an explicit
     // override (NEOMIND_BUILTIN_LLM_CTX / restart ?ctx=) wins.
-    let ctx = cfg.effective_ctx(def.default_ctx);
+    let ctx = cfg.effective_ctx(installed.default_ctx);
     let server_cfg = LlamaServerConfig {
         binary,
         model: model_path,
@@ -630,7 +884,7 @@ async fn spawn_builtin_server(
         }
         None => LlmBackendInstance::new(
             BUILTIN_INSTANCE_ID.to_string(),
-            def.display_name.to_string(),
+            installed.display_name.clone(),
             LlmBackendType::LlamaCpp,
         ),
     };
@@ -638,17 +892,17 @@ async fn spawn_builtin_server(
     // LFM2.5's thinking is integral (cannot be turned off); Qwen3.5 runs
     // non-thinking by default (faster + strongest tool-calling eval); Gemma
     // keeps its default thinking.
-    instance.thinking_is_integral = def.manifest.id == BUILTIN_MODEL_ID;
-    instance.thinking_enabled = def.default_thinking;
+    instance.thinking_is_integral = installed.manifest.id == BUILTIN_MODEL_ID;
+    instance.thinking_enabled = installed.default_thinking;
     instance.endpoint = Some(endpoint.clone());
-    instance.model = def.manifest.id.clone();
+    instance.model = installed.manifest.id.clone();
     // Capabilities must be set here — the startup capability-refresh loop ran
     // before this instance existed, so a default (max_context=4096) would
     // surface as a tiny chat context window. Report the ctx we actually
     // spawned with (LFM 128K / Qwen/Gemma 32K).
     instance.capabilities.supports_streaming = true;
     instance.capabilities.supports_tools = true;
-    instance.capabilities.supports_thinking = def.default_thinking;
+    instance.capabilities.supports_thinking = installed.default_thinking;
     instance.capabilities.max_context = ctx as usize;
     let _ = manager.upsert_instance(instance).await;
 

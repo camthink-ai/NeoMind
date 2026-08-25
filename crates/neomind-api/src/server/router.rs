@@ -1109,6 +1109,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             post(crate::builtin_llm::handlers::download_handler),
         )
         .route(
+            "/api/builtin-llm/import-local",
+            post(crate::builtin_llm::handlers::import_local_handler),
+        )
+        .route(
             "/api/builtin-llm/model",
             delete(crate::builtin_llm::handlers::delete_model_handler),
         )
