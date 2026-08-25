@@ -952,6 +952,60 @@ pub async fn run_system_cmd(cmd: SystemCommand) -> Result<(CliResponse, OutputFo
     Ok(result)
 }
 
+pub async fn run_data_cmd(
+    cmd: crate::dispatch::commands::DataCommand,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::dispatch::commands::DataCommand;
+    let client = crate::ApiClient::new();
+    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
+        OutputFormat::Json
+    } else {
+        OutputFormat::Human
+    };
+    let result = match cmd {
+        DataCommand::List { source_type } => {
+            let path = match &source_type {
+                Some(t) => format!("/data/sources?source_type={}", t),
+                None => "/data/sources".to_string(),
+            };
+            let data = client.get(&path).await?;
+            let inner = data.get("data").cloned().unwrap_or(data.clone());
+            let total = data.get("total").and_then(|t| t.as_u64()).unwrap_or(0);
+            let lines: Vec<String> = inner
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|s| {
+                            format!(
+                                "{:<48} {:<10} {}",
+                                s.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
+                                s.get("source_type").and_then(|v| v.as_str()).unwrap_or("?"),
+                                s.get("field").and_then(|v| v.as_str()).unwrap_or(""),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut msg = lines.join("\n");
+            if total > 0 {
+                msg.push_str(&format!("\n{} data source(s)", total));
+            }
+            (
+                CliResponse::success(
+                    inner,
+                    if msg.is_empty() {
+                        "No data sources".to_string()
+                    } else {
+                        msg
+                    },
+                ),
+                base_format,
+            )
+        }
+    };
+    Ok(result)
+}
+
 pub async fn run_config_cmd(
     cmd: crate::dispatch::commands::ConfigCommand,
 ) -> Result<(CliResponse, OutputFormat)> {

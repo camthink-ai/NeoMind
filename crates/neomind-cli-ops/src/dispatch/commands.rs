@@ -195,6 +195,13 @@ pub enum Command {
         #[command(subcommand)]
         config_cmd: ConfigCommand,
     },
+    /// Data source discovery.
+    ///
+    /// Example: `neomind data sources list`
+    Data {
+        #[command(subcommand)]
+        data_cmd: DataCommand,
+    },
     /// Data connector management (MQTT, webhook, HTTP, etc.).
     Connector {
         #[command(subcommand)]
@@ -2083,6 +2090,21 @@ pub enum SystemCommand {
     /// Example: `neomind system info`
     #[command(alias = "status")]
     Info {},
+}
+
+/// Data source discovery commands.
+#[derive(Subcommand, Debug)]
+pub enum DataCommand {
+    /// List all data sources (devices, extensions, transforms) usable as rule /
+    /// dashboard / push bindings. This is the authoritative discovery entry
+    /// before binding anything — don't guess DataSourceId strings.
+    ///
+    /// Example: `neomind data sources list --source-type device`
+    List {
+        /// Filter by source type: device | extension | transform | system.
+        #[arg(long)]
+        source_type: Option<String>,
+    },
 }
 
 /// Config subcommands (backup / restore).

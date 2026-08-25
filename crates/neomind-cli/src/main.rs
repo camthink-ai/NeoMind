@@ -171,6 +171,9 @@ async fn main() -> Result<()> {
         Command::Config { config_cmd } => {
             print_result(neomind_cli_ops::dispatch::handlers::run_config_cmd(config_cmd).await)
         }
+        Command::Data { data_cmd } => {
+            print_result(neomind_cli_ops::dispatch::handlers::run_data_cmd(data_cmd).await)
+        }
         Command::Connector { connector_cmd } => print_result(
             neomind_cli_ops::dispatch::handlers::run_connector_cmd(connector_cmd).await,
         ),

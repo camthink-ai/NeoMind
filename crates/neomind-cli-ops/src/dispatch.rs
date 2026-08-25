@@ -150,6 +150,12 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
+        Command::Data { data_cmd } => {
+            let (resp, _) = handlers::run_data_cmd(data_cmd)
+                .await
+                .map_err(|e| DispatchError::Api(e.to_string()))?;
+            Ok(resp)
+        }
         Command::Settings { settings_cmd } => {
             let (resp, _) = handlers::run_settings_cmd(settings_cmd)
                 .await
