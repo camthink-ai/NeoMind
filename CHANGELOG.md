@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — agent capability, open model catalog, Jetson
+## [0.9.20] - 2026-08-26 — agent capability, open model catalog, Jetson
 
 ### Agent execution core — the version's reliability spine
 - **Error-aware dedup**: the cross-round dedup set now records only SUCCESSFUL executions. Signatures were inserted before execution, so a transient tool failure (MQTT timeout, extension hiccup) made the model's retry a "duplicate", ending the loop via AllDuplicate with the error in hand. Failed calls can retry — and a failed signature that keeps failing (budget: 3 consecutive failures) is blacklisted so the loop brakes instead of burning all 30 rounds. (StuckDetector removed: its five OpenHands-style patterns were mathematically unreachable behind that same dedup — docs described a brake that never fired; the dedup IS the brake.)
@@ -67,6 +67,8 @@ share-proxy hardcoded port 127.0.0.1:9375 (non-default-port installs served brok
 - **`enable_tool_chaining` removed from the API surface** — it was a dead field end to end: the executor decides tool-calling by LLM capability (`should_use_tools` never read it), no UI ever set it. Kept in storage only for bincode compatibility with existing rows, marked deprecated.
 
 ### Frontend
+- First entry into a chat session no longer flashes the "start a new conversation" default for a frame before the real messages load.
+- **Memory and auto-onboarding configuration moved into Settings** — both were platform-level policies hiding in page-local dialogs (the agents-page memory panel and the devices-page pending-drafts toolbar). Memory config now lives in Settings → Preferences (instant-save rows, same fields), auto-onboarding in Settings → Device Connections; the original entry points jump straight to the right section. The memory panel keeps content management (view/edit files) and only reads the char limits.
 - "Add your own API backend" opens the Cloud AI dialog (protocol chooser) — it built an inline OpenAI type and bypassed the protocol path.
 - The builtin model wizard gains the **import-your-own-GGUF card** + a `Custom` badge on imported models.
 

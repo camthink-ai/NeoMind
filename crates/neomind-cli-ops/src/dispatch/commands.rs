@@ -1394,6 +1394,9 @@ pub enum AgentCommand {
     ///   - interval: `--schedule-type interval --schedule-config "300"` (every 5 min)
     ///   - cron:     `--schedule-type cron --schedule-config "0 8 * * *"` (daily 8am)
     ///   - event:    `--schedule-type event` (triggered by device data)
+    ///   - once:     `--schedule-type once` (one-shot: manual/delegated only —
+    ///               never auto-scheduled; run with `agent invoke`, completes
+    ///               then stays Completed)
     ///
     /// Workflow:
     ///   1. `agent create --name "Monitor" --prompt "Check sensors" --schedule-type interval --schedule-config "300"`

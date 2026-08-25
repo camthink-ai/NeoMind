@@ -1038,7 +1038,7 @@ impl ShellTool {
                 if is_not_found {
                     Some("Run 'neomind agent list' to see available agents.".to_string())
                 } else if action == "create" && is_validation {
-                    Some("Required fields: --name, --prompt, --schedule-type (event|interval|cron). Example: neomind agent create --name \"monitor\" --prompt \"Check devices\" --schedule-type event".to_string())
+                    Some("Required fields: --name, --prompt, --schedule-type (event|interval|cron|once). Example: neomind agent create --name \"monitor\" --prompt \"Check devices\" --schedule-type event".to_string())
                 } else if action == "control" && is_validation {
                     Some("Status is positional: neomind agent control <ID> <active|paused>. Example: neomind agent control abc123 active".to_string())
                 } else {

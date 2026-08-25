@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { logError } from "@/lib/errors"
 import { SettingsRow } from "./SettingsRow"
+import { MemorySettingsSection } from "./MemorySettingsSection"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -260,6 +261,9 @@ export function PreferencesTab() {
 
       {/* AI Agent Defaults */}
       <AgentDefaultsSection />
+
+      {/* Memory System — moved from agents-page MemoryPanel config dialog */}
+      <MemorySettingsSection />
 
       {/* Device Defaults */}
       <DeviceDefaultsSection />

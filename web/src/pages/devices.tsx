@@ -46,6 +46,7 @@ export function DevicesPage() {
   const isMobile = useIsMobile()
 
   // Group device data selectors (change together)
+  const openSettings = useStore((s) => s.openSettings)
   const { devices, devicesLoading } = useStore((s) => ({
     devices: s.devices,
     devicesLoading: s.devicesLoading,
@@ -104,61 +105,6 @@ export function DevicesPage() {
   const [draftPage, setDraftPage] = useState(1)
   const draftsPerPage = 10
   const [draftsCount, setDraftsCount] = useState(0)
-
-  // Auto-onboarding configuration (simplified to 3 fields)
-  interface OnboardConfig {
-    enabled: boolean
-    max_samples: number
-    draft_retention_secs: number
-  }
-  const [onboardConfig, setOnboardConfig] = useState<OnboardConfig>({
-    enabled: true,
-    max_samples: 10,
-    draft_retention_secs: 86400, // 24 hours
-  })
-  const [pendingOnboardConfig, setPendingOnboardConfig] = useState<OnboardConfig>(onboardConfig)
-  const [showOnboardConfigDialog, setShowOnboardConfigDialog] = useState(false)
-  const [savingOnboardConfig, setSavingOnboardConfig] = useState(false)
-
-  // Fetch auto-onboarding configuration
-  const fetchOnboardConfig = async () => {
-    const result = await withErrorHandling(
-      () => api.getOnboardConfig(),
-      { operation: 'Fetch onboard config', showToast: false }
-    )
-    if (result) {
-      setOnboardConfig(result)
-      setPendingOnboardConfig(result)
-    }
-  }
-
-  // Save auto-onboarding configuration
-  const saveOnboardConfig = async () => {
-    setSavingOnboardConfig(true)
-    try {
-      await api.updateOnboardConfig(pendingOnboardConfig)
-      setOnboardConfig(pendingOnboardConfig)
-      toast({
-        title: t('common:success'),
-        description: t('devices:pending.configSaved'),
-      })
-      setShowOnboardConfigDialog(false)
-    } catch (error) {
-      toast({
-        title: t('common:failed'),
-        description: t('devices:pending.configSaveFailed'),
-        variant: 'destructive'
-      })
-    } finally {
-      setSavingOnboardConfig(false)
-    }
-  }
-
-  // Open config dialog and fetch current config
-  const openOnboardConfigDialog = async () => {
-    await fetchOnboardConfig()
-    setShowOnboardConfigDialog(true)
-  }
 
   // Router integration
   const navigate = useNavigate()
@@ -748,7 +694,7 @@ export function DevicesPage() {
             label: t('devices:pending.config'),
             icon: <Settings className="h-4 w-4" />,
             variant: 'outline',
-            onClick: openOnboardConfigDialog,
+            onClick: () => openSettings('connections'),
           },
         ],
         secondary: [],
@@ -998,86 +944,6 @@ export function DevicesPage() {
         }}
       />
 
-      {/* Auto-onboarding Configuration Dialog */}
-      <UnifiedFormDialog
-        open={showOnboardConfigDialog}
-        onOpenChange={setShowOnboardConfigDialog}
-        title={t('devices:pending.configTitle')}
-        width="sm"
-        onSubmit={saveOnboardConfig}
-        isSubmitting={savingOnboardConfig}
-        submitLabel={t('common:save')}
-      >
-        <div className="space-y-6">
-          {/* Enable/Disable auto-onboarding */}
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="onboard-enabled">{t('devices:pending.configSettings.enabled')}</Label>
-              <p className="text-xs text-muted-foreground">
-                {t('devices:pending.configSettings.enabledDesc')}
-              </p>
-            </div>
-            <Switch
-              id="onboard-enabled"
-              checked={pendingOnboardConfig.enabled}
-              onCheckedChange={(checked) =>
-                setPendingOnboardConfig({ ...pendingOnboardConfig, enabled: checked })
-              }
-            />
-          </div>
-
-          {/* Max samples */}
-          <div className="space-y-2">
-            <Label htmlFor="maxSamples">{t('devices:pending.configSettings.maxSamples')}</Label>
-            <Input
-              id="maxSamples"
-              type="number"
-              min={1}
-              max={100}
-              value={pendingOnboardConfig.max_samples}
-              onChange={(e) =>
-                setPendingOnboardConfig({
-                  ...pendingOnboardConfig,
-                  max_samples: Math.max(1, parseInt(e.target.value) || 10),
-                })
-              }
-              disabled={!pendingOnboardConfig.enabled}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t('devices:pending.configSettings.maxSamplesDesc')}
-            </p>
-          </div>
-
-          {/* Draft retention time */}
-          <div className="space-y-2">
-            <Label htmlFor="retention">{t('devices:pending.configSettings.retention')}</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                id="retention"
-                type="number"
-                min={3600}
-                max={604800}
-                step={3600}
-                value={pendingOnboardConfig.draft_retention_secs}
-                onChange={(e) =>
-                  setPendingOnboardConfig({
-                    ...pendingOnboardConfig,
-                    draft_retention_secs: Math.max(3600, parseInt(e.target.value) || 86400),
-                  })
-                }
-                disabled={!pendingOnboardConfig.enabled}
-              />
-              <span className="text-sm text-muted-foreground whitespace-nowrap">
-                {Math.round(pendingOnboardConfig.draft_retention_secs / 3600)} {t('devices:pending.hours')}
-              </span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t('devices:pending.configSettings.retentionDesc')}
-            </p>
-          </div>
-
-        </div>
-      </UnifiedFormDialog>
     </>
   )
 }

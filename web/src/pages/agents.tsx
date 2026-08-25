@@ -550,7 +550,7 @@ export function AgentsPage() {
     : activeTab === 'memory'
     ? [
         { label: tAgent('systemMemory.custom.create', 'Add File'), icon: <FileText className="h-4 w-4" />, onClick: () => memoryPanelRef.current?.openCreateFile() },
-        { label: tAgent('systemMemory.config.title', 'Config'), icon: <Settings className="h-4 w-4" />, onClick: () => memoryPanelRef.current?.openConfig() },
+        { label: tAgent('systemMemory.config.title', 'Config'), icon: <Settings className="h-4 w-4" />, onClick: () => openSettings('preferences') },
       ]
     : activeTab === 'skills'
     ? [

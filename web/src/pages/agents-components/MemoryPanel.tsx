@@ -21,7 +21,6 @@ import {
   Clock,
   Save,
   X,
-  Settings,
   MoreVertical,
   FileText,
   Trash2,
@@ -29,14 +28,6 @@ import {
 } from "lucide-react"
 import { Card } from "@/components/ui/card"
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
-import { Switch } from "@/components/ui/switch"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { ResponsiveTable, EmptyState, LoadingState } from "@/components/shared"
 import { Button, IconButton } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -47,7 +38,6 @@ import {
   FullScreenDialogHeader,
   FullScreenDialogContent,
   FullScreenDialogFooter,
-  FullScreenDialogMain,
 } from "@/components/automation/dialog"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { useToast } from "@/hooks/use-toast"
@@ -57,7 +47,7 @@ import { cn } from "@/lib/utils"
 import { fontMonoStack, textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp } from "@/lib/utils/format"
 import { useIsMobile } from "@/hooks/useMobile"
-import type { MemorySystemConfig, LlmBackendInstance } from "@/types"
+import type { MemorySystemConfig } from "@/types"
 
 // Default config for initialization
 const defaultConfig: MemorySystemConfig = {
@@ -147,7 +137,6 @@ interface MemoryPanelProps {
 }
 
 export interface MemoryPanelRef {
-  openConfig: () => void
   openCreateFile: () => void
 }
 
@@ -171,61 +160,23 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
   const [saving, setSaving] = useState(false)
   const [exporting, setExporting] = useState<string | null>(null)
 
+  // Read-only memory config — the editable config UI moved to Settings →
+  // Preferences (MemorySettingsSection); this panel only needs the char
+  // limits for the file table.
+  const [config, setConfig] = useState<MemorySystemConfig>(defaultConfig)
+
+  useEffect(() => {
+    api.getMemoryConfig()
+      .then((res) => setConfig({ ...defaultConfig, ...res }))
+      .catch(() => {})
+  }, [])
+
   // Create dialog state
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [newFileName, setNewFileName] = useState("")
   const [newFileContent, setNewFileContent] = useState("")
   const [creating, setCreating] = useState(false)
 
-  // Configuration state
-  const [configOpen, setConfigOpen] = useState(false)
-  const [config, setConfig] = useState<MemorySystemConfig>(defaultConfig)
-  const [configLoading, setConfigLoading] = useState(false)
-  const [configSaving, setConfigSaving] = useState(false)
-  const [llmBackends, setLlmBackends] = useState<LlmBackendInstance[]>([])
-
-  // Load configuration
-  const loadConfig = useCallback(async () => {
-    setConfigLoading(true)
-    try {
-      const response = await api.getMemoryConfig()
-      setConfig({ ...defaultConfig, ...response })
-    } catch (error) {
-      handleError(error, { operation: "Load memory config", showToast: false })
-    } finally {
-      setConfigLoading(false)
-    }
-  }, [handleError])
-
-  // Load LLM backends when config dialog opens
-  useEffect(() => {
-    if (configOpen) {
-      api.listLlmBackends()
-        .then((res) => {
-          setLlmBackends(res.backends || [])
-        })
-        .catch((err) => {
-          handleError(err, { operation: "Load LLM backends", showToast: false })
-        })
-    }
-  }, [configOpen, handleError])
-
-  useEffect(() => {
-    loadConfig()
-  }, [loadConfig])
-
-  // Save configuration
-  const handleSaveConfig = async () => {
-    setConfigSaving(true)
-    try {
-      await api.updateMemoryConfig(config)
-      setConfigOpen(false)
-    } catch (error) {
-      handleError(error, { operation: "Save memory config" })
-    } finally {
-      setConfigSaving(false)
-    }
-  }
 
   // Load stats (includes custom files from backend)
   const loadStats = useCallback(async () => {
@@ -368,16 +319,12 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
 
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
-    openConfig: () => {
-      setConfigOpen(true)
-      loadConfig()
-    },
     openCreateFile: () => {
       setNewFileName("")
       setNewFileContent("")
       setCreateDialogOpen(true)
     },
-  }), [loadConfig])
+  }))
 
   // Get char limit for a file from config
   const getCharLimit = (fileId: string, isCustom: boolean): number => {
@@ -779,225 +726,6 @@ export const MemoryPanel = forwardRef<MemoryPanelRef, MemoryPanelProps>(function
         </FullScreenDialogFooter>
       </FullScreenDialog>
 
-      {/* Configuration Dialog */}
-      <FullScreenDialog open={configOpen} onOpenChange={setConfigOpen}>
-        <FullScreenDialogHeader
-          icon={<Settings className="h-5 w-5" />}
-          iconBg="bg-accent-purple-light"
-          iconColor="text-accent-purple"
-          title={t("systemMemory.config.title", "Memory Configuration")}
-          subtitle={t("systemMemory.config.description", "Configure memory storage and scheduling")}
-          onClose={() => setConfigOpen(false)}
-        />
-
-        <FullScreenDialogContent>
-          {configLoading ? (
-            <LoadingState size="lg" className="flex-1" />
-          ) : (
-            <FullScreenDialogMain className="p-6">
-              <div className="space-y-6">
-                {/* General Settings */}
-                <div className="space-y-4">
-                  <h3 className="text-sm font-semibold">
-                    {t("systemMemory.config.general", "General Settings")}
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.enabled", "Enabled")}</Label>
-                      <div className="flex items-center h-10">
-                        <Switch
-                          checked={config.enabled}
-                          onCheckedChange={(checked) =>
-                            setConfig({ ...config, enabled: checked })
-                          }
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Char Limits */}
-                <div className="space-y-4">
-                  <h3 className="text-sm font-semibold">
-                    {t("systemMemory.config.charLimits", "Character Limits")}
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.userCharLimit", "User File Limit")}</Label>
-                      <Input
-                        type="number"
-                        min={500}
-                        max={10000}
-                        step={100}
-                        value={config.user_char_limit}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            user_char_limit: parseInt(e.target.value) || 2000,
-                          })
-                        }
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {t("systemMemory.config.userCharLimitHint", "Max characters for user memory file")}
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.knowledgeCharLimit", "Knowledge File Limit")}</Label>
-                      <Input
-                        type="number"
-                        min={500}
-                        max={20000}
-                        step={100}
-                        value={config.knowledge_char_limit}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            knowledge_char_limit: parseInt(e.target.value) || 3000,
-                          })
-                        }
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {t("systemMemory.config.knowledgeCharLimitHint", "Max characters for knowledge memory file")}
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.proceduresCharLimit", "Procedures File Limit")}</Label>
-                      <Input
-                        type="number"
-                        min={500}
-                        max={20000}
-                        step={100}
-                        value={config.procedures_char_limit}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            procedures_char_limit: parseInt(e.target.value) || 3000,
-                          })
-                        }
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {t("systemMemory.config.proceduresCharLimitHint", "Max characters for procedures memory file (SOPs, playbooks, how-tos)")}
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.tempFileTtl", "Temp File TTL (Days)")}</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={30}
-                        value={config.temp_file_ttl_days}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            temp_file_ttl_days: parseInt(e.target.value) || 7,
-                          })
-                        }
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {t("systemMemory.config.tempFileTtlHint", "Days before temp files are cleaned up")}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Schedule Settings */}
-                <div className="space-y-4">
-                  <h3 className="text-sm font-semibold">
-                    {t("systemMemory.config.schedule", "Schedule")}
-                  </h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.refreshInterval", "Refresh Interval")}</Label>
-                      <Input
-                        type="number"
-                        min={60}
-                        max={86400}
-                        step={60}
-                        value={config.system_context_interval_secs}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            system_context_interval_secs: parseInt(e.target.value) || 300,
-                          })
-                        }
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {t("systemMemory.config.refreshIntervalHint", "Seconds between resource inventory refresh ({{minutes}} min)", {
-                          minutes: Math.round((config.system_context_interval_secs || 600) / 60),
-                        })}
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.summaryInterval", "Summary Interval")}</Label>
-                      <Input
-                        type="number"
-                        min={600}
-                        max={86400}
-                        step={60}
-                        value={config.summary_interval_secs}
-                        onChange={(e) =>
-                          setConfig({
-                            ...config,
-                            summary_interval_secs: parseInt(e.target.value) || 3600,
-                          })
-                        }
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        {t("systemMemory.config.summaryIntervalHint", "Seconds between LLM chat/agent summaries ({{minutes}} min)", {
-                          minutes: Math.round((config.summary_interval_secs || 7200) / 60),
-                        })}
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>{t("systemMemory.config.summaryBackend", "Summary LLM Backend")}</Label>
-                      <Select
-                        value={config.summary_backend_id || "__active__"}
-                        onValueChange={(value) =>
-                          setConfig({
-                            ...config,
-                            summary_backend_id: value === "__active__" ? null : value,
-                          })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t("systemMemory.config.useActive", "Use active backend")} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__active__">
-                            {t("systemMemory.config.useActive", "Use active backend")}
-                          </SelectItem>
-                          {llmBackends.map((b) => (
-                            <SelectItem key={b.id} value={b.id}>
-                              {b.name || b.id}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        {t("systemMemory.config.summaryBackendHint", "LLM backend for chat/agent summarization")}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </FullScreenDialogMain>
-          )}
-        </FullScreenDialogContent>
-
-        <FullScreenDialogFooter>
-          <Button variant="outline" onClick={() => setConfigOpen(false)}>
-            {t("common.cancel", "Cancel")}
-          </Button>
-          <Button onClick={handleSaveConfig} disabled={configSaving}>
-            {configSaving ? (
-              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4 mr-1" />
-            )}
-            {configSaving ? t("common.saving", "Saving...") : t("common.save", "Save")}
-          </Button>
-        </FullScreenDialogFooter>
-      </FullScreenDialog>
     </div>
   )
 })
