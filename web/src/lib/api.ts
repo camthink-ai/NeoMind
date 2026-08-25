@@ -2090,6 +2090,11 @@ export const api = {
       actions: Array<{ action: string; reasoning: string; description: string }>
       has_error: boolean
       error?: string
+      /** Present when the run exceeds the 60s wait window: execution
+       * continues in the background; poll poll_execution for the result. */
+      still_executing?: boolean
+      message?: string
+      poll_execution?: string
     }>(`/agents/${id}/invoke`, {
       method: 'POST',
       body: JSON.stringify(req || {}),

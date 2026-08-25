@@ -9,7 +9,7 @@ export type AgentStatus = 'Active' | 'Paused' | 'Error' | 'Executing'
 /**
  * Schedule type for agent execution
  */
-export type AgentScheduleType = 'interval' | 'cron' | 'event'
+export type AgentScheduleType = 'interval' | 'cron' | 'event' | 'once'
 
 /**
  * Resource type for agent resources (lowercase to match backend)
@@ -33,7 +33,6 @@ export interface AiAgent {
   avg_duration_ms: number
   llm_backend_id?: string
   // Advanced configuration (returned by list API)
-  enable_tool_chaining?: boolean
   max_chain_depth?: number
   priority?: number
   context_window_size?: number
@@ -55,7 +54,6 @@ export interface AiAgentDetail extends AiAgent {
   user_messages: UserMessage[]
   context_window_size: number
   // Tool chaining configuration
-  enable_tool_chaining?: boolean
   max_chain_depth?: number
   priority?: number
   /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling */
@@ -68,7 +66,7 @@ export interface AiAgentDetail extends AiAgent {
  * Agent schedule configuration
  */
 export interface AgentSchedule {
-  schedule_type: 'interval' | 'cron' | 'event'
+  schedule_type: 'interval' | 'cron' | 'event' | 'once'
   interval_seconds?: number
   cron_expression?: string
   timezone?: string
@@ -244,7 +242,6 @@ export interface CreateAgentRequest {
   schedule: AgentScheduleRequest
   llm_backend_id?: string
   /** Enable tool chaining (default: false) */
-  enable_tool_chaining?: boolean
   /** Maximum chain depth (default: 3) */
   max_chain_depth?: number
   /** Agent priority 0-255 (default: 128) */
@@ -327,7 +324,6 @@ export interface UpdateAgentRequest {
   /** Legacy command selections */
   commands?: CommandSelectionRequest[]
   /** Enable tool chaining (default: false) */
-  enable_tool_chaining?: boolean
   /** Maximum chain depth (default: 3) */
   max_chain_depth?: number
   /** Agent priority 1-10 (default: 5) */

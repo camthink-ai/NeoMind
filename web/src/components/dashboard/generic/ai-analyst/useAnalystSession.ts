@@ -1030,7 +1030,7 @@ export function useAnalystSession({
           const aiMsg: AnalystMessage = {
             id: dedupKey,
             type: result.has_error ? 'error' : 'ai',
-            content: result.conclusion || result.error || 'No result',
+            content: result.conclusion || result.message || result.error || 'No result',
             timestamp: Date.now(),
             modelName: config.modelName,
             duration,

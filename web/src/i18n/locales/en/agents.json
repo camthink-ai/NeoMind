@@ -182,7 +182,8 @@
     "active": "Active",
     "paused": "Paused",
     "error": "Error",
-    "executing": "Running"
+    "executing": "Running",
+    "completed": "Completed"
   },
   "executionStatus": {
     "running": "Running",

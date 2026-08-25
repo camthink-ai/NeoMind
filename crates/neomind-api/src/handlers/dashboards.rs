@@ -1717,8 +1717,8 @@ fn is_allowed_share_method(path: &str, method: &Method, allow_interactive: bool)
     }
     // Read-like POSTs both modes allow…
     let read_like = [
-        "extensions/:id/command",        // Extension commands (incl. read-only queries)
-        "devices/current-batch",         // Batch device current values
+        "extensions/:id/command", // Extension commands (incl. read-only queries)
+        "devices/current-batch",  // Batch device current values
         "agents/:id/executions/details", // Batch get execution details
     ];
     if read_like.iter().any(|p| path_matches_pattern(path, p)) {
@@ -1797,8 +1797,16 @@ mod tests {
         }
 
         // GET stays open for both modes (path allowlist handles scope).
-        assert!(is_allowed_share_method("telemetry/latest", &Method::GET, false));
-        assert!(is_allowed_share_method("telemetry/latest", &Method::GET, true));
+        assert!(is_allowed_share_method(
+            "telemetry/latest",
+            &Method::GET,
+            false
+        ));
+        assert!(is_allowed_share_method(
+            "telemetry/latest",
+            &Method::GET,
+            true
+        ));
     }
 
     #[test]

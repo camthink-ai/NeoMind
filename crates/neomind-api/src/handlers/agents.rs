@@ -35,6 +35,7 @@ fn status_to_string(status: &AgentStatus) -> &'static str {
         AgentStatus::Stopped => "Stopped",
         AgentStatus::Error => "Error",
         AgentStatus::Executing => "Executing",
+        AgentStatus::Completed => "Completed",
     }
 }
 
@@ -62,6 +63,7 @@ fn schedule_type_to_string(schedule_type: &ScheduleType) -> &'static str {
         ScheduleType::Interval => "interval",
         ScheduleType::Cron => "cron",
         ScheduleType::Event => "event",
+        ScheduleType::Once => "once",
     }
 }
 
@@ -145,8 +147,6 @@ struct AgentDto {
     avg_duration_ms: u64,
     // Advanced configuration fields
     #[serde(skip_serializing_if = "Option::is_none")]
-    enable_tool_chaining: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     max_chain_depth: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     priority: Option<u8>,
@@ -187,8 +187,6 @@ struct AgentDetailDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     llm_backend_id: Option<String>,
     // Advanced configuration fields
-    #[serde(skip_serializing_if = "Option::is_none")]
-    enable_tool_chaining: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_chain_depth: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -407,9 +405,6 @@ pub struct CreateAgentRequest {
     pub schedule: AgentScheduleRequest,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_backend_id: Option<String>,
-    /// Enable tool chaining (default: false)
-    #[serde(default)]
-    pub enable_tool_chaining: Option<bool>,
     /// Maximum chain depth (default: 3)
     #[serde(default)]
     pub max_chain_depth: Option<usize>,
@@ -504,8 +499,6 @@ pub struct UpdateAgentRequest {
     pub commands: Option<Vec<CommandSelectionRequest>>,
     // Advanced options
     #[serde(default)]
-    pub enable_tool_chaining: Option<bool>,
-    #[serde(default)]
     pub max_chain_depth: Option<usize>,
     #[serde(default)]
     pub priority: Option<u8>,
@@ -566,7 +559,6 @@ impl From<AiAgent> for AgentDto {
             error_count: agent.stats.failed_executions as u32,
             avg_duration_ms: agent.stats.avg_duration_ms,
             // Advanced configuration
-            enable_tool_chaining: Some(agent.enable_tool_chaining),
             max_chain_depth: Some(agent.max_chain_depth),
             priority: Some(agent.priority),
             context_window_size: Some(agent.context_window_size),
@@ -649,7 +641,6 @@ impl From<&AiAgent> for AgentDetailDto {
             error_message: agent.error_message.clone(),
             llm_backend_id: agent.llm_backend_id.clone(),
             // Advanced configuration
-            enable_tool_chaining: Some(agent.enable_tool_chaining),
             max_chain_depth: Some(agent.max_chain_depth),
             priority: Some(agent.priority),
             context_window_size: Some(agent.context_window_size),
@@ -954,6 +945,7 @@ pub async fn create_agent(
         "interval" => ScheduleType::Interval,
         "cron" => ScheduleType::Cron,
         "event" => ScheduleType::Event,
+        "once" => ScheduleType::Once,
         _ => {
             return Err(ErrorResponse::bad_request(format!(
                 "Invalid schedule type: {}",
@@ -1061,6 +1053,8 @@ pub async fn create_agent(
         id: uuid::Uuid::new_v4().to_string(),
         name: request.name.clone(),
         description: request.description.clone(),
+        // Deprecated dead field — always false (see AiAgent docs).
+        enable_tool_chaining: false,
         user_prompt: request.user_prompt,
         llm_backend_id: {
             // Auto-lock to the current active backend so the agent
@@ -1092,7 +1086,6 @@ pub async fn create_agent(
         user_messages: Default::default(),
         conversation_summary: Default::default(),
         context_window_size: request.context_window_size.unwrap_or(10),
-        enable_tool_chaining: request.enable_tool_chaining.unwrap_or(false),
         max_chain_depth: request.max_chain_depth.unwrap_or(3),
         tool_config: request.tool_config,
         execution_mode,
@@ -1180,6 +1173,7 @@ async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &A
             agent.schedule.cron_expression.as_deref().unwrap_or("?")
         ),
         ScheduleType::Event => "Event-driven".to_string(),
+        ScheduleType::Once => "One-shot task (manual/delegated execution)".to_string(),
     };
 
     let content = format!(
@@ -1360,6 +1354,7 @@ pub async fn update_agent(
             "interval" => neomind_storage::ScheduleType::Interval,
             "cron" => neomind_storage::ScheduleType::Cron,
             "event" => neomind_storage::ScheduleType::Event,
+            "once" => neomind_storage::ScheduleType::Once,
             _ => {
                 return Err(ErrorResponse::bad_request(format!(
                     "Invalid schedule_type: {}",
@@ -1505,9 +1500,6 @@ pub async fn update_agent(
     }
 
     // Update advanced options if provided
-    if let Some(enable_chaining) = request.enable_tool_chaining {
-        agent.enable_tool_chaining = enable_chaining;
-    }
     if let Some(max_depth) = request.max_chain_depth {
         // Validate BEFORE assigning — same bounds as create_agent. Rejecting
         // here keeps storage consistent with the create path so consumers can
@@ -1761,16 +1753,25 @@ pub async fn invoke_agent(
         None
     };
 
-    // Execute with timeout protection (60s default)
+    // Run the execution in its own task so a slow agent is not killed by
+    // this handler's patience window. Previously the 60s timeout DROPPED
+    // the inline execution future — the run died mid-flight with no
+    // execution record and no journal entry (a ghost execution the agent
+    // could never learn from). Now the timeout only bounds how long the
+    // CALLER waits: past it the JoinHandle is dropped (= detached, not
+    // aborted) and the run continues to completion in the background,
+    // writing its execution record + journal as usual.
+    let mgr = agent_manager.clone();
+    let run_agent_id = id.clone();
+    let handle =
+        tokio::spawn(async move { mgr.execute_agent_now(&run_agent_id, invocation_input).await });
+
+    // Wait up to 60s for the result; longer runs keep going in background.
     let timeout = std::time::Duration::from_secs(60);
-    let result = tokio::time::timeout(
-        timeout,
-        agent_manager.execute_agent_now(&id, invocation_input),
-    )
-    .await;
+    let result = tokio::time::timeout(timeout, handle).await;
 
     match result {
-        Ok(Ok(summary)) => {
+        Ok(Ok(Ok(summary))) => {
             // Fetch execution by ID (not "latest") to avoid race condition under concurrent load
             let execution = agent_manager
                 .executor()
@@ -1812,19 +1813,29 @@ pub async fn invoke_agent(
                 "has_error": summary.has_error,
             }))
         }
-        Ok(Err(e)) => Err(ErrorResponse::new(
+        Ok(Ok(Err(e))) => Err(ErrorResponse::new(
             "AGENT_EXECUTION_FAILED",
             format!("Agent '{}' execution failed: {}", agent_name, e),
             StatusCode::INTERNAL_SERVER_ERROR,
         )),
-        Err(_) => Err(ErrorResponse::new(
-            "AGENT_EXECUTION_TIMEOUT",
-            format!(
-                "Agent '{}' execution timed out after 60 seconds",
-                agent_name
-            ),
-            StatusCode::GATEWAY_TIMEOUT,
-        )),
+        Ok(Err(join_err)) => Err(ErrorResponse::internal(format!(
+            "Agent '{}' execution task panicked: {}",
+            agent_name, join_err
+        ))),
+        Err(_elapsed) => {
+            // Still executing in the background (detached task). The caller
+            // polls; the run itself will complete normally — record +
+            // journal are written either way.
+            ok(json!({
+                "agent_id": id,
+                "agent_name": agent_name,
+                "status": "Executing",
+                "still_executing": true,
+                "message": "Execution is still running in the background and will complete with a full record.",
+                "poll_execution": format!("/api/agents/{}/executions?limit=1", id),
+                "poll_command": format!("neomind agent executions {} --limit 1", id),
+            }))
+        }
     }
 }
 

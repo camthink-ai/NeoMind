@@ -769,6 +769,11 @@ impl AgentScheduler {
         let now = Utc::now();
 
         match schedule.schedule_type {
+            // One-shot / manual-only: never auto-scheduled. The agent runs
+            // via manual invoke/execute and transitions to Completed after a
+            // successful run. A never-due time keeps the task registered but
+            // inert (enabled flag also gates, this is belt-and-suspenders).
+            ScheduleType::Once => Ok((i64::MAX, None)),
             ScheduleType::Interval => {
                 // `interval_seconds: Some(0)` is the frontend's "on-demand"
                 // convention (AgentEditorFullScreen: manual-only agent, no
@@ -1009,6 +1014,29 @@ mod tests {
             .unwrap();
 
         assert!(next >= now + 299 && next <= now + 301);
+    }
+
+    /// `ScheduleType::Once` = one-shot / manual-only: never auto-due.
+    #[tokio::test]
+    async fn test_calculate_next_execution_once_never_due() {
+        let scheduler = AgentScheduler::new(SchedulerConfig::default())
+            .await
+            .unwrap();
+
+        let once = AgentSchedule {
+            schedule_type: ScheduleType::Once,
+            cron_expression: None,
+            interval_seconds: None,
+            event_filter: None,
+            timezone: None,
+        };
+
+        let (next, _) = scheduler.calculate_next_execution(&once).await.unwrap();
+        assert_eq!(
+            next,
+            i64::MAX,
+            "Once tasks must never come due on their own"
+        );
     }
 
     /// `interval_seconds: Some(0)` is the on-demand (manual-only) convention.

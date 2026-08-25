@@ -540,9 +540,12 @@ export function AgentEditorFullScreen({
 
   const parseSchedule = (schedule: AgentSchedule) => {
     if (!schedule) return
-    if (schedule.schedule_type === 'interval') {
+    if (schedule.schedule_type === 'once') {
+      // First-class one-shot / manual-only form
+      setScheduleType('on-demand')
+    } else if (schedule.schedule_type === 'interval') {
       if (schedule.interval_seconds === 0) {
-        // interval_seconds=0 means on-demand (no auto-trigger)
+        // Legacy encoding of on-demand (pre-Once rows) — still readable
         setScheduleType('on-demand')
       } else {
         setScheduleType('timer')
@@ -1086,7 +1089,7 @@ export function AgentEditorFullScreen({
     try {
       let cronExpression: string | undefined = undefined
       let intervalSeconds: number | undefined = undefined
-      let finalScheduleType: 'interval' | 'cron' | 'event' = 'interval'
+      let finalScheduleType: 'interval' | 'cron' | 'event' | 'once' = 'interval'
       let eventFilter: string | undefined = undefined
 
       if (scheduleType === 'timer') {
@@ -1111,8 +1114,8 @@ export function AgentEditorFullScreen({
         }
         eventFilter = JSON.stringify(eventFilterObj)
       } else { // on-demand
-        finalScheduleType = 'interval'
-        intervalSeconds = 0  // 0 = no auto-scheduling
+        finalScheduleType = 'once'
+        intervalSeconds = undefined  // Once needs no interval — never auto-scheduled
       }
 
       // Build resources array in the new format that supports both devices and extensions

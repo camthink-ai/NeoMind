@@ -77,7 +77,12 @@ pub struct AiAgent {
     /// How many recent turns to include in LLM context
     #[serde(default = "default_context_window")]
     pub context_window_size: usize,
-    /// Enable tool chaining - allows tool outputs to be used as inputs for subsequent tools
+    /// DEPRECATED (dead field, 2026-08-26): written nowhere meaningful — the
+    /// executor unconditionally uses tool-calling when the LLM supports it
+    /// (`should_use_tools` ignores this flag), and it is absent from the API
+    /// DTOs and UI. Kept ONLY for bincode compatibility with rows already in
+    /// `agents.redb` (removing a mid-struct field desyncs every stored agent);
+    /// physically remove alongside the next storage migration. Always false.
     #[serde(default)]
     pub enable_tool_chaining: bool,
     /// Maximum chain depth (prevents infinite loops)
@@ -216,6 +221,12 @@ pub enum ScheduleType {
     Cron,
     /// Fixed interval
     Interval,
+    /// One-shot / manual-only task: never auto-scheduled by the scheduler;
+    /// runs via manual invoke/execute (or delegation, e.g. chat's run_agent),
+    /// and the agent transitions to `AgentStatus::Completed` after a
+    /// successful run. This is the first-class form of what the frontend
+    /// used to encode as the `interval_seconds: 0` hack.
+    Once,
 }
 
 /// Agent status.
@@ -232,6 +243,9 @@ pub enum AgentStatus {
     Error,
     /// Executing
     Executing,
+    /// A one-shot (`ScheduleType::Once`) task finished successfully. Not
+    /// auto-scheduled anymore; manual invoke still works and re-Completes.
+    Completed,
 }
 
 /// Agent execution mode.
