@@ -260,6 +260,10 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
             let Some(id) = dir.file_name().and_then(|s| s.to_str()) else {
                 continue;
             };
+            // Dot-dirs are import backups / internal state, not models.
+            if id.starts_with('.') {
+                continue;
+            }
             if builtin_ids.contains(id) {
                 continue;
             }
@@ -432,17 +436,37 @@ pub async fn import_local_handler(
         )));
     }
 
-    let sha = sha256_of_file(&dest).map_err(|e| ErrorResponse::internal(format!("sha256: {e}")))?;
-    let quant = meta.quant.clone().unwrap_or_else(|| "imported".to_string());
-    let manifest = ModelManifest {
-        id: id.clone(),
-        version: "1.0".to_string(),
-        file_name,
-        sha256: sha,
-        quant,
+    let post_copy = (|| -> Result<ModelManifest, ErrorResponse> {
+        let sha =
+            sha256_of_file(&dest).map_err(|e| ErrorResponse::internal(format!("sha256: {e}")))?;
+        let quant = meta.quant.clone().unwrap_or_else(|| "imported".to_string());
+        Ok(ModelManifest {
+            id: id.clone(),
+            version: "1.0".to_string(),
+            file_name: file_name.clone(),
+            sha256: sha,
+            quant,
+        })
+    })();
+    let manifest = match post_copy {
+        Ok(m) => m,
+        Err(e) => {
+            // Restore the backed-up model — a failure between copy and spawn
+            // must not strand the previous model in the backup dir.
+            let _ = std::fs::remove_dir_all(mdir.join(&id));
+            if had_existing {
+                let _ = std::fs::rename(&backup_dir, mdir.join(&id));
+            }
+            return Err(e);
+        }
     };
-    save_manifest(&mdir, &manifest)
-        .map_err(|e| ErrorResponse::internal(format!("manifest: {e}")))?;
+    if let Err(e) = save_manifest(&mdir, &manifest) {
+        let _ = std::fs::remove_dir_all(mdir.join(&id));
+        if had_existing {
+            let _ = std::fs::rename(&backup_dir, mdir.join(&id));
+        }
+        return Err(ErrorResponse::internal(format!("manifest: {e}")));
+    }
 
     // Free the port the previous model's server may still hold, then spawn the
     // IMPORTED model explicitly (preferred_id) — the old model dirs are only
@@ -678,6 +702,10 @@ pub async fn models_handler(
             let Some(id) = dir.file_name().and_then(|s| s.to_str()).map(str::to_string) else {
                 continue;
             };
+            // Dot-dirs are import backups / internal state, not models.
+            if id.starts_with('.') {
+                continue;
+            }
             if builtin_ids.contains(id.as_str()) {
                 continue;
             }
