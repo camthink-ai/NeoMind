@@ -130,7 +130,11 @@ pub fn llama_asset_name(os: &str, arch: &str, variant: RuntimeVariant) -> Option
 pub fn llama_server_url_for(os: &str, arch: &str, variant: RuntimeVariant) -> String {
     let asset = llama_asset_name(os, arch, variant);
     if variant == RuntimeVariant::Jetson {
-        format!("{}/{JETSON_RUNTIME_ASSET}", JETSON_RUNTIME_BASE_URL)
+        // {base}/releases/download/<runtime-<tag>>/<asset>
+        format!(
+            "{}/runtime-{}/{JETSON_RUNTIME_ASSET}",
+            JETSON_RUNTIME_BASE_URL, LLAMA_CPP_VERSION
+        )
     } else {
         let asset = asset.unwrap_or_default();
         llama_server_url(asset)
@@ -206,6 +210,24 @@ pub fn llama_server_cache_dir(data_dir: &std::path::Path, variant: RuntimeVarian
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jetson_url_includes_runtime_tag_segment() {
+        // Regression: dropping the runtime-<tag> segment from the base URL
+        // produced .../releases/download/<asset> → 404 on first real Jetson
+        // auto-download (2026-08-25). The tag must sit between /download/ and
+        // the asset filename.
+        let url = llama_server_url_for("linux", "aarch64", RuntimeVariant::Jetson);
+        assert!(url.starts_with(JETSON_RUNTIME_BASE_URL));
+        assert!(
+            url.contains(&format!("/releases/download/runtime-{LLAMA_CPP_VERSION}/")),
+            "url missing runtime tag segment: {url}"
+        );
+        assert!(url.ends_with(JETSON_RUNTIME_ASSET), "url: {url}");
+        // Non-Jetson linux-aarch64 must keep the official asset URL.
+        let cpu = llama_server_url_for("linux", "aarch64", RuntimeVariant::Cpu);
+        assert!(cpu.starts_with("https://github.com/ggml-org/llama.cpp/"));
+    }
 
     #[test]
     fn asset_map_covers_native_platforms() {
