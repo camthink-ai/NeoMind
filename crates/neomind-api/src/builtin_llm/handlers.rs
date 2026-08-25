@@ -209,6 +209,17 @@ pub fn installed_model(mdir: &Path) -> Option<(BuiltinModelDef, ModelManifest)> 
     })
 }
 
+/// Default context for an imported GGUF: the header's context_length capped
+/// at 128K (a header claiming 1M would OOM llama-server). Single source so
+/// spawn, the picker and the import response never diverge.
+pub fn import_default_ctx(model_path: &Path) -> u32 {
+    super::gguf::parse_gguf(model_path)
+        .ok()
+        .and_then(|m| m.context_length)
+        .and_then(|c| u32::try_from(c).ok())
+        .map(|c| c.min(131_072))
+        .unwrap_or(32768)
+}
 /// Owned view of the currently installed builtin-LLM model — builtin registry
 /// OR a locally imported "custom" GGUF. Decouples the spawn/status paths from
 /// the static `BuiltinModelDef` (whose string fields are `&'static`), so a
@@ -268,16 +279,7 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
     }
     let (manifest, _) = best?;
     let name = manifest.id.clone();
-    // Context from the GGUF header (cheap read); fall back to 32K.
-    // Cap the imported model's ctx — a GGUF declaring a huge context_length
-    // (e.g. 1M) would make llama-server allocate a KV cache that OOMs the host.
-    const IMPORT_CTX_CAP: u32 = 131_072; // 128K — matches the platform max builtin
-    let ctx: u32 = super::gguf::parse_gguf(&manifest.model_path(mdir))
-        .ok()
-        .and_then(|m| m.context_length)
-        .and_then(|c| u32::try_from(c).ok())
-        .map(|c| c.min(IMPORT_CTX_CAP))
-        .unwrap_or(32768);
+    let ctx = import_default_ctx(&manifest.model_path(mdir));
     Some(InstalledModel {
         display_name: name,
         default_ctx: ctx,
@@ -295,12 +297,7 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
     if !manifest.model_path(mdir).exists() {
         return None;
     }
-    let ctx: u32 = super::gguf::parse_gguf(&manifest.model_path(mdir))
-        .ok()
-        .and_then(|m| m.context_length)
-        .and_then(|c| u32::try_from(c).ok())
-        .map(|c| c.min(131_072))
-        .unwrap_or(32768);
+    let ctx = import_default_ctx(&manifest.model_path(mdir));
     Some(InstalledModel {
         display_name: id.to_string(),
         default_ctx: ctx,
@@ -399,6 +396,14 @@ pub async fn import_local_handler(
     let mdir = models_dir(&state.data_dir);
     let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("model");
     let id = slugify(meta.name.as_deref().unwrap_or(stem));
+    // A slug colliding with a curated builtin id (e.g. general.name 'Gemma4-E2B'
+    // → 'gemma4-e2b') would overwrite the builtin's manifest/file in place —
+    // corrupting the curated entry and orphaning the real model. Reject.
+    if BUILTIN_MODELS.iter().any(|d| d.manifest.id == id) {
+        return Err(ErrorResponse::bad_request(format!(
+            "imported model id '{id}' collides with a built-in model — rename the GGUF's              general.name (or the file) so it doesn't map to a curated id"
+        )));
+    }
     let file_name = format!("{id}.gguf");
     let dest = mdir.join(&id).join(&file_name);
     if let Some(parent) = dest.parent() {
@@ -430,34 +435,38 @@ pub async fn import_local_handler(
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     let mut spawned_endpoint = None;
-    let mut spawn_ok = false;
+    let mut spawn_attempted = false;
     if let Ok(manager) = get_instance_manager() {
+        spawn_attempted = true;
         match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await {
             Ok(endpoint) => {
                 tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
                 spawned_endpoint = Some(endpoint);
-                spawn_ok = true;
+                // Single-model invariant confirmed: the imported model is live.
+                // Remove every OTHER model dir (builtin + prior customs).
+                if let Ok(entries) = std::fs::read_dir(&mdir) {
+                    for entry in entries.flatten() {
+                        let dir = entry.path();
+                        if dir.is_dir()
+                            && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str())
+                        {
+                            let _ = std::fs::remove_dir_all(&dir);
+                        }
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!(error = %e, model = %id, "builtin llm: spawn after local import failed — rolling back the import, keeping the previous model intact");
-            }
-        }
-    }
-    if spawn_ok {
-        // Single-model invariant confirmed: the imported model is live. Remove
-        // every OTHER model dir (builtin + prior customs).
-        if let Ok(entries) = std::fs::read_dir(&mdir) {
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if dir.is_dir() && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str()) {
-                    let _ = std::fs::remove_dir_all(&dir);
-                }
+                // Rollback only on an ATTEMPTED-and-failed spawn. The copy may
+                // have overwritten a same-id prior import, so deleting the dir
+                // is correct there; but if the manager was unavailable we never
+                // touched spawn state — leave the (valid) import in place for
+                // a later /restart instead of deleting it.
+                let _ = std::fs::remove_dir_all(mdir.join(&id));
             }
         }
     } else {
-        // Rollback: the previous model was never touched; remove just the new
-        // (broken) model so the next spawn/selection finds the working one.
-        let _ = std::fs::remove_dir_all(mdir.join(&id));
+        tracing::warn!(model = %id, "builtin llm: instance manager unavailable — import installed but not spawned (run /restart)");
     }
 
     ok(json!({
@@ -465,11 +474,7 @@ pub async fn import_local_handler(
         "model_id": id,
         "name": meta.name.unwrap_or_else(|| id.clone()),
         // Report the SAME capped ctx the spawn uses (imports cap at 128K).
-        "ctx": meta
-            .context_length
-            .and_then(|c| u32::try_from(c).ok())
-            .map(|c| c.min(131_072))
-            .unwrap_or(32768),
+        "ctx": import_default_ctx(&dest),
         "quant": manifest.quant,
         "arch": meta.architecture,
         "installed": true,
