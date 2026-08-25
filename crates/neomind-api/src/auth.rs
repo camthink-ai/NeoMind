@@ -43,7 +43,13 @@ pub struct ApiKeyInfo {
     pub name: String,
     /// Creation timestamp
     pub created_at: i64,
-    /// Permissions (simple list, "*" means all)
+    /// Permissions (simple list, "*" means all).
+    ///
+    /// DOCUMENTED BEHAVIOR (single-user edge platform): this field is
+    /// informational only — it is accepted at creation, stored, and echoed
+    /// back, but NEVER enforced. Every API key authenticates as a full
+    /// administrator. Treat any key you create as equivalent to the admin
+    /// account; revoke keys you don't fully trust.
     pub permissions: Vec<String>,
     /// Whether this key is active
     pub active: bool,

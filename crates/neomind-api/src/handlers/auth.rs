@@ -30,7 +30,8 @@ fn extract_api_key(headers: &HeaderMap) -> Result<String, AuthError> {
 pub struct CreateKeyRequest {
     /// Human-readable name for the key
     pub name: String,
-    /// Permissions (empty means full access)
+    /// Permissions (informational only — never enforced; every key has full
+    /// admin access regardless of this field. Empty defaults to ["*"].)
     #[serde(default)]
     pub permissions: Vec<String>,
 }
@@ -111,6 +112,10 @@ pub async fn list_keys_handler(
 }
 
 /// Create a new API key (requires authentication).
+///
+/// NOTE: the `permissions` field is informational only and never enforced —
+/// every API key grants full administrator access. Create keys only for
+/// parties you would trust with the admin account.
 pub async fn create_key_handler(
     State(state): State<ServerState>,
     headers: HeaderMap,
