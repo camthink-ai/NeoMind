@@ -901,9 +901,15 @@ pub async fn create_agent(
     // Validate interval_seconds when schedule type is interval
     if request.schedule.schedule_type == "interval" {
         match request.schedule.interval_seconds {
-            None | Some(0) => {
+            // Some(0) is the on-demand convention: a manual-only agent that
+            // never auto-schedules (the scheduler maps it to a never-due
+            // next_execution). Previously rejected here, which made the
+            // frontend's "on-demand" option fail with 400 on create while
+            // the read path still interpreted stored 0 as on-demand.
+            Some(0) => {}
+            None => {
                 return Err(ErrorResponse::validation(
-                    "interval_seconds must be > 0 when schedule_type is 'interval'",
+                    "interval_seconds is required when schedule_type is 'interval'",
                 ));
             }
             Some(secs) if secs < 10 => {
