@@ -1093,21 +1093,33 @@ impl SessionManager {
         assistant_reply: &str,
     ) {
         if !self.is_memory_enabled(session_id).await {
+            tracing::info!(session_id, "memory extraction: memory disabled, skip");
             return;
         }
         let um = user_message.trim().to_string();
         let ar = assistant_reply.trim().to_string();
         // A substantive exchange only — greetings/pings shouldn't mint memory.
         if um.is_empty() || ar.chars().count() < 40 {
+            tracing::info!(
+                session_id,
+                ar_len = ar.chars().count(),
+                "memory extraction: reply too short, skip"
+            );
             return;
         }
         let agent = match self.get_session(session_id).await {
             Ok(a) => a,
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!(session_id, error = %e, "memory extraction: no session");
+                return;
+            }
         };
         let runtime = match agent.llm_interface().get_runtime().await {
             Ok(r) => r,
-            Err(_) => return,
+            Err(e) => {
+                tracing::warn!(session_id, error = %e, "memory extraction: no runtime");
+                return;
+            }
         };
         let model = runtime.model_name().to_string();
 
@@ -1152,10 +1164,15 @@ Assistant: {ar}\n"
             let out = match runtime.generate(input).await {
                 Ok(o) => o,
                 Err(e) => {
-                    tracing::debug!(session_id, error = %e, "memory extraction skipped (LLM error)");
+                    tracing::warn!(session_id, error = %e, "memory extraction: LLM generate failed");
                     return;
                 }
             };
+            tracing::info!(
+                session_id,
+                out_chars = out.text.chars().count(),
+                "memory extraction: LLM responded"
+            );
 
             // Parse tagged bullets: `- [user] ...` / `- [knowledge] ...`
             let mut new_user: Vec<String> = Vec::new();
@@ -1185,8 +1202,15 @@ Assistant: {ar}\n"
                 }
             }
             if new_user.is_empty() && new_knowledge.is_empty() {
+                tracing::info!(session_id, "memory extraction: no tagged facts in output");
                 return;
             }
+            tracing::info!(
+                session_id,
+                user_facts = new_user.len(),
+                knowledge_facts = new_knowledge.len(),
+                "memory extraction: parsed facts"
+            );
 
             // Merge: exact-normalized dedup against existing bullets; cap to
             // the file budget keeping the OLDEST facts (durable base facts
