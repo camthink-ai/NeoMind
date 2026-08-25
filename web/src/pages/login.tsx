@@ -20,7 +20,7 @@ import { textNano } from '@/design-system/tokens/typography'
 import { tokenManager, getApiBase, getApiKey, setApiBase, clearApiKey, setApiKey } from "@/lib/api"
 import { handleWindowDragMouseDown } from "@/lib/windowDrag"
 import { INSTANCE_CACHE_KEY, CURRENT_INSTANCE_KEY, PENDING_SWITCH_KEY } from "@/lib/instance-constants"
-import { decryptApiKey } from "@/store/slices/instanceSlice"
+import { getFullApiKey } from "@/store/slices/instanceSlice"
 
 const languages = [
   { code: 'en', name: 'English' },
@@ -113,9 +113,10 @@ export function LoginPage() {
   const apiBase = getApiBase()
   const isRemote = !!(apiBase && apiBase !== '/api' && !apiBase.includes('localhost') && !apiBase.includes('127.0.0.1'))
 
-  // Handle instance switch — use encrypted_key from backend
+  // Handle instance switch — the full key comes from the per-browser key
+  // store (saved when the user entered it); the backend never returns it.
   const handleInstanceSwitch = async (instance: CachedInstance) => {
-    const fullKey = instance.encrypted_key ? decryptApiKey(instance.encrypted_key) : ''
+    const fullKey = instance.is_local ? '' : (getFullApiKey(instance.id) || '')
     useStore.setState({
       switchingState: 'switching',
       switchingError: null,
@@ -306,7 +307,7 @@ export function LoginPage() {
           <div className="max-w-lg mx-auto space-y-3">
             {cachedInstances.map((inst) => {
               const isCurrent = inst.id === localStorage.getItem(CURRENT_INSTANCE_KEY)
-              const hasApiKey = !!(inst.encrypted_key || inst.api_key)
+              const hasApiKey = !!(getFullApiKey(inst.id) || inst.api_key)
               return (
                 <button
                   key={inst.id}

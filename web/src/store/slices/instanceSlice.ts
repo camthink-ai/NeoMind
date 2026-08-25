@@ -18,14 +18,19 @@ import { INSTANCE_CACHE_KEY, CURRENT_INSTANCE_KEY, PENDING_SWITCH_KEY } from '@/
 import { fetchCache } from '@/lib/utils/async'
 
 // ============================================================================
-// API key decryption (XOR + hex, matching backend's xor_encode)
+// API key decryption — LEGACY CACHE MIGRATION ONLY
 // ============================================================================
+// The backend no longer returns the full key (a hardcoded-XOR "encryption"
+// round-trip leaked every instance's credential to anyone who could list
+// instances — the cipher lives in the open-source repo). This decoder remains
+// solely to migrate keys still sitting in an old localStorage instance cache
+// into the per-browser key store below; once migrated, entries are stripped.
 
-const KEY_CIPHER = 'NeoMind2024!@#'
+const LEGACY_KEY_CIPHER = 'NeoMind2024!@#'
 
-/** Decrypt XOR+hex encoded API key from backend. */
-export function decryptApiKey(encrypted: string): string {
-  const keyBytes = new TextEncoder().encode(KEY_CIPHER)
+/** Decrypt XOR+hex encoded API key from a pre-0.9.20 backend. */
+function decryptLegacyApiKey(encrypted: string): string {
+  const keyBytes = new TextEncoder().encode(LEGACY_KEY_CIPHER)
   const bytes: number[] = []
   for (let i = 0; i < encrypted.length; i += 2) {
     bytes.push(parseInt(encrypted.substring(i, i + 2), 16))
@@ -36,25 +41,46 @@ export function decryptApiKey(encrypted: string): string {
 }
 
 // ============================================================================
-// In-memory API key store (populated from backend encrypted_key)
+// Per-browser instance key store
 // ============================================================================
+// The backend keeps the full key for its own health checks but never returns
+// it. The browser keeps its copy here from the moment the user entered it
+// (add/edit instance) so later switches don't need the key back from the API.
 
-/** Full API keys keyed by instance ID. */
-const _apiKeyMap: Record<string, string> = {}
+const INSTANCE_KEYS_STORAGE = 'neomind_instance_keys'
 
-/** Save full API key for an instance. */
+function readKeyStore(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(INSTANCE_KEYS_STORAGE)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeKeyStore(map: Record<string, string>) {
+  try {
+    localStorage.setItem(INSTANCE_KEYS_STORAGE, JSON.stringify(map))
+  } catch { /* ignore storage errors */ }
+}
+
+/** Save full API key for an instance (persists across reloads). */
 function saveInstanceKey(instanceId: string, apiKey: string) {
-  _apiKeyMap[instanceId] = apiKey
+  const map = readKeyStore()
+  map[instanceId] = apiKey
+  writeKeyStore(map)
 }
 
 /** Remove API key for an instance. */
 function removeInstanceKey(instanceId: string) {
-  delete _apiKeyMap[instanceId]
+  const map = readKeyStore()
+  delete map[instanceId]
+  writeKeyStore(map)
 }
 
-/** Get the full API key for an instance. */
-function getFullApiKey(instanceId: string): string | undefined {
-  return _apiKeyMap[instanceId]
+/** Get the full API key for an instance, if this browser ever stored one. */
+export function getFullApiKey(instanceId: string): string | undefined {
+  return readKeyStore()[instanceId]
 }
 
 // ============================================================================
@@ -65,9 +91,13 @@ export interface InstanceInfo {
   id: string
   name: string
   url: string
-  /** Masked key from backend (e.g. "nmk_abc1****"). */
+  /** Masked key from backend (e.g. "nmk_abc1****"). The full key is never returned. */
   api_key?: string
-  /** XOR+hex encrypted full key from backend. */
+  /**
+   * @deprecated Removed from backend responses in 0.9.20. Present only in
+   * old localStorage caches; `getCachedInstances` migrates these into the
+   * key store and strips them. Do not use in new code.
+   */
   encrypted_key?: string
   is_local: boolean
   last_status: string
@@ -137,11 +167,31 @@ async function testInstanceApi(id: string): Promise<InstanceTestResult> {
   return api.post<InstanceTestResult>(`/instances/${id}/test`, {})
 }
 
-/** Read cached instance list from localStorage (available before any API call). */
+/** Read cached instance list from localStorage (available before any API call).
+ * One-time migration: entries still carrying a legacy `encrypted_key` (written
+ * by a pre-0.9.20 backend) are decrypted into the per-browser key store and
+ * stripped from the cache. */
 function getCachedInstances(): InstanceInfo[] {
   try {
     const raw = localStorage.getItem(INSTANCE_CACHE_KEY)
-    return raw ? JSON.parse(raw) : []
+    if (!raw) return []
+    const instances: InstanceInfo[] = JSON.parse(raw)
+    let migrated = false
+    for (const inst of instances) {
+      if (inst.encrypted_key) {
+        try {
+          saveInstanceKey(inst.id, decryptLegacyApiKey(inst.encrypted_key))
+        } catch { /* undecodable legacy value — drop it */ }
+        delete inst.encrypted_key
+        migrated = true
+      }
+    }
+    if (migrated) {
+      try {
+        localStorage.setItem(INSTANCE_CACHE_KEY, JSON.stringify(instances))
+      } catch { /* ignore storage errors */ }
+    }
+    return instances
   } catch {
     return []
   }
@@ -150,7 +200,8 @@ function getCachedInstances(): InstanceInfo[] {
 /** Sync instance list to localStorage cache (strips API keys for security). */
 function syncCache(instances: InstanceInfo[]) {
   try {
-    // Strip both api_key (masked) and encrypted_key (decodable) before caching
+    // Strip masked api_key (display-only) and any legacy encrypted_key
+    // before caching
     const safe = instances.map(({ api_key: _, encrypted_key: __, ...rest }) => rest)
     localStorage.setItem(INSTANCE_CACHE_KEY, JSON.stringify(safe))
   } catch { /* ignore storage errors */ }
@@ -276,12 +327,8 @@ export const createInstanceSlice: StateCreator<
     set({ instanceLoading: true })
     try {
       const instances = await fetchInstancesApi()
-      // Decrypt encrypted keys from backend into in-memory store
-      for (const inst of instances) {
-        if (inst.encrypted_key) {
-          saveInstanceKey(inst.id, decryptApiKey(inst.encrypted_key))
-        }
-      }
+      // The backend returns masked keys only; full keys live in the
+      // per-browser key store (saved when the user entered them).
       try {
         localStorage.setItem(INSTANCE_CACHE_KEY, JSON.stringify(instances))
       } catch { /* ignore storage errors */ }
@@ -309,10 +356,9 @@ export const createInstanceSlice: StateCreator<
   addInstance: async (data) => {
     fetchCache.invalidate('instances')
     const instance = await createInstanceApi(data)
-    // Decrypt key from backend's encrypted_key
-    if (instance.encrypted_key) {
-      saveInstanceKey(instance.id, decryptApiKey(instance.encrypted_key))
-    } else if (data.api_key) {
+    // The user just entered the key — persist it in the per-browser store so
+    // later switches don't need the backend to hand it back.
+    if (data.api_key) {
       saveInstanceKey(instance.id, data.api_key)
     }
     const instances = [...get().instances, instance]
@@ -325,10 +371,7 @@ export const createInstanceSlice: StateCreator<
   updateInstance: async (id, data) => {
     fetchCache.invalidate('instances')
     const updated = await updateInstanceApi(id, data)
-    // Update in-memory key from backend's encrypted_key
-    if (updated.encrypted_key) {
-      saveInstanceKey(id, decryptApiKey(updated.encrypted_key))
-    } else if (data.api_key !== undefined) {
+    if (data.api_key !== undefined) {
       if (data.api_key) {
         saveInstanceKey(id, data.api_key)
       } else {

@@ -54,41 +54,18 @@ fn default_status() -> String {
     "unknown".to_string()
 }
 
-/// XOR cipher key for API key encryption (shared with frontend).
-/// Can be overridden via NEOMIND_KEY_CIPHER environment variable.
-pub fn get_key_cipher() -> &'static [u8] {
-    use std::sync::OnceLock;
-    static CIPHER: OnceLock<Vec<u8>> = OnceLock::new();
-    CIPHER.get_or_init(|| {
-        std::env::var("NEOMIND_KEY_CIPHER")
-            .map(|s| s.into_bytes())
-            .unwrap_or_else(|_| b"NeoMind2024!@#".to_vec())
-    })
-}
-
-/// XOR encode bytes with a key, then hex-encode the result.
-/// Used to encrypt API keys for safe transit to the frontend.
-fn xor_encode(data: &str, key: &[u8]) -> String {
-    data.bytes()
-        .enumerate()
-        .fold(String::new(), |mut acc, (i, b)| {
-            use std::fmt::Write;
-            write!(acc, "{:02x}", b ^ key[i % key.len()]).unwrap();
-            acc
-        })
-}
-
 /// Instance data returned in API responses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceResponse {
     pub id: String,
     pub name: String,
     pub url: String,
-    /// Masked API key for display (e.g. "nmk_abc1****")
+    /// Masked API key for display (e.g. "nmk_abc1****"). The full key is
+    /// NEVER returned by the API — the frontend keeps its own copy from
+    /// when the user entered it (a hardcoded-XOR "encrypted" round-trip
+    /// previously leaked every instance's credential to any caller who
+    /// could list instances).
     pub api_key: Option<String>,
-    /// XOR+hex encrypted full API key (decryptable by frontend)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub encrypted_key: Option<String>,
     pub is_local: bool,
     pub last_status: String,
     pub last_checked_at: Option<i64>,
@@ -112,12 +89,9 @@ impl InstanceRecord {
         }
     }
 
-    /// Return a response-safe copy with masked api_key and encrypted full key.
+    /// Return a response-safe copy with masked api_key. The full key never
+    /// leaves the backend (see [`InstanceResponse`]).
     pub fn for_response(&self) -> InstanceResponse {
-        let encrypted_key = self
-            .api_key
-            .as_ref()
-            .map(|k| xor_encode(k, get_key_cipher()));
         InstanceResponse {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -130,7 +104,6 @@ impl InstanceRecord {
                     "****".to_string()
                 }
             }),
-            encrypted_key,
             is_local: self.is_local,
             last_status: self.last_status.clone(),
             last_checked_at: self.last_checked_at,
