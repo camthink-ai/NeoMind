@@ -899,8 +899,12 @@ export function ChatPage() {
           >
             <WelcomeArea className="min-h-full" onQuickAction={handleQuickAction} />
           </div>
-        ) : isLoadingSession ? (
-          /* Loading State - shown when switching sessions, with skeleton messages */
+        ) : isLoadingSession || (urlSessionId && sessionId !== urlSessionId) ? (
+          /* Loading State - shown while a session loads: during an explicit
+             switch AND on first entry with a sessionId in the URL, where the
+             store's sessionId is still null for the first frame — without
+             the second condition the "Empty chat" default flashes for one
+             frame before the real messages arrive. */
           <div className={cn("flex-1 min-h-0 overflow-y-auto px-2 sm:px-4 py-2 sm:py-4", isDesktop && "pt-12")}>
             <div className="max-w-3xl mx-auto space-y-4 sm:space-y-6">
               {/* Skeleton message - user */}
