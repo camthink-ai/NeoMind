@@ -178,7 +178,9 @@
     "importLocalBusy": "Importing…",
     "importLocalBadge": "Custom",
     "importLocalOk": "Imported {id}",
-    "importLocalFailed": "Import failed"
+    "importLocalFailed": "Import failed",
+    "cloudCtx": "Context window (optional)",
+    "cloudCtxHelp": "Real context length for custom backends (e.g. RKLLM3 -c 16384). Blank = default 128000"
   },
   "yes": "Yes",
   "no": "No",

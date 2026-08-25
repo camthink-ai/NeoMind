@@ -72,6 +72,12 @@ pub struct CreateBackendRequest {
     /// Model capabilities (optional, from Ollama model detection)
     #[serde(default)]
     pub capabilities: Option<BackendCapabilities>,
+
+    /// Explicit context window override (custom backends like RKLLM3 run a
+    /// real -c that the default 128000 overstates — an over-sized prompt hangs
+    /// the runtime). Merged into capabilities.max_context when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context: Option<usize>,
 }
 
 fn default_temperature() -> f32 {
@@ -128,6 +134,10 @@ pub struct UpdateBackendRequest {
     /// Model capabilities (optional, from Ollama model detection)
     #[serde(default)]
     pub capabilities: Option<BackendCapabilities>,
+
+    /// Explicit context window override (see create request).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_context: Option<usize>,
 }
 
 /// Backend instance DTO for API responses
@@ -604,6 +614,11 @@ pub async fn update_backend_handler(
         }
 
         instance.capabilities = capabilities;
+    }
+    // Explicit context override (custom backends): the user knows their real
+    // ctx (e.g. RKLLM3 -c 16384); a user-set value wins over name-detection.
+    if let Some(ctx) = req.max_context {
+        instance.capabilities.max_context = ctx;
     }
     instance.updated_at = chrono::Utc::now().timestamp();
 

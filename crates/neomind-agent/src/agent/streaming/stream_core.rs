@@ -1544,7 +1544,7 @@ pub async fn process_stream_events_with_safeguards(
                             } else {
                                 tracing::warn!("Retry produced only tool calls, using fallback");
                                 let fallback =
-                                    "Sorry, the model could not produce a response. Please retry."
+                                    "Sorry, the model could not produce a response. Please retry.\n[reason: the model returned empty content after retry — the backend may be slow, over its real context limit, or rejecting the request shape]"
                                         .to_string();
                                 raw_response = fallback.clone();
                                 yield AgentEvent::content(fallback);
@@ -1552,9 +1552,9 @@ pub async fn process_stream_events_with_safeguards(
                         }
                         Err(e) => {
                             tracing::error!("Retry LLM call failed: {}", e);
-                            let fallback =
-                                "Sorry, the model could not produce a response. Please retry."
-                                    .to_string();
+                            let fallback = format!(
+                                "Sorry, the model could not produce a response. Please retry.\n[error: {e}]"
+                            );
                             raw_response = fallback.clone();
                             yield AgentEvent::content(fallback);
                         }

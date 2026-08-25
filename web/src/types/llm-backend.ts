@@ -70,6 +70,7 @@ export interface CreateLlmBackendRequest {
   thinking_enabled?: boolean  // Enable thinking/reasoning mode for models that support it
   thinking_effort?: ThinkingEffort  // Unified reasoning effort (preferred over thinking_enabled)
   capabilities?: BackendCapabilities  // Model capabilities (from Ollama model detection)
+  max_context?: number  // Explicit context window for custom backends (e.g. RKLLM3 -c 16384)
 }
 
 export interface UpdateLlmBackendRequest {

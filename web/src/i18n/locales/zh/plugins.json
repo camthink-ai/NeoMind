@@ -178,7 +178,9 @@
     "importLocalBusy": "导入中…",
     "importLocalBadge": "自定义",
     "importLocalOk": "已导入 {id}",
-    "importLocalFailed": "导入失败"
+    "importLocalFailed": "导入失败",
+    "cloudCtx": "上下文窗口 (可选)",
+    "cloudCtxHelp": "自定义后端(如 RKLLM3)声明真实的上下文长度;留空用默认 128000"
   },
   "yes": "是",
   "no": "否",

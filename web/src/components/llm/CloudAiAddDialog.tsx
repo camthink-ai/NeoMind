@@ -34,6 +34,8 @@ export interface CloudAiEditTarget {
   endpoint: string
   model: string
   api_key_configured: boolean
+  /** Stored context window, if any (prefill the ctx field on edit). */
+  max_context?: number
 }
 
 interface Props {
@@ -65,6 +67,10 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Prop
   const [endpoint, setEndpoint] = useState(DEFAULTS.openai.endpoint)
   const [model, setModel] = useState(DEFAULTS.openai.model)
   const [apiKey, setApiKey] = useState('')
+  // Optional real context window for custom backends (e.g. RKLLM3 runs -c 16384
+  // but openai-typed backends default to 128000 — over-sized prompts hang the
+  // runtime). Sent as capabilities.max_context; the server respects it.
+  const [ctx, setCtx] = useState<string>('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -73,6 +79,7 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Prop
     setError(null)
     if (editing) {
       const p = protocolOf(editing.backend_type)
+      if (editing.max_context) setCtx(String(editing.max_context))
       setProtocol(p)
       setName(editing.name)
       setEndpoint(editing.endpoint)
@@ -117,6 +124,9 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Prop
           ...(keyProvided ? { api_key: keyProvided } : {}),
           temperature: 0.7,
           ...(protocol === 'openai' ? { top_p: 0.9 } : {}),
+          ...(ctx.trim() && !Number.isNaN(Number(ctx))
+            ? { max_context: Number(ctx) }
+            : {}),
         },
         editing?.id
       )
@@ -163,6 +173,15 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Prop
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-cloud-llm" />
         </FormField>
 
+        <FormField label={t('plugins:llm.cloudCtx')} helpText={t('plugins:llm.cloudCtxHelp')}>
+          <input
+            value={ctx}
+            onChange={(e) => setCtx(e.target.value)}
+            placeholder="16384"
+            inputMode="numeric"
+            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
+          />
+        </FormField>
         <FormField label={t('plugins:llm.endpoint')}>
           <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="https://…" />
         </FormField>
