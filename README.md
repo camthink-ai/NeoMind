@@ -282,18 +282,9 @@ All three run NeoMind's full agent toolkit (tool selection, in-process CLI dispa
 | **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | **76%** — strongest | Top agent reliability and the only one of the three with built-in vision (add the mmproj file). Runs non-thinking by default for speed. |
 | **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 67% (100% tool-selection) | Smallest footprint with native 128K context (hybrid KV is cheap). Thinking is integral to the model. Check the LFM license before redistribution. |
 | **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 60% | Google's official QAT quant; vision-ready via the `mmproj` file. Thinking on by default. |
+| **Ling 3.0-tiny** (community — import your GGUF) | Q4_K_M | 4.8 GB | — | **77%** — ties Qwen | MoE "tiny" that matches Qwen 3.5 4B on the agent suite (~110-116 tok/s gen on M4-class). Best for single-step tool tasks; its misses are long multi-step deploys. Single run, indicative. [GGUF](https://huggingface.co/bloomer010/Ling-3.0-tiny-GGUF) |
 
-Rule of thumb: **Qwen 3.5 4B** for the best agent experience, **LFM 2.5** for modest devices and long sessions, **Gemma E2B QAT** when you want the Google ecosystem and vision. Prefer a manual setup? All three are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works.
-
-### Community models (import your own GGUF)
-
-The built-in picker also accepts **any GGUF you own** — Settings → LLM Backends → the built-in model wizard → "Import local model" registers it (magic-validated, header-parsed) into the single-model switch. We validated one notable community model on the same 30-case agent suite:
-
-| Model | Quant | Size | Eval (cmd_ok) | Speed (M4-class) |
-|---|---|---|---|---|
-| **Ling-3.0-tiny** | Q4_K_M | 4.8 GB | **77%** — ties Qwen 3.5 4B | ~110-116 tok/s gen · ~1800 tok/s ingest |
-
-Ling-3.0-tiny is a Mixture-of-Experts "tiny" model whose tool-calling punches above its size — on the identical 30-case suite it scored alongside Qwen 3.5 4B (77% vs 76%) while generating ~45% faster. Its 7 misses were long multi-step workflow cases (irrigation/BMS deploys), so it's best for single-step tool tasks. [bloomer010/Ling-3.0-tiny-GGUF](https://huggingface.co/bloomer010/Ling-3.0-tiny-GGUF). Single run — treat as indicative, and verify on your own hardware.
+Rule of thumb: **Qwen 3.5 4B** for the best agent experience, **LFM 2.5** for modest devices and long sessions, **Gemma E2B QAT** when you want the Google ecosystem and vision. Prefer a manual setup? All three are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works — and the built-in picker imports **any GGUF you own** (built-in model wizard → "Import local model").
 
 ### Development
 
