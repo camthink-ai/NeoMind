@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — agent capability, open model catalog, Jetson
+
+### Agent execution core — the version's reliability spine
+- **Error-aware dedup**: the cross-round dedup set now records only SUCCESSFUL executions. Signatures were inserted before execution, so a transient tool failure (MQTT timeout, extension hiccup) made the model's retry a "duplicate", ending the loop via AllDuplicate with the error in hand. Failed calls can retry — and a failed signature that keeps failing (budget: 3 consecutive failures) is blacklisted so the loop brakes instead of burning all 30 rounds. (StuckDetector removed: its five OpenHands-style patterns were mathematically unreachable behind that same dedup — docs described a brake that never fired; the dedup IS the brake.)
+- **Context-overflow self-heal**: overflow is permanent per `is_permanent()`, but on local backends a window smaller than the registry default meant EVERY round overflows. One hard-compaction retry (halved effective window) turns "small-model execution inevitably fails" into "completes".
+- **Remaining-round countdown**: within the last 3 rounds a `[System]` note tells the model how much runway is left, so it wraps up instead of starting a chain the cap will cut off.
+- **Cancelled exits the loop**: the tool-concurrency semaphore closing only broke the batch loop; now the whole round loop stops and Phase 2 summary is skipped (no LLM calls during shutdown).
+- **Event-trigger retry un-deadened**: `execute_with_retry` treated `Ok(Failed-record)` as success — execute_agent reports LLM/tool failures as Ok records, so the 5s inline retry and the cooldown-clear never fired. Failed status now retries, then errors so the cooldown clears.
+- **Honest success metrics**: tool results returning `Ok{success:false}` counted as success (success_rate pinned to 1.0); the journal now reflects real outcomes — the learning signal agents train on.
+- **Sampling config wired**: the scheduled-agent loop hardcoded temperature 0.7 and ignored `/api/settings/agent`; the setting now feeds both chat and scheduled paths.
+
+### Cross-session memory actually works
+Chat had NO automatic memory write — only what the model chose to write via the memory tool, which small models almost never do, so USER.md/KNOWLEDGE.md stayed empty. After a completed chat turn, a thinking-disabled LLM call extracts durable `[user]`/`[knowledge]` facts, merges them deduped + budget-capped, and invalidates the frozen snapshot so the next turn sees them. Verified live on an Orin-class board: LFM's integral thinking consumes ~5700 chars of reasoning, so the extraction budget is 2000 tokens (300/800 ended empty), and the parser tolerates the model's tag-separator variants (`[user]:` vs `[user] fact`). The scheduled-agent journal injection is now failure-prioritized (failed runs surfaced first, recency preserved within each group) with the retained window grown 10→20.
+
+### Rules become observable — and correct on strings
+- **`RuleEvaluated`/`RuleTriggered`/`RuleExecuted` now actually publish** on the EventBus (they existed in the event enum with zero producers — the frontend and extension subscriptions had to poll the history API).
+- **String rules substitute `{value}`**: extract_trigger_value only surfaced numbers, so a contains/regex rule on a Text field rendered the literal placeholder in its alert.
+- **Cross-source AND no longer flaps**: the value cache's 5s TTL made a slow source's value vanish between updates → the AND went false → for_duration kept resetting. Values are now the last-known truth until replaced (cache capped at 4096 entries with oldest-eviction); staleness is the job of `__last_seen_age_secs`, not time-based eviction.
+- **`neomind data sources list`**: the authoritative source inventory (devices ∪ extensions ∪ transforms) for rule/dashboard/push bindings — the agent had to guess DataSourceId strings.
+
+### Open model catalog — three channels
+- **Local import** (`POST /api/builtin-llm/import-local` + a wizard card): bring any GGUF. Magic + zero-tensor validation, header-parsed name/ctx/quant, SHA256-pinned manifest, and it participates in the single-model switch exactly like a curated model. Failure-safe by construction: a same-id re-import back the existing dir aside and restores it; a failed spawn rolls back the import, RESTARTS the previous model's server, and reports an error; a slug colliding with a curated builtin id is rejected upfront. Context is capped at 128K (a header claiming 1M would OOM the KV allocation).
+- **Remote catalog** (edit the JSON, clients pick it up): the picker serves `models/catalog.json` from camthink-ai/NeoMind-Runtimes; a new model ships as a catalog edit, no product release. Graceful degradation is the contract: offline/timeout/parse error falls back to the compiled-in curated three (+ any local imports) — never an empty list. 3s timeout, 1h TTL cache, `NEOMIND_CATALOG_URL` override for mirrors.
+- **Custom-backend context window**: `max_context` on LLM create/update (merged into capabilities, user value wins over name detection) + a Cloud AI dialog field — an RKLLM3-class backend running `-c 16384` no longer receives 128K-budgeted prompts.
+- **Diagnosable empty-response errors**: "Sorry, the model could not produce a response" now carries the reason (the LLM error string, or an explicit empty-content hint naming likely causes) instead of a bare "Please retry".
+
+### Jetson runtime — self-bootstrapping CUDA
+Jetson hosts (Orin, sm_87) auto-detect via `/etc/nv_tegra-release` and fetch OUR gcc-11 CUDA runtime from camthink-ai/NeoMind-Runtimes (SHA-256-pinned — executable downloads get no slack; exec-checked at download and again before trusting a PATH-found binary that the official ubuntu-arm64 build shadows). Verified end-to-end on a real Orin Nano 8GB: the official llama.cpp arm64 build requires gcc-13 libstdc++ which JetPack 6 (gcc-11) lacks — our build fills exactly that gap.
+
+### The AI-facing CLI tells the truth (recovery edition)
+- **recovery_hint taught wrong syntax in five places** (device create `--type` vs `--device-type`, control `--command` flag vs positional, agent `--action` vs positional, transform `value` vs `input`, dashboard steering into the full-array replace) — the failure-recovery hint is what the model sees right after a failed command, so wrong syntax steered the retry into a second failure.
+- **Piped commands route to the real shell**: `neomind x | grep y` was intercepted in-process with `|` passed to clap as a literal argument → guaranteed "unexpected argument". The tokenizer now bails on shell constructs outside quotes.
+- **Receipts teach the next step**: agent create (paused — activate with…), connector create (test with…), transform create (check executions) — multi-step truncation was a top eval failure class.
+- **`neomind config export|import|validate`** wired (the handlers existed as dead code) and **`message delete`** added — the undo command previously pointed at a subcommand that didn't parse.
+
+### Skills: builtin is actually read-only, BM25 ranks the real path
+- "Builtin skills are read-only" was documented but not enforced — PUT/DELETE persisted a shadow file that permanently masked the builtin content across upgrades. Both the API handlers and the LLM skill tool now return teaching errors for builtin ids; the `origin` field (hardcoded "user" in every response, so `?origin=builtin` filters were dead) is serialized from metadata.
+- **BM25 ranks the production skill tool search** (it only served the debug endpoint): IDF-weighted lexical ranking rides the flat signals with a two-tier gate — ranking lift for already-positive candidates, strong rare-term rescue (≥2.5 raw) for zero-flat queries, garbage queries still find nothing. Regression test on the real 15-skill corpus locks both properties.
+
+### Notification channels survive restarts + six silent failures
+- **telegram/wecom/dingtalk/slack/feishu channels died on every server restart** (`load_persisted_channels` only had factory branches for webhook/email) — rule alerts silently stopped until each channel was manually recreated.
+- Cleanup batch: agent `--resources`/`--metrics`/`--commands` malformed JSON now errors instead of silently dropping the binding; `device create --adapter-type` defaults to the documented `mqtt`; the dashboard full-replace path runs the same known-type gate as add-components; IM bridge re-registration stops the superseded bridge instead of leaving twin polling loops; market extension upgrades carry the user's config forward (and push it to the running process); `init_llm` prefers the DB's active instance over a stale config.toml (a leftover TOML resurrected a dead backend over the user's activated builtin).
+
+### Four one-liners that were each silent failures
+share-proxy hardcoded port 127.0.0.1:9375 (non-default-port installs served broken shared dashboards — now resolves the real bind port); deleting ANY dashboard cleared the global default pointer (only the deleted one should); updating a channel wiped its routing filter (register persisted `ChannelFilter::default()` over the user's); `selectedSkills: []` couldn't clear pinned skills (the guard treated "explicitly emptied" as "not provided").
+
+### Frontend
+- "Add your own API backend" opens the Cloud AI dialog (protocol chooser) — it built an inline OpenAI type and bypassed the protocol path.
+- The builtin model wizard gains the **import-your-own-GGUF card** + a `Custom` badge on imported models.
+
+### Eval & docs
+- Ling-3.0-tiny Q4_K_M validated on the same 30-case agent suite: **77% — ties Qwen 3.5 4B** while generating ~45% faster (~110-116 tok/s on M4-class); joins the README's model table as the community-import example.
+- Remote catalog notes kept language-neutral (English) in the public NeoMind-Runtimes repo.
+
 ## [0.9.19] - 2026-08-21
 
 ### Built-in AI, out of the box — the version's theme
