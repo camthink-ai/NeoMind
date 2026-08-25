@@ -287,6 +287,29 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
     })
 }
 
+/// Build an `InstalledModel` for a SPECIFIC id (import spawn path) — load its
+/// manifest directly instead of relying on installed_model_any's preference
+/// scan, so an import can spawn the new model before the old one is removed.
+pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
+    let manifest = load_manifest(mdir, id).ok().flatten()?;
+    if !manifest.model_path(mdir).exists() {
+        return None;
+    }
+    let ctx: u32 = super::gguf::parse_gguf(&manifest.model_path(mdir))
+        .ok()
+        .and_then(|m| m.context_length)
+        .and_then(|c| u32::try_from(c).ok())
+        .map(|c| c.min(131_072))
+        .unwrap_or(32768);
+    Some(InstalledModel {
+        display_name: id.to_string(),
+        default_ctx: ctx,
+        default_thinking: false,
+        is_custom: true,
+        manifest,
+    })
+}
+
 /// Download source for a def: HF repo + file + sha. Every model downloads its
 /// registry entry directly (LFM's entry is now QAD Q4_0, the default); the
 /// env `quant_override` swaps LFM to q8_0/q4_k_m for power users.
@@ -397,62 +420,44 @@ pub async fn import_local_handler(
     save_manifest(&mdir, &manifest)
         .map_err(|e| ErrorResponse::internal(format!("manifest: {e}")))?;
 
-    // Free the port the previous model's server may still hold, then spawn
-    // for the imported model (mirrors the download tail). The other model dirs
-    // are moved ASIDE (not deleted) before spawn — installed_model_any prefers
-    // a present builtin over the newest custom, so the imported model is only
-    // selected once its competitors are out of the way. On success the backup
-    // is discarded; on failure it is restored, so a broken import can never
-    // nuke the working model.
+    // Free the port the previous model's server may still hold, then spawn the
+    // IMPORTED model explicitly (preferred_id) — the old model dirs are only
+    // removed AFTER the new one is confirmed live, and a failed spawn rolls
+    // back by deleting just the new model, never touching the working one.
     let cfg = BuiltinConfig::from_env();
     if super::server::health_check(cfg.port).await {
         kill_process_on_port(cfg.port);
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    let backup = mdir.join(".import-backup");
-    let mut moved: Vec<(String, std::path::PathBuf)> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&mdir) {
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
-            }
-            let Some(name) = dir.file_name().map(|s| s.to_string_lossy().to_string()) else {
-                continue;
-            };
-            if name == id || name == ".import-backup" {
-                continue;
-            }
-            let dest = backup.join(&name);
-            if std::fs::create_dir_all(&backup).is_ok() && std::fs::rename(&dir, &dest).is_ok() {
-                moved.push((name, dest));
-            }
-        }
-    }
     let mut spawned_endpoint = None;
     let mut spawn_ok = false;
     if let Ok(manager) = get_instance_manager() {
-        match spawn_builtin_server(&state.data_dir, &cfg, &manager).await {
+        match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await {
             Ok(endpoint) => {
                 tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
                 spawned_endpoint = Some(endpoint);
                 spawn_ok = true;
             }
             Err(e) => {
-                tracing::warn!(error = %e, model = %id, "builtin llm: spawn after local import failed (run /restart) — keeping the previous model intact");
+                tracing::warn!(error = %e, model = %id, "builtin llm: spawn after local import failed — rolling back the import, keeping the previous model intact");
             }
         }
     }
     if spawn_ok {
-        // Single-model invariant confirmed: the imported model is live. The
-        // moved-aside models are gone for good.
-        let _ = std::fs::remove_dir_all(&backup);
-    } else if !moved.is_empty() {
-        // Restore the working models — the import failed, nothing is lost.
-        for (name, dest) in moved {
-            let _ = std::fs::rename(&dest, mdir.join(&name));
+        // Single-model invariant confirmed: the imported model is live. Remove
+        // every OTHER model dir (builtin + prior customs).
+        if let Ok(entries) = std::fs::read_dir(&mdir) {
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                if dir.is_dir() && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str()) {
+                    let _ = std::fs::remove_dir_all(&dir);
+                }
+            }
         }
-        let _ = std::fs::remove_dir_all(&backup);
+    } else {
+        // Rollback: the previous model was never touched; remove just the new
+        // (broken) model so the next spawn/selection finds the working one.
+        let _ = std::fs::remove_dir_all(mdir.join(&id));
     }
 
     ok(json!({
@@ -864,7 +869,7 @@ async fn run_builtin_download(
             // only when nothing else is active). Failures here are logged, not
             // fatal — the model is downloaded and restart/status can recover.
             if let Ok(manager) = get_instance_manager() {
-                match spawn_builtin_server(&state.data_dir, &cfg, &manager).await {
+                match spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await {
                     Ok(endpoint) => {
                         tracing::info!(endpoint = %endpoint, "builtin llm: server started after download")
                     }
@@ -910,16 +915,22 @@ async fn spawn_builtin_server(
     data_dir: &Path,
     cfg: &BuiltinConfig,
     manager: &LlmBackendInstanceManager,
+    preferred_id: Option<&str>,
 ) -> anyhow::Result<String> {
     // Model check BEFORE the runtime fetch — same ordering contract as
     // bootstrap: the llama-server download belongs to the user's decision to
     // install a builtin model, never to a restart hitting a model-less host.
     let mdir = models_dir(data_dir);
-    // installed_model_any covers BOTH builtin registry models AND locally
-    // imported custom GGUFs — the open-catalog local channel participates in
-    // the single-model switch like any builtin.
-    let installed = installed_model_any(&mdir)
-        .ok_or_else(|| anyhow::anyhow!("model not installed (no manifest)"))?;
+    // `preferred_id` lets the import spawn the NEW model explicitly instead of
+    // relying on installed_model_any's preference scan (which favors a present
+    // builtin / newest custom) — so we can remove the old model only AFTER the
+    // new one is confirmed live.
+    let installed = match preferred_id {
+        Some(id) => installed_model_by_id(&mdir, id)
+            .ok_or_else(|| anyhow::anyhow!("model {id} not installed (no manifest)"))?,
+        None => installed_model_any(&mdir)
+            .ok_or_else(|| anyhow::anyhow!("model not installed (no manifest)"))?,
+    };
     let binary = ensure_llama_server(data_dir)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -1145,7 +1156,7 @@ pub async fn restart_handler(
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let manager = get_manager()?;
-    match spawn_builtin_server(&state.data_dir, &cfg, &manager).await {
+    match spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await {
         Ok(endpoint) => {
             // The builtin may be the ACTIVE chat backend — its session-manager
             // snapshot still carries the OLD endpoint/capabilities (prompt
