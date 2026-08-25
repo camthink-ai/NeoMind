@@ -116,6 +116,26 @@ impl SkillTool {
         score
     }
 
+    /// `score_skill_query` + BM25 IDF-weighted lexical boost — the production
+    /// retrieval path. The matcher's auto-inject GATE (raw>1.0 × 0.3) is NOT
+    /// applied here: this is ranking, not trigger selection, so the boost only
+    /// lifts an already-positive candidate (rare-term hits like "LoRaWAN"
+    /// climb above generic keyword ties), never creates one.
+    fn score_with_bm25(
+        skill: &skills::Skill,
+        query: &str,
+        index: &skills::bm25::Bm25Index,
+        doc_idx: usize,
+        query_tokens: &[String],
+    ) -> f32 {
+        let mut score = Self::score_skill_query(skill, query);
+        let raw = index.score(doc_idx, query_tokens);
+        if raw > 1.0 {
+            score += (raw - 1.0) * 0.3;
+        }
+        score
+    }
+
     /// Persist a skill file to disk.
     fn persist(&self, id: &str, content: &str) {
         if let Some(ref dir) = self.data_dir {
@@ -201,10 +221,18 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
 
                 let registry_guard = self.registry.read().await;
 
-                // Score all skills against the query (shared with `load` fuzzy resolution)
+                // Score all skills against the query (shared with `load` fuzzy
+                // resolution). BM25 (IDF-weighted) rides on top of the flat
+                // signals so rare-term hits rank correctly in production.
+                let all: Vec<&skills::Skill> = registry_guard.list();
+                let corpus: Vec<String> =
+                    all.iter().copied().map(|s| skills::matcher::searchable_text(s)).collect();
+                let index = skills::bm25::Bm25Index::build(corpus);
+                let query_tokens = skills::bm25::tokenize(query);
+
                 let mut results: Vec<(String, String, f32)> = Vec::new();
-                for skill in registry_guard.list() {
-                    let score = Self::score_skill_query(skill, query);
+                for (i, skill) in all.iter().copied().enumerate() {
+                    let score = Self::score_with_bm25(skill, query, &index, i, &query_tokens);
                     if score > 0.0 {
                         // The frontmatter `description` is the intent-carrying
                         // signal (agentskills.io); fall back to the body's first
@@ -270,10 +298,15 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                         // without it a model that guesses a partial id gets stuck after
                         // the first miss — especially small models, which rarely act on
                         // a plain-text "Did you mean" hint.
-                        let mut candidates: Vec<(&skills::Skill, f32)> = registry_guard
-                            .list()
+                        let all: Vec<&skills::Skill> = registry_guard.list();
+                        let corpus: Vec<String> =
+                            all.iter().copied().map(|s| skills::matcher::searchable_text(s)).collect();
+                        let index = skills::bm25::Bm25Index::build(corpus);
+                        let query_tokens = skills::bm25::tokenize(id);
+                        let mut candidates: Vec<(&skills::Skill, f32)> = all
                             .iter()
-                            .map(|s| (*s, Self::score_skill_query(s, id)))
+                            .enumerate()
+                            .map(|(i, s)| (*s, Self::score_with_bm25(s, id, &index, i, &query_tokens)))
                             .filter(|(_, sc)| *sc > 0.0)
                             .collect();
                         candidates
@@ -445,6 +478,39 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    /// Regression (0.9.20): production search used only flat signals — a
+    /// rare-term query ("lorawan") tied with generic keywords and the owning
+    /// skill ranked no better than an unrelated one. The BM25 component must
+    /// lift it above the tie.
+    #[test]
+    fn bm25_lifts_rare_term_ranking() {
+        let mut reg = SkillRegistry::new();
+        reg.add_user_skill(
+            "---\nname: LoRaWAN Bridge\nid: lorawan-bridge\ndescription: connect a lorawan gateway uplink\n---\nSteps for lorawan uplink parsing.\n",
+        )
+        .unwrap();
+        reg.add_user_skill(
+            "---\nname: Generic Bridge\nid: generic-bridge\ndescription: connect any kind of gateway\n---\nSteps for generic bridge setup.\n",
+        )
+        .unwrap();
+
+        let all: Vec<&crate::skills::Skill> = reg.list();
+        let corpus: Vec<String> = all
+            .iter()
+            .copied()
+            .map(|s| crate::skills::matcher::searchable_text(s))
+            .collect();
+        let index = crate::skills::bm25::Bm25Index::build(corpus);
+        let qt = crate::skills::bm25::tokenize("lorawan gateway");
+
+        let lorawan = SkillTool::score_with_bm25(all[0], "lorawan gateway", &index, 0, &qt);
+        let generic = SkillTool::score_with_bm25(all[1], "lorawan gateway", &index, 1, &qt);
+        assert!(
+            lorawan > generic,
+            "BM25 must lift the rare-term skill (lorawan={lorawan}, generic={generic})"
+        );
+    }
 
     /// Guard against drift between the hardcoded "Available skill IDs" list in
     /// SkillTool::description() and the builtin skills actually loaded by the

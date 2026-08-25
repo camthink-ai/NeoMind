@@ -155,7 +155,7 @@ pub fn match_skills(
 /// queries against (name + description intent text + keywords + tool
 /// targets). The body is excluded — it is instructions, not trigger
 /// vocabulary, and would drown the short fields' IDF signal.
-fn searchable_text(skill: &Skill) -> String {
+pub(crate) fn searchable_text(skill: &Skill) -> String {
     let mut parts: Vec<String> = vec![
         skill.metadata.name.clone(),
         skill.metadata.description.clone(),
