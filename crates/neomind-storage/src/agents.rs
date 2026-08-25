@@ -331,7 +331,11 @@ fn default_timestamp() -> i64 {
 }
 
 fn default_journal_limit() -> usize {
-    10
+    // 20 (was 10): failed runs are the key learning signal, and a FIFO of 10
+    // meant an old failure was evicted before a run that could have learned
+    // from it. Bigger window = more history for the failure-prioritized
+    // injection (context.rs).
+    20
 }
 
 impl Default for AgentMemory {

@@ -121,13 +121,20 @@ pub(crate) fn build_history_context(
         // signal for FAILED runs; for successes a short preview keeps the
         // journal from dominating a small model's window (5 entries × ~1100
         // chars is ~10K tokens of CJK).
-        let entries = agent
+        let mut recent: Vec<&neomind_storage::ExecutionRecord> = agent
             .memory
             .journal
             .records
             .iter()
             .rev()
             .take(config.max_journal_entries)
+            .collect();
+        // FAILED runs are the key learning signal — surface them FIRST so the
+        // agent sees what to avoid, successes after. Stable sort keeps the
+        // recency order within each group.
+        recent.sort_by_key(|r| r.success);
+        let entries = recent
+            .into_iter()
             .map(|r| {
                 let ts = format_timestamp(r.timestamp);
                 let status = if r.success { "OK" } else { "FAIL" };

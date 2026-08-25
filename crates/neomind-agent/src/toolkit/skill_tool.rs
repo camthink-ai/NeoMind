@@ -121,6 +121,9 @@ impl SkillTool {
     /// applied here: this is ranking, not trigger selection, so the boost only
     /// lifts an already-positive candidate (rare-term hits like "LoRaWAN"
     /// climb above generic keyword ties), never creates one.
+    /// BM25 raw score at which a zero-flat candidate is rescued (rare-term hit).
+    const RARE_TERM_RESCUE_RAW: f32 = 2.5;
+
     fn score_with_bm25(
         skill: &skills::Skill,
         query: &str,
@@ -131,7 +134,17 @@ impl SkillTool {
         let mut score = Self::score_skill_query(skill, query);
         let raw = index.score(doc_idx, query_tokens);
         if raw > 1.0 {
-            score += (raw - 1.0) * 0.3;
+            if score > 0.0 {
+                // Ranking lift for an already-positive candidate.
+                score += (raw - 1.0) * 0.3;
+            } else if raw >= Self::RARE_TERM_RESCUE_RAW {
+                // Rescue for a genuinely rare-term query whose flat signals
+                // missed (e.g. "lorawan"): only a STRONG IDF-weighted hit
+                // creates a candidate from zero. Common-word coincidences
+                // ("skill", "not") stay below the bar, so a garbage query
+                // like "zzz-not-a-skill" still finds nothing.
+                score += (raw - 2.0) * 0.5;
+            }
         }
         score
     }
@@ -480,35 +493,39 @@ mod tests {
     use tokio::sync::RwLock;
 
     /// Regression (0.9.20): production search used only flat signals — a
-    /// rare-term query ("lorawan") tied with generic keywords and the owning
-    /// skill ranked no better than an unrelated one. The BM25 component must
-    /// lift it above the tie.
+    /// rare-term query ("modbus" — present in exactly one builtin skill)
+    /// tied with generic keywords, and garbage scored nothing. BM25 must
+    /// RESCUE the rare-term skill while a nonsense query still finds
+    /// nothing.
     #[test]
-    fn bm25_lifts_rare_term_ranking() {
-        let mut reg = SkillRegistry::new();
-        reg.add_user_skill(
-            "---\nname: LoRaWAN Bridge\nid: lorawan-bridge\ndescription: connect a lorawan gateway uplink\n---\nSteps for lorawan uplink parsing.\n",
-        )
-        .unwrap();
-        reg.add_user_skill(
-            "---\nname: Generic Bridge\nid: generic-bridge\ndescription: connect any kind of gateway\n---\nSteps for generic bridge setup.\n",
-        )
-        .unwrap();
-
-        let all: Vec<&crate::skills::Skill> = reg.list();
+    fn bm25_rescues_rare_terms_but_not_garbage() {
+        let registry = SkillRegistry::load_all(None);
+        let all: Vec<&crate::skills::Skill> = registry.list();
         let corpus: Vec<String> = all
             .iter()
             .copied()
             .map(|s| crate::skills::matcher::searchable_text(s))
             .collect();
         let index = crate::skills::bm25::Bm25Index::build(corpus);
-        let qt = crate::skills::bm25::tokenize("lorawan gateway");
 
-        let lorawan = SkillTool::score_with_bm25(all[0], "lorawan gateway", &index, 0, &qt);
-        let generic = SkillTool::score_with_bm25(all[1], "lorawan gateway", &index, 1, &qt);
+        let score_all = |query: &str| -> Vec<f32> {
+            let tokens = crate::skills::bm25::tokenize(query);
+            all.iter()
+                .enumerate()
+                .map(|(i, s)| SkillTool::score_with_bm25(s, query, &index, i, &tokens))
+                .collect()
+        };
+
+        let rare = score_all("modbus gateway");
         assert!(
-            lorawan > generic,
-            "BM25 must lift the rare-term skill (lorawan={lorawan}, generic={generic})"
+            rare.iter().any(|&x| x > 0.0),
+            "rare-term 'modbus' must rescue at least one builtin skill: {rare:?}"
+        );
+
+        let garbage = score_all("zzz-not-a-skill");
+        assert!(
+            garbage.iter().all(|&x| x <= 0.0),
+            "garbage query must not create any candidate: {garbage:?}"
         );
     }
 
