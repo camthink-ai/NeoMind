@@ -1,28 +1,59 @@
 //! User authentication API handlers.
 
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{ConnectInfo, Extension, Path, State},
     http::{HeaderMap, StatusCode},
     response::Json,
 };
+use std::net::SocketAddr;
 
 use crate::auth_users::{
-    AuthError, ChangePasswordRequest, LoginRequest, LoginResponse, RegisterRequest, SessionInfo,
-    UserRole,
+    client_ip_for_throttle, AuthError, ChangePasswordRequest, LoginRequest, LoginResponse,
+    RegisterRequest, SessionInfo, UserRole,
 };
 use crate::server::ServerState;
 
 /// Login handler - authenticate user and return JWT token.
+///
+/// Brute-force throttled: the request is checked (per username AND per client
+/// IP) before the password is verified, and only credential failures count —
+/// a successful login clears both keys.
 pub async fn login_handler(
     State(state): State<ServerState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, AuthError> {
-    let response = state
+    let ip = client_ip_for_throttle(&headers, &addr);
+    state
+        .auth
+        .user_state
+        .check_login_throttle(&req.username, Some(&ip))?;
+
+    match state
         .auth
         .user_state
         .login(&req.username, &req.password)
-        .await?;
-    Ok(Json(response))
+        .await
+    {
+        Ok(response) => {
+            state
+                .auth
+                .user_state
+                .clear_login_throttle(&req.username, Some(&ip));
+            Ok(Json(response))
+        }
+        // Only credential failures count — a database error must not push an
+        // honest user toward a lockout.
+        Err(e @ (AuthError::InvalidCredentials | AuthError::UserNotFound)) => {
+            state
+                .auth
+                .user_state
+                .record_login_failure(&req.username, Some(&ip));
+            Err(e)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Register handler - create a new user account.
@@ -32,10 +63,25 @@ pub async fn login_handler(
 /// Promoting to admin must go through the admin-only `create_user_handler`.
 /// The `role` field on `RegisterRequest` is accepted (for backwards-
 /// compatibility with older clients) but silently ignored.
+///
+/// Every attempt counts against the per-IP signup throttle — each call
+/// creates a user, so there is no honest high-volume caller.
 pub async fn register_handler(
     State(state): State<ServerState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<RegisterRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), AuthError> {
+    let ip = client_ip_for_throttle(&headers, &addr);
+    state
+        .auth
+        .user_state
+        .check_signup_throttle("reg", Some(&ip))?;
+    state
+        .auth
+        .user_state
+        .record_signup_attempt("reg", Some(&ip));
+
     let (user, token) = state
         .auth
         .user_state

@@ -55,6 +55,7 @@ share-proxy hardcoded port 127.0.0.1:9375 (non-default-port installs served brok
 
 ### Security hygiene
 - **Deleting a user or changing a password now revokes that user's sessions immediately** — both the in-memory whitelist and every persisted row in `sessions.redb`. Previously a JWT minted before the change kept working for up to `session_duration` (7 days): a leaked token survived a password rotation, and a deleted user's token kept authenticating. Logout-level revocation existed; user-level did not.
+- **The public auth endpoints are brute-force throttled.** The global HTTP limiter sits at flood scale (thousands of req/min) — no defense against password guessing. Login now counts only *credential* failures (5 per 15 min, keyed per username AND per client IP — either over the cap blocks, so distributed guessing at one account and one host spraying many accounts are both stopped; a successful login clears the counters, so mistyping a few times never locks an honest user out). Register and first-run setup count every attempt per IP (10 per 15 min). 429 + `Retry-After` on block. The client IP honors `X-Forwarded-For`/`X-Real-IP` (production sits behind nginx); a direct-connection attacker forging those headers defeats only the IP key — the per-username key is the load-bearing half.
 
 ### Frontend
 - "Add your own API backend" opens the Cloud AI dialog (protocol chooser) — it built an inline OpenAI type and bypassed the protocol path.

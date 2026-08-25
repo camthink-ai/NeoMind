@@ -105,10 +105,36 @@ pub async fn setup_status_handler(
 ///
 /// Creates the first admin user. Only available when no users exist.
 /// After successful creation, returns a JWT token for immediate login.
+///
+/// Per-IP throttled (every attempt counts): an unconfigured device exposes
+/// this endpoint to the network, and racing to claim the admin account is
+/// the highest-value brute-force target on the box.
 pub async fn initialize_admin_handler(
     State(state): State<ServerState>,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<InitializeAdminRequest>,
 ) -> Result<Json<InitializeAdminResponse>, ErrorResponse> {
+    // Throttle first (pure in-memory check, before any DB reads).
+    let ip = crate::auth_users::client_ip_for_throttle(&headers, &addr);
+    if let Err(crate::auth_users::AuthError::TooManyAttempts(secs)) = state
+        .auth
+        .user_state
+        .check_signup_throttle("setup", Some(&ip))
+    {
+        return Err(ErrorResponse {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            code: "TOO_MANY_ATTEMPTS".to_string(),
+            message: format!("Too many setup attempts — try again in {secs} seconds"),
+            request_id: None,
+            hint: None,
+        });
+    }
+    state
+        .auth
+        .user_state
+        .record_signup_attempt("setup", Some(&ip));
+
     // Validate that this is truly first-time setup
     let users = state.auth.user_state.list_users().await;
     if !users.is_empty() {

@@ -1,6 +1,6 @@
 //! Tests for auth_users handlers.
 
-use axum::extract::{Extension, Path, State};
+use axum::extract::{ConnectInfo, Extension, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use neomind_api::auth_users::{
@@ -8,6 +8,12 @@ use neomind_api::auth_users::{
 };
 use neomind_api::handlers::auth_users::*;
 use neomind_api::handlers::ServerState;
+use std::net::SocketAddr;
+
+/// Loopback address for the ConnectInfo arg the throttled handlers take.
+fn test_connect_info() -> ConnectInfo<SocketAddr> {
+    ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 40000)))
+}
 
 async fn create_test_server_state() -> ServerState {
     crate::common::create_test_server_state().await
@@ -24,7 +30,13 @@ mod tests {
             username: "nonexistent".to_string(),
             password: "wrongpassword".to_string(),
         };
-        let result = login_handler(State(state), Json(req)).await;
+        let result = login_handler(
+            State(state),
+            test_connect_info(),
+            HeaderMap::new(),
+            Json(req),
+        )
+        .await;
         assert!(result.is_err());
     }
 
@@ -40,7 +52,13 @@ mod tests {
             password: "test_password_123".to_string(),
             role: Some(UserRole::User),
         };
-        let result = register_handler(State(state), Json(req)).await;
+        let result = register_handler(
+            State(state),
+            test_connect_info(),
+            HeaderMap::new(),
+            Json(req),
+        )
+        .await;
         assert!(result.is_ok());
         let (status, response) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);
@@ -61,7 +79,13 @@ mod tests {
             password: "admin_password_123".to_string(),
             role: Some(UserRole::Admin),
         };
-        let result = register_handler(State(state), Json(req)).await;
+        let result = register_handler(
+            State(state),
+            test_connect_info(),
+            HeaderMap::new(),
+            Json(req),
+        )
+        .await;
         assert!(result.is_ok());
         let (status, response) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);
@@ -81,7 +105,13 @@ mod tests {
             password: "password123".to_string(),
             role: None, // Should default to User
         };
-        let result = register_handler(State(state), Json(req)).await;
+        let result = register_handler(
+            State(state),
+            test_connect_info(),
+            HeaderMap::new(),
+            Json(req),
+        )
+        .await;
         assert!(result.is_ok());
         let (status, _response) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);

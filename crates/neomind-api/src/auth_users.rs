@@ -194,6 +194,100 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
+/// Sliding-window event counter backing the auth throttles.
+///
+/// Counts events per key over a fixed window; a key at/over the cap is
+/// locked out until its oldest event slides out. Memory is bounded: the map
+/// is swept for expired entries once it exceeds [`SWEEP_THRESHOLD`] keys, so
+/// a flood of distinct keys cannot grow it unboundedly.
+struct SlidingWindowCounter {
+    events: std::sync::Mutex<HashMap<String, Vec<std::time::Instant>>>,
+    max_events: usize,
+    window: std::time::Duration,
+}
+
+/// Map-size trigger for the expiry sweep (see [`SlidingWindowCounter`]).
+const SWEEP_THRESHOLD: usize = 10_000;
+
+impl SlidingWindowCounter {
+    fn new(max_events: usize, window: std::time::Duration) -> Self {
+        Self {
+            events: std::sync::Mutex::new(HashMap::new()),
+            max_events,
+            window,
+        }
+    }
+
+    /// Ok if `key` is under the cap; otherwise `Err(retry_after_secs)`.
+    /// Expired events are dropped, so the lockout ends exactly when the
+    /// oldest counted event leaves the window.
+    fn check(&self, key: &str) -> Result<(), u64> {
+        let mut map = self.events.lock().unwrap();
+        if let Some(times) = map.get_mut(key) {
+            let now = std::time::Instant::now();
+            times.retain(|t| now.duration_since(*t) < self.window);
+            if times.len() >= self.max_events {
+                let retry = self.window - now.duration_since(times[0]);
+                return Err(retry.as_secs().max(1));
+            }
+        }
+        Ok(())
+    }
+
+    /// Count one event against `key`.
+    fn record(&self, key: &str) {
+        let mut map = self.events.lock().unwrap();
+        if map.len() > SWEEP_THRESHOLD {
+            let now = std::time::Instant::now();
+            map.retain(|_, times| {
+                times.retain(|t| now.duration_since(*t) < self.window);
+                !times.is_empty()
+            });
+        }
+        map.entry(key.to_string())
+            .or_default()
+            .push(std::time::Instant::now());
+    }
+
+    /// Drop all counted events for `key` (used when a login succeeds — an
+    /// honest user who mistypes a few times then gets it right starts clean).
+    fn clear(&self, key: &str) {
+        self.events.lock().unwrap().remove(key);
+    }
+}
+
+/// Brute-force throttles for the public auth endpoints.
+///
+/// The global HTTP rate limiter sits at flood scale (thousands of req/min on
+/// adaptive hardware) — no defense against password guessing. These windows
+/// are failure-aware instead: login counts only *credential* failures (a
+/// successful login clears the counters, so an honest user mistyping a few
+/// times is never locked out), while register/setup count every attempt.
+///
+/// Login is keyed two ways — per username AND per client IP — and blocks when
+/// either key is over the cap: the username key stops distributed guessing at
+/// one account, the IP key stops one host spraying many usernames. An IP is
+/// only a secondary signal (a direct-connection attacker can forge
+/// `X-Forwarded-For` to dodge it; the username key is unaffected).
+pub struct AuthThrottle {
+    /// Credential failures: 5 per 15 min per key.
+    login_failures: SlidingWindowCounter,
+    /// Register + first-setup attempts: 10 per 15 min per IP. Every attempt
+    /// counts (not just failures) — each creates a user or claims the
+    /// device's admin account, so there is no honest high-volume caller.
+    signup_attempts: SlidingWindowCounter,
+}
+
+impl AuthThrottle {
+    /// Production defaults.
+    fn production() -> Self {
+        Self {
+            login_failures: SlidingWindowCounter::new(5, std::time::Duration::from_secs(15 * 60)),
+            signup_attempts: SlidingWindowCounter::new(10, std::time::Duration::from_secs(15 * 60)),
+        }
+    }
+}
+
 /// Authentication state with user management.
 #[derive(Clone)]
 pub struct AuthUserState {
@@ -210,6 +304,9 @@ pub struct AuthUserState {
     jwt_secret: String,
     /// Session duration (seconds)
     session_duration: i64,
+    /// Brute-force throttles for the public auth endpoints (login/register/
+    /// setup). See [`AuthThrottle`].
+    auth_throttle: Arc<AuthThrottle>,
 }
 
 impl AuthUserState {
@@ -319,6 +416,7 @@ impl AuthUserState {
             db_path,
             jwt_secret,
             session_duration: 7 * 24 * 60 * 60, // 7 days
+            auth_throttle: Arc::new(AuthThrottle::production()),
         }
     }
 
@@ -336,6 +434,7 @@ impl AuthUserState {
             db_path: db_path_static,
             jwt_secret: jwt_secret_owned,
             session_duration: 7 * 24 * 60 * 60,
+            auth_throttle: Arc::new(AuthThrottle::production()),
         }
     }
 
@@ -352,6 +451,7 @@ impl AuthUserState {
             db_path: ":memory:", // Placeholder, won't be used
             jwt_secret,
             session_duration: 7 * 24 * 60 * 60,
+            auth_throttle: Arc::new(AuthThrottle::production()),
         }
     }
 
@@ -525,10 +625,18 @@ impl AuthUserState {
                 .collect()
         };
         if !keys.is_empty() {
-            self.sessions.write().unwrap().retain(|_, info| info.username != username);
+            self.sessions
+                .write()
+                .unwrap()
+                .retain(|_, info| info.username != username);
         }
         Self::delete_user_sessions_from_db(self.db_path, username);
-        info!(category = "auth", username = username, count = keys.len(), "Revoked user sessions");
+        info!(
+            category = "auth",
+            username = username,
+            count = keys.len(),
+            "Revoked user sessions"
+        );
     }
 
     fn delete_session_from_db(path: &str, key: &str) {
@@ -827,6 +935,72 @@ impl AuthUserState {
         ))
     }
 
+    /// Check the login brute-force throttle. Blocks ([`AuthError::TooManyAttempts`])
+    /// when either the username key or the IP key has too many recent
+    /// credential failures. `ip` is the client address for HTTP callers;
+    /// `None` for in-process callers (CLI/tests), which skips the IP key.
+    pub fn check_login_throttle(&self, username: &str, ip: Option<&str>) -> Result<(), AuthError> {
+        let throttle = &self.auth_throttle;
+        throttle
+            .login_failures
+            .check(&format!("fail:u:{username}"))
+            .map_err(AuthError::TooManyAttempts)?;
+        if let Some(ip) = ip {
+            throttle
+                .login_failures
+                .check(&format!("fail:ip:{ip}"))
+                .map_err(AuthError::TooManyAttempts)?;
+        }
+        Ok(())
+    }
+
+    /// Count a login failure against both keys. Only call this for credential
+    /// failures (wrong password / unknown user) — a database error must not
+    /// punish the user trying to log in.
+    pub fn record_login_failure(&self, username: &str, ip: Option<&str>) {
+        let throttle = &self.auth_throttle;
+        throttle
+            .login_failures
+            .record(&format!("fail:u:{username}"));
+        if let Some(ip) = ip {
+            throttle.login_failures.record(&format!("fail:ip:{ip}"));
+        }
+    }
+
+    /// Clear the login throttle after a successful login (both keys) — an
+    /// honest user who mistyped a few times starts clean.
+    pub fn clear_login_throttle(&self, username: &str, ip: Option<&str>) {
+        let throttle = &self.auth_throttle;
+        throttle.login_failures.clear(&format!("fail:u:{username}"));
+        if let Some(ip) = ip {
+            throttle.login_failures.clear(&format!("fail:ip:{ip}"));
+        }
+    }
+
+    /// Check the signup throttle for a public account-creating endpoint.
+    /// `action` namespaces the key (`"reg"` for self-service register,
+    /// `"setup"` for first-run admin initialization); every attempt counts.
+    /// In-process callers (`ip: None`) skip throttling — the admin CLI is not
+    /// a brute-force surface.
+    pub fn check_signup_throttle(&self, action: &str, ip: Option<&str>) -> Result<(), AuthError> {
+        if let Some(ip) = ip {
+            self.auth_throttle
+                .signup_attempts
+                .check(&format!("{action}:ip:{ip}"))
+                .map_err(AuthError::TooManyAttempts)?;
+        }
+        Ok(())
+    }
+
+    /// Count one register/setup attempt (called whether or not it succeeds).
+    pub fn record_signup_attempt(&self, action: &str, ip: Option<&str>) {
+        if let Some(ip) = ip {
+            self.auth_throttle
+                .signup_attempts
+                .record(&format!("{action}:ip:{ip}"));
+        }
+    }
+
     /// Login user and return token.
     pub async fn login(&self, username: &str, password: &str) -> Result<LoginResponse, AuthError> {
         // Clone user data before releasing lock
@@ -1009,6 +1183,9 @@ pub enum AuthError {
     SessionRevoked,
     InvalidInput(String),
     DatabaseError(String),
+    /// Brute-force throttle engaged (login failures / signup flood).
+    /// Carries the seconds until the oldest counted event leaves the window.
+    TooManyAttempts(u64),
 }
 
 impl std::fmt::Display for AuthError {
@@ -1023,6 +1200,9 @@ impl std::fmt::Display for AuthError {
             AuthError::SessionRevoked => write!(f, "Session has been revoked"),
             AuthError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
             AuthError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
+            AuthError::TooManyAttempts(secs) => {
+                write!(f, "Too many attempts — try again in {} seconds", secs)
+            }
         }
     }
 }
@@ -1049,6 +1229,20 @@ impl IntoResponse for AuthError {
             ),
             AuthError::InvalidInput(msg) => (HttpStatusCode::BAD_REQUEST, msg),
             AuthError::DatabaseError(msg) => (HttpStatusCode::INTERNAL_SERVER_ERROR, msg),
+            // 429 + Retry-After so well-behaved clients back off on their own.
+            AuthError::TooManyAttempts(secs) => {
+                let resp = (
+                    HttpStatusCode::TOO_MANY_REQUESTS,
+                    [("Retry-After", secs.to_string())],
+                    Json(serde_json::json!({
+                        "error": format!("Too many attempts — try again in {secs} seconds"),
+                        "status": 429,
+                        "retry_after": secs,
+                    })),
+                )
+                    .into_response();
+                return resp;
+            }
         };
 
         let body = serde_json::json!({
@@ -1058,6 +1252,33 @@ impl IntoResponse for AuthError {
 
         (status, Json(body)).into_response()
     }
+}
+
+/// Client IP for auth throttling: prefer the proxy headers (production sits
+/// behind nginx, where the socket address is always the proxy itself and a
+/// per-IP key would rate-limit every user as one client), fall back to the
+/// socket address.
+///
+/// Trust caveat: a *direct*-connection attacker can forge these headers to
+/// mint fresh per-IP keys. That defeats the IP half of the login throttle,
+/// but the per-username half — the one that protects a single account from
+/// distributed guessing — is keyed off the username and unaffected.
+pub fn client_ip_for_throttle(headers: &HeaderMap, addr: &std::net::SocketAddr) -> String {
+    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(first) = xff.split(',').next() {
+            let first = first.trim();
+            if !first.is_empty() {
+                return first.to_string();
+            }
+        }
+    }
+    if let Some(rip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        let rip = rip.trim();
+        if !rip.is_empty() {
+            return rip.to_string();
+        }
+    }
+    addr.ip().to_string()
 }
 
 /// JWT authentication middleware.
@@ -1174,7 +1395,9 @@ mod tests {
     #[tokio::test]
     async fn test_change_password_revokes_sessions() {
         let (auth, _) = make_test_auth("pw_revoke");
-        auth.register("alice", "oldpass", UserRole::User).await.unwrap();
+        auth.register("alice", "oldpass", UserRole::User)
+            .await
+            .unwrap();
         let token = auth.login("alice", "oldpass").await.unwrap().token;
         assert!(auth.validate_token(&token).is_ok());
 
@@ -1196,7 +1419,9 @@ mod tests {
     #[tokio::test]
     async fn test_delete_user_revokes_sessions() {
         let (auth, _) = make_test_auth("del_revoke");
-        auth.register("bob", "pass123", UserRole::User).await.unwrap();
+        auth.register("bob", "pass123", UserRole::User)
+            .await
+            .unwrap();
         let token = auth.login("bob", "pass123").await.unwrap().token;
         assert!(auth.validate_token(&token).is_ok());
 
@@ -1206,6 +1431,173 @@ mod tests {
             matches!(auth.validate_token(&token), Err(AuthError::SessionRevoked)),
             "deleted user's token must be revoked"
         );
+    }
+
+    /// Test auth with tight throttle windows (3 events / `window_ms`).
+    fn make_test_auth_throttled(
+        test_name: &str,
+        window_ms: u64,
+    ) -> (AuthUserState, std::path::PathBuf) {
+        let (mut auth, db_path) = make_test_auth(test_name);
+        auth.auth_throttle = Arc::new(AuthThrottle {
+            login_failures: SlidingWindowCounter::new(
+                3,
+                std::time::Duration::from_millis(window_ms),
+            ),
+            signup_attempts: SlidingWindowCounter::new(
+                3,
+                std::time::Duration::from_millis(window_ms),
+            ),
+        });
+        (auth, db_path)
+    }
+
+    /// Once the failure cap is hit, even the CORRECT password is rejected —
+    /// the throttle must not become an oracle that reveals when guessing works.
+    #[tokio::test]
+    async fn test_login_throttle_blocks_after_failures() {
+        let (auth, _) = make_test_auth_throttled("throttle_block", 60_000);
+        auth.register("carol", "rightpass", UserRole::User)
+            .await
+            .unwrap();
+
+        for _ in 0..3 {
+            assert!(matches!(
+                auth.login("carol", "wrongpass").await,
+                Err(AuthError::InvalidCredentials)
+            ));
+            auth.record_login_failure("carol", None);
+        }
+
+        assert!(
+            matches!(
+                auth.check_login_throttle("carol", None),
+                Err(AuthError::TooManyAttempts(_))
+            ),
+            "4th attempt must be throttled even with the correct password"
+        );
+    }
+
+    /// A successful login clears the user's failure count — an honest user
+    /// who mistypes a few times then gets it right is not one failure from
+    /// a lockout.
+    #[tokio::test]
+    async fn test_login_throttle_success_clears() {
+        let (auth, _) = make_test_auth_throttled("throttle_clear", 60_000);
+        auth.register("dave", "rightpass", UserRole::User)
+            .await
+            .unwrap();
+
+        for _ in 0..2 {
+            assert!(auth.login("dave", "wrongpass").await.is_err());
+            auth.record_login_failure("dave", None);
+        }
+        // Below the cap (2 < 3) and the correct password still works…
+        assert!(auth.login("dave", "rightpass").await.is_ok());
+        auth.clear_login_throttle("dave", None);
+        // …and the counter starts fresh: two more failures leave room for one.
+        for _ in 0..2 {
+            assert!(auth.login("dave", "wrongpass").await.is_err());
+            auth.record_login_failure("dave", None);
+        }
+        assert!(auth.check_login_throttle("dave", None).is_ok());
+    }
+
+    /// The username key is per-account: a locked-out user does not lock out
+    /// everyone else (in-process callers have no IP key).
+    #[tokio::test]
+    async fn test_login_throttle_per_username_isolation() {
+        let (auth, _) = make_test_auth_throttled("throttle_isolation", 60_000);
+        auth.register("eve", "pass123", UserRole::User)
+            .await
+            .unwrap();
+        auth.register("frank", "pass456", UserRole::User)
+            .await
+            .unwrap();
+
+        for _ in 0..3 {
+            assert!(auth.login("eve", "nope").await.is_err());
+            auth.record_login_failure("eve", None);
+        }
+        assert!(matches!(
+            auth.check_login_throttle("eve", None),
+            Err(AuthError::TooManyAttempts(_))
+        ));
+        // Frank is untouched by Eve's failures.
+        assert!(auth.check_login_throttle("frank", None).is_ok());
+        assert!(auth.login("frank", "pass456").await.is_ok());
+    }
+
+    /// The IP key is shared across usernames: one host spraying many accounts
+    /// (password spraying) gets the whole IP throttled.
+    #[tokio::test]
+    async fn test_login_throttle_ip_key_spans_users() {
+        let (auth, _) = make_test_auth_throttled("throttle_ip", 60_000);
+        auth.register("gina", "pass123", UserRole::User)
+            .await
+            .unwrap();
+        auth.register("hank", "pass456", UserRole::User)
+            .await
+            .unwrap();
+
+        for _ in 0..3 {
+            assert!(auth.login("gina", "nope").await.is_err());
+            auth.record_login_failure("gina", Some("10.0.0.1"));
+        }
+        // Hank never failed, but the shared IP has 3 failures.
+        assert!(matches!(
+            auth.check_login_throttle("hank", Some("10.0.0.1")),
+            Err(AuthError::TooManyAttempts(_))
+        ));
+        // …while Hank from a different address is fine.
+        assert!(auth.check_login_throttle("hank", Some("10.0.0.2")).is_ok());
+    }
+
+    /// The lockout is a sliding window, not a permanent ban: once the oldest
+    /// failure ages out, the account works again.
+    #[tokio::test]
+    async fn test_login_throttle_window_expires() {
+        // Window must comfortably exceed the ~3 argon2 verifications above it
+        // (each deliberate-failure login runs a full password hash).
+        let (auth, _) = make_test_auth_throttled("throttle_expiry", 1_000);
+        auth.register("iris", "pass123", UserRole::User)
+            .await
+            .unwrap();
+
+        for _ in 0..3 {
+            assert!(auth.login("iris", "nope").await.is_err());
+            auth.record_login_failure("iris", None);
+        }
+        assert!(matches!(
+            auth.check_login_throttle("iris", None),
+            Err(AuthError::TooManyAttempts(_))
+        ));
+
+        tokio::time::sleep(std::time::Duration::from_millis(1_200)).await;
+        assert!(auth.check_login_throttle("iris", None).is_ok());
+        assert!(auth.login("iris", "pass123").await.is_ok());
+    }
+
+    /// Signup endpoints count EVERY attempt (each creates an account) — no
+    /// failure-awareness, no per-username key.
+    #[test]
+    fn test_signup_throttle_counts_every_attempt() {
+        let (auth, _) = make_test_auth_throttled("signup_throttle", 60_000);
+        for i in 0..3 {
+            assert!(auth.check_signup_throttle("reg", Some("10.1.1.1")).is_ok());
+            auth.record_signup_attempt("reg", Some("10.1.1.1"));
+            let _ = i;
+        }
+        assert!(matches!(
+            auth.check_signup_throttle("reg", Some("10.1.1.1")),
+            Err(AuthError::TooManyAttempts(_))
+        ));
+        // Different action namespace / IP unaffected; in-process callers skip.
+        assert!(auth
+            .check_signup_throttle("setup", Some("10.1.1.1"))
+            .is_ok());
+        assert!(auth.check_signup_throttle("reg", Some("10.1.1.2")).is_ok());
+        assert!(auth.check_signup_throttle("reg", None).is_ok());
     }
 
     #[tokio::test]
