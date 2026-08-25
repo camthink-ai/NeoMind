@@ -398,13 +398,36 @@ pub async fn import_local_handler(
         .map_err(|e| ErrorResponse::internal(format!("manifest: {e}")))?;
 
     // Free the port the previous model's server may still hold, then spawn
-    // for the imported model (mirrors the download tail). The single-model
-    // invariant (removing other model dirs) is enforced ONLY after a
-    // successful spawn — a failed import must not nuke the working model.
+    // for the imported model (mirrors the download tail). The other model dirs
+    // are moved ASIDE (not deleted) before spawn — installed_model_any prefers
+    // a present builtin over the newest custom, so the imported model is only
+    // selected once its competitors are out of the way. On success the backup
+    // is discarded; on failure it is restored, so a broken import can never
+    // nuke the working model.
     let cfg = BuiltinConfig::from_env();
     if super::server::health_check(cfg.port).await {
         kill_process_on_port(cfg.port);
         tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    let backup = mdir.join(".import-backup");
+    let mut moved: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&mdir) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let Some(name) = dir.file_name().map(|s| s.to_string_lossy().to_string()) else {
+                continue;
+            };
+            if name == id || name == ".import-backup" {
+                continue;
+            }
+            let dest = backup.join(&name);
+            if std::fs::create_dir_all(&backup).is_ok() && std::fs::rename(&dir, &dest).is_ok() {
+                moved.push((name, dest));
+            }
+        }
     }
     let mut spawned_endpoint = None;
     let mut spawn_ok = false;
@@ -421,24 +444,27 @@ pub async fn import_local_handler(
         }
     }
     if spawn_ok {
-        // Single-model invariant: the builtin server runs ONE llama-server.
-        // Remove every OTHER model dir (builtin + prior customs) now that the
-        // imported model is confirmed live.
-        if let Ok(entries) = std::fs::read_dir(&mdir) {
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if dir.is_dir() && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str()) {
-                    let _ = std::fs::remove_dir_all(&dir);
-                }
-            }
+        // Single-model invariant confirmed: the imported model is live. The
+        // moved-aside models are gone for good.
+        let _ = std::fs::remove_dir_all(&backup);
+    } else if !moved.is_empty() {
+        // Restore the working models — the import failed, nothing is lost.
+        for (name, dest) in moved {
+            let _ = std::fs::rename(&dest, mdir.join(&name));
         }
+        let _ = std::fs::remove_dir_all(&backup);
     }
 
     ok(json!({
         "success": true,
         "model_id": id,
         "name": meta.name.unwrap_or_else(|| id.clone()),
-        "ctx": meta.context_length.and_then(|c| u32::try_from(c).ok()).unwrap_or(32768),
+        // Report the SAME capped ctx the spawn uses (imports cap at 128K).
+        "ctx": meta
+            .context_length
+            .and_then(|c| u32::try_from(c).ok())
+            .map(|c| c.min(131_072))
+            .unwrap_or(32768),
         "quant": manifest.quant,
         "arch": meta.architecture,
         "installed": true,

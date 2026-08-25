@@ -77,13 +77,14 @@ impl AgentExecutor {
         // the same tool with the same arguments across rounds.
         let mut all_executed_signatures: HashSet<String> = HashSet::new();
         // Persistently-failing tool calls need a brake (dedup only records
-        // SUCCESSES, and StuckDetector is gone): a failed signature may retry
-        // up to FAILED_RETRY_BUDGET times, then is blacklisted so dedup skips
-        // it and the AllDuplicate path breaks the loop — instead of burning
-        // all max_rounds on the same broken call.
+        // SUCCESSES, and StuckDetector is gone): a failed signature may fail up
+        // to FAILED_RETRY_BUDGET times total (budget 3 = the initial attempt +
+        // 2 retries), then is blacklisted so dedup skips it and the AllDuplicate
+        // path breaks the loop — instead of burning all max_rounds on the same
+        // broken call.
         let mut failed_retries: HashMap<String, u32> = HashMap::new();
         let mut failed_blacklist: HashSet<String> = HashSet::new();
-        const FAILED_RETRY_BUDGET: u32 = 2;
+        const FAILED_RETRY_BUDGET: u32 = 3;
         // Duplicate round detection: track tool signatures per round to detect loops.
 
         // Get context window for token-aware compaction
