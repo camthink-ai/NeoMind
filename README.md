@@ -285,6 +285,16 @@ All three run NeoMind's full agent toolkit (tool selection, in-process CLI dispa
 
 Rule of thumb: **Qwen 3.5 4B** for the best agent experience, **LFM 2.5** for modest devices and long sessions, **Gemma E2B QAT** when you want the Google ecosystem and vision. Prefer a manual setup? All three are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works.
 
+### Community models (import your own GGUF)
+
+The built-in picker also accepts **any GGUF you own** — Settings → LLM Backends → the built-in model wizard → "Import local model" registers it (magic-validated, header-parsed) into the single-model switch. We validated one notable community model on the same 30-case agent suite:
+
+| Model | Quant | Size | Eval (cmd_ok) | Speed (M4-class) |
+|---|---|---|---|---|
+| **Ling-3.0-tiny** | Q4_K_M | 4.8 GB | **77%** — ties Qwen 3.5 4B | ~110-116 tok/s gen · ~1800 tok/s ingest |
+
+Ling-3.0-tiny is a Mixture-of-Experts "tiny" model whose tool-calling punches above its size — on the identical 30-case suite it scored alongside Qwen 3.5 4B (77% vs 76%) while generating ~45% faster. Its 7 misses were long multi-step workflow cases (irrigation/BMS deploys), so it's best for single-step tool tasks. [bloomer010/Ling-3.0-tiny-GGUF](https://huggingface.co/bloomer010/Ling-3.0-tiny-GGUF). Single run — treat as indicative, and verify on your own hardware.
+
 ### Development
 
 **Prerequisites:** Rust 1.85+, Node.js 20+ (an LLM backend is optional — the server self-bootstraps a built-in model)
