@@ -93,7 +93,7 @@ impl RuntimeVariant {
 /// Orin Nano 8GB / NX-class hardware: thin llama-server shell + sibling .so
 /// files (whole archive must be extracted together), $ORIGIN RUNPATH.
 pub const JETSON_RUNTIME_BASE_URL: &str =
-    "https://github.com/camthink-ai/NeoMind/releases/download/runtime-b10545";
+    "https://github.com/camthink-ai/NeoMind-Runtimes/releases/download";
 pub const JETSON_RUNTIME_ASSET: &str = "llama-server-b10545-linux-aarch64-jetson.tar.gz";
 /// SHA-256 of the above (executable download — hard pin, no slack).
 pub const JETSON_RUNTIME_SHA256: &str =
