@@ -65,7 +65,13 @@ impl UnifiedValueProvider {
     pub fn new() -> Self {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
-            default_ttl_ms: 5000, // 5 seconds default TTL
+            // TTL 0 = never expire. A source's cached value is its last-known
+            // truth until a new one arrives; expiring it after N seconds made
+            // cross-source AND rules flap (a slow source's value vanished,
+            // the AND condition went false, for_duration kept resetting).
+            // Staleness is expressed separately via the __last_seen_age_secs
+            // virtual metric + offline rules, not by evicting cached values.
+            default_ttl_ms: 0,
         }
     }
 

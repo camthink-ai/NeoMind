@@ -603,7 +603,7 @@ impl ServerState {
 
         // ========== Create Unified Value Provider ==========
         // This will be wired up with device and extension storage later
-        let value_provider = Arc::new(UnifiedValueProvider::new().with_ttl(5000));
+        let value_provider = Arc::new(UnifiedValueProvider::new());
 
         // Ensure data directory exists
         if let Err(e) = std::fs::create_dir_all("data") {
@@ -1238,7 +1238,7 @@ impl ServerState {
         let started_at = chrono::Utc::now().timestamp();
 
         // Create unified value provider
-        let value_provider = Arc::new(UnifiedValueProvider::new().with_ttl(5000));
+        let value_provider = Arc::new(UnifiedValueProvider::new());
 
         // ========== Build CORE STATE ==========
         let event_bus = Some(Arc::new(EventBus::new()));
