@@ -1,17 +1,18 @@
 /**
- * Auto-onboarding settings card (Settings → Device Connections tab).
+ * Auto-onboarding settings section (Settings → Preferences tab).
  *
  * Moved from the devices page's pending-drafts dialog (2026-08-26):
- * discovery policy is platform-level configuration, not a per-page action —
- * the drafts tab's config button now opens Settings here. Same 3 fields,
- * same API, restyled to the settings-row instant-save pattern.
+ * discovery policy is platform-level behavior configuration (like the
+ * memory settings), not connection-instance management — the drafts tab's
+ * config button now opens Settings here. Same 3 fields, same API, restyled
+ * to the settings-row instant-save pattern.
  */
 import { useEffect, useState } from "react"
 import { useTranslation } from "react-i18next"
 import { useToast } from "@/components/ui/use-toast"
 import { Switch } from "@/components/ui/switch"
 import { Input } from "@/components/ui/input"
-import { SettingsRow } from "@/pages/settings/SettingsRow"
+import { SettingsRow } from "./SettingsRow"
 import { api } from "@/lib/api"
 
 interface OnboardConfig {

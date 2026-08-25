@@ -43,7 +43,6 @@ import {
 import { EmptyState, LoadingState, ListToolbar } from '@/components/shared'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
-import { AutoOnboardSettings } from './AutoOnboardSettings'
 import { useServerUrl } from '@/lib/server-url'
 import { UniversalPluginConfigDialog, type PluginInstance, type UnifiedPluginType } from '@/components/plugins/UniversalPluginConfigDialog'
 import { EmbeddedBrokerConfigDialog } from './EmbeddedBrokerConfigDialog'
@@ -568,9 +567,6 @@ export function UnifiedDeviceConnectionsTab() {
             )
           })}
         </div>
-
-        {/* Auto-onboarding policy — moved from devices page pending-drafts dialog */}
-        <AutoOnboardSettings />
       </>
     )
   }

@@ -68,7 +68,7 @@ share-proxy hardcoded port 127.0.0.1:9375 (non-default-port installs served brok
 
 ### Frontend
 - First entry into a chat session no longer flashes the "start a new conversation" default for a frame before the real messages load.
-- **Memory and auto-onboarding configuration moved into Settings** — both were platform-level policies hiding in page-local dialogs (the agents-page memory panel and the devices-page pending-drafts toolbar). Memory config now lives in Settings → Preferences (instant-save rows, same fields), auto-onboarding in Settings → Device Connections; the original entry points jump straight to the right section. The memory panel keeps content management (view/edit files) and only reads the char limits.
+- **Memory and auto-onboarding configuration moved into Settings** — both were platform-level policies hiding in page-local dialogs (the agents-page memory panel and the devices-page pending-drafts toolbar). Memory config now lives in Settings → Preferences (instant-save rows, same fields), auto-onboarding in Settings → Preferences; the original entry points jump straight to the right section. The memory panel keeps content management (view/edit files) and only reads the char limits.
 - "Add your own API backend" opens the Cloud AI dialog (protocol chooser) — it built an inline OpenAI type and bypassed the protocol path.
 - The builtin model wizard gains the **import-your-own-GGUF card** + a `Custom` badge on imported models.
 

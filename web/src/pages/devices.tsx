@@ -694,7 +694,7 @@ export function DevicesPage() {
             label: t('devices:pending.config'),
             icon: <Settings className="h-4 w-4" />,
             variant: 'outline',
-            onClick: () => openSettings('connections'),
+            onClick: () => openSettings('preferences'),
           },
         ],
         secondary: [],

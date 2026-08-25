@@ -4,6 +4,7 @@ import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { logError } from "@/lib/errors"
 import { SettingsRow } from "./SettingsRow"
 import { MemorySettingsSection } from "./MemorySettingsSection"
+import { AutoOnboardSettings } from "./AutoOnboardSettings"
 import { Button } from "@/components/ui/button"
 import {
   Select,
@@ -264,6 +265,9 @@ export function PreferencesTab() {
 
       {/* Memory System — moved from agents-page MemoryPanel config dialog */}
       <MemorySettingsSection />
+
+      {/* Auto-onboarding — moved from devices-page pending-drafts dialog */}
+      <AutoOnboardSettings />
 
       {/* Device Defaults */}
       <DeviceDefaultsSection />
