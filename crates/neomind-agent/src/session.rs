@@ -1182,13 +1182,14 @@ Assistant: {ar}\n"
                 let rest = line.strip_prefix("- ").or_else(|| line.strip_prefix("• "));
                 let Some(rest) = rest else { continue };
                 let strip_tag = |tag: &str| -> Option<String> {
-                    let f = rest.strip_prefix(tag)?.trim().to_string();
-                    // The model sometimes copies the format word: "- [user] fact …"
-                    let f = f
-                        .strip_prefix("fact")
-                        .map(str::trim_start)
-                        .unwrap_or(&f)
-                        .to_string();
+                    // Accept both "- [user] fact …" and "- [user]: fact …" —
+                    // the model varies the tag separator between runs.
+                    let mut f = rest.strip_prefix(tag)?.trim().to_string();
+                    for sep in [":", "fact", "-"] {
+                        if let Some(stripped) = f.strip_prefix(sep) {
+                            f = stripped.trim_start().to_string();
+                        }
+                    }
                     if f.is_empty() {
                         None
                     } else {
