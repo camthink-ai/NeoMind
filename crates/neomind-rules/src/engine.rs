@@ -449,11 +449,11 @@ impl RuleEngine {
         }
 
         // Extract trigger value for message placeholder substitution
-        let (trigger_value, trigger_source) = rule
+        let (_, trigger_value, trigger_source) = rule
             .condition
             .as_ref()
             .map(|c| Self::extract_trigger_value(c, self.value_provider.as_ref()))
-            .unwrap_or((None, None));
+            .unwrap_or((None, None, None));
 
         // Execute actions
         let mut actions_executed = Vec::new();
@@ -461,7 +461,7 @@ impl RuleEngine {
 
         for action in &rule.actions {
             match self
-                .execute_action(action, trigger_value, trigger_source.as_deref())
+                .execute_action(action, trigger_value.as_deref(), trigger_source.as_deref())
                 .await
             {
                 Ok(name) => actions_executed.push(name),
@@ -603,7 +603,7 @@ impl RuleEngine {
         }
 
         // Extract trigger value for message placeholder substitution
-        let (trigger_value, trigger_source) =
+        let (trigger_value, trigger_value_display, trigger_source) =
             Self::extract_trigger_value(cond, self.value_provider.as_ref());
 
         self.publish(neomind_core::event::NeoMindEvent::RuleTriggered {
@@ -625,7 +625,11 @@ impl RuleEngine {
         let mut first_error = None;
         for action in &rule.actions {
             match self
-                .execute_action(action, trigger_value, trigger_source.as_deref())
+                .execute_action(
+                    action,
+                    trigger_value_display.as_deref(),
+                    trigger_source.as_deref(),
+                )
                 .await
             {
                 Ok(name) => actions_executed.push(name),
@@ -664,10 +668,17 @@ impl RuleEngine {
     // -- Action execution --
 
     /// Substitute `{value}` and `{source_id}` placeholders in a message template.
-    fn substitute_placeholders(message: &str, value: Option<f64>, source: Option<&str>) -> String {
+    fn substitute_placeholders(
+        message: &str,
+        value_display: Option<&str>,
+        source: Option<&str>,
+    ) -> String {
         let mut result = message.to_string();
-        if let Some(v) = value {
-            result = result.replace("{value}", &format!("{}", v));
+        // `{value}` renders the trigger value's DISPLAY form — a string rule
+        // (contains/regex on Text) used to leave the literal `{value}` in the
+        // alert because only numbers were ever substituted.
+        if let Some(v) = value_display {
+            result = result.replace("{value}", v);
         }
         if let Some(s) = source {
             result = result.replace("{source_id}", s);
@@ -680,27 +691,38 @@ impl RuleEngine {
     fn extract_trigger_value(
         condition: &RuleCondition,
         provider: &dyn ValueProvider,
-    ) -> (Option<f64>, Option<String>) {
+    ) -> (Option<f64>, Option<String>, Option<String>) {
+        // Returns (numeric_value, display_value, source_key). The numeric
+        // value feeds events/telemetry; the DISPLAY value feeds `{value}`
+        // placeholder substitution — which used to only ever be Some for
+        // numbers, so string rules rendered a literal `{value}` in alerts.
+        fn display(v: &RuleValue) -> String {
+            match v {
+                RuleValue::Number(n) => format!("{}", n),
+                RuleValue::Text(s) => s.clone(),
+            }
+        }
         fn find_first(
             cond: &RuleCondition,
             provider: &dyn ValueProvider,
-        ) -> (Option<f64>, Option<String>) {
+        ) -> (Option<f64>, Option<String>, Option<String>) {
             match cond {
                 RuleCondition::Comparison { source, .. } | RuleCondition::Range { source, .. } => {
                     let value = provider.get_by_source(source);
                     (
                         value.as_ref().and_then(|rv| rv.as_number()),
+                        value.as_ref().map(display),
                         Some(source.storage_key()),
                     )
                 }
                 RuleCondition::Logical { conditions, .. } => {
                     for c in conditions {
-                        let (v, s) = find_first(c, provider);
-                        if v.is_some() || s.is_some() {
-                            return (v, s);
+                        let (v, d, s) = find_first(c, provider);
+                        if v.is_some() || d.is_some() || s.is_some() {
+                            return (v, d, s);
                         }
                     }
-                    (None, None)
+                    (None, None, None)
                 }
             }
         }
@@ -710,13 +732,13 @@ impl RuleEngine {
     async fn execute_action(
         &self,
         action: &RuleAction,
-        trigger_value: Option<f64>,
+        trigger_value_display: Option<&str>,
         trigger_source: Option<&str>,
     ) -> Result<String, String> {
         match action {
             RuleAction::Notify { message, severity } => {
                 let formatted =
-                    Self::substitute_placeholders(message, trigger_value, trigger_source);
+                    Self::substitute_placeholders(message, trigger_value_display, trigger_source);
 
                 let msg_sev = match severity {
                     NotifySeverity::Info => neomind_messages::MessageSeverity::Info,
@@ -1019,6 +1041,30 @@ mod tests {
     /// published — RuleTriggered/RuleEvaluated/RuleExecuted existed in the
     /// event enum with zero producers, so the frontend and extension
     /// subscriptions had to poll the history API. Wired bus must deliver.
+    /// Regression (0.9.20): `{value}` in a Notify template used to render as
+    /// the literal placeholder for string rules — extract_trigger_value only
+    /// ever returned numbers, so Text values never substituted.
+    #[test]
+    fn placeholder_substitutes_text_values() {
+        assert_eq!(
+            RuleEngine::substitute_placeholders(
+                "State: {value} @ {source_id}",
+                Some("error"),
+                Some("device:s1:state")
+            ),
+            "State: error @ device:s1:state"
+        );
+        assert_eq!(
+            RuleEngine::substitute_placeholders("Temp: {value}", Some("23.5"), None),
+            "Temp: 23.5"
+        );
+        // No value → placeholder stays literal (caller decides what that means).
+        assert_eq!(
+            RuleEngine::substitute_placeholders("v={value}", None, None),
+            "v={value}"
+        );
+    }
+
     #[tokio::test]
     async fn test_rule_events_published_to_bus() {
         let bus = Arc::new(neomind_core::EventBus::new());
