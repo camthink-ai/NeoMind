@@ -141,6 +141,13 @@ impl AgentExecutor {
             let use_streaming = llm_runtime.capabilities().thinking_display;
             let output = {
                 let mut retries = 0u32;
+                // Context overflow is permanent per `is_permanent()`, but on
+                // local backends (llama.cpp/Ollama) a window SMALLER than the
+                // registry default means EVERY round overflows. One hard-
+                // compaction retry turns "small-model execution inevitably
+                // fails" into "completes"; only give up if even the halved
+                // window still overflows.
+                let mut overflow_retried = false;
                 let mut result: Option<neomind_core::llm::backend::LlmOutput> = None;
                 loop {
                     let generate_result = if use_streaming {
@@ -154,7 +161,9 @@ impl AgentExecutor {
                             break;
                         }
                         Err(e) => {
-                            let is_transient = !e.is_permanent();
+                            let is_overflow = matches!(&e, LlmError::ContextOverflow { .. });
+                            let is_transient =
+                                !e.is_permanent() || (is_overflow && !overflow_retried);
                             let round_num = round + 1;
                             let msg_count = messages.len();
                             let has_images = messages.iter().any(|m| {
@@ -163,6 +172,25 @@ impl AgentExecutor {
 
                             if is_transient && retries < MAX_TRANSIENT_RETRIES {
                                 retries += 1;
+                                if is_overflow {
+                                    overflow_retried = true;
+                                    // Shrink harder than the per-round pass:
+                                    // halve the effective window so
+                                    // CompactionConfig keeps fewer full-size
+                                    // results and evicts more aggressively.
+                                    let window =
+                                        if context_window == 0 || context_window > 1_000_000 {
+                                            8192
+                                        } else {
+                                            context_window
+                                        };
+                                    compact::compact_executor_messages(messages, window / 2);
+                                    tracing::warn!(
+                                        agent_id = %agent.id,
+                                        round = round_num,
+                                        "Context overflow — hard-compacting messages (halved window) and retrying once"
+                                    );
+                                }
                                 let delay_ms = 500u64 * 2u64.pow(retries); // 1s, then 2s
                                 tracing::warn!(
                                     agent_id = %agent.id,
@@ -601,6 +629,11 @@ impl AgentExecutor {
                             assembled[*idx] = Some(res);
                         }
                     }
+                    // The semaphore being closed means shutdown — do NOT keep
+                    // burning LLM rounds; exit the whole round loop.
+                    if stop_reason == StopReason::Cancelled {
+                        break;
+                    }
                 }
 
                 // Any slot still None (shouldn't happen) gets a placeholder.
@@ -619,6 +652,15 @@ impl AgentExecutor {
             };
 
             let round_tool_calls = build_round_tool_calls(&tool_calls, &results, tool_name_map);
+
+            // Record SUCCESSFUL executions into the cross-round dedup set.
+            // (Failed ones stay out so the model can retry them — the dedup
+            // pass only consults the set, never pre-populates it.)
+            for (tc, result) in tool_calls.iter().zip(results.iter()) {
+                if matches!(&result.result, Ok(o) if o.success) {
+                    all_executed_signatures.insert(tool_signature(tc));
+                }
+            }
 
             round_data_list.push(RoundData {
                 thought: if remaining_text.is_empty() {
@@ -681,6 +723,24 @@ impl AgentExecutor {
                 }
             }
 
+            // --- Remaining-round countdown ---
+            // Small models otherwise run to the budget and get force-summarized
+            // by Phase 2; telling them how much runway is left lets them wrap
+            // up themselves (synthesize an answer) instead of starting a new
+            // tool chain that the cap will cut off. Fires within the last 3
+            // rounds — early enough to affect behavior, late enough to not be
+            // a daily nag.
+            let remaining = max_rounds.saturating_sub(round + 1);
+            if remaining > 0 && remaining <= 3 {
+                messages.push(Message::new(
+                    MessageRole::System,
+                    Content::text(format!(
+                        "[System] You have {remaining} tool round(s) left in this run. \
+                         If your goal is complete or blocked, give your final answer NOW instead of starting new tool calls."
+                    )),
+                ));
+            }
+
             // The round budget is a hard cap. When the LLM is still tool-calling
             // at the boundary, the post-loop Phase 2 summary synthesizes a final
             // answer from accumulated results — instead of the old `max_rounds
@@ -691,10 +751,13 @@ impl AgentExecutor {
 
         // If all rounds exhausted without LLM producing final text, OR if LLM failed
         // mid-loop (error message in final_text), use Focused's Phase 2 pattern to
-        // generate a natural language conclusion.
-        let needs_summary = final_text.is_empty()
-            || final_text == "LLM generation failed during tool execution."
-            || final_text == "Completed tool execution rounds.";
+        // generate a natural language conclusion. Never on Cancelled — that's a
+        // shutdown signal; synthesizing would fire one more LLM call we're asked
+        // to avoid.
+        let needs_summary = stop_reason != StopReason::Cancelled
+            && (final_text.is_empty()
+                || final_text == "LLM generation failed during tool execution."
+                || final_text == "Completed tool execution rounds.");
         if needs_summary && !all_tool_results.is_empty() {
             final_text.clear();
             let summary = self
@@ -784,7 +847,11 @@ pub(crate) fn deduplicate_tool_calls(
             }
             false
         } else {
-            all_executed_signatures.insert(sig);
+            // NOTE: signatures are inserted only AFTER a successful execution
+            // (see the caller's record-successful pass). A failed call is NOT
+            // deduplicated — the model must be able to retry it (a transient
+            // MQTT/extension timeout used to be swallowed as a "duplicate",
+            // ending the loop via AllDuplicate with the error in hand).
             true
         }
     });
