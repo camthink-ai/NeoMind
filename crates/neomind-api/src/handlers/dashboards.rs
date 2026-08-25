@@ -625,17 +625,19 @@ pub async fn update_dashboard_handler(
                 // Same type gate as add-components — the full-replace path is
                 // the one place a typo'd type could still sneak in silently.
                 let known = collect_known_widget_types(&state);
-                if let Some(bad) = parsed_components
-                    .iter()
-                    .find(|c| !known.contains(&c.component_type))
-                {
-                    return Err(ErrorResponse::bad_request(format!(
-                        "Unknown component type '{}' — run `neomind widget list` for valid types",
-                        bad.component_type
-                    ))
-                    .with_hint(
-                        "Use the exact type id (kebab-case, e.g. value-card / line-chart / sparkline).",
-                    ));
+                // The update path must NOT hard-fail on orphaned/legacy types:
+                // a dashboard with a widget whose type was later uninstalled (or
+                // shared from another instance) would become un-editable. Warn
+                // and persist — the renderer shows an UnknownComponent placeholder.
+                // The ADD path keeps the strict gate (typos on new widgets).
+                for c in &parsed_components {
+                    if !known.contains(&c.component_type) {
+                        tracing::warn!(
+                            dashboard_id = %id,
+                            component_type = %c.component_type,
+                            "update-dashboard: persisting a component with an unknown type (orphaned/legacy)"
+                        );
+                    }
                 }
                 dashboard.components = parsed_components;
             }

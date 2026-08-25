@@ -160,7 +160,13 @@ pub fn parse_gguf(path: &Path) -> Result<GgufMeta, String> {
 
     let mut cur = 4usize;
     let _version = read_u32(buf, &mut cur).unwrap_or(0);
-    let _tensor_count = read_u64(buf, &mut cur).unwrap_or(0);
+    let tensor_count = read_u64(buf, &mut cur).unwrap_or(0);
+    // A real model has tensors — a header-only file (just magic + counts)
+    // would pass magic validation but fail to load. Reject it so a broken
+    // import can't nuke the working model.
+    if tensor_count == 0 {
+        return Err("not a loadable GGUF (zero tensors — header-only file?)".to_string());
+    }
     let kv_count = read_u64(buf, &mut cur).unwrap_or(0);
 
     let mut meta = GgufMeta {
@@ -247,7 +253,7 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"GGUF");
         buf.extend_from_slice(&3u32.to_le_bytes()); // version
-        buf.extend_from_slice(&0u64.to_le_bytes()); // tensor_count
+        buf.extend_from_slice(&1u64.to_le_bytes()); // tensor_count (nonzero)
         buf.extend_from_slice(&4u64.to_le_bytes()); // kv_count
         write_kv(
             &mut buf,
@@ -307,12 +313,26 @@ mod tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"GGUF");
         buf.extend_from_slice(&3u32.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
-        buf.extend_from_slice(&0u64.to_le_bytes());
+        buf.extend_from_slice(&1u64.to_le_bytes()); // tensor_count (nonzero)
+        buf.extend_from_slice(&0u64.to_le_bytes()); // empty metadata
         std::fs::write(&p, &buf).unwrap();
         let m = parse_gguf(&p).expect("parse");
         assert!(m.name.is_none());
         assert!(m.quant.is_none());
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn header_only_zero_tensor_rejected() {
+        let dir = std::env::temp_dir();
+        let p = dir.join("neomind-notens.gguf");
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"GGUF");
+        buf.extend_from_slice(&3u32.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes()); // tensor_count = 0
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        std::fs::write(&p, &buf).unwrap();
+        assert!(parse_gguf(&p).is_err(), "zero-tensor GGUF must be rejected");
         let _ = std::fs::remove_file(&p);
     }
 }

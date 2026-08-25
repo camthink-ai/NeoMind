@@ -269,10 +269,14 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
     let (manifest, _) = best?;
     let name = manifest.id.clone();
     // Context from the GGUF header (cheap read); fall back to 32K.
+    // Cap the imported model's ctx — a GGUF declaring a huge context_length
+    // (e.g. 1M) would make llama-server allocate a KV cache that OOMs the host.
+    const IMPORT_CTX_CAP: u32 = 131_072; // 128K — matches the platform max builtin
     let ctx: u32 = super::gguf::parse_gguf(&manifest.model_path(mdir))
         .ok()
         .and_then(|m| m.context_length)
         .and_then(|c| u32::try_from(c).ok())
+        .map(|c| c.min(IMPORT_CTX_CAP))
         .unwrap_or(32768);
     Some(InstalledModel {
         display_name: name,
@@ -393,33 +397,39 @@ pub async fn import_local_handler(
     save_manifest(&mdir, &manifest)
         .map_err(|e| ErrorResponse::internal(format!("manifest: {e}")))?;
 
-    // Single-model invariant: the builtin server runs ONE llama-server.
-    // Remove every OTHER model dir (builtin + prior customs).
-    if let Ok(entries) = std::fs::read_dir(&mdir) {
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if dir.is_dir() && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str()) {
-                let _ = std::fs::remove_dir_all(&dir);
-            }
-        }
-    }
-
     // Free the port the previous model's server may still hold, then spawn
-    // for the imported model (mirrors the download tail).
+    // for the imported model (mirrors the download tail). The single-model
+    // invariant (removing other model dirs) is enforced ONLY after a
+    // successful spawn — a failed import must not nuke the working model.
     let cfg = BuiltinConfig::from_env();
     if super::server::health_check(cfg.port).await {
         kill_process_on_port(cfg.port);
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
     let mut spawned_endpoint = None;
+    let mut spawn_ok = false;
     if let Ok(manager) = get_instance_manager() {
         match spawn_builtin_server(&state.data_dir, &cfg, &manager).await {
             Ok(endpoint) => {
                 tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
                 spawned_endpoint = Some(endpoint);
+                spawn_ok = true;
             }
             Err(e) => {
-                tracing::warn!(error = %e, model = %id, "builtin llm: spawn after local import failed (run /restart)");
+                tracing::warn!(error = %e, model = %id, "builtin llm: spawn after local import failed (run /restart) — keeping the previous model intact");
+            }
+        }
+    }
+    if spawn_ok {
+        // Single-model invariant: the builtin server runs ONE llama-server.
+        // Remove every OTHER model dir (builtin + prior customs) now that the
+        // imported model is confirmed live.
+        if let Ok(entries) = std::fs::read_dir(&mdir) {
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                if dir.is_dir() && dir.file_name().and_then(|s| s.to_str()) != Some(id.as_str()) {
+                    let _ = std::fs::remove_dir_all(&dir);
+                }
             }
         }
     }
@@ -659,6 +669,10 @@ pub async fn download_handler(
             .and_then(|v| v.as_str())
             .map(str::to_string)
     });
+    // Ensure the remote catalog is fetched before resolving — a cold process
+    // restarting and downloading a catalog-only model would otherwise fail
+    // (resolve_model consults the process-local cache only).
+    let _ = super::catalog::fetch_catalog().await;
     let def = resolve_model(model_id.as_deref())?;
     let (url, sha, file_name) = resolve_source(&cfg, &def);
     let dest = models_dir(&state.data_dir).join(&def.id).join(&file_name);

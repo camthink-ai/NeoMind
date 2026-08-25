@@ -1268,6 +1268,12 @@ Assistant: {ar}\n"
                 Some(merged)
             };
 
+            // Serialize the read-modify-write: two concurrent extractions
+            // reading the same base then writing would lose one's facts (the
+            // store's write lock only serializes the write, not the merge).
+            static MEMORY_EXTRACT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _guard = MEMORY_EXTRACT_LOCK.lock().await;
+
             let mut wrote_any = false;
             if let Some(content) = merged("user", &new_user) {
                 if store.write_file("user", &content).await.is_ok() {

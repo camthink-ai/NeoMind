@@ -371,7 +371,7 @@ pub async fn create_backend_handler(
     let id = LlmBackendStore::generate_id(&req.backend_type);
 
     // Get capabilities: prefer API detection for Ollama, fallback to name-based
-    let capabilities = if matches!(backend_type, LlmBackendType::Ollama) {
+    let mut capabilities = if matches!(backend_type, LlmBackendType::Ollama) {
         // For Ollama, try to get capabilities from /api/show endpoint
         let endpoint = req.endpoint.as_deref().unwrap_or("http://localhost:11434");
         let show_url = format!("{}/api/show", endpoint);
@@ -409,6 +409,11 @@ pub async fn create_backend_handler(
         adjust_capabilities_for_model(&req.model, &mut caps);
         caps
     };
+    // Explicit context override wins in both branches — the review caught that
+    // create dropped it (only the update handler merged it).
+    if let Some(ctx) = req.max_context {
+        capabilities.max_context = ctx;
+    }
 
     let instance = LlmBackendInstance {
         id: id.clone(),

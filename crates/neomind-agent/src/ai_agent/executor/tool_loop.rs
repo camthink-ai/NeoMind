@@ -76,6 +76,14 @@ impl AgentExecutor {
         // Cross-round tool deduplication: track tool signatures to avoid re-executing
         // the same tool with the same arguments across rounds.
         let mut all_executed_signatures: HashSet<String> = HashSet::new();
+        // Persistently-failing tool calls need a brake (dedup only records
+        // SUCCESSES, and StuckDetector is gone): a failed signature may retry
+        // up to FAILED_RETRY_BUDGET times, then is blacklisted so dedup skips
+        // it and the AllDuplicate path breaks the loop — instead of burning
+        // all max_rounds on the same broken call.
+        let mut failed_retries: HashMap<String, u32> = HashMap::new();
+        let mut failed_blacklist: HashSet<String> = HashSet::new();
+        const FAILED_RETRY_BUDGET: u32 = 2;
         // Duplicate round detection: track tool signatures per round to detect loops.
 
         // Get context window for token-aware compaction
@@ -399,6 +407,7 @@ impl AgentExecutor {
             let dedup_outcome = deduplicate_tool_calls(
                 &mut tool_calls,
                 &mut all_executed_signatures,
+                &failed_blacklist,
                 &agent.id,
                 round,
             );
@@ -661,8 +670,24 @@ impl AgentExecutor {
             // (Failed ones stay out so the model can retry them — the dedup
             // pass only consults the set, never pre-populates it.)
             for (tc, result) in tool_calls.iter().zip(results.iter()) {
+                let sig = tool_signature(tc);
                 if matches!(&result.result, Ok(o) if o.success) {
-                    all_executed_signatures.insert(tool_signature(tc));
+                    all_executed_signatures.insert(sig.clone());
+                } else {
+                    // Failed call: allow a bounded number of retries, then
+                    // blacklist so dedup skips it and AllDuplicate breaks the
+                    // loop (no unbounded retry of a persistently-broken call).
+                    let count = failed_retries.entry(sig.clone()).or_insert(0);
+                    *count += 1;
+                    if *count >= FAILED_RETRY_BUDGET {
+                        failed_blacklist.insert(sig.clone());
+                        tracing::debug!(
+                            agent_id = %agent.id,
+                            sig = %sig,
+                            retries = *count,
+                            "blacklisting persistently-failing tool call after retry budget"
+                        );
+                    }
                 }
             }
 
@@ -825,6 +850,7 @@ impl AgentExecutor {
 pub(crate) fn deduplicate_tool_calls(
     tool_calls: &mut Vec<ToolCall>,
     all_executed_signatures: &mut HashSet<String>,
+    failed_blacklist: &HashSet<String>,
     agent_id: &str,
     round: usize,
 ) -> DedupOutcome {
@@ -840,7 +866,7 @@ pub(crate) fn deduplicate_tool_calls(
     let mut skipped_cross_round: Vec<String> = Vec::new();
     tool_calls.retain(|tc| {
         let sig = tool_signature(tc);
-        if all_executed_signatures.contains(&sig) {
+        if all_executed_signatures.contains(&sig) || failed_blacklist.contains(&sig) {
             // Collect a human-readable summary for the hint
             if tc.name == "shell" {
                 if let Some(cmd) = tc.arguments.get("command").and_then(|v| v.as_str()) {

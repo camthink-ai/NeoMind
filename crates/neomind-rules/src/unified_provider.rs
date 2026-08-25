@@ -40,6 +40,10 @@ impl CacheEntry {
     }
 }
 
+/// Hard cap on cached values — with TTL 0 (never expire) the map would grow
+/// forever on device/transform churn; evict the oldest entry past this.
+const MAX_CACHE_ENTRIES: usize = 4096;
+
 /// Unified value provider for rule engine.
 ///
 /// Supports querying metrics from:
@@ -134,6 +138,17 @@ impl UnifiedValueProvider {
             ),
             CacheEntry::new(value, ttl_ms),
         );
+        if cache.len() > MAX_CACHE_ENTRIES {
+            // Evict the oldest entry (smallest timestamp) — last-known values
+            // for vanished sources are stale data, not worth keeping forever.
+            if let Some(oldest_key) = cache
+                .iter()
+                .min_by_key(|(_, e)| e.timestamp)
+                .map(|(k, _)| k.clone())
+            {
+                cache.remove(&oldest_key);
+            }
+        }
     }
 
     /// Parse and update from DataSourceId.
