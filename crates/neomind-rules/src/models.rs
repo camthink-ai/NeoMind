@@ -449,6 +449,17 @@ pub enum RuleAction {
     },
 }
 
+impl RuleAction {
+    /// Stable action kind (events / telemetry).
+    pub fn action_type(&self) -> &'static str {
+        match self {
+            RuleAction::Notify { .. } => "notify",
+            RuleAction::Execute { .. } => "execute",
+            RuleAction::TriggerAgent { .. } => "trigger_agent",
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Trigger
 // ---------------------------------------------------------------------------

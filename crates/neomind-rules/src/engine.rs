@@ -126,6 +126,11 @@ pub struct RuleEngine {
     agent_trigger: OptionAgentTriggerCallback,
     /// Persistent rule store.
     rule_store: Arc<StdRwLock<Option<Arc<RuleStore>>>>,
+    /// Optional EventBus — publishes RuleEvaluated/RuleTriggered/RuleExecuted
+    /// so the frontend / extension subscriptions / agents can react in real
+    /// time instead of polling the history API. Wired at construction; the
+    /// engine degrades gracefully to no-publish when absent.
+    event_bus: Arc<tokio::sync::RwLock<Option<Arc<neomind_core::EventBus>>>>,
 }
 
 impl RuleEngine {
@@ -143,6 +148,22 @@ impl RuleEngine {
             extension_action_executor: Arc::new(tokio::sync::RwLock::new(None)),
             agent_trigger: Arc::new(tokio::sync::RwLock::new(None)),
             rule_store: Arc::new(StdRwLock::new(None)),
+            event_bus: Arc::new(tokio::sync::RwLock::new(None)),
+        }
+    }
+
+    /// Attach the EventBus so rule lifecycle becomes observable in real time.
+    pub fn with_event_bus(mut self, bus: Option<Arc<neomind_core::EventBus>>) -> Self {
+        self.event_bus = Arc::new(tokio::sync::RwLock::new(bus));
+        self
+    }
+
+    /// Fire-and-forget publish. The engine never depends on a subscriber
+    /// being present; a publish that finds no bus (or a busy one) is dropped.
+    async fn publish(&self, event: neomind_core::event::NeoMindEvent) {
+        let bus = self.event_bus.read().await.clone();
+        if let Some(bus) = bus {
+            let _ = bus.publish(event).await;
         }
     }
 
@@ -544,6 +565,14 @@ impl RuleEngine {
         }))
         .unwrap_or(false);
 
+        self.publish(neomind_core::event::NeoMindEvent::RuleEvaluated {
+            rule_id: rule_id.to_string(),
+            rule_name: rule.name.clone(),
+            condition_met,
+            timestamp: Utc::now().timestamp(),
+        })
+        .await;
+
         if !condition_met {
             // Reset condition_since
             self.update_condition_since(rule_id, false).await;
@@ -576,6 +605,19 @@ impl RuleEngine {
         // Extract trigger value for message placeholder substitution
         let (trigger_value, trigger_source) =
             Self::extract_trigger_value(cond, self.value_provider.as_ref());
+
+        self.publish(neomind_core::event::NeoMindEvent::RuleTriggered {
+            rule_id: rule_id.to_string(),
+            rule_name: rule.name.clone(),
+            trigger_value: trigger_value.unwrap_or(0.0),
+            actions: rule
+                .actions
+                .iter()
+                .map(|a| a.action_type().to_string())
+                .collect(),
+            timestamp: Utc::now().timestamp(),
+        })
+        .await;
 
         // Fire actions
         let start = Instant::now();
@@ -881,6 +923,18 @@ impl RuleEngine {
     }
 
     async fn record_history(&self, result: RuleExecutionResult) {
+        // Publish the completion — the frontend's DataChanged refresh and
+        // extension event subscriptions both consume this instead of polling
+        // the history API.
+        self.publish(neomind_core::event::NeoMindEvent::RuleExecuted {
+            rule_id: result.rule_id.to_string(),
+            rule_name: result.rule_name.clone(),
+            success: result.success,
+            duration_ms: result.duration_ms,
+            timestamp: Utc::now().timestamp(),
+        })
+        .await;
+
         // Persist to store if available
         if let Some(store) = self.rule_store.read().as_ref() {
             if let Err(e) = store.save_history(&result) {
@@ -959,6 +1013,69 @@ mod tests {
 
         engine.add_rule(rule).await.unwrap();
         assert_eq!(engine.list_rules().await.len(), 1);
+    }
+
+    /// Regression (0.9.20): the engine used to record history but never
+    /// published — RuleTriggered/RuleEvaluated/RuleExecuted existed in the
+    /// event enum with zero producers, so the frontend and extension
+    /// subscriptions had to poll the history API. Wired bus must deliver.
+    #[tokio::test]
+    async fn test_rule_events_published_to_bus() {
+        let bus = Arc::new(neomind_core::EventBus::new());
+        let mut rx = bus.subscribe();
+
+        let provider = Arc::new(InMemoryValueProvider::new());
+        let engine = RuleEngine::new(provider.clone()).with_event_bus(Some(bus.clone()));
+
+        let mut rule = CompiledRule::new("High Temp");
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::device("sensor1", "temperature"),
+            operator: ComparisonOperator::GreaterThan,
+            threshold: 50.0,
+            threshold_value: None,
+        });
+        rule.trigger = RuleTrigger::from_condition(&rule.condition);
+        rule.actions = vec![RuleAction::Notify {
+            message: "Too hot".into(),
+            severity: NotifySeverity::Warning,
+        }];
+        rule.finalize();
+        engine.add_rule(rule).await.unwrap();
+
+        provider.set_value("device:sensor1:temperature", 75.0);
+        engine
+            .on_data_update(
+                &DataSourceId::device("sensor1", "temperature"),
+                RuleValue::Number(75.0),
+            )
+            .await;
+
+        use std::time::Duration;
+        use tokio::time::timeout;
+        let mut saw_evaluated = false;
+        let mut saw_triggered = false;
+        let mut saw_executed = false;
+        for _ in 0..6 {
+            match timeout(Duration::from_secs(2), rx.recv()).await {
+                Ok(Some((
+                    neomind_core::event::NeoMindEvent::RuleEvaluated { condition_met, .. },
+                    _,
+                ))) => {
+                    saw_evaluated = condition_met;
+                }
+                Ok(Some((neomind_core::event::NeoMindEvent::RuleTriggered { .. }, _))) => {
+                    saw_triggered = true;
+                }
+                Ok(Some((neomind_core::event::NeoMindEvent::RuleExecuted { success, .. }, _))) => {
+                    saw_executed = success;
+                }
+                Ok(Some((_, _))) | Ok(None) => continue,
+                Err(_) => break,
+            }
+        }
+        assert!(saw_evaluated, "expected RuleEvaluated(condition_met=true)");
+        assert!(saw_triggered, "expected RuleTriggered");
+        assert!(saw_executed, "expected RuleExecuted(success=true)");
     }
 
     #[tokio::test]

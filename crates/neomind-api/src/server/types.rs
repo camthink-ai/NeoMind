@@ -875,7 +875,8 @@ impl ServerState {
         }
 
         // ========== Build AUTOMATION STATE ==========
-        let rule_engine = Arc::new(RuleEngine::new(value_provider.clone()));
+        let rule_engine =
+            Arc::new(RuleEngine::new(value_provider.clone()).with_event_bus(event_bus.clone()));
 
         // Set up capability provider for isolated extensions
         // This allows isolated extensions to invoke capabilities on the host process
@@ -1290,7 +1291,8 @@ impl ServerState {
         );
 
         // ========== Build AUTOMATION STATE ==========
-        let rule_engine = Arc::new(RuleEngine::new(value_provider.clone()));
+        let rule_engine =
+            Arc::new(RuleEngine::new(value_provider.clone()).with_event_bus(event_bus.clone()));
         rule_engine
             .set_message_manager(core.message_manager.clone())
             .await;
