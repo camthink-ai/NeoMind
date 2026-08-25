@@ -1137,7 +1137,7 @@ Assistant: {ar}\n"
                 messages: vec![Message::new(MessageRole::User, Content::text(prompt))],
                 params: GenerationParams {
                     temperature: Some(0.2),
-                    max_tokens: Some(300),
+                    max_tokens: Some(800),
                     thinking_enabled: Some(false), // gotcha #7 — no wasted thinking tokens
                     ..Default::default()
                 },
