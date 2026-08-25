@@ -463,36 +463,13 @@ export function UnifiedLLMBackendsTab({
   // Construct a generic OpenAI-compatible type inline and open the unified
   // config dialog directly (the backend accepts openai + a custom endpoint).
   const handleAddOwnBackend = () => {
-    const manualType: BackendTypeDefinition = {
-      id: 'openai',
-      name: 'OpenAI',
-      description: t('plugins:llm.emptyStateAddOwnBackend'),
-      default_model: 'gpt-4.1-mini',
-      default_endpoint: 'https://api.openai.com/v1',
-      requires_api_key: true,
-      supports_streaming: true,
-      supports_thinking: false,
-      supports_multimodal: true,
-      config_schema: {
-        type: 'object',
-        properties: {
-          endpoint: {
-            type: 'string',
-            title: 'API Endpoint',
-            format: 'uri',
-            default: 'https://api.openai.com/v1',
-          },
-          model: { type: 'string', title: 'Model Name', default: 'gpt-4.1-mini' },
-          api_key: { type: 'string', title: 'API Key', x_secret: true },
-        },
-        required: ['name', 'api_key'],
-        ui_hints: undefined,
-      },
-    }
-    setSelectedType(toUnifiedPluginType(manualType, t))
-    setView('detail')
-    setEditingInstance(null)
-    setConfigDialogOpen(true)
+    // "添加自己的 API 后端" means "bring any vendor via its endpoint" — that
+    // is exactly the Cloud AI card (protocol chooser: OpenAI-compatible /
+    // Anthropic). It used to build an inline OpenAI type and open the unified
+    // config dialog, which bypassed the Cloud AI flow and forced openai-typed
+    // semantics (e.g. no Anthropic option).
+    setCloudEditTarget(null)
+    setCloudAddOpen(true)
   }
 
   // Cloud AI create/edit — backend_type derived from the protocol pick
