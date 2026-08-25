@@ -540,8 +540,8 @@ export function AgentEditorFullScreen({
 
   const parseSchedule = (schedule: AgentSchedule) => {
     if (!schedule) return
-    if (schedule.schedule_type === 'once') {
-      // First-class one-shot / manual-only form
+    if (schedule.schedule_type === 'manual') {
+      // First-class manual-only form (repeatable via invoke)
       setScheduleType('on-demand')
     } else if (schedule.schedule_type === 'interval') {
       if (schedule.interval_seconds === 0) {
@@ -1089,7 +1089,7 @@ export function AgentEditorFullScreen({
     try {
       let cronExpression: string | undefined = undefined
       let intervalSeconds: number | undefined = undefined
-      let finalScheduleType: 'interval' | 'cron' | 'event' | 'once' = 'interval'
+      let finalScheduleType: 'interval' | 'cron' | 'event' | 'manual' = 'interval'
       let eventFilter: string | undefined = undefined
 
       if (scheduleType === 'timer') {
@@ -1114,8 +1114,8 @@ export function AgentEditorFullScreen({
         }
         eventFilter = JSON.stringify(eventFilterObj)
       } else { // on-demand
-        finalScheduleType = 'once'
-        intervalSeconds = undefined  // Once needs no interval — never auto-scheduled
+        finalScheduleType = 'manual'
+        intervalSeconds = undefined  // Manual needs no interval — never auto-scheduled
       }
 
       // Build resources array in the new format that supports both devices and extensions

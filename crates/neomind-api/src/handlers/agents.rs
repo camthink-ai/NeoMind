@@ -63,7 +63,7 @@ fn schedule_type_to_string(schedule_type: &ScheduleType) -> &'static str {
         ScheduleType::Interval => "interval",
         ScheduleType::Cron => "cron",
         ScheduleType::Event => "event",
-        ScheduleType::Once => "once",
+        ScheduleType::Manual => "manual",
     }
 }
 
@@ -892,7 +892,7 @@ pub async fn create_agent(
     // Validate interval_seconds when schedule type is interval
     if request.schedule.schedule_type == "interval" {
         match request.schedule.interval_seconds {
-            // Some(0) is the on-demand convention: a manual-only agent that
+            // Some(0) is the legacy on-demand encoding: a manual-only agent that
             // never auto-schedules (the scheduler maps it to a never-due
             // next_execution). Previously rejected here, which made the
             // frontend's "on-demand" option fail with 400 on create while
@@ -945,7 +945,7 @@ pub async fn create_agent(
         "interval" => ScheduleType::Interval,
         "cron" => ScheduleType::Cron,
         "event" => ScheduleType::Event,
-        "once" => ScheduleType::Once,
+        "manual" => ScheduleType::Manual,
         _ => {
             return Err(ErrorResponse::bad_request(format!(
                 "Invalid schedule type: {}",
@@ -1173,7 +1173,7 @@ async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &A
             agent.schedule.cron_expression.as_deref().unwrap_or("?")
         ),
         ScheduleType::Event => "Event-driven".to_string(),
-        ScheduleType::Once => "One-shot task (manual/delegated execution)".to_string(),
+        ScheduleType::Manual => "Manual task (runs on invoke/delegation, repeatable)".to_string(),
     };
 
     let content = format!(
@@ -1354,7 +1354,7 @@ pub async fn update_agent(
             "interval" => neomind_storage::ScheduleType::Interval,
             "cron" => neomind_storage::ScheduleType::Cron,
             "event" => neomind_storage::ScheduleType::Event,
-            "once" => neomind_storage::ScheduleType::Once,
+            "manual" => neomind_storage::ScheduleType::Manual,
             _ => {
                 return Err(ErrorResponse::bad_request(format!(
                     "Invalid schedule_type: {}",

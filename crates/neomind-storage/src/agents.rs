@@ -221,12 +221,13 @@ pub enum ScheduleType {
     Cron,
     /// Fixed interval
     Interval,
-    /// One-shot / manual-only task: never auto-scheduled by the scheduler;
-    /// runs via manual invoke/execute (or delegation, e.g. chat's run_agent),
-    /// and the agent transitions to `AgentStatus::Completed` after a
-    /// successful run. This is the first-class form of what the frontend
+    /// Manual-only task: never auto-scheduled by the scheduler; runs any
+    /// number of times via manual invoke/execute (or delegation, e.g.
+    /// chat's run_agent), and shows `AgentStatus::Completed` while idle
+    /// after a successful run (Completed is a ready-state, not terminal —
+    /// re-invoking always works). First-class form of what the frontend
     /// used to encode as the `interval_seconds: 0` hack.
-    Once,
+    Manual,
 }
 
 /// Agent status.
@@ -243,8 +244,8 @@ pub enum AgentStatus {
     Error,
     /// Executing
     Executing,
-    /// A one-shot (`ScheduleType::Once`) task finished successfully. Not
-    /// auto-scheduled anymore; manual invoke still works and re-Completes.
+    /// A manual (`ScheduleType::Manual`) task finished its latest run. Not
+    /// auto-scheduled; manual invoke always works and re-Completes.
     Completed,
 }
 

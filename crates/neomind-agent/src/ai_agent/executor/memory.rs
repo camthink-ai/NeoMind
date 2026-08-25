@@ -138,8 +138,8 @@ impl AgentExecutor {
                 agent.schedule.cron_expression.as_deref().unwrap_or("?")
             ),
             neomind_storage::ScheduleType::Event => "Event-driven".to_string(),
-            neomind_storage::ScheduleType::Once => {
-                "One-shot task (manual/delegated execution)".to_string()
+            neomind_storage::ScheduleType::Manual => {
+                "Manual task (runs on invoke/delegation, repeatable)".to_string()
             }
         };
 

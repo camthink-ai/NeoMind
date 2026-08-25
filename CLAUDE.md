@@ -106,7 +106,7 @@ Transport connection (MQTT client online) is tracked **independently** from data
 Frontend: `getDeviceState()` in `web/src/lib/utils/deviceStatus.ts`, renders via `DeviceStatusBadge`. Falls back to legacy 3-state when `transport_connected` is undefined (older backend).
 
 ### Agent
-- **ScheduleType**: `Event | Cron | Interval | Once` (Once = one-shot/manual-only: never auto-scheduled, manual invoke works, transitions to `AgentStatus::Completed` after success). **ExecutionMode**: `Focused` (bound resources, single-pass) | `Free` (LLM-driven multi-round tool calling, default schedule is `free` when no resources bound)
+- **ScheduleType**: `Event | Cron | Interval | Manual` (Manual = manual-only: never auto-scheduled, invoke runs it any number of times, idles as `AgentStatus::Completed`). **ExecutionMode**: `Focused` (bound resources, single-pass) | `Free` (LLM-driven multi-round tool calling, default schedule is `free` when no resources bound)
 - **Status**: `Active | Executing | Paused | Error | Stopped | Completed` (Completed = one-shot finished). After server restart, `reload_active_agents()` loads only `Active` — `Error` agents stay dropped until manually reactivated.
 - **Event agents**: trigger when bound resources match `event_filter`. Free-mode event agents **without a filter never fire**.
 - **Two memory systems by design**: scheduled = `AgentMemory` (journal/knowledge_files/user_messages); chat = `MemorySnapshot` (user.md/knowledge.md) + conversation history.

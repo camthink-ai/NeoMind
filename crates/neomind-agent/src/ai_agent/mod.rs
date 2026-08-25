@@ -274,10 +274,10 @@ impl AiAgentManager {
 
         // Update agent status based on result
         let new_status = if result.is_ok() {
-            // A one-shot task has done its job — Completed (not Active):
-            // it is no longer "running duty", and the scheduler must not
-            // pick it up again. Manual invoke still works and re-Completes.
-            if agent.schedule.schedule_type == ScheduleType::Once {
+            // A manual task idles as Completed (not Active): it has no
+            // standing duty and the scheduler must not pick it up. Manual
+            // invoke always works — Completed is a ready-state, not terminal.
+            if agent.schedule.schedule_type == ScheduleType::Manual {
                 AgentStatus::Completed
             } else {
                 AgentStatus::Active

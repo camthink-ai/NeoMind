@@ -769,11 +769,11 @@ impl AgentScheduler {
         let now = Utc::now();
 
         match schedule.schedule_type {
-            // One-shot / manual-only: never auto-scheduled. The agent runs
-            // via manual invoke/execute and transitions to Completed after a
-            // successful run. A never-due time keeps the task registered but
-            // inert (enabled flag also gates, this is belt-and-suspenders).
-            ScheduleType::Once => Ok((i64::MAX, None)),
+            // Manual-only: never auto-scheduled. The agent runs via manual
+            // invoke/execute (repeatable) and shows Completed while idle.
+            // A never-due time keeps the task registered but inert (enabled
+            // flag also gates, this is belt-and-suspenders).
+            ScheduleType::Manual => Ok((i64::MAX, None)),
             ScheduleType::Interval => {
                 // `interval_seconds: Some(0)` is the frontend's "on-demand"
                 // convention (AgentEditorFullScreen: manual-only agent, no
@@ -1016,15 +1016,15 @@ mod tests {
         assert!(next >= now + 299 && next <= now + 301);
     }
 
-    /// `ScheduleType::Once` = one-shot / manual-only: never auto-due.
+    /// `ScheduleType::Manual` = manual-only: never auto-due.
     #[tokio::test]
-    async fn test_calculate_next_execution_once_never_due() {
+    async fn test_calculate_next_execution_manual_never_due() {
         let scheduler = AgentScheduler::new(SchedulerConfig::default())
             .await
             .unwrap();
 
         let once = AgentSchedule {
-            schedule_type: ScheduleType::Once,
+            schedule_type: ScheduleType::Manual,
             cron_expression: None,
             interval_seconds: None,
             event_filter: None,
@@ -1035,7 +1035,7 @@ mod tests {
         assert_eq!(
             next,
             i64::MAX,
-            "Once tasks must never come due on their own"
+            "Manual tasks must never come due on their own"
         );
     }
 

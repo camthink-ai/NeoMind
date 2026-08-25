@@ -9,7 +9,7 @@ export type AgentStatus = 'Active' | 'Paused' | 'Error' | 'Executing'
 /**
  * Schedule type for agent execution
  */
-export type AgentScheduleType = 'interval' | 'cron' | 'event' | 'once'
+export type AgentScheduleType = 'interval' | 'cron' | 'event' | 'manual'
 
 /**
  * Resource type for agent resources (lowercase to match backend)
@@ -66,7 +66,7 @@ export interface AiAgentDetail extends AiAgent {
  * Agent schedule configuration
  */
 export interface AgentSchedule {
-  schedule_type: 'interval' | 'cron' | 'event' | 'once'
+  schedule_type: 'interval' | 'cron' | 'event' | 'manual'
   interval_seconds?: number
   cron_expression?: string
   timezone?: string
