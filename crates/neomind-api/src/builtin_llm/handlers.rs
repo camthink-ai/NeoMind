@@ -406,12 +406,31 @@ pub async fn import_local_handler(
     }
     let file_name = format!("{id}.gguf");
     let dest = mdir.join(&id).join(&file_name);
+    // Same-id re-import: the copy below would overwrite the working model in
+    // place — a failed spawn would then lose it. Back the existing dir aside
+    // FIRST; restored on failure, discarded on success.
+    let backup_dir = mdir.join(format!(".{id}-old"));
+    let had_existing = mdir.join(&id).exists();
+    if had_existing {
+        let _ = std::fs::remove_dir_all(&backup_dir);
+        std::fs::rename(mdir.join(&id), &backup_dir)
+            .map_err(|e| ErrorResponse::internal(format!("backup existing model: {e}")))?;
+    }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| ErrorResponse::internal(format!("mkdir: {e}")))?;
     }
-    std::fs::copy(src, &dest)
-        .map_err(|e| ErrorResponse::internal(format!("copy to {}: {e}", dest.display())))?;
+    if let Err(e) = std::fs::copy(src, &dest) {
+        // Restore the backed-up model so a failed copy never leaves a hole.
+        let _ = std::fs::remove_dir_all(mdir.join(&id));
+        if had_existing {
+            let _ = std::fs::rename(&backup_dir, mdir.join(&id));
+        }
+        return Err(ErrorResponse::internal(format!(
+            "copy to {}: {e}",
+            dest.display()
+        )));
+    }
 
     let sha = sha256_of_file(&dest).map_err(|e| ErrorResponse::internal(format!("sha256: {e}")))?;
     let quant = meta.quant.clone().unwrap_or_else(|| "imported".to_string());
@@ -427,21 +446,14 @@ pub async fn import_local_handler(
 
     // Free the port the previous model's server may still hold, then spawn the
     // IMPORTED model explicitly (preferred_id) — the old model dirs are only
-    // removed AFTER the new one is confirmed live, and a failed spawn rolls
-    // back by deleting just the new model, never touching the working one.
+    // removed AFTER the new one is confirmed live.
     let cfg = BuiltinConfig::from_env();
     if super::server::health_check(cfg.port).await {
         kill_process_on_port(cfg.port);
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
-    // The ctx the server will actually run with (env override wins) — compute
-    // from the header ONCE, before any rollback could delete the file.
+    // The ctx the server will actually run with (env override wins).
     let spawn_ctx = cfg.effective_ctx(import_default_ctx(&dest));
-    let report_ctx = meta
-        .context_length
-        .and_then(|c| u32::try_from(c).ok())
-        .map(|c| c.min(131_072))
-        .unwrap_or(32768);
 
     let spawned_endpoint = match get_instance_manager() {
         Ok(manager) => match spawn_builtin_server(&state.data_dir, &cfg, &manager, Some(&id)).await
@@ -449,7 +461,7 @@ pub async fn import_local_handler(
             Ok(endpoint) => {
                 tracing::info!(endpoint = %endpoint, model = %id, "builtin llm: server started after local import");
                 // Single-model invariant confirmed: the imported model is live.
-                // Remove every OTHER model dir (builtin + prior customs).
+                // Remove every OTHER model dir + the same-id backup.
                 if let Ok(entries) = std::fs::read_dir(&mdir) {
                     for entry in entries.flatten() {
                         let dir = entry.path();
@@ -460,24 +472,38 @@ pub async fn import_local_handler(
                         }
                     }
                 }
+                let _ = std::fs::remove_dir_all(&backup_dir);
                 Some(endpoint)
             }
             Err(e) => {
-                // A failed spawn rolls the import back so the previous working
-                // model is untouched — and reports an ERROR, not a 200 with
-                // installed:true pointing at a deleted model.
-                tracing::warn!(error = %e, model = %id, "builtin llm: import spawn failed — rolling back, keeping the previous model intact");
+                // A failed spawn rolls the import back: delete the new (bad)
+                // model, restore the previous one (same-id backup or the intact
+                // other dirs), and RESTART the previous server so the working
+                // model is back online — not just its files.
+                tracing::warn!(error = %e, model = %id, "builtin llm: import spawn failed — restoring previous model");
                 let _ = std::fs::remove_dir_all(mdir.join(&id));
+                if had_existing {
+                    let _ = std::fs::rename(&backup_dir, mdir.join(&id));
+                }
+                if let Ok(manager) = get_instance_manager() {
+                    if let Err(restart_err) =
+                        spawn_builtin_server(&state.data_dir, &cfg, &manager, None).await
+                    {
+                        tracing::warn!(error = %restart_err, "builtin llm: failed to restart previous model after import rollback");
+                    }
+                }
                 return Err(ErrorResponse::internal(format!(
-                    "imported model copied but could not start ({e}) — rolled back, previous model kept"
+                    "imported model could not start ({e}) — rolled back; the previous model was restored"
                 )));
             }
         },
         Err(e) => {
-            tracing::warn!(error = %e, model = %id, "builtin llm: import spawn skipped (instance manager unavailable) — rolling back");
-            let _ = std::fs::remove_dir_all(mdir.join(&id));
+            // Transient manager failure: the import is VALID — keep the files
+            // (a /restart can serve it) and report an error rather than a
+            // misleading success.
+            tracing::warn!(error = %e, model = %id, "builtin llm: import spawn skipped (instance manager unavailable) — files kept, use /restart");
             return Err(ErrorResponse::internal(format!(
-                "instance manager unavailable — import rolled back, retry once the server is fully started"
+                "instance manager unavailable ({e}) — model files installed but not started; run /restart once the server is fully up"
             )));
         }
     };
@@ -488,7 +514,6 @@ pub async fn import_local_handler(
         "name": meta.name.unwrap_or_else(|| id.clone()),
         // The ctx the server actually runs with (env override wins).
         "ctx": spawn_ctx,
-        "report_ctx": report_ctx,
         "quant": manifest.quant,
         "arch": meta.architecture,
         "installed": true,
