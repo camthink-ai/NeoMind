@@ -23,12 +23,22 @@ pub const LLAMA_CPP_VERSION: &str = "b10545";
 /// matching cudart DLL bundle is downloaded alongside, so hosts need only an
 /// NVIDIA driver, no CUDA toolkit. Linux/Jetson have no official CUDA asset
 /// (see `llama_asset_name`); those platforms keep the CPU build and build
-/// from source for GPU.
+/// from source for GPU — EXCEPT Jetson (see `RuntimeVariant::Jetson`), where
+/// we ship our own CUDA runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RuntimeVariant {
     #[default]
     Cpu,
     Cuda,
+    /// NVIDIA Jetson (Orin-family, sm_87). Not an official llama.cpp asset —
+    /// this is OUR gcc-11-built CUDA runtime, hosted on our GitHub Releases,
+    /// SHA-pinned. Detected automatically on hosts with `/etc/nv_tegra_release`
+    /// (Linux aarch64), or forced via `NEOMIND_BUILTIN_RUNTIME_VARIANT=jetson`.
+    /// The official `ubuntu-arm64` CPU asset requires gcc-13 libstdc++
+    /// (GLIBCXX_3.4.32); JetPack 6 ships gcc-11, so it fails to exec — that
+    /// gap is exactly what this variant fills (verified end-to-end on a real
+    /// Orin Nano 8GB, 2026-08-24).
+    Jetson,
 }
 
 impl RuntimeVariant {
@@ -36,6 +46,8 @@ impl RuntimeVariant {
     pub fn parse(raw: &str) -> Self {
         if raw.trim().eq_ignore_ascii_case("cuda") {
             RuntimeVariant::Cuda
+        } else if raw.trim().eq_ignore_ascii_case("jetson") {
+            RuntimeVariant::Jetson
         } else {
             RuntimeVariant::Cpu
         }
@@ -48,14 +60,44 @@ impl RuntimeVariant {
             .unwrap_or_default()
     }
 
-    /// Cache-dir suffix so cpu/cuda caches never mix.
+    /// Resolve the runtime to fetch: explicit env override wins; otherwise
+    /// auto-detect a Jetson host (Linux aarch64 + `/etc/nv_tegra_release`).
+    /// Non-Jetson Linux aarch64 keeps the CPU build (official ubuntu-arm64).
+    pub fn detect() -> Self {
+        let env = Self::from_env();
+        if env != RuntimeVariant::Cpu {
+            return env;
+        }
+        if cfg!(target_os = "linux")
+            && matches!(std::env::consts::ARCH, "aarch64" | "arm64")
+            && std::path::Path::new("/etc/nv_tegra_release").exists()
+        {
+            RuntimeVariant::Jetson
+        } else {
+            RuntimeVariant::Cpu
+        }
+    }
+
+    /// Cache-dir suffix so cpu/cuda/jetson caches never mix.
     fn cache_suffix(self) -> &'static str {
         match self {
             RuntimeVariant::Cpu => "",
             RuntimeVariant::Cuda => "-cuda",
+            RuntimeVariant::Jetson => "-jetson",
         }
     }
 }
+
+/// Our Jetson runtime asset (not an official llama.cpp release). See
+/// `RuntimeVariant::Jetson`. The tarball is the on-device build verified on
+/// Orin Nano 8GB / NX-class hardware: thin llama-server shell + sibling .so
+/// files (whole archive must be extracted together), $ORIGIN RUNPATH.
+pub const JETSON_RUNTIME_BASE_URL: &str =
+    "https://github.com/camthink-ai/NeoMind/releases/download/runtime-b10545";
+pub const JETSON_RUNTIME_ASSET: &str = "llama-server-b10545-linux-aarch64-jetson.tar.gz";
+/// SHA-256 of the above (executable download — hard pin, no slack).
+pub const JETSON_RUNTIME_SHA256: &str =
+    "4ddbb55d0ebf4a12dfe16627381ad772626f120d85ece915d5c2054ded9ef8ef";
 
 /// Official release asset name for an OS/arch/variant, if one ships. Windows
 /// ships `win-cpu-*` / `win-cuda-*` archives (zip); macos/linux ship `-bin-*`
@@ -64,8 +106,12 @@ pub fn llama_asset_name(os: &str, arch: &str, variant: RuntimeVariant) -> Option
     match (os, arch) {
         (_, _) if variant == RuntimeVariant::Cuda => match (os, arch) {
             ("windows", "x86_64") | ("windows", "x86") => Some("win-cuda-12.4-x64"),
-            // No official CUDA prebuilt for Linux (CPU/Vulkan only) or Jetson
-            // — GPU there means building via scripts/build-llama-server.sh.
+            // No official CUDA prebuilt for Linux (CPU/Vulkan only) — GPU
+            // there means building via scripts/build-llama-server.sh.
+            _ => None,
+        },
+        (_, _) if variant == RuntimeVariant::Jetson => match (os, arch) {
+            ("linux", "aarch64") | ("linux", "arm64") => Some("jetson"),
             _ => None,
         },
         ("macos", "aarch64") | ("macos", "arm64") => Some("macos-arm64"),
@@ -75,6 +121,19 @@ pub fn llama_asset_name(os: &str, arch: &str, variant: RuntimeVariant) -> Option
         ("windows", "x86_64") | ("windows", "x86") => Some("win-cpu-x64"),
         ("windows", "aarch64") | ("windows", "arm64") => Some("win-cpu-arm64"),
         _ => None,
+    }
+}
+
+/// Release URL for the resolved asset. The Jetson asset is OURS (hosted on
+/// our GitHub Releases under the runtime tag, SHA-pinned); everything else is
+/// the official llama.cpp release archive.
+pub fn llama_server_url_for(os: &str, arch: &str, variant: RuntimeVariant) -> String {
+    let asset = llama_asset_name(os, arch, variant);
+    if variant == RuntimeVariant::Jetson {
+        format!("{}/{JETSON_RUNTIME_ASSET}", JETSON_RUNTIME_BASE_URL)
+    } else {
+        let asset = asset.unwrap_or_default();
+        llama_server_url(asset)
     }
 }
 
@@ -232,6 +291,8 @@ mod tests {
         assert_eq!(RuntimeVariant::parse(" CUDA "), RuntimeVariant::Cuda);
         assert_eq!(RuntimeVariant::parse(""), RuntimeVariant::Cpu);
         assert_eq!(RuntimeVariant::parse("cpu"), RuntimeVariant::Cpu);
-        assert_eq!(RuntimeVariant::parse("jetson"), RuntimeVariant::Cpu); // unknown → cpu
+        assert_eq!(RuntimeVariant::parse("jetson"), RuntimeVariant::Jetson);
+        assert_eq!(RuntimeVariant::parse("JETSON"), RuntimeVariant::Jetson);
+        assert_eq!(RuntimeVariant::parse("rockchip"), RuntimeVariant::Cpu); // unknown → cpu
     }
 }

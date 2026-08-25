@@ -8,8 +8,8 @@ use std::sync::{Arc, OnceLock};
 use neomind_core::builtin_llm::find::find_llama_server;
 use neomind_core::builtin_llm::runtime::{
     llama_asset_is_zip, llama_asset_name, llama_cudart_marker, llama_cudart_url,
-    llama_server_bin_name, llama_server_cache_dir, llama_server_url, RuntimeVariant,
-    LLAMA_CPP_VERSION,
+    llama_server_bin_name, llama_server_cache_dir, llama_server_url_for, RuntimeVariant,
+    JETSON_RUNTIME_SHA256, LLAMA_CPP_VERSION,
 };
 
 /// Single-flight gate so concurrent ensure_llama_server calls don't download
@@ -36,10 +36,26 @@ fn runtime_lock() -> Arc<tokio::sync::Mutex<()>> {
 pub async fn ensure_llama_server(data_dir: &Path) -> Result<PathBuf, String> {
     // Fast path — bundled binary, no network.
     if let Ok(b) = find_llama_server() {
-        return Ok(b);
+        // On Jetson hosts a PATH/bundled binary may be the OFFICIAL
+        // ubuntu-arm64 build, which requires gcc-13 libstdc++
+        // (GLIBCXX_3.4.32) — JetPack 6 ships gcc-11, so it fails to exec
+        // (verified on a real 0.9.19 install on Orin Nano 8GB). Don't trust
+        // it; exec-check and fall through to our Jetson download instead.
+        if RuntimeVariant::detect() == RuntimeVariant::Jetson {
+            if exec_check(&b).await.is_ok() {
+                return Ok(b);
+            }
+            tracing::warn!(
+                bin = %b.display(),
+                "builtin llm: found llama-server on PATH but it fails to exec on this Jetson \
+                 (official ubuntu-arm64 build needs gcc-13?) — downloading the Jetson runtime"
+            );
+        } else {
+            return Ok(b);
+        }
     }
 
-    let mut variant = RuntimeVariant::from_env();
+    let mut variant = RuntimeVariant::detect();
     match ensure_runtime_variant(data_dir, variant).await {
         Ok(bin) => Ok(bin),
         Err(err) if variant == RuntimeVariant::Cuda => {
@@ -75,7 +91,8 @@ async fn ensure_runtime_variant(
     // (crashed between the two downloads) must not short-circuit.
     let cache_complete = |dir: &Path| {
         find_runtime_binary(dir).is_some()
-            && (variant == RuntimeVariant::Cpu || dir.join(llama_cudart_marker()).exists())
+            && (matches!(variant, RuntimeVariant::Cpu | RuntimeVariant::Jetson)
+                || dir.join(llama_cudart_marker()).exists())
     };
     if cache_complete(&cache_dir) {
         return Ok(find_runtime_binary(&cache_dir).expect("checked above"));
@@ -107,19 +124,29 @@ async fn ensure_runtime_variant(
                 )
             }
         })?;
-    let url = llama_server_url(asset);
+    let url = llama_server_url_for(std::env::consts::OS, std::env::consts::ARCH, variant);
+    // Executable download — our own Jetson asset is hard SHA-pinned; official
+    // llama.cpp assets move only when our pin (LLAMA_CPP_VERSION) moves.
+    let expected_sha = (variant == RuntimeVariant::Jetson).then_some(JETSON_RUNTIME_SHA256);
     tracing::info!(url = %url, variant = ?variant, "builtin llm: downloading llama-server runtime");
 
     RUNTIME_DL_ACTIVE.store(true, Ordering::SeqCst);
     // Fresh cache for the primary archive; a cudart bundle (if any) then
     // extracts INTO it without wiping.
-    let result = download_runtime(&url, &cache_dir, llama_asset_is_zip(&asset), true).await;
+    let result = download_runtime(
+        &url,
+        &cache_dir,
+        llama_asset_is_zip(&asset),
+        true,
+        expected_sha,
+    )
+    .await;
     let result = match result {
         Ok(bin) => match llama_cudart_url(asset) {
             // CUDA builds dlopen cudart/cublas DLLs — the bundle puts them
             // next to llama-server.exe so a driver-only host just works.
             Some(cudart_url) => {
-                match download_runtime(&cudart_url, &cache_dir, true, false).await {
+                match download_runtime(&cudart_url, &cache_dir, true, false, None).await {
                     Ok(_) => {
                         // A CUDA build with no (or too old) NVIDIA driver
                         // fails to load cudart/cublas DLLs — detect that HERE
@@ -137,7 +164,20 @@ async fn ensure_runtime_variant(
                     Err(e) => Err(e),
                 }
             }
-            None => Ok(bin),
+            None => {
+                // Our own Jetson build deserves the same exec sanity gate as
+                // CUDA — catch a broken download at install time, not spawn.
+                if variant == RuntimeVariant::Jetson {
+                    exec_check(&bin).await.map(|_| bin.clone()).map_err(|e| {
+                        format!(
+                            "Jetson runtime exec check failed (SHA matched but the binary \
+                                 does not run — build/runtime mismatch): {e}"
+                        )
+                    })
+                } else {
+                    Ok(bin)
+                }
+            }
         },
         Err(e) => Err(e),
     };
@@ -157,6 +197,7 @@ async fn download_runtime(
     cache_dir: &Path,
     is_zip: bool,
     wipe: bool,
+    expected_sha: Option<&str>,
 ) -> Result<PathBuf, String> {
     let client = reqwest::Client::new();
     let tmp = std::env::temp_dir().join(format!("neomind-llama-runtime-{}", std::process::id()));
@@ -178,6 +219,22 @@ async fn download_runtime(
         .bytes()
         .await
         .map_err(|e| format!("read llama.cpp runtime: {e}"))?;
+
+    if let Some(want) = expected_sha {
+        let got = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(&bytes);
+            let out = h.finalize();
+            out.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        };
+        if !got.eq_ignore_ascii_case(want) {
+            return Err(format!(
+                "runtime SHA-256 mismatch: expected {want}, got {got} — refusing to install a \
+                 tampered/truncated executable"
+            ));
+        }
+    }
 
     // Extract the WHOLE archive into the cache dir — the llama-server binary
     // is a thin wrapper that dlopens sibling libs (macOS libllama-server-impl
