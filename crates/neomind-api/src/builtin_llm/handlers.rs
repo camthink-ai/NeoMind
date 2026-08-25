@@ -123,19 +123,45 @@ fn hf_sha256(quant: Quant) -> &'static str {
     }
 }
 
-/// Which model to install, defaulting to the registry default.
-fn resolve_model(model_id: Option<&str>) -> Result<&'static BuiltinModelDef, ErrorResponse> {
+/// Convert a compiled-in curated def into the unified catalog shape, so the
+/// picker / download / spawn treat remote and builtin models identically.
+fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
+    super::catalog::CatalogModel {
+        id: def.manifest.id.clone(),
+        display_name: def.display_name.to_string(),
+        file_name: def.manifest.file_name.clone(),
+        sha256: def.manifest.sha256.clone(),
+        quant: def.manifest.quant.clone(),
+        hf_repo: def.hf_repo.to_string(),
+        hf_file: def.hf_file.to_string(),
+        size_bytes: def.size_bytes,
+        default_ctx: def.default_ctx,
+        default_thinking: def.default_thinking,
+        min_ram_mb: def.min_ram_mb as u32,
+        notes: def.notes.to_string(),
+        recommended: def.recommended,
+    }
+}
+
+/// Resolve a model by id: compiled-in curated def first, else the remote
+/// catalog (so a model added to the Runtimes catalog is installable without a
+/// product release). `None` → unknown id.
+fn resolve_model(model_id: Option<&str>) -> Result<super::catalog::CatalogModel, ErrorResponse> {
     let id = model_id.unwrap_or(BUILTIN_MODEL_ID);
-    model_def(id).ok_or_else(|| {
-        ErrorResponse::bad_request(format!(
-            "unknown builtin model id: {id} (available: {})",
-            BUILTIN_MODELS
-                .iter()
-                .map(|d| d.manifest.id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-    })
+    if let Some(def) = model_def(id) {
+        return Ok(builtin_to_catalog(def));
+    }
+    if let Some(m) = super::catalog::catalog_model(id) {
+        return Ok(m);
+    }
+    Err(ErrorResponse::bad_request(format!(
+        "unknown builtin model id: {id} (available: {})",
+        BUILTIN_MODELS
+            .iter()
+            .map(|d| d.manifest.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )))
 }
 
 /// Resolve the quant to download for a given model: LFM keeps the existing
@@ -147,12 +173,12 @@ fn resolve_model(model_id: Option<&str>) -> Result<&'static BuiltinModelDef, Err
 /// stale sha and downloads kept failing verification).
 fn resolve_quant(
     cfg: &BuiltinConfig,
-    def: &BuiltinModelDef,
+    def: &super::catalog::CatalogModel,
 ) -> Result<Option<Quant>, ErrorResponse> {
     let Some(q) = cfg.quant_override.as_deref() else {
         return Ok(None);
     };
-    if def.manifest.id != BUILTIN_MODEL_ID {
+    if def.id != BUILTIN_MODEL_ID {
         return Err(ErrorResponse::bad_request(format!(
             "quant override is only supported for the default model ({BUILTIN_MODEL_ID})"
         )));
@@ -260,8 +286,11 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
 /// Download source for a def: HF repo + file + sha. Every model downloads its
 /// registry entry directly (LFM's entry is now QAD Q4_0, the default); the
 /// env `quant_override` swaps LFM to q8_0/q4_k_m for power users.
-fn resolve_source(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> (String, String, String) {
-    if def.manifest.id == BUILTIN_MODEL_ID {
+fn resolve_source(
+    cfg: &BuiltinConfig,
+    def: &super::catalog::CatalogModel,
+) -> (String, String, String) {
+    if def.id == BUILTIN_MODEL_ID {
         if let Ok(Some(quant)) = resolve_quant(cfg, def) {
             return (
                 format!("{}/{}", HF_REPO, hf_file_name(quant)),
@@ -275,8 +304,8 @@ fn resolve_source(cfg: &BuiltinConfig, def: &BuiltinModelDef) -> (String, String
             "https://huggingface.co/{}/resolve/main/{}",
             def.hf_repo, def.hf_file
         ),
-        def.manifest.sha256.clone(),
-        def.manifest.file_name.clone(),
+        def.sha256.clone(),
+        def.file_name.clone(),
     )
 }
 
@@ -507,24 +536,40 @@ pub async fn models_handler(
 ) -> HandlerResult<serde_json::Value> {
     let mdir = models_dir(&state.data_dir);
     let (_total_mb, available_mb) = memory_snapshot_mb();
-    let mut models: Vec<serde_json::Value> = BUILTIN_MODELS
+    // Source of truth: the REMOTE catalog when reachable (new models ship as
+    // a JSON edit), else the compiled-in curated set. A network failure must
+    // never degrade the list — offline fallback is the full builtin default.
+    let base: Vec<super::catalog::CatalogModel> = match super::catalog::fetch_catalog().await {
+        Some(catalog) => {
+            tracing::debug!(
+                count = catalog.len(),
+                "builtin llm: using remote model catalog"
+            );
+            catalog
+        }
+        None => {
+            tracing::debug!("builtin llm: catalog unreachable — using compiled-in curated models");
+            BUILTIN_MODELS.iter().map(builtin_to_catalog).collect()
+        }
+    };
+    let mut models: Vec<serde_json::Value> = base
         .iter()
         .map(|d| {
-            let installed = load_manifest(&mdir, &d.manifest.id)
+            let installed = load_manifest(&mdir, &d.id)
                 .ok()
                 .flatten()
                 .map(|m| m.model_path(&mdir).exists())
                 .unwrap_or(false);
             json!({
-                "id": d.manifest.id,
+                "id": d.id,
                 "name": d.display_name,
-                "file_name": d.manifest.file_name,
-                "quant": d.manifest.quant,
+                "file_name": d.file_name,
+                "quant": d.quant,
                 "size_bytes": d.size_bytes,
                 "default_ctx": d.default_ctx,
                 "min_ram_mb": d.min_ram_mb,
                 // Below the model's floor → the UI discourages the install.
-                "memory_ok": available_mb >= d.min_ram_mb,
+                "memory_ok": available_mb >= d.min_ram_mb as u64,
                 "notes": d.notes,
                 "recommended": d.recommended,
                 "installed": installed,
@@ -615,13 +660,11 @@ pub async fn download_handler(
             .map(str::to_string)
     });
     let def = resolve_model(model_id.as_deref())?;
-    let (url, sha, file_name) = resolve_source(&cfg, def);
-    let dest = models_dir(&state.data_dir)
-        .join(&def.manifest.id)
-        .join(&file_name);
+    let (url, sha, file_name) = resolve_source(&cfg, &def);
+    let dest = models_dir(&state.data_dir).join(&def.id).join(&file_name);
 
     tracing::info!(
-        model = %def.manifest.id,
+        model = %def.id,
         url = %url,
         dest = %dest.display(),
         "builtin llm: starting model download"
@@ -630,11 +673,11 @@ pub async fn download_handler(
     DL_ACTIVE.store(true, Ordering::SeqCst);
     DL_DOWNLOADED.store(0, Ordering::SeqCst);
     DL_TOTAL.store(0, Ordering::SeqCst);
-    *dl_model().lock().unwrap() = def.manifest.id.clone();
+    *dl_model().lock().unwrap() = def.id.clone();
 
     let state_for_task = state.clone();
     let cfg_for_task = cfg.clone();
-    let model_id_task = def.manifest.id.clone();
+    let model_id_task = def.id.clone();
     tokio::spawn(async move {
         // `guard` single-flights concurrent POSTs; `_active` flips DL_ACTIVE
         // back off on finish/panic (or earlier — run_builtin_download drops it

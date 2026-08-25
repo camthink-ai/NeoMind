@@ -4,6 +4,7 @@
 //! - `runtime`:  on-demand llama-server (bundled first, else official prebuilt).
 //! - `server`:   spawn + health-poll the bundled llama-server.
 
+pub mod catalog;
 pub mod config;
 pub mod download;
 pub mod gguf;
