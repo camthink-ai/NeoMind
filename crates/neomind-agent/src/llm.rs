@@ -489,7 +489,7 @@ impl LlmInterface {
     /// Get the current LLM runtime.
     /// Priority: Direct runtime (set via configure_llm) > Instance manager active runtime
     /// This ensures that when a specific backend is configured via backendId, it takes precedence.
-    async fn get_runtime(&self) -> AgentResult<Arc<dyn LlmRuntime>> {
+    pub(crate) async fn get_runtime(&self) -> AgentResult<Arc<dyn LlmRuntime>> {
         // First, check if a direct runtime is set (via configure_llm)
         // This takes precedence over instance manager to support backendId selection
         let llm_guard = self.llm.read().await;

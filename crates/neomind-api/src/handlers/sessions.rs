@@ -844,6 +844,18 @@ pub async fn chat_handler(
         tracing::warn!(session_id = %id, error = %e, "chat_handler: failed to persist history");
     }
 
+    // Background chat memory extraction — durable facts from this exchange get
+    // merged into USER.md/KNOWLEDGE.md so the next conversation starts knowing
+    // the user (small models never call the memory tool themselves). Skipped
+    // on errors/timeouts/empty replies.
+    if error_msg.is_none() && !timed_out && !response.trim().is_empty() {
+        state
+            .agents
+            .session_manager
+            .maybe_extract_memory(&id, &req.message, &response)
+            .await;
+    }
+
     Ok(Json(ChatResponse {
         response,
         session_id: id,

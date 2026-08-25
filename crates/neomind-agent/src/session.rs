@@ -1077,6 +1077,185 @@ impl SessionManager {
     }
 
     /// Get whether memory is enabled for a session.
+    /// Lightweight background memory extraction after a chat turn.
+    ///
+    /// Chat had NO automatic memory write — only what the model chose to
+    /// write via the memory tool, which small models almost never do — so
+    /// USER.md/KNOWLEDGE.md stayed empty and cross-session memory was dead
+    /// in practice. This runs a small thinking-disabled LLM call over the
+    /// last exchange, merges durable facts into the snapshot files
+    /// (deduped, budget-capped), and invalidates the frozen-snapshot cache
+    /// so the next turn sees them. Fire-and-forget; never blocks the reply.
+    pub async fn maybe_extract_memory(
+        &self,
+        session_id: &str,
+        user_message: &str,
+        assistant_reply: &str,
+    ) {
+        if !self.is_memory_enabled(session_id).await {
+            return;
+        }
+        let um = user_message.trim().to_string();
+        let ar = assistant_reply.trim().to_string();
+        // A substantive exchange only — greetings/pings shouldn't mint memory.
+        if um.is_empty() || ar.chars().count() < 40 {
+            return;
+        }
+        let agent = match self.get_session(session_id).await {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+        let runtime = match agent.llm_interface().get_runtime().await {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+        let model = runtime.model_name().to_string();
+
+        // The snapshot cache is invalidated after a write so the next turn
+        // re-loads the updated files. Rebuild from the store fresh each time.
+        let store = neomind_storage::MarkdownMemoryStore::new("data/memory");
+        let snapshots = self.memory_snapshots.clone();
+        let session_id = session_id.to_string();
+
+        tokio::spawn(async move {
+            use neomind_core::llm::backend::{GenerationParams, LlmInput, LlmRuntime as _};
+            use neomind_core::message::{Content, Message, MessageRole};
+
+            let prompt = format!(
+                "You are the memory extractor for an IoT edge platform assistant. \
+From this user turn and the assistant's reply, extract AT MOST 3 durable, reusable \
+facts that would help FUTURE conversations. Two kinds, tagged exactly:\n\
+[user] fact        — durable facts about the user (preferences, identity, context)\n\
+[knowledge] fact   — durable facts about the system/domain (device names, locations, conventions)\n\
+Output ONLY bullet lines starting with \"- \", one per fact, each tagged. \
+Skip transient or session-specific chatter. Empty output if nothing durable.\n\n\
+User: {um}\n\
+Assistant: {ar}\n"
+            );
+
+            let input = LlmInput {
+                messages: vec![Message::new(MessageRole::User, Content::text(prompt))],
+                params: GenerationParams {
+                    temperature: Some(0.2),
+                    max_tokens: Some(300),
+                    thinking_enabled: Some(false), // gotcha #7 — no wasted thinking tokens
+                    ..Default::default()
+                },
+                model: Some(model),
+                stream: false,
+                tools: None,
+            };
+            let out = match runtime.generate(input).await {
+                Ok(o) => o,
+                Err(e) => {
+                    tracing::debug!(session_id, error = %e, "memory extraction skipped (LLM error)");
+                    return;
+                }
+            };
+
+            // Parse tagged bullets: `- [user] ...` / `- [knowledge] ...`
+            let mut new_user: Vec<String> = Vec::new();
+            let mut new_knowledge: Vec<String> = Vec::new();
+            for line in out.text.lines() {
+                let line = line.trim();
+                let rest = line.strip_prefix("- ").or_else(|| line.strip_prefix("• "));
+                let Some(rest) = rest else { continue };
+                if let Some(fact) = rest.strip_prefix("[user]") {
+                    let f = fact.trim().to_string();
+                    if !f.is_empty() {
+                        new_user.push(f);
+                    }
+                } else if let Some(fact) = rest.strip_prefix("[knowledge]") {
+                    let f = fact.trim().to_string();
+                    if !f.is_empty() {
+                        new_knowledge.push(f);
+                    }
+                }
+            }
+            if new_user.is_empty() && new_knowledge.is_empty() {
+                return;
+            }
+
+            // Merge: exact-normalized dedup against existing bullets; cap to
+            // the file budget keeping the OLDEST facts (durable base facts
+            // outrank recent chatter).
+            let norm =
+                |s: &str| -> String { s.to_lowercase().split_whitespace().collect::<String>() };
+            let merged = |target: &str, additions: &[String]| -> Option<String> {
+                let existing = store.read_file_sync(target);
+                let existing_norms: std::collections::HashSet<String> = existing
+                    .lines()
+                    .filter_map(|l| {
+                        let l = l.trim().trim_start_matches("- ").trim_start_matches("• ");
+                        if l.is_empty() {
+                            None
+                        } else {
+                            Some(norm(l))
+                        }
+                    })
+                    .collect();
+                let fresh: Vec<&String> = additions
+                    .iter()
+                    .filter(|f| !existing_norms.contains(&norm(f)))
+                    .collect();
+                if fresh.is_empty() {
+                    return None;
+                }
+                let mut merged = existing.trim_end().to_string();
+                for f in &fresh {
+                    if !merged.is_empty() {
+                        merged.push('\n');
+                    }
+                    merged.push_str("- ");
+                    merged.push_str(f);
+                }
+                merged.push('\n');
+                let limit = match target {
+                    "user" => 2000,
+                    _ => 3000,
+                };
+                if merged.chars().count() > limit {
+                    let mut kept = String::new();
+                    for line in merged.lines() {
+                        if kept.chars().count() + line.chars().count() + 1 > limit {
+                            break;
+                        }
+                        if !kept.is_empty() {
+                            kept.push('\n');
+                        }
+                        kept.push_str(line);
+                    }
+                    merged = kept;
+                    merged.push('\n');
+                }
+                Some(merged)
+            };
+
+            let mut wrote_any = false;
+            if let Some(content) = merged("user", &new_user) {
+                if store.write_file("user", &content).await.is_ok() {
+                    wrote_any = true;
+                }
+            }
+            if let Some(content) = merged("knowledge", &new_knowledge) {
+                if store.write_file("knowledge", &content).await.is_ok() {
+                    wrote_any = true;
+                }
+            }
+
+            if wrote_any {
+                // Invalidate the frozen snapshot so the next turn re-loads.
+                snapshots.write().await.remove(&session_id);
+                tracing::info!(
+                    session_id,
+                    user_facts = new_user.len(),
+                    knowledge_facts = new_knowledge.len(),
+                    "chat memory extraction: merged durable facts"
+                );
+            }
+        });
+    }
+
     pub async fn is_memory_enabled(&self, session_id: &str) -> bool {
         self.store
             .get_session_metadata(session_id)
