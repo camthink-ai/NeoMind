@@ -1233,7 +1233,7 @@ pub async fn share_proxy_handler(
         }
     }
 
-    let is_read_only = !share.permissions.allow_interactive;
+    let allow_interactive = share.permissions.allow_interactive;
     let path_str = path.as_ref();
 
     // 3. Enforce an ALLOWLIST of paths reachable through the share proxy.
@@ -1251,14 +1251,22 @@ pub async fn share_proxy_handler(
         .into_response();
     }
 
-    // 4. Block write methods in read-only mode
-    if is_read_only && !is_allowed_readonly_method(path_str, &method) {
-        return ErrorResponse::new(
-            "FORBIDDEN",
-            "This share link is read-only",
-            StatusCode::FORBIDDEN,
-        )
-        .into_response();
+    // 4. Method gate. Interactive links get the same POST whitelist as
+    //    read-only ones, PLUS device control commands — previously an
+    //    interactive link skipped the gate entirely, letting an anonymous
+    //    share-token holder run ANY write method on any allowlisted path
+    //    (install extensions, delete agents, rewrite channels): "allow this
+    //    viewer to press the dashboard's buttons" must not mean "full admin
+    //    write inside the allowlist prefixes". PUT/DELETE stay blocked for
+    //    both modes — interactive means actuating devices, never editing
+    //    configuration.
+    if !is_allowed_share_method(path_str, &method, allow_interactive) {
+        let reason = if allow_interactive {
+            "This action is not available through a shared link"
+        } else {
+            "This share link is read-only"
+        };
+        return ErrorResponse::new("FORBIDDEN", reason, StatusCode::FORBIDDEN).into_response();
     }
 
     // 5. Build query string
@@ -1680,49 +1688,118 @@ fn path_matches_pattern(path: &str, pattern: &str) -> bool {
         .all(|(p, pat)| pat.starts_with(':') || *p == *pat)
 }
 
-/// In read-only mode, only allow GET and specific safe POST endpoints.
-/// Uses exact endpoint matching to prevent unauthorized access to side-effect
-/// operations that share a prefix with read-like endpoints.
+/// Method gate for the share proxy — both share modes. Uses exact endpoint
+/// matching to prevent unauthorized access to side-effect operations that
+/// share a prefix with read-like endpoints.
+///
+/// "Interactive" means the viewer may actuate what the dashboard shows
+/// (send a device control command) — it does NOT open configuration writes.
 ///
 /// Share mode permission matrix:
-/// ┌──────────────────────────────────────────┬────────┬─────────┐
-/// │ Path pattern                             │ Method │ Allowed │
-/// ├──────────────────────────────────────────┼────────┼─────────┤
-/// │ * (unless blocked)                       │ GET    │ YES     │
-/// │ extensions/:id/command                   │ POST   │ YES     │
-/// │ devices/current-batch                    │ POST   │ YES     │
-/// │ agents/:id/executions/details            │ POST   │ YES     │
-/// │ * (all other)                            │ POST   │ NO      │
-/// │ *                                        │ PUT    │ NO      │
-/// │ *                                        │ DELETE │ NO      │
-/// └──────────────────────────────────────────┴────────┴─────────┘
-fn is_allowed_readonly_method(path: &str, method: &Method) -> bool {
+/// ┌──────────────────────────────────────────┬────────┬─────────┬──────────────┐
+/// │ Path pattern                             │ Method │ Allowed │ Mode         │
+/// ├──────────────────────────────────────────┼────────┼─────────┼──────────────┤
+/// │ * (unless path-blocked)                  │ GET    │ YES     │ both         │
+/// │ extensions/:id/command                   │ POST   │ YES     │ both         │
+/// │ devices/current-batch                    │ POST   │ YES     │ both         │
+/// │ agents/:id/executions/details            │ POST   │ YES     │ both         │
+/// │ devices/:id/command/:command             │ POST   │ YES     │ interactive  │
+/// │ * (all other)                            │ POST   │ NO      │ both         │
+/// │ *                                        │ PUT    │ NO      │ both         │
+/// │ *                                        │ DELETE │ NO      │ both         │
+/// └──────────────────────────────────────────┴────────┴─────────┴──────────────┘
+fn is_allowed_share_method(path: &str, method: &Method, allow_interactive: bool) -> bool {
     if method == Method::GET {
         return true;
     }
-    if method == Method::POST {
-        let allowed_post_patterns = [
-            "extensions/:id/command",        // Extension read-only commands
-            "devices/current-batch",         // Batch device current values
-            "agents/:id/executions/details", // Batch get execution details
-        ];
-        return allowed_post_patterns
-            .iter()
-            .any(|p| path_matches_pattern(path, p));
+    if method != Method::POST {
+        return false;
     }
-    false
+    // Read-like POSTs both modes allow…
+    let read_like = [
+        "extensions/:id/command",        // Extension commands (incl. read-only queries)
+        "devices/current-batch",         // Batch device current values
+        "agents/:id/executions/details", // Batch get execution details
+    ];
+    if read_like.iter().any(|p| path_matches_pattern(path, p)) {
+        return true;
+    }
+    // …plus the one write interactive mode exists for: device control buttons.
+    allow_interactive && path_matches_pattern(path, "devices/:id/command/:command")
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_duplicate_dashboard, deep_merge_json, new_output_prefix,
+        build_duplicate_dashboard, deep_merge_json, is_allowed_share_method, new_output_prefix,
         rewrite_component_transform_refs,
     };
+    use axum::http::Method;
     use neomind_storage::dashboards::{
         Dashboard as StoredDashboard, DashboardComponent as StoredComponent,
         DashboardLayout as StoredLayout,
     };
+
+    /// Interactive links must NOT be "full admin write inside the allowlist
+    /// prefixes" — the method gate whitelists POSTs for both modes, with
+    /// interactive adding exactly one endpoint (device control).
+    #[test]
+    fn share_method_gate_interactive_is_not_blanket_write() {
+        // Read-like POSTs: both modes.
+        for path in [
+            "devices/current-batch",
+            "extensions/weather/command",
+            "agents/a1/executions/details",
+        ] {
+            assert!(
+                is_allowed_share_method(path, &Method::POST, false),
+                "read-like POST `{path}` must pass in read-only mode"
+            );
+            assert!(
+                is_allowed_share_method(path, &Method::POST, true),
+                "read-like POST `{path}` must pass in interactive mode"
+            );
+        }
+
+        // Device control: interactive only.
+        assert!(!is_allowed_share_method(
+            "devices/ne101-01/command/reboot",
+            &Method::POST,
+            false
+        ));
+        assert!(is_allowed_share_method(
+            "devices/ne101-01/command/reboot",
+            &Method::POST,
+            true
+        ));
+
+        // Configuration writes: NEVER — this is the fix. An interactive
+        // share-token holder previously reached any write method on any
+        // allowlisted path (install extensions, delete agents, rewrite
+        // channels).
+        for (path, method) in [
+            ("extensions/install", Method::POST),
+            ("agents/a1", Method::DELETE),
+            ("agents/a1", Method::PUT),
+            ("messages/ch-1", Method::PUT),
+            ("messages/ch-1", Method::DELETE),
+            ("devices/ne101-01", Method::DELETE),
+            ("extensions/weather/config", Method::PUT),
+        ] {
+            assert!(
+                !is_allowed_share_method(path, &method, true),
+                "interactive share must not allow {method} `{path}`"
+            );
+            assert!(
+                !is_allowed_share_method(path, &method, false),
+                "read-only share must not allow {method} `{path}`"
+            );
+        }
+
+        // GET stays open for both modes (path allowlist handles scope).
+        assert!(is_allowed_share_method("telemetry/latest", &Method::GET, false));
+        assert!(is_allowed_share_method("telemetry/latest", &Method::GET, true));
+    }
 
     #[test]
     fn rewrite_component_transform_refs_updates_all_three_fields() {
