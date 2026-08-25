@@ -500,7 +500,11 @@ pub(crate) fn build_tool_result(
     let actions_executed: Vec<neomind_storage::ActionExecuted> = all_tool_results
         .iter()
         .map(|r| {
-            let success = r.result.is_ok();
+            // A tool that returns Ok(ToolOutput{success:false}) is a SOFT
+            // failure (the command ran but reported failure) — it must not
+            // count as success, or success_rate pins to 1.0 and the journal
+            // learns nothing. Mirrors the dedup set's success semantics.
+            let success = matches!(&r.result, Ok(o) if o.success);
             neomind_storage::ActionExecuted {
                 action_type: "tool_call".to_string(),
                 description: format!("Execute tool '{}'", r.name),

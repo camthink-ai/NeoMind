@@ -640,6 +640,34 @@ impl AgentExecutor {
                         attempt = attempt,
                         "Event-triggered agent execution completed"
                     );
+                    // execute_agent reports LLM/tool failures as Ok(Failed-record)
+                    // (only storage-level errors return Err). Treating every Ok
+                    // as success made the inline retry and the caller's
+                    // cooldown-clear dead code — transient LLM faults got no
+                    // retry and the 60s window stayed locked.
+                    if record.status == neomind_storage::ExecutionStatus::Failed {
+                        if attempt <= retries {
+                            tracing::warn!(
+                                agent_id = %agent_id,
+                                execution_id = %record.id,
+                                attempt = attempt,
+                                retries = retries,
+                                "Event-triggered execution FAILED — retrying after 5s backoff"
+                            );
+                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                            continue;
+                        }
+                        tracing::error!(
+                            agent_id = %agent_id,
+                            execution_id = %record.id,
+                            attempt = attempt,
+                            "Event-triggered execution failed (status=Failed) after all retries"
+                        );
+                        return Err(crate::error::NeoMindError::Llm(format!(
+                            "event-triggered execution failed (status=Failed) after {} attempts",
+                            attempt
+                        )));
+                    }
                     return Ok(());
                 }
                 Err(e) => {

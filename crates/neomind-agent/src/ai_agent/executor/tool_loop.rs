@@ -109,7 +109,11 @@ impl AgentExecutor {
             let input = LlmInput {
                 messages: messages.clone(),
                 params: GenerationParams {
-                    temperature: Some(0.7),
+                    // AgentDefaults is the /api/settings/agent surface — the
+                    // loop used to hardcode 0.7 and ignore it (config only
+                    // fed the chat path).
+                    temperature: Some(neomind_storage::AgentDefaults::get().default_temperature),
+                    top_p: Some(neomind_storage::AgentDefaults::get().default_top_p),
                     max_tokens: Some(4000),
                     ..Default::default()
                 },
