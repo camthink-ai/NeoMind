@@ -342,10 +342,36 @@ impl AuthState {
     /// Validate an API key.
     pub fn validate_key(&self, key: &str) -> bool {
         let hash = self.crypto.hash_api_key(key);
+        if let Some(item) = self.api_keys.get(&hash) {
+            return item.value().1.active;
+        }
+        // Miss: the in-memory map is a startup snapshot — a key created
+        // after boot (e.g. `neomind api-key create` from another process)
+        // is in the DB but not here. Reload once and retry. (Previously such
+        // keys 401'd until the server restarted.)
+        self.reload_keys_from_db();
         self.api_keys
             .get(&hash)
             .map(|item| item.value().1.active)
             .unwrap_or(false)
+    }
+
+    /// Re-read the key table from the DB into the in-memory map. Only invoked
+    /// on a validation miss, so the cost is paid by unknown keys, not by the
+    /// hot authenticated path.
+    fn reload_keys_from_db(&self) {
+        match Self::load_from_db(&self.db_path, &self.crypto) {
+            Ok(keys) => {
+                // DashMap mutates through &self (interior mutability).
+                self.api_keys.clear();
+                for (k, v) in keys {
+                    self.api_keys.insert(k, v);
+                }
+            }
+            Err(e) => {
+                warn!(category = "auth", error = %e, "Failed to reload API keys from database");
+            }
+        }
     }
 
     /// Validate an API key and return its info.
