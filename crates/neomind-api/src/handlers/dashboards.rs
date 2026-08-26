@@ -1704,6 +1704,7 @@ fn path_matches_pattern(path: &str, pattern: &str) -> bool {
 /// │ devices/current-batch                    │ POST   │ YES     │ both         │
 /// │ agents/:id/executions/details            │ POST   │ YES     │ both         │
 /// │ devices/:id/command/:command             │ POST   │ YES     │ interactive  │
+/// │ agents/:id/invoke (AI-analyst ask)       │ POST   │ YES     │ interactive  │
 /// │ * (all other)                            │ POST   │ NO      │ both         │
 /// │ *                                        │ PUT    │ NO      │ both         │
 /// │ *                                        │ DELETE │ NO      │ both         │
@@ -1724,8 +1725,15 @@ fn is_allowed_share_method(path: &str, method: &Method, allow_interactive: bool)
     if read_like.iter().any(|p| path_matches_pattern(path, p)) {
         return true;
     }
-    // …plus the one write interactive mode exists for: device control buttons.
-    allow_interactive && path_matches_pattern(path, "devices/:id/command/:command")
+    // …plus interactive-mode writes: device control buttons, and running an
+    // agent via the AI-analyst widget's ask box (invoke) — same authorization
+    // tier as actuating devices; pre-hardening interactive shares allowed
+    // these and the analyst on shared boards regressed when the gate landed.
+    if !allow_interactive {
+        return false;
+    }
+    path_matches_pattern(path, "devices/:id/command/:command")
+        || path_matches_pattern(path, "agents/:id/invoke")
 }
 
 #[cfg(test)]
@@ -1772,6 +1780,14 @@ mod tests {
             &Method::POST,
             true
         ));
+
+        // AI-analyst ask box on shared boards: interactive only.
+        assert!(!is_allowed_share_method(
+            "agents/a1/invoke",
+            &Method::POST,
+            false
+        ));
+        assert!(is_allowed_share_method("agents/a1/invoke", &Method::POST, true));
 
         // Configuration writes: NEVER — this is the fix. An interactive
         // share-token holder previously reached any write method on any
