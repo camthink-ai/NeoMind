@@ -70,7 +70,9 @@ share-proxy hardcoded port 127.0.0.1:9375 (non-default-port installs served brok
 - First entry into a chat session no longer flashes the "start a new conversation" default for a frame before the real messages load.
 - **Memory and auto-onboarding configuration moved into Settings** — both were platform-level policies hiding in page-local dialogs (the agents-page memory panel and the devices-page pending-drafts toolbar). Memory config now lives in Settings → Preferences (instant-save rows, same fields), auto-onboarding in Settings → Preferences; the original entry points jump straight to the right section. The memory panel keeps content management (view/edit files) and only reads the char limits.
 - "Add your own API backend" opens the Cloud AI dialog (protocol chooser) — it built an inline OpenAI type and bypassed the protocol path.
-- The builtin model wizard gains the **import-your-own-GGUF card** + a `Custom` badge on imported models.
+- The builtin model wizard gains the **import-your-own-GGUF card** + a `Custom` badge on imported models. The card is upload-first: drag-and-drop or pick a GGUF (multipart, streamed server-side — GGUFs run to ~5 GB and are never buffered in memory), with the server-path input folded behind an "advanced" toggle for desktop/remote-deployment use.
+- "Add your own API backend" in the empty-backends state did nothing — the early-return branch never mounted the Cloud AI dialog it opens. (Fixed together with the upload work; the click now opens the protocol chooser as on the populated state.)
+- **Ling-3.0-tiny joins the model catalog** — the remote catalog entry went live in camthink-ai/NeoMind-Runtimes (4.8 GB Q4_K_M, 128K ctx, min 6 GB RAM). Our bundled runtime already carries the BailingMoe3 architecture support merged upstream on 08-17, so the download runs out of the box.
 
 ### Eval & docs
 - Ling-3.0-tiny Q4_K_M validated on the same 30-case agent suite: **77% — ties Qwen 3.5 4B** while generating ~45% faster (~110-116 tok/s on M4-class); joins the README's model table as the community-import example.

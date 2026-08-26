@@ -781,6 +781,18 @@ export function UnifiedLLMBackendsTab({
             </Button>
           </div>
         {wizardElement}
+        {/* This branch returns early — the shared dialogs below must be
+            duplicated here, or "Add your own API backend" sets state for a
+            dialog that is never mounted (click does nothing). */}
+        <CloudAiAddDialog
+          open={cloudAddOpen}
+          onOpenChange={(open) => {
+            setCloudAddOpen(open)
+            if (!open) setCloudEditTarget(null)
+          }}
+          onSubmit={handleCloudAiSubmit}
+          editing={cloudEditTarget}
+        />
         </>
       )
     }

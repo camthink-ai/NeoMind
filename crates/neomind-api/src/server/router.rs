@@ -1112,6 +1112,13 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/builtin-llm/import-local",
             post(crate::builtin_llm::handlers::import_local_handler),
         )
+        // Multipart GGUF upload — streamed to disk; GGUFs run to ~5 GB so
+        // this route alone gets a raised body limit (default is 2 MB).
+        .route(
+            "/api/builtin-llm/upload-model",
+            axum::routing::post(crate::builtin_llm::handlers::upload_model_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024 * 1024)),
+        )
         .route(
             "/api/builtin-llm/model",
             delete(crate::builtin_llm::handlers::delete_model_handler),

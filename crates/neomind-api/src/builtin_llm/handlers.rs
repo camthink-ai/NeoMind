@@ -394,6 +394,98 @@ pub async fn import_local_handler(
     if !src.is_file() {
         return Err(ErrorResponse::bad_request(format!("not a file: {path}")));
     }
+    import_gguf_from_path(&state, src).await
+}
+
+/// Stream an uploaded GGUF to a temp file, then run it through the same
+/// import pipeline as `import-local` (validation, manifest, spawn,
+/// rollback-on-failure). The temp copy is always removed afterwards — the
+/// import itself copies into `data/models/<id>/`.
+///
+/// POST /api/builtin-llm/upload-model (multipart, field "file")
+pub async fn upload_model_handler(
+    State(state): State<crate::server::types::ServerState>,
+    mut multipart: axum::extract::Multipart,
+) -> HandlerResult<serde_json::Value> {
+    // Data dir for the temp upload (same tree the import copies into).
+    let uploads_dir = std::path::Path::new(&state.data_dir)
+        .join("models")
+        .join("uploads");
+    std::fs::create_dir_all(&uploads_dir)
+        .map_err(|e| ErrorResponse::internal(format!("mkdir uploads: {e}")))?;
+
+    // Find the "file" field and stream it to disk. Streaming (not buffering)
+    // matters: GGUFs run to ~5 GB and must not be held in memory.
+    let mut tmp_path: Option<PathBuf> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ErrorResponse::bad_request(format!("multipart: {e}")))?
+    {
+        if field.name() != Some("file") {
+            continue; // ignore unknown fields (e.g. future metadata)
+        }
+        let file_name = field
+            .file_name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "upload.gguf".to_string());
+        // Only keep the file name — drop any client path parts.
+        let safe_name = std::path::Path::new(&file_name)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("upload.gguf")
+            .to_string();
+        let dest = uploads_dir.join(format!(
+            "{}-{}",
+            uuid::Uuid::new_v4().simple(),
+            safe_name
+        ));
+        let mut file = tokio::io::BufWriter::new(
+            tokio::fs::File::create(&dest)
+                .await
+                .map_err(|e| ErrorResponse::internal(format!("create temp file: {e}")))?,
+        );
+        use tokio::io::AsyncWriteExt;
+        let mut stream = field;
+        while let Some(chunk) = stream
+            .chunk()
+            .await
+            .map_err(|e| ErrorResponse::bad_request(format!("read upload: {e}")))?
+        {
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| ErrorResponse::internal(format!("write upload: {e}")))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| ErrorResponse::internal(format!("flush upload: {e}")))?;
+        drop(file);
+        tmp_path = Some(dest);
+        break; // single-file upload
+    }
+    let tmp = tmp_path.ok_or_else(|| {
+        ErrorResponse::bad_request("multipart field 'file' required")
+    })?;
+
+    // Import from the temp path; always clean it up (the import copies).
+    let result = import_gguf_from_path(&state, &tmp).await;
+    let _ = tokio::fs::remove_file(&tmp).await;
+    // Also sweep any leftovers from failed older uploads (best-effort).
+    let _ = std::fs::read_dir(&uploads_dir).map(|rd| {
+        for e in rd.flatten() {
+            let _ = std::fs::remove_file(e.path());
+        }
+    });
+    result
+}
+
+/// Shared import pipeline: validate the GGUF at `src`, copy it into
+/// `data/models/<id>/`, write the manifest, restart the builtin server on
+/// the imported model — rolling back to the previous model on any failure.
+async fn import_gguf_from_path(
+    state: &crate::server::types::ServerState,
+    src: &Path,
+) -> HandlerResult<serde_json::Value> {
     let meta = super::gguf::parse_gguf(src)
         .map_err(|e| ErrorResponse::bad_request(format!("not a valid GGUF: {e}")))?;
 

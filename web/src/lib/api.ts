@@ -1037,6 +1037,17 @@ export const api = {
       '/builtin-llm/import-local',
       { method: 'POST', body: JSON.stringify({ path }) },
     ),
+
+  /** POST /api/builtin-llm/upload-model — upload a GGUF (multipart, streamed
+   * server-side) and run it through the same import pipeline. */
+  uploadModelFile: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return fetchAPI<{ success: boolean; model_id: string; installed: boolean }>(
+      '/builtin-llm/upload-model',
+      { method: 'POST', body: form },
+    )
+  },
   /**
    * Delete the downloaded model files (stops the server first).
    * DELETE /api/builtin-llm/model
