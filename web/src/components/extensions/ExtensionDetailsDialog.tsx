@@ -942,7 +942,12 @@ export function ExtensionDetailsDialog({
                     <>
                       {numeric.length >= 2 ? (
                         <>
-                          <Sparkline data={numeric} height={48} fill colorMode="primary" />
+                          {/* Clamped wrapper: the Sparkline sizes itself off its
+                              container and, without a hard height in this
+                              dialog context, stretched the panel — lock it. */}
+                          <div className="h-12 w-full overflow-hidden">
+                            <Sparkline data={numeric} height={48} fill colorMode="primary" />
+                          </div>
                           {/* Summary stats */}
                           <div className="grid grid-cols-4 gap-2">
                             {[
