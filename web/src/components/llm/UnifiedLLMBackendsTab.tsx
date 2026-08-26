@@ -51,6 +51,26 @@ import type {
 
 type View = 'list' | 'detail'
 
+/** The Cloud AI card's pseudo-type — one card, two protocol paths; the
+ *  add/edit dialogs use the concrete protocol type, never this schema. */
+function cloudAiCardType(t: (k: string) => string): UnifiedPluginType {
+  return {
+    id: 'cloudai',
+    type: 'llm_backend',
+    name: t('plugins:llm.protocol.cloudai.name'),
+    description: t('plugins:llm.protocol.cloudai.desc'),
+    icon: <Cloud className="h-6 w-6" />,
+    color: 'bg-accent-indigo-light text-accent-indigo',
+    config_schema: { type: 'object', properties: {} },
+    can_add_multiple: true,
+    builtin: false,
+    requires_api_key: true,
+    supports_streaming: true,
+    default_model: '',
+    default_endpoint: undefined,
+  }
+}
+
 interface UnifiedLLMBackendsTabProps {
   onCreateBackend: (data: CreateLlmBackendRequest) => Promise<string>
   onUpdateBackend: (id: string, data: UpdateLlmBackendRequest) => Promise<boolean>
@@ -463,11 +483,13 @@ export function UnifiedLLMBackendsTab({
   // Construct a generic OpenAI-compatible type inline and open the unified
   // config dialog directly (the backend accepts openai + a custom endpoint).
   const handleAddOwnBackend = () => {
-    // "添加自己的 API 后端" means "bring any vendor via its endpoint" — that
-    // is exactly the Cloud AI card (protocol chooser: OpenAI-compatible /
-    // Anthropic). It used to build an inline OpenAI type and open the unified
-    // config dialog, which bypassed the Cloud AI flow and forced openai-typed
-    // semantics (e.g. no Anthropic option).
+    // "Add your own API backend" = the Cloud AI card (protocol chooser:
+    // OpenAI-compatible / Anthropic). Navigate INTO the card view first —
+    // same as clicking the card — so the user learns where these backends
+    // live and can manage them later — then open the add dialog directly
+    // (no lost click: add still takes one press).
+    setSelectedType(cloudAiCardType(t))
+    setView('detail')
     setCloudEditTarget(null)
     setCloudAddOpen(true)
   }
@@ -913,23 +935,7 @@ export function UnifiedLLMBackendsTab({
                   hasActive && "border-success border-2"
                 )}
                 onClick={() => {
-                  setSelectedType({
-                    id: 'cloudai',
-                    type: 'llm_backend',
-                    name: t('plugins:llm.protocol.cloudai.name'),
-                    description: t('plugins:llm.protocol.cloudai.desc'),
-                    icon: <Cloud className="h-6 w-6" />,
-                    color: 'bg-accent-indigo-light text-accent-indigo',
-                    // Never rendered as a form (add/edit dialogs use the concrete
-                    // protocol type) — an empty schema satisfies the type.
-                    config_schema: { type: 'object', properties: {} },
-                    can_add_multiple: true,
-                    builtin: false,
-                    requires_api_key: true,
-                    supports_streaming: true,
-                    default_model: '',
-                    default_endpoint: undefined,
-                  })
+                  setSelectedType(cloudAiCardType(t))
                   setView('detail')
                 }}
               >
