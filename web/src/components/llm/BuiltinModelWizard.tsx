@@ -573,7 +573,7 @@ export function BuiltinModelWizard({
                         )}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-sm font-medium truncate">{modelName}</span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-medium">{modelName}</span>
                           {m.recommended && (
                             <span className="shrink-0 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium text-primary-foreground">
                               {t('common:llmGuide.recommended')}
