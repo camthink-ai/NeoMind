@@ -118,7 +118,7 @@ memory ~46 GB/s effective decode bandwidth — top of the community range).
 |---|---|---|---|---|
 | LFM2.5-2.6B QAD (1.5G) | 36.5 | 1262 | ✅ (1.7G free) | 128K native; thinking integral; Mamba (no speculative) |
 | Gemma4-E2B QAT (3.1G) | 34.8 | 1197 | ✅ (2.7G free) | SWA KV is cheap; vision via mmproj |
-| **Ling-3.0-tiny Q4_K_M (4.8G)** | **~40** | ~58-69* | ❌ (needs ≥16G) | **Fastest agent-tier on this hw** — MoE 7.9B/A1.3B activated; 77% on the 30-case suite (ties Qwen 3.5 4B); bracket tool-call format is the training烙印 — works via native tools (server-side parsing), not via text-format prompting |
+| **Ling-3.0-tiny Q4_K_M (4.8G)** | **~40** | ~58-69* | ❌ (needs ≥16G) | **Fastest agent-tier on this hw** — MoE 7.9B/A1.3B activated; 77% on the 30-case suite (ties Qwen 3.5 4B); bracket tool-call format is baked in by training — works via native tools (server-side parsing), not via text-format prompting |
 | Qwen3.5-4B Q4_K_M (2.6G) | 17.8 | 538 | ✅ (1.7G free) | strongest agent score (76%); thinking switchable |
 
 *small-sample prompt figures; generation numbers are stable 128-token runs.
