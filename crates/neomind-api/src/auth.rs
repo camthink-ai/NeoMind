@@ -356,17 +356,43 @@ impl AuthState {
             .unwrap_or(false)
     }
 
-    /// Re-read the key table from the DB into the in-memory map. Only invoked
-    /// on a validation miss, so the cost is paid by unknown keys, not by the
-    /// hot authenticated path.
+    /// Throttled re-read of the key table. Unknown keys arrive in bursts
+    /// (scanners probing an exposed edge device) and each reload opens the
+    /// DB — capped so invalid-key spray can't become per-request DB load.
     fn reload_keys_from_db(&self) {
+        static LAST_RELOAD_MS: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let last = LAST_RELOAD_MS.load(std::sync::atomic::Ordering::SeqCst);
+        if now.saturating_sub(last) < 5_000 {
+            return; // a recent reload already ran; this key just isn't there
+        }
+        // CAS so concurrent misses trigger at most one reload.
+        if LAST_RELOAD_MS
+            .compare_exchange(
+                last,
+                now,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return;
+        }
         match Self::load_from_db(&self.db_path, &self.crypto) {
             Ok(keys) => {
-                // DashMap mutates through &self (interior mutability).
-                self.api_keys.clear();
+                // Insert-then-retain, never clear: the map stays populated
+                // throughout, so a valid key validated mid-reload cannot
+                // transiently 401 (clear-then-insert had that window).
+                let fresh: std::collections::HashSet<String> =
+                    keys.keys().cloned().collect();
                 for (k, v) in keys {
                     self.api_keys.insert(k, v);
                 }
+                self.api_keys.retain(|k, _| fresh.contains(k));
             }
             Err(e) => {
                 warn!(category = "auth", error = %e, "Failed to reload API keys from database");

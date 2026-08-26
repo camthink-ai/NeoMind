@@ -940,6 +940,10 @@ impl AuthUserState {
     /// credential failures. `ip` is the client address for HTTP callers;
     /// `None` for in-process callers (CLI/tests), which skips the IP key.
     pub fn check_login_throttle(&self, username: &str, ip: Option<&str>) -> Result<(), AuthError> {
+        // Cap the key: the request body allows ~2MB usernames and the key is
+        // retained in the counter map for the window — unbounded keys turn
+        // the throttle itself into a memory-exhaustion vector.
+        let username: String = username.chars().take(64).collect();
         let throttle = &self.auth_throttle;
         throttle
             .login_failures
@@ -958,6 +962,7 @@ impl AuthUserState {
     /// failures (wrong password / unknown user) — a database error must not
     /// punish the user trying to log in.
     pub fn record_login_failure(&self, username: &str, ip: Option<&str>) {
+        let username: String = username.chars().take(64).collect();
         let throttle = &self.auth_throttle;
         throttle
             .login_failures
@@ -970,6 +975,7 @@ impl AuthUserState {
     /// Clear the login throttle after a successful login (both keys) — an
     /// honest user who mistyped a few times starts clean.
     pub fn clear_login_throttle(&self, username: &str, ip: Option<&str>) {
+        let username: String = username.chars().take(64).collect();
         let throttle = &self.auth_throttle;
         throttle.login_failures.clear(&format!("fail:u:{username}"));
         if let Some(ip) = ip {

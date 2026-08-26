@@ -174,12 +174,11 @@ export function CloudAiAddDialog({ open, onOpenChange, onSubmit, editing }: Prop
         </FormField>
 
         <FormField label={t('plugins:llm.cloudCtx')} helpText={t('plugins:llm.cloudCtxHelp')}>
-          <input
+          <Input
             value={ctx}
             onChange={(e) => setCtx(e.target.value)}
             placeholder="16384"
             inputMode="numeric"
-            className="h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-primary"
           />
         </FormField>
         <FormField label={t('plugins:llm.endpoint')}>

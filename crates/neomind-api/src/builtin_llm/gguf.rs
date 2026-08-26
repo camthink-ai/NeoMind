@@ -32,10 +32,14 @@ const T_INT64: u32 = 11;
 /// Read a GGUF string (u64 length + bytes) at `cur`, advancing the cursor.
 fn read_gguf_string(buf: &[u8], cur: &mut usize) -> Option<String> {
     let len = read_u64(buf, cur)? as usize;
-    if *cur + len > buf.len() {
+    // checked_add: a crafted header length near usize::MAX wraps the plain
+    // `*cur + len` guard in release builds, and the slice below panics —
+    // a corrupt/adversarial GGUF must not crash the import handler.
+    let end = (*cur).checked_add(len)?;
+    if end > buf.len() {
         return None;
     }
-    let s = String::from_utf8_lossy(&buf[*cur..*cur + len]).to_string();
+    let s = String::from_utf8_lossy(&buf[*cur..end]).to_string();
     *cur += len;
     Some(s)
 }

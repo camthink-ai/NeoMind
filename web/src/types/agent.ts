@@ -4,7 +4,7 @@
 /**
  * AI Agent status enumeration
  */
-export type AgentStatus = 'Active' | 'Paused' | 'Error' | 'Executing'
+export type AgentStatus = 'Active' | 'Paused' | 'Error' | 'Executing' | 'Stopped' | 'Completed'
 
 /**
  * Schedule type for agent execution

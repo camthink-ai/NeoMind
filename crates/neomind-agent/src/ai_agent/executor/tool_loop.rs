@@ -93,6 +93,10 @@ impl AgentExecutor {
         let mut round: usize = 0;
 
         loop {
+        // Agent defaults: read ONCE — AgentDefaults::get() opens the
+        // settings DB on every call and this loop used to do that twice
+        // per round (60 DB opens on a 30-round execution).
+        let agent_defaults = neomind_storage::AgentDefaults::get();
             if round >= max_rounds {
                 tracing::info!(
                     agent_id = %agent.id,
@@ -121,8 +125,8 @@ impl AgentExecutor {
                     // AgentDefaults is the /api/settings/agent surface — the
                     // loop used to hardcode 0.7 and ignore it (config only
                     // fed the chat path).
-                    temperature: Some(neomind_storage::AgentDefaults::get().default_temperature),
-                    top_p: Some(neomind_storage::AgentDefaults::get().default_top_p),
+                    temperature: Some(agent_defaults.default_temperature),
+                    top_p: Some(agent_defaults.default_top_p),
                     max_tokens: Some(4000),
                     ..Default::default()
                 },

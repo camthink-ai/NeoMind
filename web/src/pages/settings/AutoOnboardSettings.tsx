@@ -47,7 +47,10 @@ export function AutoOnboardSettings() {
     const next = { ...config, ...updates }
     setConfig(next)
     try {
-      await api.updateOnboardConfig(updates)
+      // Full config, not the delta: the PUT replaces the whole struct
+      // (fields have no serde defaults server-side), so a partial body
+      // 422s — and a defaulted field would silently reset its sibling.
+      await api.updateOnboardConfig(next)
     } catch {
       toast({
         title: t("common:failed"),

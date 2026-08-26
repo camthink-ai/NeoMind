@@ -1125,7 +1125,13 @@ impl SessionManager {
 
         // The snapshot cache is invalidated after a write so the next turn
         // re-loads the updated files. Rebuild from the store fresh each time.
-        let store = neomind_storage::MarkdownMemoryStore::new("data/memory");
+        // Path AND merge limits come from the configured MemorySystemConfig —
+        // hardcoding 2000/3000 here would truncate files the user had raised
+        // the limits for (Settings → Preferences), silently destroying memory.
+        let mem_cfg = neomind_storage::MemoryConfig::load();
+        let store = neomind_storage::MarkdownMemoryStore::new(&mem_cfg.storage_path);
+        let (user_limit, knowledge_limit) =
+            (mem_cfg.user_char_limit, mem_cfg.knowledge_char_limit);
         let snapshots = self.memory_snapshots.clone();
         let session_id = session_id.to_string();
 
@@ -1248,8 +1254,8 @@ Assistant: {ar}\n"
                 }
                 merged.push('\n');
                 let limit = match target {
-                    "user" => 2000,
-                    _ => 3000,
+                    "user" => user_limit,
+                    _ => knowledge_limit,
                 };
                 if merged.chars().count() > limit {
                     let mut kept = String::new();

@@ -197,6 +197,23 @@ async fn process_stream_to_channel(
                         // P0.3: Delete pending state on successful completion
                         let _ = session_store.delete_pending_stream(&session_id);
 
+                        // Background chat memory extraction — the main web UI
+                        // streams over THIS path, not the HTTP handler; without
+                        // this spawn the feature only served API callers.
+                        {
+                            let ext_state = state.clone();
+                            let ext_session = session_id.clone();
+                            let ext_user = pending_state.user_message.clone();
+                            let ext_reply = pending_state.content.clone();
+                            tokio::spawn(async move {
+                                ext_state
+                                    .agents
+                                    .session_manager
+                                    .maybe_extract_memory(&ext_session, &ext_user, &ext_reply)
+                                    .await;
+                            });
+                        }
+
                         // === Context Summarization ===
                         // If context usage exceeds 60%, trigger background summarization
                         if let Some(pt) = prompt_tokens {
