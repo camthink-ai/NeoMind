@@ -266,10 +266,7 @@ export function ChatMessages({
                 </p>
                 {message.role === 'assistant' && !isCurrentlyStreaming && message.generationMs != null && message.generationMs > 0 && (
                   <span className="text-xs text-muted-foreground/80 tabular-nums">
-                    · {(message.generationMs / 1000).toFixed(1)}s
-                    {message.estimatedTokens != null && message.estimatedTokens > 0 && (
-                      <> · {(message.estimatedTokens / (message.generationMs / 1000)).toFixed(1)} tok/s</>
-                    )}
+                    {(message.generationMs / 1000).toFixed(1)}s {Math.round(message.content.length / (message.generationMs / 1000))} chars/s
                   </span>
                 )}
                 {!isCurrentlyStreaming && (

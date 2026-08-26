@@ -7,9 +7,6 @@ export interface Message {
   timestamp: number
   /** Reply wall time (first streamed event → end), ms — assistant messages. */
   generationMs?: number
-  /** Estimated generated tokens (heuristic: CJK ×1, other ÷4) — used with
-   * generationMs to show a tok/s figure next to the timestamp. */
-  estimatedTokens?: number
   thinking?: string // Legacy: combined thinking across all rounds
   tool_calls?: ToolCall[]
   images?: ChatImage[]  // Images sent with user messages (multimodal)

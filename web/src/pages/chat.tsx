@@ -376,29 +376,18 @@ export function ChatPage() {
           const messageContent = lastRoundContent
           if (messageContent || thinking || toolCalls.length > 0) {
             const messageId = streamingMessageIdRef.current || generateId()
-            // Reply metrics: wall time from the first streamed event, and an
-            // estimated token count (backends don't report completion usage
-            // on the streaming path — heuristic: CJK chars ×1, others ÷4).
+            // Reply metric: wall time from the first streamed event. The
+            // per-second figure shown next to it is chars/s (exact — the
+            // frontend has the full text; token counts would be a guess).
             const generationMs = streamStartRef.current !== null
               ? Date.now() - streamStartRef.current
               : undefined
-            const estimatedTokens = (() => {
-              const text = messageContent || ""
-              let cjk = 0, other = 0
-              for (const ch of text) {
-                if (/[　-鿿＀-￯]/.test(ch)) cjk++
-                else other++
-              }
-              const n = cjk + Math.round(other / 4)
-              return n > 0 ? n : undefined
-            })()
             const completeMessage: Message = {
               id: messageId,
               role: "assistant",
               content: messageContent,
               timestamp: Date.now(),
               generationMs,
-              estimatedTokens,
               thinking: thinking || undefined,
               tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
               round_contents: hasRoundContents ? roundContentsAccumulatorRef.current : undefined,
