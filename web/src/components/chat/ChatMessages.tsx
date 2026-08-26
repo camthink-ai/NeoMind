@@ -264,6 +264,14 @@ export function ChatMessages({
                 <p className="text-xs text-muted-foreground">
                   {formatTimestamp(message.timestamp, false)}
                 </p>
+                {message.role === 'assistant' && !isCurrentlyStreaming && message.generationMs != null && message.generationMs > 0 && (
+                  <span className="text-xs text-muted-foreground/80 tabular-nums">
+                    · {(message.generationMs / 1000).toFixed(1)}s
+                    {message.estimatedTokens != null && message.estimatedTokens > 0 && (
+                      <> · {(message.estimatedTokens / (message.generationMs / 1000)).toFixed(1)} tok/s</>
+                    )}
+                  </span>
+                )}
                 {!isCurrentlyStreaming && (
                   <CopyMessageButton content={copyContent} />
                 )}

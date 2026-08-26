@@ -244,6 +244,9 @@ export function ChatPage() {
   // list. We only auto-scroll on new content while pinned. If the user has
   // scrolled up to read history, auto-scrolling would yank them back down —
   // extremely annoying when waiting for a long response while reviewing context.
+  // First streamed-event timestamp of the current reply — used at `end`
+  // to report wall time + an estimated tok/s figure on the message.
+  const streamStartRef = useRef<number | null>(null)
   const isPinnedToBottomRef = useRef(true)
 
   const handleScroll = useCallback(() => {
@@ -299,6 +302,7 @@ export function ChatPage() {
     const handleMessage = (data: ServerMessage) => {
       switch (data.type) {
         case "Thinking":
+          if (streamStartRef.current === null) streamStartRef.current = Date.now()
           setIsStreaming(true)
           // Immediately update ref synchronously before setState
           capturedStreamingRef.current.thinking += (data.content || "")
@@ -306,6 +310,7 @@ export function ChatPage() {
           break
 
         case "Content":
+          if (streamStartRef.current === null) streamStartRef.current = Date.now()
           setIsStreaming(true)
           // Immediately update ref synchronously before setState
           capturedStreamingRef.current.content += (data.content || "")
@@ -371,11 +376,29 @@ export function ChatPage() {
           const messageContent = lastRoundContent
           if (messageContent || thinking || toolCalls.length > 0) {
             const messageId = streamingMessageIdRef.current || generateId()
+            // Reply metrics: wall time from the first streamed event, and an
+            // estimated token count (backends don't report completion usage
+            // on the streaming path — heuristic: CJK chars ×1, others ÷4).
+            const generationMs = streamStartRef.current !== null
+              ? Date.now() - streamStartRef.current
+              : undefined
+            const estimatedTokens = (() => {
+              const text = messageContent || ""
+              let cjk = 0, other = 0
+              for (const ch of text) {
+                if (/[　-鿿＀-￯]/.test(ch)) cjk++
+                else other++
+              }
+              const n = cjk + Math.round(other / 4)
+              return n > 0 ? n : undefined
+            })()
             const completeMessage: Message = {
               id: messageId,
               role: "assistant",
               content: messageContent,
               timestamp: Date.now(),
+              generationMs,
+              estimatedTokens,
               thinking: thinking || undefined,
               tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
               round_contents: hasRoundContents ? roundContentsAccumulatorRef.current : undefined,
@@ -392,6 +415,7 @@ export function ChatPage() {
           setStreamingRoundThinking({})
           // Reset captured ref
           capturedStreamingRef.current = { content: "", thinking: "", toolCalls: [] }
+          streamStartRef.current = null
           streamingMessageIdRef.current = null
           currentRoundRef.current = 1
           roundContentsAccumulatorRef.current = {}
