@@ -282,9 +282,9 @@ All three run NeoMind's full agent toolkit (tool selection, in-process CLI dispa
 | **Qwen 3.5 4B** | Q4_K_M | 2.7 GB | 4 GB | **76%** — strongest | Top agent reliability and the only one of the three with built-in vision (add the mmproj file). Runs non-thinking by default for speed. |
 | **LFM 2.5 2.6B** | QAD Q4_0 | 1.5 GB | 3 GB | 67% (100% tool-selection) | Smallest footprint with native 128K context (hybrid KV is cheap). Thinking is integral to the model. Check the LFM license before redistribution. |
 | **Gemma 4 E2B** | QAT q4_0 | 3.1 GB | 4.5 GB | 60% | Google's official QAT quant; vision-ready via the `mmproj` file. Thinking on by default. |
-| **Ling 3.0-tiny** (community — import your GGUF) | Q4_K_M | 4.8 GB | — | **77%** — ties Qwen | MoE "tiny" that matches Qwen 3.5 4B on the agent suite (~110-116 tok/s gen on M4-class). Best for single-step tool tasks; its misses are long multi-step deploys. Single run, indicative. [GGUF](https://huggingface.co/bloomer010/Ling-3.0-tiny-GGUF) |
+| **Ling 3.0-tiny** | Q4_K_M | 4.8 GB | — | **77%** — ties Qwen | Community MoE "tiny" that matches Qwen 3.5 4B on the agent suite (~110-116 tok/s gen on M4-class). Best for single-step tool tasks; its misses are long multi-step deploys. Single run, indicative. Available in the built-in model picker. |
 
-Rule of thumb: **Qwen 3.5 4B** for the best agent experience, **LFM 2.5** for modest devices and long sessions, **Gemma E2B QAT** when you want the Google ecosystem and vision. Prefer a manual setup? All three are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works — and the built-in picker imports **any GGUF you own** (built-in model wizard → "Import local model").
+Rule of thumb: **Qwen 3.5 4B** for the best agent experience, **LFM 2.5** for modest devices and long sessions, **Gemma E2B QAT** when you want the Google ecosystem and vision. Prefer a manual setup? All three are GGUF — serve with [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` and add the endpoint under **Settings → LLM Backends**. Any OpenAI-compatible backend also works. The built-in picker serves the models in its catalog (curated + community); adding a new one is a catalog edit, no product release.
 
 ### Development
 

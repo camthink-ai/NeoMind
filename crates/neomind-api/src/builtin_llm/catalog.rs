@@ -32,6 +32,12 @@ pub struct CatalogModel {
     pub hf_file: String,
     pub size_bytes: u64,
     pub default_ctx: u32,
+    /// Native context ceiling of the model (what the UI should SHOW —
+    /// "supports up to X"); `default_ctx` is the conservative run default
+    /// (spawn -c), tuned for small-memory edge devices. Absent in older
+    /// catalogs → fall back to default_ctx.
+    #[serde(default)]
+    pub max_ctx: Option<u32>,
     #[serde(default)]
     pub default_thinking: bool,
     #[serde(default)]
@@ -52,7 +58,10 @@ pub const CATALOG_URL: &str =
 fn catalog_url() -> String {
     std::env::var("NEOMIND_CATALOG_URL").unwrap_or_else(|_| CATALOG_URL.to_string())
 }
-const CATALOG_TTL: Duration = Duration::from_secs(3600); // 1h
+// Short TTL: catalog edits on GitHub should reach users on refresh-ish
+// timescales (the "add a model = edit the JSON" flow), while still shielding
+// the network from per-request fetches. Failed fetches keep the fallback.
+const CATALOG_TTL: Duration = Duration::from_secs(60);
 const FETCH_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// In-process cache: (fetched_at, Option<models>). `Some(list)` = last fetch

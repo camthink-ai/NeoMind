@@ -107,6 +107,9 @@ export interface BuiltinModelDef {
   quant: string
   size_bytes: number
   default_ctx: number
+  /** Native context ceiling — what the UI shows ("supports up to").
+   * Absent (older catalogs) → fall back to default_ctx. */
+  max_ctx?: number
   /** Recommended minimum AVAILABLE RAM (MB) — install discouraged below. */
   min_ram_mb: number
   /** Whether the host currently has enough available RAM. */

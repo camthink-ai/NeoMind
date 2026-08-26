@@ -136,6 +136,7 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
         hf_file: def.hf_file.to_string(),
         size_bytes: def.size_bytes,
         default_ctx: def.default_ctx,
+        max_ctx: Some(def.max_ctx),
         default_thinking: def.default_thinking,
         min_ram_mb: def.min_ram_mb as u32,
         notes: def.notes.to_string(),
@@ -228,6 +229,8 @@ pub struct InstalledModel {
     pub manifest: ModelManifest,
     pub display_name: String,
     pub default_ctx: u32,
+    /// Native context ceiling for display (None → fall back to default_ctx).
+    pub max_ctx: Option<u32>,
     pub default_thinking: bool,
     pub is_custom: bool,
 }
@@ -241,6 +244,7 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
             manifest,
             display_name: def.display_name.to_string(),
             default_ctx: def.default_ctx,
+            max_ctx: Some(def.max_ctx),
             default_thinking: def.default_thinking,
             is_custom: false,
         });
@@ -283,10 +287,19 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
     }
     let (manifest, _) = best?;
     let name = manifest.id.clone();
-    let ctx = import_default_ctx(&manifest.model_path(mdir));
+    let model_path = manifest.model_path(mdir);
+    let ctx = import_default_ctx(&model_path);
+    // The header's context_length IS the native ceiling — show it (display
+    // only; the run default stays the capped conservative value above).
+    let max = super::gguf::parse_gguf(&model_path)
+        .ok()
+        .and_then(|m| m.context_length)
+        .and_then(|c| u32::try_from(c).ok())
+        .or(Some(ctx));
     Some(InstalledModel {
         display_name: name,
         default_ctx: ctx,
+        max_ctx: max,
         default_thinking: false,
         is_custom: true,
         manifest,
@@ -301,10 +314,17 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
     if !manifest.model_path(mdir).exists() {
         return None;
     }
-    let ctx = import_default_ctx(&manifest.model_path(mdir));
+    let model_path = manifest.model_path(mdir);
+    let ctx = import_default_ctx(&model_path);
+    let max = super::gguf::parse_gguf(&model_path)
+        .ok()
+        .and_then(|m| m.context_length)
+        .and_then(|c| u32::try_from(c).ok())
+        .or(Some(ctx));
     Some(InstalledModel {
         display_name: id.to_string(),
         default_ctx: ctx,
+        max_ctx: max,
         default_thinking: false,
         is_custom: true,
         manifest,
@@ -768,6 +788,9 @@ pub async fn models_handler(
                 "quant": d.quant,
                 "size_bytes": d.size_bytes,
                 "default_ctx": d.default_ctx,
+                // Native ceiling for display; null on older catalogs (the
+                // frontend falls back to default_ctx).
+                "max_ctx": d.max_ctx,
                 "min_ram_mb": d.min_ram_mb,
                 // Below the model's floor → the UI discourages the install.
                 "memory_ok": available_mb >= d.min_ram_mb as u64,

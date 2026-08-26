@@ -36,6 +36,8 @@ pub struct BuiltinModelDef {
     /// Default context window for this model (KV size differs a lot — LFM's
     /// hybrid arch is cheap at 128K; Qwen/Gemma should run at 32K).
     pub default_ctx: u32,
+    /// Native context ceiling (display); default_ctx is the run default.
+    pub max_ctx: u32,
     /// One-line capability note for the picker.
     pub notes: &'static str,
     /// This entry is a fallback if the model cannot run (reserved).
@@ -69,6 +71,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_file: "LFM2.5-2.6B-QAD-Q4_0.gguf",
             size_bytes: 1_500_000_000,
             default_ctx: 131072,
+            max_ctx: 131072,
             notes: "小体积 + 原生 128K 上下文(hybrid KV 很省) — 资源紧张设备的默认选择",
             recommended: true,
             default_thinking: true,
@@ -88,6 +91,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_file: "Qwen3.5-4B-Q4_K_M.gguf",
             size_bytes: 2_740_000_000,
             default_ctx: 32768,
+            max_ctx: 262144,
             notes: "30 案 eval 最强的端侧 agent 模型(76% cmd_ok) — 工具调用首选",
             recommended: false,
             default_thinking: false,
@@ -107,6 +111,7 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             hf_file: "gemma-4-E2B_q4_0-it.gguf",
             size_bytes: 3_100_000_000,
             default_ctx: 32768,
+            max_ctx: 131072,
             notes: "Google 官方 QAT 量化 — 可挂 mmproj 加视觉",
             recommended: false,
             default_thinking: true,

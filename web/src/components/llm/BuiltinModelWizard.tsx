@@ -30,7 +30,6 @@ import {
   FullScreenDialogFooter,
 } from '@/components/automation/dialog'
 import { Button } from '@/components/ui/button'
-import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { cn } from '@/lib/utils'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -47,7 +46,6 @@ import {
   WifiOff,
   Zap,
   AlertTriangle,
-  Upload,
 } from 'lucide-react'
 import { api, isTauriEnv } from '@/lib/api'
 import { useEvents } from '@/hooks/useEvents'
@@ -145,11 +143,6 @@ export function BuiltinModelWizard({
   const [status, setStatus] = useState<BuiltinLlmStatus | null>(null)
   const [models, setModels] = useState<BuiltinModelDef[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
-  const [importPath, setImportPath] = useState('')
-  const [importFile, setImportFile] = useState<File | null>(null)
-  const [importOpen, setImportOpen] = useState(false)
-  const [importBusy, setImportBusy] = useState(false)
-  const [importMsg, setImportMsg] = useState<string | null>(null)
   // Model the ready-phase tiles describe: the installed one, else selection.
   const shownModel = models.find((m) => m.id === (status?.model_id ?? selectedModelId))
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -379,57 +372,6 @@ export function BuiltinModelWizard({
   // Open-catalog local channel: register a local GGUF (path on the server's
   // filesystem — the desktop app shares the host FS). On success the model
   // is installed + spawned; refresh the picker and select it.
-  const fmtSize = (n: number) => `${(n / 1e9).toFixed(2)} GB`
-
-  // Upload channel: multipart file → server import pipeline. Same success
-  // path as the path-based import below.
-  const handleUploadModel = async () => {
-    if (!importFile || importBusy) return
-    setImportBusy(true)
-    setImportMsg(t('plugins:llm.importUploading', { size: fmtSize(importFile.size) }))
-    try {
-      const r = await api.uploadModelFile(importFile)
-      setImportMsg(
-        r.success
-          ? t('plugins:llm.importLocalOk', { id: r.model_id })
-          : t('plugins:llm.importLocalFailed'),
-      )
-      if (r.success) {
-        setImportFile(null)
-        setImportOpen(false)
-        const m = await api.getBuiltinModels()
-        setModels(m.models)
-        setSelectedModelId(r.model_id)
-      }
-    } catch (e) {
-      setImportMsg(t('plugins:llm.importLocalFailed') + (String(e) ? ` — ${String(e)}` : ''))
-    } finally {
-      setImportBusy(false)
-    }
-  }
-
-  const handleImportLocal = async () => {
-    const path = importPath.trim()
-    if (!path || importBusy) return
-    setImportBusy(true)
-    setImportMsg(null)
-    try {
-      const r = await api.importLocalModel(path)
-      setImportMsg(
-        r.success
-          ? t('plugins:llm.importLocalOk', { id: r.model_id })
-          : t('plugins:llm.importLocalFailed'),
-      )
-      const m = await api.getBuiltinModels()
-      setModels(m.models)
-      if (r.success) setSelectedModelId(r.model_id)
-    } catch (e) {
-      setImportMsg(t('plugins:llm.importLocalFailed') + (String(e) ? ` — ${String(e)}` : ''))
-    } finally {
-      setImportBusy(false)
-    }
-  }
-
   const handleStartDownload = async (modelId?: string) => {
     setErrorMsg(null)
     downloadFailedRef.current = false
@@ -511,7 +453,7 @@ export function BuiltinModelWizard({
                 label={t('plugins:llm.builtinWizardCtxLabel')}
                 value={
                   shownModel
-                    ? `${Math.round(shownModel.default_ctx / 1024)}K context`
+                    ? `${Math.round((shownModel.max_ctx ?? shownModel.default_ctx) / 1024)}K context`
                     : ''
                 }
               />
@@ -623,70 +565,6 @@ export function BuiltinModelWizard({
                     ? t('plugins:llm.switchModelCta')
                     : t('plugins:llm.builtinWizardStart')}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => setImportOpen(true)}
-                >
-                  <Upload className="mr-1 h-3.5 w-3.5" />
-                  {t('plugins:llm.importLocalCard')}
-                </Button>
-                <UnifiedFormDialog
-                  open={importOpen}
-                  onOpenChange={setImportOpen}
-                  title={t('plugins:llm.importLocalCard')}
-                  width="sm"
-                  onSubmit={importFile ? handleUploadModel : handleImportLocal}
-                  isSubmitting={importBusy}
-                  submitLabel={importFile ? t('plugins:llm.importUploadCta') : t('plugins:llm.importLocalCta')}
-                  submitDisabled={!importFile && !importPath.trim()}
-                >
-                  <div className="space-y-3">
-                    <label
-                      className="flex flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted-30 px-3 py-6 text-center cursor-pointer transition-colors hover:border-primary"
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        const f = e.dataTransfer.files?.[0]
-                        if (f) setImportFile(f)
-                      }}
-                    >
-                      <Upload className="h-5 w-5 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">
-                        {t('plugins:llm.importLocalDrop')}
-                      </span>
-                      {importFile && (
-                        <span className="text-[11px] font-medium text-foreground">
-                          {t('plugins:llm.importFileChosen', {
-                            name: importFile.name,
-                            size: fmtSize(importFile.size),
-                          })}
-                        </span>
-                      )}
-                      <input
-                        type="file"
-                        accept=".gguf,application/octet-stream"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0]
-                          if (f) setImportFile(f)
-                        }}
-                      />
-                    </label>
-                    {/* Server-path import (desktop shares the host FS; remote
-                        deployments) — alternative to uploading. */}
-                    <input
-                      value={importPath}
-                      onChange={(e) => setImportPath(e.target.value)}
-                      placeholder={t('plugins:llm.importLocalPlaceholder')}
-                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
-                    />
-                    {importMsg && (
-                      <span className="text-[11px] text-muted-foreground leading-snug">{importMsg}</span>
-                    )}
-                  </div>
-                </UnifiedFormDialog>
               </div>
             )}
 
