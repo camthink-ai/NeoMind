@@ -260,14 +260,19 @@ export function ChatMessages({
                 </div>
               </div>
 
-              <div className="flex items-center gap-1 mt-1.5 px-3">
+              <div className="flex items-center gap-2.5 mt-1.5 px-3">
                 <p className="text-xs text-muted-foreground">
                   {formatTimestamp(message.timestamp, false)}
                 </p>
                 {message.role === 'assistant' && !isCurrentlyStreaming && message.generationMs != null && message.generationMs > 0 && (
-                  <span className="text-xs text-muted-foreground/80 tabular-nums">
-                    {(message.generationMs / 1000).toFixed(1)}s {Math.round(message.content.length / (message.generationMs / 1000))} chars/s
-                  </span>
+                  <>
+                    <span className="text-xs text-muted-foreground/80 tabular-nums">
+                      {(message.generationMs / 1000).toFixed(1)}s
+                    </span>
+                    <span className="text-xs text-muted-foreground/80 tabular-nums">
+                      {Math.round(message.content.length / (message.generationMs / 1000))} chars/s
+                    </span>
+                  </>
                 )}
                 {!isCurrentlyStreaming && (
                   <CopyMessageButton content={copyContent} />
