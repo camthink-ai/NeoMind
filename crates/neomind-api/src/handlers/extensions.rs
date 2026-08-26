@@ -2502,11 +2502,18 @@ pub async fn install_marketplace_extension_handler(
                     });
                 }
                 Err(e) => {
-                    tracing::warn!(
+                    // Fail CLOSED: the whole point of the pinned sha is that
+                    // an unverifiable artifact never reaches dlopen. A read
+                    // error means we cannot prove integrity — refuse.
+                    tracing::error!(
                         extension_id = %req.id,
                         error = %e,
-                        "Failed to compute package SHA256; skipping verification"
+                        "Failed to compute package SHA256 — refusing to install"
                     );
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return Err(ErrorResponse::internal(format!(
+                        "Failed to verify package integrity (sha256 read error: {e}) — install aborted"
+                    )));
                 }
             }
         }
@@ -3779,9 +3786,17 @@ pub async fn serve_extension_asset_handler(
     use axum::body::Body;
     use axum::http::{header, StatusCode};
 
-    // Prevent directory traversal via id or asset_path
+    // Prevent directory traversal AND absolute-path escape via asset_path.
+    // `PathBuf::join` REPLACES the base when the argument is absolute — an
+    // asset_path of "/etc/passwd" (no ".." anywhere) sailed through the old
+    // check and served the file. Reject absolute paths, dot segments, and
+    // verify the resolved file stays inside the extension dir.
     validate_extension_id(&id)?;
-    if asset_path.contains("..") {
+    if asset_path.contains("..")
+        || asset_path.starts_with('/')
+        || asset_path.starts_with('\\')
+        || asset_path.split('/').any(|seg| seg == "." || seg.is_empty() && false)
+    {
         return Err(ErrorResponse::bad_request("Invalid asset path"));
     }
 
@@ -3796,6 +3811,16 @@ pub async fn serve_extension_asset_handler(
     // Check if file exists
     if !asset_file.exists() {
         return Err(ErrorResponse::not_found("Asset not found"));
+    }
+    // Belt-and-suspenders: the resolved file MUST live under the extension
+    // dir (canonicalized comparison defeats every remaining join trick).
+    if let (Ok(real_file), Ok(real_dir)) = (
+        std::fs::canonicalize(&asset_file),
+        std::fs::canonicalize(&ext_dir),
+    ) {
+        if !real_file.starts_with(&real_dir) {
+            return Err(ErrorResponse::bad_request("Invalid asset path"));
+        }
     }
 
     // Read file content

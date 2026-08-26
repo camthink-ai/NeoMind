@@ -879,17 +879,11 @@ pub async fn delete_dashboard_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    // Check if dashboard exists
-    if !state
-        .dashboard_store
-        .exists(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to check dashboard: {}", e)))?
-    {
-        return Err(ErrorResponse::not_found(format!(
-            "Dashboard '{}' not found",
-            id
-        )));
-    }
+    // Resolve by id OR name — every :id handler must accept names, or a
+    // get-by-name that succeeds followed by delete-by-name that 404s traps
+    // LLM callers into hallucinated success (the resolve_dashboard contract).
+    let resolved = resolve_dashboard(&state, &id)?;
+    let id = resolved.id;
 
     state
         .dashboard_store
@@ -909,17 +903,9 @@ pub async fn set_default_dashboard_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    // Check if dashboard exists
-    if !state
-        .dashboard_store
-        .exists(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to check dashboard: {}", e)))?
-    {
-        return Err(ErrorResponse::not_found(format!(
-            "Dashboard '{}' not found",
-            id
-        )));
-    }
+    // Same id-or-name contract as every other :id handler.
+    let resolved = resolve_dashboard(&state, &id)?;
+    let id = resolved.id;
 
     state
         .dashboard_store
@@ -1053,12 +1039,9 @@ pub async fn create_share_handler(
     Path(id): Path<String>,
     Json(req): Json<CreateShareRequest>,
 ) -> HandlerResult<ShareTokenResponse> {
-    // Verify dashboard exists
-    state
-        .dashboard_store
-        .load(&id)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load dashboard: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Dashboard '{}' not found", id)))?;
+    // Same id-or-name contract as every other :id handler.
+    let resolved = resolve_dashboard(&state, &id)?;
+    let id = resolved.id;
 
     // Generate token: ds_ prefix + 22 random hex chars
     let random_bytes: [u8; 16] = rand::random();
@@ -1234,7 +1217,7 @@ pub async fn share_proxy_handler(
     }
 
     let allow_interactive = share.permissions.allow_interactive;
-    let path_str = path.as_ref();
+    let path_str: &str = path.as_ref();
 
     // 3. Enforce an ALLOWLIST of paths reachable through the share proxy.
     //    Previously this was a blocklist, which silently allowed anonymous
@@ -1242,6 +1225,22 @@ pub async fn share_proxy_handler(
     //    extension data — far beyond what the shared dashboard needs. The
     //    semantics of a share link are "read the data this dashboard needs",
     //    not "read the entire platform".
+    // 3a. Reject traversal outright: a wildcard path like
+    // `devices/../../auth/keys` passes a first-segment allowlist check, and
+    // the loopback URL builder normalizes the dot-segments away — turning
+    // the allowlist into a full authenticated-API bypass via the internal-
+    // proxy secret. No legitimate share-proxy path contains them.
+    if path_str
+        .split('/')
+        .any(|seg| seg == ".." || seg == ".")
+    {
+        return ErrorResponse::new(
+            "FORBIDDEN",
+            "This path is not accessible via share proxy",
+            StatusCode::FORBIDDEN,
+        )
+        .into_response();
+    }
     if !is_share_proxy_path_allowed(path_str) {
         return ErrorResponse::new(
             "FORBIDDEN",
@@ -1284,8 +1283,11 @@ pub async fn share_proxy_handler(
         qs
     );
 
-    // 6. Forward via reqwest (internal loopback, skips auth middleware)
-    let client = reqwest::Client::new();
+    // 6. Forward via reqwest (internal loopback, skips auth middleware).
+    // One shared client — shared boards poll through here continuously and a
+    // per-request Client pays pool/TLS setup every call.
+    static PROXY_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = PROXY_CLIENT.get_or_init(reqwest::Client::new);
     let mut req_builder = match method {
         Method::GET => client.get(&target_url),
         Method::POST => client.post(&target_url),
@@ -1734,6 +1736,8 @@ fn is_allowed_share_method(path: &str, method: &Method, allow_interactive: bool)
     }
     path_matches_pattern(path, "devices/:id/command/:command")
         || path_matches_pattern(path, "agents/:id/invoke")
+        // CommandButton widgets wired to extension commands — same tier.
+        || path_matches_pattern(path, "extensions/:id/invoke")
 }
 
 #[cfg(test)]

@@ -154,12 +154,20 @@ pub async fn create_message_handler(
     State(state): State<ServerState>,
     Json(req): Json<CreateMessageRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let severity = match req.severity.as_str() {
+    // Unknown severities are REJECTED, not coerced to Info — a typo like
+    // "severe" used to store Info silently, dropping the alert from
+    // critical-tier channel filters with no signal to the caller.
+    let severity = match req.severity.to_lowercase().as_str() {
         "info" => MessageSeverity::Info,
         "warning" => MessageSeverity::Warning,
         "critical" => MessageSeverity::Critical,
         "emergency" => MessageSeverity::Emergency,
-        _ => MessageSeverity::Info,
+        other => {
+            return Err(ErrorResponse::bad_request(format!(
+                "Invalid severity '{}' — expected info | warning | critical | emergency",
+                other
+            )))
+        }
     };
 
     let source = req.source.unwrap_or_else(|| "api".to_string());
@@ -322,18 +330,24 @@ pub struct BulkAcknowledgeRequest {
     pub message_ids: Vec<String>,
 }
 
+
+/// Parse a bulk-request's message id strings into MessageIds. Shared by the
+/// bulk acknowledge/resolve/delete handlers (was triplicated verbatim).
+fn parse_message_ids(raw: &[String]) -> Result<Vec<MessageId>, ErrorResponse> {
+    raw.iter()
+        .map(|id_str| {
+            Ok(MessageId(uuid::Uuid::parse_str(id_str).map_err(|_| {
+                ErrorResponse::bad_request(format!("Invalid message ID: {}", id_str))
+            })?))
+        })
+        .collect()
+}
+
 pub async fn bulk_acknowledge_handler(
     State(state): State<ServerState>,
     Json(req): Json<BulkAcknowledgeRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let mut ids = Vec::new();
-    for id_str in &req.message_ids {
-        let msg_id =
-            MessageId(uuid::Uuid::parse_str(id_str).map_err(|_| {
-                ErrorResponse::bad_request(format!("Invalid message ID: {}", id_str))
-            })?);
-        ids.push(msg_id);
-    }
+    let ids = parse_message_ids(&req.message_ids)?;
 
     let count = state
         .core
@@ -353,14 +367,7 @@ pub async fn bulk_resolve_handler(
     State(state): State<ServerState>,
     Json(req): Json<BulkAcknowledgeRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let mut ids = Vec::new();
-    for id_str in &req.message_ids {
-        let msg_id =
-            MessageId(uuid::Uuid::parse_str(id_str).map_err(|_| {
-                ErrorResponse::bad_request(format!("Invalid message ID: {}", id_str))
-            })?);
-        ids.push(msg_id);
-    }
+    let ids = parse_message_ids(&req.message_ids)?;
 
     let count = state
         .core
@@ -380,14 +387,7 @@ pub async fn bulk_delete_handler(
     State(state): State<ServerState>,
     Json(req): Json<BulkAcknowledgeRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let mut ids = Vec::new();
-    for id_str in &req.message_ids {
-        let msg_id =
-            MessageId(uuid::Uuid::parse_str(id_str).map_err(|_| {
-                ErrorResponse::bad_request(format!("Invalid message ID: {}", id_str))
-            })?);
-        ids.push(msg_id);
-    }
+    let ids = parse_message_ids(&req.message_ids)?;
 
     let count = state
         .core
