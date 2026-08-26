@@ -1,13 +1,13 @@
 ---
 id: agent-management
 name: AI Agent Management
-description: Use when the user wants to create, configure, or manage AI agents — schedules (cron/interval/event), triggers, invoking/executing agents, agent memory, execution history, or monitoring agents. Covers agent create/list/update/delete/control/invoke/memory/executions even if they don't say 'agent' (e.g. '让助手每天定时跑', '安排一个监控任务'). Includes 创建/配置/调用代理、定时任务、代理记忆.
+description: Use when the user wants to create, configure, or manage AI agents — schedules (cron/interval/event/manual), triggers, invoking/executing agents, agent memory, execution history, or monitoring agents. Covers agent create/list/update/delete/control/invoke/memory/executions even if they don't say 'agent' (e.g. '让助手每天定时跑', '安排一个监控任务'). Includes 创建/配置/调用代理、定时任务、代理记忆.
 category: agent
 origin: builtin
 priority: 85
 token_budget: 10000
 triggers:
-  keywords: [agent, 代理, AI代理, agent create, 创建代理, agent control, schedule, cron, interval, 监控, agent invoke, 调用代理, agent memory, 代理记忆, agent execution, 代理执行, 定时任务, scheduled task, agent schedule, agent update]
+  keywords: [agent, 代理, AI代理, agent create, 创建代理, agent control, schedule, cron, interval, manual, 监控, agent invoke, 调用代理, agent memory, 代理记忆, agent execution, 代理执行, 定时任务, scheduled task, agent schedule, agent update, 按需, 手动执行]
   tool_target:
     - tool: agent
       actions: [list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message]
@@ -58,9 +58,12 @@ neomind agent control agent-abc123 active
 
 | Type | `--schedule-type` | Shortcut / `--schedule-config` | Example |
 |------|-------------------|-------------------------------|---------|
-| Event | `event` (default) | Not needed | Manual trigger via `invoke` |
+| Event | `event` (default) | Not needed | Triggered by device data matching the event filter |
 | Interval | `interval` | `--every 5m` (shortcut) or `--schedule-config '300'` | `--every 5m` = every 5 min |
 | Cron | `cron` | `--schedule-config` | `--schedule-config '0 9 * * *'` = daily 9 AM |
+| Manual | `manual` | Not needed | Never auto-scheduled — runs ONLY via `agent invoke` |
+
+**Manual agents** are repeatable one-off workers: they never fire on their own, `agent invoke <ID>` runs them any number of times, and between runs they show status `Completed` (a ready-state — Completed agents can always be invoked again). Use manual for on-demand analysis, ad-hoc checks, or tasks delegated from chat.
 
 **`--every` shortcut**: `--every 30s`, `--every 5m`, `--every 1h`, `--every 2d` — replaces `--schedule-type interval --schedule-config <seconds>`.
 
@@ -158,7 +161,7 @@ For backend selection and multimodal capability overrides, see the **llm-managem
 neomind agent create \
   --name '<name>' \
   --prompt '<task_description>' \
-  [--schedule-type <event|interval|cron>] \
+  [--schedule-type <event|interval|cron|manual>] \
   [--schedule-config '<config>'] \
   [--description '<desc>'] \
   [--llm-backend '<llm_backend_id>'] \
