@@ -46,6 +46,15 @@ pub struct CatalogModel {
     pub notes: String,
     #[serde(default)]
     pub recommended: bool,
+    /// Per-model sampling defaults (official where validated; absent = the
+    /// platform-wide 0.6/0.85/20 legacy point). Applied at spawn (server
+    /// defaults) and written into the backend instance.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub top_p: Option<f32>,
+    #[serde(default)]
+    pub top_k: Option<u32>,
 }
 
 /// Catalog fetch target. The Runtimes repo's `models/catalog.json` on the
@@ -71,6 +80,13 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(3);
 static CACHE: OnceLock<Arc<RwLock<Option<(Instant, Option<Vec<CatalogModel>>)>>>> = OnceLock::new();
 fn cache() -> &'static Arc<RwLock<Option<(Instant, Option<Vec<CatalogModel>>)>>> {
     CACHE.get_or_init(|| Arc::new(RwLock::new(None)))
+}
+
+/// Last-fetched catalog from the in-process cache (no network). None when
+/// nothing has been fetched yet (cold process before the first /models call).
+pub fn cached_catalog() -> Option<Vec<CatalogModel>> {
+    let guard = cache().read().ok()?;
+    guard.as_ref().and_then(|(_, models)| models.clone())
 }
 
 /// Fetch the remote catalog, honoring the TTL cache.

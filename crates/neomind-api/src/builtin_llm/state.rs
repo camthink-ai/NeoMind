@@ -112,6 +112,10 @@ pub async fn bootstrap(
         ctx: effective_ctx,
         ngl: cfg.ngl,
         threads: None,
+        // Per-model sampling defaults → server-side --temp/--top-p/--top-k.
+        temperature: def.temperature,
+        top_p: def.top_p,
+        top_k: def.top_k,
     };
     let mut proc = match LlamaServerProcess::spawn(&server_cfg) {
         Ok(p) => p,

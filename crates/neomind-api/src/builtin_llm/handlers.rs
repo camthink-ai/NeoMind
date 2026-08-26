@@ -141,6 +141,9 @@ fn builtin_to_catalog(def: &BuiltinModelDef) -> super::catalog::CatalogModel {
         min_ram_mb: def.min_ram_mb as u32,
         notes: def.notes.to_string(),
         recommended: def.recommended,
+        temperature: def.temperature,
+        top_p: def.top_p,
+        top_k: def.top_k,
     }
 }
 
@@ -231,6 +234,11 @@ pub struct InstalledModel {
     pub default_ctx: u32,
     /// Native context ceiling for display (None → fall back to default_ctx).
     pub max_ctx: Option<u32>,
+    /// Per-model sampling point (official/measured). None (custom imports,
+    /// older manifests) → platform-wide legacy default.
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
     pub default_thinking: bool,
     pub is_custom: bool,
 }
@@ -245,6 +253,9 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
             display_name: def.display_name.to_string(),
             default_ctx: def.default_ctx,
             max_ctx: Some(def.max_ctx),
+            temperature: def.temperature,
+            top_p: def.top_p,
+            top_k: def.top_k,
             default_thinking: def.default_thinking,
             is_custom: false,
         });
@@ -300,6 +311,10 @@ pub fn installed_model_any(mdir: &Path) -> Option<InstalledModel> {
         display_name: name,
         default_ctx: ctx,
         max_ctx: max,
+        // Custom imports have no catalog entry — legacy global defaults.
+        temperature: None,
+        top_p: None,
+        top_k: None,
         default_thinking: false,
         is_custom: true,
         manifest,
@@ -321,10 +336,20 @@ pub fn installed_model_by_id(mdir: &Path, id: &str) -> Option<InstalledModel> {
         .and_then(|m| m.context_length)
         .and_then(|c| u32::try_from(c).ok())
         .or(Some(ctx));
+    // Catalog-only model? Try the cached catalog for its sampling point
+    // (sync read of the last fetch; a cold process falls back to the global
+    // defaults until the next /models refresh warms the cache).
+    let (temperature, top_p, top_k) = super::catalog::cached_catalog()
+        .and_then(|c| c.into_iter().find(|m| m.id == id))
+        .map(|m| (m.temperature, m.top_p, m.top_k))
+        .unwrap_or((None, None, None));
     Some(InstalledModel {
         display_name: id.to_string(),
         default_ctx: ctx,
         max_ctx: max,
+        temperature,
+        top_p,
+        top_k,
         default_thinking: false,
         is_custom: true,
         manifest,
@@ -1161,6 +1186,9 @@ async fn spawn_builtin_server(
         ctx,
         ngl: cfg.ngl,
         threads: None,
+        temperature: installed.temperature,
+        top_p: installed.top_p,
+        top_k: installed.top_k,
     };
     let mut proc = LlamaServerProcess::spawn(&server_cfg)?;
     if let Err(e) = proc.wait_healthy(Duration::from_secs(60)).await {
@@ -1206,6 +1234,17 @@ async fn spawn_builtin_server(
     instance.capabilities.supports_tools = true;
     instance.capabilities.supports_thinking = installed.default_thinking;
     instance.capabilities.max_context = ctx as usize;
+    // Per-model sampling: applies both as server-side defaults (above) and
+    // on the request side (the instance fields are what chat sends).
+    if let Some(t) = installed.temperature {
+        instance.temperature = t;
+    }
+    if let Some(p) = installed.top_p {
+        instance.top_p = p;
+    }
+    if let Some(k) = installed.top_k {
+        instance.top_k = k as usize;
+    }
     let _ = manager.upsert_instance(instance).await;
 
     // 活跃策略:仅当没有任何活跃后端时设为活跃(「有后端不抢」)。

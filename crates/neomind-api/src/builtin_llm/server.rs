@@ -11,6 +11,13 @@ pub struct LlamaServerConfig {
     pub ctx: usize,
     pub ngl: Option<u16>,
     pub threads: Option<usize>,
+    /// Per-model sampling defaults (official/model-card tuned). Passed as
+    /// server-side defaults (--temp/--top-p/--top-k): any request that omits
+    /// sampling gets the model's best-known point instead of the llama.cpp
+    /// generic default.
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
 }
 
 pub struct LlamaServerProcess {
@@ -63,6 +70,15 @@ impl LlamaServerProcess {
         }
         if let Some(t) = cfg.threads {
             cmd.arg("-t").arg(t.to_string());
+        }
+        if let Some(t) = cfg.temperature {
+            cmd.arg("--temp").arg(format!("{t:.2}"));
+        }
+        if let Some(p) = cfg.top_p {
+            cmd.arg("--top-p").arg(format!("{p:.2}"));
+        }
+        if let Some(k) = cfg.top_k {
+            cmd.arg("--top-k").arg(k.to_string());
         }
         let child = cmd.spawn()?;
         Ok(LlamaServerProcess {

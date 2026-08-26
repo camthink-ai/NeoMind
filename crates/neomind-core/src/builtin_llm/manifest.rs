@@ -38,6 +38,10 @@ pub struct BuiltinModelDef {
     pub default_ctx: u32,
     /// Native context ceiling (display); default_ctx is the run default.
     pub max_ctx: u32,
+    /// Per-model sampling defaults (None = platform-wide legacy default).
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<u32>,
     /// One-line capability note for the picker.
     pub notes: &'static str,
     /// This entry is a fallback if the model cannot run (reserved).
@@ -67,6 +71,10 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 quant: "qad_q4_0".to_string(),
             },
             display_name: "LFM2.5-2.6B",
+            // Measured-best (154-case A/B beat the official 0.1 card values).
+            temperature: Some(0.6),
+            top_p: Some(0.85),
+            top_k: Some(20),
             hf_repo: "LiquidAI/LFM2.5-2.6B-GGUF",
             hf_file: "LFM2.5-2.6B-QAD-Q4_0.gguf",
             size_bytes: 1_500_000_000,
@@ -87,6 +95,10 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 quant: "q4_k_m".to_string(),
             },
             display_name: "Qwen3.5-4B",
+            // Official non-thinking recommendation (qwen.readthedocs.io).
+            temperature: Some(0.7),
+            top_p: Some(0.8),
+            top_k: Some(20),
             hf_repo: "unsloth/Qwen3.5-4B-GGUF",
             hf_file: "Qwen3.5-4B-Q4_K_M.gguf",
             size_bytes: 2_740_000_000,
@@ -107,6 +119,10 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 quant: "qat_q4_0".to_string(),
             },
             display_name: "Gemma4-E2B",
+            // Official Gemma 4 model card (uniform across the family).
+            temperature: Some(1.0),
+            top_p: Some(0.95),
+            top_k: Some(64),
             hf_repo: "google/gemma-4-E2B-it-qat-q4_0-gguf",
             hf_file: "gemma-4-E2B_q4_0-it.gguf",
             size_bytes: 3_100_000_000,
@@ -127,6 +143,10 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
                 quant: "q4_k_m".to_string(),
             },
             display_name: "Ling-3.0-tiny",
+            // Official inclusionAI card (thinking enabled by default).
+            temperature: Some(1.0),
+            top_p: Some(0.95),
+            top_k: Some(20),
             hf_repo: "bloomer010/Ling-3.0-tiny-GGUF",
             hf_file: "Ling-3.0-tiny-Q4_K_M.gguf",
             size_bytes: 4_823_894_880,
@@ -186,6 +206,39 @@ mod tests {
             tag,
             std::process::id()
         ))
+    }
+
+    /// Every registry entry must carry an explicit sampling point — the
+    /// spawn path writes these into llama-server defaults and the backend
+    /// instance, and an accidental None would silently fall back to the
+    /// legacy global (0.6/0.85/20) for a model whose official point differs.
+    #[test]
+    fn builtin_models_carry_sampling_points() {
+        for def in BUILTIN_MODELS.iter() {
+            assert!(def.temperature.is_some(), "{} missing temperature", def.manifest.id);
+            assert!(def.top_p.is_some(), "{} missing top_p", def.manifest.id);
+            assert!(def.top_k.is_some(), "{} missing top_k", def.manifest.id);
+        }
+    }
+
+    /// The registry is hand-maintained — lock the four official/measured
+    /// points so a typo can't silently shift a model's behavior.
+    #[test]
+    fn builtin_models_sampling_values_locked() {
+        let by_id = |id: &str| {
+            BUILTIN_MODELS
+                .iter()
+                .find(|d| d.manifest.id == id)
+                .unwrap_or_else(|| panic!("{id} missing from registry"))
+        };
+        let lfm = by_id("lfm25-2.6b");
+        assert_eq!((lfm.temperature, lfm.top_p, lfm.top_k), (Some(0.6), Some(0.85), Some(20)));
+        let qwen = by_id("qwen3.5-4b");
+        assert_eq!((qwen.temperature, qwen.top_p, qwen.top_k), (Some(0.7), Some(0.8), Some(20)));
+        let gemma = by_id("gemma4-e2b");
+        assert_eq!((gemma.temperature, gemma.top_p, gemma.top_k), (Some(1.0), Some(0.95), Some(64)));
+        let ling = by_id("ling30-tiny");
+        assert_eq!((ling.temperature, ling.top_p, ling.top_k), (Some(1.0), Some(0.95), Some(20)));
     }
 
     #[test]
