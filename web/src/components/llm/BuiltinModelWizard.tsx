@@ -491,7 +491,7 @@ export function BuiltinModelWizard({
                 })()}
                 {/* Model picker — one builtin model at a time; pick then
                     download (installed model is marked and pre-selected). */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {models.length === 0 && (
                     <div className="col-span-full text-xs text-muted-foreground text-center py-2">
                       {t('plugins:llm.builtinWizardNoModels')}
