@@ -117,6 +117,28 @@ pub static BUILTIN_MODELS: LazyLock<Vec<BuiltinModelDef>> = LazyLock::new(|| {
             default_thinking: true,
             min_ram_mb: 4_608,
         },
+        BuiltinModelDef {
+            manifest: ModelManifest {
+                id: "ling30-tiny".to_string(),
+                version: "1.0".to_string(),
+                file_name: "ling-3.0-tiny-q4_k_m.gguf".to_string(),
+                sha256: "9842cce7c1a07ad4adefd2b79a1035710ff196576d89128eade29351b79c8e68"
+                    .to_string(),
+                quant: "q4_k_m".to_string(),
+            },
+            display_name: "Ling-3.0-tiny",
+            hf_repo: "bloomer010/Ling-3.0-tiny-GGUF",
+            hf_file: "Ling-3.0-tiny-Q4_K_M.gguf",
+            size_bytes: 4_823_894_880,
+            // Native 128K; the run default keeps the full window (MoE KV is
+            // modest) but the 6 GB floor steers small devices away.
+            default_ctx: 131072,
+            max_ctx: 131072,
+            notes: "社区验证的 tiny MoE — 生成快,agent 得分强(77% 平 Qwen)",
+            recommended: false,
+            default_thinking: true,
+            min_ram_mb: 6_144,
+        },
     ]
 });
 
