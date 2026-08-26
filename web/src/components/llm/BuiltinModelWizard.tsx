@@ -30,6 +30,7 @@ import {
   FullScreenDialogFooter,
 } from '@/components/automation/dialog'
 import { Button } from '@/components/ui/button'
+import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
 import { cn } from '@/lib/utils'
 import { Progress } from '@/components/ui/progress'
 import {
@@ -146,7 +147,7 @@ export function BuiltinModelWizard({
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [importPath, setImportPath] = useState('')
   const [importFile, setImportFile] = useState<File | null>(null)
-  const [showPathInput, setShowPathInput] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [importBusy, setImportBusy] = useState(false)
   const [importMsg, setImportMsg] = useState<string | null>(null)
   // Model the ready-phase tiles describe: the installed one, else selection.
@@ -395,6 +396,7 @@ export function BuiltinModelWizard({
       )
       if (r.success) {
         setImportFile(null)
+        setImportOpen(false)
         const m = await api.getBuiltinModels()
         setModels(m.models)
         setSelectedModelId(r.model_id)
@@ -609,14 +611,40 @@ export function BuiltinModelWizard({
                       </button>
                     )
                   })}
-                  {/* Open-catalog local channel: upload your own GGUF */}
-                  <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-3 text-left">
-                    <span className="text-sm font-medium text-foreground">
-                      {t('plugins:llm.importLocalCard')}
-                    </span>
-                    {/* Dropzone / file picker */}
+                </div>
+                <Button
+                  size="lg"
+                  className="w-full"
+                  disabled={!selectedModelId}
+                  onClick={() => handleStartDownload(selectedModelId ?? undefined)}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  {status?.installed
+                    ? t('plugins:llm.switchModelCta')
+                    : t('plugins:llm.builtinWizardStart')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setImportOpen(true)}
+                >
+                  <Upload className="mr-1 h-3.5 w-3.5" />
+                  {t('plugins:llm.importLocalCard')}
+                </Button>
+                <UnifiedFormDialog
+                  open={importOpen}
+                  onOpenChange={setImportOpen}
+                  title={t('plugins:llm.importLocalCard')}
+                  width="sm"
+                  onSubmit={importFile ? handleUploadModel : handleImportLocal}
+                  isSubmitting={importBusy}
+                  submitLabel={importFile ? t('plugins:llm.importUploadCta') : t('plugins:llm.importLocalCta')}
+                  submitDisabled={!importFile && !importPath.trim()}
+                >
+                  <div className="space-y-3">
                     <label
-                      className="flex flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted-30 px-3 py-4 text-center cursor-pointer transition-colors hover:border-primary"
+                      className="flex flex-col items-center justify-center gap-1 rounded-md border border-dashed border-border bg-muted-30 px-3 py-6 text-center cursor-pointer transition-colors hover:border-primary"
                       onDragOver={(e) => e.preventDefault()}
                       onDrop={(e) => {
                         e.preventDefault()
@@ -646,61 +674,19 @@ export function BuiltinModelWizard({
                         }}
                       />
                     </label>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full"
-                      disabled={importBusy || !importFile}
-                      onClick={handleUploadModel}
-                    >
-                      <Upload className="mr-1 h-3.5 w-3.5" />
-                      {importBusy
-                        ? t('plugins:llm.importLocalBusy')
-                        : t('plugins:llm.importUploadCta')}
-                    </Button>
                     {/* Server-path import (desktop shares the host FS; remote
-                        deployments): collapsed behind an advanced toggle. */}
-                    <button
-                      type="button"
-                      className="text-left text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
-                      onClick={() => setShowPathInput((v) => !v)}
-                    >
-                      {t('plugins:llm.importPathAdvanced')}
-                    </button>
-                    {showPathInput && (
-                      <div className="flex gap-2">
-                        <input
-                          value={importPath}
-                          onChange={(e) => setImportPath(e.target.value)}
-                          placeholder={t('plugins:llm.importLocalPlaceholder')}
-                          className="h-8 flex-1 rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
-                        />
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={importBusy || !importPath.trim()}
-                          onClick={handleImportLocal}
-                        >
-                          {t('plugins:llm.importLocalCta')}
-                        </Button>
-                      </div>
-                    )}
+                        deployments) — alternative to uploading. */}
+                    <input
+                      value={importPath}
+                      onChange={(e) => setImportPath(e.target.value)}
+                      placeholder={t('plugins:llm.importLocalPlaceholder')}
+                      className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus:border-primary"
+                    />
                     {importMsg && (
                       <span className="text-[11px] text-muted-foreground leading-snug">{importMsg}</span>
                     )}
                   </div>
-                </div>
-                <Button
-                  size="lg"
-                  className="w-full"
-                  disabled={!selectedModelId}
-                  onClick={() => handleStartDownload(selectedModelId ?? undefined)}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  {status?.installed
-                    ? t('plugins:llm.switchModelCta')
-                    : t('plugins:llm.builtinWizardStart')}
-                </Button>
+                </UnifiedFormDialog>
               </div>
             )}
 
