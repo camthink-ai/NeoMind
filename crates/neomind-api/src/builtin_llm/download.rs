@@ -4,6 +4,28 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+// User-cancel flag for the active download. Checked between chunks; the
+// partial .part file is KEPT (resume semantics) so re-downloading the same
+// model continues where it left off.
+static DOWNLOAD_CANCELLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Request cancellation of the in-flight download (no-op when idle).
+pub fn request_download_cancel() {
+    DOWNLOAD_CANCELLED.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// Whether cancellation was requested (the download loop also polls this).
+pub fn download_cancel_requested() -> bool {
+    DOWNLOAD_CANCELLED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Clear the flag — called when a NEW download starts, so a stale cancel
+/// request from a previous run doesn't kill the fresh one.
+pub fn clear_download_cancel() {
+    DOWNLOAD_CANCELLED.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[derive(Debug, Clone)]
 pub struct DownloadProgress {
     pub downloaded: u64,
@@ -87,6 +109,11 @@ pub async fn download_with_resume(
     use futures::StreamExt;
     let mut stream = std::pin::pin!(body);
     while let Some(chunk) = stream.next().await {
+        if download_cancel_requested() {
+            // Keep the partial file — resume on next attempt.
+            let _ = file.flush();
+            anyhow::bail!("cancelled by user");
+        }
         let chunk = chunk?;
         hasher.update(&chunk);
         file.write_all(&chunk)?;

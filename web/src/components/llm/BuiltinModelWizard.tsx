@@ -242,6 +242,10 @@ export function BuiltinModelWizard({
           downloadedBytes: d.downloaded ?? 0,
           totalBytes: d.total ?? null,
         })
+      } else if (d.status === 'cancelled') {
+        // User-cancelled: back to the picker. The partial file is kept
+        // server-side (resume on re-download of the same model).
+        setPhase('idle')
       } else if (d.status === 'error') {
         // Mid-download failure: surface it NOW. The poll reports not_configured
         // (manifest unwritten), so without this branch the wizard would sit in
@@ -576,7 +580,19 @@ export function BuiltinModelWizard({
                       ? t('plugins:llm.builtinDownloading', { percent: progress.percent })
                       : t('plugins:llm.builtinDownloadingNoProgress')}
                   </span>
-                  <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="flex items-center gap-2">
+                    <Download className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => {
+                        api.cancelModelDownload().catch(() => {})
+                      }}
+                    >
+                      {t('common:cancel', 'Cancel')}
+                    </Button>
+                  </div>
                 </div>
                 <Progress value={progress.percent ?? 0} />
                 <p className="text-xs text-muted-foreground">

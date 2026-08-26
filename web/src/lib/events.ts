@@ -115,7 +115,7 @@ export interface ModelDownloadProgressEvent extends NeoMindEvent {
     model_id: string
     downloaded: number
     total: number | null
-    status: 'downloading' | 'complete' | 'error'
+    status: 'downloading' | 'complete' | 'error' | 'cancelled'
     error?: string | null
   }
 }

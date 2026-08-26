@@ -1015,6 +1015,14 @@ export const api = {
    */
   getBuiltinLlmStatus: () =>
     fetchAPI<BuiltinLlmStatus>('/builtin-llm/status'),
+  /** POST /api/builtin-llm/download/cancel — stop the in-flight model
+   * download (partial file is kept; re-download resumes; another model can
+   * be downloaded right after). */
+  cancelModelDownload: () =>
+    fetchAPI<{ cancelled: boolean; active?: boolean }>('/builtin-llm/download/cancel', {
+      method: 'POST',
+    }),
+
   /**
    * Start / resume the model download (single-flight on the server).
    * POST /api/builtin-llm/download

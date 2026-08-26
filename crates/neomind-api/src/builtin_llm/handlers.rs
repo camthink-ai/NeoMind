@@ -863,6 +863,20 @@ pub async fn models_handler(
 
 /// POST /api/builtin-llm/download — body `{ "model_id"?: string }`, default
 /// model when omitted.
+/// POST /api/builtin-llm/download/cancel — stop the in-flight model
+/// download. The partial file is kept, so re-downloading the same model
+/// resumes; the lock is released once the task winds down, and a different
+/// model can be downloaded immediately after.
+pub async fn download_cancel_handler(
+    State(_state): State<crate::server::types::ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    if !DL_ACTIVE.load(Ordering::SeqCst) {
+        return ok(json!({ "cancelled": false, "active": false }));
+    }
+    super::download::request_download_cancel();
+    ok(json!({ "cancelled": true }))
+}
+
 pub async fn download_handler(
     State(state): State<crate::server::types::ServerState>,
     payload: Option<axum::Json<serde_json::Value>>,
@@ -902,6 +916,8 @@ pub async fn download_handler(
         "builtin llm: starting model download"
     );
 
+    // A stale cancel from a previous run must not kill this fresh download.
+    super::download::clear_download_cancel();
     DL_ACTIVE.store(true, Ordering::SeqCst);
     DL_DOWNLOADED.store(0, Ordering::SeqCst);
     DL_TOTAL.store(0, Ordering::SeqCst);
@@ -1069,6 +1085,7 @@ async fn run_builtin_download(
         }
         Err(e) => {
             if let Some(bus) = &bus {
+                let cancelled = super::download::download_cancel_requested();
                 bus.publish_sync(NeoMindEvent::ModelDownloadProgress {
                     model_id: model_id.to_string(),
                     downloaded: DL_DOWNLOADED.load(Ordering::SeqCst),
@@ -1077,8 +1094,12 @@ async fn run_builtin_download(
                     } else {
                         None
                     },
-                    status: "error".to_string(),
-                    error: Some(e.to_string()),
+                    status: if cancelled { "cancelled".to_string() } else { "error".to_string() },
+                    error: Some(if cancelled {
+                        "cancelled by user".to_string()
+                    } else {
+                        e.to_string()
+                    }),
                 });
             }
             Err(e)
