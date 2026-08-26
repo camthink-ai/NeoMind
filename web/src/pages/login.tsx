@@ -307,7 +307,10 @@ export function LoginPage() {
           <div className="max-w-lg mx-auto space-y-3">
             {cachedInstances.map((inst) => {
               const isCurrent = inst.id === localStorage.getItem(CURRENT_INSTANCE_KEY)
-              const hasApiKey = !!(getFullApiKey(inst.id) || inst.api_key)
+              // Only a locally-stored FULL key means key auth; the masked
+              // api_key can't authenticate — badging it as key auth sends
+              // the user into a switch that lands on the login page.
+              const hasApiKey = !!getFullApiKey(inst.id)
               return (
                 <button
                   key={inst.id}

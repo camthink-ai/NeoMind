@@ -29,15 +29,22 @@ import { fetchCache } from '@/lib/utils/async'
 const LEGACY_KEY_CIPHER = 'NeoMind2024!@#'
 
 /** Decrypt XOR+hex encoded API key from a pre-0.9.20 backend. */
-function decryptLegacyApiKey(encrypted: string): string {
+function decryptLegacyApiKey(encrypted: string): string | null {
   const keyBytes = new TextEncoder().encode(LEGACY_KEY_CIPHER)
   const bytes: number[] = []
   for (let i = 0; i < encrypted.length; i += 2) {
-    bytes.push(parseInt(encrypted.substring(i, i + 2), 16))
+    const b = parseInt(encrypted.substring(i, i + 2), 16)
+    // parseInt is silently NaN on bad hex ("zz"); NaN ^ k === 0 would
+    // "decrypt" corrupt input into the cipher bytes themselves.
+    if (Number.isNaN(b)) return null
+    bytes.push(b)
   }
-  return bytes
+  const out = bytes
     .map((b, i) => String.fromCharCode(b ^ keyBytes[i % keyBytes.length]))
     .join('')
+  // Empty or cipher-identical output means the input was garbage.
+  if (!out || out === LEGACY_KEY_CIPHER) return null
+  return out
 }
 
 // ============================================================================
@@ -47,40 +54,31 @@ function decryptLegacyApiKey(encrypted: string): string {
 // it. The browser keeps its copy here from the moment the user entered it
 // (add/edit instance) so later switches don't need the key back from the API.
 
-const INSTANCE_KEYS_STORAGE = 'neomind_instance_keys'
+// One sessionStorage entry per instance (no shared map): no read-modify-write
+// window between tabs (C7), and sessionStorage — not localStorage — so keys
+// die with the tab session instead of persisting indefinitely (C2; community
+// widget bundles run same-origin and can read storage).
+const instanceKeyStorageId = (instanceId: string) => `neomind_instance_key_${instanceId}`
 
-function readKeyStore(): Record<string, string> {
+function saveInstanceKey(instanceId: string, apiKey: string) {
   try {
-    const raw = localStorage.getItem(INSTANCE_KEYS_STORAGE)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
-    return {}
-  }
-}
-
-function writeKeyStore(map: Record<string, string>) {
-  try {
-    localStorage.setItem(INSTANCE_KEYS_STORAGE, JSON.stringify(map))
+    sessionStorage.setItem(instanceKeyStorageId(instanceId), apiKey)
   } catch { /* ignore storage errors */ }
 }
 
-/** Save full API key for an instance (persists across reloads). */
-function saveInstanceKey(instanceId: string, apiKey: string) {
-  const map = readKeyStore()
-  map[instanceId] = apiKey
-  writeKeyStore(map)
-}
-
-/** Remove API key for an instance. */
 function removeInstanceKey(instanceId: string) {
-  const map = readKeyStore()
-  delete map[instanceId]
-  writeKeyStore(map)
+  try {
+    sessionStorage.removeItem(instanceKeyStorageId(instanceId))
+  } catch { /* ignore storage errors */ }
 }
 
-/** Get the full API key for an instance, if this browser ever stored one. */
+/** Get the full API key for an instance, if this tab session ever stored one. */
 export function getFullApiKey(instanceId: string): string | undefined {
-  return readKeyStore()[instanceId]
+  try {
+    return sessionStorage.getItem(instanceKeyStorageId(instanceId)) || undefined
+  } catch {
+    return undefined
+  }
 }
 
 // ============================================================================
@@ -179,9 +177,8 @@ function getCachedInstances(): InstanceInfo[] {
     let migrated = false
     for (const inst of instances) {
       if (inst.encrypted_key) {
-        try {
-          saveInstanceKey(inst.id, decryptLegacyApiKey(inst.encrypted_key))
-        } catch { /* undecodable legacy value — drop it */ }
+        const legacy = decryptLegacyApiKey(inst.encrypted_key)
+        if (legacy) saveInstanceKey(inst.id, legacy)
         delete inst.encrypted_key
         migrated = true
       }
@@ -327,11 +324,9 @@ export const createInstanceSlice: StateCreator<
     set({ instanceLoading: true })
     try {
       const instances = await fetchInstancesApi()
-      // The backend returns masked keys only; full keys live in the
-      // per-browser key store (saved when the user entered them).
-      try {
-        localStorage.setItem(INSTANCE_CACHE_KEY, JSON.stringify(instances))
-      } catch { /* ignore storage errors */ }
+      // Single cache writer: syncCache (strips masked api_key) — the old
+      // direct write re-added what syncCache strips, flip-flopping policy.
+      syncCache(instances)
 
       // Self-heal: if currentInstanceId points to a non-existent instance,
       // reset to local-default (stale state from a previous failed switch)
@@ -387,6 +382,8 @@ export const createInstanceSlice: StateCreator<
   deleteInstance: async (id) => {
     fetchCache.invalidate('instances')
     await deleteInstanceApi(id)
+    // The instance is gone — its stored credential must not outlive it.
+    removeInstanceKey(id)
     const instances = get().instances.filter((i) => i.id !== id)
     set({ instances })
     syncCache(instances)

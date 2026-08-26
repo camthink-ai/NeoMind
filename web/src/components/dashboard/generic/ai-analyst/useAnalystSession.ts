@@ -1009,6 +1009,66 @@ export function useAnalystSession({
       api.invokeAgent(agentId, { input: text })
         .then((result) => {
           const duration = Date.now() - startTime
+
+          // Long run: the backend returned still_executing (past its 60s
+          // wait window) — the run continues server-side. Show a running
+          // notice and POLL the execution history so the real conclusion
+          // replaces it; without the poll (e.g. the WS event was missed)
+          // the answer was permanently lost.
+          if ((result as { still_executing?: boolean }).still_executing) {
+            if (streamingPollRef.current) {
+              clearInterval(streamingPollRef.current)
+              streamingPollRef.current = null
+            }
+            const placeholderId = streamingMsgIdRef.current ?? nextId()
+            streamingMsgIdRef.current = null
+            setStreamingMsgId(null)
+            const noticeId = placeholderId
+            setMessages((prev) => {
+              const withoutStreaming = prev.some((m) => m.id === placeholderId)
+                ? prev.filter((m) => m.id !== placeholderId)
+                : prev
+              return trimMessages([
+                ...withoutStreaming,
+                {
+                  id: noticeId,
+                  type: 'ai',
+                  content: result.message || 'Analysis is still running in the background…',
+                  timestamp: Date.now(),
+                  modelName: config.modelName,
+                  duration,
+                },
+              ])
+            })
+            setIsStreaming(false)
+            isStreamingRef.current = false
+
+            const pollAgentId = agentId
+            let tries = 0
+            const poll = setInterval(async () => {
+              tries += 1
+              try {
+                const data = await api.getAgentExecutions(pollAgentId, 1)
+                const latest = (data as unknown as { executions?: Array<Record<string, unknown>> }).executions?.[0]
+                const status = String(latest?.['status'] ?? '')
+                const running = status === 'Running' || status === 'Pending'
+                if (latest && !running) {
+                  clearInterval(poll)
+                  const dp = latest['decision_process'] as { conclusion?: string } | undefined
+                  const conclusion =
+                    dp?.conclusion || String(latest['result'] ?? '') || 'Analysis completed.'
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === noticeId ? { ...m, content: conclusion } : m,
+                    ),
+                  )
+                }
+              } catch { /* transient poll error — keep polling */ }
+              if (tries >= 24) clearInterval(poll) // ~4 min at 10s
+            }, 10_000)
+            return
+          }
+
           const execId = result.execution_id as string | undefined
 
           // Register for WS event dedup
