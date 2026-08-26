@@ -108,3 +108,28 @@ mechanically-working `--reasoning-budget 0` costs -33pp cmd_ok AND is slower
 (failure loops eat the generation savings; 2026-08-18 A/B). Thinking tokens
 also bypass `max_tokens`, which is why NeoMind caps delegated max_tokens and
 injects loop-steering hints instead.
+
+## Jetson Orin-class measured baseline (2026-08-24/26, two P3767 eng-ref boards)
+
+All numbers on our runtime (llama.cpp b10545, CUDA sm_87, -ngl 99; unified
+memory ~46 GB/s effective decode bandwidth — top of the community range).
+
+| Model | gen tok/s | prompt tok/s | 32K ctx @ 8G board | Notes |
+|---|---|---|---|---|
+| LFM2.5-2.6B QAD (1.5G) | 36.5 | 1262 | ✅ (1.7G free) | 128K native; thinking integral; Mamba (no speculative) |
+| Gemma4-E2B QAT (3.1G) | 34.8 | 1197 | ✅ (2.7G free) | SWA KV is cheap; vision via mmproj |
+| **Ling-3.0-tiny Q4_K_M (4.8G)** | **~40** | ~58-69* | ❌ (needs ≥16G) | **Fastest agent-tier on this hw** — MoE 7.9B/A1.3B activated; 77% on the 30-case suite (ties Qwen 3.5 4B); bracket tool-call format is the training烙印 — works via native tools (server-side parsing), not via text-format prompting |
+| Qwen3.5-4B Q4_K_M (2.6G) | 17.8 | 538 | ✅ (1.7G free) | strongest agent score (76%); thinking switchable |
+
+*small-sample prompt figures; generation numbers are stable 128-token runs.
+
+Selection guide on Orin-class: speed/vision → Gemma; **best speed+agent → Ling (16G+ only)**; strongest agent on 8G → Qwen; balanced default → LFM.
+
+8G boards: Qwen 64K fits only when clean (6.8G free after cleanup); Ling's
+4.8G weights + KV need ≥16G (the picker's 6 GB floor steers small boards
+away correctly).
+
+Bench gotcha: resumable-download scripts must verify HTTP 2xx before
+appending — an HF error page (1018 B) appended mid-file fails the final
+SHA check in a way truncation can't fix (wasted a full 4.8G re-download;
+transferring a verified copy over LAN was 30× faster than re-fetching).
