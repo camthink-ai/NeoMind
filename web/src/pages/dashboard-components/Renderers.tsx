@@ -18,12 +18,9 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { DashboardComponent, DataSourceOrList, DataSource } from '@/types/dashboard'
-import { getSourceId, resolveDataSource } from '@/types/dashboard'
-import { useStore } from '@/store'
-import { findDevice } from '@/lib/deviceUtils'
+import { getSourceId } from '@/types/dashboard'
 import ComponentRenderer, { ComponentErrorFallback } from '@/components/dashboard/registry/ComponentRenderer'
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary'
-import { getComponentMeta } from '@/components/dashboard/registry/registry'
 import { useDeviceBindingStatus } from '@/components/dashboard/shared/useDeviceBindingStatus'
 import { DanglingBindingState, StaleDataBadge } from '@/components/dashboard/shared/BindingStateOverlays'
 
@@ -97,33 +94,6 @@ const BuiltInComponent = memo(function BuiltInComponent({
 }) {
   const Comp = builtInComponentMap[component.type]
   const bindingStatus = useDeviceBindingStatus(dataSource)
-  const devices = useStore((s) => s.devices)
-
-  // Cards created from the library are pre-titled with the entry's display
-  // name ("Value Card") — treat that as unnamed so single device bindings
-  // render a meaningful "Field · Device name" label instead of the type.
-  const resolvedTitle = useMemo(() => {
-    const componentName = getComponentMeta(component.type)?.name?.trim()
-    const isLibraryDefault = (t?: string) =>
-      !!t && !!componentName && t.trim().toLowerCase() === componentName.toLowerCase()
-    const explicit = [component.title, config.title].find(
-      (x): x is string => typeof x === 'string' && !!x.trim() && !isLibraryDefault(x),
-    )
-    if (explicit) return explicit
-
-    const sources = Array.isArray(dataSource) ? dataSource : (dataSource ? [dataSource] : [])
-    let auto = ''
-    if (sources.length === 1) {
-      const ds = resolveDataSource(sources[0])
-      const field = typeof ds.field === 'string' && ds.field ? ds.field : ''
-      const prettyField = field.replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-      const deviceName = ds.source === 'device' && typeof ds.id === 'string'
-        ? findDevice(devices ?? [], ds.id)?.name
-        : undefined
-      auto = [prettyField, deviceName].filter(Boolean).join(' · ')
-    }
-    return auto || componentName || undefined
-  }, [dataSource, component.title, config.title, component.type, devices])
 
   if (!Comp) return null
 
@@ -147,7 +117,7 @@ const BuiltInComponent = memo(function BuiltInComponent({
       editMode={editMode}
       {...restConfig}
       {...restDisplay}
-      title={resolvedTitle}
+      title={component.title || config.title}
       className={className}
     />
   )
