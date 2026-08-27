@@ -14,6 +14,7 @@ import type {
   DashboardLayout,
 } from '@/types/dashboard'
 import { createDashboardStorage, fromDashboardDTO, type DashboardStorage } from '../persistence'
+import { hasRecentServerSyncFailure } from '../persistence/implementations'
 import { logError } from '@/lib/errors'
 import {
   generateId,
@@ -160,6 +161,9 @@ export const createDashboardCrudSlice: StateCreator<
       syncDebounceTimer = null
       // Only sync if no newer schedule call has been made
       if (version !== syncVersion) return
+      // Clear before syncing: while the sync is in flight this marks "sync
+      // pending" for hasUnflushedLocalEdits(); a newer schedule re-sets it.
+      pendingSyncDashboard = null
       recordSelfSync(dashboard.id)
       try {
         const result = await storage.sync(dashboard)
@@ -188,6 +192,30 @@ export const createDashboardCrudSlice: StateCreator<
         }
       }
     }
+  }
+
+  // Flush a pending debounced sync when the page is hidden or being unloaded.
+  // The 500ms debounce otherwise silently drops the last edit on close.
+  // visibilitychange(hidden) also covers mobile backgrounding, where pagehide
+  // is unreliable.
+  if (typeof window !== 'undefined') {
+    const flushOnLeave = () => { void flushSync() }
+    window.addEventListener('pagehide', flushOnLeave)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushOnLeave()
+    })
+  }
+
+  /**
+   * True while a local edit is still in flight: the debounce timer hasn't
+   * fired yet, or a previous sync attempt recently failed against the server
+   * (its retries are still running). Applying a server snapshot in either
+   * state would overwrite newer local edits.
+   */
+  function hasUnflushedLocalEdits(): boolean {
+    return syncDebounceTimer !== null ||
+      pendingSyncDashboard !== null ||
+      hasRecentServerSyncFailure()
   }
 
   return {
@@ -234,6 +262,17 @@ export const createDashboardCrudSlice: StateCreator<
           // was temporarily unavailable — this caused permanent data loss.
           // Instead, invalid data sources are handled at the UI layer (component shows
           // a "device unavailable" state) so user config is preserved.
+
+          // A pending (or recently failed) local sync means the in-memory state
+          // is newer than the snapshot the server just returned. Skip applying
+          // it — otherwise a DataChanged/SSE-triggered refresh would silently
+          // discard the user's edits ("change flashed back to old value").
+          if (hasUnflushedLocalEdits()) {
+            console.warn('[DashboardCrudSlice] Skipping server snapshot — local edits not yet synced')
+            if (get()._fetchId !== fetchId) return
+            set({ dashboardsLoading: false })
+            return
+          }
 
           if (get()._fetchId !== fetchId) return
           set({ dashboards: migrated })

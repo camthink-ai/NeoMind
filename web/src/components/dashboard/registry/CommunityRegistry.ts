@@ -149,6 +149,13 @@ export class CommunityComponentRegistry {
 
     try {
       const module = await promise
+      // A null result means the load failed (doLoadComponent resolves null on
+      // error). Never cache it — otherwise every automatic retry and the UI's
+      // Retry button hit this cache and the component can only recover by
+      // reloading the page.
+      if (module == null) {
+        return null
+      }
       this.state.loadedModules[type] = module
       return module
     } finally {

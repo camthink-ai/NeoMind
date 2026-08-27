@@ -153,7 +153,10 @@ interface ComponentErrorFallbackProps {
   className?: string
 }
 
-function ComponentErrorFallback({ className }: ComponentErrorFallbackProps) {
+// Exported for reuse by the built-in widget path in Renderers.tsx, which has
+// no per-card boundary of its own (ComponentRenderer only covers dynamic,
+// community, and business components).
+export function ComponentErrorFallback({ className }: ComponentErrorFallbackProps) {
   return (
     <Card className={cn('border-error-light', className)}>
       <div className="flex flex-col items-center justify-center h-full min-h-[120px] p-4 text-center">
@@ -272,6 +275,13 @@ const ComponentRenderer = memo(function ComponentRenderer({
   const [loadError, setLoadError] = useState<Error | null>(null)
   const [attemptCount, setAttemptCount] = useState(0)
   const [registrationPollCount, setRegistrationPollCount] = useState(0)
+  // Retry timer lives inside loadDynamicComponent — tracked so unmount can
+  // cancel it instead of letting it fire setState on a dead component.
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+  }, [])
 
   // Heuristic: check if this looks like an extension component (not in any registry)
   const isUnknownType = !isBuiltIn
@@ -334,7 +344,7 @@ const ComponentRenderer = memo(function ComponentRenderer({
       // Auto-retry if we haven't exceeded max attempts
       if (attempt < MAX_LOAD_RETRIES) {
         const retryType = componentType // capture current type
-        setTimeout(() => {
+        retryTimerRef.current = setTimeout(() => {
           // Only retry if the component type hasn't changed during the delay
           setAttemptCount(prev => prev === attempt ? attempt + 1 : prev)
         }, LOAD_RETRY_DELAY)

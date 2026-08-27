@@ -140,7 +140,7 @@ export class DynamicComponentRegistry {
       if (link) {
         try {
           document.head.removeChild(link)
-        } catch {}
+        } catch { /* link may already be gone */ }
         this.preloadElements.delete(type)
       }
     }
@@ -171,6 +171,13 @@ export class DynamicComponentRegistry {
 
     try {
       const module = await promise
+      // A null result means the load failed (doLoadComponent resolves null on
+      // error). Never cache it — otherwise every automatic retry and the UI's
+      // Retry button hit this cache and the component can only recover by
+      // reloading the page.
+      if (module == null) {
+        return null
+      }
       this.state.loadedModules[type] = module
       return module
     } finally {
@@ -438,7 +445,7 @@ export class DynamicComponentRegistry {
     for (const [, link] of this.preloadElements) {
       try {
         document.head.removeChild(link)
-      } catch {}
+      } catch { /* link may already be gone */ }
     }
     this.preloadElements.clear()
 
@@ -488,7 +495,7 @@ export class DynamicComponentRegistry {
           || oldDef?.export_name !== comp.export_name
         if (changed) {
           if (oldDef?.global_name) {
-            try { delete (window as any)[oldDef.global_name] } catch {}
+            try { delete (window as any)[oldDef.global_name] } catch { /* property may be non-configurable */ }
           }
           delete this.state.loadedModules[comp.type]
           delete this.state.loadingPromises[comp.type]
