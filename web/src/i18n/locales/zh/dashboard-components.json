@@ -646,6 +646,7 @@
     "selectDevice": "选择一个设备",
     "selectedItems": "已选 {{count}} 项",
     "clearAllSelections": "清除所有选择",
+    "deviceRemoved": "绑定的设备已不存在",
     "deviceList": "设备列表",
     "count": "个",
     "metricsCount": "个指标",
@@ -1246,5 +1247,8 @@
     "configureSource": "配置数据源",
     "failedToLoad": "加载失败"
   },
-  "installConfirm": "确认安装"
+  "installConfirm": "确认安装",
+  "bindingDeviceRemoved": "绑定的设备已删除",
+  "bindingDeviceRemovedHint": "请重新绑定一个存在的设备",
+  "staleData": "最后数值 · 设备离线"
 }

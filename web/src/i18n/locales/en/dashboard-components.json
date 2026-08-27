@@ -646,6 +646,7 @@
     "selectDevice": "Select a device",
     "selectedItems": "{{count}} selected",
     "clearAllSelections": "Clear all selections",
+    "deviceRemoved": "Bound device no longer exists",
     "deviceList": "Device List",
     "count": "items",
     "metricsCount": "metrics",
@@ -1246,5 +1247,8 @@
     "configureSource": "Configure Source",
     "failedToLoad": "Failed To Load"
   },
-  "installConfirm": "Install Confirm"
+  "installConfirm": "Install Confirm",
+  "bindingDeviceRemoved": "Bound device was removed",
+  "bindingDeviceRemovedHint": "Rebind this component to an existing device",
+  "staleData": "Last value — device offline"
 }
