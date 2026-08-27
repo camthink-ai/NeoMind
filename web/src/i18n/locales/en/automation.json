@@ -1111,10 +1111,10 @@
   "log": "Log",
   "emptyTransforms": {
     "title": "No Transforms",
-    "description": "Description"
+    "description": "Create a transform to process and reshape your device data"
   },
   "emptyRules": {
     "title": "No Rules",
-    "description": "Description"
+    "description": "Create your first rule to automate responses to device events"
   }
 }

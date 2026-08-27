@@ -57,14 +57,15 @@ function mcSubscribe(email: string, username?: string): Promise<{ result: string
   })
 }
 
-// Error translation helper
+// Error translation helper. setup.* keys need the explicit `setup:` prefix —
+// defaultNS is `common`, so bare keys render as raw error codes.
 function translateError(error: string, t: (key: string, params?: Record<string, unknown>) => string): string {
   const lowerError = error.toLowerCase()
   if (lowerError.includes("password must be at least")) return t('minPasswordLength', { ns: 'validation' })
   if (lowerError.includes("username must be at least")) return t('minUsernameLength', { ns: 'validation' })
-  if (lowerError.includes("password must contain")) return t('passwordComplexity')
-  if (lowerError.includes("setup already completed")) return t('setupAlreadyCompleted')
-  return error || t("setupFailed")
+  if (lowerError.includes("password must contain")) return t('setup:passwordComplexity')
+  if (lowerError.includes("setup already completed")) return t('setup:setupAlreadyCompleted')
+  return error || t("setup:setupFailed")
 }
 
 interface AccountStepProps {

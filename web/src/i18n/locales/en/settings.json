@@ -175,6 +175,8 @@
     "userAddSuccess": "User {{username}} has been added",
     "userDeleted": "User Deleted",
     "userDeleteSuccess": "User {{username}} has been removed",
+    "deleteCredentialTitle": "Delete credential {{username}}?",
+    "deleteCredentialConfirm": "Devices using this credential will no longer be able to connect. This cannot be undone.",
     "tls": "TLS",
     "tlsEnabled": "TLS Enabled",
     "tlsDisabled": "TLS Disabled",

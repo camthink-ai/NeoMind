@@ -49,17 +49,22 @@ function getCachedInstances(): CachedInstance[] {
   }
 }
 
-// Error translation helper
+// Error translation helper.
+// Backend messages vary between prose ("Invalid username or password") and
+// camelCase codes ("invalidCredentials"), so matching normalizes separators.
+// Keys MUST carry the `auth:` prefix — defaultNS is `common` and these keys
+// only exist in the auth namespace (bare keys render as raw error codes).
 function translateError(error: string, t: (key: string, params?: Record<string, unknown>) => string): string {
   const lowerError = error.toLowerCase()
-  if (lowerError.includes("invalid username or password") || lowerError.includes("invalid credentials")) {
-    return t("invalidCredentials")
+  const normalized = lowerError.replace(/[\s_-]/g, "")
+  if (normalized.includes("invalidusernameorpassword") || normalized.includes("invalidcredentials")) {
+    return t("auth:invalidCredentials")
   }
   if (lowerError.includes("user not found")) {
-    return t("userNotFound")
+    return t("auth:userNotFound")
   }
   if (lowerError.includes("user disabled") || lowerError.includes("account is disabled")) {
-    return t("accountDisabled")
+    return t("auth:accountDisabled")
   }
   if (lowerError.includes("password must be at least")) {
     return t("minPasswordLength", { ns: 'validation' })
@@ -68,12 +73,12 @@ function translateError(error: string, t: (key: string, params?: Record<string, 
     return t("minUsernameLength", { ns: 'validation' })
   }
   if (lowerError.includes("user already exists")) {
-    return t("userAlreadyExists")
+    return t("auth:userAlreadyExists")
   }
   if (lowerError.includes("unauthorized")) {
-    return t("authFailed")
+    return t("auth:authFailed")
   }
-  return error || t("loginFailed")
+  return error || t("auth:loginFailed")
 }
 
 export function LoginPage() {

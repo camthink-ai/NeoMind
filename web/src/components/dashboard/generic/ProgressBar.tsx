@@ -139,7 +139,9 @@ export const ProgressBar = memo(function ProgressBar({
 
     // Get fill color based on state
     const fillColor = iconColor || progressColor
-    const emptyColor = 'hsl(var(--muted-foreground) / 0.3)'
+    // Tokens hold full oklch() colors — `hsl(var(...) / a)` is invalid and
+    // silently drops. color-mix is the project-wide way to add alpha to a token.
+    const emptyColor = 'color-mix(in oklch, var(--muted-foreground) 30%, transparent)'
 
     // Active state for glow effect
     const isActive = state !== 'neutral'
@@ -281,7 +283,7 @@ export const ProgressBar = memo(function ProgressBar({
               cy={radius}
               r={radius - strokeWidth / 2}
               fill="none"
-              stroke="hsl(var(--muted) / 0.3)"
+              style={{ stroke: 'color-mix(in oklch, var(--muted) 30%, transparent)' }}
               strokeWidth={strokeWidth}
             />
             {/* Progress with gradient and glow */}

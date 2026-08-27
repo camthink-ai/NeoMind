@@ -175,6 +175,8 @@
     "userAddSuccess": "用户 {{username}} 已添加",
     "userDeleted": "用户已删除",
     "userDeleteSuccess": "用户 {{username}} 已移除",
+    "deleteCredentialTitle": "删除凭据 {{username}}？",
+    "deleteCredentialConfirm": "使用该凭据的设备将无法继续连接，此操作不可撤销。",
     "tls": "TLS",
     "tlsEnabled": "已启用 TLS",
     "tlsDisabled": "已禁用 TLS",

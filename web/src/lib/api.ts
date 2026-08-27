@@ -442,11 +442,14 @@ export const api = {
 
   // ========== Authentication API ==========
   login: (username: string, password: string, rememberMe: boolean = false) =>
+    // skipErrorToast: the login page renders its own inline error — a toast
+    // for the same failure is redundant double feedback.
     fetchAPI<LoginResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, password }),
       skipAuth: true,
       skipGlobalError: true,
+      skipErrorToast: true,
     }).then(res => {
       // Store token
       tokenManager.setToken(res.token, rememberMe)
@@ -458,6 +461,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
       skipAuth: true,
       skipGlobalError: true,
+      skipErrorToast: true,
     }).then(res => {
       // Store token
       tokenManager.setToken(res.token, false)

@@ -378,8 +378,18 @@ export function DevicesPage() {
     })
     if (!confirmed) return
 
-    await deleteDevice(id)
-    toast({ title: t('common:success'), description: t('devices:deviceDeleted') })
+    // deleteDevice resolves to false on failure (and can throw on network
+    // errors) — only claim success when the backend actually deleted it.
+    try {
+      const deleted = await deleteDevice(id)
+      if (deleted) {
+        toast({ title: t('common:success'), description: t('devices:deviceDeleted') })
+      } else {
+        toast({ title: t('common:error'), description: t('devices:deleteFailed'), variant: "destructive" })
+      }
+    } catch {
+      toast({ title: t('common:error'), description: t('devices:deleteFailed'), variant: "destructive" })
+    }
   }
 
   const handleOpenDeviceDetails = (device: Device) => {
@@ -544,8 +554,16 @@ export function DevicesPage() {
     })
     if (!confirmed) return
 
-    await deleteDeviceType(id)
-    toast({ title: t('common:success'), description: t('devices:deviceTypeDeleted') })
+    try {
+      const deleted = await deleteDeviceType(id)
+      if (deleted) {
+        toast({ title: t('common:success'), description: t('devices:deviceTypeDeleted') })
+      } else {
+        toast({ title: t('common:error'), description: t('devices:deleteFailed'), variant: "destructive" })
+      }
+    } catch {
+      toast({ title: t('common:error'), description: t('devices:deleteFailed'), variant: "destructive" })
+    }
   }
 
   const handleAddDeviceType = async (definition: DeviceType) => {

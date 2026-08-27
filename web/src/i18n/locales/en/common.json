@@ -353,11 +353,11 @@
   "updatedAt": "Updated",
   "welcome": {
     "greeting": {
-      "earlyMorning": "Good early morning",
+      "earlyMorning": "Good morning",
       "morning": "Good morning",
       "afternoon": "Good afternoon",
       "evening": "Good evening",
-      "night": "Good night"
+      "night": "Good evening"
     },
     "tagline": "{{appName}} Smart IoT Assistant, at your service",
     "stats": {

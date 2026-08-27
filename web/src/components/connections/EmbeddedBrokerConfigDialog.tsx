@@ -27,6 +27,7 @@ import { Badge } from '@/components/ui/badge'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
 import { useToast } from '@/hooks/use-toast'
+import { confirm } from '@/hooks/use-confirm'
 
 interface BrokerConfig {
   listen: string
@@ -180,6 +181,16 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
   }
 
   const handleDeleteCredential = async (username: string) => {
+    // Credentials are security-sensitive and unrecoverable — require an
+    // explicit destructive confirm instead of deleting on first click.
+    const confirmed = await confirm({
+      title: t('broker.deleteCredentialTitle', { username }),
+      description: t('broker.deleteCredentialConfirm', { username }),
+      confirmText: t('common:delete'),
+      cancelText: t('common:cancel'),
+      variant: "destructive",
+    })
+    if (!confirmed) return
     try {
       await api.deleteMqttCredential(username)
       await loadConfig(true)
