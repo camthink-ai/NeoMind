@@ -107,7 +107,7 @@ export const valueCardSize = {
     // Text: value is primary, keep it readable
     titleText: 'text-xs',
     labelText: 'text-mini',
-    valueText: 'text-sm font-semibold',
+    valueText: 'text-base font-semibold tabular-nums',
     // Icons: smaller but still visible
     iconSize: 'w-3.5 h-3.5',
     iconContainer: 'w-7 h-7',
@@ -124,7 +124,7 @@ export const valueCardSize = {
     // Text: stronger value/label contrast for data focus
     titleText: 'text-xs uppercase tracking-wide',
     labelText: 'text-mini',
-    valueText: 'text-lg font-semibold tracking-tight tabular-nums',
+    valueText: 'text-xl font-semibold tracking-tight tabular-nums',
     // Icons: standard size
     iconSize: 'w-4 h-4',
     iconContainer: 'w-8 h-8',

@@ -85,7 +85,7 @@ export function TransformsBadge({ deviceId, deviceTypeId, count: countProp, onRe
   // visual noise in the table.
   if (count === 0) {
     return (
-      <span className="inline-flex items-center h-7 px-2 text-xs text-muted-foreground/60 tabular-nums">
+      <span className="inline-flex items-center h-7 px-2 text-xs leading-none text-muted-foreground/60 tabular-nums">
         <Database className="h-3.5 w-3.5 mr-1 opacity-50" />0
       </span>
     )

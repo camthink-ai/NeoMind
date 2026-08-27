@@ -984,7 +984,7 @@ export default function MessagesPage() {
                 {
                   key: 'messageType',
                   label: t('messages.type.label'),
-                  width: 'w-[100px]',
+                  width: 'w-[72px]',
                   align: 'center',
                 },
                 {

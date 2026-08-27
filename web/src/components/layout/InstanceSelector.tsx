@@ -49,7 +49,7 @@ export function InstanceSelector({ onManageInstances, compact = false }: Instanc
           : "w-full flex items-center px-3 h-10",
         isOnline
           ? cn("bg-success-light text-success", !compact && "border border-success-light")
-          : "text-error bg-muted"
+          : cn("bg-error-light text-error", !compact && "border border-error-light")
       )}
     >
       <div className="relative shrink-0">

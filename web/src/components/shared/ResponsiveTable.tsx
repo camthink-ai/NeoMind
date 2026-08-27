@@ -128,7 +128,7 @@ export function ResponsiveTable<T extends object>({
                   <th
                     key={column.key}
                     className={cn(
-                      "h-12 px-4 align-middle text-nano font-semibold uppercase tracking-wider text-foreground",
+                      "h-12 px-4 align-middle text-mini font-semibold uppercase tracking-wide text-muted-foreground",
                       column.align === 'center' && 'text-center',
                       column.align === 'right' && 'text-right',
                       !column.align && 'text-left',
@@ -199,7 +199,7 @@ export function ResponsiveTable<T extends object>({
                 <th
                   key={column.key}
                   className={cn(
-                    "h-12 px-4 align-middle text-nano font-semibold uppercase tracking-wider text-foreground",
+                    "h-12 px-4 align-middle text-mini font-semibold uppercase tracking-wide text-muted-foreground",
                     column.align === 'center' && 'text-center',
                     column.align === 'right' && 'text-right',
                     !column.align && 'text-left',

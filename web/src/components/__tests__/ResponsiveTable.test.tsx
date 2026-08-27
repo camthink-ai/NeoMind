@@ -86,6 +86,8 @@ describe('ResponsiveTable (desktop)', () => {
     )
     const header = screen.getByText('Name').closest('th')
     expect(header).toBeTruthy()
-    expect(header!.className).toContain('text-nano')
+    // Upgraded from the old 10px text-nano ladder for readability
+    expect(header!.className).toContain('text-mini')
+    expect(header!.className).not.toContain('text-nano')
   })
 })
