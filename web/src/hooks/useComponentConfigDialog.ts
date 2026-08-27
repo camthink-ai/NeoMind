@@ -192,20 +192,27 @@ export function useComponentConfigDialog(params: UseComponentConfigDialogParams)
   // Handle canceling component config - revert to original
   const handleCancelConfig = useCallback(() => {
     if (selectedComponent && originalComponentConfig) {
+      // Read the LIVE component from the store. `selectedComponent` is the
+      // snapshot taken at dialog-open time — its dataSource predates any
+      // binding the live preview added, so a newly-bound dataSource would
+      // slip through the check below and survive the cancel.
+      const liveDashboard = useStore.getState().currentDashboard
+      const liveComponent = liveDashboard?.components.find(c => c.id === selectedComponent.id)
+      const currentDS = (liveComponent as any)?.dataSource
+
       // Revert to original config (no need to persist - reverting to saved state)
       const { dataSource, ...configOnly } = originalComponentConfig
-      const currentDS = (selectedComponent as any).dataSource
       const updateData: any = { config: configOnly }
       // Include dataSource if:
       // 1. Original config had dataSource, OR
-      // 2. Original config didn't have dataSource but current component does (need to clear it)
+      // 2. The live component has one (added via live preview — must be cleared)
       if (dataSource !== undefined || currentDS !== undefined) {
         updateData.dataSource = dataSource
       }
       updateComponent(selectedComponent.id, updateData, false)
 
       // Revert title
-      if (originalTitle !== selectedComponent.title) {
+      if (originalTitle !== (liveComponent?.title ?? selectedComponent.title)) {
         updateComponent(selectedComponent.id, { title: originalTitle }, false)
       }
     }

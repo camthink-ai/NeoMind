@@ -1327,6 +1327,11 @@ export function UnifiedDataSourceConfig({
                 entityName = device?.name || entityId
               }
 
+              // Bound device no longer in the registry — flag the chip so a
+              // dangling binding can't be saved on without noticing.
+              const deviceMissing = source === 'device' &&
+                (devices?.length ?? 0) > 0 && !findDevice(devices, entityId)
+
               // Icon and color based on DataSource type
               let TypeIcon = Info
               let iconColor = 'text-accent-emerald'
@@ -1364,12 +1369,30 @@ export function UnifiedDataSourceConfig({
               return (
                 <div
                   key={dsIdentityKey(ds)}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-background border border-border text-xs group hover:border-border transition-all max-w-[140px]"
+                  title={deviceMissing ? t('dataSource.deviceRemoved', 'Bound device no longer exists') : undefined}
+                  className={cn(
+                    'inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs group transition-all max-w-[140px]',
+                    deviceMissing
+                      ? 'bg-warning-light border border-warning text-warning'
+                      : 'bg-background border border-border hover:border-border',
+                  )}
                 >
-                  <TypeIcon className={cn('h-4 w-4 shrink-0', iconColor)} />
-                  <span className="max-w-[80px] truncate text-foreground" title={entityName}>{entityName}</span>
-                  {showSeparator && <span className="text-muted-foreground">·</span>}
-                  {displayLabel && <span className="truncate text-foreground" title={displayLabel}>{displayLabel}</span>}
+                  <TypeIcon className={cn('h-4 w-4 shrink-0', deviceMissing ? 'text-warning' : iconColor)} />
+                  <span
+                    className={cn('max-w-[80px] truncate', deviceMissing ? 'text-warning' : 'text-foreground')}
+                    title={entityName}
+                  >
+                    {entityName}
+                  </span>
+                  {showSeparator && <span className={deviceMissing ? 'text-warning' : 'text-muted-foreground'}>·</span>}
+                  {displayLabel && (
+                    <span
+                      className={cn('truncate', deviceMissing ? 'text-warning' : 'text-foreground')}
+                      title={displayLabel}
+                    >
+                      {displayLabel}
+                    </span>
+                  )}
                 </div>
               )
             })}
@@ -1465,7 +1488,7 @@ export function UnifiedDataSourceConfig({
         ) : (
           <div className="flex-1 flex overflow-hidden">
             {/* Left: Device list */}
-            <div className="w-56 shrink-0 overflow-hidden flex flex-col">
+            <div className="w-56 shrink-0 overflow-hidden flex flex-col border-r border-border">
               {renderDeviceList()}
             </div>
 
@@ -1487,7 +1510,7 @@ export function UnifiedDataSourceConfig({
         ) : (
           <div className="flex-1 flex overflow-hidden">
             {/* Left: Extension list */}
-            <div className="w-56 shrink-0 overflow-hidden flex flex-col">
+            <div className="w-56 shrink-0 overflow-hidden flex flex-col border-r border-border">
               {renderExtensionList()}
             </div>
 

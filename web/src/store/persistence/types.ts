@@ -160,15 +160,31 @@ function positionToDTO(p: ComponentPosition): ComponentDTO['position'] {
   }
 }
 
+/**
+ * Strip runtime-only fields from a data source before it reaches the API DTO.
+ * `_saveTs` is an in-memory re-render stamp written after config saves; any
+ * layout drag that follows would otherwise serialize the stamp into the
+ * backend payload.
+ */
+function stripRuntimeFields(ds: unknown): unknown {
+  if (Array.isArray(ds)) return ds.map(stripRuntimeFields)
+  if (ds && typeof ds === 'object') {
+    const { _saveTs, ...rest } = ds as Record<string, unknown>
+    return rest
+  }
+  return ds
+}
+
 /** Convert a single DashboardComponent to API snake_case component DTO */
 function componentToDTO(c: DashboardComponent): ComponentDTO {
   const isGeneric = isGenericComponent(c)
+  const dataSource = (isGeneric ? (c as GenericComponent).dataSource : (c as BusinessComponent).dataSource) as (Record<string, unknown> | Record<string, unknown>[]) | undefined
   return {
     id: c.id,
     type: c.type,
     position: positionToDTO(c.position),
     title: c.title,
-    data_source: (isGeneric ? (c as GenericComponent).dataSource : (c as BusinessComponent).dataSource) as (Record<string, unknown> | Record<string, unknown>[]) | undefined,
+    data_source: dataSource === undefined ? undefined : (stripRuntimeFields(dataSource) as (Record<string, unknown> | Record<string, unknown>[])),
     display: isGeneric ? ((c as GenericComponent).display as Record<string, unknown> | undefined) : undefined,
     config: 'config' in c ? ((c as GenericComponent).config as Record<string, unknown> | undefined) : undefined,
     actions: isGeneric && (c as GenericComponent).actions
