@@ -130,21 +130,17 @@ import { initVisualViewport } from "@/hooks/useVisualViewport"
     if (config.js_code) definition.js_code = config.js_code
     if (config.output_prefix) definition.output_prefix = config.output_prefix
 
-    try {
-      const result = await api.updateAutomation(id, {
-        name: config.name,
-        description: config.description,
-        definition: Object.keys(definition).length > 0 ? definition : undefined,
-      })
-      const automation = result.automation
-      return {
-        id: automation.id,
-        name: automation.name,
-        status: automation.enabled ? 'active' : 'paused',
-      }
-    } catch (error) {
-      // Throw error so caller can handle fallback (e.g., recreate Transform)
-      throw error
+    // Errors propagate so the caller can handle fallback (e.g., recreate Transform)
+    const result = await api.updateAutomation(id, {
+      name: config.name,
+      description: config.description,
+      definition: Object.keys(definition).length > 0 ? definition : undefined,
+    })
+    const automation = result.automation
+    return {
+      id: automation.id,
+      name: automation.name,
+      status: automation.enabled ? 'active' : 'paused',
     }
   },
 
@@ -282,7 +278,9 @@ initVisualViewport()
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <BrowserRouter future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+    {/* react-router v7: v7_relativeSplatPath / v7_startTransition are now the
+        only behaviours — the old `future` prop no longer exists. */}
+    <BrowserRouter>
       <ThemeProvider>
         <App />
       </ThemeProvider>

@@ -16,6 +16,36 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
+  frontend-checks:
+    name: Frontend lint / typecheck / unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Errors are fatal; the ~1100 pre-existing warnings are tracked for a
+      # dedicated cleanup — tighten to `npm run lint` (--max-warnings 0) once
+      # that lands.
+      - name: Lint (error-level only)
+        run: npm run lint:ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npx vitest run
+
   skill-cli-drift:
     name: Skill ↔ CLI drift check
     runs-on: ubuntu-latest

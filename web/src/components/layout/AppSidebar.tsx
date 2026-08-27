@@ -108,7 +108,7 @@ export function AppSidebar() {
   }, [isMacTauri])
 
   const handleNavigate = useCallback(
-    (path: string) => startTransition(() => navigate(path)),
+    (path: string) => startTransition(() => { navigate(path) }),
     [navigate]
   )
 
