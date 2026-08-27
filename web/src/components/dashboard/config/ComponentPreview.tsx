@@ -257,7 +257,7 @@ export const ComponentPreview = memo(function ComponentPreview({
         className={cn(
           'w-full bg-muted overflow-hidden relative',
           'flex items-center justify-center',
-          'transition-opacity duration-200',
+          'transition-opacity duration-normal',
           isTransitioning && 'opacity-60',
           fillContainer ? 'flex-1 min-h-0' : ''
         )}
@@ -276,7 +276,7 @@ export const ComponentPreview = memo(function ComponentPreview({
         ) : (
           <div
             className={cn(
-              'transition-all duration-200 ease-out',
+              'transition-all duration-normal ease-out',
               isTransitioning && 'blur-[1px]'
             )}
             style={containerSize ? {

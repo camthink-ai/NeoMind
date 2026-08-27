@@ -560,7 +560,7 @@ export function UnifiedDataSourceConfig({
                     setSelectedDeviceId(device.id)
                   }}
                   className={cn(
-                    'w-full flex items-center gap-2 px-3 py-2 text-left border-b transition-all duration-150',
+                    'w-full flex items-center gap-2 px-3 py-2 text-left border-b transition-all duration-fast',
                     isDeviceRowSelected
                       ? 'bg-muted border-l-2 border-l-primary'
                       : 'bg-transparent border-l-2 border-l-transparent hover:bg-muted'
@@ -770,7 +770,7 @@ export function UnifiedDataSourceConfig({
                   handleSelectItem(ds)
                 }}
                 className={cn(
-                  'w-full text-left transition-colors duration-150',
+                  'w-full text-left transition-colors duration-fast',
                   'group relative rounded-md border',
                   item.isSelected
                     ? 'bg-muted border-border'
@@ -1124,7 +1124,7 @@ export function UnifiedDataSourceConfig({
                     type="button"
                     onClick={() => handleSelectItem(createDeviceLocationDS(device.id))}
                     className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all duration-150',
+                      'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all duration-fast',
                       devIsSelected
                         ? 'bg-muted border-border'
                         : 'bg-card border-border hover:bg-accent hover:border-border'
@@ -1181,7 +1181,7 @@ export function UnifiedDataSourceConfig({
                   type="button"
                   onClick={() => handleSelectItem(createSystemDS(metric.id))}
                   className={cn(
-                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all duration-150',
+                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all duration-fast',
                     metricIsSelected
                       ? 'bg-muted border-border'
                       : 'bg-card border-border hover:bg-accent hover:border-border'
@@ -1243,7 +1243,7 @@ export function UnifiedDataSourceConfig({
                     type="button"
                     onClick={() => handleSelectItem(createTransformDS(source.source_name, source.field))}
                     className={cn(
-                      'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all duration-150',
+                      'w-full flex items-center gap-3 px-3 py-2.5 rounded-lg border text-left transition-all duration-fast',
                       tfIsSelected
                         ? 'bg-muted border-border'
                         : 'bg-card border-border hover:bg-accent hover:border-border'

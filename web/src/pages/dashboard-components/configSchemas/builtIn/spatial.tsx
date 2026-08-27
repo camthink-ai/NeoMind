@@ -389,7 +389,7 @@ export function getMapDisplaySchema(config: any, ctx: SchemaContext, u: Updaters
                           label: t('mapDisplay.device'),
                           color: 'bg-success',
                           textColor: 'text-success',
-                          bgColor: 'bg-success-light dark:bg-success-light',
+                          bgColor: 'bg-success-light',
                           borderColor: 'border-success-light dark:border-success-light',
                           icon: MapPin,
                           description: t('mapDisplay.deviceDesc')
@@ -783,7 +783,7 @@ export function getCustomLayerSchema(config: any, ctx: SchemaContext, u: Updater
                           label: t('layerDisplay.device'),
                           color: 'bg-success',
                           textColor: 'text-success',
-                          bgColor: 'bg-success-light dark:bg-success-light',
+                          bgColor: 'bg-success-light',
                           borderColor: 'border-success-light dark:border-success-light',
                           icon: MapPin,
                           description: t('layerDisplay.deviceDesc')

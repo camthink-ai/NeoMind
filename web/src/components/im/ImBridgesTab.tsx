@@ -265,7 +265,7 @@ export function ImBridgesTab() {
           return (
             <Card
               key={def.id}
-              className="cursor-pointer transition-all duration-200 hover:shadow-md"
+              className="cursor-pointer transition-all duration-normal hover:shadow-md"
               onClick={() => (bridge ? openDetail(bridge) : handlePlatformSelect(def))}
             >
               <CardContent className="p-4">

@@ -384,4 +384,4 @@ export const scrollableBody = [
 /**
  * Standard transition — used for interactive elements
  */
-export const transitionDefault = 'transition-all duration-200'
+export const transitionDefault = 'transition-all duration-normal'

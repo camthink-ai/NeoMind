@@ -64,7 +64,7 @@ export function MobileItemSelector({
     : (selectedExtension?.name || t('extensions:selectExtension') || 'Select Extension')
 
   return createPortal(
-    <div className="fixed inset-0 z-[100] bg-background animate-in slide-in-from-right-0 duration-200">
+    <div className="fixed inset-0 z-[100] bg-background animate-in slide-in-from-right-0 duration-normal">
       <div className="flex h-full w-full flex-col">
         {/* Header */}
         <div

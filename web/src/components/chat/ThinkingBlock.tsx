@@ -60,7 +60,7 @@ export function ThinkingBlock({
           <span className={cn("text-body sm:text-sm", "font-medium")}>{t("thinking.title")}</span>
           <div className="flex-1" />
           <ChevronDown className={cn(
-            "h-4 w-4 text-muted-foreground transition-transform duration-200",
+            "h-4 w-4 text-muted-foreground transition-transform duration-normal",
             isExpanded && "rotate-180"
           )} />
         </button>
@@ -107,7 +107,7 @@ export function ThinkingBlock({
         </span>
 
         <ChevronDown className={cn(
-          "h-4 w-4 text-muted-foreground transition-transform duration-200",
+          "h-4 w-4 text-muted-foreground transition-transform duration-normal",
           isExpanded && "rotate-180"
         )} />
       </button>

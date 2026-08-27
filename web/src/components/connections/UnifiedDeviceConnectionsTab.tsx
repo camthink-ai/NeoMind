@@ -537,7 +537,7 @@ export function UnifiedDeviceConnectionsTab() {
               <Card
                 key={type.id}
                 className={cn(
-                  "cursor-pointer transition-all duration-200 hover:shadow-md",
+                  "cursor-pointer transition-all duration-normal hover:shadow-md",
                   isActive && "border-success border-2"
                 )}
                 onClick={() => handleTypeSelect(type.id)}
@@ -790,7 +790,7 @@ export function UnifiedDeviceConnectionsTab() {
                 <Card
                   key={instance.id}
                   className={cn(
-                    "transition-all duration-200 hover:shadow-md",
+                    "transition-all duration-normal hover:shadow-md",
                     instance.running && "border-success"
                   )}
                 >

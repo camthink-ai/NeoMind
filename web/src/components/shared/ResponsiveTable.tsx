@@ -232,7 +232,7 @@ export function ResponsiveTable<T extends object>({
                   <tr
                     key={rowKey(rowData)}
                     className={cn(
-                      "border-b transition-colors duration-150 hover:bg-muted-30 animate-fade-in-up",
+                      "border-b transition-colors duration-fast hover:bg-muted-30 animate-fade-in-up",
                       onRowClick && 'cursor-pointer',
                       rowClass
                     )}

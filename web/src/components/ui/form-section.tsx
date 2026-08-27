@@ -105,7 +105,7 @@ export const FormSection = forwardRef<HTMLDivElement, FormSectionProps>(({
 
         {collapsible && (
           <ChevronDown className={cn(
-            'h-4 w-4 text-muted-foreground transition-transform duration-200 shrink-0',
+            'h-4 w-4 text-muted-foreground transition-transform duration-normal shrink-0',
             isExpanded && 'rotate-180'
           )} />
         )}
@@ -114,7 +114,7 @@ export const FormSection = forwardRef<HTMLDivElement, FormSectionProps>(({
       {/* Content */}
       <div
         className={cn(
-          'overflow-hidden transition-all duration-200 ease-out',
+          'overflow-hidden transition-all duration-normal ease-out',
           isExpanded ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
         )}
       >

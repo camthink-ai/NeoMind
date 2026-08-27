@@ -1383,7 +1383,7 @@ function ReviewStep({ data, onEdit, onValidate, validating, validationResult }: 
             {validationResult && (
               <div className={cn(
                 "p-3 rounded-lg text-sm",
-                validationResult.valid ? "bg-success-light text-success dark:bg-success-light dark:text-success" : "bg-muted text-error"
+                validationResult.valid ? "bg-success-light text-success" : "bg-muted text-error"
               )}>
                 <div className="flex items-center gap-2 font-medium">
                   {validationResult.valid ? <Check className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}
@@ -1418,8 +1418,8 @@ function FinishStep({ deviceType, onOpenChange, isEditMode = false }: FinishStep
 
   return (
     <div className="flex flex-col items-center justify-center h-full py-8">
-      <div className="w-16 h-16 rounded-full bg-success-light dark:bg-success-light flex items-center justify-center mb-6">
-        <Check className="h-8 w-8 text-success dark:text-success" />
+      <div className="w-16 h-16 rounded-full bg-success-light flex items-center justify-center mb-6">
+        <Check className="h-8 w-8 text-success" />
       </div>
       <h3 className="text-xl font-semibold mb-2">
         {isEditMode ? 'Device Type Updated Successfully!' : 'Device Type Added Successfully!'}
@@ -2286,8 +2286,8 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-4 gap-2 sm:gap-4">
               <Card className="p-3 sm:p-4">
                 <div className="flex items-center gap-2 sm:gap-3">
-                  <div className="p-2 rounded-lg bg-success-light dark:bg-success-light">
-                    <ArrowDown className="h-4 w-4 sm:h-5 sm:w-5 text-success dark:text-success" />
+                  <div className="p-2 rounded-lg bg-success-light">
+                    <ArrowDown className="h-4 w-4 sm:h-5 sm:w-5 text-success" />
                   </div>
                   <div>
                     <div className="text-lg sm:text-2xl font-semibold">{deviceType.metrics?.length || 0}</div>

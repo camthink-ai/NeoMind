@@ -125,7 +125,7 @@ export function StyledBrandName({
         // Orange shadow effect (3D) - top-right direction with #EB4C27
         'drop-shadow-[1.5px_-1.5px_0_var(--brand-shadow)]',
         // Transition
-        'transition-all duration-200',
+        'transition-all duration-normal',
         sizeClasses[size],
         className
       )}

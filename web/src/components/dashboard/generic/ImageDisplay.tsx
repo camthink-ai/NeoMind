@@ -275,7 +275,7 @@ export const ImageDisplay = memo(function ImageDisplay({
             src={displaySrc}
             alt={altText}
             className={cn(
-              'w-full h-full transition-transform duration-200',
+              'w-full h-full transition-transform duration-normal',
               fit === 'contain' && 'object-contain',
               fit === 'cover' && 'object-cover',
               fit === 'fill' && 'object-fill',

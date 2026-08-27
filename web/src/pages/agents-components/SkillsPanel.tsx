@@ -481,7 +481,7 @@ anti_triggers:
           iconBg={
             dialogSkill
               ? categoryConfig[dialogSkill.category]?.color || "bg-muted"
-              : "bg-success-light dark:bg-success-light"
+              : "bg-success-light"
           }
           iconColor={dialogMode === "create" ? "text-success" : undefined}
           title={dialogTitle}

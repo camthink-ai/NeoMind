@@ -614,7 +614,7 @@ export function UnifiedLLMBackendsTab({
     const builtinCard = builtinStatus && builtinInfo ? (
       <Card
         className={cn(
-          'mb-4 transition-all duration-200',
+          'mb-4 transition-all duration-normal',
           builtinIsActive && 'border-success'
         )}
       >
@@ -885,7 +885,7 @@ export function UnifiedLLMBackendsTab({
               <Card
                 key={pid}
                 className={cn(
-                  "cursor-pointer transition-all duration-200 hover:shadow-md",
+                  "cursor-pointer transition-all duration-normal hover:shadow-md",
                   hasActive && "border-success border-2"
                 )}
                 onClick={() => {
@@ -931,7 +931,7 @@ export function UnifiedLLMBackendsTab({
             return (
               <Card
                 className={cn(
-                  "cursor-pointer transition-all duration-200 hover:shadow-md",
+                  "cursor-pointer transition-all duration-normal hover:shadow-md",
                   hasActive && "border-success border-2"
                 )}
                 onClick={() => {
@@ -1159,7 +1159,7 @@ export function UnifiedLLMBackendsTab({
                 <Card
                   key={instance.id}
                   className={cn(
-                    "transition-all duration-200",
+                    "transition-all duration-normal",
                     isActive && "border-success"
                   )}
                 >

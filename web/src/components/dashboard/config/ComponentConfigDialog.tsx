@@ -251,7 +251,7 @@ export function ComponentConfigDialog({
     return createPortal(
       <>
         {open && (
-          <div className="fixed inset-0 z-[100] bg-background animate-in fade-in duration-200">
+          <div className="fixed inset-0 z-[100] bg-background animate-in fade-in duration-normal">
             <div className="flex h-full w-full flex-col">
               {/* Header */}
               <div
@@ -452,7 +452,7 @@ export function ComponentConfigDialog({
       {/* Header */}
       <FullScreenDialogHeader
         icon={<Settings className="h-5 w-5" />}
-        iconBg="bg-muted dark:bg-muted"
+        iconBg="bg-muted"
         iconColor="text-primary"
         title={t('componentConfig.editComponent')}
         subtitle={componentType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
@@ -637,7 +637,7 @@ function MobileConfigCard({
         </div>
       </button>
       {isExpanded && (
-        <div className="p-4 bg-background animate-in slide-in-from-top-2 duration-200 border-t border-border">
+        <div className="p-4 bg-background animate-in slide-in-from-top-2 duration-normal border-t border-border">
           {children}
         </div>
       )}

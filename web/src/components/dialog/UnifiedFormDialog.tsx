@@ -235,7 +235,7 @@ export function UnifiedFormDialog({
     return createPortal(
       open ? (
         <div
-          className={cn("fixed inset-0 animate-in fade-in duration-200", overlayZIndex)}
+          className={cn("fixed inset-0 animate-in fade-in duration-normal", overlayZIndex)}
           // Use opaque --chrome (matches MobilePageHeader) instead of
           // bg-background which has /97% alpha in dark mode and lets the
           // previous layer bleed through, creating a visible color split.
@@ -331,7 +331,7 @@ export function UnifiedFormDialog({
       {/* Backdrop */}
       {open && (
         <div
-          className={cn("fixed inset-0 bg-overlay-heavy backdrop-blur-sm animate-in fade-in duration-200", overlayZIndex)}
+          className={cn("fixed inset-0 bg-overlay-heavy backdrop-blur-sm animate-in fade-in duration-normal", overlayZIndex)}
           onClick={(e) => { e.stopPropagation(); if (!isDisabled) handleClose() }}
         />
       )}
@@ -344,7 +344,7 @@ export function UnifiedFormDialog({
             dialogZIndex,
             'grid w-full gap-0',
             'bg-popover border shadow-lg',
-            'duration-200',
+            'duration-normal',
             'animate-in fade-in zoom-in-95 slide-in-from-left-1/2 slide-in-from-top-[48%]',
             'rounded-lg sm:rounded-xl',
             'overflow-hidden',

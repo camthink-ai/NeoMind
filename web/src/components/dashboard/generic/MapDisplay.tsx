@@ -214,7 +214,7 @@ const MapMarkerDot = memo(function MapMarkerDot({ marker, onClick, isSelected = 
         return (
         <div
           className={cn(
-            'absolute z-50 rounded-lg shadow-xl animate-in fade-in zoom-in-95 duration-150',
+            'absolute z-50 rounded-lg shadow-xl animate-in fade-in zoom-in-95 duration-fast',
             _isImg
               ? 'min-w-[160px] max-w-[280px] overflow-hidden'
               : 'min-w-[200px] max-w-[280px] border bg-bg-95 backdrop-blur p-3',

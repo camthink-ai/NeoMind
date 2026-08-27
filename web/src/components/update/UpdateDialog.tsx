@@ -140,7 +140,7 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
   const getStatusColor = () => {
     switch (installStatus) {
       case 'done':
-        return 'bg-success-light dark:bg-success-light text-success dark:text-success'
+        return 'bg-success-light text-success'
       case 'error':
         return 'bg-error-light text-error'
       case 'downloading':
@@ -279,8 +279,8 @@ export function UpdateDialog({ open, onClose }: UpdateDialogProps) {
 
         {/* Success Message */}
         {installStatus === 'done' && (
-          <div className="flex items-center gap-2 p-3 rounded-md bg-success-light dark:bg-success-light border border-success-light dark:border-success-light">
-            <Check className="w-5 h-5 text-success dark:text-success" />
+          <div className="flex items-center gap-2 p-3 rounded-md bg-success-light border border-success-light dark:border-success-light">
+            <Check className="w-5 h-5 text-success" />
             <p className="text-sm text-success">
               {t('settings:updateCompleteMessage')}
             </p>

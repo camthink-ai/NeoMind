@@ -234,7 +234,7 @@ export function CompactTaskProgress({ task, className }: TaskProgressProps) {
       <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
         <div
           className={cn(
-            "h-full transition-all duration-300",
+            "h-full transition-all duration-slow",
             task.status === "completed" && "bg-success",
             task.status === "failed" && "bg-error",
             task.status !== "completed" && task.status !== "failed" && "bg-info"

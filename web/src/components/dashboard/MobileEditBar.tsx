@@ -72,7 +72,7 @@ const ActionButton = memo(function ActionButton({
         'flex flex-col items-center justify-center gap-1',
         'min-w-[72px] min-h-[64px]',
         'p-3 rounded-xl',
-        'transition-all duration-200',
+        'transition-all duration-normal',
         'active:scale-95',
         'cursor-pointer',
         'touch-action-manipulation',
@@ -117,7 +117,7 @@ const CompactButton = memo(function CompactButton({
         'flex items-center justify-center',
         'min-w-[56px] min-h-[56px]',
         'rounded-xl',
-        'transition-all duration-200',
+        'transition-all duration-normal',
         'active:scale-95',
         'cursor-pointer',
         'touch-action-manipulation',
@@ -182,7 +182,7 @@ export const MobileEditBar = memo(function MobileEditBar({
       <div
         className={cn(
           'fixed inset-0 bg-overlay-light backdrop-blur-sm z-40',
-          'transition-opacity duration-200',
+          'transition-opacity duration-normal',
           isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         )}
         onClick={onClose}
@@ -195,7 +195,7 @@ export const MobileEditBar = memo(function MobileEditBar({
           'bg-bg-95 backdrop-blur-md',
           'rounded-xl shadow-xl',
           'border border-border',
-          'transition-all duration-300 ease-out',
+          'transition-all duration-slow ease-out',
           // Safe area padding
           'pb-[calc(1rem+env(safe-area-inset-bottom,0px))]',
           isOpen
@@ -295,7 +295,7 @@ export const CompactMobileEditBar = memo(function CompactMobileEditBar({
           'rounded-xl shadow-xl',
           'border border-border',
           'p-2',
-          'transition-all duration-300 ease-out',
+          'transition-all duration-slow ease-out',
           'pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))]',
           isOpen
             ? 'translate-y-0 opacity-100 scale-100'
@@ -356,7 +356,7 @@ export const FloatingEditButton = memo(function FloatingEditButton({
         'min-h-[56px] px-6',
         'bg-primary text-primary-foreground',
         'rounded-full shadow-lg',
-        'transition-all duration-300 ease-out',
+        'transition-all duration-slow ease-out',
         'active:scale-95',
         // Position
         'left-1/2 -translate-x-1/2',

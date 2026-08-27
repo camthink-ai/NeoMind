@@ -551,7 +551,7 @@ export function SessionSidebar({
           // bleed through, making the drawer read darker than the chrome
           // layer it slides out from.
           "bg-popover shadow-xl flex flex-col",
-          "transform transition-transform duration-300 ease-out",
+          "transform transition-transform duration-slow ease-out",
           open ? "translate-x-0" : "-translate-x-full"
         )}
       >

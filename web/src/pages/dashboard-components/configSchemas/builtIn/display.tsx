@@ -525,7 +525,7 @@ export function getVideoDisplaySchema(config: any, ctx: SchemaContext, u: Update
                   {/* Type-specific hints */}
                   {config.type === 'hls' && (
                     <div className="p-2 bg-success-light border border-success-light rounded-md">
-                      <p className="text-xs text-success dark:text-success">
+                      <p className="text-xs text-success">
                         <strong>{t('videoDisplay.hlsUrlFormat')}:</strong> http://server/path/index.m3u8
                       </p>
                     </div>

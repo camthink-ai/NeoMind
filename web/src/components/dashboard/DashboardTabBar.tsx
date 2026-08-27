@@ -469,7 +469,7 @@ export function DashboardTabBar({
                     className={cn(
                       "flex items-center overflow-hidden",
                       "max-w-0 opacity-0",
-                      "transition-[max-width,opacity] duration-200",
+                      "transition-[max-width,opacity] duration-normal",
                       "[transition-timing-function:cubic-bezier(0.34,1.56,0.64,1)]",
                       // 28px button + 4px right breathing room so the hover
                       // background clears the tab's rounded right edge.

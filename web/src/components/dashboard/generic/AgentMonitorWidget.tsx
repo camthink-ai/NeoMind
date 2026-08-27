@@ -522,7 +522,7 @@ const FlowNode = memo(function FlowNode({ execution, isLatest, isRunning, onClic
         onClick()
       }}
       className={cn(
-        "w-full text-left group relative rounded-lg border transition-all duration-200",
+        "w-full text-left group relative rounded-lg border transition-all duration-normal",
         "hover:shadow-md hover:border-border",
         isLatest ? "border-border bg-muted" : "border-border bg-bg-50",
         isRunning && "border-info bg-info-light"

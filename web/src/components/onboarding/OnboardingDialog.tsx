@@ -177,7 +177,7 @@ export function OnboardingDialog({ open, onOpenChange, status, onDismiss }: Onbo
                   aria-label={t(stage.label)}
                 >
                   <span className={cn(
-                    "flex items-center justify-center w-8 h-8 rounded-full transition-all duration-300",
+                    "flex items-center justify-center w-8 h-8 rounded-full transition-all duration-slow",
                     completed && !active && "bg-success text-primary-foreground",
                     completed && active && "bg-success text-primary-foreground ring-4 ring-primary-light",
                     !completed && active && "bg-primary text-primary-foreground ring-4 ring-primary-light",

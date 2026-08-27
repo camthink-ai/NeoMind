@@ -224,7 +224,7 @@ export function CommandButton({
           'flex-row items-center',
           config.contentGap,
           config.padding,
-          'transition-all duration-200',
+          'transition-all duration-normal',
           'relative overflow-hidden group',
           !disabled && !sending && hasCommand && !editMode && 'hover:shadow-md hover:bg-accent',
           (disabled || sending || !hasCommand || editMode) && 'opacity-50 cursor-not-allowed',
@@ -234,7 +234,7 @@ export function CommandButton({
       >
         {/* Icon Section */}
         <div className={cn(
-          'flex items-center justify-center shrink-0 rounded-full transition-all duration-300',
+          'flex items-center justify-center shrink-0 rounded-full transition-all duration-slow',
           config.iconContainer,
           'bg-primary text-primary-foreground shadow-md',
         )}>
@@ -253,7 +253,7 @@ export function CommandButton({
 
         {/* Arrow indicator */}
         <ChevronRight className={cn(
-          'h-4 w-4 text-muted-foreground transition-transform duration-200',
+          'h-4 w-4 text-muted-foreground transition-transform duration-normal',
           !disabled && !sending && hasCommand && !editMode && 'group-hover:translate-x-0.5'
         )} />
 

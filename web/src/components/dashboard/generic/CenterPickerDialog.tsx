@@ -112,7 +112,7 @@ export function CenterPickerDialog({
         {/* Crosshair overlay at center */}
         <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
           <div className={cn(
-            "w-8 h-8 relative transition-all duration-200",
+            "w-8 h-8 relative transition-all duration-normal",
             hasSelected && "scale-110"
           )}>
             {/* Horizontal line */}
@@ -137,7 +137,7 @@ export function CenterPickerDialog({
             </div>
           </div>
           {hasSelected && (
-            <div className="text-xs text-success dark:text-success">
+            <div className="text-xs text-success">
               ✓ {t('mapDisplay.centerSelected', '已选择新位置')}
             </div>
           )}

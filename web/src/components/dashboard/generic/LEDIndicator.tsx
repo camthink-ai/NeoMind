@@ -314,7 +314,7 @@ export const LEDIndicator = memo(function LEDIndicator({
         {/* LED dot */}
         <div
           className={cn(
-            'rounded-full transition-all duration-300',
+            'rounded-full transition-all duration-slow',
             size === 'sm' ? 'h-2.5 w-2.5' : size === 'md' ? 'h-4 w-4' : 'h-4 w-4',
             isActive && 'ring-2 ring-white/20'
           )}

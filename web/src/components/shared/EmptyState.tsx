@@ -116,7 +116,8 @@ export function EmptyStateCompact({
           {icon}
         </div>
       )}
-      <p className="font-medium text-muted-foreground">{title}</p>
+      {/* explicit size: compact used to silently inherit whatever the parent set */}
+      <p className="text-base font-medium text-muted-foreground">{title}</p>
       {description && (
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       )}

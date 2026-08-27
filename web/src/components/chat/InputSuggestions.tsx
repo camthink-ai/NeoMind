@@ -247,7 +247,7 @@ export function InputSuggestions({ input, onSelect, visible }: InputSuggestionsP
       <div className={cn(
         "bg-[var(--popover)] border border-[var(--border)] rounded-lg",
         "shadow-lg overflow-hidden",
-        "animate-in slide-in-from-bottom-2 duration-200"
+        "animate-in slide-in-from-bottom-2 duration-normal"
       )}>
         {/* Header with time context and device count */}
         {(timeGreeting || deviceCountText) && (
@@ -370,7 +370,7 @@ function SuggestionItem({ suggestion, index, selectedIndex, onSelect, onMouseEnt
       onMouseEnter={onMouseEnter}
       className={cn(
         "w-full flex items-center gap-3 px-3 py-2.5 text-left",
-        "transition-colors duration-150",
+        "transition-colors duration-fast",
         isSelected
           ? "bg-[var(--accent)] text-[var(--accent-foreground)]"
           : "hover:bg-[var(--accent)]/50"

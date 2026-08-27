@@ -39,7 +39,7 @@ export function MobileExtensionMetricsList({
             type="button"
             onClick={() => onSelectItem(itemKey)}
             className={cn(
-              'w-full text-left transition-colors duration-150',
+              'w-full text-left transition-colors duration-fast',
               'group relative rounded-lg border p-4',
               isSelected
                 ? 'bg-muted border-border'

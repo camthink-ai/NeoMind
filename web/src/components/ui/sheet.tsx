@@ -37,7 +37,7 @@ const sheetVariants = cva(
   // a bg-background sheet reads as a dirty gray next to the pure-white
   // cards on the page. --popover is opaque in both themes and is the
   // semantic "floating surface" token.
-  "fixed z-50 gap-4 bg-popover shadow-lg transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
+  "fixed z-50 gap-4 bg-popover shadow-lg transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-slow data-[state=open]:duration-500",
   {
     variants: {
       side: {

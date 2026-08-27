@@ -470,7 +470,7 @@ export function DashboardListSidebar({
           // drawers. Previously bg-background (dark-mode /97% alpha) which
           // produced a visible dark tint vs the topnav chrome above.
           'bg-popover shadow-xl flex flex-col',
-          'transform transition-transform duration-300 ease-out',
+          'transform transition-transform duration-slow ease-out',
           open ? 'translate-x-0' : '-translate-x-full',
           className
         )}

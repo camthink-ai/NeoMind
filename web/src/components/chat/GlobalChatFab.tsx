@@ -162,7 +162,7 @@ export function GlobalChatFab() {
           "fixed bottom-[calc(5rem+var(--keyboard-offset,0px))] right-6 z-50",
           "w-14 h-14 rounded-full",
           "flex items-center justify-center",
-          "transition-all duration-300 ease-out",
+          "transition-all duration-slow ease-out",
           "safe-bottom",
           "bg-primary text-primary-foreground",
           "border border-transparent",
@@ -198,7 +198,7 @@ export function GlobalChatFab() {
           className={cn(
             "fixed z-[90]",
             "origin-bottom-right",
-            "transition-all duration-300 ease-out",
+            "transition-all duration-slow ease-out",
             panelState !== "closed"
               ? "bottom-[calc(6rem+var(--keyboard-offset,0px))] right-6 h-[70dvh] sm:h-[560px] rounded-xl opacity-100 scale-100"
               : "bottom-20 right-6 w-14 h-14 rounded-full opacity-0 scale-0 pointer-events-none",

@@ -356,7 +356,7 @@ export function DataExplorerPage() {
       onRowClick={(row) => setSelectedSource(row as unknown as UnifiedDataSourceInfo)}
       loading={loading}
       flexHeight
-      className={isSearchPending ? 'opacity-60 transition-opacity duration-200' : undefined}
+      className={isSearchPending ? 'opacity-60 transition-opacity duration-normal' : undefined}
       emptyState={
         <EmptyState
           icon={<Database className="h-12 w-12" />}

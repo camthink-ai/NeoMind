@@ -130,7 +130,7 @@ export function MobileMetricsList({
           type="button"
           onClick={() => onSelectItem(item.key)}
           className={cn(
-            'w-full text-left transition-colors duration-150',
+            'w-full text-left transition-colors duration-fast',
             'group relative rounded-lg border p-4',
             item.isSelected
               ? 'bg-muted border-border'
