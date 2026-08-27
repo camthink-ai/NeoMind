@@ -32,8 +32,26 @@ export interface TimeSeriesData {
 
 /**
  * Convert TimeWindowType to hours (for backward compatibility with API).
+ *
+ * Calendar windows ('today'/'yesterday'/'this_week') are anchored to the same
+ * local-day boundaries getTimeRange() queries with — NOT fixed 24h/168h
+ * multiples, which leaked neighbouring days into live-event filters near
+ * midnight and pulled last week's tail into 'this_week' on non-Mondays.
  */
 export function timeWindowToHours(timeWindow: TimeWindowType): number {
+  const now = Math.floor(Date.now() / 1000)
+  switch (timeWindow) {
+    case 'today':
+      return Math.max((now - getStartOfDay(now)) / 3600, 1 / 60)
+    case 'yesterday':
+      // Window is [startOfYesterday, startOfToday]; relative to now that is
+      // (elapsed-today + 24h) back.
+      return (now - getStartOfDay(now)) / 3600 + 24
+    case 'this_week':
+      return Math.max((now - getStartOfWeek(now)) / 3600, 1 / 60)
+    default:
+      break
+  }
   const conversions: Record<TimeWindowType, number> = {
     'now': 0,
     'last_5min': 5 / 60,
@@ -42,9 +60,9 @@ export function timeWindowToHours(timeWindow: TimeWindowType): number {
     'last_1hour': 1,
     'last_6hours': 6,
     'last_24hours': 24,
-    'today': 24,
-    'yesterday': 24,
-    'this_week': 24 * 7,
+    'today': 0,   // handled above
+    'yesterday': 0, // handled above
+    'this_week': 0, // handled above
     'custom': 1,  // Default to 1 hour for custom
   }
   return conversions[timeWindow] ?? 1
