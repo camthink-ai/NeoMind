@@ -110,6 +110,15 @@ export const createAuthSlice: StateCreator<
     } finally {
       tokenManager.clearToken()
       tokenManager.clearUser()
+      // Drop the previous user's dashboard cache, current-dashboard pointer,
+      // and local→server ID mapping so none of it leaks into the next
+      // account's session (dynamic import breaks the slice ↔ store cycle).
+      try {
+        const { useStore } = await import('@/store')
+        useStore.getState().clearDashboards()
+      } catch {
+        // Store not mounted yet — nothing cached to clear
+      }
       set({
         user: null,
         token: null,

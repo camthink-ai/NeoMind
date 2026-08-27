@@ -43,5 +43,6 @@
   "dashboard": {
     "defaultTitle": "仪表板",
     "newChat": "新建对话"
-  }
+  },
+  "syncFailureNotify": "仪表盘改动已保存到本地，但未能同步到服务器。"
 }

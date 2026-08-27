@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Search, Database, Cpu, Puzzle, Workflow, Brain, History, Loader2, Eye, Download, Clock, Copy, Check, Send, Plus } from 'lucide-react'
+import { Search, Database, Cpu, Puzzle, Workflow, Brain, History, Loader2, Eye, Download, Clock, Copy, Check, Send, Plus, AlertTriangle, RefreshCw } from 'lucide-react'
 import { api } from '@/lib/api'
 import { isBase64Image, getImageDataUrl } from '@/pages/devices/utils'
 import { cn } from '@/lib/utils'
@@ -34,6 +34,7 @@ import { textNano, textMini } from "@/design-system/tokens/typography"
 import { ExportDataDialog } from '@/components/data/ExportDataDialog'
 import { formatTimestamp } from '@/lib/utils/format'
 import { PushTargetsTab } from '@/components/datapush/PushTargetsTab'
+import { copyToClipboard } from '@/lib/clipboard'
 
 type TabValue = 'data' | 'push'
 
@@ -109,6 +110,10 @@ export function DataExplorerPage() {
   const [historyRange, setHistoryRange] = useState<string>('1h')
   const [historyData, setHistoryData] = useState<Array<{ timestamp: number; value: unknown; quality: number | null }>>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  // Distinguishes "query failed" from "genuinely no data" — collapsing the two
+  // made an unreachable backend look identical to an empty series.
+  const [historyError, setHistoryError] = useState(false)
+  const [historyRetryTick, setHistoryRetryTick] = useState(0)
   const [historyPage, setHistoryPage] = useState(1)
   const historyPageSize = 10
   const [copiedValue, setCopiedValue] = useState(false)
@@ -206,6 +211,7 @@ export function DataExplorerPage() {
 
     let stale = false
     setHistoryLoading(true)
+    setHistoryError(false)
     setHistoryPage(1)
     api.queryTelemetry(source, metric, start, now, 500).then(res => {
       if (stale) return
@@ -218,11 +224,12 @@ export function DataExplorerPage() {
       if (stale) return
       console.error('[DataExplorer] Failed to fetch history:', err)
       setHistoryData([])
+      setHistoryError(true)
     }).finally(() => {
       if (!stale) setHistoryLoading(false)
     })
     return () => { stale = true }
-  }, [selectedSource, historyRange])
+  }, [selectedSource, historyRange, historyRetryTick])
 
   const tabs = useMemo(() => [
     { value: 'data', label: t('data:tabs.all', 'Data'), icon: <Database className="h-4 w-4" /> },
@@ -500,7 +507,7 @@ export function DataExplorerPage() {
                                   <button
                                     type="button"
                                     onClick={async () => {
-                                      try { await navigator.clipboard.writeText(jsonText); setCopiedValue(true); setTimeout(() => setCopiedValue(false), 2000) } catch {}
+                                      try { await copyToClipboard(jsonText); setCopiedValue(true); setTimeout(() => setCopiedValue(false), 2000) } catch { /* clipboard unavailable */ }
                                     }}
                                     className="shrink-0 mt-0.5 text-muted-foreground hover:text-foreground"
                                     title={t('common:copy', 'Copy')}
@@ -530,7 +537,7 @@ export function DataExplorerPage() {
                                   <button
                                     type="button"
                                     onClick={async () => {
-                                      try { await navigator.clipboard.writeText(str); setCopiedValue(true); setTimeout(() => setCopiedValue(false), 2000) } catch {}
+                                      try { await copyToClipboard(str); setCopiedValue(true); setTimeout(() => setCopiedValue(false), 2000) } catch { /* clipboard unavailable */ }
                                     }}
                                     className="shrink-0 mt-0.5 text-muted-foreground hover:text-foreground"
                                     title={t('common:copy', 'Copy')}
@@ -666,7 +673,21 @@ export function DataExplorerPage() {
                       )}
                       </>
                     )
-                  })() : (
+                  })() : historyError ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                      <AlertTriangle className="h-8 w-8 mb-2 text-warning" />
+                      <p className="text-xs">{t('data:historyLoadFailed', 'Failed to load historical data')}</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => setHistoryRetryTick(t => t + 1)}
+                      >
+                        <RefreshCw className="h-4 w-4 mr-1" />
+                        {t('data:retry', 'Retry')}
+                      </Button>
+                    </div>
+                  ) : (
                     <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                       <History className="h-8 w-8 mb-2 opacity-30" />
                       <p className="text-xs">{t('data:noHistory', 'No historical data available for this period')}</p>

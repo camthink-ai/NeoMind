@@ -43,5 +43,6 @@
   "dashboard": {
     "defaultTitle": "Dashboard",
     "newChat": "New Chat"
-  }
+  },
+  "syncFailureNotify": "Dashboard changes are saved locally but could not reach the server."
 }

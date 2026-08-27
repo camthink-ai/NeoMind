@@ -162,14 +162,12 @@ export function useDashboardRealtime(params: UseDashboardRealtimeParams): void {
     devicesRef.current = useStore.getState().devices
   }, [devicesLength])
 
-  // On dashboard switch, clear polling interval
-  useEffect(() => {
-    const ctrl = batchFetchControllerRef.current
-    if (ctrl.interval) {
-      clearInterval(ctrl.interval)
-      ctrl.interval = null
-    }
-  }, [currentDashboardId])
+  // NOTE: there is deliberately NO "clear polling on dashboard switch" effect
+  // here. The batch-refresh effect above owns its full lifecycle: its cleanup
+  // runs whenever the device set changes, and its setup creates a fresh
+  // interval. A separate switch-keyed effect ran AFTER that setup in the same
+  // commit and unconditionally cleared the just-created interval, permanently
+  // stopping background refresh after any dashboard switch.
 
   // Re-load dashboards if array becomes empty but we have a current ID
   useEffect(() => {
