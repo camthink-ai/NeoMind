@@ -15,6 +15,7 @@ import { notifySuccess, notifyError } from '@/lib/notify'
 import { api, type ImBridge, type ImInvite, type ImInviteCreated } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { IM_PLATFORMS, getPlatformDef, type ImPlatformDef, type ImPlatformField } from './platforms'
+import { copyToClipboard } from '@/lib/clipboard'
 
 type View = 'list' | 'detail' | 'configure'
 
@@ -206,7 +207,7 @@ export function ImBridgesTab() {
 
   const handleCopyLink = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(text)
+      await copyToClipboard(text)
       setCopiedLink(true)
       notifySuccess(t('settings:im.linkCopied'))
       setTimeout(() => setCopiedLink(false), 2000)

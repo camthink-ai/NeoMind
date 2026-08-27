@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
 import { textCode } from "@/design-system/tokens/typography"
 import { Copy, Check } from "@/design-system/icons"
+import { copyToClipboard } from '@/lib/clipboard'
 
 interface MarkdownMessageProps {
   content: string
@@ -53,7 +54,7 @@ function CodeBlock({ children, ...props }: React.ComponentProps<'pre'>) {
   const handleCopy = async () => {
     const text = preRef.current?.innerText ?? ""
     try {
-      await navigator.clipboard.writeText(text)
+      await copyToClipboard(text)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {

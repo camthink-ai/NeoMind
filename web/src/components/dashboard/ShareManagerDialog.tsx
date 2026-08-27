@@ -31,6 +31,7 @@ import {
   Link2,
 } from 'lucide-react'
 import { textNano, textMini } from '@/design-system/tokens/typography'
+import { copyToClipboard } from '@/lib/clipboard'
 
 // ============================================================================
 // Types
@@ -128,7 +129,7 @@ export function ShareManagerDialog({
   const handleCopy = useCallback(async (token: string) => {
     const url = `${window.location.origin}/share/${token}`
     try {
-      await navigator.clipboard.writeText(url)
+      await copyToClipboard(url)
       notifySuccess(t('visualDashboard.share.linkCopied'))
     } catch {
       notifyError(t('visualDashboard.share.copyFailed'))
@@ -180,7 +181,7 @@ export function ShareManagerDialog({
                         {expiresLabel}
                       </span>
                     </div>
-                    <div className="font-mono text-xs text-muted-foreground truncate select-all">
+                    <div className="font-mono text-xs text-muted-foreground break-all select-all">
                       {window.location.origin}/share/{st.token}
                     </div>
                   </div>

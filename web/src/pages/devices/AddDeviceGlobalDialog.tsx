@@ -36,6 +36,7 @@ import { useServerUrl } from '@/lib/server-url'
 import { useStore } from '@/store'
 import { fetchCache } from '@/lib/utils/async'
 import type { DeviceType, AddDeviceRequest, ConnectionConfig, MqttStatus, ExternalBroker } from '@/types'
+import { copyToClipboard } from '@/lib/clipboard'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -476,7 +477,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                           size="icon"
                           className="shrink-0 h-7 w-7"
                           onClick={() => {
-                            navigator.clipboard.writeText(`${cred.username}:${cred.password}`)
+                            copyToClipboard(`${cred.username}:${cred.password}`)
                             toast({ title: t('common:copied') })
                           }}
                         >
@@ -537,7 +538,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                           size="icon"
                           className="shrink-0 h-7 w-7"
                           onClick={() => {
-                            broker.username && navigator.clipboard.writeText(broker.username)
+                            broker.username && copyToClipboard(broker.username)
                             toast({ title: t('common:copied') })
                           }}
                         >
@@ -562,7 +563,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                               size="icon"
                               className="shrink-0 h-7 w-7"
                               onClick={() => {
-                                navigator.clipboard.writeText(topic)
+                                copyToClipboard(topic)
                                 toast({ title: t('common:copied') })
                               }}
                             >
@@ -603,7 +604,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                   className="h-7 w-7 shrink-0"
                   onClick={() => {
                     const cmd = `curl -X POST ${serverUrl}/api/devices/my-sensor-001/webhook \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "data": {\n      "temperature": 23.5,\n      "humidity": 65.2\n    }\n  }'`
-                    navigator.clipboard.writeText(cmd)
+                    copyToClipboard(cmd)
                     toast({ title: t('devices:auto.webhookCurlCopied') })
                   }}
                 >
@@ -979,7 +980,7 @@ function ManualAddForm({
                             size="icon"
                             className="shrink-0 h-7 w-7"
                             onClick={() => {
-                              navigator.clipboard.writeText(`${cred.username}:${cred.password}`)
+                              copyToClipboard(`${cred.username}:${cred.password}`)
                               toast({ title: t('common:copied') })
                             }}
                           >
@@ -1043,7 +1044,7 @@ function ManualAddForm({
                               size="icon"
                               className="shrink-0 h-7 w-7"
                               onClick={() => {
-                                navigator.clipboard.writeText(`${broker.username}:${broker.password}`)
+                                copyToClipboard(`${broker.username}:${broker.password}`)
                                 toast({ title: t('common:copied') })
                               }}
                             >

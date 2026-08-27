@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useTranslation } from "react-i18next"
 import { Copy, Check } from "@/design-system/icons"
 import { cn } from "@/lib/utils"
+import { copyToClipboard } from '@/lib/clipboard'
 
 interface CopyMessageButtonProps {
   content: string
@@ -26,7 +27,7 @@ export function CopyMessageButton({ content, className }: CopyMessageButtonProps
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(content)
+      await copyToClipboard(content)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {

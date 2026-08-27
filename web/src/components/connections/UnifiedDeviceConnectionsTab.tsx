@@ -49,6 +49,7 @@ import { EmbeddedBrokerConfigDialog } from './EmbeddedBrokerConfigDialog'
 import type { PluginConfigSchema, AdapterType } from '@/types'
 import { useToast } from '@/hooks/use-toast'
 import { ADAPTER_TYPES } from '@/constants/deviceAdapters'
+import { copyToClipboard } from '@/lib/clipboard'
 
 // Icon mapping for adapter types
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -243,7 +244,7 @@ function WebhookTokenDisplay({ token }: { token?: string }) {
         size="sm"
         className="h-6 w-6 p-0 shrink-0"
         onClick={async () => {
-          await navigator.clipboard.writeText(token)
+          await copyToClipboard(token)
           setCopied(true)
           toast({ title: t('devices:add.webhookTokenCopied') })
           setTimeout(() => setCopied(false), 2000)
@@ -357,7 +358,7 @@ export function UnifiedDeviceConnectionsTab() {
 
   const copyWebhookUrl = async () => {
     const url = getWebhookUrl()
-    await navigator.clipboard.writeText(url)
+    await copyToClipboard(url)
     setWebhookUrlCopied(true)
     toast({
       title: 'Webhook URL copied to clipboard',

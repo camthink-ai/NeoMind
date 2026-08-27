@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils"
 import { notifySuccess, notifyError } from "@/lib/notify"
 import { useServerUrl, useServerLanReachable } from "@/lib/server-url"
 import type { OnboardingStatus } from "@/hooks/useOnboarding"
+import { copyToClipboard } from '@/lib/clipboard'
 
 interface OnboardingDialogProps {
   open: boolean
@@ -328,7 +329,7 @@ function LlmCliHelper() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(command)
+      await copyToClipboard(command)
       notifySuccess(t("onboarding.cli.copied"))
     } catch {
       notifyError(t("onboarding.cli.copyFailed"))
@@ -415,7 +416,7 @@ function DeviceQuickStart() {
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(DEVICE_CURL_COMMAND)
+      await copyToClipboard(DEVICE_CURL_COMMAND)
       notifySuccess(t("onboarding.cli.copied"))
     } catch {
       notifyError(t("onboarding.cli.copyFailed"))

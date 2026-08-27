@@ -20,6 +20,7 @@ import {
   FullScreenDialogMain,
 } from '@/components/automation/dialog'
 import type { DeliveryLog, DeliveryStatus } from '@/types'
+import { copyToClipboard } from '@/lib/clipboard'
 
 const PAGE_SIZE = 10
 
@@ -45,7 +46,7 @@ export function DeliveryHistoryPanel({ targetId, open, onOpenChange }: DeliveryH
   const copyPayload = useCallback(
     async (text: string) => {
       try {
-        await navigator.clipboard.writeText(text)
+        await copyToClipboard(text)
         notifySuccess(t('common:dataPush.payloadCopied', 'Payload copied to clipboard'))
       } catch {
         /* clipboard unavailable (non-secure context) — ignore */
