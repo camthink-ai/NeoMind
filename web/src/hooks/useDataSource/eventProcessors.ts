@@ -376,7 +376,7 @@ export function processNonTelemetryEvent(
       return fallback
     })
 
-    let finalData: unknown = dataSources.length > 1 ? results : results[0]
+    const finalData: unknown = dataSources.length > 1 ? results : results[0]
     return transform ? transform(finalData) : finalData
   })
   setLastUpdate(Date.now())

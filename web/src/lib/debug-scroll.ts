@@ -23,8 +23,8 @@ let frameCount = 0
 let lastFpsTime = performance.now()
 let maxFrameTime = 0
 let avgFrameTime = 0
-let frameTimes: number[] = []
-let longTasks: { name: string; duration: number; time: string }[] = []
+const frameTimes: number[] = []
+const longTasks: { name: string; duration: number; time: string }[] = []
 let resizeObserverFires = 0
 let scrollEvents = 0
 let isScrolling = false
@@ -159,7 +159,6 @@ export function initScrollDebugger() {
 
   // Track ResizeObserver
   const OrigRO = window.ResizeObserver
-  // @ts-ignore
   window.ResizeObserver = class DebugResizeObserver extends OrigRO {
     constructor(callback: ResizeObserverCallback) {
       const wrapped: ResizeObserverCallback = (entries, obs) => {

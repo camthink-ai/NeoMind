@@ -7,5 +7,6 @@ declare global {
     }
   }
 
+  // eslint-disable-next-line no-var -- ambient global declaration; let/const don't merge into globalThis types
   var fetch: any
 }

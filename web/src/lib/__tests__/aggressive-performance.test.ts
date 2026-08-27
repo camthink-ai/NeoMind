@@ -202,6 +202,7 @@ describe('User Experience Improvements', () => {
 })
 
 // Custom matcher for readability
+/* eslint-disable @typescript-eslint/no-namespace -- matches vitest.d.ts's global Vi augmentation */
 declare global {
   namespace Vi {
     interface Matchers<R = any> {

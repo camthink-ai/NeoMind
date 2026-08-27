@@ -46,7 +46,7 @@ export function getImageDataUrl(value: unknown): string | null {
   if (str.startsWith("data:image/")) {
     const commaIdx = str.indexOf(',')
     if (commaIdx === -1) return str
-    let b64 = sanitizeBase64(str.slice(commaIdx + 1))
+    const b64 = sanitizeBase64(str.slice(commaIdx + 1))
 
     // Unwrap double-prefixed data URLs
     if (b64.startsWith('data:image/') || b64.startsWith('data:')) {

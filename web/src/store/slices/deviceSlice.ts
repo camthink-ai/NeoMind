@@ -80,7 +80,7 @@ const setNestedProperty = (obj: Record<string, unknown>, path: string, value: un
   const parts = path.split('.')
 
   // Create a completely new object tree with new references at every level
-  let result = { ...obj }
+  const result = { ...obj }
   let current = result
 
   for (let i = 0; i < parts.length - 1; i++) {

@@ -757,7 +757,7 @@ export function ExtensionDetailsDialog({
                 </button>
                 {/* Per-command tool toggle */}
                 <Switch
-                  checked={!!command.disabled ? false : masterEnabled}
+                  checked={command.disabled ? false : masterEnabled}
                   disabled={!masterEnabled}
                   onCheckedChange={(checked) => handleCmdToggle(command.id, checked)}
                   onClick={(e) => e.stopPropagation()}

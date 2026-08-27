@@ -108,18 +108,18 @@ const ResponsiveSparkline = memo(function ResponsiveSparkline({
   const containerRef = useRef<HTMLDivElement>(null)
   const gradientId = useRef(`sparkline-gradient-${Math.random().toString(36).substr(2, 9)}`).current
 
-  // Guard: need at least 2 points to draw a line
-  if (chartData.length < 2) {
-    return <div ref={containerRef} className={cn('w-full h-full relative', className)} />
-  }
-
   // Use fixed viewBox with normalized coordinates (0-100 scale)
   // This prevents flickering when container resizes
   const VIEWBOX_WIDTH = 100
   const VIEWBOX_HEIGHT = 100
 
-  // Memoize calculations to prevent unnecessary recalculations
+  // Memoize calculations to prevent unnecessary recalculations.
+  // Hooks must run before the <2-points early return below — guard empty
+  // input here instead of skipping the hook (rules-of-hooks).
   const { min, max, isFlatLine, range, points } = useMemo(() => {
+    if (chartData.length === 0) {
+      return { min: 0, max: 0, isFlatLine: true, range: 1, points: [] as { x: number; y: number; value: number }[] }
+    }
     const min = chartData.reduce((a, b) => Math.min(a, b), Infinity)
     const max = chartData.reduce((a, b) => Math.max(a, b), -Infinity)
     const isFlatLine = max === min
@@ -178,6 +178,11 @@ const ResponsiveSparkline = memo(function ResponsiveSparkline({
     }
     return null
   }, [showThreshold, threshold, isFlatLine, min, max, range])
+
+  // Guard: need at least 2 points to draw a line (after all hooks)
+  if (chartData.length < 2) {
+    return <div ref={containerRef} className={cn('w-full h-full relative', className)} />
+  }
 
   return (
     <div ref={containerRef} className={cn('w-full h-full relative', className)}>

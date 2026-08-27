@@ -64,7 +64,7 @@ function normalizeToDataUrl(str: string): string {
   if (str.startsWith('data:image/')) {
     const ci = str.indexOf(',')
     if (ci === -1) return str
-    let b64 = str.slice(ci + 1).replace(/[\s\r\n]+/g, '')
+    const b64 = str.slice(ci + 1).replace(/[\s\r\n]+/g, '')
     if (b64.startsWith('data:image/') || b64.startsWith('data:')) return normalizeToDataUrl(b64)
     const detected = detectImageMime(b64)
     if (detected) return `data:${detected};base64,${b64}`

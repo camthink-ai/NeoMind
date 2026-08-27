@@ -21,7 +21,7 @@ export function Portal({ children }: PortalProps) {
 // Get portal root element for dialogs/popovers
 export function getPortalRoot(): HTMLElement {
   // Use dedicated dialog container for proper z-index stacking
-  let dialogRoot = document.getElementById('dialog-root')
+  const dialogRoot = document.getElementById('dialog-root')
   if (dialogRoot) {
     return dialogRoot
   }
