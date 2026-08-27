@@ -331,7 +331,17 @@ export const ValueCard = memo(function ValueCard({
     }
 
     // Convert to string and add prefix/unit
-    const valueStr = String(rawValue)
+    // Raw floats render compactly — an unformatted ratio like
+    // 0.0596160888671875 reads as noise on a metric card. Tiny magnitudes
+    // keep two significant digits instead of collapsing to "0"; exact
+    // integers and short decimals pass through unchanged.
+    let valueStr = String(rawValue)
+    if (typeof rawValue === 'number' && Number.isFinite(rawValue)) {
+      const abs = Math.abs(rawValue)
+      valueStr = String(
+        abs !== 0 && abs < 0.01 ? Number(rawValue.toPrecision(2)) : Math.round(rawValue * 100) / 100,
+      )
+    }
     const prefixStr = prefix || ''
     const unitStr = unit ? ` ${unit}` : ''
 

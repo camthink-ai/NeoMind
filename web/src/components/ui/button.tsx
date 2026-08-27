@@ -15,7 +15,7 @@ const buttonVariants = cva(
   // now safe AND actually renders. 1px + no offset = visible for keyboard a11y
   // without reading as a brand accent. Per-variant hover:bg-* + active:scale
   // handle pointer feedback.
-  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors duration-fast focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors duration-fast focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
   {
     variants: {
       variant: {

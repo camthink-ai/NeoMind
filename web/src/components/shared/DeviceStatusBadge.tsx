@@ -43,7 +43,10 @@ export function DeviceStatusBadge({ device, className, hideDot }: DeviceStatusBa
     success: 'bg-success animate-pulse',
     info: 'bg-info',
     warning: 'bg-warning',
-    muted: 'bg-muted-foreground',
+    // Hollow dot = never reported; filled gray = was online, now offline.
+    muted: info.state === 'disconnected'
+      ? 'border-[1.5px] border-muted-foreground bg-transparent'
+      : 'bg-muted-foreground',
   }[color]
 
   return (

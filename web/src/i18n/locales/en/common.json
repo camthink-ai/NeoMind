@@ -65,7 +65,7 @@
       "business": "Business"
     },
     "type": {
-      "label": "Message Type",
+      "label": "Type",
       "notification": "Notification"
     },
     "stats": {

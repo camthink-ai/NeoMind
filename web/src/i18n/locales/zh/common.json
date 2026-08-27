@@ -65,7 +65,7 @@
       "business": "业务"
     },
     "type": {
-      "label": "消息类型",
+      "label": "类型",
       "notification": "通知"
     },
     "stats": {
