@@ -56,6 +56,11 @@ pub fn http_bind_port() -> u16 {
 }
 
 pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
+    // rustls 0.23 has no auto-selected process CryptoProvider; install ring
+    // up front (idempotent) — the CLI `serve` path reaches run() directly and
+    // would otherwise panic on first TLS use (e.g. the TLS proxy below).
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     HTTP_BIND_LOOPBACK.store(
         bind.ip().is_loopback(),
         std::sync::atomic::Ordering::Relaxed,
@@ -153,7 +158,20 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             Duration::from_secs(120),
         ));
 
-    let listener = tokio::net::TcpListener::bind(bind).await?;
+    // TCP_NODELAY on the LISTENING socket: accepted connections inherit it on
+    // Linux/macOS. Without it, per-message WebSocket writes on the video push
+    // path interlock with the receiver's delayed ACKs (~40-200ms stall per
+    // message) — a fast link delivers only ~6fps of 20fps pushed frames.
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(bind),
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    socket.set_reuse_address(true)?;
+    socket.set_nodelay(true)?;
+    socket.bind(&bind.into())?;
+    socket.listen(1024)?;
+    let listener = tokio::net::TcpListener::from_std(socket.into())?;
 
     // Ready phase — HTTP listener is bound
     startup.phase_ready();
@@ -163,6 +181,29 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
         elapsed_ms = t_start.elapsed().as_millis() as u64,
         "HTTP listener ready (time to serve)"
     );
+
+    // ── Optional TLS front (secure-context enablement) ─────────────────────
+    // Browsers gate getUserMedia (device camera) and the clipboard API on
+    // secure contexts. Edge deployments are usually reached over plain HTTP
+    // on a LAN IP, so we offer an in-process TLS reverse proxy: TLS on
+    // NEOMIND_TLS_PORT (default 9376) → loopback to the plaintext listener.
+    // Enable by setting NEOMIND_TLS_CERT + NEOMIND_TLS_KEY (PEM paths).
+    if let (Ok(cert), Ok(key)) = (
+        std::env::var("NEOMIND_TLS_CERT"),
+        std::env::var("NEOMIND_TLS_KEY"),
+    ) {
+        let tls_port: u16 = std::env::var("NEOMIND_TLS_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(9376);
+        let target = format!("127.0.0.1:{}", bind.port());
+        tokio::spawn(async move {
+            match run_tls_proxy(&cert, &key, tls_port, &target).await {
+                Ok(()) => unreachable!("tls proxy loop never returns Ok"),
+                Err(e) => tracing::error!(error = %e, port = tls_port, "TLS proxy terminated"),
+            }
+        });
+    }
 
     // ── Phase B: Deferred background services (after listener starts serving) ──
     // These run in the background and do not block HTTP serving.
@@ -699,4 +740,62 @@ pub async fn start_server() -> anyhow::Result<()> {
     let (host, port) = crate::config::get_server_config();
     let bind: SocketAddr = format!("{}:{}", host, port).parse()?;
     run(bind).await
+}
+
+// ============================================================================
+// TLS reverse proxy (secure-context enablement for LAN deployments)
+// ============================================================================
+
+/// In-process TLS front: accepts rustls connections on `port`, forwards them
+/// byte-for-byte to the plaintext listener at `target` (loopback). Same
+/// TCP_NODELAY-on-listener trick as the main listener — WS push latency
+/// depends on it.
+async fn run_tls_proxy(cert_pem: &str, key_pem: &str, port: u16, target: &str) -> anyhow::Result<()> {
+    let certs: Vec<rustls::pki_types::CertificateDer<'static>> = {
+        let f = std::fs::File::open(cert_pem)?;
+        let mut r = std::io::BufReader::new(f);
+        rustls_pemfile::certs(&mut r).collect::<Result<_, _>>()?
+    };
+    let key = {
+        let f = std::fs::File::open(key_pem)?;
+        let mut r = std::io::BufReader::new(f);
+        rustls_pemfile::private_key(&mut r)?.ok_or_else(|| anyhow::anyhow!("no private key in {key_pem}"))?
+    };
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+
+    let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
+    let socket = socket2::Socket::new(
+        socket2::Domain::for_address(addr),
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    socket.set_reuse_address(true)?;
+    socket.set_nodelay(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(1024)?;
+    let listener = tokio::net::TcpListener::from_std(socket.into())?;
+
+    tracing::info!(port, %target, "TLS proxy listening (secure-context front)");
+    loop {
+        let (stream, _peer) = listener.accept().await?;
+        let _ = stream.set_nodelay(true);
+        let acceptor = acceptor.clone();
+        let target = target.to_string();
+        tokio::spawn(async move {
+            let tls = match acceptor.accept(stream).await {
+                Ok(t) => t,
+                Err(_) => return,
+            };
+            let mut upstream = match tokio::net::TcpStream::connect(&target).await {
+                Ok(u) => u,
+                Err(_) => return,
+            };
+            let _ = upstream.set_nodelay(true);
+            let mut tls = tls;
+            let _ = tokio::io::copy_bidirectional(&mut tls, &mut upstream).await;
+        });
+    }
 }

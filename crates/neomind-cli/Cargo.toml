@@ -8,7 +8,10 @@ name = "neomind"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["jemalloc"]
+# jemalloc off = cross-compile escape hatch (tikv-jemalloc-sys's configure
+# doesn't play well with zig cc). Native Linux builds keep it on by default.
+jemalloc = ["dep:tikv-jemallocator"]
 static = ["neomind-api/static"]
 
 [dependencies]
@@ -36,7 +39,7 @@ clap = { workspace = true }
 # causes RSS to climb 4-6 GB over days. macOS/Windows don't use glibc so
 # they're unaffected. tikv-jemalloc-sys doesn't compile on macOS.
 [target.'cfg(target_os = "linux")'.dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemallocator = { version = "0.6", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2.0"

@@ -25,6 +25,7 @@ static = ["rust-embed", "mime_guess"]
 testing = []  # Enable test-only APIs for parallel test execution
 
 [dependencies]
+socket2 = "0.5"
 neomind-core = { path = "../neomind-core" }
 neomind-extension-sdk = { path = "../neomind-extension-sdk" }
 neomind-agent = { path = "../neomind-agent", features = ["cloud", "llamacpp"] }
@@ -59,6 +60,8 @@ reqwest = { workspace = true }
 # auto-select a CryptoProvider — enable ring here so we can install it at startup
 # (server/mod.rs start_server). ring is portable (alpine/musl + cross-compile).
 rustls = { version = "0.23", features = ["ring"] }
+tokio-rustls = "0.26"
+rustls-pemfile = "2"
 
 # Web framework
 axum = { workspace = true, features = ["ws", "multipart", "macros"] }

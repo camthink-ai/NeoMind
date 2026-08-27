@@ -25,7 +25,7 @@ mod self_update;
 // climbed to 4-6 GB over days). jemalloc packs allocations tightly and
 // releases freed pages promptly. macOS/Windows use their own allocators
 // (not glibc) so they don't have this problem.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "jemalloc"))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
