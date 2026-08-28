@@ -69,6 +69,10 @@ const USERS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("users");
 /// SHA-256(token) — raw tokens are never written at rest.
 const SESSIONS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("user_sessions");
 
+/// Auth-related KV settings (currently: whether unauthenticated
+/// self-registration is allowed). String values, admin-controlled.
+const AUTH_SETTINGS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("auth_settings");
+
 /// Stable lookup key for a session token — SHA-256 hex. Used as BOTH the
 /// in-memory map key and the persisted row key, so the allowlist can be
 /// rebuilt from disk at boot without ever storing raw tokens.
@@ -304,6 +308,13 @@ pub struct AuthUserState {
     jwt_secret: String,
     /// Session duration (seconds)
     session_duration: i64,
+    /// Whether unauthenticated self-registration (`POST /api/auth/register`)
+    /// is allowed. Defaults to CLOSED: the first admin comes from the setup
+    /// wizard, additional users are created by an admin (`POST /api/users`) —
+    /// on a 0.0.0.0-bound edge box, open self-registration lets any LAN
+    /// client mint an account. std::sync::RwLock: read on the hot register
+    /// path, written rarely by an admin.
+    allow_registration: Arc<std::sync::RwLock<bool>>,
     /// Brute-force throttles for the public auth endpoints (login/register/
     /// setup). See [`AuthThrottle`].
     auth_throttle: Arc<AuthThrottle>,
@@ -391,6 +402,9 @@ impl AuthUserState {
         // Load users from database
         // If no users exist, the setup wizard will handle creating the first admin
         let users = Self::load_users_from_db(db_path).unwrap_or_default();
+        // Self-registration flag: persisted so an admin's choice survives
+        // restarts; missing row = default (closed).
+        let allow_registration = Self::load_allow_registration_from_db(db_path);
         // Load persisted sessions so tokens issued before this boot stay
         // valid (expired ones are dropped + purged inside the loader).
         let sessions = Self::load_sessions_from_db(db_path);
@@ -416,6 +430,7 @@ impl AuthUserState {
             db_path,
             jwt_secret,
             session_duration: 7 * 24 * 60 * 60, // 7 days
+            allow_registration: Arc::new(std::sync::RwLock::new(allow_registration)),
             auth_throttle: Arc::new(AuthThrottle::production()),
         }
     }
@@ -424,6 +439,7 @@ impl AuthUserState {
     pub fn with_config(db_path: String, jwt_secret: String) -> Self {
         let users = Self::load_users_from_db(&db_path).unwrap_or_default();
         let sessions = Self::load_sessions_from_db(&db_path);
+        let allow_registration = Self::load_allow_registration_from_db(&db_path);
         // Leak the strings to get &'static str for db_path
         let db_path_static: &'static str = Box::leak(db_path.into_boxed_str());
         let jwt_secret_owned = jwt_secret;
@@ -434,6 +450,7 @@ impl AuthUserState {
             db_path: db_path_static,
             jwt_secret: jwt_secret_owned,
             session_duration: 7 * 24 * 60 * 60,
+            allow_registration: Arc::new(std::sync::RwLock::new(allow_registration)),
             auth_throttle: Arc::new(AuthThrottle::production()),
         }
     }
@@ -451,6 +468,7 @@ impl AuthUserState {
             db_path: ":memory:", // Placeholder, won't be used
             jwt_secret,
             session_duration: 7 * 24 * 60 * 60,
+            allow_registration: Arc::new(std::sync::RwLock::new(false)),
             auth_throttle: Arc::new(AuthThrottle::production()),
         }
     }
@@ -652,6 +670,74 @@ impl AuthUserState {
             }
             let _ = w.commit();
         }
+    }
+
+    /// Whether unauthenticated self-registration is currently allowed.
+    pub fn allow_registration(&self) -> bool {
+        *self
+            .allow_registration
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Set whether unauthenticated self-registration is allowed (admin
+    /// action). Persists to users.redb so the choice survives restarts;
+    /// in-memory test stores only update the flag.
+    pub fn set_allow_registration(&self, allow: bool) {
+        *self
+            .allow_registration
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = allow;
+        if let Err(e) = Self::save_allow_registration_to_db(self.db_path, allow) {
+            tracing::error!(
+                category = "auth",
+                error = %e,
+                "Failed to persist allow_registration setting — it will revert on restart"
+            );
+        }
+    }
+
+    /// Load the persisted self-registration flag. Missing row/database = the
+    /// default (closed).
+    fn load_allow_registration_from_db(path: &str) -> bool {
+        if !std::path::Path::new(path).exists() {
+            return false;
+        }
+        let Ok(db) = Database::open(path) else {
+            return false;
+        };
+        let Ok(read_txn) = db.begin_read() else {
+            return false;
+        };
+        let Ok(table) = read_txn.open_table(AUTH_SETTINGS_TABLE) else {
+            return false;
+        };
+        matches!(table.get("allow_registration"), Ok(Some(v)) if v.value() == "true")
+    }
+
+    /// Persist the self-registration flag (mirrors `save_user_to_db`).
+    fn save_allow_registration_to_db(
+        path: &str,
+        allow: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if path == ":memory:" {
+            return Ok(());
+        }
+        if let Some(parent) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let db = if std::path::Path::new(path).exists() {
+            Database::open(path)?
+        } else {
+            Database::create(path)?
+        };
+        let write_txn = db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(AUTH_SETTINGS_TABLE)?;
+            table.insert("allow_registration", if allow { "true" } else { "false" })?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     /// Save user to database synchronously.
@@ -1189,6 +1275,9 @@ pub enum AuthError {
     SessionRevoked,
     InvalidInput(String),
     DatabaseError(String),
+    /// Self-registration is disabled on this instance (admin toggle —
+    /// `PUT /api/settings/registration`).
+    RegistrationDisabled,
     /// Brute-force throttle engaged (login failures / signup flood).
     /// Carries the seconds until the oldest counted event leaves the window.
     TooManyAttempts(u64),
@@ -1206,6 +1295,12 @@ impl std::fmt::Display for AuthError {
             AuthError::SessionRevoked => write!(f, "Session has been revoked"),
             AuthError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
             AuthError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
+            AuthError::RegistrationDisabled => {
+                write!(
+                    f,
+                    "Self-registration is disabled. Ask an administrator to create your account."
+                )
+            }
             AuthError::TooManyAttempts(secs) => {
                 write!(f, "Too many attempts — try again in {} seconds", secs)
             }
@@ -1235,6 +1330,11 @@ impl IntoResponse for AuthError {
             ),
             AuthError::InvalidInput(msg) => (HttpStatusCode::BAD_REQUEST, msg),
             AuthError::DatabaseError(msg) => (HttpStatusCode::INTERNAL_SERVER_ERROR, msg),
+            AuthError::RegistrationDisabled => (
+                HttpStatusCode::FORBIDDEN,
+                "Self-registration is disabled. Ask an administrator to create your account."
+                    .into(),
+            ),
             // 429 + Retry-After so well-behaved clients back off on their own.
             AuthError::TooManyAttempts(secs) => {
                 let resp = (

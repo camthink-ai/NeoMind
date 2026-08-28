@@ -1120,8 +1120,9 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         // this route alone gets a raised body limit (default is 2 MB).
         .route(
             "/api/builtin-llm/upload-model",
-            axum::routing::post(crate::builtin_llm::handlers::upload_model_handler)
-                .layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024 * 1024)),
+            axum::routing::post(crate::builtin_llm::handlers::upload_model_handler).layer(
+                axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024 * 1024),
+            ),
         )
         .route(
             "/api/builtin-llm/model",
@@ -1185,6 +1186,17 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/users/:username",
             delete(auth_users::delete_user_handler),
+        )
+        // Registration settings (admin only): gate for the public
+        // POST /api/auth/register endpoint. Default is closed — see
+        // register_handler.
+        .route(
+            "/api/settings/registration",
+            get(auth_users::get_registration_settings_handler),
+        )
+        .route(
+            "/api/settings/registration",
+            put(auth_users::update_registration_settings_handler),
         )
         // Apply JWT authentication middleware
         .route_layer(axum::middleware::from_fn_with_state(

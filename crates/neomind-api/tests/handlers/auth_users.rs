@@ -43,6 +43,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_handler() {
         let state = create_test_server_state().await;
+        state.auth.user_state.set_allow_registration(true);
         let username = format!(
             "test_user_{}",
             uuid::Uuid::new_v4().to_string().replace('-', "")
@@ -70,6 +71,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_handler_admin_role() {
         let state = create_test_server_state().await;
+        state.auth.user_state.set_allow_registration(true);
         let username = format!(
             "admin_user_{}",
             uuid::Uuid::new_v4().to_string().replace('-', "")
@@ -96,6 +98,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_handler_default_role() {
         let state = create_test_server_state().await;
+        state.auth.user_state.set_allow_registration(true);
         let username = format!(
             "default_user_{}",
             uuid::Uuid::new_v4().to_string().replace('-', "")
@@ -115,6 +118,37 @@ mod tests {
         assert!(result.is_ok());
         let (status, _response) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn test_register_handler_disabled_by_default() {
+        // Fresh state must reject self-registration: closed unless an admin
+        // opens it (setup wizard / POST /api/users are the sanctioned paths).
+        let state = create_test_server_state().await;
+        assert!(!state.auth.user_state.allow_registration());
+
+        let req = RegisterRequest {
+            username: "blocked_user".to_string(),
+            password: "password123".to_string(),
+            role: None,
+        };
+        let result = register_handler(
+            State(state),
+            test_connect_info(),
+            HeaderMap::new(),
+            Json(req),
+        )
+        .await;
+        assert!(result.is_err());
+        use axum::response::{IntoResponse, Response};
+        let resp: Response = result.unwrap_err().into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(
+            body_str.contains("Self-registration is disabled"),
+            "unexpected body: {body_str}"
+        );
     }
 
     #[tokio::test]

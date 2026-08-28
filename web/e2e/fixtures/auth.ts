@@ -10,35 +10,44 @@ const TEST_USER = {
 };
 
 /**
- * Ensure test user exists (register if needed)
+ * Ensure test user exists.
+ * Self-registration is closed by default; the test account is the first-run
+ * admin created via the setup wizard (only available while no users exist).
  * Uses relative URL to go through Vite proxy
  */
 async function ensureTestUser(page: Page): Promise<boolean> {
   try {
-    // Use the page's request context which will go through the current browser context
-    const response = await page.request.post('/api/auth/register', {
+    const statusResponse = await page.request.get('/api/setup/status');
+    const setup = await statusResponse.json().catch(() => null);
+
+    if (!setup?.setup_required) {
+      // Setup already completed in a prior run — assume the account exists.
+      return true;
+    }
+
+    const response = await page.request.post('/api/setup/initialize', {
       data: {
         username: TEST_USER.username,
         password: TEST_USER.password,
       },
     });
 
-    // Conflict (409) means user already exists - that's fine
-    // Created (201) means user was just created - also fine
+    // 200 = admin created just now; 403 SETUP_ALREADY_COMPLETED = lost the
+    // race against a parallel worker — the account exists either way.
     const status = response.status();
-    if (status === 409) {
-      console.log('Test user already exists');
-      return true; // User exists
-    } else if (status === 201) {
-      console.log('Test user created');
-      return true; // User created
+    if (status === 200 || status === 201) {
+      console.log('Test admin created via setup wizard');
+      return true;
+    } else if (status === 403) {
+      console.log('Setup already completed by another worker');
+      return true;
     } else {
       const text = await response.text();
-      console.log('Registration response:', status, text);
+      console.log('Setup initialize response:', status, text);
       return false;
     }
   } catch (e) {
-    console.log('Registration error:', (e as Error).message);
+    console.log('Setup initialize error:', (e as Error).message);
     return false;
   }
 }
@@ -47,7 +56,7 @@ async function ensureTestUser(page: Page): Promise<boolean> {
  * Login with test credentials
  */
 export async function login(page: Page): Promise<void> {
-  // First try to register the test user (idempotent if already exists)
+  // First ensure the test admin exists (idempotent via setup wizard)
   await ensureTestUser(page);
 
   await page.goto('/login');

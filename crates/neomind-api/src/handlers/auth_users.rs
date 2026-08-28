@@ -82,6 +82,15 @@ pub async fn register_handler(
         .user_state
         .record_signup_attempt("reg", Some(&ip));
 
+    // Self-registration is admin-gated: closed unless explicitly enabled
+    // (`PUT /api/settings/registration`). The first admin comes from the
+    // setup wizard; additional users are created by an admin
+    // (`POST /api/users`) — on a 0.0.0.0-bound edge box, open
+    // self-registration lets any LAN client mint an account.
+    if !state.auth.user_state.allow_registration() {
+        return Err(AuthError::RegistrationDisabled);
+    }
+
     let (user, token) = state
         .auth
         .user_state
@@ -254,5 +263,56 @@ pub async fn delete_user_handler(
 
     Ok(Json(
         serde_json::json!({"message": format!("User '{}' deleted successfully", username)}),
+    ))
+}
+
+/// Request body for the registration-settings admin endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct UpdateRegistrationSettingsRequest {
+    /// Whether unauthenticated self-registration (`POST /api/auth/register`)
+    /// should be allowed.
+    pub allow_registration: bool,
+}
+
+/// Get registration settings (admin only).
+pub async fn get_registration_settings_handler(
+    State(state): State<ServerState>,
+    Extension(admin_user): Extension<SessionInfo>,
+) -> Result<Json<serde_json::Value>, AuthError> {
+    if admin_user.role != UserRole::Admin {
+        return Err(AuthError::InvalidInput("Admin access required".into()));
+    }
+
+    Ok(Json(serde_json::json!({
+        "allow_registration": state.auth.user_state.allow_registration(),
+    })))
+}
+
+/// Update registration settings (admin only).
+///
+/// When registration is closed, the only account-creation paths are the
+/// first-run setup wizard (admin) and `POST /api/users` (admin).
+pub async fn update_registration_settings_handler(
+    State(state): State<ServerState>,
+    Extension(admin_user): Extension<SessionInfo>,
+    Json(req): Json<UpdateRegistrationSettingsRequest>,
+) -> Result<Json<serde_json::Value>, AuthError> {
+    if admin_user.role != UserRole::Admin {
+        return Err(AuthError::InvalidInput("Admin access required".into()));
+    }
+
+    state
+        .auth
+        .user_state
+        .set_allow_registration(req.allow_registration);
+
+    tracing::info!(
+        admin = %admin_user.username,
+        allow_registration = req.allow_registration,
+        "Admin updated registration settings"
+    );
+
+    Ok(Json(
+        serde_json::json!({"allow_registration": req.allow_registration}),
     ))
 }
