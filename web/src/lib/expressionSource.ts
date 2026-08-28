@@ -98,7 +98,7 @@ export function evalExpression(expr: string, values: Record<string, number>): Ex
       sqrt: Math.sqrt,
       pow: Math.pow,
     }
-    // eslint-disable-next-line no-new-func
+     
     const fn = new Function(...FN_NAMES, `"use strict"; return (${js});`)
     const out = fn(...FN_NAMES.map((n) => fns[n]))
     if (typeof out !== 'number' || !Number.isFinite(out)) {

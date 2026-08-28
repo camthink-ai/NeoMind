@@ -50,7 +50,7 @@ export function NavigationProgress() {
     )
 
     return clearTimers
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [pathname])
 
   if (!visible) return null

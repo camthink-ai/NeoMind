@@ -24,6 +24,7 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/use-toast"
 import { api } from "@/lib/api"
+import { useStore } from "@/store"
 import { useGlobalTimezone } from "@/hooks/useTimeFormat"
 import { getLocalizedTimezones } from "@/lib/time"
 
@@ -274,6 +275,9 @@ export function PreferencesTab() {
 
       {/* Data Management */}
       <DataManagementSection />
+
+      {/* Backup schedule */}
+      <BackupSettingsSection />
 
       {/* Diagnostic Data — log archive download */}
       <DiagnosticDataSection />
@@ -704,4 +708,151 @@ export function usePreferences() {
   }
 
   return { preferences, updatePreferences }
+}
+
+function BackupSettingsSection() {
+  const { t } = useTranslation(["common", "settings"])
+  const { toast } = useToast()
+  const isAdmin = useStore((s) => s.user?.role === "admin")
+  const [config, setConfig] = useState<{
+    enabled: boolean
+    interval_secs: number
+    keep: number
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [backing, setBacking] = useState(false)
+  const [lastBackup, setLastBackup] = useState<{
+    id: string
+    created_at: string
+    total_bytes: number
+  } | null>(null)
+
+  const refreshLastBackup = () => {
+    api
+      .get("/settings/backups")
+      .then((data: any) => {
+        const list = data?.backups ?? []
+        setLastBackup(list.length > 0 ? list[0] : null)
+      })
+      .catch(() => {})
+  }
+
+  useEffect(() => {
+    api
+      .get("/settings/backup-config")
+      .then((data: any) => setConfig(data))
+      .catch(() => {})
+      .finally(() => setLoading(false))
+    refreshLastBackup()
+  }, [])
+
+  const saveConfig = async (updates: Partial<NonNullable<typeof config>>) => {
+    if (!config) return
+    const next = { ...config, ...updates }
+    setConfig(next)
+    try {
+      await api.put("/settings/backup-config", next)
+    } catch {
+      toast({ title: t("common:failed"), variant: "destructive" })
+      setConfig(config)
+    }
+  }
+
+  const runNow = async () => {
+    setBacking(true)
+    try {
+      await api.post("/settings/backup", {})
+      toast({ title: t("settings:backupNowDone") })
+      refreshLastBackup()
+    } catch {
+      toast({ title: t("common:failed"), variant: "destructive" })
+    } finally {
+      setBacking(false)
+    }
+  }
+
+  if (loading || !config) {
+    return <div className="h-32 w-full animate-pulse rounded-md bg-muted" />
+  }
+
+  const intervalOpts = [
+    { v: 6 * 3600, l: t("settings:backupInterval6h") },
+    { v: 12 * 3600, l: t("settings:backupInterval12h") },
+    { v: 24 * 3600, l: t("settings:backupInterval1d") },
+    { v: 48 * 3600, l: t("settings:backupInterval2d") },
+    { v: 7 * 24 * 3600, l: t("settings:backupInterval7d") },
+  ]
+  const keepOpts = [3, 5, 7, 10, 14]
+  const lastLabel = lastBackup
+    ? `${new Date(lastBackup.created_at).toLocaleString()} (${(lastBackup.total_bytes / 1024 / 1024).toFixed(1)} MB)`
+    : t("settings:backupLastNone")
+
+  return (
+    <section>
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+        {t("settings:backupSchedule")}
+      </h3>
+      <div className="rounded-lg bg-card border border-border shadow-sm p-5 space-y-4">
+        <SettingsRow
+          label={t("settings:backupEnabled")}
+          description={t("settings:backupEnabledDesc")}
+        >
+          <Switch
+            checked={config.enabled}
+            onCheckedChange={(v) => saveConfig({ enabled: v })}
+          />
+        </SettingsRow>
+        <SettingsRow
+          label={t("settings:backupInterval")}
+          description={t("settings:backupIntervalDesc")}
+        >
+          <Select
+            value={String(config.interval_secs)}
+            onValueChange={(v) => saveConfig({ interval_secs: +v })}
+            disabled={!config.enabled}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {intervalOpts.map((o) => (
+                <SelectItem key={o.v} value={String(o.v)}>
+                  {o.l}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <SettingsRow label={t("settings:backupKeep")} description={t("settings:backupKeepDesc")}>
+          <Select
+            value={String(config.keep)}
+            onValueChange={(v) => saveConfig({ keep: +v })}
+            disabled={!config.enabled}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {keepOpts.map((k) => (
+                <SelectItem key={k} value={String(k)}>
+                  {k}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingsRow>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+          <span className="text-sm text-muted-foreground">
+            {t("settings:backupLast")}: {lastLabel}
+          </span>
+          {isAdmin && (
+            <Button variant="outline" size="sm" onClick={runNow} disabled={backing}>
+              {backing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+              {t("settings:backupNow")}
+            </Button>
+          )}
+        </div>
+      </div>
+    </section>
+  )
 }

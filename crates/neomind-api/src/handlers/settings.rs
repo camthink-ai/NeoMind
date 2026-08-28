@@ -552,10 +552,12 @@ pub async fn create_backup_handler(
     }
 
     let data_dir = state.data_dir.clone();
-    let keep: usize = std::env::var("NEOMIND_BACKUP_KEEP")
+    // Retention from the saved schedule config (UI); env seeds the default.
+    let keep: usize = neomind_storage::SettingsStore::open("data/settings.redb")
         .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(7);
+        .and_then(|s| s.load_backup_config().ok().flatten())
+        .unwrap_or_else(neomind_storage::settings::BackupConfig::from_env_or_default)
+        .keep;
 
     let result = tokio::task::spawn_blocking(move || {
         let manifest =
@@ -598,4 +600,81 @@ pub async fn list_backups_handler(
 
     let backups = neomind_storage::backup::list_backups(&state.data_dir);
     ok(json!({ "backups": backups }))
+}
+
+/// Backup schedule configuration (Settings → Preferences in the web UI).
+/// The scheduler and the manual admin trigger both read this; env vars only
+/// seed the default until something is saved here.
+#[derive(Debug, serde::Deserialize)]
+pub struct BackupConfigRequest {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    pub keep: usize,
+}
+
+/// Get the effective backup schedule configuration.
+pub async fn get_backup_config(
+    State(_state): State<ServerState>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::SettingsStore;
+
+    const SETTINGS_DB_PATH: &str = "data/settings.redb";
+
+    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
+    let config = settings_store
+        .load_backup_config()
+        .ok()
+        .flatten()
+        .unwrap_or_else(neomind_storage::settings::BackupConfig::from_env_or_default);
+
+    ok(json!({
+        "enabled": config.enabled,
+        "interval_secs": config.interval_secs,
+        "keep": config.keep,
+    }))
+}
+
+/// Update the backup schedule configuration (takes effect within a minute —
+/// the scheduler re-reads this every tick).
+pub async fn update_backup_config(
+    State(_state): State<ServerState>,
+    Json(req): Json<BackupConfigRequest>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::SettingsStore;
+
+    const SETTINGS_DB_PATH: &str = "data/settings.redb";
+
+    if req.interval_secs < 300 {
+        return Err(ErrorResponse::bad_request(
+            "interval_secs must be at least 300 (5 minutes)",
+        ));
+    }
+    if !(1..=50).contains(&req.keep) {
+        return Err(ErrorResponse::bad_request("keep must be between 1 and 50"));
+    }
+
+    let settings_store = SettingsStore::open(SETTINGS_DB_PATH)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
+    let config = neomind_storage::settings::BackupConfig {
+        enabled: req.enabled,
+        interval_secs: req.interval_secs,
+        keep: req.keep,
+    };
+    settings_store
+        .save_backup_config(&config)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to save backup config: {}", e)))?;
+
+    tracing::info!(
+        enabled = config.enabled,
+        interval_secs = config.interval_secs,
+        keep = config.keep,
+        "Backup schedule updated"
+    );
+
+    ok(json!({
+        "enabled": config.enabled,
+        "interval_secs": config.interval_secs,
+        "keep": config.keep,
+    }))
 }

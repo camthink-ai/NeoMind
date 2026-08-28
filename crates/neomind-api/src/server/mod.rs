@@ -728,42 +728,59 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Periodic data-directory backup: every `NEOMIND_BACKUP_INTERVAL_SECS`
-/// (default 24h; `0` disables), keeping the newest `NEOMIND_BACKUP_KEEP`
-/// (default 7). The first interval is skipped so a fresh boot does not
-/// start copying databases while services are still warming up.
+/// Periodic data-directory backup. The schedule lives in settings.redb
+/// (`/api/settings/backup-config`, editable in Settings → Preferences) and
+/// is re-read every tick so changes apply within a minute — env vars only
+/// seed the default before anything is saved. The first full interval after
+/// boot is skipped so a fresh start does not copy databases while services
+/// are still warming up.
 fn spawn_backup_scheduler(data_dir: std::path::PathBuf) {
-    let interval_secs: u64 = std::env::var("NEOMIND_BACKUP_INTERVAL_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(24 * 60 * 60);
-    if interval_secs == 0 {
-        tracing::info!(
-            category = "backup",
-            "Periodic backup disabled (NEOMIND_BACKUP_INTERVAL_SECS=0)"
-        );
-        return;
-    }
-    let keep: usize = std::env::var("NEOMIND_BACKUP_KEEP")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(7);
-
-    tracing::info!(
-        category = "backup",
-        interval_secs,
-        keep,
-        "Periodic backup scheduler started"
-    );
+    tracing::info!(category = "backup", "Periodic backup scheduler started");
 
     tokio::spawn(async move {
-        let mut ticker =
-            tokio::time::interval(std::time::Duration::from_secs(interval_secs.max(1)));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        ticker.tick().await; // fires immediately — skip, don't back up at boot
+        // Read the schedule off the (blocking) settings store.
+        let read_config = || {
+            tokio::task::spawn_blocking(|| {
+                use neomind_storage::settings::BackupConfig;
+                neomind_storage::SettingsStore::open("data/settings.redb")
+                    .ok()
+                    .and_then(|s| s.load_backup_config().ok().flatten())
+                    .unwrap_or_else(BackupConfig::from_env_or_default)
+            })
+        };
+
+        let initial = read_config().await.unwrap_or_default();
+        // Grace: first backup one full interval after boot, not immediately.
+        let mut next_run =
+            tokio::time::Instant::now() + std::time::Duration::from_secs(initial.interval_secs);
+        let mut last_config = initial;
+
         loop {
-            ticker.tick().await;
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+            let config = read_config().await.unwrap_or(last_config.clone());
+            if config != last_config {
+                // Schedule edit: re-arm the timer off the NEW interval so a
+                // shortened interval doesn't wait out the old one.
+                next_run = tokio::time::Instant::now()
+                    + std::time::Duration::from_secs(config.interval_secs);
+                tracing::info!(
+                    category = "backup",
+                    enabled = config.enabled,
+                    interval_secs = config.interval_secs,
+                    keep = config.keep,
+                    "Backup schedule changed; timer re-armed"
+                );
+                last_config = config.clone();
+            }
+            if !config.enabled || tokio::time::Instant::now() < next_run {
+                continue;
+            }
+            next_run =
+                tokio::time::Instant::now() + std::time::Duration::from_secs(config.interval_secs);
+
             let dir = data_dir.clone();
+            let keep = config.keep;
             let result = tokio::task::spawn_blocking(move || {
                 match neomind_storage::backup::create_backup(&dir, env!("CARGO_PKG_VERSION")) {
                     Ok(manifest) => {

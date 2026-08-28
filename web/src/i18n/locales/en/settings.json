@@ -337,5 +337,21 @@
     "remove": "Remove",
     "confirmRemove": "Remove this chat from the allowlist? The chat will be disconnected.",
     "chatRemoved": "Chat removed"
-  }
+  },
+  "backupSchedule": "Data Backup",
+  "backupEnabled": "Scheduled backup",
+  "backupEnabledDesc": "Automatically back up the data directory (databases + keys). Restore: stop the server, copy files back from data/backups/.",
+  "backupInterval": "Backup interval",
+  "backupIntervalDesc": "How often the scheduled backup runs. Changes apply within a minute.",
+  "backupInterval6h": "Every 6 hours",
+  "backupInterval12h": "Every 12 hours",
+  "backupInterval1d": "Every day",
+  "backupInterval2d": "Every 2 days",
+  "backupInterval7d": "Every week",
+  "backupKeep": "Backups to keep",
+  "backupKeepDesc": "Older backups are pruned automatically. Each backup is a full copy — watch disk space on small devices.",
+  "backupLast": "Last backup",
+  "backupLastNone": "None yet",
+  "backupNow": "Back up now",
+  "backupNowDone": "Backup created"
 }

@@ -337,5 +337,21 @@
     "remove": "移除",
     "confirmRemove": "确定从白名单移除该会话？该会话将被断开。",
     "chatRemoved": "会话已移除"
-  }
+  },
+  "backupSchedule": "数据备份",
+  "backupEnabled": "定时备份",
+  "backupEnabledDesc": "自动备份数据目录(数据库与密钥)。恢复方式:停止服务后,将 data/backups/ 中的文件拷回数据目录。",
+  "backupInterval": "备份间隔",
+  "backupIntervalDesc": "定时备份的执行频率,修改后一分钟内生效。",
+  "backupInterval6h": "每 6 小时",
+  "backupInterval12h": "每 12 小时",
+  "backupInterval1d": "每天",
+  "backupInterval2d": "每 2 天",
+  "backupInterval7d": "每周",
+  "backupKeep": "保留份数",
+  "backupKeepDesc": "超出保留份数的旧备份会自动清理。每份备份都是完整拷贝,请留意小容量设备的磁盘占用。",
+  "backupLast": "最近备份",
+  "backupLastNone": "暂无",
+  "backupNow": "立即备份",
+  "backupNowDone": "备份已创建"
 }

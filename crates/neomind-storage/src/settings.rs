@@ -21,6 +21,7 @@ pub const KEY_GLOBAL_TIMEZONE: &str = "global_timezone";
 pub const KEY_RETENTION_CONFIG: &str = "retention_config";
 pub const KEY_AGENT_DEFAULTS: &str = "agent_defaults";
 pub const KEY_DEVICE_DEFAULTS: &str = "device_defaults";
+pub const KEY_BACKUP_CONFIG: &str = "backup_config";
 
 /// Default global timezone (IANA format)
 pub const DEFAULT_GLOBAL_TIMEZONE: &str = "Asia/Shanghai";
@@ -322,12 +323,72 @@ impl MqttSettings {
 }
 
 /// Retention configuration for data cleanup.
+/// Runtime-configurable backup schedule (Settings → Preferences in the web
+/// UI; executed by the api server's scheduler and the manual admin trigger).
+/// Env vars seed the factory default; a saved value always wins over them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BackupConfig {
+    /// Whether the periodic scheduler runs at all.
+    #[serde(default = "default_backup_enabled")]
+    pub enabled: bool,
+    /// Seconds between scheduled backups (>= 300).
+    #[serde(default = "default_backup_interval_secs")]
+    pub interval_secs: u64,
+    /// How many newest backups to keep.
+    #[serde(default = "default_backup_keep")]
+    pub keep: usize,
+}
+
+fn default_backup_enabled() -> bool {
+    true
+}
+fn default_backup_interval_secs() -> u64 {
+    24 * 60 * 60
+}
+fn default_backup_keep() -> usize {
+    7
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_backup_enabled(),
+            interval_secs: default_backup_interval_secs(),
+            keep: default_backup_keep(),
+        }
+    }
+}
+
+impl BackupConfig {
+    /// Factory default seeded from the environment: `NEOMIND_BACKUP_INTERVAL_SECS=0`
+    /// starts disabled (until enabled in the UI), any other value sets the
+    /// interval; `NEOMIND_BACKUP_KEEP` overrides retention. Used when nothing
+    /// has been saved to the settings store yet.
+    pub fn from_env_or_default() -> Self {
+        let mut config = Self::default();
+        if let Ok(v) = std::env::var("NEOMIND_BACKUP_INTERVAL_SECS") {
+            if let Ok(secs) = v.parse::<u64>() {
+                if secs == 0 {
+                    config.enabled = false;
+                } else {
+                    config.interval_secs = secs.max(300);
+                }
+            }
+        }
+        if let Ok(v) = std::env::var("NEOMIND_BACKUP_KEEP") {
+            if let Ok(keep) = v.parse::<usize>() {
+                config.keep = keep.clamp(1, 50);
+            }
+        }
+        config
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RetentionConfig {
     /// Whether automatic cleanup is enabled.
     #[serde(default = "default_retention_enabled")]
     pub enabled: bool,
-
     /// Cleanup interval in hours.
     #[serde(default = "default_retention_interval")]
     pub interval_hours: u64,
@@ -1229,6 +1290,34 @@ impl SettingsStore {
 
         if let Some(data) = table.get(KEY_RETENTION_CONFIG)? {
             let config: RetentionConfig = serde_json::from_slice(data.value())
+                .map_err(|e| Error::Serialization(e.to_string()))?;
+            Ok(Some(config))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Save backup schedule configuration.
+    pub fn save_backup_config(&self, config: &BackupConfig) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(SETTINGS_TABLE)?;
+            let value =
+                serde_json::to_vec(config).map_err(|e| Error::Serialization(e.to_string()))?;
+            table.insert(KEY_BACKUP_CONFIG, value.as_slice())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load backup schedule configuration (None = never saved; callers fall
+    /// back to [`BackupConfig::from_env_or_default`]).
+    pub fn load_backup_config(&self) -> Result<Option<BackupConfig>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(SETTINGS_TABLE)?;
+
+        if let Some(data) = table.get(KEY_BACKUP_CONFIG)? {
+            let config: BackupConfig = serde_json::from_slice(data.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?;
             Ok(Some(config))
         } else {

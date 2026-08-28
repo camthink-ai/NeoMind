@@ -727,6 +727,16 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/settings/retention",
             put(settings::update_retention_config),
         )
+        // Backup schedule (Settings → Preferences): same exposure class as
+        // the retention config. The manual trigger stays admin-only.
+        .route(
+            "/api/settings/backup-config",
+            get(settings::get_backup_config),
+        )
+        .route(
+            "/api/settings/backup-config",
+            put(settings::update_backup_config),
+        )
         .route(
             "/api/settings/retention/cleanup",
             post(settings::trigger_retention_cleanup),
