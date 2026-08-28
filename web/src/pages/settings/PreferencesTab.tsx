@@ -782,7 +782,7 @@ function BackupSettingsSection() {
     { v: 48 * 3600, l: t("settings:backupInterval2d") },
     { v: 7 * 24 * 3600, l: t("settings:backupInterval7d") },
   ]
-  const keepOpts = [3, 5, 7, 10, 14]
+  const keepOpts = [1, 2, 3, 5, 7, 14]
   const lastLabel = lastBackup
     ? `${new Date(lastBackup.created_at).toLocaleString()} (${(lastBackup.total_bytes / 1024 / 1024).toFixed(1)} MB)`
     : t("settings:backupLastNone")

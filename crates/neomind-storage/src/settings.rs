@@ -346,7 +346,7 @@ fn default_backup_interval_secs() -> u64 {
     24 * 60 * 60
 }
 fn default_backup_keep() -> usize {
-    7
+    3
 }
 
 impl Default for BackupConfig {
