@@ -198,8 +198,16 @@ pub struct IsolatedExtensionConfig {
     pub startup_timeout_secs: u64,
     /// Command execution timeout in seconds
     pub command_timeout_secs: u64,
-    /// Maximum memory usage in MB (0 = unlimited)
+    /// Maximum memory usage in MB (0 = unlimited) — enforced by the RSS
+    /// polling check (accurate for resident memory, incl. GPU-adjacent libs).
     pub max_memory_mb: usize,
+    /// HARD address-space rlimit for the runner process, in MB (None =
+    /// unlimited). OFF by default on purpose: RLIMIT_AS caps *virtual*
+    /// address space, and CUDA/ONNX runtimes reserve multi-GB VA regions at
+    /// init, so a naive cap kills exactly the heavy extensions it looks like
+    /// it should protect. Set this only for extensions with known-bounded
+    /// allocators (pure-Rust CLI-style extensions).
+    pub rlimit_memory_mb: Option<u64>,
     /// Restart on crash
     pub restart_on_crash: bool,
     /// Maximum restart attempts
@@ -231,6 +239,7 @@ impl Default for IsolatedExtensionConfig {
             // - System overhead: ~100MB
             // - Headroom: ~918MB
             max_memory_mb: 2048, // Increased from 1024MB for YOLO stability
+            rlimit_memory_mb: None,
             restart_on_crash: true,
             max_restart_attempts: 3,
             restart_cooldown_secs: 5,
@@ -581,6 +590,13 @@ impl IsolatedExtension {
                 .unwrap_or_else(|_| extension_dir.to_path_buf())
         };
         let mut cmd = Command::new(&runner_path);
+        // Hard rlimit only when explicitly configured — see the field docs on
+        // IsolatedExtensionConfig::rlimit_memory_mb for why this is not fed
+        // from max_memory_mb (the runner's flags existed but were never wired,
+        // which made "resource limits" a no-op on the spawn path).
+        if let Some(mb) = self.config.rlimit_memory_mb {
+            cmd.arg("--memory-limit").arg(mb.to_string());
+        }
         cmd.arg("--extension-path")
             .arg(&extension_path_absolute)
             .env("NEOMIND_EXTENSION_DIR", &extension_dir_absolute)
