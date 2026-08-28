@@ -783,6 +783,9 @@ impl SettingsStore {
         } else {
             Database::create(path_ref)?
         };
+        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        crate::schema::check_or_stamp(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
         let crypto = crate::secret::crypto_for_db(path_ref);
         let store = Arc::new(SettingsStore {
             db: Arc::new(db),

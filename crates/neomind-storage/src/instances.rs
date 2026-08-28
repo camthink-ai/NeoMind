@@ -186,6 +186,9 @@ impl InstanceStore {
         } else {
             Database::create(path_ref)?
         };
+        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        crate::schema::check_or_stamp(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
 
         let store = Arc::new(InstanceStore {
             db: Arc::new(db),

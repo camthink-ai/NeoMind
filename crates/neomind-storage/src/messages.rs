@@ -116,6 +116,9 @@ impl MessageStore {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         let db = Database::create(path)
             .map_err(|e| Error::Storage(format!("Failed to open message database: {}", e)))?;
+        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        crate::schema::check_or_stamp(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
 
         // Create tables
         let write_txn = db

@@ -148,6 +148,9 @@ impl AlertStore {
             }
             Database::create(path_ref)?
         };
+        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        crate::schema::check_or_stamp(&db)
+            .map_err(|e| crate::error::Error::Storage(format!("schema version: {e}")))?;
 
         Ok(Self { db: Arc::new(db) })
     }

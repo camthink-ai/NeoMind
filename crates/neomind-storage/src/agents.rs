@@ -596,6 +596,9 @@ impl AgentStore {
     /// Open or create an agent store at the given path.
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Arc<Self>, Error> {
         let db = Database::create(path)?;
+        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        crate::schema::check_or_stamp(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
         let write_txn = db.begin_write()?;
 
         // Create tables if they don't exist

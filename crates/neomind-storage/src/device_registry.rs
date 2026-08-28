@@ -367,6 +367,9 @@ impl DeviceRegistryStore {
         } else {
             Database::open(path_ref)?
         };
+        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        crate::schema::check_or_stamp(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
 
         // Create tables if this is a new database OR verify/create for existing databases
         // This handles cases where a database file exists but tables weren't created properly
