@@ -536,3 +536,66 @@ pub struct RetentionConfigRequest {
     pub default_retention: Option<u64>,
     pub image_retention: Option<u64>,
 }
+
+/// Trigger an immediate data-directory backup (admin only).
+///
+/// Copies every `*.redb` + secret file into `data/backups/backup-<ts>/`,
+/// verifies each copied database opens (redb crash-recovery check), and
+/// prunes old backups down to the retention limit. The periodic scheduler
+/// (`NEOMIND_BACKUP_INTERVAL_SECS`, default 24h) calls the same path.
+pub async fn create_backup_handler(
+    State(state): State<ServerState>,
+    axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+
+    let data_dir = state.data_dir.clone();
+    let keep: usize = std::env::var("NEOMIND_BACKUP_KEEP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let manifest =
+            neomind_storage::backup::create_backup(&data_dir, env!("CARGO_PKG_VERSION"))?;
+        let pruned = neomind_storage::backup::prune_backups(&data_dir, keep);
+        Ok::<_, neomind_storage::backup::BackupError>((manifest, pruned))
+    })
+    .await
+    .map_err(|e| ErrorResponse::internal(format!("Backup task failed: {}", e)))?
+    .map_err(|e| ErrorResponse::internal(format!("Backup failed: {}", e)))?;
+
+    let (manifest, pruned) = result;
+    tracing::info!(
+        admin = %admin.username,
+        id = %manifest.id,
+        pruned,
+        "Manual backup triggered"
+    );
+
+    ok(json!({
+        "id": manifest.id,
+        "created_at": manifest.created_at,
+        "total_bytes": manifest.total_bytes,
+        "files": manifest.files,
+        "pruned_old_backups": pruned,
+    }))
+}
+
+/// List existing backups (admin only), newest first.
+///
+/// Restoring is deliberately manual: stop the server, copy the files from
+/// `data/backups/<id>/` back into the data dir, start the server.
+pub async fn list_backups_handler(
+    State(state): State<ServerState>,
+    axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
+) -> HandlerResult<serde_json::Value> {
+    if admin.role != crate::auth_users::UserRole::Admin {
+        return Err(ErrorResponse::bad_request("Admin access required"));
+    }
+
+    let backups = neomind_storage::backup::list_backups(&state.data_dir);
+    ok(json!({ "backups": backups }))
+}

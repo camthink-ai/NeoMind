@@ -704,6 +704,10 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     // Services phase
     startup.phase_services();
 
+    // Periodic data-dir backup (see neomind_storage::backup). Runs the same
+    // create_backup path as POST /api/settings/backup.
+    spawn_backup_scheduler(state.data_dir.clone());
+
     // Run with graceful shutdown.
     // `into_make_service_with_connect_info` populates `ConnectInfo<SocketAddr>` for
     // all handlers — required by webhook IP allow/block lists, rate-limit client_id
@@ -722,6 +726,74 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
 
     tracing::info!("Server shutdown complete");
     Ok(())
+}
+
+/// Periodic data-directory backup: every `NEOMIND_BACKUP_INTERVAL_SECS`
+/// (default 24h; `0` disables), keeping the newest `NEOMIND_BACKUP_KEEP`
+/// (default 7). The first interval is skipped so a fresh boot does not
+/// start copying databases while services are still warming up.
+fn spawn_backup_scheduler(data_dir: std::path::PathBuf) {
+    let interval_secs: u64 = std::env::var("NEOMIND_BACKUP_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(24 * 60 * 60);
+    if interval_secs == 0 {
+        tracing::info!(
+            category = "backup",
+            "Periodic backup disabled (NEOMIND_BACKUP_INTERVAL_SECS=0)"
+        );
+        return;
+    }
+    let keep: usize = std::env::var("NEOMIND_BACKUP_KEEP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7);
+
+    tracing::info!(
+        category = "backup",
+        interval_secs,
+        keep,
+        "Periodic backup scheduler started"
+    );
+
+    tokio::spawn(async move {
+        let mut ticker =
+            tokio::time::interval(std::time::Duration::from_secs(interval_secs.max(1)));
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        ticker.tick().await; // fires immediately — skip, don't back up at boot
+        loop {
+            ticker.tick().await;
+            let dir = data_dir.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                match neomind_storage::backup::create_backup(&dir, env!("CARGO_PKG_VERSION")) {
+                    Ok(manifest) => {
+                        let pruned = neomind_storage::backup::prune_backups(&dir, keep);
+                        Ok((manifest, pruned))
+                    }
+                    Err(e) => Err(e),
+                }
+            })
+            .await;
+            match result {
+                Ok(Ok((manifest, pruned))) => tracing::info!(
+                    category = "backup",
+                    id = %manifest.id,
+                    pruned,
+                    "Scheduled backup complete"
+                ),
+                Ok(Err(e)) => tracing::warn!(
+                    category = "backup",
+                    error = %e,
+                    "Scheduled backup failed"
+                ),
+                Err(e) => tracing::warn!(
+                    category = "backup",
+                    error = %e,
+                    "Scheduled backup task join error"
+                ),
+            }
+        }
+    });
 }
 
 /// Start the server with default configuration.

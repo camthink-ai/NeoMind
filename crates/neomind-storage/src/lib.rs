@@ -46,6 +46,7 @@
 
 pub mod agents;
 pub mod atomic_write;
+pub mod backup;
 pub mod business;
 pub mod dashboards;
 pub mod device_registry;

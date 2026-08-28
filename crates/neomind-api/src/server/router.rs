@@ -1198,6 +1198,13 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/settings/registration",
             put(auth_users::update_registration_settings_handler),
         )
+        // Data-directory backup (admin only): manual trigger + listing.
+        // The periodic scheduler runs the same create_backup path.
+        .route(
+            "/api/settings/backup",
+            post(settings::create_backup_handler),
+        )
+        .route("/api/settings/backups", get(settings::list_backups_handler))
         // Apply JWT authentication middleware
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
