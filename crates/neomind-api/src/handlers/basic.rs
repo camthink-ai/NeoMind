@@ -219,3 +219,22 @@ fn get_wifi_ssid() -> Option<String> {
     }
     None
 }
+
+/// Prometheus-format process metrics (public endpoint).
+///
+/// Counters only (HTTP totals, EventBus drops, uptime, build info) — no
+/// per-user/device data, so it stays unauthenticated like the health checks.
+/// See `crate::metrics` for the rationale behind each metric.
+pub async fn metrics_handler(
+    State(state): State<ServerState>,
+) -> axum::http::Response<axum::body::Body> {
+    let body = crate::metrics::render_prometheus(state.core.event_bus.as_deref());
+    axum::http::Response::builder()
+        .status(axum::http::StatusCode::OK)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )
+        .body(axum::body::Body::from(body))
+        .expect("static response parts")
+}

@@ -12,6 +12,7 @@ pub mod config;
 pub mod crypto;
 pub mod event_services;
 pub mod handlers;
+pub mod metrics;
 pub mod models;
 
 pub mod rate_limit;

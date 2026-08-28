@@ -51,6 +51,9 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/auth/register", post(auth_users::register_handler))
         // Setup endpoints (public - only available when no users exist)
         .route("/api/setup/status", get(setup::setup_status_handler))
+        // Prometheus-format process metrics: counters only, no secrets —
+        // same exposure class as the health checks so scrapers need no auth.
+        .route("/api/metrics", get(basic::metrics_handler))
         .route(
             "/api/setup/initialize",
             post(setup::initialize_admin_handler),
@@ -1299,6 +1302,9 @@ pub fn create_router_with_state(state: ServerState) -> Router {
     let router = assets::configure_static_file_serving(router);
 
     router
+        // Global HTTP counter for /api/metrics — mounted outermost so it
+        // observes every route (public, protected, webhooks, assets).
+        .layer(middleware::from_fn(crate::metrics::http_metrics_middleware))
         // Data-change events: publish DataChanged after successful mutating
         // requests on data domains (AI/CLI/any actor) so clients refresh.
         .layer(middleware::from_fn_with_state(
