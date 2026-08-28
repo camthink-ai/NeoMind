@@ -1506,10 +1506,10 @@ impl ServerState {
             "Extension sync paths configured"
         );
 
+        let state_for_sync = self.clone();
         tokio::spawn(async move {
             use crate::server::ExtensionInstallService;
 
-            // Move paths into the async block instead of borrowing
             let install_service = ExtensionInstallService::new(install_dir, nep_cache_dir);
 
             match install_service.sync_nep_cache().await {
@@ -1521,8 +1521,25 @@ impl ServerState {
                             installed = report.installed,
                             upgraded = report.upgraded,
                             skipped = report.skipped,
-                            "Extension sync completed"
+                            "Extension cache sync completed"
                         );
+                    }
+                    // Register whatever actually landed on disk (the sync used
+                    // to stop here, reporting counts while loading nothing).
+                    for pkg in &report.installed_packages {
+                        if let Err(e) = crate::handlers::extensions::register_installed_package(
+                            &state_for_sync,
+                            pkg,
+                        )
+                        .await
+                        {
+                            tracing::warn!(
+                                category = "extensions",
+                                extension_id = %pkg.extension_id,
+                                error = %e,
+                                "Failed to register synced extension (installed on disk only)"
+                            );
+                        }
                     }
                 }
                 Err(e) => {

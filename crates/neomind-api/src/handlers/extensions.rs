@@ -467,6 +467,75 @@ pub async fn list_extension_types_handler() -> HandlerResult<Vec<ExtensionTypeDt
     ok(types)
 }
 
+/// Fall back to the release-level `checksums.txt` for a package sha256.
+///
+/// The marketplace index does not carry per-build sha256; the Extensions CI
+/// uploads a `checksums.txt` (sha256sum format) to the SAME release as the
+/// .nep assets, so integrity data is at least as fresh as the package
+/// itself. Derives the checksum URL from the package URL and looks up the
+/// matching filename.
+async fn fetch_release_checksum(
+    client: &reqwest::Client,
+    package_url: &str,
+    nep_filename: &str,
+) -> Option<String> {
+    let base = package_url.rsplit_once('/')?.0;
+    let url = format!("{base}/checksums.txt");
+    let text = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .header("User-Agent", "NeoMind-Extension-Marketplace")
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .text()
+        .await
+        .ok()?;
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(sha), Some(name)) = (parts.next(), parts.next()) else {
+            continue;
+        };
+        if name == nep_filename && sha.len() == 64 {
+            return Some(sha.to_string());
+        }
+    }
+    None
+}
+
+/// Resolve a client-provided package/library path, confining it to the
+/// server's data directory.
+///
+/// `file_path` used to accept any host path, which made the register/upload/
+/// validate endpoints a read-and-try-load primitive for arbitrary files on
+/// the machine for anyone holding credentials. Relative paths resolve
+/// against the data dir; absolute paths must land inside it (after
+/// canonicalization, so `..` and symlinks can't escape).
+fn resolve_confined_package_path(raw: &str) -> Result<PathBuf, ErrorResponse> {
+    let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+    let data_root = std::path::PathBuf::from(&data_dir)
+        .canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(&data_dir));
+
+    let candidate = PathBuf::from(raw);
+    let joined = if candidate.is_absolute() {
+        candidate
+    } else {
+        data_root.join(candidate)
+    };
+    let canonical = joined
+        .canonicalize()
+        .map_err(|_| ErrorResponse::not_found(format!("Package file not found: {}", raw)))?;
+    if !canonical.starts_with(&data_root) {
+        return Err(ErrorResponse::bad_request(
+            "file_path must point inside the server data directory",
+        ));
+    }
+    Ok(canonical)
+}
+
 /// POST /api/extensions
 /// Register a new extension from file path.
 pub async fn register_extension_handler(
@@ -475,7 +544,7 @@ pub async fn register_extension_handler(
 ) -> HandlerResult<serde_json::Value> {
     let runtime = &state.extensions.runtime;
 
-    let path = PathBuf::from(&req.file_path);
+    let path = resolve_confined_package_path(&req.file_path)?;
 
     let metadata = runtime.load(&path).await.map_err(|e| {
         // Check for specific error types to return appropriate HTTP status codes
@@ -2479,6 +2548,47 @@ pub async fn install_marketplace_extension_handler(
             });
         }
 
+        // The marketplace index does not carry sha256 yet (the release
+        // pipeline computes checksums but never publishes them), so the
+        // verify branch below is effectively dead for today's metadata.
+        // Surface that loudly instead of installing silently unverified, and
+        // give strict deployments a fail-closed switch.
+        let mut expected_sha256 = expected_sha256;
+        if expected_sha256.is_none() {
+            let filename = package_url.rsplit('/').next().unwrap_or("");
+            if let Some(sha) = fetch_release_checksum(&client, package_url, filename).await {
+                tracing::info!(
+                    extension_id = %req.id,
+                    "Package SHA256 sourced from the release checksums.txt"
+                );
+                expected_sha256 = Some(sha);
+            }
+        }
+        if expected_sha256.is_none() {
+            let strict = std::env::var("NEOMIND_STRICT_PACKAGE_SHA256")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            if strict {
+                let _ = std::fs::remove_file(&tmp_path);
+                return ok(MarketplaceInstallResponse {
+                    success: false,
+                    extension_id: req.id.clone(),
+                    downloaded: true,
+                    installed: false,
+                    path: None,
+                    error: Some(
+                        "Marketplace metadata carries no sha256 and NEOMIND_STRICT_PACKAGE_SHA256 is enabled — refusing to install an unverified package"
+                            .to_string(),
+                    ),
+                });
+            }
+            tracing::warn!(
+                extension_id = %req.id,
+                url = %package_url,
+                "Marketplace metadata carries no sha256 — integrity check skipped (set NEOMIND_STRICT_PACKAGE_SHA256=1 to refuse unverified packages)"
+            );
+        }
+
         // Verify SHA256 when the marketplace metadata provides one. Defends
         // against CDN/transport corruption or a swapped package being loaded
         // into the process via dlopen. The legacy binary branch already does
@@ -2954,8 +3064,19 @@ pub async fn check_marketplace_updates_handler(
             {
                 if response.status().is_success() {
                     if let Ok(metadata) = response.json::<MarketplaceExtensionMetadata>().await {
-                        // Compare versions (simple string comparison for now)
-                        if metadata.version != ext_info.metadata.version {
+                        // Semver comparison, and only upgrades count. The old
+                        // string `!=` flagged downgrades and build-suffix
+                        // mismatches as "updates" — combined with extensions
+                        // that hardcoded their version, some entries showed a
+                        // permanent false "update available".
+                        let newer = matches!(
+                            (
+                                metadata.version.parse::<semver::Version>(),
+                                ext_info.metadata.version.parse::<semver::Version>(),
+                            ),
+                            (Ok(new), Ok(cur)) if new > cur
+                        );
+                        if newer {
                             updates.push(serde_json::json!({
                                 "id": ext_id,
                                 "name": ext_info.metadata.name,
@@ -3899,14 +4020,7 @@ pub async fn upload_extension_package_handler(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_core::extension::package::ExtensionPackage;
 
-    let file_path = PathBuf::from(&req.file_path);
-
-    if !file_path.exists() {
-        return Err(ErrorResponse::not_found(format!(
-            "Package file not found: {}",
-            req.file_path
-        )));
-    }
+    let file_path = resolve_confined_package_path(&req.file_path)?;
 
     // Load the package
     let package = ExtensionPackage::load(&file_path)
@@ -4022,14 +4136,7 @@ pub async fn validate_extension_package_handler(
 ) -> HandlerResult<serde_json::Value> {
     use neomind_core::extension::package::ExtensionPackage;
 
-    let file_path = PathBuf::from(&req.file_path);
-
-    if !file_path.exists() {
-        return Err(ErrorResponse::not_found(format!(
-            "Package file not found: {}",
-            req.file_path
-        )));
-    }
+    let file_path = resolve_confined_package_path(&req.file_path)?;
 
     let package = ExtensionPackage::load(&file_path)
         .await
@@ -4351,21 +4458,120 @@ pub async fn upload_extension_file_handler(
 /// POST /api/extensions/sync
 ///
 /// Manually trigger extension synchronization from /extensions/ directory.
+/// Register an on-disk-installed extension with the runtime: unregister the
+/// old instance if any, load the binary, and upsert the ExtensionRecord
+/// carrying the previous user config forward (same contract as the
+/// marketplace install path). Shared by the sync handler and the startup
+/// cache scan so they can't drift apart again.
+pub(crate) async fn register_installed_package(
+    state: &ServerState,
+    pkg: &crate::server::install_service::InstalledPackage,
+) -> Result<(), String> {
+    let runtime = state.extensions.runtime.clone();
+
+    // Replace a registered instance (mirrors the marketplace flow). An
+    // unregister failure is fatal there; here we propagate the error too —
+    // a half-replaced extension is worse than a reported failure.
+    if runtime.contains(&pkg.extension_id).await {
+        runtime
+            .unregister(&pkg.extension_id)
+            .await
+            .map_err(|e| format!("failed to unregister old instance: {e}"))?;
+    }
+
+    let metadata = runtime
+        .load(&pkg.binary_path)
+        .await
+        .map_err(|e| format!("failed to load extension: {e}"))?;
+
+    let extension_type = pkg
+        .binary_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| if e == "wasm" { "wasm" } else { "native" })
+        .unwrap_or("native")
+        .to_string();
+
+    let store = state.extensions.store.clone();
+    let preserved_config = store
+        .load(&pkg.extension_id)
+        .ok()
+        .flatten()
+        .and_then(|old| old.config.clone());
+    {
+        let mut record = ExtensionRecord::new(
+            pkg.extension_id.clone(),
+            metadata.name.clone(),
+            pkg.binary_path.to_string_lossy().to_string(),
+            extension_type,
+            pkg.version.clone(),
+        )
+        .with_description(metadata.description.clone())
+        .with_author(metadata.author.clone())
+        .with_checksum(Some(pkg.checksum.clone()))
+        .with_auto_start(true)
+        .with_frontend_path(
+            pkg.frontend_dir
+                .as_ref()
+                .map(|p| p.to_string_lossy().to_string()),
+        );
+        if let Some(cfg) = preserved_config.clone() {
+            record = record.with_config(cfg);
+        }
+        if let Err(e) = store.save(&record) {
+            tracing::warn!(
+                extension_id = %pkg.extension_id,
+                error = %e,
+                "Failed to save extension record after sync install"
+            );
+        }
+    }
+
+    state.refresh_extension_tools().await;
+
+    if let Some(cfg) = preserved_config {
+        if let Err(e) = runtime.send_config_update(&pkg.extension_id, &cfg).await {
+            tracing::warn!(
+                extension_id = %pkg.extension_id,
+                error = %e,
+                "Failed to apply preserved config after sync install"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn sync_extensions_handler(
-    State(_state): State<ServerState>,
+    State(state): State<ServerState>,
 ) -> HandlerResult<serde_json::Value> {
     use crate::server::ExtensionInstallService;
 
     let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
-    let install_dir = std::path::PathBuf::from(data_dir).join("extensions");
-    let nep_cache_dir = std::path::PathBuf::from("extensions");
-
-    let install_service = ExtensionInstallService::new(&install_dir, &nep_cache_dir);
+    let extensions_dir = std::path::PathBuf::from(&data_dir).join("extensions");
+    // The cache IS the extensions dir: the marketplace download path already
+    // drops .nep files there. (This used to scan a CWD-relative "extensions/"
+    // that had nothing to do with the data dir.)
+    let install_service = ExtensionInstallService::new(&extensions_dir, &extensions_dir);
 
     let report = install_service
         .sync_nep_cache()
         .await
         .map_err(|e| ErrorResponse::internal(format!("Sync failed: {}", e)))?;
+
+    // Disk install is only half the job — register what changed. This sync
+    // used to report "installed: N" while doing neither half.
+    let mut registered = 0usize;
+    let mut errors: Vec<serde_json::Value> = Vec::new();
+    for pkg in &report.installed_packages {
+        match register_installed_package(&state, pkg).await {
+            Ok(()) => registered += 1,
+            Err(e) => errors.push(serde_json::json!({
+                "extension_id": pkg.extension_id,
+                "error": e,
+            })),
+        }
+    }
 
     ok(serde_json::json!({
         "message": "Extensions synchronized",
@@ -4373,6 +4579,9 @@ pub async fn sync_extensions_handler(
         "installed": report.installed,
         "upgraded": report.upgraded,
         "skipped": report.skipped,
+        "failed": report.failed,
+        "registered": registered,
+        "errors": errors,
     }))
 }
 
