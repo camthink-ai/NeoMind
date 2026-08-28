@@ -171,6 +171,10 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     socket.set_nodelay(true)?;
     socket.bind(&bind.into())?;
     socket.listen(1024)?;
+    // std/socket2 sockets are blocking by default; tokio requires a
+    // non-blocking fd or registration panics ("Registering a blocking socket
+    // with the tokio runtime is unsupported" — seen on macOS 15+).
+    socket.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(socket.into())?;
 
     // Ready phase — HTTP listener is bound
