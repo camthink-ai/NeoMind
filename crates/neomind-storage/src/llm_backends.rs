@@ -559,6 +559,8 @@ pub struct LlmBackendStore {
     db: Arc<Database>,
     /// Path to the database file
     path: String,
+    /// Seals the `api_key` field at rest; key file lives next to the db.
+    crypto: neomind_core::crypto::CryptoService,
 }
 
 impl LlmBackendStore {
@@ -587,6 +589,7 @@ impl LlmBackendStore {
         let store = Arc::new(LlmBackendStore {
             db: Arc::new(db),
             path: path_str,
+            crypto: crate::secret::crypto_for_db(path_ref),
         });
 
         // Ensure tables exist
@@ -610,16 +613,22 @@ impl LlmBackendStore {
     }
 
     /// Save an LLM backend instance
+    ///
+    /// The `api_key` field is sealed (AES-256-GCM, shared `encryption_key`)
+    /// before it touches the database; callers keep passing plaintext.
     pub fn save_instance(&self, instance: &LlmBackendInstance) -> Result<(), Error> {
         instance
             .validate()
             .map_err(|e| Error::InvalidInput(e.to_string()))?;
 
+        let mut sealed = instance.clone();
+        sealed.api_key = crate::secret::seal(&self.crypto, &instance.api_key);
+
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(LLM_BACKENDS_TABLE)?;
             let value =
-                serde_json::to_vec(instance).map_err(|e| Error::Serialization(e.to_string()))?;
+                serde_json::to_vec(&sealed).map_err(|e| Error::Serialization(e.to_string()))?;
             table.insert(instance.id.as_str(), value.as_slice())?;
         }
         write_txn.commit()?;
@@ -627,6 +636,9 @@ impl LlmBackendStore {
     }
 
     /// Load an LLM backend instance by ID
+    ///
+    /// Unseals `api_key` on the way out; pre-encryption plaintext rows load
+    /// unchanged (and get sealed on their next save).
     pub fn load_instance(&self, id: &str) -> Result<Option<LlmBackendInstance>, Error> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(LLM_BACKENDS_TABLE)?;
@@ -635,6 +647,7 @@ impl LlmBackendStore {
             let mut instance: LlmBackendInstance = serde_json::from_slice(data.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?;
             instance.ensure_capabilities(); // Fix missing capabilities for old data
+            instance.api_key = crate::secret::unseal(&self.crypto, instance.api_key.take());
             Ok(Some(instance))
         } else {
             Ok(None)
@@ -653,6 +666,7 @@ impl LlmBackendStore {
             let mut instance: LlmBackendInstance = serde_json::from_slice(data.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?;
             instance.ensure_capabilities(); // Fix missing capabilities for old data
+            instance.api_key = crate::secret::unseal(&self.crypto, instance.api_key.take());
             instances.push(instance);
         }
 

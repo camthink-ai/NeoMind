@@ -756,6 +756,8 @@ pub struct SettingsStore {
     db: Arc<Database>,
     /// Path to the database file (for singleton management)
     path: String,
+    /// Seals secret fields (LLM api_key) at rest; key file lives next to the db.
+    crypto: neomind_core::crypto::CryptoService,
 }
 
 impl SettingsStore {
@@ -781,9 +783,11 @@ impl SettingsStore {
         } else {
             Database::create(path_ref)?
         };
+        let crypto = crate::secret::crypto_for_db(path_ref);
         let store = Arc::new(SettingsStore {
             db: Arc::new(db),
             path: path_str,
+            crypto,
         });
 
         // Ensure all tables exist (create them if they don't)
@@ -818,18 +822,19 @@ impl SettingsStore {
         settings: &LlmSettings,
         source: &str,
     ) -> Result<(), Error> {
-        // Get old value for history
+        // Get old value for history (sealed form — history never stores
+        // plaintext secrets)
         let old_value = self
             .load_llm_settings()
             .ok()
             .flatten()
-            .and_then(|s| serde_json::to_value(s).ok());
+            .and_then(|s| self.llm_settings_for_history(&s));
 
         // Save the new settings
         self.save_llm_settings(settings)?;
 
         // Record the change
-        if let Ok(new_value) = serde_json::to_value(settings) {
+        if let Some(new_value) = self.llm_settings_for_history(settings) {
             let entry = ConfigChangeEntry::new(
                 "llm_config".to_string(),
                 old_value,
@@ -840,6 +845,13 @@ impl SettingsStore {
         }
 
         Ok(())
+    }
+
+    /// JSON form of LLM settings for config history, with `api_key` sealed.
+    fn llm_settings_for_history(&self, settings: &LlmSettings) -> Option<serde_json::Value> {
+        let mut sealed = settings.clone();
+        sealed.api_key = crate::secret::seal(&self.crypto, &settings.api_key);
+        serde_json::to_value(sealed).ok()
     }
 
     /// Save MQTT settings with change tracking.
@@ -972,12 +984,18 @@ impl SettingsStore {
     }
 
     /// Save LLM settings.
+    ///
+    /// The `api_key` field is sealed (AES-256-GCM, shared `encryption_key`)
+    /// before it touches the database; callers keep passing plaintext.
     pub fn save_llm_settings(&self, settings: &LlmSettings) -> Result<(), Error> {
+        let mut sealed = settings.clone();
+        sealed.api_key = crate::secret::seal(&self.crypto, &settings.api_key);
+
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(SETTINGS_TABLE)?;
             let value =
-                serde_json::to_vec(settings).map_err(|e| Error::Serialization(e.to_string()))?;
+                serde_json::to_vec(&sealed).map_err(|e| Error::Serialization(e.to_string()))?;
             table.insert("llm_config", value.as_slice())?;
         }
         write_txn.commit()?;
@@ -985,13 +1003,17 @@ impl SettingsStore {
     }
 
     /// Load LLM settings.
+    ///
+    /// Unseals `api_key` on the way out; pre-encryption plaintext rows load
+    /// unchanged (and get sealed on their next save).
     pub fn load_llm_settings(&self) -> Result<Option<LlmSettings>, Error> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(SETTINGS_TABLE)?;
 
         if let Some(data) = table.get("llm_config")? {
-            let settings: LlmSettings = serde_json::from_slice(data.value())
+            let mut settings: LlmSettings = serde_json::from_slice(data.value())
                 .map_err(|e| Error::Serialization(e.to_string()))?;
+            settings.api_key = crate::secret::unseal(&self.crypto, settings.api_key.take());
             Ok(Some(settings))
         } else {
             Ok(None)
@@ -1485,5 +1507,46 @@ mod tests {
         // Delete settings
         assert!(store.delete_llm_settings().unwrap());
         assert!(!store.has_llm_settings());
+    }
+
+    #[test]
+    fn test_llm_settings_api_key_sealed_at_rest() {
+        // Own temp dir (NOT the ":memory:" singleton): that store is shared
+        // across all tests in this binary, and this test writes llm_config
+        // concurrently with test_settings_store. A real dir also exercises
+        // the persisted encryption_key-next-to-the-db path.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SettingsStore::open(tmp.path().join("settings.redb")).unwrap();
+
+        // Save settings carrying a cloud API key
+        let mut settings = LlmSettings::openai("gpt-4o-mini", "sk-rest-plaintext-leak");
+        settings.touch();
+        store.save_llm_settings(&settings).unwrap();
+
+        // The raw stored row must not contain the plaintext key
+        let read_txn = store.db.begin_read().unwrap();
+        let table = read_txn.open_table(SETTINGS_TABLE).unwrap();
+        let raw = table.get("llm_config").unwrap().unwrap();
+        let raw_str = String::from_utf8_lossy(raw.value()).to_string();
+        assert!(
+            !raw_str.contains("sk-rest-plaintext-leak"),
+            "api_key must be sealed at rest, got raw row: {raw_str}"
+        );
+        assert!(raw_str.contains("enc1:"), "sealed marker expected");
+
+        // Loading hands back the plaintext key for runtime use
+        let loaded = store.load_llm_settings().unwrap().unwrap();
+        assert_eq!(loaded.api_key.as_deref(), Some("sk-rest-plaintext-leak"));
+
+        // Config history must not leak the plaintext key either
+        store.save_llm_settings_tracked(&settings, "test").unwrap();
+        let history = store.get_all_config_history(50).unwrap();
+        for entry in &history {
+            let rendered = serde_json::to_string(entry).unwrap();
+            assert!(
+                !rendered.contains("sk-rest-plaintext-leak"),
+                "config history leaked plaintext api_key: {rendered}"
+            );
+        }
     }
 }

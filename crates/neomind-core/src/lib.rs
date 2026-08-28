@@ -6,6 +6,7 @@
 pub mod brand;
 pub mod builtin_llm;
 pub mod config;
+pub mod crypto;
 pub mod dashboard;
 pub mod datasource;
 pub mod error;

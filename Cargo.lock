@@ -3639,15 +3639,19 @@ dependencies = [
 name = "neomind-core"
 version = "0.9.20"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
  "futures",
+ "hex",
  "libc",
  "libloading",
  "neomind-extension-sdk",
  "once_cell",
  "parking_lot",
+ "pbkdf2",
  "redb",
  "scopeguard",
  "semver 1.0.28",

@@ -56,6 +56,7 @@ pub mod instances;
 pub mod llm_backends;
 pub mod memory_config;
 pub mod messages;
+pub mod secret;
 pub mod session;
 pub mod settings;
 pub mod system_memory;
